@@ -1,0 +1,68 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.uv-cache/
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Virtual environments
+# if on windows AI runs in WSL and IDE runs on Windows
+# WSL uses python linux and windows uses windows linux
+# they each need their own .venv
+.venv*/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Pyright
+.pyright/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+coverage.xml
+htmlcov/
+.coverage
+.coverage.*
+.cache/
+nosetests.xml
+
+# Static analysis
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.sonar/
+.review/
+openapi/
+
+# IDEs and editors
+.idea*/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Misc
+*.log
+.env
+.env.local
+.env.*.local
+out/
+.knowledge/knowledge.duckdb
+
+to_adapt/

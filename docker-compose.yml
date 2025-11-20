@@ -1,0 +1,67 @@
+services:
+  api:
+    build: .
+    container_name: ai-workflow-api
+    ports:
+      - "${TEST_PORT:-8000}:8000"
+    command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./tests:/app/tests
+    environment:
+      - DEBUG=true
+      - PYTHONUNBUFFERED=1
+      # Development credentials only; production secrets must come from .env or docker-compose.override.yml, deploy-time env vars, or Docker secrets via Vault/AWS Secrets Manager (never checked into source).
+      - SURREALDB_URL=ws://surrealdb:8000/rpc
+      - SURREALDB_NAMESPACE=knowledge
+      - SURREALDB_DATABASE=facts
+      - SURREALDB_USER=root
+      - SURREALDB_PASS=root
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      # - LOG_LEVEL=debug
+    depends_on:
+      surrealdb:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  surrealdb:
+    image: surrealdb/surrealdb:v2.3.10
+    container_name: ai-workflow-surrealdb
+    # SurrealDB listens on 8000 inside its container and is reachable by other services via surrealdb:8000; only api publishes 8000 to the host, so there's no host port conflict.
+    command: ["start", "--log", "trace", "--user", "root", "--pass", "root", "file:/data/database.db"]
+    volumes:
+      - surrealdb_data:/data
+    healthcheck:
+      test: ["CMD", "surreal", "isready", "--conn", "http://localhost:8000"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.2.1
+    container_name: ai-workflow-elasticsearch
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      # Disable security only for local development; enable auth, TLS, and access controls in production.
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  surrealdb_data:
+  elasticsearch_data:

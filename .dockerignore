@@ -1,0 +1,71 @@
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.swp
+*.swo
+.Python
+
+# Package / build
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Virtual environments and env files
+# if on windows AI runs in WSL and IDE runs on Windows
+# WSL uses python linux and windows uses windows linux
+# they each need their own .venv
+.venv*/
+venv*/
+env/
+ENV/
+.env
+
+# Git metadata
+.git
+.gitignore
+
+# IDE/editor directories
+.idea/
+.vscode/
+.uv-cache/
+.github/
+.code/
+.factory/
+.review/
+.pre-commit-config.yaml
+
+# Logs and runtime files
+*.log
+*.sqlite3
+
+# Documentation and tests not needed in final image
+docs/
+tests/
+out/
+openapi/
+
+# Local-only tooling scripts
+scripts/coderabbit_review.py
+scripts/latest_review.py
+scripts/setup.py
+scripts/sonar_scan.sh
+scripts/knowledge/
+
+# Test coverage reports
+.coverage
+htmlcov/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+
+# Markdown files (except app resources which may contain runtime-needed docs)
+*.md
+!README.md
+!app/resources/*.md
+
+# Temp files
+*~
+to_adapt/

@@ -1,0 +1,14 @@
+skip-check:
+  - CKV_OPENAPI_4  # No global security field needed for internal API
+  - CKV_OPENAPI_5  # No security operations needed for internal API
+
+skip-path:
+  - .review/**
+  - tests/** # Often contains dummy secrets/keys for testing
+
+# STRICTNESS: Only scan for Secrets and OpenAPI flaws (Ignores Terraform/Docker/etc)
+framework:
+  - secrets
+  - openapi
+
+soft-fail: false

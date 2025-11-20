@@ -1,0 +1,48 @@
+{
+  "plugins": {
+    "md013": {
+      "enabled": true,
+      "line_length": 120,
+      "code_block_line_length": 120,
+      "tables": false,
+      "headings": true,
+      "code_blocks": false
+    },
+    "md024": {
+      "enabled": true,
+      "siblings_only": true,
+      "allow_different_nesting": true
+    },
+    "md033": {
+      "enabled": true,
+      "allowed_elements": "br,hr,img,a,span,sub,sup,details,summary"
+    },
+    "md009": {
+      "enabled": true,
+      "br_spaces": 2
+    },
+    "md012": {
+      "enabled": true,
+      "maximum": 1
+    },
+    "md003": {
+      "enabled": true,
+      "style": "atx"
+    },
+    "md004": {
+      "enabled": true,
+      "style": "asterisk"
+    },
+    "md025": {
+      "enabled": true,
+      "front_matter_title": ""
+    },
+    "md041": {
+      "enabled": true
+    },
+    "md046": {
+      "enabled": true,
+      "style": "fenced"
+    }
+  }
+}

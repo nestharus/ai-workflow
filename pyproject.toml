@@ -1,0 +1,142 @@
+[project]
+name = "ai-workflow"
+version = "0.1.0"
+description = "Human-orchestrated AI workflow system with 5-role agent skeleton."
+readme = "README.md"
+# ADR-0001: Use Python 3.14+ as the supported runtime range.
+requires-python = ">=3.14.0,<3.15.0"
+# Allow patch-level updates; review dependencies monthly for minor/major releases.
+dependencies = [
+    "fastapi>=0.121.2,<0.122.0",
+    "uvicorn[standard]>=0.38.0,<0.39.0",
+    "orjson>=3.11.4,<3.12.0",
+    "pydantic>=2.12.4,<2.13.0",
+    "pydantic-settings>=2.12.0,<2.13.0",
+    "surrealdb>=1.0.6,<1.1.0",
+    "elasticsearch>=9.2.0,<9.3.0",
+    "anyio>=4.11.0,<4.12.0"
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app", "scripts", "tools"]
+exclude = ["tests*"]
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+    "pytest==9.0.1",
+    "pytest-asyncio==1.3.0",
+    "pytest-check==2.6.0",
+    "pytest-cov>=7.0.0,<7.1.0",
+    "pytest-mock>=3.15.1,<3.16.0",
+    "pytest-randomly>=4.0.1,<4.1.0",
+    "pytest-xdist==3.8.0",
+    "mypy>=1.18.2,<1.19.0",
+    "ruff>=0.14.5,<0.15",
+    "checkov>=3.2.494,<3.3",
+    "pymarkdownlnt==0.9.33",
+    "pre-commit>=4.4.0,<4.5",
+    "hadolint-coatl>=2.14.0,<2.15.0",
+]
+
+[project.scripts]
+setup = "scripts.setup:main"
+lint = "scripts.lint:main"
+start-server = "scripts.start_server:main"
+gen_openapi = "scripts.gen_openapi:main"
+coderabbit-review = "scripts.coderabbit_review:main"
+sonar-review = "scripts.sonar_review:main"
+latest-review = "scripts.latest_review:main"
+
+[tool.uv]
+link-mode = "copy"
+
+[tool.ruff]
+# ADR-0005: Standardize on Ruff for linting and formatting.
+target-version = "py314"
+line-length = 100
+exclude = [
+    ".venv",
+    "build",
+    "dist",
+    ".coverage",
+    "htmlcov/",
+    ".coverage.*",
+    "coverage.xml",
+    "uv.lock",
+    "to_adapt/",
+    ".idea/",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    "openapi/",
+    ".review/",
+    "LICENSE",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "TRY",  # tryceratops (exception handling)
+    "ANN",  # flake8-annotations (type hints)
+    "B",    # flake8-bugbear (common bugs)
+    "UP",   # pyupgrade (modern python syntax)
+    "S",    # flake8-bandit (security)
+    "SIM",  # flake8-simplify (code simplification)
+    "RUF",  # ruff specific rules
+    "TCH",
+    "D"
+]
+ignore = []
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "D", "TCH003", "TC002", "TRY003"]
+"*/__init__.py" = ["D104"]
+"app/contracts/**/*.py" = ["TCH003"]
+"app/schemas/**/*.py" = ["TCH003"]
+"scripts/**/*.py" = ["TRY003", "TCH003", "TC002"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "e2e: marks tests as end-to-end (requires running server)"
+]
+
+[tool.coverage.run]
+source = ["app", "scripts", "tools"]
+omit = [
+    "tests/*",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+    "*/.venv/*"
+]
+
+[tool.coverage.report]
+fail_under = 80
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self\\.debug:",
+    "if settings\\.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == \"__main__\":",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod"
+]

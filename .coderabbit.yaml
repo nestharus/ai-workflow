@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Assertive profile aligns with R4 Quality Reviewer duties described in AGENTS.md.
+language: en-US
+early_access: true
+enable_free_tier: true
+reviews:
+  profile: assertive
+  high_level_summary: true
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+  # Exclude generated artifacts, caches, IDE files, and non-reviewable paths.
+  # NOTE: Patterns starting with '!' are EXCLUSIONS.
+  # We use '/**' to ensure the entire directory content is ignored.
+  path_filters:
+    - "!.review/**"
+    - "!.venv*/**"
+    - "!venv/**"
+    - "!env/**"
+    - "!ENV/**"
+    - "!build/**"
+    - "!dist/**"
+    - "!**/*.egg-info/**"
+    - "!pip-wheel-metadata/**"
+    - "!__pycache__/**"
+    - "!**/*.pyc"
+    - "!**/*.pyo"
+    - "!**/*.py[cod]"
+    - "!.coverage"
+    - "!.coverage.*"
+    - "!htmlcov/**"
+    - "!coverage.xml"
+    - "!.mypy_cache/**"
+    - "!.pytest_cache/**"
+    - "!.ruff_cache/**"
+    - "!.sonar/**"
+    - "!.factory/**"
+    - "!.pyright/**"
+    - "!.idea*/**"
+    - "!.vscode/**"
+    - "!*.sublime-project"
+    - "!*.sublime-workspace"
+    - "!openapi/**"
+    - "!to_adapt/**"
+    - "!out/**"
+    - "!.uv-cache/**"
+    - "!.knowledge/**"
+    - "!uv.lock"
+    - "!LICENSE"
+    - "!.DS_Store"
+    - "!Thumbs.db"
+    - "!**/*.log"
+    - "!.env"
+    - "!.env.*"
+  tools:
+    ruff:
+      enabled: true
+    gitleaks:
+      enabled: true
+  finishing_touches:
+    docstrings:
+      enabled: true
+    unit_tests:
+      enabled: false
