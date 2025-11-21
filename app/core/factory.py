@@ -15,6 +15,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
 
+from app.api.v1.endpoints.health import health_check
+from app.api.v1.router import api_router
 from app.contracts.errors import HTTPValidationError
 from app.core.exceptions import validation_exception_handler
 from app.infrastructure.db_connections import (
@@ -23,9 +25,6 @@ from app.infrastructure.db_connections import (
     create_elasticsearch_wrapper,
     create_surrealdb_pool,
 )
-from app.routes.example_router import router as example_router
-from app.routes.health_router import health_check
-from app.routes.health_router import router as health_router
 
 logger = logging.getLogger(__name__)
 OPENAPI_DEFS_KEY: Final[str] = "$defs"
@@ -82,8 +81,8 @@ def create_app(settings: Settings) -> FastAPI:
         lifespan=_lifespan(settings),
     )
     app.state.settings = settings
-    app.include_router(health_router, prefix="/api/v1")
-    app.include_router(example_router, prefix="/api/v1/example", tags=["example"])
+    # Mount versioned API router; keeps new endpoints scoped under /api/v1.
+    app.include_router(api_router, prefix="/api/v1")
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_api_route("/health", health_check, methods=["GET"], include_in_schema=False)
 

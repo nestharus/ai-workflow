@@ -47,7 +47,7 @@ async def validation_exception_handler(request: Request, exc: Exception) -> ORJS
         try:
             raw_body = await request.body()
             body_content = json.loads(raw_body) if raw_body else None
-        except (ValueError):
+        except ValueError:
             body_content = None
 
     logger.warning(

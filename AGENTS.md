@@ -348,3 +348,32 @@ droid exec --skip-permissions-unsafe --model custom:gemini-3-pro-preview-low --f
 ## Docstring Linter Errors
 
 See docs/docstrings-guide.md
+
+## Research & Spec Protocol
+
+When the user requests a "Spec", "Plan", or "Research" mode, you must suspend code generation and enter
+the **Deep Research Loop**. Do not output the final plan until you have sufficient, verified information.
+
+### The Deep Research Loop (Native)
+
+You are to act as a recursive research engine. Follow this loop:
+
+1. **Gap Analysis:** Identify exactly what technical details, API signatures, or versions are unknown or
+   potentially outdated.
+2. **Information Retrieval (Mandatory Tool Use):**
+   * **KNOWN LIBRARIES:** Use `context7` to fetch the latest official documentation for known frameworks
+     (e.g., React, Next.js, Tailwind).
+   * **UNKNOWN/NEW WEB DATA:** Use `firecrawl` to scrape specific documentation URLs, GitHub issues, or
+     blog posts for bleeding-edge tools.
+3. **Extraction & Verification:** Compare the retrieved data against your training data. Discard outdated
+   hallucinations.
+4. **Recursion:** If the retrieved data reveals new concepts or missing dependencies, **REPEAT Step 2** for
+   those specific items.
+5. **Synthesis:** Only once all technical gaps are filled, generate the "Implementation Spec."
+
+### Spec Output Requirements
+
+Your final output must include a section titled "## Research Verification" listing:
+* The documentation sources you read.
+* The specific API versions you verified.
+* Any discrepancies found between your internal knowledge and the live web data.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import anyio
 from elasticsearch import Elasticsearch
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DictStrAny: TypeAlias = dict[str, Any]
+type DictStrAny = dict[str, Any]
 
 
 class ElasticsearchNotInitializedError(RuntimeError):
@@ -315,7 +315,7 @@ class ElasticsearchWrapper:
         self._ensure_initialized()
 
         def _sync_search() -> dict[str, Any]:
-            return cast(DictStrAny, self._client.search(index=index, query=query))
+            return cast("DictStrAny", self._client.search(index=index, query=query))
 
         return await anyio.to_thread.run_sync(_sync_search)
 
@@ -326,7 +326,7 @@ class ElasticsearchWrapper:
         self._ensure_initialized()
 
         def _sync_index() -> dict[str, Any]:
-            return cast(DictStrAny, self._client.index(index=index, document=document, id=id))
+            return cast("DictStrAny", self._client.index(index=index, document=document, id=id))
 
         return await anyio.to_thread.run_sync(_sync_index)
 
@@ -335,7 +335,7 @@ class ElasticsearchWrapper:
         self._ensure_initialized()
 
         def _sync_bulk() -> dict[str, Any]:
-            return cast(DictStrAny, self._client.bulk(operations=operations))
+            return cast("DictStrAny", self._client.bulk(operations=operations))
 
         return await anyio.to_thread.run_sync(_sync_bulk)
 
