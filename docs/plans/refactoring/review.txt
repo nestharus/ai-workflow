@@ -1,0 +1,14 @@
+Validation of FastAPI Best Practice Plan
+Documents
+General Observations (All Plan Documents)
+Repeated Introductory Content: Each plan file begins with the same Observations, Gaps
+Identified, and Approach/Reasoning sections. These were useful for planning but should be
+omitted from the final documentation to avoid duplication. In the final docs, start with the actual
+pattern content (the “Proposed File Change” sections).
+Excessive File References: Many plans reference specific files and even line numbers in the
+codebase as examples. This is problematic because code lines can change. It’s better to inline selfcontained code examples or pseudocode demonstrating patterns, or reference a class/concept by
+name rather than by file line. For instance, instead of “see app/core/factory.py lines 39–44,”
+include a small code snippet showing the startup event usage. Only keep file references when
+instructing the reader to use a specific existing component (e.g. “use the AppError model from
+errors.py ”), not for illustrating a pattern. This will make the documentation stable and easier to
+follow.
