@@ -1,6 +1,33 @@
 # Service Layer Patterns
 
-This document establishes the architectural patterns for the service layer in the AI Workflow system. The service layer encapsulates business logic, orchestrates data access, and ensures clean separation between the API (HTTP) layer and the persistence layer.
+This document establishes the architectural patterns for the service layer in
+the AI Workflow system. The service layer encapsulates business logic,
+orchestrates data access, and ensures clean separation between the API (HTTP)
+layer and the persistence layer.
+
+In this codebase, routers in `app/api/v1/endpoints/` handle HTTP concerns,
+services in `app/services/` implement business rules and use cases, and
+infrastructure modules such as `app/infrastructure/db_connections.py` manage
+database and search connections.
+
+## Scope for this document
+
+This guide covers the service layer only:
+
+* Defining what a service is and how it sits between routers and repositories.
+* Service responsibilities, boundaries, and HTTP-agnostic design.
+* Constructor-based dependency injection for repositories, settings, and clients.
+* Transaction management where services coordinate units of work and repositories do not commit.
+* Patterns for raising domain exceptions from services and testing services in isolation.
+
+## Out of scope for this document
+
+The following topics are documented elsewhere and are intentionally not
+covered in detail here:
+
+* Router decorators, HTTP status codes, and response wiring (see router and exception pattern documents).
+* HTTP error schemas and OpenAPI documentation details.
+* Direct data-access implementation details, including repository design and connection pooling.
 
 ## 1. Service Layer Responsibilities
 
@@ -9,8 +36,12 @@ The service layer is the heart of the application's business logic. Its primary 
 *   **Business Logic Encapsulation:** Implementing core use cases and business rules.
 *   **Orchestration:** Coordinating calls to multiple repositories or external clients (e.g., fetching data from DB, processing it, and sending an event).
 *   **Transaction Management:** Defining transaction boundaries to ensure data consistency across operations.
-*   **Domain Error Handling:** Raising domain-specific exceptions (subclasses of `DomainError`) rather than HTTP exceptions.
-*   **HTTP Agnostic:** Services must **never** import `fastapi`, `starlette`, or handle `Request`/`Response` objects directly.
+*   **Domain Error Handling:** Raising domain-specific exceptions (subclasses of
+    `DomainError`, defined in `app/core/errors.py`) rather than HTTP
+    exceptions.
+*   **HTTP Agnostic:** Services must **never** import `fastapi`, `starlette`,
+    handle `Request`/`Response` objects directly, or embed HTTP status codes in
+    their public APIs.
 
 ## 2. Service Class Structure
 
@@ -19,31 +50,27 @@ Services are implemented as classes to allow for dependency injection and state 
 ### Standard Pattern
 
 ```python
-from app.contracts.common import ServiceResult
-from app.contracts.example_contract import ExampleResponse
-
 class OrderService:
-    """
-    Service for managing order lifecycle.
-    
+    """Service for managing order lifecycle.
+
     Attributes:
         order_repository: Repository for order persistence.
         payment_gateway: Client for payment processing.
     """
 
-    def __init__(self, order_repository: OrderRepository, payment_gateway: PaymentGateway):
+    def __init__(self, order_repository: OrderRepository, payment_gateway: PaymentGateway) -> None:
+        """Create a service with its collaborators."""
         self.order_repository = order_repository
         self.payment_gateway = payment_gateway
 
-    async def process_order(self, order_id: str) -> ServiceResult[ExampleResponse]:
-        """
-        Process a pending order.
+    async def process_order(self, order_id: str) -> Order:
+        """Process a pending order and return the updated order.
 
         Args:
             order_id: The unique identifier of the order.
 
         Returns:
-            ServiceResult containing the processed order details.
+            Order: The processed order details.
 
         Raises:
             OrderNotFoundError: If the order does not exist.
@@ -52,7 +79,7 @@ class OrderService:
         # Business logic implementation
         pass
 
-    async def shutdown(self):
+    async def shutdown(self) -> None:
         """Cleanup resources if necessary (e.g., closing specific connections)."""
         pass
 ```
@@ -61,47 +88,47 @@ class OrderService:
 *   **Methods**: Represent business actions (verbs like `create`, `process`, `calculate`).
 *   **Cleanup (`shutdown`)**: Optional method for resource cleanup.
 *   **Type Hints**: Mandatory for all arguments and return values.
-*   **Docstrings**: Follow the Google style guide as defined in the project's docstring guidelines.
+*   **Docstrings**: Follow the Google-style guidance in `docs/docstrings-guide.md`.
+*   **Exception Documentation**: List all domain exceptions a method may raise
+    in a `Raises` section so callers know which failures to handle.
 
 ## 3. Dependency Injection Pattern
 
-We use FastAPI's dependency injection system to provide services to routers. Services, in turn, receive their dependencies (repositories, settings) via their constructors.
+Services receive their dependencies via constructors rather than globals or
+module-level state. This makes them easy to instantiate in tests and keeps
+dependencies explicit.
 
-### Injection in Routers
-
-Do not instantiate services directly in route handlers. Use `Depends`.
-
-**Correct:**
-```python
-# Example of service injection in a router
-from fastapi import APIRouter, Depends
-# from app.services.order_service import OrderService
-# from app.core.dependencies import get_order_service
-
-router = APIRouter()
-
-@router.post("/{order_id}/process")
-async def process_order(
-    order_id: str,
-    service: OrderService = Depends(get_order_service)
-):
-    return await service.process_order(order_id)
-```
-
-### Dependency Factory
-
-Define factories to wire up the service dependencies.
+Constructor-based injection pattern:
 
 ```python
-# Example dependency provider
-from fastapi import Depends
-# from app.infrastructure.db import get_db_session
-# from app.services.order_service import OrderService
-
-def get_order_service(session = Depends(get_db_session)) -> OrderService:
-    repo = OrderRepository(session)
-    return OrderService(repo)
+class UserService:
+    def __init__(self, user_repo: UserRepository, settings: Settings) -> None:
+        self._user_repo = user_repo
+        self._settings = settings
 ```
+
+When a service needs multiple collaborators (repositories, clients, and
+configuration objects), add them as typed constructor parameters. For
+composition or testing, it is often useful to define a small factory function
+that wires the service together:
+
+```python
+def build_user_service(
+    user_repo: UserRepository,
+    settings: Settings,
+) -> UserService:
+    return UserService(user_repo=user_repo, settings=settings)
+```
+
+Database sessions or pools (for example, an ORM session or a SurrealDB
+connection pool) should be created in the request context by outer layers and
+passed into repositories or services as constructor arguments. Services must
+not create global connections or reach into application state to obtain them.
+
+In this project, runtime configuration is provided by a `Settings` object via
+the `get_settings()` dependency in `app/core/dependencies.py`. Router-level
+dependencies obtain a `Settings` instance from there and pass it into service
+constructors, following the constructor-based pattern above.
 
 ## 4. Transaction Management
 
@@ -109,12 +136,18 @@ Services define the boundaries of a unit of work.
 
 *   **Transactional Methods**: Operations that modify state should run within a transaction.
 *   **Async Context Managers**: Use `async with` blocks for acquiring connections or transactions.
-*   **Commit/Rollback**: The service decides when to commit (success) or rollback (error).
+*   **Commit/Rollback**: Services commit on success and roll back when a domain
+    exception signals failure.
+
+Repositories must not commit or roll back transactions themselves; they
+translate domain operations into database or search calls, while services own
+the unit-of-work boundary. See the repository patterns documentation for
+additional guidance on repository responsibilities.
 
 **Example Pattern:**
 
 ```python
-async def create_order(self, order_data: CreateOrderSchema):
+async def create_order(self, order_data: CreateOrderSchema) -> Order:
     # Start transaction boundary
     async with self.repository.transaction() as txn:
         try:
@@ -122,7 +155,7 @@ async def create_order(self, order_data: CreateOrderSchema):
             await self.audit_log.log_creation(order.id)
             await txn.commit()
             return order
-        except Exception:
+        except DomainError:
             await txn.rollback()
             raise
 ```
@@ -135,7 +168,13 @@ Services must raise **Domain Exceptions**, not HTTP Exceptions. This keeps the s
 
 1.  **Define Custom Exceptions**: Create a hierarchy of exceptions (e.g., `AppError` -> `DomainError` -> `ResourceNotFoundError`).
 2.  **Catch Technical Errors**: Catch low-level database errors (e.g., `IntegrityError`) and wrap/re-raise them as domain errors (e.g., `DuplicateRecordError`).
-3.  **Global Handling**: Rely on the global exception handler (registered in the application core) to translate `ResourceNotFoundError` to a 404 HTTP response.
+3.  **Global Handling**: Rely on transport-layer exception handlers (for
+    example, those registered in `app/core/factory.py` for HTTP) to translate
+    domain errors into appropriate transport-specific responses.
+
+Service code does not decide which HTTP status codes to use or how errors are
+serialized for clients; that mapping lives in the HTTP and exception pattern
+documents and their corresponding code.
 
 **Anti-Pattern (Do NOT do this):**
 ```python
@@ -162,18 +201,29 @@ Services are the easiest layer to test because they don't depend on external fra
 *   **Unit Tests**: Test logic in isolation. Mock repositories and external clients.
     *   Use `unittest.mock` or `pytest-mock`.
     *   Verify that repositories are called with expected arguments.
-*   **Integration Tests**: specific integration tests can verify service interaction with real database implementations using the `async_client` fixture in test configuration.
-*   **Dependency Overrides**: In full application tests, use `app.dependency_overrides` to replace real services with mocks if needed (though E2E tests usually prefer real implementations).
+*   **Integration Tests**: specific integration tests can verify service
+    interaction with real database implementations and real repositories. The
+    fixtures in `tests/conftest.py` show patterns for test isolation and
+    swapping implementations via dependency injection.
 
 ## 7. Service Lifecycle
 
 *   **Request Scoped**: Most services are instantiated per request. This ensures thread safety and proper resource isolation (e.g., database sessions).
 *   **Singleton Scoped**: Services that hold stateless logic or shared thread-safe connections (like an HTTP client pool) *may* be singletons, but request-scoped is safer by default.
-*   **Lifespan Management**: Hooks in application factory manage the startup and shutdown of global resources (DB pools) that services rely on.
+*   **Lifespan Management**: Hooks in the application factory manage the
+    startup and shutdown of global resources (DB pools) that services rely on.
+*   **Long-Lived Services**: For background or long-lived services that own
+    external resources, implement a `shutdown()` method on the service and
+    ensure it is called during application shutdown.
 
 ## 8. Anti-Patterns to Avoid
 
-*   **God Services**: Avoid creating a single `MainService` that does everything. Split services by domain (e.g., `UserService`, `OrderService`).
-*   **Anemic Services**: Services that just pass data to a repository without any logic. If a service adds no value, consider if it's needed, but generally, keep the layer for future extensibility.
-*   **Leaky Abstractions**: Returning ORM objects directly to the API layer. Always map domain entities or ORM models to Pydantic Contracts (DTOs) before returning from the service.
-*   **Global State**: Relying on module-level variables or `app.state` inside the service logic. Pass everything via `__init__`.
+*   Services that are just thin wrappers around repositories with no business
+    logic.
+*   Services that import FastAPI or Starlette types such as `Request`,
+    `Response`, or `HTTPException`.
+*   Services that directly access `app.state` or other global variables instead
+    of receiving dependencies via constructors.
+*   Services that mix multiple unrelated business domains into a single class.
+*   Services that perform I/O without using proper `async`/`await` in async
+    codepaths.
