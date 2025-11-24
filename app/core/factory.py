@@ -19,12 +19,6 @@ from app.api.v1.endpoints.health import health_check
 from app.api.v1.router import api_router
 from app.contracts.errors import HTTPValidationError
 from app.core.exceptions import validation_exception_handler
-from app.infrastructure.db_connections import (
-    ElasticsearchWrapper,
-    SurrealDBPool,
-    create_elasticsearch_wrapper,
-    create_surrealdb_pool,
-)
 
 logger = logging.getLogger(__name__)
 OPENAPI_DEFS_KEY: Final[str] = "$defs"
@@ -33,32 +27,23 @@ OPENAPI_DEFS_KEY: Final[str] = "$defs"
 def _lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-        surreal_pool: SurrealDBPool | None = None
-        elasticsearch_client: ElasticsearchWrapper | None = None
+        # pool: connection_pool | None = None
         try:
-            surreal_pool = await create_surrealdb_pool(settings)
-            app.state.surrealdb_pool = surreal_pool
-            logger.info("Initialized SurrealDB pool")
-
-            elasticsearch_client = await create_elasticsearch_wrapper(settings)
-            app.state.elasticsearch_client = elasticsearch_client
-            logger.info("Initialized Elasticsearch client")
+            # connection = await create_connection_pool(settings)
+            # app.state.connection_pool = connection_pool
+            # logger.info("Initialized pool")
 
             yield
         except Exception:
             logger.exception("Failed to initialize application resources")
             raise
         finally:
-            if elasticsearch_client is not None:
-                try:
-                    await elasticsearch_client.close()
-                except Exception:  # pragma: no cover - defensive logging
-                    logger.exception("Failed to close Elasticsearch client cleanly")
-            if surreal_pool is not None:
-                try:
-                    await surreal_pool.close()
-                except Exception:  # pragma: no cover - defensive logging
-                    logger.exception("Failed to close SurrealDB pool cleanly")
+            pass
+            # if client is not None:
+            #     try:
+            #         await client.close()
+            #     except Exception:  # pragma: no cover - defensive logging
+            #         logger.exception("Failed to close client cleanly")
 
     return lifespan
 
