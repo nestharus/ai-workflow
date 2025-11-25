@@ -11,7 +11,9 @@ import secrets
 
 import pytest
 
-from app.contracts.example_contract import ExampleRequest
+from pydantic import ValidationError
+
+from app.contracts.example_contract import EmptyMessageError, ExampleRequest
 from app.core.settings import Settings
 from app.services.example_service import ExampleService
 
@@ -88,6 +90,30 @@ def test_process_uses_debug_prefix_when_debug_true(
     assert response.result.startswith("[DEBUG]")
     assert "[WARNING]" in response.result
     assert "Test Message" in response.result
+
+
+def test_example_request_rejects_empty_message() -> None:
+    """ExampleRequest surfaces EmptyMessageError for empty message content."""
+    with pytest.raises(ValidationError) as excinfo:
+        ExampleRequest(message="", type="info")
+    errors = excinfo.value.errors()
+    assert any(
+        err.get("type") == "value_error"
+        and EmptyMessageError._MESSAGE in err.get("msg", "")  # noqa: SLF001
+        for err in errors
+    )
+
+
+def test_example_request_rejects_whitespace_message() -> None:
+    """ExampleRequest surfaces EmptyMessageError for whitespace-only message."""
+    with pytest.raises(ValidationError) as excinfo:
+        ExampleRequest(message="   ", type="warning")
+    errors = excinfo.value.errors()
+    assert any(
+        err.get("type") == "value_error"
+        and EmptyMessageError._MESSAGE in err.get("msg", "")  # noqa: SLF001
+        for err in errors
+    )
 
 
 def test_process_preserves_original_message_length(

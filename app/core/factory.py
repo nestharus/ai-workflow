@@ -14,10 +14,11 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
+from pydantic import TypeAdapter
 
 from app.api.v1.endpoints.health import health_check
 from app.api.v1.router import api_router
-from app.contracts.errors import HTTPValidationError
+from app.contracts.errors import AppError, ErrorCode, HTTPValidationError
 from app.core.exceptions import validation_exception_handler
 from app.infrastructure.db_connections import (
     ElasticsearchWrapper,
@@ -101,14 +102,23 @@ def create_app(settings: Settings) -> FastAPI:
         schema_definitions = app.openapi_schema.setdefault("components", {}).setdefault(
             "schemas", {}
         )
-        error_schema = HTTPValidationError.model_json_schema(
-            ref_template="#/components/schemas/{model}"
-        )
-        schema_definitions["HTTPValidationError"] = error_schema
-        if OPENAPI_DEFS_KEY in error_schema:
-            for name, definition in error_schema[OPENAPI_DEFS_KEY].items():
-                schema_definitions[name] = definition
-            del error_schema[OPENAPI_DEFS_KEY]
+        ref_template = "#/components/schemas/{model}"
+
+        def _register_schema(schema: dict[str, Any], name: str) -> None:
+            schema_definitions[name] = schema
+            if OPENAPI_DEFS_KEY in schema:
+                for definition_name, definition in schema[OPENAPI_DEFS_KEY].items():
+                    schema_definitions[definition_name] = definition
+                del schema[OPENAPI_DEFS_KEY]
+
+        error_schema = HTTPValidationError.model_json_schema(ref_template=ref_template)
+        _register_schema(error_schema, "HTTPValidationError")
+
+        app_error_schema = AppError.model_json_schema(ref_template=ref_template)
+        _register_schema(app_error_schema, "AppError")
+
+        error_code_schema = TypeAdapter(ErrorCode).json_schema(ref_template=ref_template)
+        _register_schema(error_code_schema, "ErrorCode")
         if (
             "ValidationError" in schema_definitions
             and "ValidationErrorDetail" in schema_definitions

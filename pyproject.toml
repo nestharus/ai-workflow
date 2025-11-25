@@ -104,8 +104,8 @@ convention = "google"
 "app/contracts/**/*.py" = ["TCH003"]
 "app/schemas/**/*.py" = ["TCH003"]
 "app/api/**/*.py" = ["TC001"]
-"scripts/**/*.py" = ["TRY003", "TCH003", "TC002"]
-"tools/**/*.py" = ["TRY003", "TCH003", "TC002"]
+"scripts/**/*.py" = ["TRY003", "TCH003", "TC002", "TC001"]
+"tools/**/*.py" = ["TRY003", "TCH003", "TC002", "TC001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

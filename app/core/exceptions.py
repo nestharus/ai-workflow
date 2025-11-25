@@ -26,6 +26,16 @@ def _sanitize_validation_errors(errors: Sequence[dict[str, Any]]) -> list[Valida
     """Convert raw Pydantic errors into constrained validation detail models."""
     sanitized: list[ValidationErrorDetail] = []
     for error in errors:
+        ctx = error.get("ctx")
+        if isinstance(ctx, dict):
+            safe_ctx: dict[str, Any] = {}
+            for key, value in ctx.items():
+                try:
+                    json.dumps(value)
+                    safe_ctx[key] = value
+                except TypeError:
+                    safe_ctx[key] = str(value)
+            error = {**error, "ctx": safe_ctx}
         sanitized.append(ValidationErrorDetail(**error))
         if len(sanitized) >= MAX_VALIDATION_ERRORS:
             break

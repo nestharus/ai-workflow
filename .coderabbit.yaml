@@ -53,6 +53,7 @@ reviews:
     - "!**/*.log"
     - "!.env"
     - "!.env.*"
+    - "!docs/plans/**"
   tools:
     ruff:
       enabled: true

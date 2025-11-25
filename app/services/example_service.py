@@ -59,6 +59,9 @@ class ExampleService:
         The result prefix is determined by the injected ``Settings``: uses
         ``[DEBUG]`` when ``settings.debug`` is ``True``, otherwise ``[PROCESSED]``.
 
+        Input shape and basic invariants are enforced by ``ExampleRequest``; the
+        service focuses on higher-level business rules and output formatting.
+
         Note:
             To use the repository for prefix retrieval, convert this method to
             ``async def process(...)`` and call ``await self._repository.get_prefix()``.

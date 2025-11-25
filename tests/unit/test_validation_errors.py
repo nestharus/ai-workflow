@@ -7,6 +7,8 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.v1 import dependencies as api_dependencies
+from app.core import dependencies as core_dependencies
 from app.core.factory import create_app
 from app.core.settings import Settings
 
@@ -22,6 +24,17 @@ def _expected_detail() -> list[dict[str, str]]:
             "loc": ["body", "message"],
             "msg": "Field required",
             "type": "missing",
+        }
+    ]
+
+
+def _expected_whitespace_detail() -> list[dict[str, str]]:
+    return [
+        {
+            "loc": ["body", "message"],
+            "msg": "Value error, ExampleRequest.message must not be empty or whitespace only",
+            "type": "value_error",
+            "ctx": {"error": "ExampleRequest.message must not be empty or whitespace only"},
         }
     ]
 
@@ -54,7 +67,14 @@ def _build_settings(include_error_body: bool) -> Settings:
 @pytest.fixture
 def validation_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     _mock_external_dependencies(monkeypatch)
-    app = create_app(_build_settings(include_error_body=False))
+    monkeypatch.setenv("SURREALDB_USER", _generate_test_credential("User"))
+    monkeypatch.setenv("SURREALDB_PASS", _generate_test_credential("Pass"))
+    settings = _build_settings(include_error_body=False)
+    monkeypatch.setattr("app.core.dependencies.get_settings", lambda: settings)
+    monkeypatch.setattr("app.api.v1.dependencies.get_settings", lambda: settings)
+    app = create_app(settings)
+    app.dependency_overrides[core_dependencies.get_settings] = lambda: settings
+    app.dependency_overrides[api_dependencies.get_settings] = lambda: settings
     with TestClient(app) as client:
         yield client
 
@@ -62,7 +82,14 @@ def validation_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
 @pytest.fixture
 def validation_client_with_body(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     _mock_external_dependencies(monkeypatch)
-    app = create_app(_build_settings(include_error_body=True))
+    monkeypatch.setenv("SURREALDB_USER", _generate_test_credential("User"))
+    monkeypatch.setenv("SURREALDB_PASS", _generate_test_credential("Pass"))
+    settings = _build_settings(include_error_body=True)
+    monkeypatch.setattr("app.core.dependencies.get_settings", lambda: settings)
+    monkeypatch.setattr("app.api.v1.dependencies.get_settings", lambda: settings)
+    app = create_app(settings)
+    app.dependency_overrides[core_dependencies.get_settings] = lambda: settings
+    app.dependency_overrides[api_dependencies.get_settings] = lambda: settings
     with TestClient(app) as client:
         yield client
 
@@ -83,3 +110,12 @@ def test_validation_error_body_echoed_when_enabled(
     payload = response.json()
     assert payload["body"] == {"type": "info"}
     assert payload["detail"] == _expected_detail()
+
+
+def test_validation_error_for_whitespace_message(validation_client: TestClient) -> None:
+    response = validation_client.post(
+        "/api/v1/examples/process", json={"message": "   ", "type": "info"}
+    )
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["detail"] == _expected_whitespace_detail()

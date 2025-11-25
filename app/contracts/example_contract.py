@@ -10,7 +10,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.core.errors import DomainValidationError
 
 # Type aliases using Python 3.12+ syntax
 type MessageType = Literal["info", "warning", "error"]
@@ -22,7 +24,7 @@ MAX_VALIDATION_ERRORS = 32
 MAX_JSON_DEPTH = 20
 
 
-class EmptyMessageError(ValueError):
+class EmptyMessageError(DomainValidationError):
     """Raised when ExampleRequest.message is empty or whitespace."""
 
     _MESSAGE = "ExampleRequest.message must not be empty or whitespace only"
@@ -48,12 +50,12 @@ class ExampleRequest(BaseModel):
     message: Annotated[str, Field(min_length=MIN_MESSAGE_LENGTH, max_length=MAX_MESSAGE_LENGTH)]
     type: MessageType = "info"
 
-    @model_validator(mode="after")
-    def validate_message_content(self) -> ExampleRequest:
-        """Ensure message contains meaningful content."""
-        if self.message.strip() == "":
+    @field_validator("message", mode="before")
+    def validate_message_content(cls, value: str) -> str:  # noqa: N805
+        """Ensure message contains meaningful content before other validation."""
+        if isinstance(value, str) and value.strip() == "":
             raise EmptyMessageError()
-        return self
+        return value
 
 
 class ExampleResponse(BaseModel):
