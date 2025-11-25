@@ -1,20 +1,14 @@
 """Example endpoint routes demonstrating service wiring."""
 
 from datetime import UTC, datetime
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
+from app.api.v1.dependencies import ExampleServiceDep
 from app.contracts.errors import VALIDATION_ERROR_RESPONSE
 from app.contracts.example_contract import ExampleRequest, ExampleResponse
-from app.services.example_service import ExampleService
 
 router = APIRouter()
-
-
-def get_example_service() -> ExampleService:
-    """Provide an ExampleService instance for dependency injection."""
-    return ExampleService(prefix="[DEMO]")
 
 
 @router.get(
@@ -47,8 +41,6 @@ def sample_item() -> ExampleResponse:
         400: VALIDATION_ERROR_RESPONSE,
     },
 )
-def process_message(
-    request: ExampleRequest, service: Annotated[ExampleService, Depends(get_example_service)]
-) -> ExampleResponse:
+def process_message(request: ExampleRequest, service: ExampleServiceDep) -> ExampleResponse:
     """Process an input message using the ExampleService."""
     return service.process(request)

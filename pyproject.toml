@@ -99,11 +99,13 @@ ignore = []
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "D", "TCH003", "TC002", "TRY003"]
-"*/__init__.py" = ["D104"]
+"tests/**/*.py" = ["S101", "D", "TCH003", "TC001", "TC002", "TRY003"]
+"**/__init__.py" = ["D104"]
 "app/contracts/**/*.py" = ["TCH003"]
 "app/schemas/**/*.py" = ["TCH003"]
+"app/api/**/*.py" = ["TC001"]
 "scripts/**/*.py" = ["TRY003", "TCH003", "TC002"]
+"tools/**/*.py" = ["TRY003", "TCH003", "TC002"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
