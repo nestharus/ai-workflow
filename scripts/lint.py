@@ -11,6 +11,8 @@ CHECKOV_CONFIG = REPO_ROOT / ".checkov.yaml"
 HADOLINT_EXCLUDE_DIRS = {
     REPO_ROOT / "to_adapt",
     REPO_ROOT / "docs" / "plans",
+    REPO_ROOT / ".venv",
+    REPO_ROOT / ".venv2",
 }
 HADOLINT_CONFIG = REPO_ROOT / ".hadolint.yaml"
 UV_CLI_REQUIRED = "uv CLI required to run lint"
@@ -87,7 +89,8 @@ def main() -> int:
         dockerfiles = [
             path
             for path in REPO_ROOT.rglob("Dockerfile")
-            if not any(excluded in path.parents for excluded in HADOLINT_EXCLUDE_DIRS)
+            if path.is_file()
+            and not any(excluded in path.parents for excluded in HADOLINT_EXCLUDE_DIRS)
         ]
         if not dockerfiles:
             print("No Dockerfiles found for hadolint scan")
