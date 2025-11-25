@@ -334,7 +334,7 @@ Guidelines:
   many items, log only a subset or summary.
 * For validation errors, log at warning level using the sanitized `ValidationErrorDetail` list
   produced by `_sanitize_validation_errors` in `app/core/exceptions.py`.
-* For unexpected internal errors, log at error level with full stack traces while returning a
+* For unexpected internal errors, log at error level with full-stack traces while returning a
   sanitized `AppError` to the client.
 
 ## 9. OpenAPI Error Documentation

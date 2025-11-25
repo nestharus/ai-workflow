@@ -20,8 +20,8 @@ def _generate_test_credential(prefix: str) -> str:
     return f"{prefix}Aa1!{secrets.token_hex(4)}"
 
 
-def _build_settings(**overrides: object) -> Settings:
-    base = {
+def _build_settings(**overrides: str | bool | int) -> Settings:
+    base: dict[str, str | bool | int] = {
         "surrealdb_user": os.getenv("SURREALDB_USER") or _generate_test_credential("User"),
         "surrealdb_pass": os.getenv("SURREALDB_PASS") or _generate_test_credential("Pass"),
     }

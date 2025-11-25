@@ -40,7 +40,7 @@ See `.pre-commit-config.yaml` for code quality standards.
 Use the start script for a robust development server with health checks:
 
 ```bash
-uv run python scripts/start-server.py
+uv run start-server
 ```
 
 #### Options

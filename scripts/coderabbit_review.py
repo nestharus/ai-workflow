@@ -15,8 +15,9 @@ import argparse
 import shutil
 import subprocess
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
+
+from scripts.utils import utc_timestamp
 
 
 class StdoutCaptureError(RuntimeError):
@@ -27,14 +28,10 @@ class CoderabbitNotFoundError(FileNotFoundError):
     """Raised when the coderabbit executable is unavailable."""
 
 
-def _utc_timestamp() -> str:
-    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-
-
 def run_coderabbit(target_args: list[str], extra_args: list[str], output_dir: Path) -> Path:
     """Run coderabbit review and tee output to a timestamped file."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    ts = _utc_timestamp()
+    ts = utc_timestamp()
     output_path = output_dir / f"{ts}.review.coderabbit"
 
     coderabbit_exe = shutil.which("coderabbit")

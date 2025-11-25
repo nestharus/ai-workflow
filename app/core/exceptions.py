@@ -102,10 +102,12 @@ async def domain_exception_handler(request: Request, exc: Exception) -> ORJSONRe
 async def internal_exception_handler(request: Request, exc: Exception) -> ORJSONResponse:
     """Handle unexpected failures with a generic envelope."""
     logger.exception(
-        "Unhandled error on %s %s [%s]",
+        "Unhandled error on %s %s [%s]: %s: %s",
         request.method,
         request.url.path,
         ErrorCode.INTERNAL_ERROR,
+        type(exc).__name__,
+        str(exc),
     )
     app_error = AppError.internal_error()
     return ORJSONResponse(

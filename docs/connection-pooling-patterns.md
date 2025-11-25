@@ -347,7 +347,7 @@ clients:
   handlers is expensive and defeats the purpose of pooling.
 * **Bypassing pooling entirely:** Opening new database or HTTP connections
   for every operation leads to connection thrashing and resource exhaustion.
-* **Oversized pools:** Setting very large pool sizes without regard for
+* **Oversized pools:** Setting excessively large pool sizes without regard for
   backend limits can starve other services and make failures harder to
   diagnose.
 * **No timeouts:** Failing to configure acquire or request timeouts causes

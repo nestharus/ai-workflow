@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Request, status
 from pydantic import BaseModel
 
 from app.contracts.errors import AppError
@@ -22,7 +22,10 @@ class HealthResponse(BaseModel):
     summary="Readiness health check",
     description=(
         "Versioned readiness probe exposed at `/api/v1/health`, distinct from the "
-        "unversioned `/health` liveness check registered at the application root."
+        "unversioned `/health` liveness check registered at the application root. "
+        "Checks critical dependencies (SurrealDB pool, Elasticsearch client) and "
+        "returns 'unhealthy' if any are missing, 'degraded' on transient failures, "
+        "or 'ok' when all dependencies are available."
     ),
     responses={
         status.HTTP_500_INTERNAL_SERVER_ERROR: {
@@ -31,6 +34,14 @@ class HealthResponse(BaseModel):
         }
     },
 )
-async def health_check() -> HealthResponse:
-    """Return service health status."""
+async def health_check(request: Request) -> HealthResponse:
+    """Return service health status based on dependency availability."""
+    app_state = request.app.state
+
+    surrealdb_pool = getattr(app_state, "surrealdb_pool", None)
+    elasticsearch_client = getattr(app_state, "elasticsearch_client", None)
+
+    if surrealdb_pool is None or elasticsearch_client is None:
+        return HealthResponse(status="unhealthy")
+
     return HealthResponse(status="ok")

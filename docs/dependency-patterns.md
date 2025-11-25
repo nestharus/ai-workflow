@@ -151,7 +151,7 @@ request-scoped while the underlying pool is shared.
 
 Keep the session dependency itself thin: `get_db_session` is responsible only for acquiring and
 releasing a connection, while repositories and services encapsulate all query logic, transactions,
-and domain workflows on top of that session.
+and domain workflows atop that session.
 
 ## 5. Settings Dependency
 
@@ -311,6 +311,6 @@ end-to-end.
 * **Not using `yield` for cleanup in dependencies with resources:** Leads to resource leaks
   (e.g., open database connections).
 * **Circular dependencies between modules:** Indicates poor architectural separation; resolve by
-  refactoring shared logic or using type checking imports.
+  refactoring shared logic or using type-checking imports.
 * **Over-nesting dependencies:** Keep dependency chains simple (max 2-3 levels) to maintain
   readability and debuggability.

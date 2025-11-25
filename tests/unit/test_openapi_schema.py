@@ -14,10 +14,10 @@ class _DummyResource:
 
 
 def _mock_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _fake_surreal_pool(settings: Settings) -> _DummyResource:
+    async def _fake_surreal_pool(_settings: Settings) -> _DummyResource:
         return _DummyResource()
 
-    async def _fake_elasticsearch_wrapper(settings: Settings) -> _DummyResource:
+    async def _fake_elasticsearch_wrapper(_settings: Settings) -> _DummyResource:
         return _DummyResource()
 
     monkeypatch.setattr("app.core.factory.create_surrealdb_pool", _fake_surreal_pool)

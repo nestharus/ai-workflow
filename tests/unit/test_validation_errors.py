@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import secrets
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -28,7 +29,7 @@ def _expected_detail() -> list[dict[str, str]]:
     ]
 
 
-def _expected_whitespace_detail() -> list[dict[str, str]]:
+def _expected_whitespace_detail() -> list[dict[str, Any]]:
     return [
         {
             "loc": ["body", "message"],
@@ -40,10 +41,10 @@ def _expected_whitespace_detail() -> list[dict[str, str]]:
 
 
 def _mock_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _fake_surreal_pool(settings: Settings) -> _DummyResource:
+    async def _fake_surreal_pool(_settings: Settings) -> _DummyResource:
         return _DummyResource()
 
-    async def _fake_elasticsearch_wrapper(settings: Settings) -> _DummyResource:
+    async def _fake_elasticsearch_wrapper(_settings: Settings) -> _DummyResource:
         return _DummyResource()
 
     monkeypatch.setattr("app.core.factory.create_surrealdb_pool", _fake_surreal_pool)
@@ -64,12 +65,14 @@ def _build_settings(include_error_body: bool) -> Settings:
     )
 
 
-@pytest.fixture
-def validation_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+def _create_validation_client(
+    monkeypatch: pytest.MonkeyPatch, *, include_error_body: bool
+) -> Iterator[TestClient]:
+    """Factory that builds a TestClient with the given include_error_body setting."""
     _mock_external_dependencies(monkeypatch)
     monkeypatch.setenv("SURREALDB_USER", _generate_test_credential("User"))
     monkeypatch.setenv("SURREALDB_PASS", _generate_test_credential("Pass"))
-    settings = _build_settings(include_error_body=False)
+    settings = _build_settings(include_error_body=include_error_body)
     monkeypatch.setattr("app.core.dependencies.get_settings", lambda: settings)
     monkeypatch.setattr("app.api.v1.dependencies.get_settings", lambda: settings)
     app = create_app(settings)
@@ -77,21 +80,16 @@ def validation_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     app.dependency_overrides[api_dependencies.get_settings] = lambda: settings
     with TestClient(app) as client:
         yield client
+
+
+@pytest.fixture
+def validation_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    yield from _create_validation_client(monkeypatch, include_error_body=False)
 
 
 @pytest.fixture
 def validation_client_with_body(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
-    _mock_external_dependencies(monkeypatch)
-    monkeypatch.setenv("SURREALDB_USER", _generate_test_credential("User"))
-    monkeypatch.setenv("SURREALDB_PASS", _generate_test_credential("Pass"))
-    settings = _build_settings(include_error_body=True)
-    monkeypatch.setattr("app.core.dependencies.get_settings", lambda: settings)
-    monkeypatch.setattr("app.api.v1.dependencies.get_settings", lambda: settings)
-    app = create_app(settings)
-    app.dependency_overrides[core_dependencies.get_settings] = lambda: settings
-    app.dependency_overrides[api_dependencies.get_settings] = lambda: settings
-    with TestClient(app) as client:
-        yield client
+    yield from _create_validation_client(monkeypatch, include_error_body=True)
 
 
 def test_validation_error_body_omitted_when_disabled(validation_client: TestClient) -> None:

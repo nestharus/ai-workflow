@@ -76,3 +76,4 @@ class ExampleService:
         Placeholder for resource cleanup (connections, file handles, etc.)
         to demonstrate lifecycle management.
         """
+        # No resources to clean up; repository manages connections

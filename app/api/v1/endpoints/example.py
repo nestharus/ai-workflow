@@ -26,6 +26,7 @@ router = APIRouter()
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: VALIDATION_ERROR_RESPONSE,
+        # 404 included for OpenAPI schema consistency across all example endpoints
         status.HTTP_404_NOT_FOUND: {"model": AppError, "description": "Resource not found"},
         status.HTTP_500_INTERNAL_SERVER_ERROR: {
             "model": AppError,

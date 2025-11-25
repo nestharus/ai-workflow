@@ -158,7 +158,7 @@ class SurrealUserRepository(UserRepositoryProtocol):
         ...  # Use parameterized SurrealDB queries here
 ```
 
-In a similar way, an `ElasticsearchUserSearchRepository` could depend on an
+Similarly, an `ElasticsearchUserSearchRepository` could depend on an
 `ElasticsearchWrapper` to provide search capabilities over user indices.
 
 ## 4. SurrealDB Repository Pattern
@@ -334,10 +334,9 @@ connections to integration tests that exercise real databases or indices.
 * **State isolation:** Ensure test data is reset between runs by truncating
   collections, deleting indices, or using transactional rollbacks where
   supported. Repositories should provide helper methods where necessary to
-  make reset logic straightforward and safe. See the testing patterns
-  documentation for concrete reset strategies and fixtures (TODO: replace
-  this with a concrete testing-patterns document reference once that
-  documentation is added).
+  make reset logic straightforward and safe. See
+  [testing-patterns.md](plans/todo/testing-patterns.md) for concrete reset
+  strategies and fixtures.
 
 When choosing between unit and integration tests, prioritize fast unit tests
 for most logic and add targeted integration coverage for critical queries and
