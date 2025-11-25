@@ -19,7 +19,12 @@ from pydantic import TypeAdapter
 from app.api.v1.endpoints.health import health_check
 from app.api.v1.router import api_router
 from app.contracts.errors import AppError, ErrorCode, HTTPValidationError
-from app.core.exceptions import validation_exception_handler
+from app.core.errors import DomainError
+from app.core.exceptions import (
+    domain_exception_handler,
+    internal_exception_handler,
+    validation_exception_handler,
+)
 from app.infrastructure.db_connections import (
     ElasticsearchWrapper,
     SurrealDBPool,
@@ -84,7 +89,9 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.settings = settings
     # Mount versioned API router; keeps new endpoints scoped under /api/v1.
     app.include_router(api_router, prefix="/api/v1")
+    app.add_exception_handler(DomainError, domain_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(Exception, internal_exception_handler)
     app.add_api_route("/health", health_check, methods=["GET"], include_in_schema=False)
 
     def custom_openapi() -> dict[str, Any]:

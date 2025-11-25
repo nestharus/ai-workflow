@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, status
 
 from app.api.v1.dependencies import ExampleServiceDep
-from app.contracts.errors import VALIDATION_ERROR_RESPONSE
+from app.contracts.errors import AppError, VALIDATION_ERROR_RESPONSE
 from app.contracts.example_contract import ExampleRequest, ExampleResponse
 
 router = APIRouter()
@@ -26,6 +26,11 @@ router = APIRouter()
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: VALIDATION_ERROR_RESPONSE,
+        status.HTTP_404_NOT_FOUND: {"model": AppError, "description": "Resource not found"},
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {
+            "model": AppError,
+            "description": "Internal server error",
+        },
     },
 )
 def sample_item() -> ExampleResponse:
@@ -52,6 +57,11 @@ def sample_item() -> ExampleResponse:
     responses={
         status.HTTP_200_OK: {"description": "Successful processing"},
         status.HTTP_400_BAD_REQUEST: VALIDATION_ERROR_RESPONSE,
+        status.HTTP_404_NOT_FOUND: {"model": AppError, "description": "Resource not found"},
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {
+            "model": AppError,
+            "description": "Internal server error",
+        },
     },
 )
 def process_message(request: ExampleRequest, service: ExampleServiceDep) -> ExampleResponse:
