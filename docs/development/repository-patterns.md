@@ -335,7 +335,7 @@ connections to integration tests that exercise real databases or indices.
   collections, deleting indices, or using transactional rollbacks where
   supported. Repositories should provide helper methods where necessary to
   make reset logic straightforward and safe. See
-  [testing-patterns.md](plans/todo/testing-patterns.md) for concrete reset
+  [testing-patterns.md](../testing/testing-patterns.md) for concrete reset
   strategies and fixtures.
 
 When choosing between unit and integration tests, prioritize fast unit tests

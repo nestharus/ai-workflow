@@ -45,10 +45,10 @@ The following documents contain testing guidance to be adapted and integrated:
 - `to_adapt/docs/to_integrate/test_fixtures_soft_and_e2e.py`
 - `to_adapt/docs/TEST.md`
 - `to_adapt/docs/TESTING_ARCHITECTURE.md`
-- `docs/api-testing-patterns.md` (FastAPI testing patterns)
+- `api-testing-patterns.md` (FastAPI testing patterns)
 
 ## Related Documentation
 
-- `docs/repository-patterns.md` - Repository implementation patterns
-- `docs/dependency-patterns.md` - Dependency injection for testing
-- `tests/conftest.py` - Current fixture implementations
+- `../development/repository-patterns.md` - Repository implementation patterns
+- `../development/dependency-patterns.md` - Dependency injection for testing
+- `../../tests/conftest.py` - Current fixture implementations
