@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Final
+from typing import Annotated, Any, Final
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,6 +16,7 @@ from app.core.errors import (
 )
 
 _BODY_UNSET: Final[object] = object()
+DetailsList = Annotated[list[Any], Field(max_length=MAX_VALIDATION_ERRORS)]
 
 ErrorLocation = str | int
 
@@ -39,51 +40,49 @@ class AppError(BaseModel):
     code: ErrorCode = Field(title="Error Code")
     message: str = Field(title="Message")
     status_code: int = Field(alias="statusCode", title="HTTP Status Code")
-    details: dict[str, Any] | list[Any] | None = Field(
+    details: dict[str, Any] | DetailsList | None = Field(
         default=None,
         title="Details",
     )
 
     @classmethod
-    def from_domain(cls, exc: DomainError) -> "AppError":
+    def from_domain(cls, exc: DomainError) -> AppError:
         """Map domain errors to HTTP-aware envelopes."""
-
         if isinstance(exc, ResourceNotFoundError):
             return cls(
                 code=ErrorCode.RESOURCE_NOT_FOUND,
                 message=str(exc) or "Resource not found",
-                status_code=404,
+                statusCode=404,
                 details=None,
             )
         if isinstance(exc, DomainValidationError):
             return cls(
                 code=ErrorCode.DOMAIN_VALIDATION_ERROR,
                 message=str(exc) or "Domain validation failed",
-                status_code=400,
+                statusCode=400,
                 details=None,
             )
         if isinstance(exc, UnauthorizedError):
             return cls(
                 code=ErrorCode.UNAUTHORIZED,
                 message=str(exc) or "Unauthorized",
-                status_code=401,
+                statusCode=401,
                 details=None,
             )
         return cls(
             code=ErrorCode.INTERNAL_ERROR,
             message=str(exc) or "Unexpected error",
-            status_code=500,
+            statusCode=500,
             details=None,
         )
 
     @classmethod
-    def internal_error(cls) -> "AppError":
+    def internal_error(cls) -> AppError:
         """Return a standardized envelope for unexpected failures."""
-
         return cls(
             code=ErrorCode.INTERNAL_ERROR,
             message="Unexpected error while processing request",
-            status_code=500,
+            statusCode=500,
             details=None,
         )
 
@@ -129,9 +128,9 @@ VALIDATION_ERROR_RESPONSE: Final[dict[str, Any]] = {
 }
 
 __all__ = [
+    "VALIDATION_ERROR_RESPONSE",
     "AppError",
     "ErrorCode",
-    "VALIDATION_ERROR_RESPONSE",
     "ErrorLocation",
     "HTTPValidationError",
     "ValidationErrorDetail",

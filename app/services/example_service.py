@@ -24,15 +24,12 @@ class ExampleService:
 
     The service determines the message prefix based on the injected ``Settings``:
     when ``settings.debug`` is ``True``, messages are prefixed with ``[DEBUG]``;
-    otherwise, the default ``[PROCESSED]`` prefix is used. This allows runtime
-    behavior to vary based on application configuration without code changes.
+    otherwise, it uses the configurable ``settings.example_prefix`` value. This
+    allows runtime behavior to vary based on application configuration without
+    code changes.
 
     Note:
-        The injected repository is available for data access operations. To
-        demonstrate async repository usage, the ``process`` method could be
-        converted to ``async def`` and call ``await self._repository.get_prefix()``
-        to retrieve a database-driven prefix. This would require updating the
-        endpoint to use ``async def`` as well.
+        The injected repository is used to persist processed messages.
 
     Attributes:
         _repository: Repository for example domain data access.
@@ -53,39 +50,25 @@ class ExampleService:
         self._repository = repository
         self._settings = settings
 
-    def process(self, request: ExampleRequest) -> ExampleResponse:
-        """Process an example request by applying a transformation.
-
-        The result prefix is determined by the injected ``Settings``: uses
-        ``[DEBUG]`` when ``settings.debug`` is ``True``, otherwise ``[PROCESSED]``.
-
-        Input shape and basic invariants are enforced by ``ExampleRequest``; the
-        service focuses on higher-level business rules and output formatting.
-
-        Note:
-            To use the repository for prefix retrieval, convert this method to
-            ``async def process(...)`` and call ``await self._repository.get_prefix()``.
-            The endpoint in ``app/api/v1/endpoints/example.py`` would also need
-            to become async to await this method.
-
-        Args:
-            request: The validated request object.
-
-        Returns:
-            ExampleResponse: The result of the processing operation.
-        """
-        # Use settings to derive prefix from app configuration
-        # When debug=True, use [DEBUG]; otherwise use [PROCESSED]
-        prefix = "[PROCESSED]" if not self._settings.debug else "[DEBUG]"
-
-        # Simulate business logic: string manipulation
+    async def process(self, request: ExampleRequest) -> ExampleResponse:
+        """Process an example request by applying a transformation and persisting it."""
+        prefix = "[DEBUG]" if self._settings.debug else self._settings.example_prefix
+        processed_at = datetime.now(UTC)
         processed_content = f"{prefix} [{request.type.upper()}] {request.message}"
 
-        return ExampleResponse(
+        response = ExampleResponse(
             result=processed_content,
-            processed_at=datetime.now(UTC),
+            processed_at=processed_at,
             original_length=len(request.message),
         )
+
+        await self._repository.save_processed_message(
+            content=response.result,
+            message_type=request.type,
+            processed_at=processed_at,
+        )
+
+        return response
 
     def shutdown(self) -> None:
         """Clean up service resources.

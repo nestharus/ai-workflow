@@ -24,3 +24,12 @@ repository and settings into `ExampleService`.
 
 **Step 5: Update plan docs:** Describe the new `app/repositories/` package and how it illustrates
 the repository architecture.
+
+## Implementation Notes
+
+* Added `app/repositories/example_repository.py` defining
+  `ExampleRepositoryProtocol.save_processed_message` and a SurrealDB-backed implementation using
+  parameterized queries.
+* `ExampleService` now depends on the repository protocol, uses `settings.example_prefix`, and
+  persists processed messages via the repository.
+* API v1 dependencies wire the repository provider and inject settings into `ExampleService`.

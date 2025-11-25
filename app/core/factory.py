@@ -12,6 +12,10 @@ if TYPE_CHECKING:
     from app.core.settings import Settings
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
 from pydantic import TypeAdapter
@@ -25,6 +29,7 @@ from app.core.exceptions import (
     internal_exception_handler,
     validation_exception_handler,
 )
+from app.core.middleware import SecurityHeadersMiddleware
 from app.infrastructure.db_connections import (
     ElasticsearchWrapper,
     SurrealDBPool,
@@ -87,12 +92,42 @@ def create_app(settings: Settings) -> FastAPI:
         lifespan=_lifespan(settings),
     )
     app.state.settings = settings
-    # Mount versioned API router; keeps new endpoints scoped under /api/v1.
-    app.include_router(api_router, prefix="/api/v1")
+    # Mount versioned API router using configured prefix.
+    app.include_router(api_router, prefix=settings.api_prefix)
     app.add_exception_handler(DomainError, domain_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(Exception, internal_exception_handler)
     app.add_api_route("/health", health_check, methods=["GET"], include_in_schema=False)
+
+    # Middleware registration (last added runs first on request path):
+    # TrustedHost (outer) -> HTTPS redirect -> CORS -> Security headers -> GZip (inner).
+    # Logging/metrics would be registered before GZip when introduced.
+
+    if settings.enable_gzip:
+        app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        enforce_https=settings.enforce_https,
+    )
+
+    if settings.cors_enabled:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_allow_origins,
+            allow_origin_regex=settings.cors_allow_origin_regex,
+            allow_methods=settings.cors_allow_methods,
+            allow_headers=settings.cors_allow_headers,
+            expose_headers=settings.cors_expose_headers,
+            allow_credentials=settings.cors_allow_credentials,
+            max_age=settings.cors_max_age,
+        )
+
+    if settings.enforce_https:
+        app.add_middleware(HTTPSRedirectMiddleware)
+
+    if settings.allowed_hosts:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 
     def custom_openapi() -> dict[str, Any]:
         if app.openapi_schema:

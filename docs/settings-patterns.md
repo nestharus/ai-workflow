@@ -47,6 +47,8 @@ areas:
 
 * **Application identity:** `app_name`, `app_version`, and `debug` describe
   the FastAPI application and control high-level behavior.
+* **Routing and prefixes:** `api_prefix` scopes versioned APIs and
+  `example_prefix` controls the default example response prefix.
 * **Error handling feature flags:** `include_error_body` controls whether
   request bodies are echoed back in validation error responses.
 * **SurrealDB connection:** `surrealdb_url`, `surrealdb_namespace`,
@@ -59,6 +61,10 @@ areas:
   search backend.
 * **Embedding configuration:** `embedding_dimension` captures the expected
   dimensionality of embeddings used in the knowledge graph.
+* **Middleware toggles:** `enable_gzip`, `enforce_https`, `allowed_hosts`, and
+  CORS controls such as `cors_allow_origins`, `cors_allow_methods`,
+  `cors_allow_headers`, `cors_expose_headers`, `cors_allow_credentials`, and
+  `cors_max_age` gate runtime middleware behavior.
 
 Naming must be descriptive and explicit. For example, prefer
 `surrealdb_url` to `db_url`, and `elasticsearch_connections_per_node` to

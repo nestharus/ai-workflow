@@ -21,3 +21,13 @@ when appropriate.
 
 **Step 5: Update plan docs:** Add a middleware section listing the new module, settings fields, and
 wiring order.
+
+## Implementation Notes
+
+* Added `app/core/middleware.py` with `SecurityHeadersMiddleware` (includes HSTS when
+  `Settings.enforce_https` is true) and registered it via the factory.
+* Introduced `Settings.cors_enabled` and defaulted `allowed_hosts` to `['*']` alongside existing
+  CORS and compression flags.
+* Middleware order in `create_app`: GZip (optional) → Security headers → CORS (optional) → HTTPS
+  redirect (optional) → Trusted hosts.
+* Added `tests/unit/test_middleware.py` to verify security headers, HSTS, and gzip behavior.

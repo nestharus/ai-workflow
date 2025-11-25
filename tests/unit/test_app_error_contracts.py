@@ -4,7 +4,7 @@ from app.contracts.errors import AppError, ErrorCode
 from app.core.errors import DomainValidationError, ResourceNotFoundError, UnauthorizedError
 
 
-def test_from_domain_resource_not_found_defaults():
+def test_from_domain_resource_not_found_defaults() -> None:
     error = AppError.from_domain(ResourceNotFoundError())
 
     assert error.code is ErrorCode.RESOURCE_NOT_FOUND
@@ -12,7 +12,7 @@ def test_from_domain_resource_not_found_defaults():
     assert error.message == "Resource not found"
 
 
-def test_from_domain_resource_not_found_custom_message():
+def test_from_domain_resource_not_found_custom_message() -> None:
     msg = "User missing"
 
     error = AppError.from_domain(ResourceNotFoundError(msg))
@@ -22,7 +22,7 @@ def test_from_domain_resource_not_found_custom_message():
     assert error.message == msg
 
 
-def test_from_domain_domain_validation_defaults():
+def test_from_domain_domain_validation_defaults() -> None:
     error = AppError.from_domain(DomainValidationError())
 
     assert error.code is ErrorCode.DOMAIN_VALIDATION_ERROR
@@ -30,7 +30,7 @@ def test_from_domain_domain_validation_defaults():
     assert error.message == "Domain validation failed"
 
 
-def test_from_domain_unauthorized_defaults():
+def test_from_domain_unauthorized_defaults() -> None:
     error = AppError.from_domain(UnauthorizedError())
 
     assert error.code is ErrorCode.UNAUTHORIZED
@@ -38,7 +38,7 @@ def test_from_domain_unauthorized_defaults():
     assert error.message == "Unauthorized"
 
 
-def test_internal_error_factory():
+def test_internal_error_factory() -> None:
     error = AppError.internal_error()
 
     assert error.code is ErrorCode.INTERNAL_ERROR
@@ -46,7 +46,7 @@ def test_internal_error_factory():
     assert error.message == "Unexpected error while processing request"
 
 
-def test_serialization_uses_alias_and_omits_null_details():
+def test_serialization_uses_alias_and_omits_null_details() -> None:
     error = AppError.from_domain(UnauthorizedError("denied"))
 
     payload = error.model_dump(mode="json", by_alias=True, exclude_none=True)

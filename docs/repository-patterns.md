@@ -117,6 +117,15 @@ Even if such protocols are not yet implemented in the codebase, consider them
 the target design: services should program against these interfaces rather than
 concrete storage details.
 
+### Current reference implementation
+
+The repository pattern is illustrated in `app/repositories/example_repository.py`,
+where `ExampleRepositoryProtocol` is implemented against `SurrealDBPool` for
+`save_processed_message`. Services such as `ExampleService` in
+`app/services/example_service.py` depend on the protocol instead of the concrete
+pool, and API v1 wiring in `app/api/v1/dependencies.py` provides the repository
+via `get_example_repository` for service construction.
+
 ## 3. Implementing Repository Classes
 
 For each protocol, implement one or more concrete repository classes that

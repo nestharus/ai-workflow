@@ -51,7 +51,7 @@ class ExampleRequest(BaseModel):
     type: MessageType = "info"
 
     @field_validator("message", mode="before")
-    def validate_message_content(cls, value: str) -> str:  # noqa: N805
+    def validate_message_content(cls, value: str) -> str:
         """Ensure message contains meaningful content before other validation."""
         if isinstance(value, str) and value.strip() == "":
             raise EmptyMessageError()

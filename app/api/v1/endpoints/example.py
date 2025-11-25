@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, status
 
 from app.api.v1.dependencies import ExampleServiceDep
-from app.contracts.errors import AppError, VALIDATION_ERROR_RESPONSE
+from app.contracts.errors import VALIDATION_ERROR_RESPONSE, AppError
 from app.contracts.example_contract import ExampleRequest, ExampleResponse
 
 router = APIRouter()
@@ -64,6 +64,6 @@ def sample_item() -> ExampleResponse:
         },
     },
 )
-def process_message(request: ExampleRequest, service: ExampleServiceDep) -> ExampleResponse:
+async def process_message(request: ExampleRequest, service: ExampleServiceDep) -> ExampleResponse:
     """Process an input message using the ExampleService."""
-    return service.process(request)
+    return await service.process(request)

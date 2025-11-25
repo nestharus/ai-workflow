@@ -8,7 +8,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OPENAPI_SCHEMA = REPO_ROOT / "openapi" / "openapi.json"
 CHECKOV_CONFIG = REPO_ROOT / ".checkov.yaml"
-DOCKERFILE_PATH = REPO_ROOT / "Dockerfile"
+HADOLINT_EXCLUDE_DIRS = {
+    REPO_ROOT / "to_adapt",
+    REPO_ROOT / "docs" / "plans",
+}
 HADOLINT_CONFIG = REPO_ROOT / ".hadolint.yaml"
 UV_CLI_REQUIRED = "uv CLI required to run lint"
 HADOLINT_CLI_REQUIRED = "hadolint CLI required to run lint"
@@ -81,14 +84,22 @@ def main() -> int:
         _run_checked([uv_exe, "run", "ruff", "check", "--fix", "."])
         _run_checked([uv_exe, "run", "mypy"])
         hadolint_exe = _hadolint()
-        _run_checked(
-            [
-                hadolint_exe,
-                "--config",
-                str(HADOLINT_CONFIG),
-                str(DOCKERFILE_PATH),
-            ]
-        )
+        dockerfiles = [
+            path
+            for path in REPO_ROOT.rglob("Dockerfile")
+            if not any(excluded in path.parents for excluded in HADOLINT_EXCLUDE_DIRS)
+        ]
+        if not dockerfiles:
+            print("No Dockerfiles found for hadolint scan")
+        else:
+            _run_checked(
+                [
+                    hadolint_exe,
+                    "--config",
+                    str(HADOLINT_CONFIG),
+                    *[str(path) for path in dockerfiles],
+                ]
+            )
         pymarkdown_cmd = [
             uv_exe,
             "run",

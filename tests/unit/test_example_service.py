@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import os
 import secrets
+from datetime import datetime
 
 import pytest
-
 from pydantic import ValidationError
 
 from app.contracts.example_contract import EmptyMessageError, ExampleRequest
@@ -25,9 +25,13 @@ class FakeExampleRepository:
     allowing unit tests to run without infrastructure.
     """
 
-    async def get_prefix(self) -> str:
-        """Return a stubbed prefix value."""
-        return "[FAKE]"
+    def __init__(self) -> None:
+        self.saved: list[tuple[str, str]] = []
+
+    async def save_processed_message(
+        self, *, content: str, message_type: str, processed_at: datetime
+    ) -> None:
+        self.saved.append((content, message_type))
 
 
 def _generate_test_credential(prefix: str) -> str:
@@ -35,10 +39,11 @@ def _generate_test_credential(prefix: str) -> str:
     return f"{prefix}Aa1!{secrets.token_hex(4)}"
 
 
-def _build_settings(*, debug: bool) -> Settings:
+def _build_settings(*, debug: bool, example_prefix: str = "[PROCESSED]") -> Settings:
     """Build a Settings instance with the specified debug flag."""
     return Settings(
         debug=debug,
+        example_prefix=example_prefix,
         surrealdb_user=os.getenv("SURREALDB_USER") or _generate_test_credential("User"),
         surrealdb_pass=os.getenv("SURREALDB_PASS") or _generate_test_credential("Pass"),
     )
@@ -53,7 +58,7 @@ def fake_repository() -> FakeExampleRepository:
 @pytest.fixture
 def settings_debug_false() -> Settings:
     """Provide Settings with debug=False."""
-    return _build_settings(debug=False)
+    return _build_settings(debug=False, example_prefix="[CUSTOM]")
 
 
 @pytest.fixture
@@ -62,22 +67,25 @@ def settings_debug_true() -> Settings:
     return _build_settings(debug=True)
 
 
-def test_process_uses_processed_prefix_when_debug_false(
+@pytest.mark.asyncio
+async def test_process_uses_processed_prefix_when_debug_false(
     fake_repository: FakeExampleRepository,
     settings_debug_false: Settings,
 ) -> None:
-    """ExampleService uses [PROCESSED] prefix when Settings.debug is False."""
+    """ExampleService uses configured prefix when Settings.debug is False."""
     service = ExampleService(repository=fake_repository, settings=settings_debug_false)
     request = ExampleRequest(message="Hello World", type="info")
 
-    response = service.process(request)
+    response = await service.process(request)
 
-    assert response.result.startswith("[PROCESSED]")
+    assert response.result.startswith("[CUSTOM]")
     assert "[INFO]" in response.result
     assert "Hello World" in response.result
+    assert fake_repository.saved[0][1] == "info"
 
 
-def test_process_uses_debug_prefix_when_debug_true(
+@pytest.mark.asyncio
+async def test_process_uses_debug_prefix_when_debug_true(
     fake_repository: FakeExampleRepository,
     settings_debug_true: Settings,
 ) -> None:
@@ -85,11 +93,12 @@ def test_process_uses_debug_prefix_when_debug_true(
     service = ExampleService(repository=fake_repository, settings=settings_debug_true)
     request = ExampleRequest(message="Test Message", type="warning")
 
-    response = service.process(request)
+    response = await service.process(request)
 
     assert response.result.startswith("[DEBUG]")
     assert "[WARNING]" in response.result
     assert "Test Message" in response.result
+    assert fake_repository.saved[0][1] == "warning"
 
 
 def test_example_request_rejects_empty_message() -> None:
@@ -98,8 +107,7 @@ def test_example_request_rejects_empty_message() -> None:
         ExampleRequest(message="", type="info")
     errors = excinfo.value.errors()
     assert any(
-        err.get("type") == "value_error"
-        and EmptyMessageError._MESSAGE in err.get("msg", "")  # noqa: SLF001
+        err.get("type") == "value_error" and EmptyMessageError._MESSAGE in err.get("msg", "")
         for err in errors
     )
 
@@ -110,13 +118,13 @@ def test_example_request_rejects_whitespace_message() -> None:
         ExampleRequest(message="   ", type="warning")
     errors = excinfo.value.errors()
     assert any(
-        err.get("type") == "value_error"
-        and EmptyMessageError._MESSAGE in err.get("msg", "")  # noqa: SLF001
+        err.get("type") == "value_error" and EmptyMessageError._MESSAGE in err.get("msg", "")
         for err in errors
     )
 
 
-def test_process_preserves_original_message_length(
+@pytest.mark.asyncio
+async def test_process_preserves_original_message_length(
     fake_repository: FakeExampleRepository,
     settings_debug_false: Settings,
 ) -> None:
@@ -125,6 +133,6 @@ def test_process_preserves_original_message_length(
     message = "Sample input"
     request = ExampleRequest(message=message, type="error")
 
-    response = service.process(request)
+    response = await service.process(request)
 
     assert response.original_length == len(message)

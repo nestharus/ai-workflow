@@ -21,7 +21,7 @@ class UnauthorizedError(DomainError):
 
 __all__ = [
     "DomainError",
-    "ResourceNotFoundError",
     "DomainValidationError",
+    "ResourceNotFoundError",
     "UnauthorizedError",
 ]

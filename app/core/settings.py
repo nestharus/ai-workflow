@@ -82,6 +82,20 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     debug: bool = False
     include_error_body: bool = False
+    api_prefix: str = "/api/v1"
+    example_prefix: str = "[PROCESSED]"
+
+    enable_gzip: bool = False
+    enforce_https: bool = False
+    allowed_hosts: list[str] = Field(default_factory=lambda: ["*"])
+    cors_enabled: bool = False
+    cors_allow_origins: list[str] = Field(default_factory=list)
+    cors_allow_origin_regex: str | None = None
+    cors_allow_methods: list[str] = Field(default_factory=lambda: ["*"])
+    cors_allow_headers: list[str] = Field(default_factory=lambda: ["*"])
+    cors_expose_headers: list[str] = Field(default_factory=list)
+    cors_allow_credentials: bool = False
+    cors_max_age: int = 600
 
     surrealdb_url: str = "ws://localhost:8000/rpc"
     surrealdb_namespace: str = "knowledge"
@@ -131,6 +145,7 @@ class Settings(BaseSettings):
         "elasticsearch_request_timeout",
         "elasticsearch_shards",
         "embedding_dimension",
+        "cors_max_age",
     )
     @classmethod
     def _validate_positive(cls, value: int, info: ValidationInfo) -> int:
