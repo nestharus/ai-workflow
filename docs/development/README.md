@@ -12,9 +12,9 @@ Defines how to model, validate, and consume runtime configuration using Pydantic
 
 **Apply when:**
 
-- Defining application configuration models
-- Adding new environment variables
-- Validating configuration at startup
+* Defining application configuration models
+* Adding new environment variables
+* Validating configuration at startup
 
 ### Factory Patterns
 
@@ -24,9 +24,9 @@ Covers application construction, lifespan management, and configuration patterns
 
 **Apply when:**
 
-- Setting up application entry points
-- Configuring application lifespan events
-- Wiring routers and middleware
+* Setting up application entry points
+* Configuring application lifespan events
+* Wiring routers and middleware
 
 ### Dependency Patterns
 
@@ -36,9 +36,9 @@ Establishes FastAPI dependency injection patterns using Annotated type aliases. 
 
 **Apply when:**
 
-- Creating injectable services and repositories
-- Defining reusable dependency type aliases
-- Wiring database connections into handlers
+* Creating injectable services and repositories
+* Defining reusable dependency type aliases
+* Wiring database connections into handlers
 
 ### Router Patterns
 
@@ -48,9 +48,9 @@ Defines FastAPI router organization, route handler structure, and OpenAPI docume
 
 **Apply when:**
 
-- Creating new API endpoints
-- Organizing routes by domain
-- Adding OpenAPI documentation to handlers
+* Creating new API endpoints
+* Organizing routes by domain
+* Adding OpenAPI documentation to handlers
 
 ### Service Patterns
 
@@ -60,9 +60,9 @@ Establishes service layer architecture for encapsulating business logic and tran
 
 **Apply when:**
 
-- Writing business logic for domain operations
-- Coordinating multiple repository calls
-- Managing transactions and rollbacks
+* Writing business logic for domain operations
+* Coordinating multiple repository calls
+* Managing transactions and rollbacks
 
 ### Repository Patterns
 
@@ -72,9 +72,9 @@ Defines data access layer patterns, repository interfaces, and query patterns fo
 
 **Apply when:**
 
-- Writing database query code
-- Defining repository interfaces
-- Implementing CRUD operations
+* Writing database query code
+* Defining repository interfaces
+* Implementing CRUD operations
 
 ### Middleware Patterns
 
@@ -84,9 +84,9 @@ Covers HTTP middleware implementation, ordering, and configuration for cross-cut
 
 **Apply when:**
 
-- Adding cross-cutting HTTP behavior
-- Configuring security headers
-- Implementing request/response logging
+* Adding cross-cutting HTTP behavior
+* Configuring security headers
+* Implementing request/response logging
 
 ### Exception Patterns
 
@@ -96,9 +96,9 @@ Defines how to design domain exceptions, error handling, and HTTP error mapping.
 
 **Apply when:**
 
-- Defining domain-specific exceptions
-- Mapping exceptions to HTTP status codes
-- Implementing error handling in services
+* Defining domain-specific exceptions
+* Mapping exceptions to HTTP status codes
+* Implementing error handling in services
 
 ### Connection Pooling Patterns
 
@@ -108,9 +108,9 @@ Describes how to create, configure, and manage database and search client pools.
 
 **Apply when:**
 
-- Configuring database connection pools
-- Setting up search client connections
-- Managing pool lifecycle and cleanup
+* Configuring database connection pools
+* Setting up search client connections
+* Managing pool lifecycle and cleanup
 
 ### API Patterns
 
@@ -120,18 +120,35 @@ Establishes REST API design standards including URL structure, request/response 
 
 **Apply when:**
 
-- Designing new API endpoints
-- Modeling request and response schemas
-- Documenting API contracts
+* Designing new API endpoints
+* Modeling request and response schemas
+* Documenting API contracts
 
 ### Docstrings Guide
 
 **File:** `docstrings-guide.md`
 
-Defines Google-style docstring conventions and standards for documenting code. Covers function, class, and module documentation with examples for consistent codebase documentation.
+Defines Google-style docstring conventions and standards for documenting code. Covers
+function, class, and module documentation with examples for consistent codebase
+documentation.
 
 **Apply when:**
 
-- Writing function and class documentation
-- Documenting module-level code
-- Adding parameter and return type descriptions
+* Writing function and class documentation
+* Documenting module-level code
+* Adding parameter and return type descriptions
+
+### Architectural Patterns
+
+**File:** `architectural-patterns.md`
+
+Defines the strict layered architecture for separation of concerns and testability.
+Covers Routers (HTTP request/response lifecycle), Services (business logic encapsulation
+with dependency injection), and Contracts/DTOs (data structures and validation rules
+with Pydantic). Includes standards, patterns, and lifecycle details for each layer.
+
+**Apply when:**
+
+* Designing new application components
+* Understanding layer responsibilities and boundaries
+* Implementing routers, services, or contracts
