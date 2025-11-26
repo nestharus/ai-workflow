@@ -25,7 +25,7 @@ class ExampleService:
     """Encapsulates business logic for the example domain.
 
     Demonstrates dependency injection patterns with repository and settings
-    injected via constructor, following service-patterns.md.
+    injected via constructor, following service-patterns.toon.
 
     The service determines the message prefix based on the injected ``Settings``:
     when ``settings.debug`` is ``True``, messages are prefixed with ``[DEBUG]``;

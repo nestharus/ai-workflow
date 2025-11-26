@@ -46,7 +46,7 @@ repositories, and other dependencies into route handlers for testability and sep
 
 ### Router Patterns
 
-**File:** `router-patterns.md`
+**File:** `router-patterns.toon`
 
 Defines FastAPI router organization, route handler structure, and OpenAPI documentation standards. Covers how to
 structure endpoints, handle request/response models, and document APIs for clarity.
@@ -59,7 +59,7 @@ structure endpoints, handle request/response models, and document APIs for clari
 
 ### Service Patterns
 
-**File:** `service-patterns.md`
+**File:** `service-patterns.toon`
 
 Establishes service layer architecture for encapsulating business logic and transaction management. Defines how
 services coordinate between routers and repositories while maintaining separation of concerns.
@@ -72,7 +72,7 @@ services coordinate between routers and repositories while maintaining separatio
 
 ### Repository Patterns
 
-**File:** `repository-patterns.md`
+**File:** `repository-patterns.toon`
 
 Defines data access layer patterns, repository interfaces, and query patterns for persistence code. Covers how
 to abstract database operations behind clean interfaces for testability.
@@ -151,7 +151,7 @@ documentation.
 
 ### Architectural Patterns
 
-**File:** `architectural-patterns.md`
+**File:** `architectural-patterns.toon`
 
 Defines the strict layered architecture for separation of concerns and testability.
 Covers Routers (HTTP request/response lifecycle), Services (business logic encapsulation

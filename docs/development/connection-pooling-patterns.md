@@ -32,9 +32,9 @@ The following topics are documented elsewhere and are intentionally not
 covered in detail here:
 
 * Repository APIs built on top of connection pools (see
-  `repository-patterns.md`).
+  `repository-patterns.toon`).
 * Domain-level service orchestration and business rules (see
-  `service-patterns.md`).
+  `service-patterns.toon`).
 * Settings modeling beyond pool-related configuration (see
   `settings-patterns.md`).
 * HTTP error schemas and validation behavior (see exception and error

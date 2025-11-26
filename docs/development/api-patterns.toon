@@ -5,7 +5,7 @@ version_hint: "2024-2025"
 kind: rest_api_standards
 description: Central standards for REST API design, including URL structure, request/response schemas, error responses, and OpenAPI documentation.
 tech_stack: Captures stable 2024-2025 FastAPI and Pydantic v2 practices for this backend.
-scope: This file is the source of truth for API-wide behavior and contracts. Router composition, service and repository patterns, and tests are covered separately in router-patterns.md, service-patterns.md, and dependency-patterns.md.
+scope: This file is the source of truth for API-wide behavior and contracts. Router composition, service and repository patterns, and tests are covered separately in router-patterns.toon, service-patterns.toon, and dependency-patterns.md.
 primary_runtime_references[4]:
   - path: app/core/factory.py
     role: FastAPI application construction, default response class, and custom OpenAPI schema.
@@ -16,8 +16,8 @@ primary_runtime_references[4]:
   - path: app/contracts/errors.py
     role: HTTP validation error contracts.
 related_pattern_docs[3]:
-  - router-patterns.md
-  - service-patterns.md
+  - router-patterns.toon
+  - service-patterns.toon
   - dependency-patterns.md
 sections[8]:
   - id: url-structure-versioning

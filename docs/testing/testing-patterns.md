@@ -49,6 +49,6 @@ The following documents contain testing guidance to be adapted and integrated:
 
 ## Related Documentation
 
-* `../development/repository-patterns.md` - Repository implementation patterns
+* `../development/repository-patterns.toon` - Repository implementation patterns
 * `../development/dependency-patterns.md` - Dependency injection for testing
 * `../../tests/conftest.py` - Current fixture implementations

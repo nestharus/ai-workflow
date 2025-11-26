@@ -2,8 +2,8 @@
 
 This document establishes the standard patterns for dependency injection (DI) within the `ai-workflow`
 application. We leverage FastAPI's powerful dependency injection system to ensure modularity,
-testability, and separation of concerns. This guide sits alongside `api-patterns.md`,
-`router-patterns.md`, `service-patterns.md`, and `factory-patterns.md` and should be read together
+testability, and separation of concerns. This guide sits alongside `api-patterns.toon`,
+`router-patterns.toon`, `service-patterns.toon`, and `factory-patterns.md` and should be read together
 with the FastAPI best-practices documents such as `fastapi-best-practices.md` and
 `fastapi-best-practices-2.md`.
 

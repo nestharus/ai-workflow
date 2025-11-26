@@ -229,7 +229,7 @@ The patterns for using settings are:
   infrastructure factories as needed; routers must not construct `Settings`
   directly.
 * **Services:** Receive `Settings` via constructor injection (see
-  `docs/service-patterns.md`) and use it for configuration-dependent
+  `docs/development/service-patterns.toon`) and use it for configuration-dependent
   behaviour, such as timeouts or feature flags.
 * **Infrastructure:** Connection factories such as `create_surrealdb_pool`
   and `create_elasticsearch_wrapper` receive `Settings` instances and read
@@ -238,7 +238,7 @@ The patterns for using settings are:
 In all cases, configuration should flow from a single `Settings` instance
 created at startup; additional instances should only be created explicitly in
 tests. For additional patterns on services that consume settings, see
-`docs/development/service-patterns.md`.
+`docs/development/service-patterns.toon`.
 
 ## 8. Settings in Tests
 
