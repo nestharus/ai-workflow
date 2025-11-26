@@ -1,5 +1,5 @@
 # Pinned uv version for reproducible builds.
-ARG UV_VERSION=0.7.2
+ARG UV_VERSION=0.9.12
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
 # Phase 1: Builder
