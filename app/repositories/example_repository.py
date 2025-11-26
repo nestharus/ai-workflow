@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING, Final, Protocol
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from app.infrastructure.surrealdb import SurrealDBPool
 
 PROCESSED_MESSAGES_TABLE: Final[str] = "processed_messages"

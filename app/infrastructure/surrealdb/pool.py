@@ -44,11 +44,10 @@ class AsyncSurrealConnection(Protocol):
         """Close the connection."""
         ...
 
-    async def query(
-        self, sql: str, params: dict[str, Any] | None = None
-    ) -> list[Any]:
+    async def query(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
         """Execute a query and return the results."""
         ...
+
 
 logger = logging.getLogger(__name__)
 

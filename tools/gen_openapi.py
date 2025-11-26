@@ -6,9 +6,9 @@ import argparse
 import sys
 from pathlib import Path
 from typing import Any
-from fastapi import FastAPI
 
 import orjson
+from fastapi import FastAPI
 
 OPENAPI_VERSION = "3.1.0"
 ALLOWED_OPENAPI_KEYS = {
