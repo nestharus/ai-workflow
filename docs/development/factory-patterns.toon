@@ -16,8 +16,9 @@ primary_runtime_references[5]:
     role: SurrealDB and Elasticsearch connection factories used during startup.
   - path: tests/conftest.py
     role: Test application factory usage, dependency overrides, and fixtures.
-related_pattern_docs[2]:
-  - settings-patterns.toon
+related_pattern_docs[3]:
+  - python/settings-patterns.toon
+  - fastapi/settings-patterns.toon
   - middleware-patterns.toon
 sections[10]:
   - id: application-factory-pattern

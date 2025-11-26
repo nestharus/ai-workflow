@@ -8,7 +8,7 @@ scope: Covers connection pooling fundamentals, SurrealDB pool management, Elasti
 out_of_scope[4]:
   - Repository APIs built on top of pools (see repository-patterns.toon).
   - Domain-level service orchestration (see service-patterns.toon).
-  - Settings modeling beyond pool-related configuration (see settings-patterns.toon).
+  - Settings modeling beyond pool-related configuration (see python/settings-patterns.toon).
   - HTTP error schemas and validation behavior (see exception-patterns.toon).
 primary_runtime_references[3]:
   - path: app/core/factory.py
@@ -21,7 +21,7 @@ related_pattern_docs[5]:
   - router-patterns.toon
   - repository-patterns.toon
   - service-patterns.toon
-  - settings-patterns.toon
+  - python/settings-patterns.toon
   - exception-patterns.toon
 sections[15]:
   - id: connection-pooling-fundamentals

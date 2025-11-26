@@ -20,12 +20,11 @@ primary_runtime_references[5]:
     role: Dependency injection helpers.
   - path: app/infrastructure/db_connections.py
     role: Database and search connection management.
-transitional_note: References to .md files (dependency-patterns.md, exception-patterns.md) are transitional and will be updated to .toon filenames once those documents are converted in later phases.
 related_pattern_docs[4]:
   - router-patterns.toon
   - repository-patterns.toon
-  - dependency-patterns.md
-  - exception-patterns.md
+  - python/dependency-patterns.toon
+  - exception-patterns.toon
 sections[8]:
   - id: responsibilities
     index: 1
@@ -71,7 +70,7 @@ sections[8]:
         text: Type hints are mandatory for all arguments and return values.
       - id: structure.docstrings
         type: rule
-        text: Follow Google-style docstring guidance in docs/development/docstrings-guide.md.
+        text: Follow Google-style docstring guidance in docs/development/python/docstrings-guide.toon.
       - id: structure.exceptions
         type: rule
         text: List all domain exceptions a method may raise in a Raises section so callers know which failures to handle.
@@ -102,7 +101,7 @@ sections[8]:
         text: Database sessions or pools (e.g., an ORM session or a SurrealDB connection pool) should be created in request context by outer layers and passed into repositories or services as constructor arguments.
       - id: di.settings
         type: rule
-        text: Runtime configuration is provided by a Settings object via get_settings() dependency in app/core/dependencies.py.
+        text: Runtime configuration is provided by a Settings object via get_settings() dependency in app/core/dependencies.py; detailed patterns for get_settings() and FastAPI dependency wiring are documented in docs/development/fastapi/settings-patterns.toon.
   - id: transaction-management
     index: 4
     title: Transaction management

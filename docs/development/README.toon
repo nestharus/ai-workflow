@@ -5,11 +5,33 @@ version_hint: "2024-2025"
 kind: development_index
 description: Navigation index for development documentation covering code patterns, standards, and best practices.
 scope: Provides overview and navigation to all development-related documentation files with topic summaries and usage guidance.
+module_organization:
+  description: Development documentation is organized into four specialized modules for targeted guidance.
+  note: This is phase one of a multi-phase reorganization. Subsequent phases will move additional pattern files into their respective modules.
+  modules[4]:
+    - name: python
+      path: python/
+      description: Pure Python patterns including documentation standards, exception hierarchies, and dependency injection concepts not specific to any framework.
+      consult_when: Writing Python code, docstrings, or implementing generic patterns.
+    - name: fastapi
+      path: fastapi/
+      description: FastAPI-specific patterns including routers, Depends() injection, middleware, lifespan management, and OpenAPI documentation.
+      consult_when: Building API endpoints, configuring middleware, or wiring FastAPI dependencies.
+    - name: surrealdb
+      path: surrealdb/
+      description: SurrealDB-specific patterns including connection pooling, repository implementations, and query patterns.
+      consult_when: Working with SurrealDB persistence, writing repository code, or managing database connections.
+    - name: elasticsearch
+      path: elasticsearch/
+      description: Elasticsearch-specific patterns including client configuration, search query patterns, and index management.
+      consult_when: Implementing search functionality, configuring Elasticsearch clients, or managing indices.
 primary_runtime_references[0]:
-related_pattern_docs[11]:
-  - settings-patterns.toon
+related_pattern_docs[13]:
+  - python/settings-patterns.toon
+  - fastapi/settings-patterns.toon
+  - python/dependency-patterns.toon
+  - fastapi/dependency-patterns.toon
   - factory-patterns.toon
-  - dependency-patterns.toon
   - router-patterns.toon
   - service-patterns.toon
   - repository-patterns.toon
@@ -23,17 +45,26 @@ sections[12]:
     index: 1
     title: Settings Patterns
     category: navigation
-    summary: Defines how to model, validate, and consume runtime configuration using Pydantic settings.
-    items[3]:
-      - id: settings-patterns.file
+    summary: Defines how to model, validate, and consume runtime configuration using Pydantic settings and FastAPI dependency injection.
+    items[6]:
+      - id: settings-patterns-python.file
         type: reference
-        text: "File: settings-patterns.toon"
-      - id: settings-patterns.description
+        text: "File: python/settings-patterns.toon"
+      - id: settings-patterns-python.description
         type: note
-        text: Covers environment variable binding, validation rules, and settings composition for different deployment environments.
-      - id: settings-patterns.apply-when
+        text: Covers Pydantic BaseSettings usage, field validation, credential security, environment variable mapping, and testing patterns.
+      - id: settings-patterns-python.apply-when
         type: guidance
-        text: "Apply when: Defining application configuration models, adding new environment variables, or validating configuration at startup."
+        text: "Apply when: Defining Settings fields, adding validators, or structuring configuration models."
+      - id: settings-patterns-fastapi.file
+        type: reference
+        text: "File: fastapi/settings-patterns.toon"
+      - id: settings-patterns-fastapi.description
+        type: note
+        text: Covers Settings DI integration, get_settings dependency, app.state storage, and runtime access patterns.
+      - id: settings-patterns-fastapi.apply-when
+        type: guidance
+        text: "Apply when: Integrating Settings with FastAPI factory, injecting Settings into routers, or testing with dependency overrides."
   - id: factory-patterns
     index: 2
     title: Factory Patterns
@@ -53,17 +84,26 @@ sections[12]:
     index: 3
     title: Dependency Patterns
     category: navigation
-    summary: Establishes FastAPI dependency injection patterns using Annotated type aliases.
-    items[3]:
-      - id: dependency-patterns.file
+    summary: Establishes dependency injection patterns using Python constructor injection and FastAPI's Depends() system.
+    items[6]:
+      - id: dependency-patterns-python.file
         type: reference
-        text: "File: dependency-patterns.toon"
-      - id: dependency-patterns.description
+        text: "File: python/dependency-patterns.toon"
+      - id: dependency-patterns-python.description
         type: note
-        text: Defines how to wire services, repositories, and other dependencies into route handlers for testability and separation of concerns.
-      - id: dependency-patterns.apply-when
+        text: Covers constructor injection, factory functions, service layer patterns, and lifecycle concepts.
+      - id: dependency-patterns-python.apply-when
         type: guidance
-        text: "Apply when: Creating injectable services and repositories, defining reusable dependency type aliases, or wiring database connections into handlers."
+        text: "Apply when: Designing service constructors, creating factory functions, or understanding dependency lifecycles."
+      - id: dependency-patterns-fastapi.file
+        type: reference
+        text: "File: fastapi/dependency-patterns.toon"
+      - id: dependency-patterns-fastapi.description
+        type: note
+        text: Covers FastAPI Depends(), Annotated type aliases, yield-based dependencies, and app.dependency_overrides.
+      - id: dependency-patterns-fastapi.apply-when
+        type: guidance
+        text: "Apply when: Creating injectable dependencies, defining Annotated type aliases, or testing with dependency overrides."
   - id: router-patterns
     index: 4
     title: Router Patterns
@@ -177,7 +217,7 @@ sections[12]:
     items[3]:
       - id: docstrings-guide.file
         type: reference
-        text: "File: docstrings-guide.toon"
+        text: "File: python/docstrings-guide.toon"
       - id: docstrings-guide.description
         type: note
         text: Covers function, class, and module documentation with examples for consistent codebase documentation.
