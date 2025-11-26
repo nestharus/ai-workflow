@@ -74,6 +74,7 @@ exclude = [
     ".mypy_cache/",
     "openapi/",
     ".review/",
+    ".serena/",
     "LICENSE",
 ]
 

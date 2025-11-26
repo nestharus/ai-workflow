@@ -23,9 +23,17 @@ from scripts.utils import utc_timestamp
 class StdoutCaptureError(RuntimeError):
     """Raised when coderabbit output cannot be read."""
 
+    def __init__(self, message: str | None = None) -> None:
+        """Initialize with a default or custom message."""
+        super().__init__(message or "Failed to capture stdout from coderabbit process")
+
 
 class CoderabbitNotFoundError(FileNotFoundError):
     """Raised when the coderabbit executable is unavailable."""
+
+    def __init__(self, message: str | None = None) -> None:
+        """Initialize with a default or custom message."""
+        super().__init__(message or "coderabbit executable not found on PATH")
 
 
 def run_coderabbit(target_args: list[str], extra_args: list[str], output_dir: Path) -> Path:
@@ -36,7 +44,7 @@ def run_coderabbit(target_args: list[str], extra_args: list[str], output_dir: Pa
 
     coderabbit_exe = shutil.which("coderabbit")
     if coderabbit_exe is None:
-        raise CoderabbitNotFoundError("coderabbit executable not found on PATH")
+        raise CoderabbitNotFoundError()
 
     cmd = [
         coderabbit_exe,
@@ -56,7 +64,7 @@ def run_coderabbit(target_args: list[str], extra_args: list[str], output_dir: Pa
         stdout = process.stdout
         if stdout is None:  # pragma: no cover - defensive guard
             process.kill()
-            raise StdoutCaptureError("Failed to capture stdout from coderabbit process")
+            raise StdoutCaptureError()
         try:
             for line in stdout:
                 sys.stdout.write(line)

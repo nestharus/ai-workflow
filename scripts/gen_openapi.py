@@ -14,23 +14,26 @@ def _debug_enabled() -> bool:
     return bool(debug_value and debug_value.lower() in {"1", "true", "yes", "on"})
 
 
-def _ensure_surreal_credentials() -> None:
-    """Provide default SurrealDB credentials for schema generation if absent.
-
-    Defaults are strictly for local development/schema generation, must never
-    be used in staging or production, and should not be committed to version
-    control. Use environment-specific credentials or a local-only secrets store
-    for any purpose beyond local schema generation.
-    """
-    # Settings validation requires complex creds; adding special flags just for
-    # gen_openapi would overcomplicate things, so we use strong defaults here.
-    os.environ.setdefault("SURREALDB_USER", "GenUser1!Abc#")
-    os.environ.setdefault("SURREALDB_PASS", "GenPass1!Xyz$")
+def _is_local_environment() -> bool:
+    """Check if running in a local development environment."""
+    env = os.getenv("ENV", "").lower()
+    ci = os.getenv("CI", "").lower()
+    return env in {"", "local", "dev", "development"} and ci not in {"true", "1", "yes"}
 
 
 def main() -> int:
     """Delegate OpenAPI generation and normalize exit codes."""
-    _ensure_surreal_credentials()
+    # Only set default credentials in local/development environments to prevent
+    # accidental use in CI/staging/production where real credentials should be provided.
+    if _is_local_environment():
+        os.environ.setdefault("SURREALDB_USER", "GenUser1!Abc#")
+        os.environ.setdefault("SURREALDB_PASS", "GenPass1!Xyz$")
+    elif not (os.getenv("SURREALDB_USER") and os.getenv("SURREALDB_PASS")):
+        print(
+            "Error: SURREALDB_USER and SURREALDB_PASS must be set in non-local environments.",
+            file=sys.stderr,
+        )
+        return 1
     try:
         generate_openapi()
     except SystemExit as exc:

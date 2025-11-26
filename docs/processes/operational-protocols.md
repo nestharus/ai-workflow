@@ -10,7 +10,8 @@ These nine protocols define required agent behavior within the orchestrator-base
    not deviate from your domain or function.
 
 3. **Communication**: Use TOON (Token-Oriented Object Notation) for structured data handoffs
-   (specs, plans) when required by the workflow.
+   (specs, plans) when required by the workflow. For the TOON format specification and usage
+   examples, see `docs/architecture/toon-format.md`.
 
 4. **Orchestrator Submission**: Agents submit messages to the orchestrator via POST to
    `/api/v1/orchestrator/submit` instead of calling other agents directly.

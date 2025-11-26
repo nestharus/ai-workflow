@@ -81,7 +81,7 @@ async def validation_exception_handler(request: Request, exc: Exception) -> ORJS
     )
 
 
-async def domain_exception_handler(request: Request, exc: Exception) -> ORJSONResponse:
+def domain_exception_handler(request: Request, exc: Exception) -> ORJSONResponse:
     """Convert domain errors into standardized envelopes."""
     if not isinstance(exc, DomainError):
         raise TypeError from exc
@@ -99,7 +99,7 @@ async def domain_exception_handler(request: Request, exc: Exception) -> ORJSONRe
     )
 
 
-async def internal_exception_handler(request: Request, exc: Exception) -> ORJSONResponse:
+def internal_exception_handler(request: Request, exc: Exception) -> ORJSONResponse:
     """Handle unexpected failures with a generic envelope."""
     logger.exception(
         "Unhandled error on %s %s [%s]: %s: %s",

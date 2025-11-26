@@ -59,24 +59,22 @@ def _iter_scripts_files() -> list[Path]:
     ]
     return sorted(
         files,
-        key=lambda path: path.resolve().relative_to(REPO_ROOT).as_posix(),
+        key=lambda path: path.relative_to(REPO_ROOT).as_posix(),
     )
 
 
 def concatenate_scripts(output_path: Path) -> None:
     """Concatenate all scripts files into a single output file."""
-    files = _iter_scripts_files()
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    written_index = 0
+    files = [f for f in _iter_scripts_files() if f.resolve() != output_path]
+
     with output_path.open("w", encoding="utf-8") as destination:
-        for file_path in files:
-            if file_path.resolve() == output_path:
-                continue
+        for index, file_path in enumerate(files):
             relative_label = file_path.resolve().relative_to(REPO_ROOT)
             heading = f"===== {relative_label.as_posix()} =====\n"
-            if written_index:
+            if index > 0:
                 destination.write("\n")
             destination.write(heading)
 
@@ -84,7 +82,6 @@ def concatenate_scripts(output_path: Path) -> None:
             destination.write(content)
             if not content.endswith("\n"):
                 destination.write("\n")
-            written_index += 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -162,6 +162,13 @@ constraints:
   Because Pydantic's underlying regex engine does not support lookahead
   assertions, this pattern enumerates valid permutations instead of relying
   on lookaheads.
+
+The credential complexity rules enforce the following requirements:
+* Must contain at least one uppercase letter (A-Z)
+* Must contain at least one lowercase letter (a-z)
+* Must contain at least one digit (0-9)
+* Must contain at least one special character (non-alphanumeric)
+* Must be at least 12 characters in total length
 * **Secret representation:** `repr=False` prevents credential values from
   appearing in model `repr` output or logs derived from it.
 * **OpenAPI schema hints:** `json_schema_extra={"format": "password"}` marks
@@ -230,7 +237,8 @@ The patterns for using settings are:
 
 In all cases, configuration should flow from a single `Settings` instance
 created at startup; additional instances should only be created explicitly in
-tests.
+tests. For additional patterns on services that consume settings, see
+`docs/development/service-patterns.md`.
 
 ## 8. Settings in Tests
 

@@ -54,6 +54,7 @@ reviews:
     - "!.env"
     - "!.env.*"
     - "!docs/plans/**"
+    - "!.serena/**"
   tools:
     ruff:
       enabled: true

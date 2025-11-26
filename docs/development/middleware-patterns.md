@@ -30,8 +30,8 @@ concerns (security headers, compression, logging, metrics, request IDs, and rate
   last.
 * Conceptually, if `MiddlewareA` is added first and `MiddlewareB` second with
   `app.add_middleware(...)`:
-  * Request flow: `MiddlewareB  MiddlewareA  route handler`.
-  * Response flow: `route handler  MiddlewareA  MiddlewareB`.
+  * Request flow: `MiddlewareB -> MiddlewareA -> route handler`.
+  * Response flow: `route handler -> MiddlewareA -> MiddlewareB`.
 
 Because of this stacking, the registration order in `create_app` in `app/core/factory.py` is
 critical. All HTTP middlewares for this project must be registered via FastAPI's
@@ -266,9 +266,27 @@ control.
 * Centralize rate limiting behavior in a `RateLimitingMiddleware` class in `app/core/middleware.py`
   so it can be configured and tested consistently.
 
-TODO: Introduce the `RequestLoggingMiddleware`, `RequestIDMiddleware`, `MetricsMiddleware`, and
-`RateLimitingMiddleware` classes in `app/core/middleware.py` and wire them via `create_app` so new
-work can rely on these standardized middleware entry points.
+The following observability middleware are implemented in `app/core/middleware.py` and wired via
+`create_app`:
+
+* **RequestIDMiddleware**: Generates or propagates a unique `X-Request-ID` header for each
+  request. If an incoming request contains an `X-Request-ID` header, that value is propagated;
+  otherwise a new UUID is generated. The ID is attached to the ASGI scope as `request_id` and
+  included in the response headers. Enable via `enable_request_id` setting (default: `True`).
+
+* **RequestLoggingMiddleware**: Logs request method, path, status code, and latency using
+  structured logging with key-value pairs. Exceptions are logged with traceback and re-raised.
+  The request ID (if available) is included in log entries. Enable via `enable_request_logging`
+  setting (default: `True`).
+
+* **MetricsMiddleware**: Collects in-memory request metrics including request count, duration
+  sum, and status code counts organized by route pattern. Metrics can be accessed via the
+  middleware's `get_metrics()` method. Enable via `enable_metrics` setting (default: `False`).
+
+* **RateLimitingMiddleware**: Implements per-IP fixed-window rate limiting. Requests exceeding
+  the limit receive a 429 Too Many Requests response with a `Retry-After` header. Configure via
+  `enable_rate_limiting` (default: `False`), `rate_limit_requests` (default: 100), and
+  `rate_limit_window_seconds` (default: 60).
 
 ## 9. Middleware Implementation Patterns
 

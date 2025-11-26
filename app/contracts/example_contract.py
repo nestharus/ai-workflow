@@ -21,6 +21,7 @@ type MessageType = Literal["info", "warning", "error"]
 MAX_MESSAGE_LENGTH = 500
 MIN_MESSAGE_LENGTH = 1
 MAX_VALIDATION_ERRORS = 32
+# MAX_JSON_DEPTH is used by OpenAPI schema generation for API compliance checks.
 MAX_JSON_DEPTH = 20
 
 
@@ -51,6 +52,7 @@ class ExampleRequest(BaseModel):
     type: MessageType = "info"
 
     @field_validator("message", mode="before")
+    @classmethod
     def validate_message_content(cls, value: str) -> str:
         """Ensure message contains meaningful content before other validation."""
         if isinstance(value, str) and value.strip() == "":
@@ -78,4 +80,4 @@ class ExampleResponse(BaseModel):
 
     result: Annotated[str, Field(min_length=1)]
     processed_at: datetime
-    original_length: int
+    original_length: Annotated[int, Field(ge=0)]

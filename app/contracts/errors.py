@@ -52,27 +52,27 @@ class AppError(BaseModel):
             return cls(
                 code=ErrorCode.RESOURCE_NOT_FOUND,
                 message=str(exc) or "Resource not found",
-                statusCode=404,
+                status_code=404,
                 details=None,
             )
         if isinstance(exc, DomainValidationError):
             return cls(
                 code=ErrorCode.DOMAIN_VALIDATION_ERROR,
                 message=str(exc) or "Domain validation failed",
-                statusCode=400,
+                status_code=400,
                 details=None,
             )
         if isinstance(exc, UnauthorizedError):
             return cls(
                 code=ErrorCode.UNAUTHORIZED,
                 message=str(exc) or "Unauthorized",
-                statusCode=401,
+                status_code=401,
                 details=None,
             )
         return cls(
             code=ErrorCode.INTERNAL_ERROR,
             message=str(exc) or "Unexpected error",
-            statusCode=500,
+            status_code=500,
             details=None,
         )
 
@@ -82,7 +82,7 @@ class AppError(BaseModel):
         return cls(
             code=ErrorCode.INTERNAL_ERROR,
             message="Unexpected error while processing request",
-            statusCode=500,
+            status_code=500,
             details=None,
         )
 

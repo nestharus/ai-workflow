@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     """Runtime configuration loaded from environment variables.
 
     Includes Knowledge Graph infrastructure settings for SurrealDB and Elasticsearch.
+
+    WARNING: Several security-related defaults below are permissive for local development
+    convenience and MUST be tightened in production deployments. See inline comments on
+    allowed_hosts, cors_enabled, cors_allow_methods, and cors_allow_headers for guidance.
     """
 
     app_name: str = "AI Workflow API"
@@ -87,15 +91,27 @@ class Settings(BaseSettings):
 
     enable_gzip: bool = False
     enforce_https: bool = False
+    # Production: restrict to specific domains, e.g., ["example.com", "*.example.com"]
     allowed_hosts: list[str] = Field(default_factory=lambda: ["*"])
+    # Production: enable only when cross-origin browser clients are expected
     cors_enabled: bool = False
     cors_allow_origins: list[str] = Field(default_factory=list)
     cors_allow_origin_regex: str | None = None
+    # Production: restrict to specific methods, e.g., ["GET", "POST", "PUT", "DELETE"]
     cors_allow_methods: list[str] = Field(default_factory=lambda: ["*"])
+    # Production: restrict to specific headers, e.g., ["Authorization", "Content-Type"]
     cors_allow_headers: list[str] = Field(default_factory=lambda: ["*"])
     cors_expose_headers: list[str] = Field(default_factory=list)
     cors_allow_credentials: bool = False
     cors_max_age: int = 600
+
+    # Observability and traffic control middleware toggles
+    enable_request_id: bool = True
+    enable_request_logging: bool = True
+    enable_metrics: bool = False
+    enable_rate_limiting: bool = False
+    rate_limit_requests: int = 100
+    rate_limit_window_seconds: int = 60
 
     surrealdb_url: str = "ws://localhost:8000/rpc"
     surrealdb_namespace: str = "knowledge"

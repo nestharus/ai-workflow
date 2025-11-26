@@ -79,8 +79,20 @@ class OrderService:
             OrderNotFoundError: If the order does not exist.
             PaymentFailedError: If the payment capture fails.
         """
-        # Business logic implementation
-        pass
+        # 1. Fetch order from repository
+        order = await self.order_repository.get_by_id(order_id)
+        if order is None:
+            raise OrderNotFoundError(order_id)
+
+        # 2. Capture payment via gateway
+        payment_result = await self.payment_gateway.capture(order.payment_intent_id)
+        if not payment_result.success:
+            raise PaymentFailedError(order_id, payment_result.error)
+
+        # 3. Update order status and persist
+        order.status = OrderStatus.PROCESSED
+        await self.order_repository.update(order)
+        return order
 
     async def shutdown(self) -> None:
         """Cleanup resources if necessary (e.g., closing specific connections)."""

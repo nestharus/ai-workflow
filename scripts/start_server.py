@@ -1,4 +1,10 @@
-"""Launch the AI Workflow API server with CLI controls and health validation."""
+"""Launch the AI Workflow API server with CLI controls and health validation.
+
+Security note: This script is intended for use by trusted operators only. The HOST
+and PORT values must come from controlled sources (CLI arguments or trusted environment
+variables), not from untrusted user input. The urllib.request.urlopen call in health
+checking is used intentionally with a controlled URL built from these trusted values.
+"""
 
 from __future__ import annotations
 

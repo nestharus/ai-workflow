@@ -20,6 +20,7 @@ It supports two distinct testing tiers:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -75,12 +76,16 @@ def test_settings() -> Settings:
     """
     Provide a Settings instance for testing.
 
-    Note: This currently uses default values as the Settings model is simple.
-    In the future, if testing-specific overrides (like debug flags or mocked paths)
-    are added to Settings, they should be explicitly configured here to ensure
-    reproducible test environments.
+    Explicitly provides test-safe credentials so tests do not depend on external
+    environment variables. In the future, if testing-specific overrides (like debug
+    flags or mocked paths) are added to Settings, they should be explicitly
+    configured here to ensure reproducible test environments.
     """
-    return Settings()
+    # Test-only credentials that satisfy complexity requirements; never used in production
+    return Settings(
+        surrealdb_user="TestUser12!Abc#",
+        surrealdb_pass="TestPass12!Xyz$",  # noqa: S106
+    )
 
 
 @pytest.fixture
@@ -128,6 +133,11 @@ def _resolve_test_port() -> int:
     except ValueError:
         logger.warning("Invalid TEST_PORT '%s'; falling back to ephemeral port", env_port)
 
+    # NOTE: Race condition exists here. The port is freed when the socket closes,
+    # allowing another process to claim it before Docker binds. Mitigations include:
+    # - Keeping the socket open until the service binds (not always feasible)
+    # - Letting Docker pick and reading the mapped port afterward
+    # - Retrying on bind failure with a new ephemeral port
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("", 0))
         _, port = sock.getsockname()
@@ -166,14 +176,18 @@ def live_server() -> Iterator[str]:
     stack_name = "docker-compose stack"
 
     # Run docker-compose to build and start the api stack with dependencies
-    _docker_run(
-        ["compose", "-f", "docker-compose.yml", "up", "-d", "--build", "api"],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        env=compose_env,
-    )
-    # 4. Poll for health
+    try:
+        _docker_run(
+            ["compose", "-f", "docker-compose.yml", "up", "-d", "--build", "api"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            env=compose_env,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr_output = exc.stderr.decode("utf-8") if exc.stderr else ""
+        raise DockerBuildError(stderr_output) from exc
+    # Poll for health
     start_time = time.time()
     timeout = 20.0  # seconds
     healthy = False
@@ -182,7 +196,12 @@ def live_server() -> Iterator[str]:
         while time.time() - start_time < timeout:
             try:
                 response = client.get(f"{BASE_URL}/health")
-                if response.status_code == 200 and response.json().get("status") == "ok":
+                try:
+                    payload = response.json()
+                except (json.JSONDecodeError, ValueError):
+                    time.sleep(0.5)
+                    continue
+                if response.status_code == 200 and payload.get("status") == "ok":
                     healthy = True
                     break
             except httpx.RequestError:

@@ -18,6 +18,8 @@ def run_pre_commit_install() -> None:
     if uv_exe is None:
         raise UvNotFoundError()
 
+    # Vetted ruff S603 exception: list-based subprocess call without shell=True is safe;
+    # uv_exe is resolved from PATH via shutil.which, not from untrusted input.
     subprocess.check_call([uv_exe, "run", "--group", "dev", "pre-commit", "install"])  # noqa: S603
 
 

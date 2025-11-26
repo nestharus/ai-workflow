@@ -10,7 +10,8 @@ from fastapi import Depends, Request
 
 from app.core.dependencies import get_settings
 from app.core.settings import Settings
-from app.infrastructure.db_connections import ElasticsearchWrapper, SurrealDBPool
+from app.infrastructure.elasticsearch import ElasticsearchWrapper
+from app.infrastructure.surrealdb import SurrealDBPool
 from app.repositories.example_repository import (
     ExampleRepository,
     ExampleRepositoryProtocol,

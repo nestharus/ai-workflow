@@ -275,7 +275,8 @@ during testing without changing application code.
 **Testing Pattern:**
 
 ```python
-from app.main import app
+from app.core.factory import create_app
+from app.core.dependencies import get_settings
 from app.api.v1.dependencies import get_db_session
 
 async def override_get_db_session():
@@ -283,15 +284,24 @@ async def override_get_db_session():
         yield conn
 
 def test_create_item():
+    # Create app via factory to avoid main-level side effects
+    test_settings = Settings(surrealdb_user="TestUser12!Abc#", surrealdb_pass="TestPass12!Xyz$")
+    app = create_app(test_settings)
+    
     # Override the dependency
     app.dependency_overrides[get_db_session] = override_get_db_session
     
     # Run test
-    client.post("/items/", json={...})
+    with TestClient(app) as client:
+        client.post("/items/", json={...})
     
     # Clean up
-    app.dependency_overrides = {}
+    app.dependency_overrides.clear()
 ```
+
+Note: The factory `create_app` should be used instead of importing from `app.main` to avoid
+triggering environment validation and side effects. Tests should construct the app with explicit
+test settings that include safe credentials.
 
 The test suite's composition root in `tests/conftest.py` centralizes fixture patterns: integration
 tests use `test_settings`, `test_app`, and `async_client` fixtures to exercise the in-process app

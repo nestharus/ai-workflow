@@ -90,6 +90,11 @@ if [[ "$SONAR_HOST_URL" == "$DEFAULT_SONAR_HOST_URL" && -z "${ALLOW_DEFAULT_SONA
 fi
 
 # Run Docker command
+# Security notes:
+# - CACHE_DIR permissions should be restricted to the runner user (not world-writable).
+# - SONAR_TOKEN should have minimal scope (scan-only, not admin); rotate if broader rights exist.
+# - In CI/CD, store SONAR_TOKEN in the secret store, mark as protected/masked, and avoid echoing.
+# - Consider using Docker secrets or env-file managed by CI instead of inline env vars.
 docker run \
     --rm \
     -v "$CACHE_DIR":/opt/sonar-scanner/.sonar/cache \

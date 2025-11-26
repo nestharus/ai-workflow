@@ -43,6 +43,7 @@ PYMARKDOWN_EXCLUDES = [
     ".uv-cache",
     ".cache",
     ".knowledge/knowledge.duckdb",
+    ".serena/**",
 ]
 PYMARKDOWN_TARGETS: list[str] = ["README.md", "AGENTS.md", "docs/**", "scripts/knowledge/README.md"]
 

@@ -16,8 +16,8 @@ services:
       - SURREALDB_URL=ws://surrealdb:8000/rpc
       - SURREALDB_NAMESPACE=knowledge
       - SURREALDB_DATABASE=facts
-      - SURREALDB_USER=root
-      - SURREALDB_PASS=root
+      - SURREALDB_USER=DevRootUser1!
+      - SURREALDB_PASS=DevRootPass1!
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       # - LOG_LEVEL=debug
     depends_on:
@@ -28,25 +28,29 @@ services:
     restart: unless-stopped
 
   surrealdb:
-    image: surrealdb/surrealdb:v2.3.10
+    # Using -dev image which includes shell utilities needed for healthcheck
+    image: surrealdb/surrealdb:v2.3.10-dev
     container_name: ai-workflow-surrealdb
+    # Run as root inside the container to avoid permission issues with Docker volumes
+    user: root
     # SurrealDB listens on 8000 inside its container and is reachable by other services via surrealdb:8000; only api publishes 8000 to the host, so there's no host port conflict.
-    command: ["start", "--log", "trace", "--user", "root", "--pass", "root", "file:/data/database.db"]
+    command: ["start", "--log", "trace", "--user", "DevRootUser1!", "--pass", "DevRootPass1!", "surrealkv:/data/database.db"]
     volumes:
       - surrealdb_data:/data
     healthcheck:
-      test: ["CMD", "surreal", "isready", "--conn", "http://localhost:8000"]
-      interval: 30s
-      timeout: 10s
-      start_period: 5s
-      retries: 3
+      test: ["CMD", "/surreal", "isready", "--conn", "http://localhost:8000"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
     restart: unless-stopped
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:9.2.1
     container_name: ai-workflow-elasticsearch
+    # Bind to localhost only; other Docker services can reach it via elasticsearch:9200
     ports:
-      - "9200:9200"
+      - "127.0.0.1:9200:9200"
     environment:
       - discovery.type=single-node
       # Disable security only for local development; enable auth, TLS, and access controls in production.

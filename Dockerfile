@@ -1,3 +1,7 @@
+# Pinned uv version for reproducible builds.
+ARG UV_VERSION=0.7.2
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
+
 # Phase 1: Builder
 # Base image exists and project targets Python 3.14.
 FROM python:3.14-slim AS builder
@@ -11,9 +15,8 @@ WORKDIR /app
 # Set shell to strict mode
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Install uv by copying the prebuilt binary from the official image
-# This is the official practice from uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Install uv by copying the prebuilt binary from the official image.
+COPY --from=uv /uv /usr/local/bin/uv
 
 # Copy dependency files
 COPY pyproject.toml uv.lock README.md LICENSE ./
@@ -30,6 +33,7 @@ COPY tools ./tools
 RUN uv pip install --no-cache .
 
 # Phase 2: Runtime
+# This is using the same image as the builder
 FROM python:3.14-slim
 
 # Set environment variables

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Final, Protocol
 
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from app.infrastructure.db_connections import SurrealDBPool
+    from app.infrastructure.surrealdb import SurrealDBPool
+
+PROCESSED_MESSAGES_TABLE: Final[str] = "processed_messages"
 
 
 class ExampleRepositoryProtocol(Protocol):
@@ -20,7 +22,7 @@ class ExampleRepositoryProtocol(Protocol):
         ...
 
 
-class ExampleRepository:
+class ExampleRepository(ExampleRepositoryProtocol):
     """Concrete repository implementation for example domain using SurrealDB."""
 
     def __init__(self, pool: SurrealDBPool) -> None:
@@ -32,7 +34,7 @@ class ExampleRepository:
     ) -> None:
         """Persist a processed message record to SurrealDB."""
         query = (
-            "CREATE processed_messages SET "
+            f"CREATE {PROCESSED_MESSAGES_TABLE} SET "
             "content = $content, type = $type, processed_at = $processed_at;"
         )
         params = {

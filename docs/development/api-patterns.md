@@ -173,7 +173,7 @@ The generated OpenAPI schema is the external contract; routes must be documented
   * Add a `Deprecation` response header when an endpoint is deprecated (e.g., `Deprecation: true` or a
     deprecation date string).
   * When a removal date is known, include a `Sunset` header with an RFC 1123 timestamp (e.g.,
-    `Sunset: Wed, 30 Jun 2025 23:59:59 GMT`).
+    `Sunset: Mon, 30 Jun 2025 23:59:59 GMT`).
 * **Changelog**: Any breaking or deprecating change must be documented in the API changelog, including
   migration guidance to replacement endpoints or versions.
 

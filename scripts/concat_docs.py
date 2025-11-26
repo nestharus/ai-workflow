@@ -53,7 +53,7 @@ def _iter_docs_files() -> list[Path]:
         raise FileNotFoundError(msg)
 
     files = [path for path in DOCS_DIR.iterdir() if path.is_file()]
-    return sorted(files, key=lambda path: path.name)
+    return sorted(files, key=lambda path: str(path.relative_to(REPO_ROOT)))
 
 
 def concatenate_docs(output_path: Path) -> None:
@@ -62,11 +62,14 @@ def concatenate_docs(output_path: Path) -> None:
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    written_index = 0
     with output_path.open("w", encoding="utf-8") as destination:
-        for index, file_path in enumerate(files):
+        for file_path in files:
+            if file_path.resolve() == output_path:
+                continue
             relative_label = file_path.resolve().relative_to(REPO_ROOT)
             heading = f"===== {relative_label.as_posix()} =====\n"
-            if index:
+            if written_index:
                 destination.write("\n")
             destination.write(heading)
 
@@ -74,6 +77,7 @@ def concatenate_docs(output_path: Path) -> None:
             destination.write(content)
             if not content.endswith("\n"):
                 destination.write("\n")
+            written_index += 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
