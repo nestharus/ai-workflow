@@ -97,8 +97,16 @@ def test_validation_error_body_omitted_when_disabled(validation_client: TestClie
     response = validation_client.post(f"{api_prefix}/examples/process", json={})
     assert response.status_code == 400
     payload = response.json()
-    assert "body" not in payload
-    assert payload["detail"] == _expected_detail()
+
+    # Verify AppError envelope structure
+    assert payload["code"] == "VALIDATION_ERROR"
+    assert payload["message"] == "Request validation failed"
+    assert payload["statusCode"] == 400
+
+    # Verify validation details in the details field
+    assert "details" in payload
+    assert "body" not in payload["details"]
+    assert payload["details"]["detail"] == _expected_detail()
 
 
 def test_validation_error_body_echoed_when_enabled(
@@ -110,8 +118,16 @@ def test_validation_error_body_echoed_when_enabled(
     )
     assert response.status_code == 400
     payload = response.json()
-    assert payload["body"] == {"type": "info"}
-    assert payload["detail"] == _expected_detail()
+
+    # Verify AppError envelope structure
+    assert payload["code"] == "VALIDATION_ERROR"
+    assert payload["message"] == "Request validation failed"
+    assert payload["statusCode"] == 400
+
+    # Verify validation details in the details field with body echoed
+    assert "details" in payload
+    assert payload["details"]["body"] == {"type": "info"}
+    assert payload["details"]["detail"] == _expected_detail()
 
 
 def test_validation_error_for_whitespace_message(validation_client: TestClient) -> None:
@@ -121,4 +137,12 @@ def test_validation_error_for_whitespace_message(validation_client: TestClient) 
     )
     assert response.status_code == 400
     payload = response.json()
-    assert payload["detail"] == _expected_whitespace_detail()
+
+    # Verify AppError envelope structure
+    assert payload["code"] == "VALIDATION_ERROR"
+    assert payload["message"] == "Request validation failed"
+    assert payload["statusCode"] == 400
+
+    # Verify validation details in the details field
+    assert "details" in payload
+    assert payload["details"]["detail"] == _expected_whitespace_detail()

@@ -1,4 +1,10 @@
-"""Error response contracts for request validation failures."""
+"""Error response contracts for all API error responses.
+
+This module defines the canonical error envelope (`AppError`) used for all HTTP error
+responses, including validation errors, domain errors, and internal errors. The
+`HTTPValidationError` model is used internally to structure field-level validation
+details that are nested in the `AppError.details` field for validation failures.
+"""
 
 from __future__ import annotations
 
@@ -86,6 +92,27 @@ class AppError(BaseModel):
             details=None,
         )
 
+    @classmethod
+    def from_validation_error(cls, validation_error: HTTPValidationError) -> AppError:
+        """Wrap an HTTPValidationError in the standard AppError envelope.
+
+        Args:
+            validation_error: The HTTPValidationError instance containing field-level
+                validation details.
+
+        Returns:
+            AppError envelope with code=VALIDATION_ERROR, status_code=400, and the
+            HTTPValidationError payload serialized in the details field.
+        """
+        return cls(
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Request validation failed",
+            status_code=400,
+            details=validation_error.model_dump(
+                mode="json", exclude_none=True, exclude_unset=True
+            ),
+        )
+
 
 class ValidationErrorDetail(BaseModel):
     """Represents a single validation failure with optional context."""
@@ -123,8 +150,12 @@ class HTTPValidationError(BaseModel):
 
 
 VALIDATION_ERROR_RESPONSE: Final[dict[str, Any]] = {
-    "model": HTTPValidationError,
-    "description": "Validation Error",
+    "model": AppError,
+    "description": (
+        "Validation Error - Request validation failed. The response uses the standard "
+        "AppError envelope with code='VALIDATION_ERROR' and detailed field-level "
+        "validation errors in the 'details' field."
+    ),
 }
 
 __all__ = [

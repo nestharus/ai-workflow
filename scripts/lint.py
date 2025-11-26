@@ -117,6 +117,7 @@ def main() -> int:
         for pattern in PYMARKDOWN_EXCLUDES:
             pymarkdown_cmd.extend(["-e", pattern])
         _run_checked(pymarkdown_cmd)
+        _run_checked([uv_exe, "run", "validate-toon"])
         if not OPENAPI_SCHEMA.exists():
             print(
                 f"OpenAPI schema missing at {OPENAPI_SCHEMA}. Run `uv run gen_openapi` first.",

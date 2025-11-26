@@ -64,7 +64,11 @@ Runs a comprehensive suite of static analysis and security tools.
   1. `ruff format .`: Auto-formats code
   2. `ruff check --fix .`: Fixes linting issues
   3. `mypy`: Type checking
-  4. `checkov`: Scans the generated `openapi/openapi.json` against policies in
+  4. `hadolint`: Lints Dockerfiles
+  5. `pymarkdown`: Validates Markdown files
+  6. `validate-toon`: Validates all `.toon` files for syntax and structural correctness
+     per the TOON specification
+  7. `checkov`: Scans the generated `openapi/openapi.json` against policies in
      `.checkov.yaml`
 * **Prerequisite**: Run `uv run gen_openapi` first to generate the schema for Checkov
 * **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when

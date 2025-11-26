@@ -51,10 +51,12 @@ Standard semantics with a strict rule for validation failures:
   overriding FastAPI's default `422 Unprocessable Entity` for `RequestValidationError`.
   * `create_app` registers `validation_exception_handler` from `app/core/exceptions.py` as the global
     handler for `RequestValidationError`.
-  * That handler returns a `400` response with a body shaped by the `HTTPValidationError` model in
-    `app/contracts/errors.py`.
+  * That handler returns a `400` response with an `AppError` envelope containing the
+    `HTTPValidationError` payload in the `details` field. This ensures all error responses share the
+    same top-level structure (`code`, `message`, `statusCode`, `details`).
   * Route decorators should reuse `VALIDATION_ERROR_RESPONSE` from `app/contracts/errors.py` in the
-    `responses` section for `400` entries.
+    `responses` section for `400` entries. This constant now references `AppError` for OpenAPI
+    documentation consistency.
 
 ## 3. Request/Response Modeling
 
@@ -115,10 +117,12 @@ The generated OpenAPI schema is the external contract; routes must be documented
 * **tags**: Group endpoints by domain (e.g., `tags=["Users"]`, `tags=["Health"]`).
 * **Error responses**:
   * Document non-success responses using the `responses` parameter.
-  * For request validation, use `VALIDATION_ERROR_RESPONSE` so schemas align with
-    `HTTPValidationError`.
-  * `create_app` customizes OpenAPI generation to register the `HTTPValidationError` schema and its
-    nested types; do not duplicate these definitions by hand.
+  * For request validation, use `VALIDATION_ERROR_RESPONSE` to document a `400` response using the
+    `AppError` envelope as the top-level error schema. The `HTTPValidationError` payload containing
+    field-level validation details is nested inside `AppError.details`.
+  * `create_app` customizes OpenAPI generation to register both the `AppError` schema (used for all
+    error responses) and the `HTTPValidationError` schema (for the nested validation structure);
+    do not duplicate these definitions by hand.
 * **Consistency**: Router-specific documentation details (e.g., shared `responses`) belong in
   router-level patterns; this document defines only the API-wide expectations they should satisfy.
 
@@ -135,18 +139,17 @@ The generated OpenAPI schema is the external contract; routes must be documented
   until a concrete generic `Paginated[T]` model is introduced under `app/contracts/`. New paginated
   endpoints should follow these field names to ease future migration.
 * **Error responses**:
-  * All error responses should share a common top-level envelope, conceptually an `AppError` schema
-    with `code`, `message`, `status_code`, and optional `details` fields.
-  * Validation failures continue to use `HTTPValidationError` to describe field-level issues (with
-    `detail` and optional `body`), but where feasible they should be exposed through the same top-level
-    `AppError` structure (for example, by placing the `HTTPValidationError` payload inside the
-    `details` field).
-  * Non-validation errors (for example, domain or infrastructure failures) must also use the `AppError`
-    envelope with domain-specific `code` values and contextual `details`.
-  * TODO: Introduce a concrete `AppError` Pydantic model under `app/contracts/errors.py` and align
-    global exception handling (including the existing validation handler in `app/core/exceptions.py`)
-    so that all non-validation errors, and where feasible validation errors, are exposed through this
-    envelope and documented consistently.
+  * All error responses share a common top-level envelope using the `AppError` schema defined in
+    `app/contracts/errors.py` with `code`, `message`, `statusCode`, and optional `details` fields.
+  * Validation failures use the `AppError` envelope with `code="VALIDATION_ERROR"` and the
+    `HTTPValidationError` payload (containing field-level `detail` and optional `body`) placed in the
+    `details` field. This provides a consistent top-level structure while preserving detailed
+    validation information.
+  * Non-validation errors (for example, domain or infrastructure failures) use the `AppError` envelope
+    with domain-specific `code` values (from the `ErrorCode` enum) and contextual `details` where
+    applicable.
+  * Route decorators use `VALIDATION_ERROR_RESPONSE` (which now references `AppError`) for `400`
+    responses and `{"model": AppError, "description": "..."}` for other error status codes.
   * TODO: Once a generic `Paginated[T]` model exists under `app/contracts/`, update routers and this
     document to reference that model as the canonical pagination schema instead of treating
     `Paginated[T]` as purely conceptual.

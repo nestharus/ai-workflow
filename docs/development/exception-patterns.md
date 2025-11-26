@@ -14,10 +14,12 @@ Primary runtime references:
 * `tests/unit/test_validation_errors.py` – baseline tests for request validation behavior.
 * `app/contracts/example_contract.py` – validation constants used to constrain error payloads.
 
-This document standardizes a single error response vocabulary with two core shapes:
+This document standardizes a single error response vocabulary:
 
-* `HTTPValidationError` – field-level validation issues for requests.
-* `AppError` – top-level envelope for all domain and infrastructure errors.
+* `AppError` – the canonical top-level envelope for **all** error responses, including validation errors,
+  domain errors, and infrastructure errors.
+* `HTTPValidationError` – used internally to structure field-level validation details that are nested in
+  the `AppError.details` field for validation failures.
 
 ## 1. Exception Hierarchy
 
@@ -47,9 +49,9 @@ Key rules:
 
 ## 2. AppError Response Model
 
-All non-validation error responses use a single envelope modeled by `AppError` in
-`app/contracts/errors.py`. This envelope provides a stable JSON contract for the frontend
-and external consumers.
+All error responses use a single envelope modeled by `AppError` in `app/contracts/errors.py`.
+This envelope provides a stable JSON contract for the frontend and external consumers. This
+includes validation errors, which wrap the `HTTPValidationError` payload in the `details` field.
 
 Conceptual model:
 
@@ -86,6 +88,25 @@ JSON examples:
   }
   ```
 
+* Validation error example:
+
+  ```json
+  {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed",
+    "statusCode": 400,
+    "details": {
+      "detail": [
+        {
+          "loc": ["body", "message"],
+          "msg": "Field required",
+          "type": "missing"
+        }
+      ]
+    }
+  }
+  ```
+
 Usage guidelines:
 
 * Routes describing non-validation failures must document `AppError` in their `responses` section,
@@ -102,8 +123,9 @@ registered in `create_app` in `app/core/factory.py` using `app.add_exception_han
 The application uses three layers of handlers:
 
 * **Request validation handler**: Registered for `RequestValidationError` and implemented as
-  `validation_exception_handler` in `app/core/exceptions.py`. It returns `HTTPValidationError`
-  payloads with status code `400`.
+  `validation_exception_handler` in `app/core/exceptions.py`. It wraps the `HTTPValidationError`
+  details in `AppError.details` and returns an `AppError` envelope with `code=ErrorCode.VALIDATION_ERROR`
+  and `statusCode=400`.
 * **Domain error handler**: Registered for `DomainError` and responsible for mapping domain-specific
   exceptions to appropriate HTTP status codes and `AppError` responses.
 * **Catch-all handler** (optional but recommended): Registered for `Exception` as a last resort to
@@ -155,8 +177,12 @@ manually returning `ORJSONResponse` objects.
 Request validation behavior is centralized in `validation_exception_handler` in
 `app/core/exceptions.py` and the models in `app/contracts/errors.py`.
 
-`HTTPValidationError` and its nested `ValidationErrorDetail` model define the canonical shape of
-validation failures:
+The handler wraps validation errors in the `AppError` envelope with `code=VALIDATION_ERROR`,
+ensuring all error responses share the same top-level structure. The `HTTPValidationError`
+payload (containing field-level details) is placed in the `AppError.details` field.
+
+`HTTPValidationError` and its nested `ValidationErrorDetail` model define the structure of the
+validation details nested inside `AppError.details`:
 
 * `ValidationErrorDetail` fields:
   * `loc: list[str | int]` – location of the failing field (for example, `"body"`, `"query"`,
@@ -182,17 +208,22 @@ Implementation rules derived from `app/core/exceptions.py` and `app/contracts/ex
 * The handler logs each validation failure at warning level and truncates the serialized error list
   in logs to avoid flooding storage.
 
-Example response body for a missing field:
+Example response body for a missing field (wrapped in `AppError`):
 
 ```json
 {
-  "detail": [
-    {
-      "loc": ["body", "message"],
-      "msg": "Field required",
-      "type": "missing"
-    }
-  ]
+  "code": "VALIDATION_ERROR",
+  "message": "Request validation failed",
+  "statusCode": 400,
+  "details": {
+    "detail": [
+      {
+        "loc": ["body", "message"],
+        "msg": "Field required",
+        "type": "missing"
+      }
+    ]
+  }
 }
 ```
 
@@ -270,20 +301,22 @@ async def resource_not_found_handler(request: Request, exc: ResourceNotFoundErro
 
 ## 7. Error Response Structure
 
-The backend exposes two complementary error shapes, each with a specific purpose.
+The backend exposes a unified error envelope using `AppError` for all error types.
+
+* **All errors** – validation, domain, and infrastructure failures:
+  * Represented by `AppError` in `app/contracts/errors.py`.
+  * Body shape: `{ "code": "ERROR_CODE", "message": "...", "statusCode": 4xx/5xx, "details": { ... } }`.
+  * The `details` field contains type-specific information (validation details, domain context, etc.).
 
 * **Validation failures** – request-shape problems:
-  * Represented by `HTTPValidationError` in `app/contracts/errors.py`.
-  * Returned as `400 Bad Request`.
-  * Body shape: `{ "detail": [ValidationErrorDetail, ...], "body": ... }` (with `body` optionally
-    omitted).
+  * Returned as `400 Bad Request` with `code="VALIDATION_ERROR"`.
+  * The `details` field contains the `HTTPValidationError` payload with field-level `detail` and
+    optional `body`.
 
 * **Domain and infrastructure errors** – business logic and internal failures:
-  * Represented by `AppError`.
   * Returned with status codes matching the semantics of the error (`404`, `400`, `401`, `403`,
     `409`, `500`, etc.).
-  * Body shape: `{ "code": "ERROR_CODE", "message": "...", "statusCode": 4xx/5xx,
-    "details": { ... } }`.
+  * The `code` field uses domain-specific values from the `ErrorCode` enum.
 
 Examples:
 
@@ -297,17 +330,22 @@ Examples:
   }
   ```
 
-* Validation error:
+* Validation error (now wrapped in `AppError`):
 
   ```json
   {
-    "detail": [
-      {
-        "loc": ["body", "message"],
-        "msg": "Field required",
-        "type": "missing"
-      }
-    ]
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed",
+    "statusCode": 400,
+    "details": {
+      "detail": [
+        {
+          "loc": ["body", "message"],
+          "msg": "Field required",
+          "type": "missing"
+        }
+      ]
+    }
   }
   ```
 
@@ -340,12 +378,13 @@ Guidelines:
 ## 9. OpenAPI Error Documentation
 
 Error responses must be documented explicitly in OpenAPI using shared models and response
-definitions.
+definitions. All error responses now use the `AppError` envelope for consistency.
 
 Patterns:
 
 * Reuse `VALIDATION_ERROR_RESPONSE` from `app/contracts/errors.py` for `400` validation failures
-  in route decorators, for example:
+  in route decorators. This constant now references `AppError` (not `HTTPValidationError`) so that
+  all error responses share the same top-level schema in OpenAPI. For example:
 
   ```python
   from app.contracts.errors import VALIDATION_ERROR_RESPONSE

@@ -43,7 +43,16 @@ def _sanitize_validation_errors(errors: Sequence[dict[str, Any]]) -> list[Valida
 
 
 async def validation_exception_handler(request: Request, exc: Exception) -> ORJSONResponse:
-    """Format request validation errors as a structured JSON response."""
+    """Format request validation errors as a structured JSON response.
+
+    Wraps the HTTPValidationError payload in the standard AppError envelope with
+    code=VALIDATION_ERROR and status_code=400. The detailed field-level validation
+    information is preserved in the AppError.details field.
+
+    Returns:
+        ORJSONResponse with status 400 and an AppError payload containing the
+        validation details.
+    """
     if not isinstance(exc, RequestValidationError):
         raise TypeError from exc
     sanitized_errors = _sanitize_validation_errors(exc.errors())
@@ -65,19 +74,24 @@ async def validation_exception_handler(request: Request, exc: Exception) -> ORJS
         except ValueError:
             body_content = None
 
+    if include_error_body:
+        validation_error = HTTPValidationError(detail=sanitized_errors, body=body_content)
+    else:
+        validation_error = HTTPValidationError(detail=sanitized_errors)
+
+    app_error = AppError.from_validation_error(validation_error)
+
     logger.warning(
-        "Validation error on %s %s: %s",
+        "Validation error on %s %s [%s]: %s",
         request.method,
         request.url.path,
+        app_error.code,
         str(sanitized_errors)[:1000],
     )
-    if include_error_body:
-        response_model = HTTPValidationError(detail=sanitized_errors, body=body_content)
-    else:
-        response_model = HTTPValidationError(detail=sanitized_errors)
+
     return ORJSONResponse(
         status_code=400,
-        content=response_model.model_dump(mode="json", exclude_none=True, exclude_unset=True),
+        content=app_error.model_dump(mode="json", by_alias=True, exclude_none=True),
     )
 
 

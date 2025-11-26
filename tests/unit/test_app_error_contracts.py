@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from app.contracts.errors import AppError, ErrorCode
+from app.contracts.errors import (
+    AppError,
+    ErrorCode,
+    HTTPValidationError,
+    ValidationErrorDetail,
+)
 from app.core.errors import DomainValidationError, ResourceNotFoundError, UnauthorizedError
 
 
@@ -56,3 +61,69 @@ def test_serialization_uses_alias_and_omits_null_details() -> None:
     assert payload["statusCode"] == 401
     assert payload["code"] == ErrorCode.UNAUTHORIZED
     assert "details" not in payload
+
+
+def test_from_validation_error_without_body() -> None:
+    """Test that from_validation_error creates correct AppError envelope without body."""
+    validation_detail = ValidationErrorDetail(
+        loc=["body", "message"],
+        msg="Field required",
+        type="missing",
+        ctx=None,
+    )
+    validation_error = HTTPValidationError(detail=[validation_detail])
+
+    error = AppError.from_validation_error(validation_error)
+
+    assert error.code is ErrorCode.VALIDATION_ERROR
+    assert error.status_code == 400
+    assert error.message == "Request validation failed"
+    assert error.details is not None
+    assert "detail" in error.details
+    assert len(error.details["detail"]) == 1
+    assert error.details["detail"][0]["loc"] == ["body", "message"]
+    assert error.details["detail"][0]["msg"] == "Field required"
+    assert error.details["detail"][0]["type"] == "missing"
+    # Body should not be present when not explicitly set
+    assert "body" not in error.details
+
+
+def test_from_validation_error_with_body() -> None:
+    """Test that from_validation_error preserves body when included."""
+    validation_detail = ValidationErrorDetail(
+        loc=["body", "email"],
+        msg="Invalid email format",
+        type="value_error",
+        ctx={"pattern": "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"},
+    )
+    request_body = {"email": "invalid-email", "name": "Test User"}
+    validation_error = HTTPValidationError(detail=[validation_detail], body=request_body)
+
+    error = AppError.from_validation_error(validation_error)
+
+    assert error.code is ErrorCode.VALIDATION_ERROR
+    assert error.status_code == 400
+    assert error.details is not None
+    assert "detail" in error.details
+    assert "body" in error.details
+    assert error.details["body"] == request_body
+
+
+def test_validation_error_serialization_uses_alias() -> None:
+    """Test that validation error serialization uses statusCode alias."""
+    validation_detail = ValidationErrorDetail(
+        loc=["body", "field"],
+        msg="Test error",
+        type="test",
+    )
+    validation_error = HTTPValidationError(detail=[validation_detail])
+    error = AppError.from_validation_error(validation_error)
+
+    payload = error.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+    assert "statusCode" in payload
+    assert "status_code" not in payload
+    assert payload["statusCode"] == 400
+    assert payload["code"] == "VALIDATION_ERROR"
+    assert "details" in payload
+    assert "detail" in payload["details"]
