@@ -151,7 +151,7 @@ sections[13]:
         text: Achieve the desired execution order by registering middleware in reverse: logging/metrics → GZip → SecurityHeaders → CORS → TrustedHost, optionally followed by ProxyHeadersMiddleware as the outermost layer.
       - id: cors.settings-fields
         type: rule
-        text: Configure CORS via Settings fields such as cors_enabled: bool, cors_allow_origins: list[str], cors_allow_methods: list[str], and cors_allow_headers: list[str] (for example Authorization and Content-Type).
+        text: Configure CORS via Settings fields such as cors_enabled: bool, cors_allow_origins: list[str], cors_allow_methods: list[str] (default ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]), and cors_allow_headers: list[str] (for example Authorization and Content-Type).
       - id: cors.conditional-registration
         type: pattern
         text: Register CORSMiddleware in create_app only when settings.cors_enabled is True.
@@ -205,7 +205,7 @@ sections[13]:
         text: Implement RateLimitingMiddleware as the centralized enforcement point for per-IP fixed-window rate limiting, returning HTTP 429 with a Retry-After header when limits are exceeded.
       - id: obs.settings-toggles
         type: rule
-        text: Control observability middleware via Settings toggles such as enable_request_id, enable_request_logging, enable_metrics, enable_rate_limiting, rate_limit_requests, and rate_limit_window_seconds, wired from create_app.
+        text: Control observability middleware via Settings toggles such as enable_request_id (default True), enable_request_logging (default True), enable_metrics (default False), enable_rate_limiting (default False), rate_limit_requests (default 100), and rate_limit_window_seconds (default 60), wired from create_app.
       - id: obs.metrics-distinct-errors
         type: note
         text: Ensure metrics distinguish middleware-induced failures such as host rejections or rate limits from application-level errors so operators can diagnose issues quickly.

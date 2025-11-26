@@ -3,8 +3,8 @@ title: Docstrings Guide
 project: ai-workflow
 version_hint: "2024-2025"
 kind: documentation_style_guide
-description: Google-style docstring conventions and standards for documenting Python code, enforced through ruff and pymarkdown.
-scope: Defines docstring structure, formatting rules, and examples for modules, classes, functions, and methods.
+description: Google-style docstring conventions and standards for documenting Python code, enforced through ruff (with pydocstyle) and pymarkdown.
+scope: Use these conventions for all public modules, classes, functions, and methods.
 primary_runtime_references[0]:
 related_pattern_docs[0]:
 external_references[1]:
