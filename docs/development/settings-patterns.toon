@@ -151,7 +151,7 @@ sections[12]:
     title: Accessing Settings at Runtime
     category: standard
     summary: Patterns for retrieving Settings via the factory and dependency injection.
-    items[5]:
+    items[8]:
       - id: runtime.factory-entry
         type: rule
         text: Construct a single Settings instance at startup and pass it into create_app; treat that instance as the canonical configuration for the application lifecycle.
@@ -161,12 +161,21 @@ sections[12]:
       - id: runtime.get-settings-dep
         type: pattern
         text: Use get_settings in app/core/dependencies.py with @lru_cache to expose Settings via DI so routers can declare settings: Settings = Depends(get_settings).
-      - id: runtime.usage-patterns
-        type: note
-        text: Have routers, services, and infrastructure components accept Settings via constructor injection or dependency parameters and read only the fields they need; see service-patterns.toon for details on service constructor injection.
+      - id: runtime.routers-pattern
+        type: pattern
+        text: Routers accept Settings as a dependency and pass it into services or infrastructure factories as needed; routers must not construct Settings directly.
+      - id: runtime.services-pattern
+        type: pattern
+        text: Services receive Settings via constructor injection (see docs/development/service-patterns.toon) and use it for configuration-dependent behaviour such as timeouts or feature flags.
+      - id: runtime.infrastructure-pattern
+        type: pattern
+        text: Connection factories such as create_surrealdb_pool and create_elasticsearch_wrapper receive Settings instances and read only the fields they need.
       - id: runtime.single-instance
         type: rule
         text: Avoid constructing additional Settings instances at runtime; tests may create extra instances explicitly, but the running app should rely on a single shared instance.
+      - id: runtime.service-patterns-ref
+        type: note
+        text: For additional patterns on services that consume settings, see docs/development/service-patterns.toon.
   - id: settings-in-tests
     index: 8
     title: Settings in Tests
@@ -229,7 +238,7 @@ sections[12]:
     title: Settings Documentation and Naming
     category: standard
     summary: Documentation and naming conventions for configuration fields.
-    items[4]:
+    items[5]:
       - id: docs.self-documenting
         type: rule
         text: Make Settings fields self-documenting with clear names and type hints so their purpose and constraints are obvious.
@@ -239,6 +248,9 @@ sections[12]:
       - id: docs.env-var-alignment
         type: rule
         text: Keep environment variable names aligned with field names using BaseSettings conventions (for example surrealdb_url → SURREALDB_URL).
+      - id: docs.defaults-not-production
+        type: rule
+        text: Ensure defaults and valid ranges are consistent with operational expectations; for example, default pool sizes suitable for local development, not production maximums.
       - id: docs.unmodeled-config
         type: rule
         text: Treat configuration that is not modeled on Settings as effectively undocumented and refactor such values into the Settings model.
