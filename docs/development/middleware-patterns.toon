@@ -7,11 +7,12 @@ description: Standards for HTTP middleware in FastAPI covering ordering semantic
 scope: Defines middleware fundamentals, ordering, security headers, compression, CORS, proxy handling, observability, implementation patterns, configuration, error handling, testing, and anti-patterns.
 primary_runtime_references[3]:
   - path: app/core/factory.py
-    role: FastAPI application construction and middleware registration.
+    role: FastAPI application construction, middleware registration, and OpenAPI customization.
   - path: app/core/settings.py
     role: Settings model used to configure middleware behavior.
   - path: app/core/middleware.py
     role: Custom middleware implementations (security headers, request IDs, logging, metrics, rate limiting).
+pattern_guidance: Patterns in this document intentionally avoid concrete source line references. Use the high-level patterns when wiring or extending middleware in the application factory.
 related_pattern_docs[3]:
   - api-patterns.toon
   - exception-patterns.toon
@@ -22,6 +23,7 @@ sections[13]:
     title: Middleware Fundamentals and Ordering
     category: standard
     summary: Explains ASGI middleware semantics, stack behavior, and why middleware is the correct place for cross-cutting concerns.
+    asgi_context: FastAPI is built on Starlette and the ASGI specification, so any ASGI-compatible middleware can be used.
     items[5]:
       - id: mw.role-cross-cutting
         type: rule
@@ -151,7 +153,7 @@ sections[13]:
         text: Achieve the desired execution order by registering middleware in reverse: logging/metrics → GZip → SecurityHeaders → CORS → TrustedHost, optionally followed by ProxyHeadersMiddleware as the outermost layer.
       - id: cors.settings-fields
         type: rule
-        text: Configure CORS via Settings fields such as cors_enabled: bool, cors_allow_origins: list[str], cors_allow_methods: list[str] (default ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]), and cors_allow_headers: list[str] (for example Authorization and Content-Type).
+        text: Configure CORS via Settings fields with the following defaults: cors_enabled: bool = False, cors_allow_origins: list[str] = [], cors_allow_methods: list[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], cors_allow_headers: list[str] = ["Authorization", "Content-Type"].
       - id: cors.conditional-registration
         type: pattern
         text: Register CORSMiddleware in create_app only when settings.cors_enabled is True.
@@ -187,7 +189,7 @@ sections[13]:
     items[9]:
       - id: obs.logging-middleware
         type: pattern
-        text: Use RequestLoggingMiddleware in app/core/middleware.py to log method, path, status code, and latency per request using structured key–value logging instead of ad hoc logging in routers or services.
+        text: Use RequestLoggingMiddleware in app/core/middleware.py to log method, path, status code, and latency per request using structured key–value logging instead of ad hoc logging in routers or services. Exceptions are logged with traceback and re-raised.
       - id: obs.avoid-body-logging
         type: rule
         text: Avoid logging full request or response bodies by default to prevent leaking sensitive data; log only high-level metadata and sanitized attributes.
@@ -199,7 +201,7 @@ sections[13]:
         text: When an upstream system already provides an X-Request-ID, propagate that value rather than generating a new one to maintain trace continuity across services.
       - id: obs.metrics-middleware
         type: pattern
-        text: Use MetricsMiddleware to collect per-route metrics such as request counts, duration totals, and status code distributions, exposing them through a helper like get_metrics().
+        text: Use MetricsMiddleware to collect in-memory per-route metrics such as request counts, duration totals, and status code distributions, exposing them through a helper like get_metrics(). For production observability, integrate with Prometheus or OpenTelemetry via provider-specific middleware wrappers.
       - id: obs.rate-limiting-middleware
         type: pattern
         text: Implement RateLimitingMiddleware as the centralized enforcement point for per-IP fixed-window rate limiting, returning HTTP 429 with a Retry-After header when limits are exceeded.
@@ -238,7 +240,7 @@ sections[13]:
     items[5]:
       - id: config.settings-fields
         type: rule
-        text: Represent middleware configuration as explicit Settings fields (for example enable_gzip, enforce_https, allowed_hosts, cors_*, enable_request_logging, enable_rate_limiting) instead of hardcoding constants.
+        text: Represent middleware configuration as explicit Settings fields instead of hardcoding constants. Key defaults include enable_gzip: bool = True, enforce_https: bool = False (set to True in production), and allowed_hosts: list[str] = ["*"] (use explicit domains in production).
       - id: config.factory-wiring
         type: pattern
         text: Pass a Settings instance into create_app, store it on app.state.settings, and wire middleware registration exclusively in this function.
@@ -268,7 +270,7 @@ sections[13]:
         text: Middleware may log errors at appropriate levels and then re-raise them rather than returning ad hoc responses.
       - id: errors.contracts
         type: rule
-        text: Ensure middleware behavior remains compatible with the global AppError contracts defined in api-patterns.toon and exception-patterns.toon.
+        text: Ensure middleware behavior remains compatible with the error contracts defined in api-patterns.toon and exception-patterns.toon.
   - id: middleware-testing
     index: 12
     title: Testing Middleware
