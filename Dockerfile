@@ -15,6 +15,11 @@ WORKDIR /app
 # Set shell to strict mode
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# Install build dependencies for packages requiring compilation (e.g., duckdb)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends g++=4:14.2.0-1 && \
+    rm -rf /var/lib/apt/lists/*
+
 # Install uv by copying the prebuilt binary from the official image.
 COPY --from=uv /uv /usr/local/bin/uv
 

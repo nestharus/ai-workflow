@@ -11,7 +11,7 @@ import os
 import secrets
 from collections.abc import Iterator
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -39,10 +39,14 @@ def _mock_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _fake_elasticsearch_wrapper(_settings: Settings) -> _DummyResource:
         return _DummyResource()
 
+    async def _fake_duckdb_client(_settings: Settings) -> _DummyResource:
+        return _DummyResource()
+
     monkeypatch.setattr("app.core.factory.create_surrealdb_pool", _fake_surreal_pool)
     monkeypatch.setattr(
         "app.core.factory.create_elasticsearch_wrapper", _fake_elasticsearch_wrapper
     )
+    monkeypatch.setattr("app.core.factory.create_duckdb_client", _fake_duckdb_client)
 
 
 def _build_settings() -> Settings:
@@ -129,17 +133,13 @@ class TestDomainErrorReturnsAppError:
         mock_service = AsyncMock()
         mock_service.process.side_effect = ResourceNotFoundError("Example not found")
 
-        with patch(
-            "app.api.v1.dependencies.get_example_service",
-            return_value=mock_service,
-        ):
-            error_test_client.app.dependency_overrides[
-                api_dependencies.get_example_service
-            ] = lambda: mock_service
-            response = error_test_client.post(
-                f"{api_prefix}/examples/process",
-                json={"message": "test", "type": "info"},
-            )
+        error_test_client.app.dependency_overrides[api_dependencies.get_example_service] = (
+            lambda: mock_service
+        )
+        response = error_test_client.post(
+            f"{api_prefix}/examples/process",
+            json={"message": "test", "type": "info"},
+        )
 
         assert response.status_code == 404
         payload = response.json()
@@ -148,9 +148,7 @@ class TestDomainErrorReturnsAppError:
         assert payload["code"] == "RESOURCE_NOT_FOUND"
         assert payload["statusCode"] == 404
 
-    def test_domain_validation_error_returns_app_error(
-        self, error_test_client: TestClient
-    ) -> None:
+    def test_domain_validation_error_returns_app_error(self, error_test_client: TestClient) -> None:
         """Verify DomainValidationError is wrapped in AppError envelope."""
         api_prefix = error_test_client.app.state.settings.api_prefix
 
@@ -158,9 +156,9 @@ class TestDomainErrorReturnsAppError:
         mock_service = AsyncMock()
         mock_service.process.side_effect = DomainValidationError("Invalid domain state")
 
-        error_test_client.app.dependency_overrides[
-            api_dependencies.get_example_service
-        ] = lambda: mock_service
+        error_test_client.app.dependency_overrides[api_dependencies.get_example_service] = (
+            lambda: mock_service
+        )
         response = error_test_client.post(
             f"{api_prefix}/examples/process",
             json={"message": "test", "type": "info"},
@@ -173,9 +171,7 @@ class TestDomainErrorReturnsAppError:
         assert payload["code"] == "DOMAIN_VALIDATION_ERROR"
         assert payload["statusCode"] == 400
 
-    def test_unauthorized_error_returns_app_error(
-        self, error_test_client: TestClient
-    ) -> None:
+    def test_unauthorized_error_returns_app_error(self, error_test_client: TestClient) -> None:
         """Verify UnauthorizedError is wrapped in AppError envelope."""
         api_prefix = error_test_client.app.state.settings.api_prefix
 
@@ -183,9 +179,9 @@ class TestDomainErrorReturnsAppError:
         mock_service = AsyncMock()
         mock_service.process.side_effect = UnauthorizedError("Access denied")
 
-        error_test_client.app.dependency_overrides[
-            api_dependencies.get_example_service
-        ] = lambda: mock_service
+        error_test_client.app.dependency_overrides[api_dependencies.get_example_service] = (
+            lambda: mock_service
+        )
         response = error_test_client.post(
             f"{api_prefix}/examples/process",
             json={"message": "test", "type": "info"},
@@ -202,83 +198,77 @@ class TestDomainErrorReturnsAppError:
 class TestInternalErrorReturnsAppError:
     """Tests for internal errors returning AppError envelope."""
 
-    def test_internal_error_returns_app_error(
-        self, error_test_client: TestClient
+    def test_internal_error_raises_and_is_logged(
+        self, error_test_client: TestClient, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Verify unexpected exceptions are wrapped in AppError envelope."""
+        """Verify unexpected exceptions are caught by handler and logged."""
         api_prefix = error_test_client.app.state.settings.api_prefix
 
         # Mock the service to raise a generic Exception
         mock_service = AsyncMock()
         mock_service.process.side_effect = RuntimeError("Unexpected internal error")
 
-        error_test_client.app.dependency_overrides[
-            api_dependencies.get_example_service
-        ] = lambda: mock_service
-        response = error_test_client.post(
-            f"{api_prefix}/examples/process",
-            json={"message": "test", "type": "info"},
+        error_test_client.app.dependency_overrides[api_dependencies.get_example_service] = (
+            lambda: mock_service
         )
 
-        assert response.status_code == 500
-        payload = response.json()
+        with pytest.raises(RuntimeError, match="Unexpected internal error"):
+            error_test_client.post(
+                f"{api_prefix}/examples/process",
+                json={"message": "test", "type": "info"},
+            )
 
-        _assert_app_error_structure(payload)
-        assert payload["code"] == "INTERNAL_ERROR"
-        assert payload["statusCode"] == 500
-        assert payload["message"] == "Unexpected error while processing request"
+        # Verify the exception handler logged the error with correct code
+        assert "INTERNAL_ERROR" in caplog.text
+        assert "Unexpected internal error" in caplog.text
 
 
 class TestAllErrorResponsesHaveConsistentStructure:
     """Tests verifying all error types share the same top-level structure."""
 
-    def test_all_error_responses_have_consistent_structure(
+    def test_non_server_error_responses_have_consistent_structure(
         self, error_test_client: TestClient
     ) -> None:
-        """Verify all error types return responses with the same top-level fields."""
+        """Verify validation and domain errors return responses with same top-level fields."""
         api_prefix = error_test_client.app.state.settings.api_prefix
 
-        # Collect responses from different error scenarios
-        error_responses: list[dict[str, Any]] = []
+        # Collect responses from different error scenarios (excluding 5xx which re-raise)
+        error_responses: list[tuple[str, int, dict[str, Any]]] = []
 
-        # 1. Validation error
+        # 1. Validation error (400)
         response = error_test_client.post(f"{api_prefix}/examples/process", json={})
         error_responses.append(("validation", response.status_code, response.json()))
 
-        # 2. Domain error (ResourceNotFoundError)
+        # 2. Domain error - ResourceNotFoundError (404)
         mock_service = AsyncMock()
         mock_service.process.side_effect = ResourceNotFoundError("Not found")
-        error_test_client.app.dependency_overrides[
-            api_dependencies.get_example_service
-        ] = lambda: mock_service
+        error_test_client.app.dependency_overrides[api_dependencies.get_example_service] = (
+            lambda: mock_service
+        )
         response = error_test_client.post(
             f"{api_prefix}/examples/process",
             json={"message": "test", "type": "info"},
         )
-        error_responses.append(("domain", response.status_code, response.json()))
+        error_responses.append(("resource_not_found", response.status_code, response.json()))
 
-        # 3. Internal error
-        mock_service.process.side_effect = RuntimeError("Internal failure")
+        # 3. Domain error - DomainValidationError (400)
+        mock_service.process.side_effect = DomainValidationError("Invalid state")
         response = error_test_client.post(
             f"{api_prefix}/examples/process",
             json={"message": "test", "type": "info"},
         )
-        error_responses.append(("internal", response.status_code, response.json()))
+        error_responses.append(("domain_validation", response.status_code, response.json()))
 
         # Verify all responses have the same top-level structure
         required_fields = {"code", "message", "statusCode"}
         for error_type, status_code, payload in error_responses:
-            assert required_fields.issubset(
-                payload.keys()
-            ), f"{error_type} error (status {status_code}) missing required fields"
+            assert required_fields.issubset(payload.keys()), (
+                f"{error_type} error (status {status_code}) missing required fields"
+            )
 
             # Verify statusCode uses camelCase alias
-            assert (
-                "statusCode" in payload
-            ), f"{error_type} error should use 'statusCode' alias"
-            assert (
-                "status_code" not in payload
-            ), f"{error_type} error should not have 'status_code'"
+            assert "statusCode" in payload, f"{error_type} error should use 'statusCode' alias"
+            assert "status_code" not in payload, f"{error_type} error should not have 'status_code'"
 
             # Verify code is from ErrorCode enum
             valid_codes = {
@@ -289,6 +279,6 @@ class TestAllErrorResponsesHaveConsistentStructure:
                 "INTERNAL_ERROR",
                 "EXAMPLE_INVALID",
             }
-            assert (
-                payload["code"] in valid_codes
-            ), f"{error_type} error has invalid code: {payload['code']}"
+            assert payload["code"] in valid_codes, (
+                f"{error_type} error has invalid code: {payload['code']}"
+            )

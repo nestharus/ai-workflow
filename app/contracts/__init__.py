@@ -6,6 +6,7 @@ from app.contracts.errors import (
     ValidationErrorDetail,
 )
 from app.contracts.example_contract import ExampleRequest, ExampleResponse
+from app.contracts.pagination import Paginated
 
 __all__ = [
     "VALIDATION_ERROR_RESPONSE",
@@ -14,5 +15,6 @@ __all__ = [
     "ExampleRequest",
     "ExampleResponse",
     "HTTPValidationError",
+    "Paginated",
     "ValidationErrorDetail",
 ]

@@ -47,10 +47,14 @@ def _mock_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _fake_elasticsearch_wrapper(_settings: Settings) -> _DummyResource:
         return _DummyResource()
 
+    async def _fake_duckdb_client(_settings: Settings) -> _DummyResource:
+        return _DummyResource()
+
     monkeypatch.setattr("app.core.factory.create_surrealdb_pool", _fake_surreal_pool)
     monkeypatch.setattr(
         "app.core.factory.create_elasticsearch_wrapper", _fake_elasticsearch_wrapper
     )
+    monkeypatch.setattr("app.core.factory.create_duckdb_client", _fake_duckdb_client)
 
 
 def _generate_test_credential(prefix: str) -> str:

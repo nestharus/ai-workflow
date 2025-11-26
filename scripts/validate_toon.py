@@ -115,7 +115,6 @@ def validate_toon_file(file_path: Path) -> tuple[bool, str | None]:
     try:
         content = file_path.read_text(encoding="utf-8")
         toon_format.decode(content, DecodeOptions(strict=True))
-        return (True, None)
     except ToonDecodeError as exc:
         relative_path = file_path.relative_to(REPO_ROOT)
         error_str = str(exc)
@@ -129,6 +128,8 @@ def validate_toon_file(file_path: Path) -> tuple[bool, str | None]:
         relative_path = file_path.relative_to(REPO_ROOT)
         error_msg = f"{relative_path}: {exc}"
         return (False, error_msg)
+    else:
+        return (True, None)
 
 
 def main() -> int:

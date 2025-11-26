@@ -9,6 +9,7 @@ services:
       - ./app:/app/app
       - ./scripts:/app/scripts
       - ./tests:/app/tests
+      - ./data:/app/data
     environment:
       - DEBUG=true
       - PYTHONUNBUFFERED=1

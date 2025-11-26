@@ -130,14 +130,13 @@ The generated OpenAPI schema is the external contract; routes must be documented
 
 * **No generic envelopes**: Do not wrap successful responses in generic structures like
   `{"status": "ok", "data": ...}`. Return domain models directly as dictated by the `response_model`.
-* **Pagination pattern**: For collections that require pagination, use a consistent structure
-  conceptually equivalent to:
-  * `items: list[T]`
-  * `total: int`
-  * `page: int`
-  * `page_size: int`
-  until a concrete generic `Paginated[T]` model is introduced under `app/contracts/`. New paginated
-  endpoints should follow these field names to ease future migration.
+* **Pagination pattern**: For collections that require pagination, use the generic `Paginated[T]`
+  model from `app/contracts/pagination.py`. This model provides the following fields:
+  * `items: list[T]` – The collection of items for the current page.
+  * `total: int` – Total count of items across all pages (must be non-negative).
+  * `page: int` – Current page number (1-indexed, must be at least 1).
+  * `page_size: int` – Number of items per page (must be between 1 and 1000).
+  For example, a user listing endpoint would use `response_model=Paginated[UserResponse]`.
 * **Error responses**:
   * All error responses share a common top-level envelope using the `AppError` schema defined in
     `app/contracts/errors.py` with `code`, `message`, `statusCode`, and optional `details` fields.
@@ -150,9 +149,6 @@ The generated OpenAPI schema is the external contract; routes must be documented
     applicable.
   * Route decorators use `VALIDATION_ERROR_RESPONSE` (which now references `AppError`) for `400`
     responses and `{"model": AppError, "description": "..."}` for other error status codes.
-  * TODO: Once a generic `Paginated[T]` model exists under `app/contracts/`, update routers and this
-    document to reference that model as the canonical pagination schema instead of treating
-    `Paginated[T]` as purely conceptual.
 
 ## 6. Content Negotiation
 

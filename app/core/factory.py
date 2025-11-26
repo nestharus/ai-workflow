@@ -36,6 +36,7 @@ from app.core.middleware import (
     RequestLoggingMiddleware,
     SecurityHeadersMiddleware,
 )
+from app.infrastructure.duckdb import DuckDBClient, create_duckdb_client
 from app.infrastructure.elasticsearch import (
     ElasticsearchWrapper,
     create_elasticsearch_wrapper,
@@ -148,6 +149,7 @@ def _lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncContextMan
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         surreal_pool: SurrealDBPool | None = None
         elasticsearch_client: ElasticsearchWrapper | None = None
+        duckdb_client: DuckDBClient | None = None
         try:
             surreal_pool = await create_surrealdb_pool(settings)
             app.state.surrealdb_pool = surreal_pool
@@ -157,11 +159,20 @@ def _lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncContextMan
             app.state.elasticsearch_client = elasticsearch_client
             logger.info("Initialized Elasticsearch client")
 
+            duckdb_client = await create_duckdb_client(settings)
+            app.state.duckdb_client = duckdb_client
+            logger.info("Initialized DuckDB client")
+
             yield
         except Exception:
             logger.exception("Failed to initialize application resources")
             raise
         finally:
+            if duckdb_client is not None:
+                try:
+                    await duckdb_client.close()
+                except Exception:
+                    logger.exception("Failed to close DuckDB client cleanly")
             if elasticsearch_client is not None:
                 try:
                     await elasticsearch_client.close()

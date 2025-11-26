@@ -7,11 +7,16 @@ resources and should not be used in production workloads.
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
 from app.api.v1.dependencies import ExampleServiceDep
 from app.contracts.errors import VALIDATION_ERROR_RESPONSE, AppError
-from app.contracts.example_contract import ExampleRequest, ExampleResponse
+from app.contracts.example_contract import (
+    ExampleRequest,
+    ExampleResponse,
+    ProcessedMessageResponse,
+)
+from app.contracts.pagination import MAX_PAGE_SIZE, Paginated
 
 router = APIRouter()
 
@@ -26,8 +31,6 @@ router = APIRouter()
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: VALIDATION_ERROR_RESPONSE,
-        # TODO: Replace with actual 404 when database querying is implemented (DuckDB + CSV).
-        # Currently included for OpenAPI schema consistency across all example endpoints.
         status.HTTP_404_NOT_FOUND: {"model": AppError, "description": "Resource not found"},
         status.HTTP_500_INTERNAL_SERVER_ERROR: {
             "model": AppError,
@@ -69,3 +72,73 @@ def sample_item() -> ExampleResponse:
 async def process_message(request: ExampleRequest, service: ExampleServiceDep) -> ExampleResponse:
     """Process an input message using the ExampleService."""
     return await service.process(request)
+
+
+@router.get(
+    "/processed-messages",
+    response_model=Paginated[ProcessedMessageResponse],
+    summary="List processed messages",
+    description=(
+        "[DEMO] Returns a paginated list of processed messages queried from CSV "
+        "data via DuckDB. Demonstrates real database querying with pagination."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: VALIDATION_ERROR_RESPONSE,
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {
+            "model": AppError,
+            "description": "Internal server error",
+        },
+    },
+)
+async def list_processed_messages(
+    service: ExampleServiceDep,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(10, ge=1, le=MAX_PAGE_SIZE, description="Number of items per page"),
+) -> Paginated[ProcessedMessageResponse]:
+    """Retrieve a paginated list of processed messages."""
+    result = await service.list_processed_messages(page, page_size)
+    return Paginated[ProcessedMessageResponse](
+        items=[
+            ProcessedMessageResponse(
+                id=msg.id,
+                content=msg.content,
+                type=msg.type,  # type: ignore[arg-type]
+                processed_at=msg.processed_at,
+            )
+            for msg in result.items
+        ],
+        total=result.total,
+        page=result.page,
+        page_size=result.page_size,
+    )
+
+
+@router.get(
+    "/processed-messages/{message_id}",
+    response_model=ProcessedMessageResponse,
+    summary="Get a processed message by ID",
+    description=(
+        "[DEMO] Retrieves a single processed message by its unique identifier. "
+        "Demonstrates real 404 handling when a resource is not found."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: VALIDATION_ERROR_RESPONSE,
+        status.HTTP_404_NOT_FOUND: {"model": AppError, "description": "Message not found"},
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {
+            "model": AppError,
+            "description": "Internal server error",
+        },
+    },
+)
+async def get_processed_message(
+    message_id: str,
+    service: ExampleServiceDep,
+) -> ProcessedMessageResponse:
+    """Retrieve a processed message by its unique identifier."""
+    msg = await service.get_processed_message(message_id)
+    return ProcessedMessageResponse(
+        id=msg.id,
+        content=msg.content,
+        type=msg.type,  # type: ignore[arg-type]
+        processed_at=msg.processed_at,
+    )

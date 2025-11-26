@@ -81,3 +81,32 @@ class ExampleResponse(BaseModel):
     result: Annotated[str, Field(min_length=1)]
     processed_at: datetime
     original_length: Annotated[int, Field(ge=0)]
+
+
+class ProcessedMessageResponse(BaseModel):
+    """Response object for a queried processed message.
+
+    Represents a message record retrieved from the CSV data store via DuckDB,
+    demonstrating read operations separate from the write-focused ExampleResponse.
+
+    Attributes:
+        id: Unique identifier for the message.
+        content: The processed message content.
+        type: Message category (info, warning, error).
+        processed_at: Timestamp when the message was processed.
+
+    Examples:
+        ProcessedMessageResponse(
+            id="msg_001",
+            content="[PROCESSED] [INFO] Hello World",
+            type="info",
+            processed_at=datetime.fromisoformat("2024-01-15T10:30:00+00:00")
+        )
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: Annotated[str, Field(min_length=1)]
+    content: Annotated[str, Field(min_length=1)]
+    type: MessageType
+    processed_at: datetime

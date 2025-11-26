@@ -57,6 +57,10 @@ openapi/
 .DS_Store
 Thumbs.db
 
+# Database files
+*.duckdb
+*.duckdb.wal
+
 # Misc
 *.log
 .env

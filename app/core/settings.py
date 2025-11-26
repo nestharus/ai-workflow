@@ -132,6 +132,10 @@ class Settings(BaseSettings):
     )
     surrealdb_pool_size: int = 5
 
+    # Path to directory containing CSV data files queried via DuckDB.
+    # Relative to project root; contains staging data for lightweight queries.
+    csv_data_path: str = "data/csv"
+
     elasticsearch_url: str = "http://localhost:9200"
     elasticsearch_connections_per_node: int = 25
     elasticsearch_request_timeout: int = 10

@@ -10,10 +10,15 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.contracts.example_contract import ExampleRequest, ExampleResponse
+from app.contracts.pagination import Paginated
+from app.core.errors import ResourceNotFoundError
 
 if TYPE_CHECKING:
     from app.core.settings import Settings
-    from app.repositories.example_repository import ExampleRepositoryProtocol
+    from app.repositories.example_repository import (
+        ExampleRepositoryProtocol,
+        ProcessedMessage,
+    )
 
 
 class ExampleService:
@@ -69,6 +74,45 @@ class ExampleService:
         )
 
         return response
+
+    async def get_processed_message(self, id: str) -> ProcessedMessage:
+        """Retrieve a processed message by its unique identifier.
+
+        Args:
+            id: The unique identifier of the message to retrieve.
+
+        Returns:
+            The ProcessedMessage domain object.
+
+        Raises:
+            ResourceNotFoundError: If no message with the given ID exists.
+        """
+        message = await self._repository.get_by_id(id)
+        if message is None:
+            msg = f"Processed message {id} not found"
+            raise ResourceNotFoundError(msg)
+        return message
+
+    async def list_processed_messages(
+        self, page: int, page_size: int
+    ) -> Paginated[ProcessedMessage]:
+        """Retrieve a paginated list of processed messages.
+
+        Args:
+            page: Page number (1-indexed).
+            page_size: Number of items per page.
+
+        Returns:
+            Paginated response containing messages and pagination metadata.
+        """
+        offset = (page - 1) * page_size
+        messages, total = await self._repository.list_paginated(offset, page_size)
+        return Paginated(
+            items=messages,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
 
     def shutdown(self) -> None:
         """Clean up service resources.

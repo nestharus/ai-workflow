@@ -11,6 +11,7 @@ CHECKOV_CONFIG = REPO_ROOT / ".checkov.yaml"
 HADOLINT_EXCLUDE_DIRS = {
     REPO_ROOT / "to_adapt",
     REPO_ROOT / "docs" / "plans",
+    REPO_ROOT / "docs" / "references",
     REPO_ROOT / ".venv",
     REPO_ROOT / ".venv2",
 }
@@ -44,8 +45,15 @@ PYMARKDOWN_EXCLUDES = [
     ".cache",
     ".knowledge/knowledge.duckdb",
     ".serena/**",
+    "docs/plans/**",
+    "docs/references/**",
 ]
-PYMARKDOWN_TARGETS: list[str] = ["README.md", "AGENTS.md", "docs/**", "scripts/knowledge/README.md"]
+PYMARKDOWN_TARGETS: list[str] = [
+    "README.md",
+    "AGENTS.md",
+    "docs/**/*.md",
+    "scripts/knowledge/README.md",
+]
 
 
 class InvalidCommandError(TypeError):

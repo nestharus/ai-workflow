@@ -108,9 +108,7 @@ class AppError(BaseModel):
             code=ErrorCode.VALIDATION_ERROR,
             message="Request validation failed",
             status_code=400,
-            details=validation_error.model_dump(
-                mode="json", exclude_none=True, exclude_unset=True
-            ),
+            details=validation_error.model_dump(mode="json", exclude_none=True, exclude_unset=True),
         )
 
 
