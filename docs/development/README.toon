@@ -1,0 +1,201 @@
+doc_id: development-index
+title: Development Documentation Index
+project: ai-workflow
+version_hint: "2024-2025"
+kind: development_index
+description: Navigation index for development documentation covering code patterns, standards, and best practices.
+scope: Provides overview and navigation to all development-related documentation files with topic summaries and usage guidance.
+primary_runtime_references[0]:
+related_pattern_docs[11]:
+  - settings-patterns.toon
+  - factory-patterns.toon
+  - dependency-patterns.toon
+  - router-patterns.toon
+  - service-patterns.toon
+  - repository-patterns.toon
+  - middleware-patterns.toon
+  - exception-patterns.toon
+  - connection-pooling-patterns.toon
+  - api-patterns.toon
+  - architectural-patterns.toon
+sections[12]:
+  - id: settings-patterns
+    index: 1
+    title: Settings Patterns
+    category: navigation
+    summary: Defines how to model, validate, and consume runtime configuration using Pydantic settings.
+    items[3]:
+      - id: settings-patterns.file
+        type: reference
+        text: "File: settings-patterns.toon"
+      - id: settings-patterns.description
+        type: note
+        text: Covers environment variable binding, validation rules, and settings composition for different deployment environments.
+      - id: settings-patterns.apply-when
+        type: guidance
+        text: "Apply when: Defining application configuration models, adding new environment variables, or validating configuration at startup."
+  - id: factory-patterns
+    index: 2
+    title: Factory Patterns
+    category: navigation
+    summary: Covers application construction, lifespan management, and configuration patterns for building FastAPI applications.
+    items[3]:
+      - id: factory-patterns.file
+        type: reference
+        text: "File: factory-patterns.toon"
+      - id: factory-patterns.description
+        type: note
+        text: Establishes how to wire together routers, middleware, and services during application startup.
+      - id: factory-patterns.apply-when
+        type: guidance
+        text: "Apply when: Setting up application entry points, configuring application lifespan events, or wiring routers and middleware."
+  - id: dependency-patterns
+    index: 3
+    title: Dependency Patterns
+    category: navigation
+    summary: Establishes FastAPI dependency injection patterns using Annotated type aliases.
+    items[3]:
+      - id: dependency-patterns.file
+        type: reference
+        text: "File: dependency-patterns.toon"
+      - id: dependency-patterns.description
+        type: note
+        text: Defines how to wire services, repositories, and other dependencies into route handlers for testability and separation of concerns.
+      - id: dependency-patterns.apply-when
+        type: guidance
+        text: "Apply when: Creating injectable services and repositories, defining reusable dependency type aliases, or wiring database connections into handlers."
+  - id: router-patterns
+    index: 4
+    title: Router Patterns
+    category: navigation
+    summary: Defines FastAPI router organization, route handler structure, and OpenAPI documentation standards.
+    items[3]:
+      - id: router-patterns.file
+        type: reference
+        text: "File: router-patterns.toon"
+      - id: router-patterns.description
+        type: note
+        text: Covers how to structure endpoints, handle request/response models, and document APIs for clarity.
+      - id: router-patterns.apply-when
+        type: guidance
+        text: "Apply when: Creating new API endpoints, organizing routes by domain, or adding OpenAPI documentation to handlers."
+  - id: service-patterns
+    index: 5
+    title: Service Patterns
+    category: navigation
+    summary: Establishes service layer architecture for encapsulating business logic and transaction management.
+    items[3]:
+      - id: service-patterns.file
+        type: reference
+        text: "File: service-patterns.toon"
+      - id: service-patterns.description
+        type: note
+        text: Defines how services coordinate between routers and repositories while maintaining separation of concerns.
+      - id: service-patterns.apply-when
+        type: guidance
+        text: "Apply when: Writing business logic for domain operations, coordinating multiple repository calls, or managing transactions and rollbacks."
+  - id: repository-patterns
+    index: 6
+    title: Repository Patterns
+    category: navigation
+    summary: Defines data access layer patterns, repository interfaces, and query patterns for persistence code.
+    items[3]:
+      - id: repository-patterns.file
+        type: reference
+        text: "File: repository-patterns.toon"
+      - id: repository-patterns.description
+        type: note
+        text: Covers how to abstract database operations behind clean interfaces for testability.
+      - id: repository-patterns.apply-when
+        type: guidance
+        text: "Apply when: Writing database query code, defining repository interfaces, or implementing CRUD operations."
+  - id: middleware-patterns
+    index: 7
+    title: Middleware Patterns
+    category: navigation
+    summary: Covers HTTP middleware implementation, ordering, and configuration for cross-cutting concerns.
+    items[3]:
+      - id: middleware-patterns.file
+        type: reference
+        text: "File: middleware-patterns.toon"
+      - id: middleware-patterns.description
+        type: note
+        text: Defines how to add request/response processing for logging, security headers, and error handling.
+      - id: middleware-patterns.apply-when
+        type: guidance
+        text: "Apply when: Adding cross-cutting HTTP behavior, configuring security headers, or implementing request/response logging."
+  - id: exception-patterns
+    index: 8
+    title: Exception Patterns
+    category: navigation
+    summary: Defines how to design domain exceptions, error handling, and HTTP error mapping.
+    items[3]:
+      - id: exception-patterns.file
+        type: reference
+        text: "File: exception-patterns.toon"
+      - id: exception-patterns.description
+        type: note
+        text: Establishes a consistent approach to raising, catching, and translating exceptions into appropriate API responses.
+      - id: exception-patterns.apply-when
+        type: guidance
+        text: "Apply when: Defining domain-specific exceptions, mapping exceptions to HTTP status codes, or implementing error handling in services."
+  - id: connection-pooling-patterns
+    index: 9
+    title: Connection Pooling Patterns
+    category: navigation
+    summary: Describes how to create, configure, and manage database and search client pools.
+    items[3]:
+      - id: connection-pooling-patterns.file
+        type: reference
+        text: "File: connection-pooling-patterns.toon"
+      - id: connection-pooling-patterns.description
+        type: note
+        text: Covers pool sizing, connection lifecycle, and health checking for infrastructure resources.
+      - id: connection-pooling-patterns.apply-when
+        type: guidance
+        text: "Apply when: Configuring database connection pools, setting up search client connections, or managing pool lifecycle and cleanup."
+  - id: api-patterns
+    index: 10
+    title: API Patterns
+    category: navigation
+    summary: Establishes REST API design standards including URL structure, request/response modeling, and OpenAPI documentation conventions.
+    items[3]:
+      - id: api-patterns.file
+        type: reference
+        text: "File: api-patterns.toon"
+      - id: api-patterns.description
+        type: note
+        text: Defines consistent patterns for resource naming, pagination, and error responses.
+      - id: api-patterns.apply-when
+        type: guidance
+        text: "Apply when: Designing new API endpoints, modeling request and response schemas, or documenting API contracts."
+  - id: docstrings-guide
+    index: 11
+    title: Docstrings Guide
+    category: navigation
+    summary: Defines Google-style docstring conventions and standards for documenting code.
+    items[3]:
+      - id: docstrings-guide.file
+        type: reference
+        text: "File: docstrings-guide.toon"
+      - id: docstrings-guide.description
+        type: note
+        text: Covers function, class, and module documentation with examples for consistent codebase documentation.
+      - id: docstrings-guide.apply-when
+        type: guidance
+        text: "Apply when: Writing function and class documentation, documenting module-level code, or adding parameter and return type descriptions."
+  - id: architectural-patterns
+    index: 12
+    title: Architectural Patterns
+    category: navigation
+    summary: Defines the strict layered architecture for separation of concerns and testability.
+    items[3]:
+      - id: architectural-patterns.file
+        type: reference
+        text: "File: architectural-patterns.toon"
+      - id: architectural-patterns.description
+        type: note
+        text: Covers Routers (HTTP request/response lifecycle), Services (business logic encapsulation with dependency injection), and Contracts/DTOs (data structures and validation rules with Pydantic). Includes standards, patterns, and lifecycle details for each layer.
+      - id: architectural-patterns.apply-when
+        type: guidance
+        text: "Apply when: Designing new application components, understanding layer responsibilities and boundaries, or implementing routers, services, or contracts."

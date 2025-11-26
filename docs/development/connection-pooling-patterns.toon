@@ -1,0 +1,327 @@
+doc_id: connection-pooling-patterns
+title: Connection & Resource Pooling Patterns
+project: ai-workflow
+version_hint: "2024-2025"
+kind: resource_pooling_standards
+description: Patterns for creating, reusing, and cleaning up long-lived pooled resources such as database connections, search clients, and HTTP clients.
+scope: Covers connection pooling fundamentals, SurrealDB pool management, Elasticsearch connection handling, pool configuration and tuning, timeout handling, connection recycling, schema initialization, error handling, testing, HTTP client pooling, monitoring, and anti-patterns.
+out_of_scope[4]:
+  - Repository APIs built on top of pools (see repository-patterns.toon).
+  - Domain-level service orchestration (see service-patterns.toon).
+  - Settings modeling beyond pool-related configuration (see settings-patterns.toon).
+  - HTTP error schemas and validation behavior (see exception-patterns.toon).
+primary_runtime_references[3]:
+  - path: app/core/factory.py
+    role: Application factory and lifespan management of shared resources.
+  - path: app/infrastructure/db_connections.py
+    role: SurrealDBPool, ElasticsearchWrapper, and connection factory implementations.
+  - path: app/core/settings.py
+    role: Pool and timeout configuration for database, search, and HTTP clients.
+related_pattern_docs[5]:
+  - router-patterns.toon
+  - repository-patterns.toon
+  - service-patterns.toon
+  - settings-patterns.toon
+  - exception-patterns.toon
+sections[15]:
+  - id: connection-pooling-fundamentals
+    index: 1
+    title: Connection pooling fundamentals
+    category: standard
+    summary: Core principles for creating and managing pooled connections in a FastAPI application.
+    items[5]:
+      - id: fundamentals.startup-only
+        type: rule
+        text: Create connection pools and long-lived clients only once during application startup, before the app begins handling requests.
+      - id: fundamentals.no-per-request
+        type: rule
+        text: Never create database engines, SurrealDB pools, Elasticsearch clients, or HTTP clients inside route handlers or other per-request code paths.
+      - id: fundamentals.shared-state
+        type: pattern
+        text: Store shared resources on app.state (for example app.state.surrealdb_pool, app.state.elasticsearch_client, app.state.http_client) so they can be accessed via dependencies rather than globals.
+      - id: fundamentals.lifespan-managed
+        type: rule
+        text: Use the lifespan context manager in app/core/factory.py to initialize pools during startup and close them during shutdown, guaranteeing cleanup even if initialization fails.
+      - id: fundamentals.access-via-deps
+        type: note
+        text: Access pools and clients through dependency providers (for example get_surrealdb_pool, get_elasticsearch_client) so tests can override them easily.
+  - id: surrealdb-connection-pool
+    index: 2
+    title: SurrealDB connection pool
+    category: standard
+    summary: Design and usage patterns for SurrealDBPool.
+    sample_code:
+      description: Typical SurrealDBPool usage pattern for executing a query.
+      imports[2]: app.infrastructure.db_connections.SurrealDBPool,typing.Any
+      code: |
+        from typing import Any
+        from app.infrastructure.db_connections import SurrealDBPool
+        async def run_query(pool: SurrealDBPool, sql: str, params: dict[str, Any] | None = None) -> Any:
+            async with pool.acquire() as conn:
+                result = await conn.query(sql, params or {})
+                return result
+    items[5]:
+      - id: surreal.pool-async-queue
+        type: rule
+        text: SurrealDBPool maintains multiple WebSocket connections to SurrealDB in an asyncio.Queue, creating them up front during initialization.
+      - id: surreal.pool-config-size
+        type: rule
+        text: Control pool size via Settings.surrealdb_pool_size so concurrency can be tuned per environment without code changes.
+      - id: surreal.pre-authenticated
+        type: note
+        text: During initialization, each SurrealDB connection is authenticated and pointed at the configured namespace and database so queries do not repeat this work.
+      - id: surreal.acquire-context-manager
+        type: pattern
+        text: Use SurrealDBPool.acquire() as an async context manager that enforces an acquire timeout and automatically returns connections to the pool when the context exits.
+      - id: surreal.exception-safety
+        type: note
+        text: The async with pool.acquire() pattern ensures connections are returned even if downstream queries raise exceptions.
+  - id: surrealdb-pool-configuration
+    index: 3
+    title: SurrealDB pool configuration
+    category: standard
+    summary: Recommended configuration options for SurrealDBPool.
+    items[4]:
+      - id: surreal.config.pool-size
+        type: rule
+        text: Start with a conservative surrealdb_pool_size (for example 5) and increase only when metrics show SurrealDB is the bottleneck and the server can handle more concurrent connections.
+      - id: surreal.config.acquire-timeout
+        type: rule
+        text: Configure an acquire_timeout of several seconds on SurrealDBPool and enforce it via asyncio.wait_for() so callers fail fast rather than hanging indefinitely.
+      - id: surreal.config.env-specific
+        type: note
+        text: Treat pool size and acquire timeout as environment-specific knobs, using smaller values for local development and tuned values for staging and production.
+      - id: surreal.config-focus
+        type: note
+        text: Keep pool-related settings focused on connection counts and wait times rather than unrelated SurrealDB configuration.
+  - id: surrealdb-connection-lifecycle
+    index: 4
+    title: SurrealDB connection lifecycle
+    category: standard
+    summary: Startup, schema initialization, and shutdown behavior for the SurrealDB pool.
+    items[5]:
+      - id: surreal.lifecycle.startup
+        type: pattern
+        text: In lifespan startup, call create_surrealdb_pool(settings) to build a SurrealDBPool, initialize connections, and attach it to app.state.surrealdb_pool.
+      - id: surreal.lifecycle.auth
+        type: note
+        text: During initialization, the pool authenticates each connection and selects the configured namespace and database so subsequent queries can assume a ready session.
+      - id: surreal.lifecycle.schema-init
+        type: rule
+        text: After creating the pool, call pool.initialize_schema() to set up tables, relationships, and vector indexes required by the application.
+      - id: surreal.lifecycle.fail-fast
+        type: rule
+        text: If schema initialization fails, close the pool and propagate the error so the application fails fast instead of running with partial schema state.
+      - id: surreal.lifecycle.shutdown
+        type: rule
+        text: During shutdown, call surrealdb_pool.close() and log any failures without preventing process termination.
+  - id: elasticsearch-connection-pool
+    index: 5
+    title: Elasticsearch connection pool
+    category: standard
+    summary: Patterns for using ElasticsearchWrapper and the underlying HTTP connection pool.
+    items[5]:
+      - id: es.wrapper-role
+        type: pattern
+        text: Use ElasticsearchWrapper in app/infrastructure/db_connections.py to adapt the synchronous elasticsearch client for async use and centralize connection management.
+      - id: es.client-managed-pool
+        type: rule
+        text: Rely on the Elasticsearch client’s internal HTTP connection pool, configured via Settings.elasticsearch_connections_per_node.
+      - id: es.async-wrapper
+        type: note
+        text: Execute potentially blocking operations (ping, search, index, bulk, indices.create) via anyio.to_thread.run_sync() so they do not block the event loop.
+      - id: es.init-handshake
+        type: rule
+        text: Have ElasticsearchWrapper.init() ping the cluster at startup to verify connectivity before marking the client ready.
+      - id: es.index-initialization
+        type: pattern
+        text: Use initialize_indices() on the wrapper to create required indices with configured shard and replica counts, handling already-existing indices gracefully.
+  - id: elasticsearch-configuration
+    index: 6
+    title: Elasticsearch configuration
+    category: standard
+    summary: Tuning connections, timeouts, retries, and hosts for Elasticsearch.
+    items[4]:
+      - id: es.config.connections-per-node
+        type: rule
+        text: Configure elasticsearch_connections_per_node with a moderate default (for example 25) and increase only when metrics show underutilized nodes and connection pool exhaustion.
+      - id: es.config.request-timeout
+        type: rule
+        text: Set elasticsearch_request_timeout to a bounded value that reflects expected query latency; avoid unbounded waits that tie up worker threads.
+      - id: es.config.retry-on-timeout
+        type: note
+        text: Enable retry_on_timeout only when it is acceptable to retry operations on transient issues; do not use it to hide persistent performance problems.
+      - id: es.config.hosts
+        type: note
+        text: Point elasticsearch_url at a load balancer or list of node URLs; the client will maintain a pool of HTTP connections across these nodes.
+  - id: pool-size-tuning
+    index: 7
+    title: Pool size tuning
+    category: standard
+    summary: Guidelines for choosing and adjusting pool sizes.
+    items[4]:
+      - id: tuning.conservative-defaults
+        type: rule
+        text: Start with small pool sizes (for example 5–10 connections per pool or per node) instead of guessing large values.
+      - id: tuning.respect-backend-limits
+        type: rule
+        text: Ensure workers × surrealdb_pool_size and similar calculations stay well below backend connection limits.
+      - id: tuning.observe-metrics
+        type: note
+        text: Monitor metrics such as acquire timeouts, queue wait times, request latencies, and error rates before changing pool sizes.
+      - id: tuning.scale-incrementally
+        type: pattern
+        text: Increase pool sizes gradually and evaluate impact, preferring query optimization and caching where they provide better benefits than simply adding connections.
+  - id: connection-timeout-handling
+    index: 8
+    title: Connection timeout handling
+    category: standard
+    summary: Patterns for using timeouts as signals of pool exhaustion or backend slowness.
+    items[4]:
+      - id: timeouts.acquire
+        type: rule
+        text: Use SurrealDBPool.acquire() with asyncio.wait_for to enforce acquire timeouts and log when callers cannot obtain connections within the configured window.
+      - id: timeouts.request
+        type: rule
+        text: Bound Elasticsearch operations with elasticsearch_request_timeout and similarly configured HTTP client timeouts.
+      - id: timeouts.logging-alerts
+        type: note
+        text: Treat repeated timeouts as indicators of pool exhaustion or backend slowness and investigate query patterns, indexing, and infrastructure before simply raising pool sizes.
+      - id: timeouts.fail-fast
+        type: rule
+        text: Translate timeout failures into well-typed exceptions that global handlers can convert into HTTP errors rather than allowing requests to hang.
+  - id: connection-recycling
+    index: 9
+    title: Connection recycling
+    category: standard
+    summary: Handling stale connections and long-lived pools for SurrealDB and HTTP backends.
+    items[4]:
+      - id: recycling.surreal-lifetime
+        type: note
+        text: Allow SurrealDBPool connections to live for the process lifetime but be prepared to recreate them if servers restart or networks drop idle connections.
+      - id: recycling.future-enhancements
+        type: note
+        text: Consider adding explicit health checks or recycling policies to SurrealDBPool to rebuild connections proactively when failures are detected.
+      - id: recycling.elasticsearch
+        type: note
+        text: Rely on Elasticsearch client features such as dead node detection and connection refreshing rather than manually closing and reopening HTTP connections.
+      - id: recycling.http-backends
+        type: pattern
+        text: For HTTP-based backends, consider periodically recycling clients or clearing connection pools (for example every 30 minutes) to handle proxies and load balancers that silently drop idle connections.
+  - id: schema-initialization
+    index: 10
+    title: Schema initialization
+    category: standard
+    summary: How schema setup ties into connection pooling.
+    items[4]:
+      - id: schema.initialize-in-pool
+        type: rule
+        text: Run SurrealDB schema initialization inside SurrealDBPool.initialize_schema() so it executes immediately after pool creation.
+      - id: schema.versioning
+        type: note
+        text: Track schema versions using a schema_versions table or similar mechanism to manage migrations safely.
+      - id: schema.factory-calls-init
+        type: pattern
+        text: Ensure create_surrealdb_pool() calls initialize_schema() and closes the pool if initialization fails.
+      - id: schema.failure-fatal
+        type: rule
+        text: Treat schema initialization failures as fatal; the app must not start with an inconsistent or partially-applied schema.
+  - id: pooling-error-handling
+    index: 11
+    title: Error handling
+    category: standard
+    summary: Handling startup, runtime, and shutdown errors for pooled resources.
+    items[5]:
+      - id: errors.startup-fail-fast
+        type: rule
+        text: If create_surrealdb_pool() or create_elasticsearch_wrapper() fails during startup, log the error and re-raise it so the application does not start in a broken state.
+      - id: errors.cleanup-on-failure
+        type: pattern
+        text: Ensure factories clean up partially initialized resources (for example closing opened connections) before propagating startup errors.
+      - id: errors.runtime-metadata
+        type: rule
+        text: Log runtime pool errors and timeouts with enough metadata—operation type, pool name, and key identifiers—to support troubleshooting.
+      - id: errors.typed-exceptions
+        type: pattern
+        text: Have infrastructure layers raise well-typed domain exceptions so services and global exception handlers can translate them into HTTP error responses.
+      - id: errors.shutdown-logging
+        type: note
+        text: During shutdown, log failures to close pools or clients but do not prevent process termination; best-effort cleanup is sufficient once traffic stops.
+  - id: testing-connection-pools
+    index: 12
+    title: Testing with connection pools
+    category: testing
+    summary: Unit, integration, and end-to-end testing strategies for pooled resources.
+    items[5]:
+      - id: test.unit-doubles
+        type: rule
+        text: Use fakes or test doubles for SurrealDBPool and ElasticsearchWrapper in unit tests so they do not require real backends.
+      - id: test.monkeypatch-factories
+        type: pattern
+        text: Monkeypatch create_surrealdb_pool() and create_elasticsearch_wrapper() to return dummy resources in tests that only care about validation or error behavior (see tests/unit/test_validation_errors.py for examples).
+      - id: test.integration-fixtures
+        type: pattern
+        text: Use in-process integration fixtures (for example test_app and async_client from tests/conftest.py) plus dependency overrides to exercise pools initialized by create_app.
+      - id: test.e2e-live
+        type: note
+        text: Use live_server and api_client fixtures (defined in tests/conftest.py) for end-to-end tests that hit a dockerized stack with real SurrealDB and Elasticsearch services.
+      - id: test.avoid-real-in-unit
+        type: rule
+        text: Avoid contacting real databases or search clusters from unit tests; restrict such connectivity to integration and E2E suites.
+  - id: pooling-anti-patterns
+    index: 13
+    title: Anti-patterns to avoid
+    category: warning
+    summary: Common mistakes when working with pools and long-lived clients.
+    items[5]:
+      - id: anti.per-request-pools
+        type: anti_pattern
+        text: Creating connection pools or HTTP clients inside route handlers or per-request code paths.
+      - id: anti.bypassing-pool
+        type: anti_pattern
+        text: Opening new database or HTTP connections for every operation instead of reusing pool-managed connections.
+      - id: anti.oversized-pools
+        type: anti_pattern
+        text: Configuring excessively large pool sizes without regard for backend limits, which can starve other services and hide performance problems.
+      - id: anti.no-timeouts
+        type: anti_pattern
+        text: Failing to configure acquire or request timeouts, causing requests to hang when backends are slow or unreachable.
+      - id: anti.no-cleanup
+        type: anti_pattern
+        text: Neglecting to close pools and clients during shutdown, leading to leaked sockets, file descriptors, or threads.
+  - id: http-client-pooling
+    index: 14
+    title: HTTP client pooling
+    category: standard
+    summary: Patterns for pooling outbound HTTP connections using httpx.AsyncClient.
+    items[4]:
+      - id: http.pooling-shared-client
+        type: rule
+        text: Create a single shared httpx.AsyncClient instance during lifespan startup and attach it to app.state.http_client.
+      - id: http.limits-timeouts
+        type: rule
+        text: Configure HTTP client pooling via httpx.Limits for maximum connections and keepalive behavior, and httpx.Timeout for connect, read, and write timeouts.
+      - id: http.dependency-injection
+        type: pattern
+        text: Inject the shared AsyncClient into services via dependencies rather than creating new clients per request.
+      - id: http.shutdown
+        type: rule
+        text: Close the shared AsyncClient during lifespan shutdown to release network resources cleanly.
+  - id: monitoring-and-security
+    index: 15
+    title: Monitoring and security considerations
+    category: standard
+    summary: Observability and security practices for pooled resources.
+    items[4]:
+      - id: monitoring.logs-metrics
+        type: rule
+        text: Emit structured logs for pool initialization, timeouts, acquire failures, and backend errors, and record metrics for pool utilization, queue wait times, and backend latency where available.
+      - id: monitoring.tuning-feed
+        type: note
+        text: Use monitoring signals such as timeouts, queue lengths, and error rates as primary input when tuning pool sizes, timeouts, and retry policies.
+      - id: security.no-credential-logging
+        type: rule
+        text: Avoid logging raw connection strings, credentials, or hostnames; follow Settings conventions that mark sensitive fields as non-repr.
+      - id: security.config-through-settings
+        type: rule
+        text: Store credentials and hosts exclusively in configuration surfaced via Settings and never hard-code them in code or tests.
