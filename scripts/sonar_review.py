@@ -7,19 +7,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import subprocess
-import sys
 from pathlib import Path
 
-from scripts.utils import utc_timestamp
-
-
-class StdoutCaptureError(RuntimeError):
-    """Raised when sonar_scan output cannot be read."""
-
-    def __init__(self) -> None:
-        """Initialize with a fixed capture failure message."""
-        super().__init__("Failed to capture stdout from sonar_scan process")
+from scripts.utils import run_command_with_tee, utc_timestamp
 
 
 class SonarScriptNotFoundError(FileNotFoundError):
@@ -42,26 +32,7 @@ def run_sonar(extra_args: list[str], output_dir: Path) -> Path:
 
     cmd = [str(script_path), *extra_args]
 
-    with output_path.open("w", encoding="utf-8") as outfile:
-        process = subprocess.Popen(  # noqa: S603
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        stdout = process.stdout
-        if stdout is None:  # pragma: no cover - defensive guard
-            process.kill()
-            raise StdoutCaptureError()
-        try:
-            for line in stdout:
-                sys.stdout.write(line)
-                outfile.write(line)
-        except Exception:
-            process.kill()
-            raise
-        retcode = process.wait()
-
+    retcode = run_command_with_tee(cmd, output_path)
     if retcode != 0:
         raise SystemExit(retcode)
 

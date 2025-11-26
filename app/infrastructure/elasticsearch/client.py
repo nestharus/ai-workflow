@@ -64,7 +64,7 @@ class ElasticsearchWrapper:
         self._ensure_initialized()
 
         def _sync_search() -> dict[str, Any]:
-            return cast("DictStrAny", self._client.search(index=index, query=query))
+            return cast("DictStrAny", cast(object, self._client.search(index=index, query=query)))
 
         return await anyio.to_thread.run_sync(_sync_search)
 
@@ -75,7 +75,7 @@ class ElasticsearchWrapper:
         self._ensure_initialized()
 
         def _sync_index() -> dict[str, Any]:
-            return cast("DictStrAny", self._client.index(index=index, document=document, id=id))
+            return cast("DictStrAny", cast(object, self._client.index(index=index, document=document, id=id)))
 
         return await anyio.to_thread.run_sync(_sync_index)
 
@@ -84,7 +84,7 @@ class ElasticsearchWrapper:
         self._ensure_initialized()
 
         def _sync_bulk() -> dict[str, Any]:
-            return cast("DictStrAny", self._client.bulk(operations=operations))
+            return cast("DictStrAny", cast(object, self._client.bulk(operations=operations)))
 
         return await anyio.to_thread.run_sync(_sync_bulk)
 
@@ -98,7 +98,6 @@ class ElasticsearchWrapper:
             try:
                 self._client.indices.create(index=index, mappings=mappings, settings=settings)
             except es_exceptions.RequestError as exc:
-                error_type = ""
                 try:
                     error_type = exc.info.get("error", {}).get("type", "")
                 except (AttributeError, KeyError):  # pragma: no cover - defensive

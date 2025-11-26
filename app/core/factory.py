@@ -165,12 +165,12 @@ def _lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncContextMan
             if elasticsearch_client is not None:
                 try:
                     await elasticsearch_client.close()
-                except Exception:  # pragma: no cover - defensive logging
+                except Exception:
                     logger.exception("Failed to close Elasticsearch client cleanly")
             if surreal_pool is not None:
                 try:
                     await surreal_pool.close()
-                except Exception:  # pragma: no cover - defensive logging
+                except Exception:
                     logger.exception("Failed to close SurrealDB pool cleanly")
 
     return lifespan

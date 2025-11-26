@@ -5,12 +5,10 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
+from fastapi import FastAPI
 
 import orjson
-
-if TYPE_CHECKING:
-    from fastapi import FastAPI
 
 OPENAPI_VERSION = "3.1.0"
 ALLOWED_OPENAPI_KEYS = {

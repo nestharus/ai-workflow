@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+HTTP_RESPONSE_START = "http.response.start"
 HSTS_HEADER_VALUE = "max-age=31536000; includeSubDomains"
 REQUEST_ID_HEADER = "X-Request-ID"
 
@@ -34,7 +35,7 @@ class SecurityHeadersMiddleware:
             return
 
         async def send_wrapper(message: Message) -> None:
-            if message.get("type") == "http.response.start":
+            if message.get("type") == HTTP_RESPONSE_START:
                 headers = MutableHeaders(scope=message)
                 headers["X-Content-Type-Options"] = "nosniff"
                 headers["X-Frame-Options"] = "DENY"
@@ -78,14 +79,15 @@ class RequestIDMiddleware:
         scope["request_id"] = request_id
 
         async def send_wrapper(message: Message) -> None:
-            if message.get("type") == "http.response.start":
+            if message.get("type") == HTTP_RESPONSE_START:
                 headers = MutableHeaders(scope=message)
                 headers[REQUEST_ID_HEADER] = request_id
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
 
-    def _extract_or_generate_id(self, scope: Scope) -> str:
+    @staticmethod
+    def _extract_or_generate_id(scope: Scope) -> str:
         raw_headers: list[tuple[bytes, bytes]] = scope.get("headers", [])
         headers = dict(raw_headers)
         existing_id = headers.get(REQUEST_ID_HEADER.lower().encode())
@@ -123,7 +125,7 @@ class RequestLoggingMiddleware:
 
         async def send_wrapper(message: Message) -> None:
             nonlocal status_code
-            if message.get("type") == "http.response.start":
+            if message.get("type") == HTTP_RESPONSE_START:
                 status_code = message.get("status", 0)
             await send(message)
 
@@ -187,7 +189,7 @@ class MetricsMiddleware:
 
         async def send_wrapper(message: Message) -> None:
             nonlocal status_code
-            if message.get("type") == "http.response.start":
+            if message.get("type") == HTTP_RESPONSE_START:
                 status_code = message.get("status", 0)
             await send(message)
 
@@ -251,7 +253,8 @@ class RateLimitingMiddleware:
         self._record_request(client_ip, current_time)
         await self.app(scope, receive, send)
 
-    def _get_client_ip(self, scope: Scope) -> str:
+    @staticmethod
+    def _get_client_ip(scope: Scope) -> str:
         client: tuple[str, int] | None = scope.get("client")
         if client:
             return client[0]
@@ -275,7 +278,7 @@ class RateLimitingMiddleware:
     async def _send_rate_limit_response(self, send: Send) -> None:
         await send(
             {
-                "type": "http.response.start",
+                "type": HTTP_RESPONSE_START,
                 "status": 429,
                 "headers": [
                     (b"content-type", b"application/json"),

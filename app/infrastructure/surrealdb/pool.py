@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from surrealdb import AsyncSurreal
 
@@ -18,6 +18,37 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
 
     from app.core.settings import Settings
+
+
+class AsyncSurrealConnection(Protocol):
+    """Protocol defining the interface for async SurrealDB connections.
+
+    This protocol captures the subset of methods used by the connection pool,
+    decoupling the pool implementation from the concrete connection class
+    returned by the surrealdb library's AsyncSurreal factory function.
+    """
+
+    async def connect(self) -> None:
+        """Establish the connection to SurrealDB."""
+        ...
+
+    async def signin(self, credentials: dict[str, Any]) -> None:
+        """Authenticate with the provided credentials."""
+        ...
+
+    async def use(self, namespace: str, database: str) -> None:
+        """Select the namespace and database to use."""
+        ...
+
+    async def close(self) -> None:
+        """Close the connection."""
+        ...
+
+    async def query(
+        self, sql: str, params: dict[str, Any] | None = None
+    ) -> list[Any]:
+        """Execute a query and return the results."""
+        ...
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +81,7 @@ class SurrealDBPool:
         self._password = password
         self._size = size
         self._embedding_dimension = embedding_dimension
-        self._queue: asyncio.Queue[AsyncSurreal] = asyncio.Queue(maxsize=size)
+        self._queue: asyncio.Queue[AsyncSurrealConnection] = asyncio.Queue(maxsize=size)
         self._initialized = False
         self._acquire_timeout = acquire_timeout
 
@@ -59,7 +90,7 @@ class SurrealDBPool:
         if self._initialized:
             return
 
-        created: list[AsyncSurreal] = []
+        created: list[AsyncSurrealConnection] = []
         try:
             for _ in range(self._size):
                 conn = AsyncSurreal(self._dsn)
@@ -92,7 +123,7 @@ class SurrealDBPool:
         self._initialized = False
 
     @asynccontextmanager
-    async def acquire(self) -> AsyncIterator[AsyncSurreal]:
+    async def acquire(self) -> AsyncIterator[AsyncSurrealConnection]:
         """Acquire a connection from the pool with timeout handling."""
         if not self._initialized:
             raise SurrealDBPoolNotInitializedError()
@@ -111,8 +142,7 @@ class SurrealDBPool:
     ) -> list[Any]:
         """Execute schema definition statements."""
         async with self.acquire() as conn:
-            result = await conn.query(schema_sql, params)
-            return cast("list[Any]", result)
+            return await conn.query(schema_sql, params)
 
     async def initialize_schema(self) -> None:
         """Define Knowledge Graph tables, relationships, and vector index."""
@@ -208,7 +238,8 @@ class SurrealDBPool:
         result = await self.execute_schema(query, params)
         return self._extract_first_field(result, "current_version")
 
-    def _extract_first_field(self, result: list[Any], field: str) -> str | None:
+    @staticmethod
+    def _extract_first_field(result: list[Any], field: str) -> str | None:
         if not result:
             return None
         try:
@@ -217,7 +248,7 @@ class SurrealDBPool:
             if rows and isinstance(rows[0], dict):
                 value = rows[0].get(field)
                 return cast("str | None", value)
-        except Exception:
+        except (AttributeError, IndexError, KeyError, TypeError):
             logger.debug("Failed to parse schema version result", exc_info=True)
         return None
 
