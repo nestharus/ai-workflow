@@ -8,7 +8,8 @@ This module covers documentation for writing and running test code.
 
 **File:** `api-testing-patterns.md`
 
-Defines how to test FastAPI endpoints across unit, integration, and E2E test layers. Covers fixture setup, dependency overrides, async client configuration, and test organization for comprehensive API coverage.
+Defines how to test FastAPI endpoints across unit, integration, and E2E test layers. Covers fixture setup,
+dependency overrides, async client configuration, and test organization for comprehensive API coverage.
 
 **Apply when:**
 

@@ -191,8 +191,9 @@ Available via `uv run <script>`:
 | `sonar-review` | Run SonarQube analysis (human-initiated) |
 | `latest-review` | Fetch latest review artifact path |
 
-Additional concatenation tools (`concat_app`, `concat_docs`, `concat_scripts`, `concat_tests`, `concat_tools`)
-are available for codebase analysis. See `AGENTS.md` for detailed usage of review tools.
+Additional concatenation tools (`concat_app`, `concat_docs`, `concat_scripts`, `concat_tests`,
+`concat_tools`) are available for codebase analysis. See `AGENTS.md` for detailed usage of review
+tools.
 
 ## Documentation Modules
 
@@ -203,11 +204,11 @@ Documentation is organized into focused modules under `docs/`:
 | **Usage** | [`docs/usage/`](docs/usage/README.md) | Using the application |
 | **Development** | [`docs/development/`](docs/development/README.md) | Writing code, docstrings, FastAPI practices |
 | **Testing** | [`docs/testing/`](docs/testing/README.md) | Writing and running test code |
-| **Architecture** | [`docs/architecture/`](docs/architecture/README.md) | Folder structure, services, endpoints, integrations |
+| **Architecture** | [`docs/architecture/`](docs/architecture/README.md) | Structure, services, endpoints |
 | **Processes** | [`docs/processes/`](docs/processes/README.md) | Development processes, git releases, code reviews |
 
-Each module README contains topic summaries and applicability guidance. See `AGENTS.md` as the primary entry
-point for AI agents.
+Each module README contains topic summaries and applicability guidance. See `AGENTS.md` as the
+primary entry point for AI agents.
 
 ## Operational Protocols
 

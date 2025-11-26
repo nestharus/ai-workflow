@@ -1,6 +1,7 @@
 # Development
 
-This module covers documentation for writing application code. This includes docstrings, code style, FastAPI practices, etc.
+This module covers documentation for writing application code. This includes docstrings, code style, FastAPI
+practices, etc.
 
 ## Topics
 
@@ -8,7 +9,8 @@ This module covers documentation for writing application code. This includes doc
 
 **File:** `settings-patterns.md`
 
-Defines how to model, validate, and consume runtime configuration using Pydantic settings. Covers environment variable binding, validation rules, and settings composition for different deployment environments.
+Defines how to model, validate, and consume runtime configuration using Pydantic settings. Covers environment
+variable binding, validation rules, and settings composition for different deployment environments.
 
 **Apply when:**
 
@@ -20,7 +22,8 @@ Defines how to model, validate, and consume runtime configuration using Pydantic
 
 **File:** `factory-patterns.md`
 
-Covers application construction, lifespan management, and configuration patterns for building FastAPI applications. Establishes how to wire together routers, middleware, and services during application startup.
+Covers application construction, lifespan management, and configuration patterns for building FastAPI
+applications. Establishes how to wire together routers, middleware, and services during application startup.
 
 **Apply when:**
 
@@ -32,7 +35,8 @@ Covers application construction, lifespan management, and configuration patterns
 
 **File:** `dependency-patterns.md`
 
-Establishes FastAPI dependency injection patterns using Annotated type aliases. Defines how to wire services, repositories, and other dependencies into route handlers for testability and separation of concerns.
+Establishes FastAPI dependency injection patterns using Annotated type aliases. Defines how to wire services,
+repositories, and other dependencies into route handlers for testability and separation of concerns.
 
 **Apply when:**
 
@@ -44,7 +48,8 @@ Establishes FastAPI dependency injection patterns using Annotated type aliases. 
 
 **File:** `router-patterns.md`
 
-Defines FastAPI router organization, route handler structure, and OpenAPI documentation standards. Covers how to structure endpoints, handle request/response models, and document APIs for clarity.
+Defines FastAPI router organization, route handler structure, and OpenAPI documentation standards. Covers how to
+structure endpoints, handle request/response models, and document APIs for clarity.
 
 **Apply when:**
 
@@ -56,7 +61,8 @@ Defines FastAPI router organization, route handler structure, and OpenAPI docume
 
 **File:** `service-patterns.md`
 
-Establishes service layer architecture for encapsulating business logic and transaction management. Defines how services coordinate between routers and repositories while maintaining separation of concerns.
+Establishes service layer architecture for encapsulating business logic and transaction management. Defines how
+services coordinate between routers and repositories while maintaining separation of concerns.
 
 **Apply when:**
 
@@ -68,7 +74,8 @@ Establishes service layer architecture for encapsulating business logic and tran
 
 **File:** `repository-patterns.md`
 
-Defines data access layer patterns, repository interfaces, and query patterns for persistence code. Covers how to abstract database operations behind clean interfaces for testability.
+Defines data access layer patterns, repository interfaces, and query patterns for persistence code. Covers how
+to abstract database operations behind clean interfaces for testability.
 
 **Apply when:**
 
@@ -80,7 +87,8 @@ Defines data access layer patterns, repository interfaces, and query patterns fo
 
 **File:** `middleware-patterns.md`
 
-Covers HTTP middleware implementation, ordering, and configuration for cross-cutting concerns. Defines how to add request/response processing for logging, security headers, and error handling.
+Covers HTTP middleware implementation, ordering, and configuration for cross-cutting concerns. Defines how to
+add request/response processing for logging, security headers, and error handling.
 
 **Apply when:**
 
@@ -92,7 +100,8 @@ Covers HTTP middleware implementation, ordering, and configuration for cross-cut
 
 **File:** `exception-patterns.md`
 
-Defines how to design domain exceptions, error handling, and HTTP error mapping. Establishes a consistent approach to raising, catching, and translating exceptions into appropriate API responses.
+Defines how to design domain exceptions, error handling, and HTTP error mapping. Establishes a consistent
+approach to raising, catching, and translating exceptions into appropriate API responses.
 
 **Apply when:**
 
@@ -104,7 +113,8 @@ Defines how to design domain exceptions, error handling, and HTTP error mapping.
 
 **File:** `connection-pooling-patterns.md`
 
-Describes how to create, configure, and manage database and search client pools. Covers pool sizing, connection lifecycle, and health checking for infrastructure resources.
+Describes how to create, configure, and manage database and search client pools. Covers pool sizing, connection
+lifecycle, and health checking for infrastructure resources.
 
 **Apply when:**
 
@@ -116,7 +126,8 @@ Describes how to create, configure, and manage database and search client pools.
 
 **File:** `api-patterns.md`
 
-Establishes REST API design standards including URL structure, request/response modeling, and OpenAPI documentation conventions. Defines consistent patterns for resource naming, pagination, and error responses.
+Establishes REST API design standards including URL structure, request/response modeling, and OpenAPI
+documentation conventions. Defines consistent patterns for resource naming, pagination, and error responses.
 
 **Apply when:**
 
