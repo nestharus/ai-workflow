@@ -1,0 +1,284 @@
+doc_id: python-service-patterns
+title: Python Service Layer Patterns
+project: ai-workflow
+version_hint: 2024-2025
+kind: business_logic_layer_standards
+description: Framework-agnostic service layer patterns for encapsulating business logic, orchestrating data access, and ensuring
+  clean separation between API and persistence layers.
+scope: Covers service responsibilities, class structure, constructor injection, transaction management, domain error handling,
+  testing strategy, lifecycle, and anti-patterns. FastAPI-specific DI wiring is in docs/development/fastapi/service-patterns.toon.
+primary_runtime_references:
+  - path: app/services/example_service.py
+    role: Service implementation example.
+  - path: app/core/errors.py
+    role: Domain error definitions.
+related_pattern_docs:
+  - fastapi/service-patterns.toon
+  - python/repository-patterns.toon
+  - python/dependency-patterns.toon
+  - python/exception-patterns.toon
+sections:
+  - id: responsibilities
+    index: 1
+    title: Service layer responsibilities
+    category: layer_definition
+    summary: The service layer is the heart of the application's business logic, coordinating data access and enforcing domain
+      rules.
+    items:
+      - id: responsibilities.business-logic
+        type: rule
+        text: Implement core use cases and business rules in services; this is where domain logic lives.
+      - id: responsibilities.orchestration
+        type: rule
+        text: Coordinate calls to multiple repositories or external clients (e.g., fetching data from DB, processing it, sending
+          events).
+      - id: responsibilities.transactions
+        type: rule
+        text: Define transaction boundaries to ensure data consistency across operations.
+      - id: responsibilities.domain-errors
+        type: rule
+        text: Raise domain-specific exceptions (subclasses of DomainError defined in app/core/errors.py) rather than HTTP
+          exceptions.
+      - id: responsibilities.http-agnostic
+        type: rule
+        text: Services must never import web framework types, handle Request/Response objects directly, or embed HTTP status
+          codes in their public APIs.
+  - id: class-structure
+    index: 2
+    title: Service class structure
+    category: standard
+    summary: Services are implemented as classes with constructor-based dependency injection and explicit lifecycle methods.
+    sample_code:
+      description: Standard service class pattern with constructor injection, business methods, and optional shutdown.
+      code: |-
+        class OrderService:
+            """Service for managing order lifecycle.
+
+            Attributes:
+                order_repository: Repository for order persistence.
+                payment_gateway: Client for payment processing.
+            """
+
+            def __init__(self, order_repository: OrderRepository, payment_gateway: PaymentGateway) -> None:
+                """Create a service with its collaborators."""
+                self.order_repository = order_repository
+                self.payment_gateway = payment_gateway
+
+            async def process_order(self, order_id: str) -> Order:
+                """Process a pending order and return the updated order.
+
+                Args:
+                    order_id: The unique identifier of the order.
+
+                Returns:
+                    Order: The processed order details.
+
+                Raises:
+                    OrderNotFoundError: If the order does not exist.
+                    PaymentFailedError: If the payment capture fails.
+                """
+                # 1. Fetch order from repository
+                order = await self.order_repository.get_by_id(order_id)
+                if order is None:
+                    raise OrderNotFoundError(order_id)
+
+                # 2. Capture payment via gateway
+                payment_result = await self.payment_gateway.capture(order.payment_intent_id)
+                if not payment_result.success:
+                    raise PaymentFailedError(order_id, payment_result.error)
+
+                # 3. Update order status and persist
+                order.status = OrderStatus.PROCESSED
+                await self.order_repository.update(order)
+                return order
+
+            async def shutdown(self) -> None:
+                """Cleanup resources if necessary (e.g., closing specific connections)."""
+                pass
+    items:
+      - id: structure.constructor
+        type: rule
+        text: Accept dependencies explicitly via __init__ constructor parameters.
+      - id: structure.methods
+        type: rule
+        text: Implement business actions as named methods (verbs like create, process, calculate).
+      - id: structure.cleanup
+        type: rule
+        text: Provide an optional shutdown() method for resource cleanup when needed.
+      - id: structure.type-hints
+        type: rule
+        text: Type hints are mandatory for all arguments and return values.
+      - id: structure.docstrings
+        type: rule
+        text: Follow Google-style docstring guidance in docs/development/python/docstrings-guide.toon.
+      - id: structure.exceptions
+        type: rule
+        text: List all domain exceptions a method may raise in a Raises section so callers know which failures to handle.
+  - id: dependency-injection
+    index: 3
+    title: Dependency injection pattern
+    category: standard
+    summary: Services receive dependencies via constructors rather than globals or module-level state for testability and
+      explicitness.
+    sample_code:
+      description: Constructor-based dependency injection with factory function pattern.
+      snippets:
+        - name: constructor
+          code: |-
+            class UserService:
+                def __init__(self, user_repo: UserRepository, settings: Settings) -> None:
+                    self._user_repo = user_repo
+                    self._settings = settings
+        - name: factory
+          code: |-
+            def build_user_service(
+                user_repo: UserRepository,
+                settings: Settings,
+            ) -> UserService:
+                return UserService(user_repo=user_repo, settings=settings)
+    items:
+      - id: di.constructor-based
+        type: rule
+        text: Receive all dependencies via constructor parameters; avoid globals or module-level state.
+      - id: di.multiple-collaborators
+        type: rule
+        text: When a service needs multiple collaborators (repositories, clients, configuration), add them as typed constructor
+          parameters.
+      - id: di.factory-functions
+        type: rule
+        text: Define small factory functions to wire services together for composition or testing.
+      - id: di.db-sessions
+        type: rule
+        text: Database sessions or pools (e.g., an ORM session or a SurrealDB connection pool) should be created in request
+          context by outer layers and passed into repositories or services as constructor arguments.
+  - id: transaction-management
+    index: 4
+    title: Transaction management
+    category: standard
+    summary: Services define the boundaries of a unit of work; repositories must not commit or roll back transactions.
+    sample_code:
+      description: Transaction boundary pattern with async context manager.
+      code: |-
+        async def create_order(self, order_data: CreateOrderSchema) -> Order:
+            # Start transaction boundary
+            async with self.repository.transaction() as txn:
+                try:
+                    order = await self.repository.create(order_data)
+                    await self.audit_log.log_creation(order.id)
+                    await txn.commit()
+                    return order
+                except DomainError:
+                    await txn.rollback()
+                    raise
+    items:
+      - id: txn.transactional-methods
+        type: rule
+        text: Operations that modify state should run within a transaction boundary defined by the service.
+      - id: txn.async-context
+        type: rule
+        text: Use async with blocks for acquiring connections or transactions.
+      - id: txn.commit-rollback
+        type: rule
+        text: Services commit on success and roll back when a domain exception signals failure.
+      - id: txn.repository-responsibility
+        type: rule
+        text: Repositories must not commit or roll back transactions; they translate domain operations into database or search
+          calls while services own the unit-of-work boundary.
+  - id: error-handling
+    index: 5
+    title: Error handling in services
+    category: standard
+    summary: Services must raise domain exceptions, not HTTP exceptions, keeping the service layer decoupled from transport.
+    sample_code:
+      description: Correct pattern using domain exceptions vs. anti-pattern using HTTP exceptions.
+      snippets:
+        - name: anti_pattern
+          label: Anti-Pattern (Do NOT do this)
+          code: |-
+            from some_framework import HTTPException
+
+            class BadService:
+                async def get_item(self, id: str):
+                    if not found:
+                        raise HTTPException(status_code=404, detail="Item not found")  # WRONG
+        - name: correct_pattern
+          label: Correct Pattern
+          code: |-
+            class GoodService:
+                async def get_item(self, id: str):
+                    if not found:
+                        raise ItemNotFoundError(f"Item {id} not found")  # RIGHT
+    items:
+      - id: errors.domain-exceptions
+        type: rule
+        text: Raise domain exceptions (not HTTP exceptions) to keep services decoupled from transport layer.
+      - id: errors.custom-hierarchy
+        type: rule
+        text: Create a hierarchy of exceptions (e.g., AppError -> DomainError -> ResourceNotFoundError).
+      - id: errors.catch-technical
+        type: rule
+        text: Catch low-level database errors (e.g., IntegrityError) and wrap/re-raise as domain errors (e.g., DuplicateRecordError).
+      - id: errors.global-handling
+        type: rule
+        text: Rely on transport-layer exception handlers to translate domain errors into appropriate responses.
+      - id: errors.no-http-mapping
+        type: rule
+        text: Service code does not decide HTTP status codes or error serialization; that mapping lives in HTTP and exception
+          pattern documents.
+  - id: testing-strategy
+    index: 6
+    title: Service testing strategy
+    category: standard
+    summary: Services are the easiest layer to test because they do not depend on external frameworks.
+    items:
+      - id: testing.unit-tests
+        type: rule
+        text: Test logic in isolation using mocked repositories and external clients; use unittest.mock or pytest-mock to
+          verify calls.
+      - id: testing.integration-tests
+        type: rule
+        text: Integration tests can verify service interaction with real database implementations and repositories.
+      - id: testing.fixtures
+        type: note
+        text: The fixtures in tests/conftest.py show patterns for test isolation and swapping implementations via dependency
+          injection.
+      - id: testing.verify-calls
+        type: rule
+        text: Verify that repositories are called with expected arguments in unit tests.
+  - id: lifecycle
+    index: 7
+    title: Service lifecycle
+    category: standard
+    summary: Services are typically request-scoped for safety; some may be singletons when holding stateless logic or shared
+      connections.
+    items:
+      - id: lifecycle.request-scoped
+        type: rule
+        text: Most services are instantiated per request for thread safety and proper resource isolation (e.g., database sessions).
+      - id: lifecycle.singleton-scoped
+        type: note
+        text: Services holding stateless logic or shared thread-safe connections (like HTTP client pools) may be singletons,
+          but request-scoped is safer by default.
+      - id: lifecycle.lifespan
+        type: rule
+        text: Hooks in the application factory manage startup and shutdown of global resources (DB pools) that services rely
+          on.
+      - id: lifecycle.long-lived
+        type: rule
+        text: For background or long-lived services that own external resources, implement a shutdown() method and ensure
+          it is called during application shutdown.
+  - id: anti-patterns
+    index: 8
+    title: Anti-patterns to avoid
+    category: anti_patterns
+    summary: Common pitfalls that undermine service layer design.
+    items:
+      - id: anti.thin-wrappers
+        type: anti_pattern
+        text: Services that are just thin wrappers around repositories with no business logic.
+      - id: anti.mixed-domains
+        type: anti_pattern
+        text: Services that mix multiple unrelated business domains into a single class.
+      - id: anti.blocking-io
+        type: anti_pattern
+        text: Services that perform I/O without using proper async/await in async codepaths.

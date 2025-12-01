@@ -66,8 +66,8 @@ Runs a comprehensive suite of static analysis and security tools.
   3. `mypy`: Type checking
   4. `hadolint`: Lints Dockerfiles
   5. `pymarkdown`: Validates Markdown files
-  6. `validate-toon`: Validates all `.toon` files for syntax and structural correctness
-     per the TOON specification
+  6. `yamllint`: Validates all `.yml` and `.yaml` files for syntax and style per the
+     configuration in `.yamllint.yaml`
   7. `checkov`: Scans the generated `openapi/openapi.json` against policies in
      `.checkov.yaml`
 * **Prerequisite**: Run `uv run gen_openapi` first to generate the schema for Checkov
@@ -83,7 +83,7 @@ Runs a comprehensive suite of static analysis and security tools.
   `app/schemas/**`), keep imports loaded at runtime and rely on the scoped TCH003 ignore
   already configured.
 
-For docstring linter errors, see `docs/development/python/docstrings-guide.toon`.
+For docstring linter errors, see `docs/development/python/python.docstrings-guide.yml`.
 
 ## Code Review
 

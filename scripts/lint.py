@@ -125,7 +125,21 @@ def main() -> int:
         for pattern in PYMARKDOWN_EXCLUDES:
             pymarkdown_cmd.extend(["-e", pattern])
         _run_checked(pymarkdown_cmd)
-        _run_checked([uv_exe, "run", "validate-toon"])
+        yaml_files = [
+            str(path)
+            for path in REPO_ROOT.rglob("*.yml")
+            if path.is_file()
+            and not any(excluded in path.parts for excluded in PYMARKDOWN_EXCLUDES)
+        ]
+        yaml_files.extend(
+            str(path)
+            for path in REPO_ROOT.rglob("*.yaml")
+            if path.is_file()
+            and not any(excluded in path.parts for excluded in PYMARKDOWN_EXCLUDES)
+        )
+        if yaml_files:
+            yamllint_config = str(REPO_ROOT / ".yamllint.yaml")
+            _run_checked([uv_exe, "run", "yamllint", "-c", yamllint_config, *yaml_files])
         if not OPENAPI_SCHEMA.exists():
             print(
                 f"OpenAPI schema missing at {OPENAPI_SCHEMA}. Run `uv run gen_openapi` first.",

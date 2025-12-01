@@ -1,0 +1,268 @@
+doc_id: fastapi-connection-pooling-patterns
+title: FastAPI Connection Pooling Patterns
+project: ai-workflow
+version_hint: 2024-2025
+kind: fastapi_pooling_standards
+description: FastAPI-specific patterns for integrating connection pools with lifespan management, app.state storage, dependency
+  injection, and HTTP client pooling.
+scope: Covers FastAPI lifespan context manager integration with pools, app.state attachment patterns, dependency providers
+  for pool access, HTTP client pooling with httpx.AsyncClient, FastAPI-specific testing fixtures, and resource cleanup. Generic
+  pooling concepts are in python/connection-pooling-patterns.toon.
+out_of_scope:
+  - Generic pooling fundamentals (see python/connection-pooling-patterns.toon).
+  - SurrealDB pool implementation (see surrealdb/connection-pooling-patterns.toon).
+  - Elasticsearch wrapper implementation (see elasticsearch/connection-pooling-patterns.toon).
+  - Factory pattern details (see fastapi/factory-patterns.toon).
+primary_runtime_references:
+  - path: app/core/factory.py
+    role: FastAPI lifespan implementation with pool initialization and cleanup.
+  - path: app/api/v1/dependencies.py
+    role: Dependency providers for pool access via request.app.state.
+  - path: tests/conftest.py
+    role: Test fixtures for FastAPI applications with pools.
+related_pattern_docs:
+  - python/connection-pooling-patterns.toon
+  - surrealdb/connection-pooling-patterns.toon
+  - elasticsearch/connection-pooling-patterns.toon
+  - fastapi/factory-patterns.toon
+  - fastapi/dependency-patterns.toon
+  - fastapi/settings-patterns.toon
+sections:
+  - id: fastapi-lifespan-integration
+    index: 1
+    title: FastAPI lifespan integration
+    category: standard
+    summary: Managing pool lifecycle using FastAPI's lifespan context manager.
+    sample_code:
+      description: Lifespan function that initializes and cleans up pools.
+      imports:
+        - contextlib.asynccontextmanager
+        - contextlib.AbstractAsyncContextManager
+        - collections.abc.AsyncGenerator
+        - collections.abc.Callable
+        - fastapi.FastAPI
+        - app.core.settings.Settings
+      code: |-
+        from contextlib import asynccontextmanager, AbstractAsyncContextManager
+        from collections.abc import AsyncGenerator, Callable
+        from fastapi import FastAPI
+        from app.infrastructure.surrealdb.pool import SurrealDBPool, create_surrealdb_pool
+        from app.infrastructure.elasticsearch.client import (
+            ElasticsearchWrapper,
+            create_elasticsearch_wrapper,
+        )
+        def _lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
+            @asynccontextmanager
+            async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+                surreal_pool: SurrealDBPool | None = None
+                elasticsearch_client: ElasticsearchWrapper | None = None
+                try:
+                    surreal_pool = await create_surrealdb_pool(settings)
+                    app.state.surrealdb_pool = surreal_pool
+                    logger.info("Initialized SurrealDB pool")
+                    elasticsearch_client = await create_elasticsearch_wrapper(settings)
+                    app.state.elasticsearch_client = elasticsearch_client
+                    logger.info("Initialized Elasticsearch client")
+                    yield
+                except Exception:
+                    logger.exception("Failed to initialize application resources")
+                    raise
+                finally:
+                    if elasticsearch_client is not None:
+                        try:
+                            await elasticsearch_client.close()
+                        except Exception:
+                            logger.exception("Failed to close Elasticsearch client cleanly")
+                    if surreal_pool is not None:
+                        try:
+                            await surreal_pool.close()
+                        except Exception:
+                            logger.exception("Failed to close SurrealDB pool cleanly")
+            return lifespan
+    items:
+      - id: lifespan.use-context-manager
+        type: rule
+        text: Use FastAPI's lifespan context manager instead of on_event startup/shutdown hooks to manage initialization and
+          cleanup in a single async function.
+      - id: lifespan.resource-safety
+        type: note
+        text: Structure lifespan so that cleanup runs even if exceptions occur during startup, ensuring resources are not
+          leaked when initialization fails.
+      - id: lifespan.startup-phase
+        type: pattern
+        text: In the startup block, create shared resources via create_surrealdb_pool(settings) and create_elasticsearch_wrapper(settings)
+          and attach them to app.state.
+      - id: lifespan.error-handling
+        type: rule
+        text: Wrap startup logic in try/except blocks that log exceptions and re-raise them so failed resource initialization
+          prevents the app from serving requests.
+      - id: lifespan.shutdown-phase
+        type: rule
+        text: In the finally block, close pools and clients if they were created, logging but swallowing close errors to allow
+          a clean shutdown.
+  - id: app-state-attachment
+    index: 2
+    title: app.state attachment patterns
+    category: standard
+    summary: Storing and accessing pools via app.state.
+    items:
+      - id: state.naming-convention
+        type: rule
+        text: Store pools on app.state using descriptive names such as app.state.surrealdb_pool, app.state.elasticsearch_client,
+          and app.state.http_client.
+      - id: state.attach-after-init
+        type: pattern
+        text: Attach resources to app.state immediately after successful initialization so dependencies can access them.
+      - id: state.type-safety
+        type: note
+        text: Access app.state attributes with awareness that they are dynamically attached; type checkers may not verify
+          their existence at compile time.
+      - id: state.settings-storage
+        type: pattern
+        text: Store the Settings instance on app.state.settings as well so configuration is accessible alongside resources.
+      - id: state.no-globals
+        type: rule
+        text: Avoid storing pools in module-level globals; use app.state to enable test isolation and multiple app instances.
+  - id: dependency-providers
+    index: 3
+    title: Dependency providers for pools
+    category: standard
+    summary: Creating dependency functions that read pools from app.state.
+    sample_code:
+      description: Dependency provider that retrieves SurrealDBPool from app.state.
+      imports:
+        - fastapi.Request
+        - typing.Annotated
+        - fastapi.Depends
+      code: |-
+        from fastapi import Request, Depends
+        from typing import Annotated
+        from app.infrastructure.surrealdb.pool import SurrealDBPool
+        def get_surrealdb_pool(request: Request) -> SurrealDBPool:
+            """Retrieve the SurrealDB pool from app.state."""
+            return request.app.state.surrealdb_pool
+        SurrealDBPoolDep = Annotated[SurrealDBPool, Depends(get_surrealdb_pool)]
+        # Usage in a router:
+        # async def get_user(pool: SurrealDBPoolDep, user_id: str) -> User:
+        #     async with pool.acquire() as conn:
+        #         ...
+    items:
+      - id: deps.request-access
+        type: pattern
+        text: Dependency providers accept Request and access request.app.state to retrieve pools; this allows tests to override
+          app.state.
+      - id: deps.annotated-aliases
+        type: rule
+        text: Create Annotated type aliases such as SurrealDBPoolDep = Annotated[SurrealDBPool, Depends(get_surrealdb_pool)]
+          for clean injection syntax.
+      - id: deps.router-injection
+        type: pattern
+        text: 'Routers declare dependencies using the Annotated alias (for example pool: SurrealDBPoolDep) to receive pools
+          via FastAPI''s DI system.'
+      - id: deps.testability
+        type: note
+        text: 'Dependency providers enable tests to override pools using app.dependency_overrides[get_surrealdb_pool] = lambda:
+          mock_pool.'
+  - id: http-client-pooling
+    index: 4
+    title: HTTP client pooling
+    category: standard
+    summary: Patterns for pooling outbound HTTP connections using httpx.AsyncClient.
+    sample_code:
+      description: HTTP client initialization in lifespan.
+      imports:
+        - httpx
+        - fastapi.FastAPI
+        - app.core.settings.Settings
+      code: |-
+        import httpx
+        from fastapi import FastAPI
+        @asynccontextmanager
+        async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+            http_client: httpx.AsyncClient | None = None
+            try:
+                http_client = httpx.AsyncClient(
+                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+                    timeout=httpx.Timeout(10.0, connect=5.0),
+                )
+                app.state.http_client = http_client
+                yield
+            finally:
+                if http_client is not None:
+                    await http_client.aclose()
+    items:
+      - id: http.pooling-shared-client
+        type: rule
+        text: Create a single shared httpx.AsyncClient instance during lifespan startup and attach it to app.state.http_client.
+      - id: http.limits-timeouts
+        type: rule
+        text: Configure HTTP client pooling via httpx.Limits for maximum connections and keepalive behavior, and httpx.Timeout
+          for connect, read, and write timeouts.
+      - id: http.dependency-injection
+        type: pattern
+        text: Inject the shared AsyncClient into services via dependencies rather than creating new clients per request.
+      - id: http.shutdown
+        type: rule
+        text: Close the shared AsyncClient during lifespan shutdown using await http_client.aclose() to release network resources
+          cleanly.
+  - id: fastapi-testing-fixtures
+    index: 5
+    title: Testing with FastAPI fixtures
+    category: testing
+    summary: Test fixtures for FastAPI applications using connection pools.
+    sample_code:
+      description: Pytest fixtures for testing FastAPI apps with pools.
+      imports:
+        - pytest
+        - httpx
+        - fastapi.FastAPI
+        - app.core.factory.create_app
+      code: |-
+        import pytest
+        from httpx import AsyncClient, ASGITransport
+        from fastapi import FastAPI
+        from app.core.settings import Settings
+        from app.core.factory import create_app
+        @pytest.fixture
+        def test_settings() -> Settings:
+            """Create Settings instance for tests."""
+            return Settings()
+        @pytest.fixture
+        async def test_app(test_settings: Settings, monkeypatch) -> FastAPI:
+            """Create a FastAPI app instance with mocked pools."""
+            # Monkeypatch pool factories to return mocks
+            async def mock_create_pool(settings):
+                return MockSurrealDBPool()
+            monkeypatch.setattr(
+                "app.infrastructure.surrealdb.pool.create_surrealdb_pool",
+                mock_create_pool,
+            )
+            return create_app(test_settings)
+        @pytest.fixture
+        async def async_client(test_app: FastAPI):
+            """Create an async HTTP client for testing."""
+            async with AsyncClient(
+                transport=ASGITransport(app=test_app),
+                base_url="http://test",
+            ) as client:
+                yield client
+    items:
+      - id: test.test-settings
+        type: pattern
+        text: Define a test_settings fixture that instantiates Settings with safe defaults suitable for tests.
+      - id: test.test-app
+        type: pattern
+        text: Define a test_app fixture that calls create_app(test_settings) with monkeypatched pool factories to provide
+          isolated FastAPI instances.
+      - id: test.async-client
+        type: pattern
+        text: Define an async_client fixture using httpx.AsyncClient with ASGITransport to make HTTP requests against the
+          test app.
+      - id: test.dependency-overrides
+        type: rule
+        text: Prefer FastAPI's dependency override system (app.dependency_overrides) to replace pools while still exercising
+          the same create_app wiring.
+      - id: test.e2e-live
+        type: note
+        text: Use live_server and api_client fixtures for end-to-end tests that hit a dockerized stack with real SurrealDB
+          and Elasticsearch services.

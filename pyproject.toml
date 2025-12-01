@@ -16,7 +16,8 @@ dependencies = [
     "toon_format>=0.9.0b1,<1.0.0",
     "elasticsearch>=9.2.0,<9.3.0",
     "anyio>=4.11.0,<4.12.0",
-    "duckdb>=1.4.2,<1.5.0"
+    "duckdb>=1.4.2,<1.5.0",
+    "pyyaml>=6.0.2,<6.1.0"
 ]
 
 [build-system]
@@ -43,6 +44,8 @@ dev = [
     "pymarkdownlnt==0.9.33",
     "pre-commit>=4.4.0,<4.5",
     "hadolint-coatl>=2.14.0,<2.15.0",
+    "types-pyyaml>=6.0.12.20250915,<6.0.13",
+    "yamllint>=1.37.1,<1.38.0",
 ]
 
 [project.scripts]
@@ -54,6 +57,7 @@ gen_openapi = "scripts.gen_openapi:main"
 coderabbit-review = "scripts.coderabbit_review:main"
 sonar-review = "scripts.sonar_review:main"
 latest-review = "scripts.latest_review:main"
+toon-to-yml = "scripts.toon_to_yml:main"
 
 [tool.uv]
 link-mode = "copy"
