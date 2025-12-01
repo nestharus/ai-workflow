@@ -125,17 +125,31 @@ def main() -> int:
         for pattern in PYMARKDOWN_EXCLUDES:
             pymarkdown_cmd.extend(["-e", pattern])
         _run_checked(pymarkdown_cmd)
+        yaml_excludes = {
+            ".venv",
+            ".venv2",
+            "__pycache__",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".sonar",
+            ".review",
+            ".idea",
+            ".git",
+            ".github",
+            ".cache",
+            ".uv-cache",
+            "node_modules",
+        }
         yaml_files = [
             str(path)
             for path in REPO_ROOT.rglob("*.yml")
-            if path.is_file()
-            and not any(excluded in path.parts for excluded in PYMARKDOWN_EXCLUDES)
+            if path.is_file() and not any(excl in path.parts for excl in yaml_excludes)
         ]
         yaml_files.extend(
             str(path)
             for path in REPO_ROOT.rglob("*.yaml")
-            if path.is_file()
-            and not any(excluded in path.parts for excluded in PYMARKDOWN_EXCLUDES)
+            if path.is_file() and not any(excl in path.parts for excl in yaml_excludes)
         )
         if yaml_files:
             yamllint_config = str(REPO_ROOT / ".yamllint.yaml")

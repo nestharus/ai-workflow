@@ -56,6 +56,8 @@ coderabbit-review = "scripts.coderabbit_review:main"
 compare-yml-docs = "scripts.compare_yaml_docs:main"
 sonar-review = "scripts.sonar_review:main"
 latest-review = "scripts.latest_review:main"
+mark-resolved = "scripts.resolution_tracker:main"
+query-comparisons = "scripts.query_comparisons:main"
 
 [tool.uv]
 link-mode = "copy"

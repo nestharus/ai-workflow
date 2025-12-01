@@ -64,6 +64,7 @@ def dump_yaml(data: Any) -> str:  # noqa: ANN401
         indent=2,
     )
 
+
 TOON_FILE_PATTERN = "**/*.toon"
 EXCLUDED_DIRS = {
     ".venv",
@@ -123,8 +124,7 @@ def find_toon_files(root_path: Path) -> list[Path]:
     files = [
         path
         for path in root_path.rglob(TOON_FILE_PATTERN)
-        if path.is_file()
-        and not any(excluded in path.parts for excluded in EXCLUDED_DIRS)
+        if path.is_file() and not any(excluded in path.parts for excluded in EXCLUDED_DIRS)
     ]
     return sorted(files)
 

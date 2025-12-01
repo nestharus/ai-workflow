@@ -4,6 +4,9 @@ This module provides utilities for parsing YAML files and extracting ID-to-text
 mappings, enabling comparison of document content across different versions or files.
 It compares original YAML files with their split counterparts in subdirectories.
 
+Outputs flattened CSV files to `.knowledge/comparisons/` with columns:
+source_file, id, origin_type, original_text, split_file, split_text
+
 Usage:
     uv run compare-yml-docs [--path <directory>]
 
@@ -13,11 +16,11 @@ Args:
 """
 
 import argparse
-import json
+import csv
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Literal, TypedDict
 
 import yaml
 
@@ -367,9 +370,7 @@ def compare_original_to_splits(
         orig_text_stripped = orig_text.strip()
         split_data = split_texts.get(element_id, {})
 
-        has_exact_match = any(
-            text.strip() == orig_text_stripped for text in split_data.values()
-        )
+        has_exact_match = any(text.strip() == orig_text_stripped for text in split_data.values())
 
         if not has_exact_match:
             splits: list[SplitEntry] = [
@@ -473,88 +474,110 @@ def compare_all(base_path: Path) -> dict[str, CompareResult]:
     return results
 
 
-def _transform_entry_for_output(entry: ComparisonEntry) -> dict[str, Any]:
-    """Transform a ComparisonEntry to output format with appropriate text field.
+def _get_compare_output_path(source_path: str) -> Path:
+    """Determine the output path for a comparison CSV file.
 
-    For entries from original files, uses 'original_text'.
-    For split_only and orphan entries, uses 'source_text' to avoid semantic confusion.
-
-    Args:
-        entry: The comparison entry to transform.
-
-    Returns:
-        Dictionary with origin_type and appropriately named text field.
-    """
-    origin_type = entry["origin_type"]
-    result: dict[str, Any] = {
-        "source_file": entry["source_file"],
-        "id": entry["id"],
-        "origin_type": origin_type,
-    }
-
-    if origin_type == "original":
-        result["original_text"] = entry["source_text"]
-    else:
-        result["source_text"] = entry["source_text"]
-
-    result["splits"] = entry["splits"]
-    return result
-
-
-def _get_compare_output_path(source_path: str, base_path: Path) -> Path:
-    """Determine the output path for a .compare file.
-
-    For original files in the base directory, extracts the base name.
-    For orphan files in subdirectories, writes to the subdirectory.
+    Extracts the pattern name from the source path and returns a path under
+    `.knowledge/comparisons/<pattern-name>.csv`.
 
     Args:
         source_path: The relative source file path.
-        base_path: Base directory for comparison output.
 
     Returns:
-        Path where the .compare file should be written.
+        Path where the comparison CSV file should be written.
     """
     source = Path(source_path)
-    filename = source.stem
-
-    if base_path.is_relative_to(REPO_ROOT):
-        base_relative = base_path.relative_to(REPO_ROOT)
-        if source.parent == base_relative:
-            return base_path / f"{filename}.compare"
-        return REPO_ROOT / source.parent / f"{filename}.compare"
-
-    if source.parent == base_path:
-        return base_path / f"{filename}.compare"
-    return source.parent / f"{filename}.compare"
+    pattern = pattern_from_path(source)
+    comparisons_dir = REPO_ROOT / ".knowledge" / "comparisons"
+    return comparisons_dir / f"{pattern}.csv"
 
 
-def write_compare_files(results: dict[str, CompareResult], base_path: Path) -> int:
-    """Write comparison results to .compare files.
+CSV_COLUMNS = ["source_file", "id", "origin_type", "original_text", "split_file", "split_text"]
 
-    Creates one .compare file per original document in the base directory.
-    Each file contains a JSON array of comparison entries with differing text.
+
+def _flatten_entry_to_rows(entry: ComparisonEntry) -> list[dict[str, str]]:
+    """Flatten a ComparisonEntry into CSV rows.
+
+    For entries with splits, creates one row per split.
+    For entries without splits, creates one row with empty split columns.
+
+    Note: The `original_text` column is populated from `source_text` for all origin
+    types. For `split_only` and `orphan` entries, this represents the text from the
+    split or orphan file respectively, not from an original file. Query authors
+    should be aware of this semantic when filtering by origin_type.
+
+    Args:
+        entry: The comparison entry to flatten.
+
+    Returns:
+        List of dictionaries representing CSV rows.
+    """
+    rows: list[dict[str, str]] = []
+    # Note: original_text is populated from source_text for all origin types.
+    # For "original" entries, this is text from the original file.
+    # For "split_only" and "orphan" entries, this is text from the split/orphan file.
+    base_row = {
+        "source_file": entry["source_file"],
+        "id": entry["id"],
+        "origin_type": entry["origin_type"],
+        "original_text": entry["source_text"],
+    }
+
+    if entry["splits"]:
+        for split in entry["splits"]:
+            row = {
+                **base_row,
+                "split_file": split["source_file"],
+                "split_text": split["split_text"],
+            }
+            rows.append(row)
+    else:
+        row = {**base_row, "split_file": "", "split_text": ""}
+        rows.append(row)
+
+    return rows
+
+
+def write_compare_files(results: dict[str, CompareResult]) -> int:
+    """Write comparison results to CSV files in .knowledge/comparisons/.
+
+    Creates one CSV file per pattern with flattened comparison entries.
+    Each row represents a (source_file, id, split_file) combination.
+
+    Note: Comparison CSVs are regenerated on each run and older data is intentionally
+    discarded. This design ensures the CSV always reflects the current state of the
+    YAML files being compared, rather than accumulating stale historical data.
 
     Args:
         results: Dictionary mapping file paths to comparison results.
-        base_path: Base directory for comparison output.
 
     Returns:
-        Number of .compare files written.
+        Number of CSV files written.
     """
-    files_written = 0
+    pattern_rows: dict[str, list[dict[str, str]]] = {}
 
     for source_path, compare_result in results.items():
-        output_path = _get_compare_output_path(source_path, base_path)
+        output_path = _get_compare_output_path(source_path)
+        pattern_name = output_path.stem
 
-        transformed_entries = [
-            _transform_entry_for_output(entry) for entry in compare_result["entries"]
-        ]
+        if pattern_name not in pattern_rows:
+            pattern_rows[pattern_name] = []
+
+        for entry in compare_result["entries"]:
+            pattern_rows[pattern_name].extend(_flatten_entry_to_rows(entry))
+
+    files_written = 0
+    comparisons_dir = REPO_ROOT / ".knowledge" / "comparisons"
+
+    for pattern_name, rows in pattern_rows.items():
+        output_path = comparisons_dir / f"{pattern_name}.csv"
 
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            with output_path.open("w", encoding="utf-8") as f:
-                json.dump(transformed_entries, f, indent=2)
-                f.write("\n")
+            with output_path.open("w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+                writer.writeheader()
+                writer.writerows(rows)
             files_written += 1
         except OSError as exc:
             print(
@@ -566,7 +589,7 @@ def write_compare_files(results: dict[str, CompareResult], base_path: Path) -> i
 
 
 def main() -> int:
-    """Run comparison and write results to .compare files.
+    """Run comparison and write results to CSV files.
 
     Returns:
         0 if no differences found, 1 if differences exist.
@@ -584,12 +607,8 @@ def main() -> int:
     results = compare_all(base_path)
 
     if results:
-        count = write_compare_files(results, base_path)
-        if base_path.is_relative_to(REPO_ROOT):
-            display_path = base_path.relative_to(REPO_ROOT)
-        else:
-            display_path = base_path
-        print(f"Wrote {count} comparison file(s) to {display_path}")
+        count = write_compare_files(results)
+        print(f"Wrote {count} CSV file(s) to .knowledge/comparisons/")
         return 1
 
     print("No differences found.")

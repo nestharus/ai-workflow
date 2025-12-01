@@ -137,4 +137,60 @@ Generates the OpenAPI 3.1 schema JSON file from the FastAPI application code.
 * **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
   invoked via `uv run`
 
+## Custom Droids (Sub-agents)
+
+This project includes specialized sub-agents (droids) for automated task delegation.
+Droids are defined in `.factory/droids/` and can be invoked via the Task tool.
+
+**Prerequisite**: Enable Custom Droids in settings (`/settings` → Experimental → Custom
+Droids) and restart droid.
+
+### Available Droids
+
+| Droid | Model | Purpose |
+|-------|-------|---------|
+| `lint-fixer` | `gpt-5.1-codex-max-low` | Resolves all lint errors iteratively |
+| `test-fixer` | `claude-opus-4-5-thinking-high` | Runs tests, debugs failures, meets coverage |
+
+### lint-fixer
+
+Resolves and fixes lint errors until all issues pass.
+
+* **Workflow**:
+  1. Runs `uv run gen_openapi` first (required before lint)
+  2. Runs `uv run lint`
+  3. Fixes errors iteratively until all checks pass
+* **Usage**: "Run the subagent `lint-fixer` to fix all lint errors"
+* **Tools**: Read, Edit, MultiEdit, Create, Execute, Grep, Glob, LS
+
+### test-fixer
+
+Runs all tests, debugs failures, and ensures coverage requirements are met.
+
+* **Workflow**:
+  1. Sets required environment variables (`SURREALDB_USER`, `SURREALDB_PASS`)
+  2. Runs `uv run pytest --cov`
+  3. Debugs and fixes test failures
+  4. Ensures 80% coverage threshold is met
+* **Usage**: "Run the subagent `test-fixer` to fix all failing tests"
+* **Tools**: Read, Edit, MultiEdit, Create, Execute, Grep, Glob, LS, TodoWrite, firecrawl
+
+### Creating New Droids
+
+Droids are Markdown files with YAML frontmatter in `.factory/droids/`:
+
+```markdown
+---
+name: my-droid
+description: Short description of what this droid does
+model: inherit
+tools: ["Read", "Edit", "Execute"]
+---
+
+System prompt instructions for the droid...
+```
+
+For more information, see the
+[Factory Custom Droids documentation](https://docs.factory.ai/cli/configuration/custom-droids).
+
 </coding_guidelines>

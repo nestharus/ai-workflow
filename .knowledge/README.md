@@ -18,29 +18,47 @@ for documentation migrations.
 
 ### resolutions/resolved.csv
 
-Tracks resolved documentation sections using content hashes.
+Tracks resolved documentation sections using content hashes and file paths.
+Duplicate detection is based on (id, source_file, split_file) for path-level uniqueness.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| id | string | Unique identifier (UUID) |
+| resolution_id | string | Unique identifier for this resolution record (UUID) |
+| id | string | YAML element identifier being resolved |
+| source_file | string | Relative path to the source YAML file |
+| split_file | string | Relative path to the split YAML file |
 | original_text_hash | string | SHA-256 hash of original text content |
 | split_text_hash | string | SHA-256 hash of split text content |
 | source_file_hash | string | SHA-256 hash of source file at resolution time |
 | split_file_hash | string | SHA-256 hash of split file at resolution time |
-| resolved_at | string | ISO 8601 timestamp of resolution |
+| resolved_at | string | ISO 8601 basic format timestamp (YYYYMMDDTHHMMSSZ) |
 
 ### comparisons/*.csv
 
 Flattened comparison results (one file per pattern, e.g., `api-patterns.csv`).
 
+**Note**: Comparison CSVs are regenerated on each run of `uv run compare-yml-docs`.
+Older data is intentionally discarded to ensure the CSV always reflects the current
+state of the YAML files being compared.
+
 | Column | Type | Description |
 |--------|------|-------------|
-| source_file | string | Path to the original source file |
-| id | string | Section identifier from the original |
-| origin_type | string | Type classification (e.g., "split", "original") |
-| original_text | string | Text content from original file |
-| split_file | string | Path to the split target file |
-| split_text | string | Text content in split file |
+| source_file | string | Path to the source file (original, split, or orphan depending on origin_type) |
+| id | string | Section identifier from the source file |
+| origin_type | string | Type classification: "original", "split_only", or "orphan" |
+| original_text | string | Text content from source_file (see semantics below) |
+| split_file | string | Path to the split target file (empty for split_only/orphan entries) |
+| split_text | string | Text content in split file (empty for split_only/orphan entries) |
+
+**`original_text` column semantics by `origin_type`**:
+
+- `original`: Text from the original file that differs from or is missing in splits
+- `split_only`: Text from a split file for an ID not found in the corresponding original
+- `orphan`: Text from a file in a subdirectory with no corresponding original file
+
+For `split_only` and `orphan` entries, `original_text` contains the source text from the
+split/orphan file respectively, not from an original file. Query authors should filter by
+`origin_type` when the distinction matters.
 
 ### migrations/tasks.csv
 
