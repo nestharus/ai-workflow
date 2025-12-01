@@ -1,6 +1,5 @@
 doc_id: fastapi-settings-patterns
 title: FastAPI Settings Integration Patterns
-project: ai-workflow
 version_hint: 2024-2025
 kind: fastapi_integration_standards
 description: FastAPI-specific patterns for integrating Settings with dependency injection, application factory, and app.state.
@@ -8,214 +7,220 @@ description: FastAPI-specific patterns for integrating Settings with dependency 
 scope: Covers Settings DI integration, factory wiring, app.state storage, dependency injection patterns, and testing with
   overrides. Python/Pydantic validation patterns are in docs/development/python/settings-patterns.toon.
 primary_runtime_references:
-  - path: app/core/dependencies.py
-    role: get_settings dependency exposing the Settings model.
-  - path: app/core/factory.py
-    role: create_app factory that accepts and stores Settings.
+- path: app/core/dependencies.py
+  role: get_settings dependency exposing the Settings model.
+- path: app/core/factory.py
+  role: create_app factory that accepts and stores Settings.
 related_pattern_docs:
-  - python/settings-patterns.toon
-  - fastapi/factory-patterns.toon
-  - python/dependency-patterns.toon
-  - fastapi/dependency-patterns.toon
-  - python/service-patterns.toon
-  - fastapi/service-patterns.toon
+- python/settings-patterns.toon
+- fastapi/factory-patterns.toon
+- python/dependency-patterns.toon
+- fastapi/dependency-patterns.toon
+- python/service-patterns.toon
+- fastapi/service-patterns.toon
 sections:
-  - id: get-settings-dependency
-    index: 1
-    title: get_settings Dependency
-    category: standard
-    summary: Patterns for exposing Settings via FastAPI dependency injection using @lru_cache.
-    sample_code:
-      description: Implementation of get_settings with @lru_cache for singleton Settings access.
-      imports:
-        - functools.lru_cache
-        - app.core.settings.Settings
-      code: |-
-        from functools import lru_cache
-        from app.core.settings import Settings
-        @lru_cache(maxsize=1)
-        def get_settings() -> Settings:
-            """Return cached Settings."""
-            return Settings()
-    items:
-      - id: get-settings.lru-cache
-        type: rule
-        text: Implement get_settings in app/core/dependencies.py as an @lru_cache-decorated function that builds a single
-          Settings instance from environment variables.
-      - id: get-settings.singleton-behavior
-        type: note
-        text: The @lru_cache decorator ensures get_settings() returns the same Settings instance across all calls, avoiding
-          repeated environment variable parsing and validation.
-      - id: get-settings.maxsize-one
-        type: rule
-        text: Use maxsize=1 for @lru_cache since only one Settings instance is needed per process lifecycle.
-      - id: get-settings.module-location
-        type: rule
-        text: Place get_settings in app/core/dependencies.py so it is framework-agnostic and can be used by both FastAPI routes
-          and non-HTTP code paths.
-      - id: get-settings.no-direct-construction
-        type: rule
-        text: Avoid constructing Settings() directly in route handlers or services; always use get_settings dependency or
-          receive Settings via constructor injection.
-  - id: app-state-storage
-    index: 2
-    title: Settings Storage on app.state
-    category: standard
-    summary: Patterns for storing and accessing Settings via app.state in the application factory.
-    sample_code:
-      description: Storing Settings on app.state in create_app.
-      imports:
-        - fastapi.FastAPI
-        - fastapi.responses.ORJSONResponse
-        - app.core.settings.Settings
-      code: |-
-        from fastapi import FastAPI
-        from fastapi.responses import ORJSONResponse
-        from app.core.settings import Settings
-        def create_app(settings: Settings) -> FastAPI:
-            app = FastAPI(
-                title=settings.app_name,
-                version=settings.app_version,
-                default_response_class=ORJSONResponse,
-            )
-            app.state.settings = settings
-            # ... router registration, middleware configuration ...
-            return app
-    items:
-      - id: app-state.store-on-create
-        type: rule
-        text: Store the Settings instance on app.state.settings immediately after FastAPI app creation in create_app so components
-          with Request or App access can read configuration.
-      - id: app-state.factory-entrypoint
-        type: note
-        text: 'Treat create_app(settings: Settings) as the canonical composition root; production startup and tests should
-          both construct apps by passing in validated Settings instances.'
-      - id: app-state.middleware-access
-        type: pattern
-        text: Middleware and exception handlers that need Settings access can retrieve it from request.app.state.settings
-          when they do not have access to dependency injection.
-      - id: app-state.single-instance
-        type: rule
-        text: Avoid constructing additional Settings instances at runtime; tests may create extra instances explicitly, but
-          the running app should rely on a single shared instance.
-      - id: app-state.no-direct-modification
-        type: rule
-        text: Do not modify app.state.settings after application startup; treat the Settings instance as immutable once stored.
-  - id: route-dependency-injection
-    index: 3
-    title: Route Dependency Injection
-    category: standard
-    summary: Patterns for injecting Settings into FastAPI route handlers using Depends().
-    sample_code:
-      description: Injecting Settings into route handlers using Annotated type aliases.
-      imports:
-        - typing.Annotated
-        - fastapi.Depends
-        - fastapi.APIRouter
-        - app.core.settings.Settings
-      code: |-
-        from typing import Annotated
-        from fastapi import APIRouter, Depends
-        from app.core.dependencies import get_settings
-        from app.core.settings import Settings
-        SettingsDep = Annotated[Settings, Depends(get_settings)]
-        router = APIRouter()
-        @router.get("/config")
-        async def get_config(settings: SettingsDep) -> dict[str, str]:
-            return {"app_name": settings.app_name, "version": settings.app_version}
-    items:
-      - id: route-di.annotated-alias
-        type: pattern
-        text: Define a SettingsDep type alias as Annotated[Settings, Depends(get_settings)] and use it in route signatures
-          for concise and consistent injection.
-      - id: route-di.centralized-aliases
-        type: rule
-        text: Place the SettingsDep alias in app/api/v1/dependencies.py alongside other dependency type aliases so routers
-          import from a single versioned module.
-      - id: route-di.route-usage
-        type: pattern
-        text: 'Inject Settings into routes using settings: SettingsDep rather than calling get_settings() directly inside
-          the handler body.'
-      - id: route-di.pass-to-services
-        type: note
-        text: Routes that need to pass Settings to services should inject it via the dependency system and pass it as a constructor
-          argument to service factories.
-      - id: route-di.no-globals
-        type: rule
-        text: Avoid importing or using a global Settings instance in routes; always rely on dependency injection for testability
-          and explicit configuration.
-  - id: service-integration
-    index: 4
-    title: Service and Infrastructure Integration
-    category: standard
-    summary: Patterns for passing Settings to services and infrastructure components.
-    items:
-      - id: service-integration.constructor-injection
-        type: rule
-        text: Services receive Settings via constructor injection; define service factory dependencies that accept SettingsDep
-          and pass it to the service constructor.
-      - id: service-integration.infrastructure-factories
-        type: pattern
-        text: Connection factories such as create_surrealdb_pool and create_elasticsearch_wrapper receive Settings instances
-          and read only the fields they need.
-      - id: service-integration.lifespan-usage
-        type: note
-        text: The lifespan context manager in app/core/factory.py receives Settings via the closure over create_app parameters
-          and uses it to initialize pools and clients.
-      - id: service-integration.no-settings-in-services
-        type: rule
-        text: Services should not import get_settings directly; they should receive Settings via constructor parameters, keeping
-          them framework-agnostic.
-      - id: service-integration.ref-to-service-patterns
-        type: note
-        text: For additional patterns on services that consume settings, see docs/development/python/service-patterns.toon
-          for core patterns and docs/development/fastapi/service-patterns.toon for DI integration.
-  - id: testing-with-overrides
-    index: 5
-    title: Testing with Dependency Overrides
-    category: testing
-    summary: Patterns for overriding get_settings in tests to supply test-specific configuration.
-    sample_code:
-      description: Overriding get_settings in tests using app.dependency_overrides.
-      imports:
-        - pytest
-        - fastapi.FastAPI
-        - app.core.settings.Settings
-        - app.core.dependencies.get_settings
-      code: |-
-        import pytest
-        from fastapi import FastAPI
-        from app.core.factory import create_app
-        from app.core.settings import Settings
-        from app.core.dependencies import get_settings
-        @pytest.fixture
-        def test_settings() -> Settings:
-            return Settings()
-        @pytest.fixture
-        def test_app(test_settings: Settings) -> FastAPI:
-            app = create_app(test_settings)
-            app.dependency_overrides[get_settings] = lambda: test_settings
-            return app
-    items:
-      - id: testing.factory-app
-        type: rule
-        text: Construct FastAPI apps in tests using create_app with explicit Settings instances instead of importing an app
-          from app.main.
-      - id: testing.override-get-settings
-        type: rule
-        text: Override get_settings via app.dependency_overrides[get_settings] to supply test-specific configuration.
-      - id: testing.clear-overrides
-        type: note
-        text: Clear app.dependency_overrides after each test or use fresh app instances per test to avoid state leakage.
-      - id: testing.model-copy-updates
-        type: pattern
-        text: When tests need custom configuration, start from test_settings and use model_copy(update={...}) to override
-          specific fields without reconstructing the entire Settings.
-      - id: testing.fixture-composition
-        type: note
-        text: Compose test fixtures such as test_settings → test_app → async_client so overrides propagate consistently through
-          the test infrastructure.
-      - id: testing.no-lru-cache-clear
-        type: rule
-        text: Do not rely on clearing @lru_cache in tests; use dependency overrides instead, which is the FastAPI-native pattern
-          for test isolation.
+- id: get-settings-dependency
+  index: 1
+  title: get_settings Dependency
+  category: standard
+  summary: Patterns for exposing Settings via FastAPI dependency injection using @lru_cache.
+  sample_code:
+    description: Implementation of get_settings with @lru_cache for singleton Settings access.
+    imports:
+    - functools.lru_cache
+    - app.core.settings.Settings
+    code: "from functools import lru_cache\nfrom app.core.settings import Settings\n@lru_cache(maxsize=1)\ndef get_settings()\
+      \ -> Settings:\n    \"\"\"Return cached Settings.\"\"\"\n    return Settings()"
+  items:
+  - id: get-settings.lru-cache
+    type: rule
+    text: Implement get_settings in app/core/dependencies.py as an @lru_cache-decorated function that builds a single Settings
+      instance from environment variables.
+  - id: get-settings.singleton-behavior
+    type: note
+    text: The @lru_cache decorator ensures get_settings() returns the same Settings instance across all calls, avoiding repeated
+      environment variable parsing and validation.
+  - id: get-settings.maxsize-one
+    type: rule
+    text: Use maxsize=1 for @lru_cache since only one Settings instance is needed per process lifecycle.
+  - id: get-settings.module-location
+    type: rule
+    text: Place get_settings in app/core/dependencies.py so it is framework-agnostic and can be used by both FastAPI routes
+      and non-HTTP code paths.
+  - id: get-settings.no-direct-construction
+    type: rule
+    text: Avoid constructing Settings() directly in route handlers or services; always use get_settings dependency or receive
+      Settings via constructor injection.
+- id: app-state-storage
+  index: 2
+  title: Settings Storage on app.state
+  category: standard
+  summary: Patterns for storing and accessing Settings via app.state in the application factory.
+  sample_code:
+    description: Storing Settings on app.state in create_app.
+    imports:
+    - fastapi.FastAPI
+    - fastapi.responses.ORJSONResponse
+    - app.core.settings.Settings
+    code: "from fastapi import FastAPI\nfrom fastapi.responses import ORJSONResponse\nfrom app.core.settings import Settings\n\
+      def create_app(settings: Settings) -> FastAPI:\n    app = FastAPI(\n        title=settings.app_name,\n        version=settings.app_version,\n\
+      \        default_response_class=ORJSONResponse,\n    )\n    app.state.settings = settings\n    # ... router registration,\
+      \ middleware configuration ...\n    return app"
+  items:
+  - id: app-state.store-on-create
+    type: rule
+    text: Store the Settings instance on app.state.settings immediately after FastAPI app creation in create_app so components
+      with Request or App access can read configuration.
+  - id: app-state.factory-entrypoint
+    type: note
+    text: 'Treat create_app(settings: Settings) as the canonical composition root; production startup and tests should both
+      construct apps by passing in validated Settings instances.'
+  - id: app-state.middleware-access
+    type: pattern
+    text: Middleware and exception handlers that need Settings access can retrieve it from request.app.state.settings when
+      they do not have access to dependency injection.
+  - id: app-state.single-instance
+    type: rule
+    text: Avoid constructing additional Settings instances at runtime; tests may create extra instances explicitly, but the
+      running app should rely on a single shared instance.
+  - id: app-state.no-direct-modification
+    type: rule
+    text: Do not modify app.state.settings after application startup; treat the Settings instance as immutable once stored.
+- id: route-dependency-injection
+  index: 3
+  title: Route Dependency Injection
+  category: standard
+  summary: Patterns for injecting Settings into FastAPI route handlers using Depends().
+  sample_code:
+    description: Injecting Settings into route handlers using Annotated type aliases.
+    imports:
+    - typing.Annotated
+    - fastapi.Depends
+    - fastapi.APIRouter
+    - app.core.settings.Settings
+    code: "from typing import Annotated\nfrom fastapi import APIRouter, Depends\nfrom app.core.dependencies import get_settings\n\
+      from app.core.settings import Settings\nSettingsDep = Annotated[Settings, Depends(get_settings)]\nrouter = APIRouter()\n\
+      @router.get(\"/config\")\nasync def get_config(settings: SettingsDep) -> dict[str, str]:\n    return {\"app_name\":\
+      \ settings.app_name, \"version\": settings.app_version}"
+  items:
+  - id: route-di.annotated-alias
+    type: pattern
+    text: Define a SettingsDep type alias as Annotated[Settings, Depends(get_settings)] and use it in route signatures for
+      concise and consistent injection.
+  - id: route-di.centralized-aliases
+    type: rule
+    text: Place the SettingsDep alias in app/api/v1/dependencies.py alongside other dependency type aliases so routers import
+      from a single versioned module.
+  - id: route-di.route-usage
+    type: pattern
+    text: 'Inject Settings into routes using settings: SettingsDep rather than calling get_settings() directly inside the
+      handler body.'
+  - id: route-di.pass-to-services
+    type: note
+    text: Routes that need to pass Settings to services should inject it via the dependency system and pass it as a constructor
+      argument to service factories.
+  - id: route-di.no-globals
+    type: rule
+    text: Avoid importing or using a global Settings instance in routes; always rely on dependency injection for testability
+      and explicit configuration.
+- id: service-integration
+  index: 4
+  title: Service and Infrastructure Integration
+  category: standard
+  summary: Patterns for passing Settings to services and infrastructure components.
+  items:
+  - id: service-integration.constructor-injection
+    type: rule
+    text: Services receive Settings via constructor injection; define service factory dependencies that accept SettingsDep
+      and pass it to the service constructor.
+  - id: service-integration.infrastructure-factories
+    type: pattern
+    text: Connection factories such as create_surrealdb_pool and create_elasticsearch_wrapper receive Settings instances and
+      read only the fields they need.
+  - id: service-integration.lifespan-usage
+    type: note
+    text: The lifespan context manager in app/core/factory.py receives Settings via the closure over create_app parameters
+      and uses it to initialize pools and clients.
+  - id: service-integration.no-settings-in-services
+    type: rule
+    text: Services should not import get_settings directly; they should receive Settings via constructor parameters, keeping
+      them framework-agnostic.
+  - id: service-integration.ref-to-service-patterns
+    type: note
+    text: For additional patterns on services that consume settings, see docs/development/python/service-patterns.toon for
+      core patterns and docs/development/fastapi/service-patterns.toon for DI integration.
+- id: testing-with-overrides
+  index: 5
+  title: Testing with Dependency Overrides
+  category: testing
+  summary: Patterns for overriding get_settings in tests to supply test-specific configuration.
+  sample_code:
+    description: Overriding get_settings in tests using app.dependency_overrides.
+    imports:
+    - pytest
+    - fastapi.FastAPI
+    - app.core.settings.Settings
+    - app.core.dependencies.get_settings
+    code: "import pytest\nfrom fastapi import FastAPI\nfrom app.core.factory import create_app\nfrom app.core.settings import\
+      \ Settings\nfrom app.core.dependencies import get_settings\n@pytest.fixture\ndef test_settings() -> Settings:\n    return\
+      \ Settings()\n@pytest.fixture\ndef test_app(test_settings: Settings) -> FastAPI:\n    app = create_app(test_settings)\n\
+      \    app.dependency_overrides[get_settings] = lambda: test_settings\n    return app"
+  items:
+  - id: testing.factory-app
+    type: rule
+    text: Construct FastAPI apps in tests using create_app with explicit Settings instances instead of importing an app from
+      app.main.
+  - id: testing.override-get-settings
+    type: rule
+    text: Override get_settings via app.dependency_overrides[get_settings] to supply test-specific configuration.
+  - id: testing.clear-overrides
+    type: note
+    text: Clear app.dependency_overrides after each test or use fresh app instances per test to avoid state leakage.
+  - id: testing.model-copy-updates
+    type: pattern
+    text: When tests need custom configuration, start from test_settings and use model_copy(update={...}) to override specific
+      fields without reconstructing the entire Settings.
+  - id: testing.fixture-composition
+    type: note
+    text: Compose test fixtures such as test_settings → test_app → async_client so overrides propagate consistently through
+      the test infrastructure.
+  - id: testing.no-lru-cache-clear
+    type: rule
+    text: Do not rely on clearing @lru_cache in tests; use dependency overrides instead, which is the FastAPI-native pattern
+      for test isolation.
+- id: accessing-settings-at-runtime
+  index: 6
+  title: Accessing Settings at Runtime
+  category: standard
+  summary: Patterns for retrieving Settings via the factory and dependency injection.
+  items:
+  - id: runtime.factory-entry
+    type: rule
+    text: Construct a single Settings instance at startup and pass it into create_app; treat that instance as the canonical
+      configuration for the application lifecycle.
+  - id: runtime.app-state
+    type: note
+    text: Store the Settings instance on app.state.settings so components with a Request or App can retrieve configuration.
+  - id: runtime.get-settings-dep
+    type: pattern
+    text: 'Use get_settings in app/core/dependencies.py with @lru_cache to expose Settings via DI so routers can declare settings:
+      Settings = Depends(get_settings).'
+  - id: runtime.routers-pattern
+    type: pattern
+    text: Routers accept Settings as a dependency and pass it into services or infrastructure factories as needed; routers
+      must not construct Settings directly.
+  - id: runtime.services-pattern
+    type: pattern
+    text: Services receive Settings via constructor injection (see docs/development/service-patterns.toon) and use it for
+      configuration-dependent behaviour such as timeouts or feature flags.
+  - id: runtime.infrastructure-pattern
+    type: pattern
+    text: Connection factories such as create_surrealdb_pool and create_elasticsearch_wrapper receive Settings instances and
+      read only the fields they need.
+  - id: runtime.single-instance
+    type: rule
+    text: Avoid constructing additional Settings instances at runtime; tests may create extra instances explicitly, but the
+      running app should rely on a single shared instance.
+  - id: runtime.service-patterns-ref
+    type: note
+    text: For additional patterns on services that consume settings, see docs/development/service-patterns.toon.

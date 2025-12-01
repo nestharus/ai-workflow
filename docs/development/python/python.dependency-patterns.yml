@@ -1,6 +1,5 @@
 doc_id: python-dependency-patterns
 title: Python Dependency Injection Patterns
-project: ai-workflow
 version_hint: 2024-2025
 kind: dependency_injection_standards
 description: Framework-agnostic dependency injection patterns using constructor injection, factory functions, and explicit
@@ -8,220 +7,204 @@ description: Framework-agnostic dependency injection patterns using constructor 
 scope: Covers DI fundamentals, constructor injection, factory functions, service layer patterns, lifecycle concepts, dependency
   chains, and anti-patterns. FastAPI-specific Depends() and Annotated patterns are in docs/development/fastapi/dependency-patterns.toon.
 primary_runtime_references:
-  - path: app/services/
-    role: Service implementations demonstrating constructor injection.
-  - path: app/repositories/
-    role: Repository implementations demonstrating constructor injection.
+- path: app/services/
+  role: Service implementations demonstrating constructor injection.
+- path: app/repositories/
+  role: Repository implementations demonstrating constructor injection.
 related_pattern_docs:
-  - fastapi/dependency-patterns.toon
-  - python/service-patterns.toon
-  - python/repository-patterns.toon
-  - python/exception-patterns.toon
+- fastapi/dependency-patterns.toon
+- python/service-patterns.toon
+- python/repository-patterns.toon
+- python/exception-patterns.toon
 sections:
-  - id: di-fundamentals
-    index: 1
-    title: Dependency Injection Fundamentals
-    category: standard
-    summary: Core DI concepts for composable, testable Python code.
-    items:
-      - id: fundamentals.explicit-deps
-        type: rule
-        text: Make all dependencies explicit by declaring them as constructor parameters rather than importing or creating
-          them inside class methods.
-      - id: fundamentals.composition
-        type: note
-        text: Treat dependencies as composable building blocks; classes may receive other classes or interfaces as constructor
-          arguments, forming a directed acyclic graph.
-      - id: fundamentals.async-support
-        type: note
-        text: Dependencies can be async or sync; services should support both patterns transparently when their collaborators
-          require it.
-      - id: fundamentals.interface-types
-        type: pattern
-        text: Depend on abstract interfaces or protocols rather than concrete implementations to enable easy substitution
-          in tests and different runtime contexts.
-      - id: fundamentals.testability
-        type: note
-        text: Constructor injection enables unit testing by allowing test doubles (mocks, fakes, stubs) to be passed in place
-          of real dependencies.
-      - id: fundamentals.no-service-locator
-        type: rule
-        text: Avoid the service locator anti-pattern where a component requests dependencies from a global registry at runtime;
-          prefer explicit constructor injection.
-  - id: constructor-injection
-    index: 2
-    title: Constructor-Based Dependency Injection
-    category: standard
-    summary: Patterns for receiving dependencies via __init__ parameters.
-    sample_code:
-      description: Service class with constructor-based dependency injection.
-      language: python
-      code: |-
-        class UserService:
-            """Service for user-related business logic."""
-            def __init__(self, user_repo: UserRepository, settings: Settings) -> None:
-                """Create a service with its collaborators."""
-                self._user_repo = user_repo
-                self._settings = settings
-            async def get_user(self, user_id: str) -> User:
-                """Retrieve a user by ID."""
-                user = await self._user_repo.get_by_id(user_id)
-                if user is None:
-                    raise UserNotFoundError(user_id)
-                return user
-    items:
-      - id: constructor.parameters
-        type: rule
-        text: Accept all dependencies explicitly via __init__ constructor parameters with proper type hints.
-      - id: constructor.private-storage
-        type: pattern
-        text: Store injected dependencies as private instance attributes (prefixed with underscore) to indicate they are internal
-          implementation details.
-      - id: constructor.multiple-deps
-        type: note
-        text: When a class needs multiple collaborators (repositories, clients, configuration), add them as separate typed
-          constructor parameters rather than bundling into a context object.
-      - id: constructor.no-defaults
-        type: rule
-        text: Avoid default values for dependencies in constructors; callers should always provide explicit instances to prevent
-          hidden coupling.
-      - id: constructor.type-hints
-        type: rule
-        text: Type hints are mandatory for all constructor parameters to enable IDE support and static analysis.
-  - id: factory-functions
-    index: 3
-    title: Factory Functions for Dependency Composition
-    category: standard
-    summary: Using factory functions to wire dependencies together.
-    sample_code:
-      description: Factory function that composes a service from its dependencies.
-      language: python
-      code: |-
-        def build_user_service(user_repo: UserRepository, settings: Settings) -> UserService:
-            """Create a UserService with its dependencies."""
-            return UserService(user_repo=user_repo, settings=settings)
-        def build_order_service(
-            order_repo: OrderRepository, user_service: UserService, payment_gateway: PaymentGateway
-        ) -> OrderService:
-            """Create an OrderService with its dependencies."""
-            return OrderService(order_repo=order_repo, user_service=user_service, payment_gateway=payment_gateway)
-    items:
-      - id: factory.purpose
-        type: note
-        text: Factory functions encapsulate the construction logic for complex objects, isolating wiring code from business
-          logic.
-      - id: factory.explicit-params
-        type: rule
-        text: Factory functions accept explicit parameters for all dependencies they need to wire, making the dependency graph
-          visible.
-      - id: factory.composition-root
-        type: pattern
-        text: Centralize factory functions at the composition root (application startup or test setup) rather than scattering
-          construction logic throughout the codebase.
-      - id: factory.testability
-        type: note
-        text: Factory functions make testing easier by providing clear injection points; tests can call factories with test
-          doubles.
-      - id: factory.no-hidden-deps
-        type: rule
-        text: Factory functions should not import or create dependencies internally; all dependencies must be passed as parameters.
-  - id: service-layer-pattern
-    index: 4
-    title: Service Layer Pattern
-    category: standard
-    summary: Service layer architecture with constructor injection and domain errors.
-    items:
-      - id: service.layer-definition
-        type: rule
-        text: Adopt the Service Layer pattern where services encapsulate domain workflows and business logic, receiving dependencies
-          via constructor injection.
-      - id: service.domain-errors
-        type: rule
-        text: Services raise domain-specific exceptions (subclasses of DomainError) rather than framework-specific or HTTP
-          exceptions to remain transport-agnostic.
-      - id: service.stateless-methods
-        type: pattern
-        text: Service methods should be stateless with respect to the request; state lives in repositories, databases, or
-          passed-in parameters.
-      - id: service.orchestration
-        type: note
-        text: Services orchestrate calls to multiple repositories or external clients, applying business rules and coordinating
-          transactions.
-      - id: service.testability
-        type: note
-        text: With constructor injection, service unit tests can mock repositories and clients without touching databases
-          or networks.
-  - id: lifecycle-concepts
-    index: 5
-    title: Dependency Lifecycle Concepts
-    category: standard
-    summary: Understanding singleton vs request-scoped lifecycles.
-    items:
-      - id: lifecycle.singleton
-        type: rule
-        text: Treat Settings, connection pools, and shared HTTP clients as singleton dependencies created once per application
-          lifecycle.
-      - id: lifecycle.request-scoped
-        type: rule
-        text: Treat database sessions, current user context, and service instances that wrap request data as request-scoped
-          dependencies.
-      - id: lifecycle.explicit-management
-        type: note
-        text: Singleton resources should be created at application startup and closed at shutdown; request-scoped resources
-          should be created and cleaned up per request.
-      - id: lifecycle.no-hidden-state
-        type: rule
-        text: Be explicit about the lifecycle of each dependency; avoid accidentally sharing mutable state across requests
-          by documenting and enforcing lifecycle boundaries.
-      - id: lifecycle.cleanup
-        type: pattern
-        text: Dependencies that hold resources (connections, file handles) should provide explicit cleanup methods (close,
-          shutdown) called during teardown.
-  - id: dependency-chains
-    index: 6
-    title: Dependency Chains
-    category: standard
-    summary: Structuring multi-layer dependency graphs without creating cycles.
-    items:
-      - id: chains.structure
-        type: note
-        text: Compose dependency chains where services depend on repositories, repositories depend on database sessions, and
-          sessions depend on connection pools.
-      - id: chains.avoid-cycles
-        type: rule
-        text: Avoid circular dependencies between modules or classes; refactor shared logic into lower-level utilities or
-          separate modules when cycles appear.
-      - id: chains.depth-limit
-        type: rule
-        text: Keep dependency chain depth modest (ideally no more than two or three layers) to aid readability and debugging.
-      - id: chains.acyclic-graph
-        type: note
-        text: The dependency graph should be a directed acyclic graph (DAG); cycles indicate architectural issues that should
-          be resolved by extracting shared components.
-      - id: chains.visualization
-        type: note
-        text: Consider documenting complex dependency graphs to help new team members understand the wiring.
-  - id: dependency-anti-patterns
-    index: 7
-    title: Anti-Patterns to Avoid
-    category: warning
-    summary: Dependency injection mistakes that hurt testability and maintainability.
-    items:
-      - id: anti.create-in-methods
-        type: anti_pattern
-        text: Instantiating services, database clients, or HTTP clients directly inside methods instead of receiving them
-          via constructor injection.
-      - id: anti.global-variables
-        type: anti_pattern
-        text: Using module-level global variables for stateful components rather than injecting them through constructors.
-      - id: anti.hidden-deps
-        type: anti_pattern
-        text: Importing dependencies directly in class bodies or methods rather than receiving them as constructor parameters,
-          hiding the true dependency graph.
-      - id: anti.circular-deps
-        type: anti_pattern
-        text: Introducing circular dependencies between classes or modules, indicating poor separation of concerns.
-      - id: anti.over-nesting
-        type: anti_pattern
-        text: Creating extremely deep or tangled dependency chains that are hard to reason about; prefer clearer compositions
-          with fewer layers.
+- id: di-fundamentals
+  index: 1
+  title: Dependency Injection Fundamentals
+  category: standard
+  summary: Core FastAPI DI concepts and how dependency trees are built per request.
+  items:
+  - id: fundamentals.depends-usage
+    type: rule
+    text: Declare dependencies in path operation signatures using fastapi.Depends() so FastAPI can resolve and inject them
+      automatically for each request.
+  - id: fundamentals.composition
+    type: note
+    text: Treat dependencies as composable building blocks; dependency functions and classes may themselves declare dependencies,
+      forming a DAG.
+  - id: fundamentals.async-support
+    type: note
+    text: Dependencies can be async def or plain def and FastAPI handles both styles transparently.
+  - id: fundamentals.request-cache
+    type: rule
+    text: Rely on FastAPI’s per-request dependency cache, which ensures each dependency is resolved at most once per request
+      unless use_cache=False is specified.
+  - id: fundamentals.common-parameters-example
+    type: pattern
+    text: Use small helper dependencies such as common_parameters to share query parameter handling across endpoints.
+  - id: fundamentals.http-surface
+    type: note
+    text: Design dependencies around HTTP concerns at the router boundary (for example pagination, authentication, headers)
+      and separate them from pure domain services.
+- id: constructor-injection
+  index: 2
+  title: Constructor-Based Dependency Injection
+  category: standard
+  summary: Patterns for receiving dependencies via __init__ parameters.
+  sample_code:
+    description: Service class with constructor-based dependency injection.
+    language: python
+    code: "class UserService:\n    \"\"\"Service for user-related business logic.\"\"\"\n    def __init__(self, user_repo:\
+      \ UserRepository, settings: Settings) -> None:\n        \"\"\"Create a service with its collaborators.\"\"\"\n     \
+      \   self._user_repo = user_repo\n        self._settings = settings\n    async def get_user(self, user_id: str) -> User:\n\
+      \        \"\"\"Retrieve a user by ID.\"\"\"\n        user = await self._user_repo.get_by_id(user_id)\n        if user\
+      \ is None:\n            raise UserNotFoundError(user_id)\n        return user"
+  items:
+  - id: constructor.parameters
+    type: rule
+    text: Accept all dependencies explicitly via __init__ constructor parameters with proper type hints.
+  - id: constructor.private-storage
+    type: pattern
+    text: Store injected dependencies as private instance attributes (prefixed with underscore) to indicate they are internal
+      implementation details.
+  - id: constructor.multiple-deps
+    type: note
+    text: When a class needs multiple collaborators (repositories, clients, configuration), add them as separate typed constructor
+      parameters rather than bundling into a context object.
+  - id: constructor.no-defaults
+    type: rule
+    text: Avoid default values for dependencies in constructors; callers should always provide explicit instances to prevent
+      hidden coupling.
+  - id: constructor.type-hints
+    type: rule
+    text: Type hints are mandatory for all constructor parameters to enable IDE support and static analysis.
+- id: factory-functions
+  index: 3
+  title: Factory Functions for Dependency Composition
+  category: standard
+  summary: Using factory functions to wire dependencies together.
+  sample_code:
+    description: Factory function that composes a service from its dependencies.
+    language: python
+    code: "def build_user_service(user_repo: UserRepository, settings: Settings) -> UserService:\n    \"\"\"Create a UserService\
+      \ with its dependencies.\"\"\"\n    return UserService(user_repo=user_repo, settings=settings)\ndef build_order_service(\n\
+      \    order_repo: OrderRepository, user_service: UserService, payment_gateway: PaymentGateway\n) -> OrderService:\n \
+      \   \"\"\"Create an OrderService with its dependencies.\"\"\"\n    return OrderService(order_repo=order_repo, user_service=user_service,\
+      \ payment_gateway=payment_gateway)"
+  items:
+  - id: factory.purpose
+    type: note
+    text: Factory functions encapsulate the construction logic for complex objects, isolating wiring code from business logic.
+  - id: factory.explicit-params
+    type: rule
+    text: Factory functions accept explicit parameters for all dependencies they need to wire, making the dependency graph
+      visible.
+  - id: factory.composition-root
+    type: pattern
+    text: Centralize factory functions at the composition root (application startup or test setup) rather than scattering
+      construction logic throughout the codebase.
+  - id: factory.testability
+    type: note
+    text: Factory functions make testing easier by providing clear injection points; tests can call factories with test doubles.
+  - id: factory.no-hidden-deps
+    type: rule
+    text: Factory functions should not import or create dependencies internally; all dependencies must be passed as parameters.
+- id: service-layer-pattern
+  index: 4
+  title: Service Layer Pattern
+  category: standard
+  summary: Service layer architecture with constructor injection and domain errors.
+  items:
+  - id: service.layer-definition
+    type: rule
+    text: Adopt the Service Layer pattern where services encapsulate domain workflows and business logic, receiving dependencies
+      via constructor injection.
+  - id: service.domain-errors-generic
+    type: rule
+    text: Services raise domain-specific exceptions (subclasses of DomainError) rather than framework-specific or HTTP exceptions
+      to remain transport-agnostic.
+  - id: service.stateless-methods
+    type: pattern
+    text: Service methods should be stateless with respect to the request; state lives in repositories, databases, or passed-in
+      parameters.
+  - id: service.orchestration
+    type: note
+    text: Services orchestrate calls to multiple repositories or external clients, applying business rules and coordinating
+      transactions.
+  - id: service.testability-generic
+    type: note
+    text: With constructor injection, service unit tests can mock repositories and clients without touching databases or networks.
+- id: request-vs-singleton-dependencies
+  index: 5
+  title: Request-Scoped vs Singleton Dependencies
+  category: standard
+  summary: Understanding dependency lifecycles and how they map to resources.
+  items:
+  - id: lifecycle.singleton
+    type: rule
+    text: Treat Settings, connection pools (SurrealDBPool, ElasticsearchWrapper), and shared HTTP clients as singleton dependencies
+      created once per application lifecycle.
+  - id: lifecycle.request-scoped
+    type: rule
+    text: Treat DB sessions, current user context, and service instances that wrap request data as request-scoped dependencies
+      created for each request.
+  - id: lifecycle.management
+    type: note
+    text: Manage singleton resources via the lifespan startup/shutdown mechanism and request-scoped resources via yield-based
+      dependencies that handle cleanup.
+  - id: lifecycle.awareness
+    type: note
+    text: Be explicit about the lifecycle of each dependency to avoid accidentally sharing mutable state across requests.
+- id: dependency-chains
+  index: 6
+  title: Dependency Chains
+  category: standard
+  summary: Structuring multi-layer dependency graphs without creating cycles.
+  items:
+  - id: chains.structure
+    type: note
+    text: Compose dependency chains where routers depend on services, services depend on repositories, repositories depend
+      on DB sessions, and DB sessions depend on connection pools.
+  - id: chains.avoid-cycles
+    type: rule
+    text: Avoid circular dependencies between modules or providers; refactor shared logic into lower-level utilities or separate
+      modules when cycles appear.
+  - id: chains.depth-limit
+    type: rule
+    text: Keep dependency chain depth modest (ideally no more than two or three layers visible from a route) to aid readability
+      and debugging.
+  - id: chains.let-fastapi-resolve
+    type: note
+    text: Let FastAPI construct and cache dependency graphs; avoid manually instantiating deep chains inside route handlers.
+  - id: chains.acyclic-graph
+    type: note
+    text: The dependency graph should be a directed acyclic graph (DAG); cycles indicate architectural issues that should
+      be resolved by extracting shared components.
+  - id: chains.visualization
+    type: note
+    text: Consider documenting complex dependency graphs to help new team members understand the wiring.
+- id: dependency-anti-patterns
+  index: 7
+  title: Anti-Patterns to Avoid
+  category: warning
+  summary: Dependency injection mistakes that hurt testability and maintainability.
+  items:
+  - id: anti.create-deps-in-handlers
+    type: anti_pattern
+    text: Instantiating services, database clients, or HTTP clients directly inside route handlers instead of using dependencies.
+  - id: anti.global-variables
+    type: anti_pattern
+    text: Using module-level global variables for stateful components rather than injecting them through FastAPI’s dependency
+      system.
+  - id: anti.missing-yield-cleanup
+    type: anti_pattern
+    text: Failing to use yield-based dependencies for resources that need cleanup, which leads to leaked connections or resources.
+  - id: anti.circular-deps
+    type: anti_pattern
+    text: Introducing circular dependencies between providers or modules, indicating poor separation of concerns.
+  - id: anti.circular-deps-classes
+    type: anti_pattern
+    text: Introducing circular dependencies between classes or modules, indicating poor separation of concerns.
+  - id: anti.over-nesting
+    type: anti_pattern
+    text: Creating extremely deep or tangled dependency chains that are hard to reason about; prefer clearer compositions
+      with fewer layers.

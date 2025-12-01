@@ -1,6 +1,5 @@
 doc_id: python-api-patterns
 title: Python API Patterns
-project: ai-workflow
 version_hint: 2024-2025
 kind: python_api_standards
 description: Framework-agnostic REST API design patterns covering HTTP semantics, URL structure, status codes, request/response
@@ -8,224 +7,252 @@ description: Framework-agnostic REST API design patterns covering HTTP semantics
 scope: Covers REST principles, HTTP methods and status codes, request/response modeling with Pydantic, pagination concepts,
   content negotiation, versioning strategies, and anti-patterns. FastAPI-specific router and OpenAPI integration is in docs/development/fastapi/api-patterns.toon.
 primary_runtime_references:
-  - path: app/contracts/errors.py
-    role: Error response contracts and AppError envelope.
-  - path: app/contracts/
-    role: Pydantic contract models for request/response payloads.
+- path: app/contracts/errors.py
+  role: Error response contracts and AppError envelope.
+- path: app/contracts/
+  role: Pydantic contract models for request/response payloads.
 related_pattern_docs:
-  - fastapi/api-patterns.toon
-  - python/router-patterns.toon
-  - python/exception-patterns.toon
-  - python/service-patterns.toon
+- fastapi/api-patterns.toon
+- python/router-patterns.toon
+- python/exception-patterns.toon
+- python/service-patterns.toon
 sections:
-  - id: url-structure-versioning
-    index: 1
-    title: URL structure and versioning
-    category: standard
-    summary: URL path conventions, version prefixes, health checks, and resource naming.
-    items:
-      - id: url.prefix
-        type: rule
-        text: Mount all versioned endpoints under /api/{version} (for example /api/v1) to support multiple API versions concurrently.
-      - id: url.health.liveness
-        type: rule
-        text: Expose GET /health as an unversioned liveness probe for orchestrators to check process aliveness.
-      - id: url.health.readiness
-        type: rule
-        text: Expose GET /api/{version}/health as the versioned readiness endpoint to verify the application is ready to serve
-          requests.
-      - id: url.resource-naming
-        type: rule
-        text: Use plural, kebab-case resource names in paths such as /api/v1/task-assignments and /api/v1/user-sessions.
-      - id: url.path-params
-        type: rule
-        text: Use descriptive path parameter names like {user_id} instead of generic {id}.
-  - id: http-methods-and-status-codes
-    index: 2
-    title: HTTP methods and status codes
-    category: standard
-    summary: Standard REST semantics plus a strict rule that validation failures are 400 Bad Request.
-    http_method_defaults:
-      - method: GET
-        usage: Retrieve a resource or list
-        success_status: 200
-        success_status_text: OK
-        error_statuses:
-          - 404
-      - method: POST
-        usage: Create a new resource
-        success_status: 201
-        success_status_text: Created
-        error_statuses:
-          - 400
-          - 409
-      - method: PUT
-        usage: Replace an entire resource
-        success_status: 200
-        success_status_text: OK
-        error_statuses:
-          - 400
-          - 404
-      - method: PATCH
-        usage: Partially update a resource
-        success_status: 200
-        success_status_text: OK
-        error_statuses:
-          - 400
-          - 404
-      - method: DELETE
-        usage: Delete a resource
-        success_status: 204
-        success_status_text: No Content
-        error_statuses:
-          - 404
-    items:
-      - id: http.status.named-constants
-        type: rule
-        text: Use named constants for HTTP status codes instead of hard-coded integer literals to improve code readability.
-      - id: http.validation.use-400
-        type: rule
-        text: Surface all request validation failures as HTTP 400 Bad Request instead of framework defaults like 422.
-      - id: http.validation.error-model
-        type: note
-        text: Validation failures should return an AppError envelope containing field-level validation details. This ensures
-          all error responses share the same top-level structure (code, message, statusCode, details).
-  - id: request-response-modeling
-    index: 3
-    title: Request and response modeling
-    category: standard
-    summary: Pydantic v2 models with extra fields forbidden, snake_case JSON, and explicit response models.
-    sample_code:
-      description: Generic Pydantic model example showing ConfigDict and Field usage.
-      imports:
-        - datetime.datetime
-        - typing.Annotated
-        - pydantic.BaseModel
-      models:
-        - name: ResourceCreate
-          config: ConfigDict(extra="forbid")
-          fields:
-            - 'name: Annotated[str, Field(min_length=1)]'
-        - name: ResourceResponse
-          config: ConfigDict(extra="forbid")
-          fields:
-            - 'id: int,name: str,created_at: datetime'
-    items:
-      - id: modeling.pydantic-extra-forbid
-        type: rule
-        text: Define all request and response payloads as Pydantic BaseModel subclasses with model_config = ConfigDict(extra="forbid")
-          to reject unknown JSON fields.
-      - id: modeling.json-snake-case
-        type: rule
-        text: Use snake_case for all JSON field names; represent datetimes as timezone-aware UTC ISO 8601 strings.
-      - id: modeling.response-model-required
-        type: rule
-        text: Every endpoint must have an explicit response model so outbound schemas are enforced and extra fields from services
-          are filtered out.
-      - id: modeling.describe-side-effects
-        type: rule
-        text: When a route has non-trivial side effects such as writes or external calls, document these behaviors for API
-          consumers.
-  - id: response-shape-and-pagination
-    index: 4
-    title: Response shape and pagination
-    category: standard
-    summary: Successful responses return domain models directly; pagination and errors follow shared envelopes.
-    pagination_fields:
-      - items
-      - total
-      - page
-      - page_size
-    pagination_type_hints:
-      items: list[T]
-      total: int
-      page: int
-      page_size: int
-    items:
-      - id: responses.no-generic-envelopes
-        type: rule
-        text: 'Do not wrap successful responses in generic envelopes such as {"status": "ok", "data": ...}; return the domain
-          model directly.'
-      - id: pagination.standard-fields
-        type: rule
-        text: For paginated collections, use a structure with items, total, page, and page_size fields until a generic Paginated[T]
-          model exists under app/contracts/.
-      - id: errors.app-error-envelope
-        type: rule
-        text: All error responses share a common top-level envelope using the AppError schema with code, message, statusCode,
-          and optional details fields.
-      - id: errors.validation-through-app-error
-        type: rule
-        text: Validation failures use the AppError envelope with code="VALIDATION_ERROR" and field-level details placed in
-          the details field.
-      - id: errors.non-validation-through-app-error
-        type: rule
-        text: Non-validation errors such as domain or infrastructure failures use the AppError envelope with domain-specific
-          code values and contextual details where applicable.
-      - id: errors.todo.paginated-model
-        type: todo
-        text: Once a generic Paginated[T] model exists under app/contracts/, update routers and this document to reference
-          it as the canonical pagination schema.
-  - id: content-negotiation
-    index: 5
-    title: Content negotiation
-    category: standard
-    summary: JSON as default content type with gzip compression support.
-    items:
-      - id: content.json-default
-        type: rule
-        text: Use application/json as the default Content-Type unless a route explicitly declares a different media type.
-      - id: content.compression-gzip
-        type: rule
-        text: 'Support Accept-Encoding: gzip via middleware and ensure compressed responses remain valid JSON at the payload
-          level.'
-  - id: versioning-and-deprecation
-    index: 6
-    title: Versioning and deprecation
-    category: standard
-    summary: Path-based API versioning with additive-only changes per version and explicit deprecation metadata.
-    items:
-      - id: versioning.path-based
-        type: rule
-        text: Version all public endpoints in the path such as /api/v1 or /api/v2, and require a new major version for any
-          breaking change.
-      - id: versioning.compatibility-additive
-        type: rule
-        text: Within a given API version, allow only additive changes such as new optional fields or new endpoints.
-      - id: versioning.compatibility-no-breaking
-        type: rule
-        text: Do not remove fields or change semantics within an existing API version; such changes require a new version.
-      - id: deprecation.header-deprecation
-        type: rule
-        text: 'For deprecated endpoints, include a Deprecation response header such as Deprecation: true or a deprecation
-          date string.'
-      - id: deprecation.header-sunset
-        type: rule
-        text: When a removal date is known for a deprecated endpoint, include a Sunset header with an RFC 1123 timestamp such
-          as Mon, 30 Jun 2025 23:59:59 GMT.
-      - id: deprecation.changelog
-        type: rule
-        text: Record every breaking or deprecating change in the API changelog with migration guidance to replacement endpoints
-          or versions.
-  - id: anti-patterns
-    index: 7
-    title: Anti-patterns to avoid
-    category: anti_patterns
-    summary: Common pitfalls that violate these standards.
-    items:
-      - id: anti-patterns.business-logic-in-routes
-        type: anti_pattern
-        text: Implementing business logic directly in route handlers instead of delegating to services.
-      - id: anti-patterns.orm-models-as-contracts
-        type: anti_pattern
-        text: Returning ORM or database models directly from endpoints instead of Pydantic contract models.
-      - id: anti-patterns.inconsistent-error-shapes
-        type: anti_pattern
-        text: Using inconsistent or undocumented error response shapes across endpoints.
-      - id: anti-patterns.missing-response-model
-        type: anti_pattern
-        text: Omitting response models or leaving success and error status codes implicit.
-      - id: anti-patterns.broad-except
-        type: anti_pattern
-        text: Catching broad exceptions such as except Exception in ways that hide root causes or bypass global exception
-          handling.
+- id: url-structure-versioning
+  index: 1
+  title: URL structure and versioning
+  category: standard
+  summary: URL path conventions, version prefixes, health checks, and resource naming.
+  items:
+  - id: url.prefix
+    type: rule
+    text: Mount all versioned endpoints under /api/{version} (for example /api/v1) using create_app in app/core/factory.py.
+  - id: url.health.liveness
+    type: rule
+    text: Expose GET /health as an unversioned liveness probe, exclude it from OpenAPI, and let orchestrators use it to check
+      process aliveness.
+  - id: url.health.readiness
+    type: rule
+    text: Expose GET /api/{version}/health as the versioned readiness endpoint, register it in the versioned API router, and
+      document it in OpenAPI.
+  - id: url.resource-naming
+    type: rule
+    text: Use plural, kebab-case resource names in paths such as /api/v1/task-assignments and /api/v1/user-sessions.
+  - id: url.path-params
+    type: rule
+    text: Use descriptive path parameter names like {user_id} instead of generic {id}.
+  - id: url.trailing-slashes
+    type: rule
+    text: Declare canonical paths without a trailing slash (for example /users and /users/{user_id}); FastAPI handling of
+      .../ redirects is not part of the API contract.
+- id: http-methods-and-status-codes
+  index: 2
+  title: HTTP methods and status codes
+  category: standard
+  summary: Standard REST semantics plus a strict rule that validation failures are 400 Bad Request.
+  http_method_defaults:
+  - method: GET
+    usage: Retrieve a resource or list
+    success_status: 200
+    success_status_text: OK
+    error_statuses:
+    - 404
+  - method: POST
+    usage: Create a new resource
+    success_status: 201
+    success_status_text: Created
+    error_statuses:
+    - 400
+    - 409
+  - method: PUT
+    usage: Replace an entire resource
+    success_status: 200
+    success_status_text: OK
+    error_statuses:
+    - 400
+    - 404
+  - method: PATCH
+    usage: Partially update a resource
+    success_status: 200
+    success_status_text: OK
+    error_statuses:
+    - 400
+    - 404
+  - method: DELETE
+    usage: Delete a resource
+    success_status: 204
+    success_status_text: No Content
+    error_statuses:
+    - 404
+  items:
+  - id: http.status.named-constants
+    type: rule
+    text: Use fastapi.status named constants such as status.HTTP_201_CREATED instead of hard-coded integer literals.
+  - id: http.validation.use-400
+    type: rule
+    text: Surface all request validation failures as HTTP 400 Bad Request instead of the FastAPI default 422 for RequestValidationError.
+  - id: http.validation.error-model
+    type: note
+    text: The validation exception handler returns a 400 response with an AppError envelope containing the HTTPValidationError
+      payload in the details field. This ensures all error responses share the same top-level structure (code, message, statusCode,
+      details).
+  - id: http.validation.handler-registration
+    type: note
+    text: create_app registers validation_exception_handler from app/core/exceptions.py as the global handler for RequestValidationError.
+  - id: http.validation.route-responses
+    type: rule
+    text: Route decorators must reuse VALIDATION_ERROR_RESPONSE from app/contracts/errors.py in the responses mapping for
+      400 entries. This constant now references AppError for OpenAPI documentation consistency.
+- id: request-response-modeling
+  index: 3
+  title: Request and response modeling
+  category: standard
+  summary: Pydantic v2 models with extra fields forbidden, snake_case JSON, and explicit response models.
+  sample_code:
+    description: Generic Pydantic model example showing ConfigDict and Field usage.
+    imports:
+    - datetime.datetime
+    - typing.Annotated
+    - pydantic.BaseModel
+    models:
+    - name: ResourceCreate
+      config: ConfigDict(extra="forbid")
+      fields:
+      - 'name: Annotated[str, Field(min_length=1)]'
+    - name: ResourceResponse
+      config: ConfigDict(extra="forbid")
+      fields:
+      - 'id: int,name: str,created_at: datetime'
+  items:
+  - id: modeling.pydantic-extra-forbid
+    type: rule
+    text: Define all request and response payloads as Pydantic BaseModel subclasses with model_config = ConfigDict(extra="forbid")
+      to reject unknown JSON fields.
+  - id: modeling.json-snake-case
+    type: rule
+    text: Use snake_case for all JSON field names; represent datetimes as timezone-aware UTC ISO 8601 strings.
+  - id: modeling.response-model-required
+    type: rule
+    text: Every endpoint must set response_model so that outbound schemas are enforced, extra fields from services are filtered
+      out, and OpenAPI schemas are derived from the contracts.
+  - id: modeling.describe-side-effects
+    type: rule
+    text: When a route has non-trivial side effects such as writes or external calls, the description must explain these behaviors
+      for API consumers.
+- id: response-shape-and-pagination
+  index: 4
+  title: Response shape and pagination
+  category: standard
+  summary: Successful responses return domain models directly; pagination and errors follow shared envelopes.
+  pagination_fields:
+  - items
+  - total
+  - page
+  - page_size
+  pagination_type_hints:
+    items: list[T]
+    total: int
+    page: int
+    page_size: int
+  items:
+  - id: responses.no-generic-envelopes
+    type: rule
+    text: 'Do not wrap successful responses in generic envelopes such as {"status": "ok", "data": ...}; return the domain
+      model dictated by response_model.'
+  - id: pagination.standard-fields
+    type: rule
+    text: For paginated collections, use a structure with items, total, page, and page_size fields until a generic Paginated[T]
+      model exists under app/contracts/.
+  - id: errors.app-error-envelope
+    type: rule
+    text: All error responses share a common top-level envelope using the AppError schema defined in app/contracts/errors.py
+      with code, message, statusCode, and optional details fields.
+  - id: errors.validation-through-app-error
+    type: rule
+    text: Validation failures use the AppError envelope with code="VALIDATION_ERROR" and the HTTPValidationError payload (containing
+      field-level detail and optional body) placed in the details field. This provides a consistent top-level structure while
+      preserving detailed validation information.
+  - id: errors.non-validation-through-app-error
+    type: rule
+    text: Non-validation errors such as domain or infrastructure failures use the AppError envelope with domain-specific code
+      values (from the ErrorCode enum) and contextual details where applicable.
+  - id: errors.route-decorator-usage
+    type: rule
+    text: 'Route decorators use VALIDATION_ERROR_RESPONSE (which now references AppError) for 400 responses and {"model":
+      AppError, "description": "..."} for other error status codes.'
+  - id: errors.todo.paginated-model
+    type: todo
+    text: Once a generic Paginated[T] model exists under app/contracts/, update routers and this document to reference it
+      as the canonical pagination schema.
+- id: content-negotiation
+  index: 5
+  title: Content negotiation
+  category: standard
+  summary: JSON plus ORJSONResponse by default, with gzip compression support.
+  items:
+  - id: content.json-default
+    type: rule
+    text: Use application/json as the default Content-Type unless a route explicitly declares a different media type.
+  - id: content.serializer-orjson
+    type: rule
+    text: Configure ORJSONResponse as the default_response_class in create_app and avoid per-route overrides unless a different
+      content type is required.
+  - id: content.compression-gzip
+    type: rule
+    text: 'Support Accept-Encoding: gzip via middleware and ensure compressed responses remain valid JSON at the payload level.'
+- id: versioning-and-deprecation
+  index: 6
+  title: Versioning and deprecation
+  category: standard
+  summary: Path-based API versioning with additive-only changes per version and explicit deprecation metadata.
+  items:
+  - id: versioning.path-based
+    type: rule
+    text: Version all public endpoints in the path such as /api/v1 or /api/v2, and require a new major version for any breaking
+      change.
+  - id: versioning.compatibility-additive
+    type: rule
+    text: Within a given API version, allow only additive changes such as new optional fields or new endpoints.
+  - id: versioning.compatibility-no-breaking
+    type: rule
+    text: Do not remove fields or change semantics within an existing API version; such changes require a new version.
+  - id: deprecation.header-deprecation
+    type: rule
+    text: 'For deprecated endpoints, include a Deprecation response header such as Deprecation: true or a deprecation date
+      string.'
+  - id: deprecation.header-sunset
+    type: rule
+    text: When a removal date is known for a deprecated endpoint, include a Sunset header with an RFC 1123 timestamp such
+      as Mon, 30 Jun 2025 23:59:59 GMT.
+  - id: deprecation.changelog
+    type: rule
+    text: Record every breaking or deprecating change in the API changelog with migration guidance to replacement endpoints
+      or versions.
+  - id: deprecation.flag-endpoints
+    type: rule
+    text: When deprecating an endpoint, set deprecated=True in the route decorator so OpenAPI and interactive docs show deprecation
+      state.
+- id: anti-patterns
+  index: 7
+  title: Anti-patterns to avoid
+  category: anti_patterns
+  summary: Common pitfalls that violate these standards.
+  items:
+  - id: anti-patterns.business-logic-in-routes
+    type: anti_pattern
+    text: Implementing business logic directly in route handlers instead of delegating to services.
+  - id: anti-patterns.orm-models-as-contracts
+    type: anti_pattern
+    text: Returning ORM or database models directly from endpoints instead of Pydantic contract models.
+  - id: anti-patterns.inconsistent-error-shapes
+    type: anti_pattern
+    text: Using inconsistent or undocumented error response shapes across endpoints.
+  - id: anti-patterns.missing-response-model
+    type: anti_pattern
+    text: Omitting response_model or leaving success and error status codes implicit.
+  - id: anti-patterns.broad-except
+    type: anti_pattern
+    text: Catching broad exceptions such as except Exception in ways that hide root causes or bypass global exception handling.
+  - id: anti-patterns.missing-openapi-docs
+    type: anti_pattern
+    text: Leaving OpenAPI documentation incomplete, for example by omitting summary, description, tags, or documented error
+      responses.

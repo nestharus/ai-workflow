@@ -1,6 +1,5 @@
 doc_id: fastapi-exception-patterns
 title: FastAPI Exception Patterns
-project: ai-workflow
 version_hint: 2024-2025
 kind: fastapi_exception_standards
 description: FastAPI-specific patterns for exception handling, HTTP error mapping, global exception handlers, and error response
@@ -9,388 +8,367 @@ scope: Covers HTTP exception usage, AppError response model, global exception ha
   to HTTP mapping, custom handler implementation, error response structure, error logging, OpenAPI documentation, testing,
   and anti-patterns.
 primary_runtime_references:
-  - path: app/core/exceptions.py
-    role: Request validation handler and sanitization utilities.
-  - path: app/contracts/errors.py
-    role: HTTP validation error models, AppError envelope, and shared error response definitions.
-  - path: app/core/factory.py
-    role: FastAPI application construction and exception handler registration.
-  - path: tests/unit/test_validation_errors.py
-    role: Baseline tests for request validation behavior.
-  - path: app/contracts/example_contract.py
-    role: Validation constants and limits for error payloads.
+- path: app/core/exceptions.py
+  role: Request validation handler and sanitization utilities.
+- path: app/contracts/errors.py
+  role: HTTP validation error models, AppError envelope, and shared error response definitions.
+- path: app/core/factory.py
+  role: FastAPI application construction and exception handler registration.
+- path: tests/unit/test_validation_errors.py
+  role: Baseline tests for request validation behavior.
+- path: app/contracts/example_contract.py
+  role: Validation constants and limits for error payloads.
 related_pattern_docs:
-  - python/exception-patterns.toon
-  - fastapi/api-patterns.toon
-  - fastapi/router-patterns.toon
-  - fastapi/factory-patterns.toon
+- python/exception-patterns.toon
+- fastapi/api-patterns.toon
+- fastapi/router-patterns.toon
+- fastapi/factory-patterns.toon
 sections:
-  - id: http-exception-usage
-    index: 1
-    title: HTTP Exception Usage
-    category: standard
-    summary: When to use fastapi.HTTPException for HTTP-layer concerns versus domain exceptions.
-    items:
-      - id: http.reserve-for-transport
-        type: rule
-        text: Reserve fastapi.HTTPException for HTTP-layer concerns such as malformed requests, authentication problems, and
-          rate-limiting decisions.
-      - id: http.domain-exceptions-first
-        type: rule
-        text: Services and domain components should raise DomainError subclasses; the transport layer translates these to
-          HTTP responses via global handlers.
-      - id: http.not-in-services
-        type: rule
-        text: Do not raise HTTPException from services; this couples domain logic to HTTP concerns and makes services harder
-          to reuse in non-HTTP contexts.
-      - id: http.appropriate-cases
-        type: note
-        text: Appropriate uses of HTTPException include authentication failures at the router level, middleware rejections,
-          and explicit rate limit enforcement.
-      - id: http.prefer-global-handlers
-        type: pattern
-        text: Prefer global exception handlers that translate domain exceptions to HTTP responses over scattering HTTPException
-          raises throughout the codebase.
-  - id: apperror-response-model
-    index: 2
-    title: AppError Response Model
-    category: standard
-    summary: Canonical error envelope and error-code vocabulary used for all error responses.
-    sample_code:
-      description: JSON examples showing the three main AppError shapes for domain, infrastructure, and validation errors.
-      imports: []
-      code: |-
-        # Domain error example (HTTP 404):
-        {
-          "code": "USER_NOT_FOUND",
-          "message": "User with ID 123 was not found",
-          "statusCode": 404,
-          "details": null
-        }
-        # Infrastructure error example (HTTP 500):
-        {
-          "code": "INTERNAL_ERROR",
-          "message": "Unexpected error while processing request",
-          "statusCode": 500,
-          "details": {"requestId": "b8a53f7b-9a5b-4e2b-9c0e-4f2d1c0f25b1"}
-        }
-        # Validation error example (HTTP 400):
-        {
-          "code": "VALIDATION_ERROR",
-          "message": "Request validation failed",
-          "statusCode": 400,
-          "details": {
-            "detail": [
-              {
-                "loc": ["body", "message"],
-                "msg": "Field required",
-                "type": "missing"
-              }
-            ]
-          }
-        }
-    items:
-      - id: apperror.canonical-envelope
-        type: rule
-        text: Use AppError from app/contracts/errors.py as the canonical envelope for all error responses, including validation,
-          domain, and infrastructure failures.
-      - id: apperror.errorcode-enum
-        type: rule
-        text: Define a closed ErrorCode enum listing allowed error identifiers (for example USER_NOT_FOUND, VALIDATION_ERROR,
-          UNAUTHORIZED, INTERNAL_ERROR) and forbid ad hoc string codes.
-      - id: apperror.fields
-        type: note
-        text: 'AppError includes code: ErrorCode, message: str, status_code: int serialized as statusCode, and details: dict
-          | list | None for structured context.'
-      - id: apperror.examples
-        type: note
-        text: Use AppError for domain errors (for example USER_NOT_FOUND with 404), infrastructure errors (INTERNAL_ERROR
-          with 500 and a requestId in details), and validation errors (VALIDATION_ERROR with an HTTPValidationError payload
-          nested in details).
-      - id: apperror.documentation
-        type: rule
-        text: 'Document non-validation failures in route decorators with AppError as the model, for example responses={404:
-          {"model": AppError, "description": "Not found"}}.'
-      - id: apperror.details-structure
-        type: rule
-        text: Restrict AppError.details to structured, machine-parseable data rather than verbose stack traces or arbitrary
-          strings.
-  - id: global-exception-handlers
-    index: 3
-    title: Global Exception Handlers
-    category: standard
-    summary: Centralized registration of validation, domain, and catch-all handlers in create_app.
-    sample_code:
-      description: Conceptual create_app registration of validation, domain, and catch-all exception handlers.
-      imports:
-        - fastapi.FastAPI
-        - fastapi.Request
-        - fastapi.exceptions.RequestValidationError
-        - fastapi.responses.ORJSONResponse
-        - app.contracts.errors.AppError
-        - app.core.errors.DomainError
-        - app.core.exceptions.validation_exception_handler
-        - app.core.settings.Settings
-      code: |-
-        from fastapi import FastAPI, Request
-        from fastapi.exceptions import RequestValidationError
-        from fastapi.responses import ORJSONResponse
-        from app.contracts.errors import AppError
-        from app.core.errors import DomainError
-        from app.core.exceptions import validation_exception_handler
-        from app.core.settings import Settings
-        def create_app(settings: Settings) -> FastAPI:
-            app = FastAPI(default_response_class=ORJSONResponse, lifespan=_lifespan(settings))
-            app.add_exception_handler(RequestValidationError, validation_exception_handler)
-            @app.exception_handler(DomainError)
-            async def domain_error_handler(request: Request, exc: DomainError) -> ORJSONResponse:
-                error = AppError.from_domain(exc)
-                return ORJSONResponse(
-                    status_code=error.status_code,
-                    content=error.model_dump(mode="json", by_alias=True, exclude_none=True),
-                )
-            @app.exception_handler(Exception)
-            async def internal_error_handler(request: Request, exc: Exception) -> ORJSONResponse:
-                generic = AppError.internal_error()
-                return ORJSONResponse(
-                    status_code=generic.status_code,
-                    content=generic.model_dump(mode="json", by_alias=True),
-                )
-            return app
-    items:
-      - id: handlers.global-layers
-        type: rule
-        text: 'Register three layers of handlers in create_app: a RequestValidationError handler, a DomainError handler, and
-          a catch-all Exception handler.'
-      - id: handlers.validation-handler
-        type: rule
-        text: Use validation_exception_handler from app/core/exceptions.py for RequestValidationError to wrap HTTPValidationError
-          details in an AppError with code ErrorCode.VALIDATION_ERROR and status 400.
-      - id: handlers.domain-handler
-        type: rule
-        text: Register a DomainError handler that maps domain-specific exceptions to AppError responses with appropriate status
-          codes and codes.
-      - id: handlers.catchall-handler
-        type: rule
-        text: Register a generic Exception handler last to log unexpected failures and return a sanitized INTERNAL_ERROR AppError
-          with HTTP 500.
-      - id: handlers.router-reliance
-        type: note
-        text: Routers and services should rely on global handlers instead of catching exceptions and returning ORJSONResponse
-          manually.
-  - id: validation-error-handling
-    index: 4
-    title: Validation Error Handling
-    category: standard
-    summary: Centralized handling and sanitization of request validation failures.
-    items:
-      - id: validation.handler-role
-        type: rule
-        text: Centralize request validation behavior in validation_exception_handler, which converts FastAPI RequestValidationError
-          into an AppError with code VALIDATION_ERROR.
-      - id: validation.details-models
-        type: note
-        text: 'Use ValidationErrorDetail and HTTPValidationError models in app/contracts/errors.py to represent validation
-          details; ValidationErrorDetail includes loc, msg, type, and optional ctx, while HTTPValidationError holds detail:
-          list[ValidationErrorDetail] and an optional body.'
-      - id: validation.app-error-shape
-        type: rule
-        text: Return validation failures as HTTP 400 with an AppError envelope instead of FastAPI's default 422 for RequestValidationError.
-      - id: validation.max-errors
-        type: rule
-        text: Cap the number of returned validation errors at MAX_VALIDATION_ERRORS and limit nesting depth using MAX_JSON_DEPTH
-          constants from app/contracts/example_contract.py.
-      - id: validation.include-body-flag
-        type: rule
-        text: When Settings.include_error_body is True, attempt to parse and include the request body in HTTPValidationError.body;
-          otherwise omit the body field to avoid echoing payloads.
-      - id: validation.logging
-        type: note
-        text: Log validation failures at warning level using sanitized ValidationErrorDetail structures and avoid logging
-          raw request bodies or excessively long error lists.
-      - id: validation.example-shape
-        type: note
-        text: 'Keep responses consistent with the canonical example shape: code "VALIDATION_ERROR", message "Request validation
-          failed", statusCode 400, and details.detail listing field-level issues.'
-  - id: domain-to-http-mapping
-    index: 5
-    title: Domain to HTTP Mapping
-    category: standard
-    summary: How global handlers map domain exceptions to HTTP responses with appropriate status codes.
-    items:
-      - id: mapping.pattern
-        type: rule
-        text: Global exception handlers translate domain exceptions to HTTP responses, mapping exception types to appropriate
-          status codes and ErrorCode values.
-      - id: mapping.common-mappings
-        type: note
-        text: Map ResourceNotFoundError to 404 Not Found with a resource-specific ErrorCode, DomainValidationError to 400
-          with VALIDATION_ERROR and details, and UnauthorizedError to 401 or 403 depending on semantics.
-      - id: mapping.centralized
-        type: rule
-        text: Keep domain-to-HTTP mapping logic centralized in global handlers registered in create_app rather than scattering
-          it across routers.
-      - id: mapping.router-behavior
-        type: rule
-        text: Allow DomainError subclasses to propagate out of routers so the global DomainError handler can convert them
-          to AppError responses; do not catch and re-wrap them as HTTPException.
-      - id: mapping.extensibility
-        type: note
-        text: When adding new DomainError subclasses, update the domain handler to map them to appropriate HTTP responses
-          with suitable status codes and error codes.
-  - id: custom-exception-handlers
-    index: 6
-    title: Custom Exception Handler Implementation
-    category: standard
-    summary: Implementation guidelines for FastAPI exception handlers built on AppError.
-    items:
-      - id: impl.fastapi-decorator
-        type: pattern
-        text: 'Implement custom handlers using @app.exception_handler(ExceptionType) with async def handler(request: Request,
-          exc: ExceptionType) -> Response signatures.'
-      - id: impl.response-class
-        type: rule
-        text: Return ORJSONResponse from handlers so error responses share the same serialization characteristics as successful
-          responses.
-      - id: impl.logging-levels
-        type: rule
-        text: Log domain and validation errors at warning level and unexpected internal errors at error level with stack traces.
-      - id: impl.request-metadata
-        type: note
-        text: Include HTTP method, path, and correlation identifiers in error logs to simplify troubleshooting.
-      - id: impl.truncation-reuse-models
-        type: rule
-        text: Truncate long payloads or error lists when logging and always serialize responses using AppError or HTTPValidationError
-          from app/contracts/errors.py.
-  - id: error-response-structure
-    index: 7
-    title: Error Response Structure
-    category: standard
-    summary: Unified AppError envelope rules for validation, domain, and infrastructure errors.
-    items:
-      - id: structure.unified-envelope
-        type: rule
-        text: Ensure all errors use the AppError envelope with fields {code, message, statusCode, details}, regardless of
-          error type.
-      - id: structure.validation-failures
-        type: rule
-        text: For request-shape problems, return 400 with code "VALIDATION_ERROR" and HTTPValidationError embedded under AppError.details.
-      - id: structure.domain-infrastructure
-        type: rule
-        text: For domain and infrastructure errors, choose HTTP status codes that match semantics (404, 400, 401, 403, 409,
-          500) and set code to a value from ErrorCode.
-      - id: structure.examples
-        type: note
-        text: Keep JSON payloads close to documented examples so clients can rely on stable field names and error codes.
-      - id: structure.security-privacy
-        type: rule
-        text: Do not expose stack traces, SQL statements, internal IDs, or secrets in message or details; keep rich diagnostics
-          in logs and observability tools.
-  - id: error-logging
-    index: 8
-    title: Error Logging
-    category: standard
-    summary: Structured logging guidance for validation, domain, and internal errors.
-    items:
-      - id: logging.module-logger
-        type: rule
-        text: Log via module-level loggers (for example logger = logging.getLogger(__name__)) so messages respect centralized
-          logging configuration.
-      - id: logging.request-metadata
-        type: note
-        text: Include method, path, safe query parameters, correlation IDs, and authenticated principals when available in
-          error log entries.
-      - id: logging.structured
-        type: pattern
-        text: Prefer structured logging (for example JSON logs) that record code, status_code, and route as fields for filtering
-          and aggregation.
-      - id: logging.truncation
-        type: rule
-        text: Truncate large request bodies and error lists in logs to a bounded length; log summaries rather than entire
-          validation result sets.
-      - id: logging.validation-warning
-        type: rule
-        text: Log validation errors at warning level using sanitized ValidationErrorDetail lists from _sanitize_validation_errors.
-      - id: logging.internal-error
-        type: rule
-        text: Log unexpected internal errors at error level with stack traces while returning sanitized INTERNAL_ERROR AppError
-          responses.
-  - id: openapi-error-documentation
-    index: 9
-    title: OpenAPI Error Documentation
-    category: standard
-    summary: How to document error responses in OpenAPI using shared models and constants.
-    items:
-      - id: openapi.use-validation-constant
-        type: rule
-        text: Reuse VALIDATION_ERROR_RESPONSE from app/contracts/errors.py for 400 validation failures in route decorators
-          so OpenAPI reflects the AppError-wrapped validation shape.
-      - id: openapi.domain-error-models
-        type: rule
-        text: Document domain and infrastructure errors explicitly with AppError as the response model, for example 400 and
-          404 entries in responses.
-      - id: openapi.register-schemas
-        type: note
-        text: Ensure create_app registers HTTPValidationError, AppError, and ErrorCode under components.schemas so routes
-          can reference them by model.
-      - id: openapi.examples
-        type: note
-        text: Attach example error payloads where helpful to document concrete code values and details structure.
-      - id: openapi.alignment
-        type: rule
-        text: Keep OpenAPI documentation aligned with runtime behavior; update shared error responses whenever AppError or
-          validation behavior changes.
-  - id: testing-exception-handlers
-    index: 10
-    title: Testing Exception Handlers
-    category: testing
-    summary: Testing strategies for validation, domain, and catch-all handlers.
-    items:
-      - id: test.validation-suite
-        type: pattern
-        text: Extend tests/unit/test_validation_errors.py to cover typical validation failures, deeply nested payloads, truncated
-          error lists, and the include_error_body toggle.
-      - id: test.domain-mappings
-        type: rule
-        text: Write tests that trigger specific DomainError subclasses and assert that routes produce expected status codes
-          and AppError JSON with correct ErrorCode values.
-      - id: test.catchall-handler
-        type: rule
-        text: Add tests that raise generic Exception in routes and verify that the catch-all handler returns INTERNAL_ERROR
-          AppError responses with status 500 and no internal details.
-      - id: test.logging
-        type: note
-        text: Use log-capture fixtures to assert that validation errors are logged at warning level and internal errors at
-          error level without logging whole request bodies.
-      - id: test.regression-safeguard
-        type: note
-        text: Treat error-handling tests as regression guards; any change to AppError shape or mapping must be accompanied
-          by updated tests.
-  - id: exception-anti-patterns
-    index: 11
-    title: Anti-Patterns to Avoid
-    category: warning
-    summary: Practices that make error handling unpredictable, insecure, or inconsistent.
-    items:
-      - id: anti.http-exception-in-services
-        type: anti_pattern
-        text: Raising fastapi.HTTPException directly from services instead of domain-specific DomainError subclasses.
-      - id: anti.mixed-error-envelopes
-        type: anti_pattern
-        text: 'Returning heterogeneous error shapes from endpoints (for example mixing {"detail": ...} with custom envelopes)
-          instead of consistently using AppError.'
-      - id: anti.swallowed-exceptions
-        type: anti_pattern
-        text: Swallowing exceptions in routers or services and returning generic 500 responses instead of relying on global
-          handlers.
-      - id: anti.exposed-internal-details
-        type: anti_pattern
-        text: Exposing stack traces, SQL queries, or secrets in client-facing error responses.
-      - id: anti.broad-except
-        type: anti_pattern
-        text: Using broad except Exception blocks without re-raising or logging appropriately, which bypasses centralized
-          handling and hides failures.
-      - id: anti.ad-hoc-models
-        type: anti_pattern
-        text: Introducing new error models or ad-hoc response structures instead of extending AppError, ErrorCode, and the
-          domain exception hierarchy.
+- id: http-exception-usage
+  index: 1
+  title: HTTP Exception Usage
+  category: standard
+  summary: When to use fastapi.HTTPException for HTTP-layer concerns versus domain exceptions.
+  items:
+  - id: http.reserve-for-transport
+    type: rule
+    text: Reserve fastapi.HTTPException for HTTP-layer concerns such as malformed requests, authentication problems, and rate-limiting
+      decisions.
+  - id: http.domain-exceptions-first
+    type: rule
+    text: Services and domain components should raise DomainError subclasses; the transport layer translates these to HTTP
+      responses via global handlers.
+  - id: http.not-in-services
+    type: rule
+    text: Do not raise HTTPException from services; this couples domain logic to HTTP concerns and makes services harder to
+      reuse in non-HTTP contexts.
+  - id: http.appropriate-cases
+    type: note
+    text: Appropriate uses of HTTPException include authentication failures at the router level, middleware rejections, and
+      explicit rate limit enforcement.
+  - id: http.prefer-global-handlers
+    type: pattern
+    text: Prefer global exception handlers that translate domain exceptions to HTTP responses over scattering HTTPException
+      raises throughout the codebase.
+  - id: hierarchy.http-exception-usage
+    type: rule
+    text: Reserve fastapi.HTTPException for HTTP-layer concerns such as malformed requests, authentication problems, and rate-limiting
+      decisions.
+- id: apperror-response-model
+  index: 2
+  title: AppError Response Model
+  category: standard
+  summary: Canonical error envelope and error-code vocabulary used for all error responses.
+  sample_code:
+    description: JSON examples showing the three main AppError shapes for domain, infrastructure, and validation errors.
+    imports: []
+    code: "# Domain error example (HTTP 404):\n{\n  \"code\": \"USER_NOT_FOUND\",\n  \"message\": \"User with ID 123 was not\
+      \ found\",\n  \"statusCode\": 404,\n  \"details\": null\n}\n# Infrastructure error example (HTTP 500):\n{\n  \"code\"\
+      : \"INTERNAL_ERROR\",\n  \"message\": \"Unexpected error while processing request\",\n  \"statusCode\": 500,\n  \"details\"\
+      : {\"requestId\": \"b8a53f7b-9a5b-4e2b-9c0e-4f2d1c0f25b1\"}\n}\n# Validation error example (HTTP 400):\n{\n  \"code\"\
+      : \"VALIDATION_ERROR\",\n  \"message\": \"Request validation failed\",\n  \"statusCode\": 400,\n  \"details\": {\n \
+      \   \"detail\": [\n      {\n        \"loc\": [\"body\", \"message\"],\n        \"msg\": \"Field required\",\n      \
+      \  \"type\": \"missing\"\n      }\n    ]\n  }\n}"
+  items:
+  - id: apperror.canonical-envelope
+    type: rule
+    text: Use AppError from app/contracts/errors.py as the canonical envelope for all error responses, including validation,
+      domain, and infrastructure failures.
+  - id: apperror.errorcode-enum
+    type: rule
+    text: Define a closed ErrorCode enum listing allowed error identifiers (for example USER_NOT_FOUND, VALIDATION_ERROR,
+      UNAUTHORIZED, INTERNAL_ERROR) and forbid ad hoc string codes.
+  - id: apperror.fields
+    type: note
+    text: 'AppError includes code: ErrorCode, message: str, status_code: int serialized as statusCode, and details: dict |
+      list | None for structured context.'
+  - id: apperror.examples
+    type: note
+    text: Use AppError for domain errors (for example USER_NOT_FOUND with 404), infrastructure errors (INTERNAL_ERROR with
+      500 and a requestId in details), and validation errors (VALIDATION_ERROR with an HTTPValidationError payload nested
+      in details).
+  - id: apperror.documentation
+    type: rule
+    text: 'Document non-validation failures in route decorators with AppError as the model, for example responses={404: {"model":
+      AppError, "description": "Not found"}}.'
+  - id: apperror.details-structure
+    type: rule
+    text: Restrict AppError.details to structured, machine-parseable data rather than verbose stack traces or arbitrary strings.
+- id: global-exception-handlers
+  index: 3
+  title: Global Exception Handlers
+  category: standard
+  summary: Centralized registration of validation, domain, and catch-all handlers in create_app.
+  sample_code:
+    description: Conceptual create_app registration of validation, domain, and catch-all exception handlers.
+    imports:
+    - fastapi.FastAPI
+    - fastapi.Request
+    - fastapi.exceptions.RequestValidationError
+    - fastapi.responses.ORJSONResponse
+    - app.contracts.errors.AppError
+    - app.core.errors.DomainError
+    - app.core.exceptions.validation_exception_handler
+    - app.core.settings.Settings
+    code: "from fastapi import FastAPI, Request\nfrom fastapi.exceptions import RequestValidationError\nfrom fastapi.responses\
+      \ import ORJSONResponse\nfrom app.contracts.errors import AppError\nfrom app.core.errors import DomainError\nfrom app.core.exceptions\
+      \ import validation_exception_handler\nfrom app.core.settings import Settings\ndef create_app(settings: Settings) ->\
+      \ FastAPI:\n    app = FastAPI(default_response_class=ORJSONResponse, lifespan=_lifespan(settings))\n    app.add_exception_handler(RequestValidationError,\
+      \ validation_exception_handler)\n    @app.exception_handler(DomainError)\n    async def domain_error_handler(request:\
+      \ Request, exc: DomainError) -> ORJSONResponse:\n        error = AppError.from_domain(exc)\n        return ORJSONResponse(\n\
+      \            status_code=error.status_code,\n            content=error.model_dump(mode=\"json\", by_alias=True, exclude_none=True),\n\
+      \        )\n    @app.exception_handler(Exception)\n    async def internal_error_handler(request: Request, exc: Exception)\
+      \ -> ORJSONResponse:\n        generic = AppError.internal_error()\n        return ORJSONResponse(\n            status_code=generic.status_code,\n\
+      \            content=generic.model_dump(mode=\"json\", by_alias=True),\n        )\n    return app"
+  items:
+  - id: handlers.global-layers
+    type: rule
+    text: 'Register three layers of handlers in create_app: a RequestValidationError handler, a DomainError handler, and a
+      catch-all Exception handler.'
+  - id: handlers.validation-handler
+    type: rule
+    text: Use validation_exception_handler from app/core/exceptions.py for RequestValidationError to wrap HTTPValidationError
+      details in an AppError with code ErrorCode.VALIDATION_ERROR and status 400.
+  - id: handlers.domain-handler
+    type: rule
+    text: Register a DomainError handler that maps domain-specific exceptions to AppError responses with appropriate status
+      codes and codes.
+  - id: handlers.catchall-handler
+    type: rule
+    text: Register a generic Exception handler last to log unexpected failures and return a sanitized INTERNAL_ERROR AppError
+      with HTTP 500.
+  - id: handlers.router-reliance
+    type: note
+    text: Routers and services should rely on global handlers instead of catching exceptions and returning ORJSONResponse
+      manually.
+- id: validation-error-handling
+  index: 4
+  title: Validation Error Handling
+  category: standard
+  summary: Centralized handling and sanitization of request validation failures.
+  items:
+  - id: validation.handler-role
+    type: rule
+    text: Centralize request validation behavior in validation_exception_handler, which converts FastAPI RequestValidationError
+      into an AppError with code VALIDATION_ERROR.
+  - id: validation.details-models
+    type: note
+    text: 'Use ValidationErrorDetail and HTTPValidationError models in app/contracts/errors.py to represent validation details;
+      ValidationErrorDetail includes loc, msg, type, and optional ctx, while HTTPValidationError holds detail: list[ValidationErrorDetail]
+      and an optional body.'
+  - id: validation.app-error-shape
+    type: rule
+    text: Return validation failures as HTTP 400 with an AppError envelope instead of FastAPI’s default 422 for RequestValidationError.
+  - id: validation.max-errors
+    type: rule
+    text: Cap the number of returned validation errors at MAX_VALIDATION_ERRORS and limit nesting depth using MAX_JSON_DEPTH
+      constants from app/contracts/example_contract.py.
+  - id: validation.include-body-flag
+    type: rule
+    text: When Settings.include_error_body is True, attempt to parse and include the request body in HTTPValidationError.body;
+      otherwise omit the body field to avoid echoing payloads.
+  - id: validation.logging
+    type: note
+    text: Log validation failures at warning level using sanitized ValidationErrorDetail structures and avoid logging raw
+      request bodies or excessively long error lists.
+  - id: validation.example-shape
+    type: note
+    text: 'Keep responses consistent with the canonical example shape: code "VALIDATION_ERROR", message "Request validation
+      failed", statusCode 400, and details.detail listing field-level issues.'
+- id: domain-to-http-mapping
+  index: 5
+  title: Domain to HTTP Mapping
+  category: standard
+  summary: How global handlers map domain exceptions to HTTP responses with appropriate status codes.
+  items:
+  - id: mapping.pattern
+    type: rule
+    text: Global exception handlers translate domain exceptions to HTTP responses, mapping exception types to appropriate
+      status codes and ErrorCode values.
+  - id: mapping.common-mappings
+    type: note
+    text: Map ResourceNotFoundError to 404 Not Found with a resource-specific ErrorCode, DomainValidationError to 400 with
+      VALIDATION_ERROR and details, and UnauthorizedError to 401 or 403 depending on semantics.
+  - id: mapping.centralized
+    type: rule
+    text: Keep domain-to-HTTP mapping logic centralized in global handlers registered in create_app rather than scattering
+      it across routers.
+  - id: mapping.router-behavior
+    type: rule
+    text: Allow DomainError subclasses to propagate out of routers so the global DomainError handler can convert them to AppError
+      responses; do not catch and re-wrap them as HTTPException.
+  - id: mapping.extensibility
+    type: note
+    text: When adding new DomainError subclasses, update the domain handler to map them to appropriate HTTP responses with
+      suitable status codes and error codes.
+  - id: domain.router-behavior
+    type: rule
+    text: Allow DomainError subclasses to propagate out of routers so the global DomainError handler can convert them to AppError
+      responses; do not catch and re-wrap them as HTTPException.
+  - id: domain.http-exception-layer
+    type: note
+    text: Use fastapi.HTTPException only for HTTP-specific failures like missing authentication headers, invalid tokens, or
+      transport-level rate limits.
+  - id: domain.mapping-examples
+    type: note
+    text: Map ResourceNotFoundError to 404 Not Found with a resource-specific ErrorCode, DomainValidationError to 400 with
+      VALIDATION_ERROR and details, and UnauthorizedError to 401 or 403 depending on semantics.
+  - id: domain.extensibility
+    type: note
+    text: Define additional DomainError subclasses (such as UserNotFoundError or InvalidOrderStateError) to express more precise
+      codes without leaking HTTP concerns.
+- id: custom-exception-handlers
+  index: 6
+  title: Custom Exception Handler Implementation
+  category: standard
+  summary: Implementation guidelines for FastAPI exception handlers built on AppError.
+  items:
+  - id: impl.fastapi-decorator
+    type: pattern
+    text: 'Implement custom handlers using @app.exception_handler(ExceptionType) with async def handler(request: Request,
+      exc: ExceptionType) -> Response signatures.'
+  - id: impl.response-class
+    type: rule
+    text: Return ORJSONResponse from handlers so error responses share the same serialization characteristics as successful
+      responses.
+  - id: impl.logging-levels
+    type: rule
+    text: Log domain and validation errors at warning level and unexpected internal errors at error level with stack traces.
+  - id: impl.request-metadata
+    type: note
+    text: Include HTTP method, path, and correlation identifiers in error logs to simplify troubleshooting.
+  - id: impl.truncation-reuse-models
+    type: rule
+    text: Truncate long payloads or error lists when logging and always serialize responses using AppError or HTTPValidationError
+      from app/contracts/errors.py.
+- id: error-response-structure
+  index: 7
+  title: Error Response Structure
+  category: standard
+  summary: Unified AppError envelope rules for validation, domain, and infrastructure errors.
+  items:
+  - id: structure.unified-envelope
+    type: rule
+    text: Ensure all errors use the AppError envelope with fields {code, message, statusCode, details}, regardless of error
+      type.
+  - id: structure.validation-failures
+    type: rule
+    text: For request-shape problems, return 400 with code "VALIDATION_ERROR" and HTTPValidationError embedded under AppError.details.
+  - id: structure.domain-infrastructure
+    type: rule
+    text: For domain and infrastructure errors, choose HTTP status codes that match semantics (404, 400, 401, 403, 409, 500)
+      and set code to a value from ErrorCode.
+  - id: structure.examples
+    type: note
+    text: Keep JSON payloads close to documented examples so clients can rely on stable field names and error codes.
+  - id: structure.security-privacy
+    type: rule
+    text: Do not expose stack traces, SQL statements, internal IDs, or secrets in message or details; keep rich diagnostics
+      in logs and observability tools.
+- id: error-logging
+  index: 8
+  title: Error Logging
+  category: standard
+  summary: Structured logging guidance for validation, domain, and internal errors.
+  items:
+  - id: logging.module-logger
+    type: rule
+    text: Log via module-level loggers (for example logger = logging.getLogger(__name__)) so messages respect centralized
+      logging configuration.
+  - id: logging.request-metadata
+    type: note
+    text: Include method, path, safe query parameters, correlation IDs, and authenticated principals when available in error
+      log entries.
+  - id: logging.structured
+    type: pattern
+    text: Prefer structured logging (for example JSON logs) that record code, status_code, and route as fields for filtering
+      and aggregation.
+  - id: logging.truncation
+    type: rule
+    text: Truncate large request bodies and error lists in logs to a bounded length; log summaries rather than entire validation
+      result sets.
+  - id: logging.validation-warning
+    type: rule
+    text: Log validation errors at warning level using sanitized ValidationErrorDetail lists from _sanitize_validation_errors.
+  - id: logging.internal-error
+    type: rule
+    text: Log unexpected internal errors at error level with stack traces while returning sanitized INTERNAL_ERROR AppError
+      responses.
+- id: openapi-error-documentation
+  index: 9
+  title: OpenAPI Error Documentation
+  category: standard
+  summary: How to document error responses in OpenAPI using shared models and constants.
+  items:
+  - id: openapi.use-validation-constant
+    type: rule
+    text: Reuse VALIDATION_ERROR_RESPONSE from app/contracts/errors.py for 400 validation failures in route decorators so
+      OpenAPI reflects the AppError-wrapped validation shape.
+  - id: openapi.domain-error-models
+    type: rule
+    text: Document domain and infrastructure errors explicitly with AppError as the response model, for example 400 and 404
+      entries in responses.
+  - id: openapi.register-schemas
+    type: note
+    text: Ensure create_app registers HTTPValidationError, AppError, and ErrorCode under components.schemas so routes can
+      reference them by model.
+  - id: openapi.examples
+    type: note
+    text: Attach example error payloads where helpful to document concrete code values and details structure.
+  - id: openapi.alignment
+    type: rule
+    text: Keep OpenAPI documentation aligned with runtime behavior; update shared error responses whenever AppError or validation
+      behavior changes.
+- id: testing-exception-handlers
+  index: 10
+  title: Testing Exception Handlers
+  category: testing
+  summary: Testing strategies for validation, domain, and catch-all handlers.
+  items:
+  - id: test.validation-suite
+    type: pattern
+    text: Extend tests/unit/test_validation_errors.py to cover typical validation failures, deeply nested payloads, truncated
+      error lists, and the include_error_body toggle.
+  - id: test.domain-mappings
+    type: rule
+    text: Write tests that trigger specific DomainError subclasses and assert that routes produce expected status codes and
+      AppError JSON with correct ErrorCode values.
+  - id: test.catchall-handler
+    type: rule
+    text: Add tests that raise generic Exception in routes and verify that the catch-all handler returns INTERNAL_ERROR AppError
+      responses with status 500 and no internal details.
+  - id: test.logging
+    type: note
+    text: Use log-capture fixtures to assert that validation errors are logged at warning level and internal errors at error
+      level without logging whole request bodies.
+  - id: test.regression-safeguard
+    type: note
+    text: Treat error-handling tests as regression guards; any change to AppError shape or mapping must be accompanied by
+      updated tests.
+- id: exception-anti-patterns
+  index: 11
+  title: Anti-Patterns to Avoid
+  category: warning
+  summary: Practices that make error handling unpredictable, insecure, or inconsistent.
+  items:
+  - id: anti.http-exception-in-services
+    type: anti_pattern
+    text: Raising fastapi.HTTPException directly from services instead of domain-specific DomainError subclasses.
+  - id: anti.mixed-error-envelopes
+    type: anti_pattern
+    text: 'Returning heterogeneous error shapes from endpoints (for example mixing {"detail": ...} with custom envelopes)
+      instead of consistently using AppError.'
+  - id: anti.swallowed-exceptions
+    type: anti_pattern
+    text: Swallowing exceptions in routers or services and returning generic 500 responses instead of relying on global handlers.
+  - id: anti.exposed-internal-details
+    type: anti_pattern
+    text: Exposing stack traces, SQL queries, or secrets in client-facing error responses.
+  - id: anti.broad-except
+    type: anti_pattern
+    text: Using broad except Exception blocks without re-raising or logging appropriately, which bypasses centralized handling
+      and hides failures.
+  - id: anti.ad-hoc-models
+    type: anti_pattern
+    text: Introducing new error models or ad-hoc response structures instead of extending AppError, ErrorCode, and the domain
+      exception hierarchy.
