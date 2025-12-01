@@ -8,20 +8,28 @@ Outputs flattened CSV files to `.knowledge/comparisons/` with columns:
 source_file, id, origin_type, original_text, split_file, split_text
 
 Usage:
-    uv run compare-yml-docs [--path <directory>]
+    uv run compare-yml-docs [--path <directory>] [--original-files <file> ...]
 
 Args:
     --path: Base directory containing original and split YAML files
             (default: docs/development/).
+    --original-files: Optional list of timestamped original files from
+            `.knowledge/originals/` to use instead of globbing for
+            `original.*.yml` files in the base path. When not provided,
+            falls back to the default glob pattern.
+
+Example:
+    uv run compare-yml-docs --original-files .knowledge/originals/20251201T134735Z-api-patterns.yml
 """
 
 import argparse
-import csv
+import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
+import duckdb
 import yaml
 
 from scripts.utils import REPO_ROOT
@@ -46,7 +54,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         argv: Command line arguments (defaults to sys.argv).
 
     Returns:
-        Parsed argument namespace with path attribute.
+        Parsed argument namespace with path and original_files attributes.
     """
     parser = argparse.ArgumentParser(
         description="Compare original YAML documents with their split counterparts.",
@@ -57,6 +65,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=DEVELOPMENT_DIR,
         help="Base directory containing original and split YAML files "
         "(default: docs/development/).",
+    )
+    parser.add_argument(
+        "--original-files",
+        nargs="*",
+        type=Path,
+        help="Optional list of timestamped original files from .knowledge/originals/ "
+        "to use instead of globbing for original.*.yml files in the base path.",
     )
     return parser.parse_args(argv)
 
@@ -209,17 +224,35 @@ def extract_ids_and_text(
     return result
 
 
-def find_originals(base_path: Path) -> list[Path]:
+def find_originals(
+    base_path: Path,
+    original_files: list[Path] | None = None,
+) -> list[Path]:
     """Find all original YAML files in the development directory.
 
-    Original files are top-level files matching the pattern 'original.*.yml'.
+    When original_files is provided, uses those files instead of globbing.
+    Otherwise, finds top-level files matching the pattern 'original.*.yml'.
 
     Args:
-        base_path: Base directory to search for original files.
+        base_path: Base directory to search for original files (used for glob fallback).
+        original_files: Optional list of explicit original file paths to use.
+            When provided and non-empty, these files are used instead of globbing.
 
     Returns:
         Sorted list of paths to original YAML files.
     """
+    if original_files:
+        valid_files: list[Path] = []
+        for file_path in original_files:
+            if file_path.exists() and file_path.is_file():
+                valid_files.append(file_path)
+            else:
+                print(
+                    f"Warning: Provided original file does not exist: {file_path}",
+                    file=sys.stderr,
+                )
+        return sorted(valid_files)
+
     pattern = "original.*.yml"
     return sorted(base_path.glob(pattern))
 
@@ -241,11 +274,31 @@ def find_all_yml(base_path: Path) -> list[Path]:
     return sorted(files)
 
 
+def _strip_timestamp_prefix(name: str) -> str:
+    """Strip ISO 8601 timestamp prefix from a filename stem if present.
+
+    Handles timestamped filenames like '20251201T134735Z-api-patterns' by
+    stripping the timestamp prefix up to and including the first hyphen.
+
+    Args:
+        name: Filename stem to process.
+
+    Returns:
+        The stem with timestamp prefix stripped, or original if no match.
+    """
+    # Match ISO 8601 basic format timestamp: YYYYMMDDTHHMMSSZ-
+    match = re.match(r"^\d{8}T\d{6}Z-(.+)$", name)
+    if match:
+        return match.group(1)
+    return name
+
+
 def pattern_from_path(path: Path) -> str:
     """Extract the pattern name from a YAML file path.
 
     For 'original.api-patterns.yml', returns 'api-patterns'.
     For 'python.api-patterns.yml', returns 'api-patterns'.
+    For '20251201T134735Z-api-patterns.yml', returns 'api-patterns'.
 
     Args:
         path: Path to a YAML file.
@@ -254,6 +307,10 @@ def pattern_from_path(path: Path) -> str:
         The extracted pattern name.
     """
     name = path.stem
+
+    # Handle timestamped originals: 20251201T134735Z-api-patterns -> api-patterns
+    name = _strip_timestamp_prefix(name)
+
     if name.startswith("original."):
         return name[len("original.") :]
     parts = name.split(".", 1)
@@ -407,7 +464,10 @@ def compare_original_to_splits(
     return entries
 
 
-def compare_all(base_path: Path) -> tuple[dict[str, CompareResult], set[str]]:
+def compare_all(
+    base_path: Path,
+    original_files: list[Path] | None = None,
+) -> tuple[dict[str, CompareResult], set[str]]:
     """Compare all original files to their split files.
 
     Also handles orphan files in subdirectories that don't have a corresponding
@@ -415,6 +475,9 @@ def compare_all(base_path: Path) -> tuple[dict[str, CompareResult], set[str]]:
 
     Args:
         base_path: Base directory containing original and split YAML files.
+        original_files: Optional list of explicit original file paths to use.
+            When provided, these files are used instead of globbing for
+            original.*.yml files in the base path.
 
     Returns:
         Tuple of (results dict, processed patterns set).
@@ -424,7 +487,7 @@ def compare_all(base_path: Path) -> tuple[dict[str, CompareResult], set[str]]:
     results: dict[str, CompareResult] = {}
     processed_patterns: set[str] = set()
 
-    originals = find_originals(base_path)
+    originals = find_originals(base_path, original_files)
     for orig_path in originals:
         pattern = pattern_from_path(orig_path)
         processed_patterns.add(pattern)
@@ -548,6 +611,7 @@ def write_compare_files(results: dict[str, CompareResult]) -> int:
 
     Creates one CSV file per pattern with flattened comparison entries.
     Each row represents a (source_file, id, split_file) combination.
+    Uses DuckDB to write CSV files.
 
     Note: Comparison CSVs are regenerated on each run and older data is intentionally
     discarded. This design ensures the CSV always reflects the current state of the
@@ -579,12 +643,22 @@ def write_compare_files(results: dict[str, CompareResult]) -> int:
 
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            with output_path.open("w", encoding="utf-8", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-                writer.writeheader()
-                writer.writerows(rows)
+            conn = duckdb.connect()
+            try:
+                columns_def = ", ".join(f"{col} VARCHAR" for col in CSV_COLUMNS)
+                conn.execute(f"CREATE TABLE comparisons ({columns_def})")
+                if rows:
+                    placeholders = ", ".join("?" for _ in CSV_COLUMNS)
+                    insert_sql = f"INSERT INTO comparisons VALUES ({placeholders})"
+                    for row in rows:
+                        values = [row.get(col, "") for col in CSV_COLUMNS]
+                        conn.execute(insert_sql, values)
+                copy_sql = f"COPY comparisons TO '{output_path}' (HEADER, DELIMITER ',')"
+                conn.execute(copy_sql)
+            finally:
+                conn.close()
             files_written += 1
-        except OSError as exc:
+        except (OSError, duckdb.Error) as exc:
             print(
                 f"Warning: Failed to write {output_path}: {exc}",
                 file=sys.stderr,
@@ -593,11 +667,30 @@ def write_compare_files(results: dict[str, CompareResult]) -> int:
     return files_written
 
 
+def _get_logical_pattern_from_csv(csv_path: Path) -> str:
+    """Extract the logical pattern name from a comparison CSV filename.
+
+    Handles both legacy filenames (e.g., 'api-patterns.csv') and
+    timestamp-prefixed filenames (e.g., '20251201T134735Z-api-patterns.csv').
+
+    Args:
+        csv_path: Path to a comparison CSV file.
+
+    Returns:
+        The logical pattern name with any timestamp prefix stripped.
+    """
+    return _strip_timestamp_prefix(csv_path.stem)
+
+
 def _delete_stale_comparison_csvs(
     processed_patterns: set[str],
     patterns_with_differences: set[str],
 ) -> int:
     """Delete comparison CSVs for patterns that no longer have differences.
+
+    Handles both legacy CSV filenames (e.g., 'api-patterns.csv') and
+    timestamp-prefixed filenames (e.g., '20251201T134735Z-api-patterns.csv')
+    by normalizing to logical pattern names before comparison.
 
     Args:
         processed_patterns: All patterns that were compared in this run.
@@ -613,9 +706,12 @@ def _delete_stale_comparison_csvs(
     deleted = 0
     patterns_to_delete = processed_patterns - patterns_with_differences
 
-    for pattern in patterns_to_delete:
-        csv_path = comparisons_dir / f"{pattern}.csv"
-        if csv_path.exists():
+    # Scan all CSV files and delete those whose logical pattern has no differences
+    for csv_path in comparisons_dir.glob("*.csv"):
+        logical_pattern = _get_logical_pattern_from_csv(csv_path)
+
+        # Only delete if the logical pattern was processed and has no differences
+        if logical_pattern in patterns_to_delete:
             try:
                 csv_path.unlink()
                 deleted += 1
@@ -632,7 +728,9 @@ def main() -> int:
     """Run comparison and write results to CSV files.
 
     Deletes stale comparison CSVs for patterns that no longer have differences,
-    ensuring validation does not fail due to outdated data.
+    ensuring validation does not fail due to outdated data. Supports the
+    --original-files parameter to specify timestamped originals from
+    .knowledge/originals/ instead of globbing for original.*.yml files.
 
     Returns:
         0 if no differences found, 1 if differences exist.
@@ -647,7 +745,14 @@ def main() -> int:
         )
         return 1
 
-    results, processed_patterns = compare_all(base_path)
+    original_files: list[Path] | None = None
+    if args.original_files:
+        original_files = [
+            (REPO_ROOT / f).resolve() if not f.is_absolute() else f.resolve()
+            for f in args.original_files
+        ]
+
+    results, processed_patterns = compare_all(base_path, original_files)
 
     patterns_with_differences: set[str] = set()
     for source_path in results:

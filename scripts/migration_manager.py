@@ -16,6 +16,11 @@ The migration workflow:
 4. validate-migration runs comparison, checks for unresolved differences
 5. Updates task status to 'completed' (validated) or 'failed' based on results
 
+The validate-migration command passes the original file reference from tasks.csv
+to the comparison command via the --original-files parameter. This enables
+comparison of timestamped originals stored in .knowledge/originals/ against
+current split files in the target directory.
+
 Task statuses:
 - pending: Task created, migration work not yet started
 - in_progress: Validation is currently running
@@ -26,7 +31,6 @@ Task statuses:
 from __future__ import annotations
 
 import argparse
-import csv
 import subprocess
 import sys
 import uuid
@@ -66,27 +70,41 @@ class MigrationTask(TypedDict):
 def ensure_csv_exists(csv_path: Path) -> None:
     """Create tasks.csv with header if it does not exist.
 
+    Uses DuckDB to create an empty CSV with proper headers.
+
     Args:
         csv_path: Path to the tasks.csv file.
     """
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     if not csv_path.exists():
-        with csv_path.open("w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-            writer.writeheader()
+        cols_select = ", ".join(f"'' AS {col}" for col in CSV_COLUMNS)
+        query = f"COPY (SELECT * FROM (SELECT {cols_select}) WHERE 1=0) "
+        query += f"TO '{csv_path}' (HEADER, DELIMITER ',')"
+        duckdb.execute(query)
 
 
 def append_task(csv_path: Path, task: MigrationTask) -> None:
     """Append a task record to the tasks CSV.
+
+    Uses DuckDB to read existing data, add the new task, and write back.
 
     Args:
         csv_path: Path to the tasks.csv file.
         task: Task record to append.
     """
     ensure_csv_exists(csv_path)
-    with csv_path.open("a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-        writer.writerow(task)
+    conn = duckdb.connect()
+    try:
+        conn.execute(f"""
+            CREATE TABLE tasks AS
+            SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
+        """)
+        placeholders = ", ".join("?" for _ in CSV_COLUMNS)
+        values = [task[col] for col in CSV_COLUMNS]  # type: ignore[literal-required]
+        conn.execute(f"INSERT INTO tasks VALUES ({placeholders})", values)
+        conn.execute(f"COPY tasks TO '{csv_path}' (HEADER, DELIMITER ',')")
+    finally:
+        conn.close()
 
 
 def get_task_by_id(csv_path: Path, task_id: str) -> MigrationTask | None:
@@ -126,6 +144,8 @@ def update_task_status(
 ) -> bool:
     """Update the status of a task in tasks.csv.
 
+    Uses DuckDB to read, update, and write the CSV file.
+
     Args:
         csv_path: Path to the tasks.csv file.
         task_id: UUID of the task to update.
@@ -138,37 +158,36 @@ def update_task_status(
     if not csv_path.exists():
         return False
 
-    tasks: list[MigrationTask] = []
-    found = False
+    conn = duckdb.connect()
+    try:
+        conn.execute(f"""
+            CREATE TABLE tasks AS
+            SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
+        """)
 
-    with csv_path.open("r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row["task_id"] == task_id:
-                row["status"] = new_status
-                if validated_at is not None:
-                    row["validated_at"] = validated_at
-                found = True
-            tasks.append(
-                MigrationTask(
-                    task_id=row["task_id"],
-                    original_file_ref=row["original_file_ref"],
-                    pattern_name=row["pattern_name"],
-                    status=row["status"],
-                    created_at=row["created_at"],
-                    validated_at=row["validated_at"],
-                )
+        result = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE task_id = ?",
+            [task_id],
+        ).fetchone()
+
+        if result is None or result[0] == 0:
+            return False
+
+        if validated_at is not None:
+            conn.execute(
+                "UPDATE tasks SET status = ?, validated_at = ? WHERE task_id = ?",
+                [new_status, validated_at, task_id],
+            )
+        else:
+            conn.execute(
+                "UPDATE tasks SET status = ? WHERE task_id = ?",
+                [new_status, task_id],
             )
 
-    if not found:
-        return False
-
-    with csv_path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-        writer.writeheader()
-        writer.writerows(tasks)
-
-    return True
+        conn.execute(f"COPY tasks TO '{csv_path}' (HEADER, DELIMITER ',')")
+        return True
+    finally:
+        conn.close()
 
 
 def extract_pattern_from_path(file_path: Path) -> str:
@@ -315,12 +334,30 @@ def start_migration(original_file: Path, knowledge_path: Path) -> int:
     return 0
 
 
+def get_original_file_path(knowledge_path: Path, original_file_ref: str) -> Path:
+    """Construct the full path to a timestamped original file from its reference.
+
+    Args:
+        knowledge_path: Path to the .knowledge directory.
+        original_file_ref: Relative reference to the original file stored in tasks.csv
+            (e.g., "originals/20251201T134735Z-api-patterns.yml").
+
+    Returns:
+        Resolved Path object to the timestamped original file.
+    """
+    return (knowledge_path / original_file_ref).resolve()
+
+
 def validate_migration(
     task_id: str,
     knowledge_path: Path,
     base_comparison_path: Path,
 ) -> int:
     """Validate and complete a migration task.
+
+    Retrieves the original file reference from the task record and passes it
+    to the comparison command via --original-files parameter, enabling comparison
+    of timestamped originals from .knowledge/originals/ against current split files.
 
     Args:
         task_id: UUID of the task to validate.
@@ -341,14 +378,34 @@ def validate_migration(
         print(f"Task {task_id} is already completed (validated at {task['validated_at']})")
         return 0
 
+    original_file_ref = task["original_file_ref"]
+    original_file_path = get_original_file_path(knowledge_path, original_file_ref)
+
+    if not original_file_path.exists():
+        print(
+            f"Error: Original file not found: {original_file_path}",
+            file=sys.stderr,
+        )
+        update_task_status(tasks_csv, task_id, "failed")
+        return 1
+
     update_task_status(tasks_csv, task_id, "in_progress")
 
     print(f"Validating migration for pattern: {task['pattern_name']}")
+    print(f"Using original file: {original_file_path}")
     print("Running comparison...")
 
     try:
         result = subprocess.run(  # noqa: S603
-            ["uv", "run", "compare-yml-docs", "--path", str(base_comparison_path)],  # noqa: S607
+            [  # noqa: S607
+                "uv",
+                "run",
+                "compare-yml-docs",
+                "--path",
+                str(base_comparison_path),
+                "--original-files",
+                str(original_file_path),
+            ],
             capture_output=True,
             text=True,
             check=False,

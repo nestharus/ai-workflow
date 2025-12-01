@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp:*)",
+      "mcp__firecrawl__firecrawl_search",
+      "mcp__firecrawl__firecrawl_scrape",
+      "Bash(mkdir:*)",
+      "Bash(chmod:*)",
+      "Bash(uv run:*)",
+      "Bash(uv sync:*)",
+      "Bash(export SURREALDB_USER=root SURREALDB_PASS=root)",
+      "Bash(python -m pytest:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

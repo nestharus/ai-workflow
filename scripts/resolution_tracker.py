@@ -11,19 +11,18 @@ a unique UUID for each resolution record. Duplicate detection is based on
 (id, source_file, split_file) to support path-level uniqueness.
 
 Usage:
-    uv run mark-resolved --id <element_id> --source-file <path> --split-file <path>
+    uv run mark-resolved --id <element_id> --source-file <path> --split-file <path> [<path> ...]
 
 Args:
     --id: Element identifier to mark as resolved.
     --source-file: Path to the source YAML file.
-    --split-file: Path to the split YAML file.
+    --split-file: One or more paths to split YAML files.
     --knowledge-path: Base knowledge directory (default: .knowledge).
 """
 
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
 import shutil
 import sys
@@ -132,27 +131,41 @@ def save_original_file(source_path: Path, knowledge_path: Path) -> Path:
 def ensure_csv_exists(csv_path: Path) -> None:
     """Create CSV file with header row if it doesn't exist or is empty.
 
+    Uses DuckDB to create an empty CSV with proper headers.
+
     Args:
         csv_path: Path to the CSV file.
     """
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     needs_header = not csv_path.exists() or csv_path.stat().st_size == 0
     if needs_header:
-        with csv_path.open("w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(CSV_COLUMNS)
+        cols_select = ", ".join(f"'' AS {col}" for col in CSV_COLUMNS)
+        query = f"COPY (SELECT * FROM (SELECT {cols_select}) WHERE 1=0) "
+        query += f"TO '{csv_path}' (HEADER, DELIMITER ',')"
+        duckdb.execute(query)
 
 
 def append_resolution(csv_path: Path, record: ResolutionRecord) -> None:
     """Append a resolution record to the CSV file.
 
+    Uses DuckDB to read existing data, add the new record, and write back.
+
     Args:
         csv_path: Path to the CSV file.
         record: Resolution record to append.
     """
-    with csv_path.open("a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-        writer.writerow(record)
+    conn = duckdb.connect()
+    try:
+        conn.execute(f"""
+            CREATE TABLE resolutions AS
+            SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
+        """)
+        placeholders = ", ".join("?" for _ in CSV_COLUMNS)
+        values = [record[col] for col in CSV_COLUMNS]  # type: ignore[literal-required]
+        conn.execute(f"INSERT INTO resolutions VALUES ({placeholders})", values)
+        conn.execute(f"COPY resolutions TO '{csv_path}' (HEADER, DELIMITER ',')")
+    finally:
+        conn.close()
 
 
 def is_already_resolved(
@@ -261,8 +274,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--split-file",
         type=Path,
-        required=True,
-        help="Path to the split YAML file.",
+        nargs="*",
+        default=[],
+        help="One or more paths to split YAML files.",
     )
     parser.add_argument(
         "--knowledge-path",
@@ -281,8 +295,12 @@ def main() -> int:
     """
     args = parse_args()
 
+    split_files: list[Path] = args.split_file
+    if not split_files:
+        print("Error: At least one --split-file is required.", file=sys.stderr)
+        return 1
+
     source_file = (REPO_ROOT / args.source_file).resolve()
-    split_file = (REPO_ROOT / args.split_file).resolve()
 
     if args.knowledge_path.is_absolute():
         knowledge_path = args.knowledge_path.resolve()
@@ -293,20 +311,11 @@ def main() -> int:
         print(f"Error: Source file not found: {source_file}", file=sys.stderr)
         return 1
 
-    if not split_file.exists():
-        print(f"Error: Split file not found: {split_file}", file=sys.stderr)
-        return 1
-
     if not source_file.is_relative_to(REPO_ROOT):
         print(f"Error: Source file must be within repository: {source_file}", file=sys.stderr)
         return 1
 
-    if not split_file.is_relative_to(REPO_ROOT):
-        print(f"Error: Split file must be within repository: {split_file}", file=sys.stderr)
-        return 1
-
     source_file_rel = source_file.relative_to(REPO_ROOT).as_posix()
-    split_file_rel = split_file.relative_to(REPO_ROOT).as_posix()
 
     try:
         original_text = extract_text_for_id(source_file, args.id)
@@ -317,46 +326,83 @@ def main() -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    try:
-        split_text = extract_text_for_id(split_file, args.id)
-    except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-    except FileNotFoundError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-
     original_text_hash = compute_text_hash(original_text)
-    split_text_hash = compute_text_hash(split_text)
     source_file_hash = compute_file_hash(source_file)
-    split_file_hash = compute_file_hash(split_file)
 
     csv_path = knowledge_path / "resolutions" / "resolved.csv"
+    records_created = 0
+    errors: list[str] = []
+    saved_split_files: set[Path] = set()
 
-    if is_already_resolved(csv_path, args.id, source_file_rel, split_file_rel):
-        print(f"ID '{args.id}' is already resolved for these files, skipping.")
-        return 0
+    # Save source file once before processing split files
+    source_file_saved = False
 
-    save_original_file(source_file, knowledge_path)
-    save_original_file(split_file, knowledge_path)
+    for split_file_arg in split_files:
+        split_file = (REPO_ROOT / split_file_arg).resolve()
 
-    resolved_at = utc_timestamp()
-    record = ResolutionRecord(
-        resolution_id=str(uuid.uuid4()),
-        id=args.id,
-        source_file=source_file_rel,
-        split_file=split_file_rel,
-        original_text_hash=original_text_hash,
-        split_text_hash=split_text_hash,
-        source_file_hash=source_file_hash,
-        split_file_hash=split_file_hash,
-        resolved_at=resolved_at,
-    )
+        if not split_file.exists():
+            errors.append(f"Split file not found: {split_file}")
+            continue
 
-    ensure_csv_exists(csv_path)
-    append_resolution(csv_path, record)
+        if not split_file.is_relative_to(REPO_ROOT):
+            errors.append(f"Split file must be within repository: {split_file}")
+            continue
 
-    print(f"Resolution recorded for '{args.id}' with ID: {record['resolution_id']}")
+        split_file_rel = split_file.relative_to(REPO_ROOT).as_posix()
+
+        try:
+            split_text = extract_text_for_id(split_file, args.id)
+        except ValueError as exc:
+            errors.append(f"Error in {split_file_rel}: {exc}")
+            continue
+        except FileNotFoundError as exc:
+            errors.append(f"Error in {split_file_rel}: {exc}")
+            continue
+
+        if is_already_resolved(csv_path, args.id, source_file_rel, split_file_rel):
+            print(f"ID '{args.id}' is already resolved for {split_file_rel}, skipping.")
+            continue
+
+        split_text_hash = compute_text_hash(split_text)
+        split_file_hash = compute_file_hash(split_file)
+
+        # Save source file only once per invocation
+        if not source_file_saved:
+            save_original_file(source_file, knowledge_path)
+            source_file_saved = True
+
+        # Save each split file only once per invocation
+        if split_file not in saved_split_files:
+            save_original_file(split_file, knowledge_path)
+            saved_split_files.add(split_file)
+
+        resolved_at = utc_timestamp()
+        record = ResolutionRecord(
+            resolution_id=str(uuid.uuid4()),
+            id=args.id,
+            source_file=source_file_rel,
+            split_file=split_file_rel,
+            original_text_hash=original_text_hash,
+            split_text_hash=split_text_hash,
+            source_file_hash=source_file_hash,
+            split_file_hash=split_file_hash,
+            resolved_at=resolved_at,
+        )
+
+        ensure_csv_exists(csv_path)
+        append_resolution(csv_path, record)
+        records_created += 1
+
+    if records_created > 0:
+        record_word = "record" if records_created == 1 else "records"
+        print(f"Resolution recorded for '{args.id}' ({records_created} {record_word})")
+
+    if errors:
+        print("\nErrors encountered:", file=sys.stderr)
+        for error in errors:
+            print(f"  - {error}", file=sys.stderr)
+        return 1
+
     return 0
 
 

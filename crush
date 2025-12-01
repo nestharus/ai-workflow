@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Run Crush CLI with all permissions skipped
+crush --yolo "$@"

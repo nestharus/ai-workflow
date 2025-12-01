@@ -123,22 +123,22 @@ def build_query(
             ON c.id = r.id
             AND c.source_file = r.source_file
             AND c.split_file = r.split_file
-        """
+        """  # noqa: S608
         where_clauses.append("r.id IS NULL")
     else:
         query = f"""
             WITH comparisons AS ({comparisons_cte})
             SELECT c.*
             FROM comparisons c
-        """
+        """  # noqa: S608
 
     if where_clauses:
-        query = f"SELECT * FROM ({query}) AS filtered WHERE {' AND '.join(where_clauses)}"
+        query = f"SELECT * FROM ({query}) AS filtered WHERE {' AND '.join(where_clauses)}"  # noqa: S608
 
     return query, params
 
 
-def format_results(rows: list[tuple], columns: list[str]) -> str:
+def format_results(rows: list[tuple[object, ...]], columns: list[str]) -> str:
     """Format query results as a readable table.
 
     Args:
@@ -181,7 +181,7 @@ def query_comparisons(
     source_file: str | None = None,
     split_file: str | None = None,
     exclude_resolved: bool = False,
-) -> tuple[list[tuple], list[str]]:
+) -> tuple[list[tuple[object, ...]], list[str]]:
     """Query comparison CSV files with filters.
 
     Args:

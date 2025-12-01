@@ -55,6 +55,28 @@ directory_structure:
         Resolutions include content hashes to detect if source files change.
       contents: "resolved.csv"
 
+    movements:
+      path: ".knowledge/movements/"
+      purpose: |
+        Records detailed information about content movements between files,
+        including source/target locations, reasons, coverage descriptions,
+        and before/after sentence context for validation.
+      contents: "movements.csv"
+
+    additions:
+      path: ".knowledge/additions/"
+      purpose: |
+        Tracks new IDs/content in target files not present in originals.
+        Enables validation that additions are intentional, in-scope, and meaningful.
+      contents: "additions.csv"
+
+    reports:
+      path: ".knowledge/reports/"
+      purpose: |
+        Stores generated YAML review reports for non-identical text comparisons.
+        Reports contain items requiring human review based on text similarity scoring.
+      contents: "Pattern-named YML files (e.g., api-patterns-review.yml)"
+
 csv_schemas:
   resolutions:
     file: "resolutions/resolved.csv"
@@ -140,6 +162,74 @@ csv_schemas:
         type: "ISO 8601 basic format timestamp"
         description: "When validation was last run (YYYYMMDDTHHMMSSZ, UTC; empty if never validated)"
 
+  movements:
+    file: "movements/movements.csv"
+    columns:
+      movement_id:
+        type: "UUID"
+        description: "Unique identifier for the movement record"
+      element_id:
+        type: "string"
+        description: "Element identifier being moved (links to comparisons/resolutions)"
+      source_file:
+        type: "path"
+        description: "Path to the source file where information originated"
+      target_file:
+        type: "path"
+        description: "Path to the target file where information was moved"
+      reason:
+        type: "string"
+        description: "Explanation of why the information was moved"
+      coverage_description:
+        type: "string"
+        description: "Description of what information is being covered/moved"
+      before_sentence:
+        type: "string"
+        description: "Original sentence in source file before the move"
+      after_sentence_source:
+        type: "string"
+        description: "Sentence in source file after information was removed"
+      target_before_sentence:
+        type: "string"
+        description: "Sentence in target file before information was added"
+      target_after_sentence:
+        type: "string"
+        description: "Sentence in target file after information was added"
+      moved_at:
+        type: "ISO 8601 basic format timestamp"
+        description: "When the movement was recorded (YYYYMMDDTHHMMSSZ, UTC)"
+
+  additions:
+    file: "additions/additions.csv"
+    columns:
+      addition_id:
+        type: "UUID"
+        description: "Unique identifier for the addition record"
+      element_id:
+        type: "string"
+        description: "Element identifier found in target file (links to comparisons)"
+      target_file:
+        type: "path"
+        description: "Path to the target file where new content was added"
+      added_text:
+        type: "string"
+        description: "Text content of the added element"
+      detected_at:
+        type: "ISO 8601 basic format timestamp"
+        description: "When the addition was detected (YYYYMMDDTHHMMSSZ, UTC)"
+      validated:
+        type: "string"
+        description: "Whether addition has been reviewed ('true' or 'false')"
+      in_scope:
+        type: "string"
+        description: "Whether addition is within project scope ('true' or 'false')"
+      meaningful:
+        type: "string"
+        description: "Whether addition provides meaningful value ('true' or 'false')"
+    note: |
+      Additions are detected by querying comparison CSVs for origin_type='split_only'
+      entries. Duplicate detection is based on (element_id, target_file) pairs.
+
 workflow_steps:
   step_1_start_migration:
     title: "Start Migration"
@@ -204,6 +294,68 @@ workflow_steps:
     outputs:
       - "New record appended to .knowledge/resolutions/resolved.csv"
 
+  step_5b_record_movements:
+    title: "Record Information Movements"
+    command: "uv run record-movement --id <element_id> --source-file <path> --target-file <path> --reason <text> --coverage <text> --before-text <text> --after-text-source <text> --target-before <text> --target-after <text>"
+    description: |
+      Records detailed information about content movements between files,
+      capturing before/after sentence context for validation. This enables
+      tracking of information flow and verification that moved content was
+      not lost or incorrectly modified.
+    example: |
+      uv run record-movement \
+        --id "api_patterns.authentication.jwt_validation" \
+        --source-file docs/development/original.api-patterns.yml \
+        --target-file docs/development/python/api-patterns.yml \
+        --reason "Moved to language-specific file" \
+        --coverage "JWT validation implementation details" \
+        --before-text "JWT tokens must be validated using..." \
+        --after-text-source "See python/api-patterns.yml for JWT details." \
+        --target-before "Authentication patterns include..." \
+        --target-after "JWT tokens must be validated using..."
+    outputs:
+      - "New record appended to .knowledge/movements/movements.csv"
+    note: "Movement records link to resolution records via element_id"
+
+  step_5c_track_additions:
+    title: "Track Additions"
+    command: "uv run track-additions [--pattern <name>]"
+    description: |
+      Detects new IDs/content in target files that were not present in original files.
+      Queries comparison CSVs for origin_type='split_only' entries and records them
+      in additions.csv for tracking and validation.
+    example: |
+      uv run track-additions --pattern api-patterns
+    outputs:
+      - "New records appended to .knowledge/additions/additions.csv"
+      - "Count of newly detected additions printed to stdout"
+
+  step_5d_validate_additions:
+    title: "Validate Additions"
+    command: "uv run validate-addition --id <uuid> [--validated] [--in-scope] [--meaningful]"
+    description: |
+      Validates tracked additions by setting review flags. Use this to confirm that
+      newly detected additions are intentional, within project scope, and provide
+      meaningful value to the documentation.
+    example: |
+      uv run validate-addition --id a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+        --validated --in-scope --meaningful
+    outputs:
+      - "Updated flags in .knowledge/additions/additions.csv"
+
+  step_5e_generate_review_report:
+    title: "Generate Review Report"
+    command: "uv run generate-migration-report [--pattern <name>]"
+    description: |
+      Generates YAML review reports for non-identical text comparisons that require
+      human review. Reports include similarity scoring to help prioritize items
+      with significant text differences.
+    example: |
+      uv run generate-migration-report --pattern api-patterns
+    outputs:
+      - "YML report in .knowledge/reports/<pattern>-review.yml"
+      - "Count of items requiring review printed to stdout"
+
   step_6_validate_migration:
     title: "Validate Migration"
     command: "uv run validate-migration --task-id <uuid>"
@@ -231,6 +383,87 @@ command_reference:
       --split-file:
         required: true
         description: "Path to the split/target file"
+      --knowledge-path:
+        required: false
+        default: ".knowledge"
+        description: "Path to the knowledge directory"
+
+  record_movement:
+    command: "uv run record-movement"
+    description: "Record detailed information about content movements"
+    arguments:
+      --id:
+        required: true
+        description: "Element identifier being moved"
+      --source-file:
+        required: true
+        description: "Path to the source file where information originated"
+      --target-file:
+        required: true
+        description: "Path to the target file where information was moved"
+      --reason:
+        required: true
+        description: "Explanation of why the information was moved"
+      --coverage:
+        required: true
+        description: "Description of what information is being covered/moved"
+      --before-text:
+        required: true
+        description: "Original sentence in source file before the move"
+      --after-text-source:
+        required: true
+        description: "Sentence in source file after information was removed"
+      --target-before:
+        required: true
+        description: "Sentence in target file before information was added"
+      --target-after:
+        required: true
+        description: "Sentence in target file after information was added"
+      --knowledge-path:
+        required: false
+        default: ".knowledge"
+        description: "Path to the knowledge directory"
+
+  track_additions:
+    command: "uv run track-additions"
+    description: "Detect and track new IDs in target files not present in originals"
+    arguments:
+      --pattern:
+        required: false
+        description: "Filter by pattern name (matches comparison CSV filename)"
+      --knowledge-path:
+        required: false
+        default: ".knowledge"
+        description: "Path to the knowledge directory"
+
+  validate_addition:
+    command: "uv run validate-addition"
+    description: "Validate a tracked addition by setting review flags"
+    arguments:
+      --id:
+        required: true
+        description: "UUID of the addition to validate"
+      --validated:
+        required: false
+        description: "Mark the addition as reviewed"
+      --in-scope:
+        required: false
+        description: "Mark the addition as within project scope"
+      --meaningful:
+        required: false
+        description: "Mark the addition as providing meaningful value"
+      --knowledge-path:
+        required: false
+        default: ".knowledge"
+        description: "Path to the knowledge directory"
+
+  generate_migration_report:
+    command: "uv run generate-migration-report"
+    description: "Generate YML review reports for non-identical text comparisons"
+    arguments:
+      --pattern:
+        required: false
+        description: "Filter by pattern name (generates report for specific pattern)"
       --knowledge-path:
         required: false
         default: ".knowledge"
@@ -336,6 +569,88 @@ duckdb_query_patterns:
           ON c.id = r.id
           AND c.source_file = r.source_file
           AND c.split_file = r.split_file
+
+    query_movements_by_element:
+      description: "Find all movements for a specific element ID"
+      query: |
+        SELECT *
+        FROM read_csv_auto('.knowledge/movements/movements.csv')
+        WHERE element_id = 'api_patterns.authentication.jwt_validation'
+
+    join_movements_with_resolutions:
+      description: "Join movements with resolutions to see complete migration history"
+      query: |
+        SELECT
+          m.element_id,
+          m.source_file,
+          m.target_file,
+          m.reason,
+          m.coverage_description,
+          r.resolution_id,
+          r.resolved_at
+        FROM read_csv_auto('.knowledge/movements/movements.csv') m
+        LEFT JOIN read_csv_auto('.knowledge/resolutions/resolved.csv') r
+          ON m.element_id = r.id
+          AND m.source_file = r.source_file
+          AND m.target_file = r.split_file
+
+    find_text_modifications:
+      description: "Find movements where text was modified (not identical)"
+      query: |
+        SELECT
+          element_id,
+          source_file,
+          target_file,
+          before_sentence,
+          target_after_sentence
+        FROM read_csv_auto('.knowledge/movements/movements.csv')
+        WHERE before_sentence != target_after_sentence
+
+    query_unvalidated_additions:
+      description: "Find additions that have not been validated"
+      query: |
+        SELECT *
+        FROM read_csv_auto('.knowledge/additions/additions.csv')
+        WHERE validated = 'false'
+
+    query_additions_by_target:
+      description: "Find additions by target file path"
+      query: |
+        SELECT *
+        FROM read_csv_auto('.knowledge/additions/additions.csv')
+        WHERE target_file = 'docs/development/python/api-patterns.yml'
+
+    join_additions_with_comparisons:
+      description: "Join additions with comparisons to see full context"
+      query: |
+        SELECT
+          a.addition_id,
+          a.element_id,
+          a.target_file,
+          a.validated,
+          a.in_scope,
+          a.meaningful,
+          c.origin_type,
+          c.original_text
+        FROM read_csv_auto('.knowledge/additions/additions.csv') a
+        LEFT JOIN read_csv_auto('.knowledge/comparisons/*.csv') c
+          ON a.element_id = c.id
+          AND a.target_file = c.source_file
+        WHERE c.origin_type = 'split_only'
+
+    query_additions_needing_review:
+      description: "Find additions that need review (not validated or not in-scope)"
+      query: |
+        SELECT *
+        FROM read_csv_auto('.knowledge/additions/additions.csv')
+        WHERE validated = 'false' OR in_scope = 'false' OR meaningful = 'false'
+
+    find_low_similarity_items:
+      description: "Find items with similarity score below threshold (from review reports)"
+      query: |
+        -- Note: Review reports are YAML files; use yaml library in Python for
+        -- programmatic access. This query demonstrates finding files for review.
+        SELECT * FROM glob('.knowledge/reports/*-review.yml')
 
 practical_examples:
   example_1_full_migration:
@@ -445,16 +760,24 @@ git_tracking:
     - ".knowledge/migrations/.gitkeep"
     - ".knowledge/comparisons/.gitkeep"
     - ".knowledge/resolutions/.gitkeep"
+    - ".knowledge/movements/.gitkeep"
+    - ".knowledge/additions/.gitkeep"
+    - ".knowledge/reports/.gitkeep"
   ignored:
     - ".knowledge/**/*.csv"
     - ".knowledge/originals/*.yml"
     - ".knowledge/originals/*.yaml"
     - ".knowledge/knowledge.duckdb"
+    - ".knowledge/movements/*.csv"
+    - ".knowledge/additions/*.csv"
+    - ".knowledge/reports/*.yml"
   rationale: |
     Directory structure and README documentation are tracked to ensure the
     knowledge system is available in all clones. Generated data files (CSVs,
     timestamped originals, DuckDB database) are ignored as they are
-    environment-specific artifacts.
+    environment-specific artifacts. Movement CSV files, addition CSV files,
+    and generated review reports (YML) are also ignored as environment-specific
+    artifacts that track information flow and validation during migrations.
 
 apply_when:
   - "Restructuring or splitting YAML documentation files"
@@ -464,3 +787,7 @@ apply_when:
   - "Querying comparison results to identify unresolved differences"
   - "Auditing migration history and resolution decisions"
   - "Ensuring documentation changes are deliberate and reviewed"
+  - "Recording detailed information movements with before/after sentence context for validation"
+  - "Tracking and validating new content additions in target files"
+  - "Generating review reports for non-identical text comparisons"
+  - "Identifying items requiring human review based on text similarity"

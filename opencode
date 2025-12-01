@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Run OpenCode - no CLI flag for skipping permissions
+# OpenCode uses config-based permissions (defaults to allow most operations)
+# To skip all permissions, set in opencode.json:
+#   "permission": { "edit": "allow", "bash": "allow", "webfetch": "allow" }
+opencode "$@"
