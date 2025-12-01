@@ -10,9 +10,9 @@ primary_runtime_references[1]:
     role: Settings class implementation and validators.
 related_pattern_docs[4]:
   - fastapi/settings-patterns.toon
-  - connection-pooling-patterns.toon
-  - service-patterns.toon
-  - exception-patterns.toon
+  - python/connection-pooling-patterns.toon
+  - python/service-patterns.toon
+  - python/exception-patterns.toon
 sections[11]:
   - id: pydantic-settings-best-practices
     index: 1
@@ -181,7 +181,7 @@ sections[11]:
         text: The embedding_dimension field captures the dimensionality of embeddings used in the knowledge graph and is validated as a positive integer.
       - id: dbsearch.validation
         type: rule
-        text: Validators enforce positive values for pool sizes, timeouts, shards, and embedding dimensions and non-negative values for replicas, while connection lifecycle and pooling details are handled in app/infrastructure/db_connections.py and connection-pooling-patterns.toon.
+        text: Validators enforce positive values for pool sizes, timeouts, shards, and embedding dimensions and non-negative values for replicas, while connection lifecycle and pooling details are handled in app/infrastructure/db_connections.py and python/connection-pooling-patterns.toon.
   - id: feature-flags
     index: 9
     title: Feature Flags

@@ -12,9 +12,9 @@ primary_runtime_references[2]:
     role: Repository implementations demonstrating constructor injection.
 related_pattern_docs[4]:
   - fastapi/dependency-patterns.toon
-  - service-patterns.toon
-  - repository-patterns.toon
-  - exception-patterns.toon
+  - python/service-patterns.toon
+  - python/repository-patterns.toon
+  - python/exception-patterns.toon
 sections[7]:
   - id: di-fundamentals
     index: 1

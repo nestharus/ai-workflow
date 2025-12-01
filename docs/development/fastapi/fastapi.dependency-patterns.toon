@@ -16,10 +16,10 @@ primary_runtime_references[4]:
     role: Application startup wiring that populates app.state for dependency providers.
 related_pattern_docs[6]:
   - python/dependency-patterns.toon
-  - api-patterns.toon
-  - router-patterns.toon
-  - service-patterns.toon
-  - factory-patterns.toon
+  - fastapi/api-patterns.toon
+  - fastapi/router-patterns.toon
+  - fastapi/service-patterns.toon
+  - fastapi/factory-patterns.toon
   - fastapi/settings-patterns.toon
 sections[8]:
   - id: depends-fundamentals

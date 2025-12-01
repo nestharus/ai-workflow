@@ -10,12 +10,13 @@ primary_runtime_references[2]:
     role: get_settings dependency exposing the Settings model.
   - path: app/core/factory.py
     role: create_app factory that accepts and stores Settings.
-related_pattern_docs[5]:
+related_pattern_docs[6]:
   - python/settings-patterns.toon
-  - factory-patterns.toon
+  - fastapi/factory-patterns.toon
   - python/dependency-patterns.toon
   - fastapi/dependency-patterns.toon
-  - service-patterns.toon
+  - python/service-patterns.toon
+  - fastapi/service-patterns.toon
 sections[5]:
   - id: get-settings-dependency
     index: 1
@@ -139,7 +140,7 @@ sections[5]:
         text: Services should not import get_settings directly; they should receive Settings via constructor parameters, keeping them framework-agnostic.
       - id: service-integration.ref-to-service-patterns
         type: note
-        text: For additional patterns on services that consume settings, see docs/development/service-patterns.toon.
+        text: For additional patterns on services that consume settings, see docs/development/python/service-patterns.toon for core patterns and docs/development/fastapi/service-patterns.toon for DI integration.
   - id: testing-with-overrides
     index: 5
     title: Testing with Dependency Overrides
