@@ -20,7 +20,7 @@ import csv
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 import yaml
 
@@ -29,6 +29,9 @@ from scripts.utils import REPO_ROOT
 TEXT_FIELDS = ("text", "description", "summary", "title")
 DEVELOPMENT_DIR = REPO_ROOT / "docs" / "development"
 SUBDIRS = ("python", "fastapi", "elasticsearch", "surrealdb")
+
+# Centralized constant for the knowledge directory name to avoid duplication
+KNOWLEDGE_DIR_NAME = ".knowledge"
 
 YamlValue = str | int | float | bool | None | list["YamlValue"] | dict[str, "YamlValue"]
 YamlStructure = dict[str, YamlValue] | list[YamlValue]
@@ -327,7 +330,7 @@ def aggregate_split_texts(
             id_texts[element_id][relative_path] = text
 
     for element_id, file_texts in id_texts.items():
-        unique_texts = set(t.strip() for t in file_texts.values())
+        unique_texts = {t.strip() for t in file_texts.values()}
         if len(unique_texts) > 1:
             files = ", ".join(file_texts.keys())
             print(
@@ -404,7 +407,7 @@ def compare_original_to_splits(
     return entries
 
 
-def compare_all(base_path: Path) -> dict[str, CompareResult]:
+def compare_all(base_path: Path) -> tuple[dict[str, CompareResult], set[str]]:
     """Compare all original files to their split files.
 
     Also handles orphan files in subdirectories that don't have a corresponding
@@ -414,7 +417,9 @@ def compare_all(base_path: Path) -> dict[str, CompareResult]:
         base_path: Base directory containing original and split YAML files.
 
     Returns:
-        Dictionary mapping original file path to comparison results.
+        Tuple of (results dict, processed patterns set).
+        Results dict maps original file path to comparison results.
+        Processed patterns set contains all pattern names that were compared.
     """
     results: dict[str, CompareResult] = {}
     processed_patterns: set[str] = set()
@@ -471,7 +476,7 @@ def compare_all(base_path: Path) -> dict[str, CompareResult]:
                 entries=orphan_entries,
             )
 
-    return results
+    return results, processed_patterns
 
 
 def _get_compare_output_path(source_path: str) -> Path:
@@ -488,7 +493,7 @@ def _get_compare_output_path(source_path: str) -> Path:
     """
     source = Path(source_path)
     pattern = pattern_from_path(source)
-    comparisons_dir = REPO_ROOT / ".knowledge" / "comparisons"
+    comparisons_dir = REPO_ROOT / KNOWLEDGE_DIR_NAME / "comparisons"
     return comparisons_dir / f"{pattern}.csv"
 
 
@@ -567,7 +572,7 @@ def write_compare_files(results: dict[str, CompareResult]) -> int:
             pattern_rows[pattern_name].extend(_flatten_entry_to_rows(entry))
 
     files_written = 0
-    comparisons_dir = REPO_ROOT / ".knowledge" / "comparisons"
+    comparisons_dir = REPO_ROOT / KNOWLEDGE_DIR_NAME / "comparisons"
 
     for pattern_name, rows in pattern_rows.items():
         output_path = comparisons_dir / f"{pattern_name}.csv"
@@ -588,8 +593,46 @@ def write_compare_files(results: dict[str, CompareResult]) -> int:
     return files_written
 
 
+def _delete_stale_comparison_csvs(
+    processed_patterns: set[str],
+    patterns_with_differences: set[str],
+) -> int:
+    """Delete comparison CSVs for patterns that no longer have differences.
+
+    Args:
+        processed_patterns: All patterns that were compared in this run.
+        patterns_with_differences: Patterns that have current differences.
+
+    Returns:
+        Number of stale CSV files deleted.
+    """
+    comparisons_dir = REPO_ROOT / KNOWLEDGE_DIR_NAME / "comparisons"
+    if not comparisons_dir.exists():
+        return 0
+
+    deleted = 0
+    patterns_to_delete = processed_patterns - patterns_with_differences
+
+    for pattern in patterns_to_delete:
+        csv_path = comparisons_dir / f"{pattern}.csv"
+        if csv_path.exists():
+            try:
+                csv_path.unlink()
+                deleted += 1
+            except OSError as exc:
+                print(
+                    f"Warning: Failed to delete stale CSV {csv_path}: {exc}",
+                    file=sys.stderr,
+                )
+
+    return deleted
+
+
 def main() -> int:
     """Run comparison and write results to CSV files.
+
+    Deletes stale comparison CSVs for patterns that no longer have differences,
+    ensuring validation does not fail due to outdated data.
 
     Returns:
         0 if no differences found, 1 if differences exist.
@@ -604,11 +647,20 @@ def main() -> int:
         )
         return 1
 
-    results = compare_all(base_path)
+    results, processed_patterns = compare_all(base_path)
+
+    patterns_with_differences: set[str] = set()
+    for source_path in results:
+        output_path = _get_compare_output_path(source_path)
+        patterns_with_differences.add(output_path.stem)
+
+    deleted = _delete_stale_comparison_csvs(processed_patterns, patterns_with_differences)
+    if deleted > 0:
+        print(f"Deleted {deleted} stale CSV file(s) with no current differences.")
 
     if results:
         count = write_compare_files(results)
-        print(f"Wrote {count} CSV file(s) to .knowledge/comparisons/")
+        print(f"Wrote {count} CSV file(s) to {KNOWLEDGE_DIR_NAME}/comparisons/")
         return 1
 
     print("No differences found.")

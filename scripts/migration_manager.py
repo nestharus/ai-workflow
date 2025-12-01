@@ -2,7 +2,8 @@
 
 This module provides CLI commands for managing migration workflows:
 - `start-migration`: Store original files with timestamps and create task records
-- `validate-migration`: Rerun comparisons and mark tasks as completed or failed
+- `validate-migration`: Rerun comparisons, check for unresolved differences, and
+  mark tasks as 'completed' (validated successfully) or 'failed'
 
 Usage:
     uv run start-migration --original-file docs/development/original.api-patterns.yml
@@ -13,7 +14,13 @@ The migration workflow:
 2. Creates a task record in .knowledge/migrations/tasks.csv with status='pending'
 3. User performs migration work on the target documentation
 4. validate-migration runs comparison, checks for unresolved differences
-5. Updates task status to 'completed' or 'failed' based on validation results
+5. Updates task status to 'completed' (validated) or 'failed' based on results
+
+Task statuses:
+- pending: Task created, migration work not yet started
+- in_progress: Validation is currently running
+- completed: Migration validated successfully with no unresolved differences
+- failed: Validation found unresolved differences requiring attention
 """
 
 from __future__ import annotations
@@ -217,6 +224,9 @@ def count_unresolved_differences(
 ) -> int:
     """Count unresolved differences for a pattern using DuckDB.
 
+    Joins comparison rows with resolutions on (id, source_file, split_file) columns
+    and counts rows where no matching resolution exists.
+
     Args:
         knowledge_path: Path to the .knowledge directory.
         pattern_name: Pattern name to filter by.
@@ -225,7 +235,7 @@ def count_unresolved_differences(
         Number of unresolved comparison differences.
     """
     comparisons_dir = knowledge_path / "comparisons"
-    resolutions_path = knowledge_path / "resolutions" / "resolutions.csv"
+    resolutions_path = knowledge_path / "resolutions" / "resolved.csv"
 
     if not comparisons_dir.exists():
         return 0
@@ -239,14 +249,17 @@ def count_unresolved_differences(
     for comp_file in comparison_files:
         if resolutions_path.exists():
             query = """
-                SELECT COUNT(*) FROM read_csv_auto(?) c
-                LEFT JOIN read_csv_auto(?) r
-                ON c.file_hash = r.file_hash AND c.section_key = r.section_key
-                WHERE r.file_hash IS NULL
+                SELECT COUNT(*)
+                FROM read_csv_auto(?, ALL_VARCHAR=TRUE) c
+                LEFT JOIN read_csv_auto(?, ALL_VARCHAR=TRUE) r
+                ON c.id = r.id
+                AND c.source_file = r.source_file
+                AND c.split_file = r.split_file
+                WHERE r.id IS NULL
             """
             result = duckdb.execute(query, [str(comp_file), str(resolutions_path)]).fetchone()
         else:
-            query = "SELECT COUNT(*) FROM read_csv_auto(?)"
+            query = "SELECT COUNT(*) FROM read_csv_auto(?, ALL_VARCHAR=TRUE)"
             result = duckdb.execute(query, [str(comp_file)]).fetchone()
 
         if result:
@@ -387,7 +400,7 @@ def parse_start_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--knowledge-path",
         type=Path,
         default=Path(".knowledge"),
-        help="Path to the .knowledge directory (default: .knowledge).",
+        help="Base knowledge directory, relative to REPO_ROOT or absolute (default: .knowledge).",
     )
     return parser.parse_args(argv)
 
@@ -414,13 +427,14 @@ def parse_validate_args(argv: Sequence[str] | None = None) -> argparse.Namespace
         "--knowledge-path",
         type=Path,
         default=Path(".knowledge"),
-        help="Path to the .knowledge directory (default: .knowledge).",
+        help="Base knowledge directory, relative to REPO_ROOT or absolute (default: .knowledge).",
     )
     parser.add_argument(
         "--comparison-path",
         type=Path,
         default=Path("docs/development"),
-        help="Base path for comparison command (default: docs/development).",
+        help="Base path for comparison, relative to REPO_ROOT or absolute "
+        "(default: docs/development).",
     )
     return parser.parse_args(argv)
 
@@ -434,7 +448,12 @@ def main_start() -> int:
     try:
         args = parse_start_args()
         original_file = (REPO_ROOT / args.original_file).resolve()
-        knowledge_path = (REPO_ROOT / args.knowledge_path).resolve()
+
+        if args.knowledge_path.is_absolute():
+            knowledge_path = args.knowledge_path.resolve()
+        else:
+            knowledge_path = (REPO_ROOT / args.knowledge_path).resolve()
+
         return start_migration(original_file, knowledge_path)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -449,8 +468,17 @@ def main_validate() -> int:
     """
     try:
         args = parse_validate_args()
-        knowledge_path = (REPO_ROOT / args.knowledge_path).resolve()
-        comparison_path = (REPO_ROOT / args.comparison_path).resolve()
+
+        if args.knowledge_path.is_absolute():
+            knowledge_path = args.knowledge_path.resolve()
+        else:
+            knowledge_path = (REPO_ROOT / args.knowledge_path).resolve()
+
+        if args.comparison_path.is_absolute():
+            comparison_path = args.comparison_path.resolve()
+        else:
+            comparison_path = (REPO_ROOT / args.comparison_path).resolve()
+
         return validate_migration(args.task_id, knowledge_path, comparison_path)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
