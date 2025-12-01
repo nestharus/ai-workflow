@@ -1,0 +1,250 @@
+[
+  {
+    "source_file": "docs/development/original.service-patterns.yml",
+    "id": "responsibilities.http-agnostic",
+    "origin_type": "original",
+    "original_text": "Services must never import fastapi, starlette, handle Request/Response objects directly, or embed HTTP status codes in their public APIs.",
+    "splits": [
+      {
+        "split_text": "Services must never import web framework types, handle Request/Response objects directly, or embed HTTP status codes in their public APIs.",
+        "source_file": "docs/development/python/python.service-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.service-patterns.yml",
+    "id": "di.settings",
+    "origin_type": "original",
+    "original_text": "Runtime configuration is provided by a Settings object via get_settings() dependency in app/core/dependencies.py; detailed patterns for get_settings() and FastAPI dependency wiring are documented in docs/development/fastapi/settings-patterns.toon.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.service-patterns.yml",
+    "id": "errors.global-handling",
+    "origin_type": "original",
+    "original_text": "Rely on transport-layer exception handlers (registered in app/core/factory.py) to translate domain errors into appropriate responses.",
+    "splits": [
+      {
+        "split_text": "Rely on transport-layer exception handlers to translate domain errors into appropriate responses.",
+        "source_file": "docs/development/python/python.service-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.service-patterns.yml",
+    "id": "anti.fastapi-imports",
+    "origin_type": "original",
+    "original_text": "Services that import FastAPI or Starlette types such as Request, Response, or HTTPException.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.service-patterns.yml",
+    "id": "anti.app-state",
+    "origin_type": "original",
+    "original_text": "Services that directly access app.state or other global variables instead of receiving dependencies via constructors.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "service-factory-dependencies",
+    "origin_type": "split_only",
+    "source_text": "Define service factory functions that use Depends() to inject repositories, settings, and infrastructure. | Service factory dependencies",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "factory.pattern",
+    "origin_type": "split_only",
+    "source_text": "Define service factory functions that accept dependencies via Depends() and construct service instances with explicit constructor injection.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "factory.repository-deps",
+    "origin_type": "split_only",
+    "source_text": "Service factories depend on repository factories which in turn retrieve pools from app.state, forming a clear dependency chain.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "factory.settings-injection",
+    "origin_type": "split_only",
+    "source_text": "Inject Settings into service factories using SettingsDep type alias rather than reading environment variables or accessing globals.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "factory.location",
+    "origin_type": "split_only",
+    "source_text": "Place service factory functions in app/api/v1/dependencies.py alongside other dependency providers for the versioned API.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "factory.type-aliases",
+    "origin_type": "split_only",
+    "source_text": "Define type aliases like UserServiceDep = Annotated[UserService, Depends(get_user_service)] for cleaner route handler signatures.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "app-state-integration",
+    "origin_type": "split_only",
+    "source_text": "Store infrastructure resources on app.state during lifespan and access them in service factories. | app.state integration",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "app-state.initialization",
+    "origin_type": "split_only",
+    "source_text": "Initialize infrastructure resources (SurrealDBPool, ElasticsearchWrapper) in the lifespan context manager and store them on app.state. See fastapi/factory-patterns.toon.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "app-state.access-via-request",
+    "origin_type": "split_only",
+    "source_text": "Access app.state resources via request.app.state in dependency providers, not by importing a global app instance.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "app-state.no-direct-service-access",
+    "origin_type": "split_only",
+    "source_text": "Services must not access app.state directly; they receive dependencies via constructor injection from factory functions.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "app-state.cleanup",
+    "origin_type": "split_only",
+    "source_text": "Close pools and clients in the lifespan shutdown phase to ensure proper resource cleanup.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "app-state.ref-factory",
+    "origin_type": "split_only",
+    "source_text": "The app/core/factory.py create_app function handles initialization; see fastapi/factory-patterns.toon for implementation details.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "router-service-injection",
+    "origin_type": "split_only",
+    "source_text": "Inject services into router handlers using Annotated type aliases with Depends(). | Router service injection",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "injection.type-alias",
+    "origin_type": "split_only",
+    "source_text": "Use Annotated type aliases for service dependencies to keep route signatures clean and readable.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "injection.service-method-call",
+    "origin_type": "split_only",
+    "source_text": "Route handlers call service methods and return the result; they do not implement business logic.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "injection.domain-exceptions",
+    "origin_type": "split_only",
+    "source_text": "Let domain exceptions from services propagate; global exception handlers translate them to HTTP responses.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "injection.no-construction",
+    "origin_type": "split_only",
+    "source_text": "Never construct services directly inside route handlers; always use Depends() for injection.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "injection.ref-router-patterns",
+    "origin_type": "split_only",
+    "source_text": "See fastapi/router-patterns.toon for comprehensive route handler patterns.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "testing-service-overrides",
+    "origin_type": "split_only",
+    "source_text": "Use app.dependency_overrides to replace service factories with mocks or fakes in tests. | Testing with service overrides",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "testing.override-pattern",
+    "origin_type": "split_only",
+    "source_text": "Override service factory functions via app.dependency_overrides[get_service] = lambda to inject mocks without modifying production code.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "testing.mock-services",
+    "origin_type": "split_only",
+    "source_text": "Use unittest.mock.AsyncMock for async service methods; configure return values and side effects as needed.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "testing.fixture-composition",
+    "origin_type": "split_only",
+    "source_text": "Compose fixtures (test_settings \u2192 mock_service \u2192 test_app \u2192 async_client) for consistent test setup.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "testing.clear-overrides",
+    "origin_type": "split_only",
+    "source_text": "Clear app.dependency_overrides after tests or use fresh app instances per test to prevent state leakage.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "testing.ref-conftest",
+    "origin_type": "split_only",
+    "source_text": "See tests/conftest.py for production fixture patterns and app construction helpers.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "fastapi-anti-patterns",
+    "origin_type": "split_only",
+    "source_text": "Common FastAPI-specific mistakes that undermine service layer integration. | FastAPI service anti-patterns",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "anti.framework-imports",
+    "origin_type": "split_only",
+    "source_text": "Services that import FastAPI or Starlette types such as Request, Response, or HTTPException; services must remain framework-agnostic.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "anti.direct-app-state",
+    "origin_type": "split_only",
+    "source_text": "Services that directly access app.state or request objects instead of receiving dependencies via constructor injection.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "anti.inline-construction",
+    "origin_type": "split_only",
+    "source_text": "Constructing services inside route handlers instead of using Depends() with factory functions.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.service-patterns.yml",
+    "id": "anti.hardcoded-deps",
+    "origin_type": "split_only",
+    "source_text": "Service factory functions that create dependencies internally instead of receiving them via Depends(), preventing test overrides.",
+    "splits": []
+  }
+]

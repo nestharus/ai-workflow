@@ -1,0 +1,110 @@
+[
+  {
+    "source_file": "docs/development/original.router-patterns.yml",
+    "id": "organization.grouping",
+    "origin_type": "original",
+    "original_text": "Group related endpoints within the same router file for discoverability.",
+    "splits": [
+      {
+        "split_text": "Group related endpoints within the same router file for discoverability. See app/api/v1/endpoints/ for reference.",
+        "source_file": "docs/development/fastapi/fastapi.router-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.router-patterns.yml",
+    "id": "handler.thin",
+    "origin_type": "original",
+    "original_text": "Keep route handlers thin; they should only validate, call services, and return responses.",
+    "splits": [
+      {
+        "split_text": "Keep route handlers thin; they should only validate, call services, and return responses. See python/router-patterns.toon for generic handler principles.",
+        "source_file": "docs/development/fastapi/fastapi.router-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.router-patterns.yml",
+    "id": "di.annotated",
+    "origin_type": "original",
+    "original_text": "Use Annotated type aliases for cleaner function signatures.",
+    "splits": [
+      {
+        "split_text": "Use Annotated type aliases for cleaner function signatures. See fastapi/dependency-patterns.toon for detailed patterns.",
+        "source_file": "docs/development/fastapi/fastapi.router-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.router-patterns.yml",
+    "id": "di.shared-providers",
+    "origin_type": "original",
+    "original_text": "Keep get_*_service, get_settings, and other provider functions in dedicated dependency modules for reuse across routers, background tasks, and tests.",
+    "splits": [
+      {
+        "split_text": "Keep get_*_service, get_settings, and other provider functions in dedicated dependency modules (app/core/dependencies.py) for reuse across routers, background tasks, and tests.",
+        "source_file": "docs/development/fastapi/fastapi.router-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.router-patterns.yml",
+    "id": "errors.domain-exceptions",
+    "origin_type": "original",
+    "original_text": "Let the service layer raise specific domain exceptions (e.g., ItemNotFound, DuplicateItem).",
+    "splits": [
+      {
+        "split_text": "Let the service layer raise specific domain exceptions (e.g., ItemNotFound, DuplicateItem). See python/exception-patterns.toon for domain exception design.",
+        "source_file": "docs/development/fastapi/fastapi.router-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.router-patterns.yml",
+    "id": "errors.global-handlers",
+    "origin_type": "original",
+    "original_text": "Rely on global exception handlers to translate domain and infrastructure exceptions into HTTP responses.",
+    "splits": [
+      {
+        "split_text": "Rely on global exception handlers registered in the factory (see fastapi/factory-patterns.toon) to translate domain and infrastructure exceptions into HTTP responses.",
+        "source_file": "docs/development/fastapi/fastapi.router-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.router-patterns.yml",
+    "id": "openapi.responses",
+    "origin_type": "original",
+    "original_text": "Document all relevant responses (success and error) using the responses parameter so status codes, schemas, and examples are explicit.",
+    "splits": [
+      {
+        "split_text": "Document all relevant responses (success and error) using the responses parameter so status codes, schemas, and examples are explicit. Use VALIDATION_ERROR_RESPONSE from app/contracts/errors.py for 400 validation errors.",
+        "source_file": "docs/development/fastapi/fastapi.router-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.router-patterns.yml",
+    "id": "registration.include-router",
+    "origin_type": "original",
+    "original_text": "Use api_router.include_router() to register routers.",
+    "splits": [
+      {
+        "split_text": "Use api_router.include_router() to register routers in app/api/v1/router.py.",
+        "source_file": "docs/development/fastapi/fastapi.router-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.router-patterns.yml",
+    "id": "registration.version-prefix",
+    "origin_type": "original",
+    "original_text": "Apply the /api/{version} prefix in the application factory so routers remain version-agnostic.",
+    "splits": [
+      {
+        "split_text": "Apply the /api/{version} prefix in the application factory (see fastapi/factory-patterns.toon) so routers remain version-agnostic.",
+        "source_file": "docs/development/fastapi/fastapi.router-patterns.yml"
+      }
+    ]
+  }
+]

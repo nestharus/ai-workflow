@@ -1,0 +1,135 @@
+[
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "general-rules",
+    "origin_type": "orphan",
+    "source_text": "Core conventions for writing docstrings in this project. | General Rules",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "general.triple-quotes",
+    "origin_type": "orphan",
+    "source_text": "Use triple double quotes (\"\"\") and keep the opening summary on one line.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "general.summary-format",
+    "origin_type": "orphan",
+    "source_text": "Write clear, sentence-case summaries ending with a period.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "general.type-hints",
+    "origin_type": "orphan",
+    "source_text": "Prefer type hints in code; avoid duplicating types in docstrings unless it aids clarity.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "general.focus",
+    "origin_type": "orphan",
+    "source_text": "Keep docstrings focused on behavior, side effects, and important constraints.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "general.sections",
+    "origin_type": "orphan",
+    "source_text": "Include argument, return, and raises sections only when they add information beyond type hints.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "recommended-structure",
+    "origin_type": "orphan",
+    "source_text": "Ordering and organization of docstring content. | Recommended Structure",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "structure.summary-line",
+    "origin_type": "orphan",
+    "source_text": "Begin with a summary line.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "structure.blank-line",
+    "origin_type": "orphan",
+    "source_text": "Add an optional blank line when additional detail follows the summary.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "structure.section-order",
+    "origin_type": "orphan",
+    "source_text": "Order sections as: Args, Returns, Yields, Raises, Examples.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "function-example",
+    "origin_type": "orphan",
+    "source_text": "Complete example of a properly documented function. | Function Example",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "function-example.note",
+    "origin_type": "orphan",
+    "source_text": "This example demonstrates a complete function docstring with summary, Args, Returns, and Raises sections.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "class-example",
+    "origin_type": "orphan",
+    "source_text": "Complete example of a properly documented class. | Class Example",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "class-example.note",
+    "origin_type": "orphan",
+    "source_text": "This example shows class-level docstrings plus method docstrings for __init__ and public methods.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "additional-guidance",
+    "origin_type": "orphan",
+    "source_text": "Supplementary conventions for specific scenarios. | Additional Guidance",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "additional.modules",
+    "origin_type": "orphan",
+    "source_text": "Modules: Provide a brief description when the module exposes public APIs or significant setup logic.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "additional.properties",
+    "origin_type": "orphan",
+    "source_text": "Properties: Document behavior in the getter; setters rarely need separate docstrings unless they perform non-trivial work.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "additional.async",
+    "origin_type": "orphan",
+    "source_text": "Async functions: Document awaited side effects and cancellation behavior if relevant.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.docstrings-guide.yml",
+    "id": "additional.examples",
+    "origin_type": "orphan",
+    "source_text": "Examples: Use fenced code blocks with the language set (```python) and keep them minimal and runnable when possible.",
+    "splits": []
+  }
+]

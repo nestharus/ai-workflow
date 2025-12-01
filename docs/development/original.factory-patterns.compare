@@ -1,0 +1,270 @@
+[
+  {
+    "source_file": "docs/development/original.factory-patterns.yml",
+    "id": "lifespan-management",
+    "origin_type": "original",
+    "original_text": "Managing startup and shutdown using FastAPI\u2019s lifespan context manager. | Lifespan Management",
+    "splits": [
+      {
+        "split_text": "Managing startup and shutdown using FastAPI's lifespan context manager. | Lifespan Management",
+        "source_file": "docs/development/fastapi/fastapi.factory-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.factory-patterns.yml",
+    "id": "lifespan.use-context-manager",
+    "origin_type": "original",
+    "original_text": "Use FastAPI\u2019s lifespan context manager instead of on_event startup/shutdown hooks to manage initialization and cleanup in a single async function.",
+    "splits": [
+      {
+        "split_text": "Use FastAPI's lifespan context manager instead of on_event startup/shutdown hooks to manage initialization and cleanup in a single async function.",
+        "source_file": "docs/development/fastapi/fastapi.factory-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.factory-patterns.yml",
+    "id": "resource-initialization",
+    "origin_type": "original",
+    "original_text": "Using dedicated factory functions to initialize external resources and schemas. | Resource Initialization",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.factory-patterns.yml",
+    "id": "exceptions-updates",
+    "origin_type": "original",
+    "original_text": "Keep exception registration aligned with exception-patterns.toon; add or update handlers as new DomainError subclasses or error codes are introduced.",
+    "splits": [
+      {
+        "split_text": "Keep exception registration aligned with fastapi/exception-patterns.toon; add or update handlers as new DomainError subclasses or error codes are introduced.",
+        "source_file": "docs/development/fastapi/fastapi.factory-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.factory-patterns.yml",
+    "id": "middleware.ordering",
+    "origin_type": "original",
+    "original_text": "Follow the recommended stack ordering documented in middleware-patterns.toon (for example TrustedHost \u2192 security headers \u2192 GZip \u2192 logging) and adjust for CORS and proxies as needed.",
+    "splits": [
+      {
+        "split_text": "Follow the recommended stack ordering documented in fastapi/middleware-patterns.toon (for example TrustedHost \u2192 security headers \u2192 GZip \u2192 logging) and adjust for CORS and proxies as needed.",
+        "source_file": "docs/development/fastapi/fastapi.factory-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.factory-patterns.yml",
+    "id": "openapi.align-validation-shape",
+    "origin_type": "original",
+    "original_text": "Normalize validation error schemas to match the AppError-wrapped HTTPValidationError structure described in api-patterns.toon and exception-patterns.toon.",
+    "splits": [
+      {
+        "split_text": "Normalize validation error schemas to match the AppError-wrapped HTTPValidationError structure described in fastapi/api-patterns.toon and fastapi/exception-patterns.toon.",
+        "source_file": "docs/development/fastapi/fastapi.factory-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.factory-patterns.yml",
+    "id": "testing.dependency-overrides",
+    "origin_type": "original",
+    "original_text": "Prefer FastAPI\u2019s dependency override system (see api-testing-patterns.toon) to replace external integrations while still exercising the same create_app wiring.",
+    "splits": [
+      {
+        "split_text": "Prefer FastAPI's dependency override system (see api-testing-patterns.toon) to replace external integrations while still exercising the same create_app wiring.",
+        "source_file": "docs/development/fastapi/fastapi.factory-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "factory-function-pattern",
+    "origin_type": "split_only",
+    "source_text": "Using factory functions to construct and configure objects with injected dependencies. | Factory Function Pattern",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "factory.purpose",
+    "origin_type": "split_only",
+    "source_text": "Factory functions encapsulate object construction logic, isolating wiring code from business logic and making dependency graphs explicit.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "factory.explicit-params",
+    "origin_type": "split_only",
+    "source_text": "Factory functions accept explicit parameters for all dependencies they need to wire, making the dependency graph visible and testable.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "factory.vs-constructors",
+    "origin_type": "split_only",
+    "source_text": "Use factory functions when construction involves complex wiring, conditional logic, or multiple steps; use constructors directly when dependencies are simple and explicit.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "factory.composition-root",
+    "origin_type": "split_only",
+    "source_text": "Centralize factory functions at the composition root (application startup or test setup) rather than scattering construction logic throughout the codebase.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "factory.return-types",
+    "origin_type": "split_only",
+    "source_text": "Factory functions should have explicit return type annotations matching the constructed object type.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "factory.no-hidden-deps",
+    "origin_type": "split_only",
+    "source_text": "Factory functions should not import or create dependencies internally; all dependencies must be passed as parameters to maintain testability.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "resource-initialization-patterns",
+    "origin_type": "split_only",
+    "source_text": "Using dedicated factory functions to initialize external resources with proper error handling and cleanup. | Resource Initialization Patterns",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "resources.init-then-setup",
+    "origin_type": "split_only",
+    "source_text": "Structure resource initialization as connection/init followed by setup (schema, indices, validation), with cleanup on setup failure.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "resources.try-except-cleanup",
+    "origin_type": "split_only",
+    "source_text": "Use try/except blocks around setup operations, calling cleanup methods in the except block before re-raising to prevent resource leaks.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "resources.settings-driven",
+    "origin_type": "split_only",
+    "source_text": "Resource factory functions should accept Settings or specific configuration values as parameters rather than reading from environment or globals directly.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "composition-and-wiring",
+    "origin_type": "split_only",
+    "source_text": "Composing objects and wiring dependencies together without creating cycles. | Composition and Wiring",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "composition.centralized",
+    "origin_type": "split_only",
+    "source_text": "Centralize composition logic in dedicated factory functions or modules rather than distributing it across the codebase.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "composition.dependency-order",
+    "origin_type": "split_only",
+    "source_text": "Build dependencies in order from lowest-level (pools, clients) to highest-level (services, orchestrators), ensuring each component has its dependencies available.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "composition.avoid-cycles",
+    "origin_type": "split_only",
+    "source_text": "Avoid circular dependencies between modules or classes; refactor shared logic into lower-level utilities when cycles appear.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "composition.dag-structure",
+    "origin_type": "split_only",
+    "source_text": "The dependency graph should be a directed acyclic graph (DAG); cycles indicate architectural issues that should be resolved by extracting shared components.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "composition.testability",
+    "origin_type": "split_only",
+    "source_text": "Composition functions make testing easier by providing clear injection points; tests can call factories with test doubles at any level of the graph.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "factory-testing-patterns",
+    "origin_type": "split_only",
+    "source_text": "How factory functions enable test isolation, configuration injection, and avoiding global state. | Factory Testing Patterns",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "testing.fixture-composition",
+    "origin_type": "split_only",
+    "source_text": "Use pytest fixtures that call factory functions with test-specific dependencies to create isolated instances for each test.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "testing.config-injection",
+    "origin_type": "split_only",
+    "source_text": "Tests inject configuration through Settings instances passed to factories, avoiding environment variable manipulation or global state mutation.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "testing.mock-at-boundaries",
+    "origin_type": "split_only",
+    "source_text": "Mock dependencies at the factory boundary by passing test doubles as parameters rather than patching imports inside the system under test.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "testing.no-global-state",
+    "origin_type": "split_only",
+    "source_text": "Factory functions should not rely on or modify global state; each call should produce an independent instance based solely on its parameters.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "anti.global-instances",
+    "origin_type": "split_only",
+    "source_text": "Creating global instances at module load time (for example db_pool = DatabasePool()) instead of using factory functions called during application initialization.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "anti.init-without-cleanup",
+    "origin_type": "split_only",
+    "source_text": "Initializing resources without providing corresponding cleanup mechanisms, leading to resource leaks during failures or test teardown.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "anti.business-logic-in-factories",
+    "origin_type": "split_only",
+    "source_text": "Embedding complex business logic or workflows directly inside factory functions; factories should focus on wiring and delegate behavior to dedicated modules and services.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.factory-patterns.yml",
+    "id": "anti.hidden-dependencies",
+    "origin_type": "split_only",
+    "source_text": "Factory functions that import and create dependencies internally rather than accepting them as parameters, hiding the true dependency graph and making testing difficult.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.factory-patterns.yml",
+    "id": "resource-initialization-fastapi",
+    "origin_type": "split_only",
+    "source_text": "Attaching resources to app.state and accessing them via dependencies. | Resource Initialization in FastAPI",
+    "splits": []
+  }
+]

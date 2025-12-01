@@ -69,4 +69,9 @@ Thumbs.db
 out/
 .knowledge/knowledge.duckdb
 
+# Knowledge migration artifacts - track structure, ignore data
+.knowledge/**/*.csv
+.knowledge/originals/*.yml
+.knowledge/originals/*.yaml
+
 to_adapt/

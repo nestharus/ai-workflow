@@ -1,0 +1,631 @@
+[
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "responsibilities.persistence-abstraction",
+    "origin_type": "original",
+    "original_text": "Hide SurrealDB SQL, Elasticsearch queries, or future storage details behind a stable Python interface.",
+    "splits": [
+      {
+        "split_text": "Hide database queries and search index operations behind a stable Python interface.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "responsibilities.service-facing",
+    "origin_type": "original",
+    "original_text": "Services depend on repository interfaces, not on infrastructure classes like SurrealDBPool or ElasticsearchWrapper.",
+    "splits": [
+      {
+        "split_text": "Services depend on repository interfaces, not on infrastructure classes like connection pools or client wrappers.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "responsibilities.http-agnostic",
+    "origin_type": "original",
+    "original_text": "Repositories are unaware of HTTP; they never import FastAPI or raise HTTP-specific exceptions.",
+    "splits": [
+      {
+        "split_text": "Repositories are unaware of HTTP; they never import web framework types or raise HTTP-specific exceptions.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "responsibilities.architecture",
+    "origin_type": "original",
+    "original_text": "Modern FastAPI architectures pair repositories with a dedicated service layer; services compose multiple repositories and own business rules.",
+    "splits": [
+      {
+        "split_text": "Modern architectures pair repositories with a dedicated service layer; services compose multiple repositories and own business rules.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "interface.async",
+    "origin_type": "original",
+    "original_text": "Use async def for all I/O-bound operations so repositories compose naturally with async services and FastAPI routes.",
+    "splits": [
+      {
+        "split_text": "Use async def for all I/O-bound operations so repositories compose naturally with async services.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "interface.current-reference",
+    "origin_type": "original",
+    "original_text": "The repository pattern is illustrated in app/repositories/example_repository.py, where ExampleRepositoryProtocol is implemented against SurrealDBPool for save_processed_message. Services such as ExampleService in app/services/example_service.py depend on the protocol instead of the concrete pool, and API v1 wiring in app/api/v1/dependencies.py provides the repository via get_example_repository for service construction.",
+    "splits": [
+      {
+        "split_text": "The repository pattern is illustrated in app/repositories/example_repository.py, where ExampleRepositoryProtocol is implemented. Services depend on the protocol instead of the concrete pool.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "impl.constructor-injection",
+    "origin_type": "original",
+    "original_text": "Repository constructors accept minimal infrastructure dependencies (SurrealDBPool, ElasticsearchWrapper, AsyncSession); they do not reach into global application state.",
+    "splits": [
+      {
+        "split_text": "Repository constructors accept minimal infrastructure dependencies (pool, wrapper, session); they do not reach into global application state.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "surrealdb-pattern",
+    "origin_type": "original",
+    "original_text": "SurrealDB access is coordinated via SurrealDBPool; repositories use parameterized queries and connection acquisition. | SurrealDB repository pattern",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "elasticsearch-pattern",
+    "origin_type": "original",
+    "original_text": "Search-oriented repositories depend on ElasticsearchWrapper for async-friendly methods and index initialization. | Elasticsearch repository pattern",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "txn.current-behavior",
+    "origin_type": "original",
+    "original_text": "With SurrealDB and Elasticsearch, each operation is effectively auto-committed. This document treats transaction boundaries as a service-level concern for architectural consistency.",
+    "splits": [
+      {
+        "split_text": "With auto-commit stores, each operation is effectively committed immediately. This document treats transaction boundaries as a service-level concern for architectural consistency.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "txn.cross-aggregate",
+    "origin_type": "original",
+    "original_text": "When a use case spans multiple repositories, the service layer coordinates all calls and defines recovery behavior if one step fails. See service-patterns.toon for orchestration details.",
+    "splits": [
+      {
+        "split_text": "When a use case spans multiple repositories, the service layer coordinates all calls and defines recovery behavior if one step fails. See python/service-patterns.toon for orchestration details.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "query.parameterized",
+    "origin_type": "original",
+    "original_text": "Always prefer parameterized queries ($id, $namespace, etc.) with separate parameter dictionaries to avoid injection and make queries reusable.",
+    "splits": [
+      {
+        "split_text": "Always prefer parameterized queries with separate parameter dictionaries to avoid injection and make queries reusable.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "query.domain-results",
+    "origin_type": "original",
+    "original_text": "Methods return lists of domain models, not raw database rows or Elasticsearch hits. Mapping is the repository's responsibility.",
+    "splits": [
+      {
+        "split_text": "Methods return lists of domain models, not raw database rows or search hits. Mapping is the repository's responsibility.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "query.bulk",
+    "origin_type": "original",
+    "original_text": "When the underlying store exposes efficient bulk APIs (e.g., Elasticsearch bulk), provide repository-level methods like bulk_index or bulk_insert.",
+    "splits": [
+      {
+        "split_text": "When the underlying store exposes efficient bulk APIs, provide repository-level methods like bulk_index or bulk_insert.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "errors.http-mapping",
+    "origin_type": "original",
+    "original_text": "Mapping domain exceptions to HTTP status codes and error payloads is the responsibility of exception-handling layer documented in exception-patterns.md and api-patterns.toon.",
+    "splits": [
+      {
+        "split_text": "Mapping domain exceptions to HTTP status codes and error payloads is the responsibility of exception-handling layer documented in python/exception-patterns.toon and python/api-patterns.toon.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "testing.unit",
+    "origin_type": "original",
+    "original_text": "Replace SurrealDBPool or ElasticsearchWrapper with fakes or mocks that capture executed queries without performing real I/O. Assert on SQL strings, parameter dictionaries, or search bodies.",
+    "splits": [
+      {
+        "split_text": "Replace pools or wrappers with fakes or mocks that capture executed queries without performing real I/O. Assert on query strings, parameter dictionaries, or search bodies.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "testing.isolation",
+    "origin_type": "original",
+    "original_text": "Ensure test data is reset between runs by truncating collections, deleting indices, or using transactional rollbacks. See testing-patterns.md for concrete reset strategies.",
+    "splits": [
+      {
+        "split_text": "Ensure test data is reset between runs by truncating collections, deleting indices, or using transactional rollbacks.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "factory-di",
+    "origin_type": "original",
+    "original_text": "Construct repositories via factory functions compatible with FastAPI dependency injection and the application factory in app/core/factory.py. | Repository factory and dependency injection",
+    "splits": [
+      {
+        "split_text": "Construct repositories via factory functions that wire infrastructure dependencies. | Repository factory functions",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "factory.functions",
+    "origin_type": "original",
+    "original_text": "Define simple functions like def get_user_repository(pool) -> UserRepositoryProtocol that build concrete repositories.",
+    "splits": [
+      {
+        "split_text": "Define simple factory functions like def build_user_repository(pool) -> UserRepository that build concrete repositories from infrastructure.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "factory.app-state",
+    "origin_type": "original",
+    "original_text": "create_app stores initialized SurrealDBPool and ElasticsearchWrapper on app.state. Dependency functions retrieve these and pass them into repository factories.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "factory.fastapi-deps",
+    "origin_type": "original",
+    "original_text": "Use Depends with repository factory functions to inject repositories into services or route handlers. FastAPI per-request dependency cache ensures each repository is constructed at most once per request.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "factory.service-composition",
+    "origin_type": "original",
+    "original_text": "Services receive repositories via constructors (see service-patterns.toon), keeping dependencies explicit and testable.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.repository-patterns.yml",
+    "id": "anti.raw-responses",
+    "origin_type": "original",
+    "original_text": "Repositories that return ORM models or raw driver responses (SurrealDB records, Elasticsearch hit structures) instead of domain models or DTOs.",
+    "splits": [
+      {
+        "split_text": "Repositories that return ORM models or raw driver responses instead of domain models or DTOs.",
+        "source_file": "docs/development/python/python.repository-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/python/python.repository-patterns.yml",
+    "id": "factory.composition",
+    "origin_type": "split_only",
+    "source_text": "Factory functions are called by the composition root (application startup or test setup) to wire repositories with their dependencies.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/python/python.repository-patterns.yml",
+    "id": "factory.service-usage",
+    "origin_type": "split_only",
+    "source_text": "Services receive repositories via constructors (see python/service-patterns.toon), keeping dependencies explicit and testable.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "elasticsearch-repository-pattern",
+    "origin_type": "split_only",
+    "source_text": "Search-oriented repositories depend on ElasticsearchWrapper for async-friendly methods and index initialization. | Elasticsearch repository pattern",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "elasticsearch-connection-management",
+    "origin_type": "split_only",
+    "source_text": "Patterns for using ElasticsearchWrapper in repository implementations. | Elasticsearch connection management",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "conn.constructor",
+    "origin_type": "split_only",
+    "source_text": "Accept ElasticsearchWrapper in the repository constructor via dependency injection; do not create wrappers inside repositories.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "conn.constructor",
+    "origin_type": "split_only",
+    "source_text": "Accept SurrealDBPool in the repository constructor via dependency injection; do not create pools inside repositories.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "conn.wrapper-methods",
+    "origin_type": "split_only",
+    "source_text": "Use wrapper methods (search, index, bulk, create_index) which handle async-to-thread execution internally.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "conn.async-execution",
+    "origin_type": "split_only",
+    "source_text": "The wrapper uses anyio.to_thread.run_sync to execute blocking Elasticsearch client calls without blocking the event loop.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "conn.ref-pool-patterns",
+    "origin_type": "split_only",
+    "source_text": "See app/infrastructure/elasticsearch/client.py and elasticsearch/connection-pooling-patterns.toon for wrapper configuration and lifecycle details.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "conn.ref-pool-patterns",
+    "origin_type": "split_only",
+    "source_text": "See app/infrastructure/surrealdb/pool.py and surrealdb/connection-pooling-patterns.toon for pool configuration and lifecycle details.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "elasticsearch-search-patterns",
+    "origin_type": "split_only",
+    "source_text": "Patterns for building and executing Elasticsearch search queries. | Elasticsearch search patterns",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "search.query-dsl",
+    "origin_type": "split_only",
+    "source_text": "Build Elasticsearch query DSL as Python dictionaries; use match for full-text, term for exact, and bool for compound queries.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "search.result-extraction",
+    "origin_type": "split_only",
+    "source_text": "Extract hits from raw[\"hits\"][\"hits\"] and access document data via hit[\"_source\"]; handle empty results gracefully.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "search.model-mapping",
+    "origin_type": "split_only",
+    "source_text": "Map Elasticsearch documents to Pydantic domain models in the repository; services should never see raw Elasticsearch response structures.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "search.pagination",
+    "origin_type": "split_only",
+    "source_text": "Use from_ and size parameters for pagination; calculate from_ as (page - 1) * size for page-based APIs.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "search.scoring",
+    "origin_type": "split_only",
+    "source_text": "Elasticsearch returns relevance scores in hit[\"_score\"]; include these in response models if ranking information is needed by consumers.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "elasticsearch-indexing-patterns",
+    "origin_type": "split_only",
+    "source_text": "Patterns for indexing documents into Elasticsearch. | Elasticsearch indexing patterns",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "indexing.single",
+    "origin_type": "split_only",
+    "source_text": "Use wrapper.index(index, id, document) for single document indexing; provide explicit document IDs for idempotent updates.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "indexing.bulk",
+    "origin_type": "split_only",
+    "source_text": "Use wrapper.bulk(body) for multiple documents; alternate action metadata and document source in the body list.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "indexing.id-management",
+    "origin_type": "split_only",
+    "source_text": "Use stable, domain-derived IDs for Elasticsearch documents to enable idempotent upserts and direct lookups.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "indexing.error-handling",
+    "origin_type": "split_only",
+    "source_text": "Bulk operations may partially succeed; check response for errors and handle failed items appropriately.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "elasticsearch-index-management",
+    "origin_type": "split_only",
+    "source_text": "Index lifecycle and initialization patterns. | Elasticsearch index management",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "index.creation",
+    "origin_type": "split_only",
+    "source_text": "Index creation is handled by ElasticsearchWrapper.create_index() called via initialize_indices() during application startup.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "index.mappings",
+    "origin_type": "split_only",
+    "source_text": "Define index mappings and settings (analyzers, shards, replicas) in the wrapper initialization code, not in repositories.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "index.assume-exists",
+    "origin_type": "split_only",
+    "source_text": "Repositories assume indices exist; they do not create indices on demand. Index creation failure should prevent application startup.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "index.examples",
+    "origin_type": "split_only",
+    "source_text": "Common indices include facts_index for knowledge graph facts and entity_aliases_index for entity name variations.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "index.ref-connection-pooling",
+    "origin_type": "split_only",
+    "source_text": "See elasticsearch/connection-pooling-patterns.toon for index initialization lifecycle and configuration details.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "elasticsearch-testing",
+    "origin_type": "split_only",
+    "source_text": "Strategies for testing repositories that use Elasticsearch. | Testing Elasticsearch repositories",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "testing.unit-mocks",
+    "origin_type": "split_only",
+    "source_text": "For unit tests, mock ElasticsearchWrapper and configure mock.search() to return canned response structures.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "testing.unit-mocks",
+    "origin_type": "split_only",
+    "source_text": "For unit tests, mock SurrealDBPool and configure mock.acquire() to return a mock connection that captures query arguments.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "testing.integration-indices",
+    "origin_type": "split_only",
+    "source_text": "For integration tests, use test-specific index names (e.g., test_facts_index) to isolate test data from development indices.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "testing.cleanup",
+    "origin_type": "split_only",
+    "source_text": "Clean up test indices between test runs by deleting indices or clearing documents; avoid side effects between tests.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "testing.cleanup",
+    "origin_type": "split_only",
+    "source_text": "Clean up test data between test runs by deleting records or resetting the test database; avoid side effects between tests.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "testing.docker-setup",
+    "origin_type": "split_only",
+    "source_text": "Integration tests can use docker-compose to spin up an Elasticsearch instance for the test suite.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "testing.docker-setup",
+    "origin_type": "split_only",
+    "source_text": "Integration tests can use docker-compose to spin up a SurrealDB instance for the test suite.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/elasticsearch/elasticsearch.repository-patterns.yml",
+    "id": "testing.ref-conftest",
+    "origin_type": "split_only",
+    "source_text": "See tests/conftest.py for fixtures that set up ElasticsearchWrapper for integration testing.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "testing.ref-conftest",
+    "origin_type": "split_only",
+    "source_text": "See tests/conftest.py for fixtures that set up SurrealDB pools for integration testing.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "surrealdb-repository-pattern",
+    "origin_type": "split_only",
+    "source_text": "SurrealDB access is coordinated via SurrealDBPool; repositories use parameterized queries and connection acquisition. | SurrealDB repository pattern",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "surrealdb-connection-management",
+    "origin_type": "split_only",
+    "source_text": "Patterns for using SurrealDBPool in repository implementations. | SurrealDB connection management",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "conn.acquire-context",
+    "origin_type": "split_only",
+    "source_text": "Use async with pool.acquire() as conn for connection lifecycle; the context manager ensures connections are returned to the pool.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "conn.timeout-handling",
+    "origin_type": "split_only",
+    "source_text": "The pool enforces acquire timeouts; if no connection is available within the configured timeout, an error is raised. Handle this at the service or global error handler level.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "surrealdb-query-patterns",
+    "origin_type": "split_only",
+    "source_text": "Patterns for building and executing SurrealDB queries. | SurrealDB query patterns",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "query.parameterized-syntax",
+    "origin_type": "split_only",
+    "source_text": "Use $variable syntax for parameters in SurrealDB SQL and pass a dictionary as the second argument to conn.query().",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "query.result-structure",
+    "origin_type": "split_only",
+    "source_text": "SurrealDB returns results as a list of response objects; each contains a result key with the actual data. Always check for empty or None results.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "query.model-mapping",
+    "origin_type": "split_only",
+    "source_text": "Map SurrealDB records to Pydantic domain models in the repository; services should never see raw SurrealDB response structures.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "query.record-ids",
+    "origin_type": "split_only",
+    "source_text": "SurrealDB uses type::thing() functions for record IDs (e.g., type::thing(\"users\", \"123\")). Handle ID conversion in repository mapping code.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "surrealdb-schema-operations",
+    "origin_type": "split_only",
+    "source_text": "Schema management patterns for SurrealDB repositories. | SurrealDB schema operations",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "schema.pool-responsibility",
+    "origin_type": "split_only",
+    "source_text": "Schema initialization is handled by SurrealDBPool.initialize_schema() called during application startup; repositories assume schema exists.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "schema.versioning",
+    "origin_type": "split_only",
+    "source_text": "Track schema versions using a schema_versions table or similar mechanism to manage migrations safely.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "schema.define-patterns",
+    "origin_type": "split_only",
+    "source_text": "Use DEFINE TABLE, DEFINE FIELD, and DEFINE INDEX statements in schema initialization scripts. See app/infrastructure/surrealdb/pool.py.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "schema.no-repo-schema",
+    "origin_type": "split_only",
+    "source_text": "Repositories must not execute schema changes; they perform only data operations (SELECT, CREATE, UPDATE, DELETE).",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "schema.ref-connection-pooling",
+    "origin_type": "split_only",
+    "source_text": "See surrealdb/connection-pooling-patterns.toon for schema initialization lifecycle and error handling details.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "surrealdb-testing",
+    "origin_type": "split_only",
+    "source_text": "Strategies for testing repositories that use SurrealDB. | Testing SurrealDB repositories",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/surrealdb/surrealdb.repository-patterns.yml",
+    "id": "testing.integration-db",
+    "origin_type": "split_only",
+    "source_text": "For integration tests, use a separate SurrealDB namespace/database (e.g., test_namespace, test_database) to isolate test data.",
+    "splits": []
+  }
+]

@@ -1,0 +1,294 @@
+[
+  {
+    "source_file": "docs/development/original.settings-patterns.yml",
+    "id": "accessing-settings-at-runtime",
+    "origin_type": "original",
+    "original_text": "Patterns for retrieving Settings via the factory and dependency injection. | Accessing Settings at Runtime",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.settings-patterns.yml",
+    "id": "runtime.factory-entry",
+    "origin_type": "original",
+    "original_text": "Construct a single Settings instance at startup and pass it into create_app; treat that instance as the canonical configuration for the application lifecycle.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.settings-patterns.yml",
+    "id": "runtime.app-state",
+    "origin_type": "original",
+    "original_text": "Store the Settings instance on app.state.settings so components with a Request or App can retrieve configuration.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.settings-patterns.yml",
+    "id": "runtime.get-settings-dep",
+    "origin_type": "original",
+    "original_text": "Use get_settings in app/core/dependencies.py with @lru_cache to expose Settings via DI so routers can declare settings: Settings = Depends(get_settings).",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.settings-patterns.yml",
+    "id": "runtime.routers-pattern",
+    "origin_type": "original",
+    "original_text": "Routers accept Settings as a dependency and pass it into services or infrastructure factories as needed; routers must not construct Settings directly.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.settings-patterns.yml",
+    "id": "runtime.services-pattern",
+    "origin_type": "original",
+    "original_text": "Services receive Settings via constructor injection (see docs/development/service-patterns.toon) and use it for configuration-dependent behaviour such as timeouts or feature flags.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.settings-patterns.yml",
+    "id": "runtime.infrastructure-pattern",
+    "origin_type": "original",
+    "original_text": "Connection factories such as create_surrealdb_pool and create_elasticsearch_wrapper receive Settings instances and read only the fields they need.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.settings-patterns.yml",
+    "id": "runtime.single-instance",
+    "origin_type": "original",
+    "original_text": "Avoid constructing additional Settings instances at runtime; tests may create extra instances explicitly, but the running app should rely on a single shared instance.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.settings-patterns.yml",
+    "id": "runtime.service-patterns-ref",
+    "origin_type": "original",
+    "original_text": "For additional patterns on services that consume settings, see docs/development/service-patterns.toon.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/original.settings-patterns.yml",
+    "id": "dbsearch.validation",
+    "origin_type": "original",
+    "original_text": "Validators enforce positive values for pool sizes, timeouts, shards, and embedding dimensions and non-negative values for replicas, while connection lifecycle and pooling details are handled in app/infrastructure/db_connections.py and connection-pooling-patterns.toon.",
+    "splits": [
+      {
+        "split_text": "Validators enforce positive values for pool sizes, timeouts, shards, and embedding dimensions and non-negative values for replicas, while connection lifecycle and pooling details are handled in app/infrastructure/db_connections.py and python/connection-pooling-patterns.toon.",
+        "source_file": "docs/development/python/python.settings-patterns.yml"
+      }
+    ]
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "get-settings-dependency",
+    "origin_type": "split_only",
+    "source_text": "Patterns for exposing Settings via FastAPI dependency injection using @lru_cache. | get_settings Dependency",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "get-settings.lru-cache",
+    "origin_type": "split_only",
+    "source_text": "Implement get_settings in app/core/dependencies.py as an @lru_cache-decorated function that builds a single Settings instance from environment variables.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "get-settings.singleton-behavior",
+    "origin_type": "split_only",
+    "source_text": "The @lru_cache decorator ensures get_settings() returns the same Settings instance across all calls, avoiding repeated environment variable parsing and validation.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "get-settings.maxsize-one",
+    "origin_type": "split_only",
+    "source_text": "Use maxsize=1 for @lru_cache since only one Settings instance is needed per process lifecycle.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "get-settings.module-location",
+    "origin_type": "split_only",
+    "source_text": "Place get_settings in app/core/dependencies.py so it is framework-agnostic and can be used by both FastAPI routes and non-HTTP code paths.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "get-settings.no-direct-construction",
+    "origin_type": "split_only",
+    "source_text": "Avoid constructing Settings() directly in route handlers or services; always use get_settings dependency or receive Settings via constructor injection.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "app-state-storage",
+    "origin_type": "split_only",
+    "source_text": "Patterns for storing and accessing Settings via app.state in the application factory. | Settings Storage on app.state",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "app-state.store-on-create",
+    "origin_type": "split_only",
+    "source_text": "Store the Settings instance on app.state.settings immediately after FastAPI app creation in create_app so components with Request or App access can read configuration.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "app-state.factory-entrypoint",
+    "origin_type": "split_only",
+    "source_text": "Treat create_app(settings: Settings) as the canonical composition root; production startup and tests should both construct apps by passing in validated Settings instances.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "app-state.middleware-access",
+    "origin_type": "split_only",
+    "source_text": "Middleware and exception handlers that need Settings access can retrieve it from request.app.state.settings when they do not have access to dependency injection.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "app-state.single-instance",
+    "origin_type": "split_only",
+    "source_text": "Avoid constructing additional Settings instances at runtime; tests may create extra instances explicitly, but the running app should rely on a single shared instance.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "app-state.no-direct-modification",
+    "origin_type": "split_only",
+    "source_text": "Do not modify app.state.settings after application startup; treat the Settings instance as immutable once stored.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "route-dependency-injection",
+    "origin_type": "split_only",
+    "source_text": "Patterns for injecting Settings into FastAPI route handlers using Depends(). | Route Dependency Injection",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "route-di.annotated-alias",
+    "origin_type": "split_only",
+    "source_text": "Define a SettingsDep type alias as Annotated[Settings, Depends(get_settings)] and use it in route signatures for concise and consistent injection.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "route-di.centralized-aliases",
+    "origin_type": "split_only",
+    "source_text": "Place the SettingsDep alias in app/api/v1/dependencies.py alongside other dependency type aliases so routers import from a single versioned module.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "route-di.route-usage",
+    "origin_type": "split_only",
+    "source_text": "Inject Settings into routes using settings: SettingsDep rather than calling get_settings() directly inside the handler body.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "route-di.pass-to-services",
+    "origin_type": "split_only",
+    "source_text": "Routes that need to pass Settings to services should inject it via the dependency system and pass it as a constructor argument to service factories.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "route-di.no-globals",
+    "origin_type": "split_only",
+    "source_text": "Avoid importing or using a global Settings instance in routes; always rely on dependency injection for testability and explicit configuration.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "service-integration",
+    "origin_type": "split_only",
+    "source_text": "Patterns for passing Settings to services and infrastructure components. | Service and Infrastructure Integration",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "service-integration.constructor-injection",
+    "origin_type": "split_only",
+    "source_text": "Services receive Settings via constructor injection; define service factory dependencies that accept SettingsDep and pass it to the service constructor.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "service-integration.infrastructure-factories",
+    "origin_type": "split_only",
+    "source_text": "Connection factories such as create_surrealdb_pool and create_elasticsearch_wrapper receive Settings instances and read only the fields they need.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "service-integration.lifespan-usage",
+    "origin_type": "split_only",
+    "source_text": "The lifespan context manager in app/core/factory.py receives Settings via the closure over create_app parameters and uses it to initialize pools and clients.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "service-integration.no-settings-in-services",
+    "origin_type": "split_only",
+    "source_text": "Services should not import get_settings directly; they should receive Settings via constructor parameters, keeping them framework-agnostic.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "service-integration.ref-to-service-patterns",
+    "origin_type": "split_only",
+    "source_text": "For additional patterns on services that consume settings, see docs/development/python/service-patterns.toon for core patterns and docs/development/fastapi/service-patterns.toon for DI integration.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "testing-with-overrides",
+    "origin_type": "split_only",
+    "source_text": "Patterns for overriding get_settings in tests to supply test-specific configuration. | Testing with Dependency Overrides",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "testing.factory-app",
+    "origin_type": "split_only",
+    "source_text": "Construct FastAPI apps in tests using create_app with explicit Settings instances instead of importing an app from app.main.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "testing.override-get-settings",
+    "origin_type": "split_only",
+    "source_text": "Override get_settings via app.dependency_overrides[get_settings] to supply test-specific configuration.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "testing.clear-overrides",
+    "origin_type": "split_only",
+    "source_text": "Clear app.dependency_overrides after each test or use fresh app instances per test to avoid state leakage.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "testing.model-copy-updates",
+    "origin_type": "split_only",
+    "source_text": "When tests need custom configuration, start from test_settings and use model_copy(update={...}) to override specific fields without reconstructing the entire Settings.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "testing.fixture-composition",
+    "origin_type": "split_only",
+    "source_text": "Compose test fixtures such as test_settings \u2192 test_app \u2192 async_client so overrides propagate consistently through the test infrastructure.",
+    "splits": []
+  },
+  {
+    "source_file": "docs/development/fastapi/fastapi.settings-patterns.yml",
+    "id": "testing.no-lru-cache-clear",
+    "origin_type": "split_only",
+    "source_text": "Do not rely on clearing @lru_cache in tests; use dependency overrides instead, which is the FastAPI-native pattern for test isolation.",
+    "splits": []
+  }
+]

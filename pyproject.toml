@@ -53,6 +53,7 @@ lint = "scripts.lint:main"
 start-server = "scripts.start_server:main"
 gen_openapi = "scripts.gen_openapi:main"
 coderabbit-review = "scripts.coderabbit_review:main"
+compare-yml-docs = "scripts.compare_yaml_docs:main"
 sonar-review = "scripts.sonar_review:main"
 latest-review = "scripts.latest_review:main"
 

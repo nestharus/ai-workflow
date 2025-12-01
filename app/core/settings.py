@@ -136,6 +136,10 @@ class Settings(BaseSettings):
     # Relative to project root; contains staging data for lightweight queries.
     csv_data_path: str = "data/csv"
 
+    # Path to directory containing migration artifacts, comparison results,
+    # and resolution tracking. Relative to project root.
+    knowledge_path: str = ".knowledge"
+
     elasticsearch_url: str = "http://localhost:9200"
     elasticsearch_connections_per_node: int = 25
     elasticsearch_request_timeout: int = 10
