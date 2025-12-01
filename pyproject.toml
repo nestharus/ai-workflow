@@ -16,7 +16,8 @@ dependencies = [
     "elasticsearch>=9.2.0,<9.3.0",
     "anyio>=4.11.0,<4.12.0",
     "duckdb>=1.4.2,<1.5.0",
-    "pyyaml>=6.0.2,<6.1.0"
+    "pyyaml>=6.0.2,<6.1.0",
+    "pytz>=2025.2,<2026.0",
 ]
 
 [build-system]
@@ -58,6 +59,8 @@ sonar-review = "scripts.sonar_review:main"
 latest-review = "scripts.latest_review:main"
 mark-resolved = "scripts.resolution_tracker:main"
 query-comparisons = "scripts.query_comparisons:main"
+start-migration = "scripts.migration_manager:main_start"
+validate-migration = "scripts.migration_manager:main_validate"
 
 [tool.uv]
 link-mode = "copy"

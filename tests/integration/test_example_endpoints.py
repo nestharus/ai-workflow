@@ -6,7 +6,6 @@ that query processed messages from CSV data via DuckDB.
 
 from __future__ import annotations
 
-import os
 import secrets
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
@@ -44,14 +43,16 @@ def _mock_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _build_test_settings() -> Settings:
     return Settings(
-        surrealdb_user=os.getenv("SURREALDB_USER") or _generate_test_credential("User"),
-        surrealdb_pass=os.getenv("SURREALDB_PASS") or _generate_test_credential("Pass"),
+        surrealdb_user=_generate_test_credential("User"),
+        surrealdb_pass=_generate_test_credential("Pass"),
         csv_data_path=str(Path(__file__).parent.parent.parent / "data" / "csv"),
     )
 
 
 @pytest.fixture
-def test_settings() -> Settings:
+def test_settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
+    monkeypatch.setenv("SURREALDB_USER", _generate_test_credential("User"))
+    monkeypatch.setenv("SURREALDB_PASS", _generate_test_credential("Pass"))
     return _build_test_settings()
 
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import secrets
 from collections.abc import Iterator
 from typing import Any
@@ -64,8 +63,8 @@ def _generate_test_credential(prefix: str) -> str:
 def _build_settings(include_error_body: bool) -> Settings:
     return Settings(
         include_error_body=include_error_body,
-        surrealdb_user=os.getenv("SURREALDB_USER") or _generate_test_credential("User"),
-        surrealdb_pass=os.getenv("SURREALDB_PASS") or _generate_test_credential("Pass"),
+        surrealdb_user=_generate_test_credential("User"),
+        surrealdb_pass=_generate_test_credential("Pass"),
     )
 
 

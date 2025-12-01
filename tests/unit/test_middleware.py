@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import secrets
 
 import pytest
@@ -22,8 +21,8 @@ def _generate_test_credential(prefix: str) -> str:
 
 def _build_settings(**overrides: str | bool | int) -> Settings:
     base: dict[str, str | bool | int] = {
-        "surrealdb_user": os.getenv("SURREALDB_USER") or _generate_test_credential("User"),
-        "surrealdb_pass": os.getenv("SURREALDB_PASS") or _generate_test_credential("Pass"),
+        "surrealdb_user": _generate_test_credential("User"),
+        "surrealdb_pass": _generate_test_credential("Pass"),
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]

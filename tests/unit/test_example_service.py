@@ -6,7 +6,6 @@ from the injected Settings, demonstrating configuration-driven behavior via DI.
 
 from __future__ import annotations
 
-import os
 import secrets
 from datetime import UTC, datetime
 
@@ -65,8 +64,8 @@ def _build_settings(*, debug: bool, example_prefix: str = "[PROCESSED]") -> Sett
     return Settings(
         debug=debug,
         example_prefix=example_prefix,
-        surrealdb_user=os.getenv("SURREALDB_USER") or _generate_test_credential("User"),
-        surrealdb_pass=os.getenv("SURREALDB_PASS") or _generate_test_credential("Pass"),
+        surrealdb_user=_generate_test_credential("User"),
+        surrealdb_pass=_generate_test_credential("Pass"),
     )
 
 

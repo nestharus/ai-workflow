@@ -7,7 +7,6 @@ and details fields.
 
 from __future__ import annotations
 
-import os
 import secrets
 from collections.abc import Iterator
 from typing import Any
@@ -52,8 +51,8 @@ def _mock_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
 def _build_settings() -> Settings:
     return Settings(
         include_error_body=False,
-        surrealdb_user=os.getenv("SURREALDB_USER") or _generate_test_credential("User"),
-        surrealdb_pass=os.getenv("SURREALDB_PASS") or _generate_test_credential("Pass"),
+        surrealdb_user=_generate_test_credential("User"),
+        surrealdb_pass=_generate_test_credential("Pass"),
     )
 
 
