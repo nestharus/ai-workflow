@@ -1,7 +1,7 @@
-doc_id: python-api-patterns
-title: Python API Patterns
+doc_id: project-rest-api-patterns
+title: REST API Patterns
 version_hint: 2024-2025
-kind: python_api_standards
+kind: rest_api_standards
 description: Framework-agnostic REST API design patterns covering HTTP semantics, URL structure, status codes, request/response
   modeling, and versioning principles.
 scope: Covers REST principles, HTTP methods and status codes, request/response modeling with Pydantic, pagination concepts,

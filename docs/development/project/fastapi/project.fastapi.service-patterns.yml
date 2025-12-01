@@ -1,4 +1,4 @@
-doc_id: fastapi-service-patterns
+doc_id: project-fastapi-service-patterns
 title: FastAPI Service Layer Integration
 version_hint: 2024-2025
 kind: fastapi_service_integration

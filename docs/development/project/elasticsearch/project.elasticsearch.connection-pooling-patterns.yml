@@ -1,4 +1,4 @@
-doc_id: elasticsearch-connection-pooling-patterns
+doc_id: project-elasticsearch-connection-pooling-patterns
 title: Elasticsearch Connection Pooling Patterns
 version_hint: 2024-2025
 kind: elasticsearch_pooling_standards
