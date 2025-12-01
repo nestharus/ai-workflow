@@ -95,13 +95,14 @@ When text is MIXED (contains both GENERAL and PROJECT chunks), it should be spli
 
 6. **Verify coverage**: For PROJECT chunks, search for existing coverage in other PROJECT files:
    ```bash
-   # Search for similar content in project files
-   uv run python -c "from scripts.compare_yaml_docs import extract_ids_and_text, parse_yaml_file; ..."
-   ```
-   Or use Grep to search:
-   ```bash
-   # Search for ID in project files
-   grep -r "<element-id>" docs/development/project/
+   # Search for ID in project files (partial match)
+   uv run grep-yml-ids --id <element-id> --path docs/development/project/
+
+   # Search for exact ID match
+   uv run grep-yml-ids --id <element-id> --path docs/development/project/ --exact
+
+   # Get JSON output for programmatic use
+   uv run grep-yml-ids --id <element-id> --output json
    ```
 
 7. **Suggest action**:
@@ -183,11 +184,14 @@ When PROJECT content is detected, check if it's already covered by other PROJECT
 
 2. **Search methods**:
    ```bash
-   # Search by ID
-   grep -r "id: <element-id>" docs/development/project/
+   # Search by ID (returns file path, section, type, and text)
+   uv run grep-yml-ids --id <element-id> --path docs/development/project/
 
-   # Search by key terms
-   grep -r "<key-term>" docs/development/project/fastapi/
+   # Search with exact match
+   uv run grep-yml-ids --id <element-id> --path docs/development/project/ --exact
+
+   # Search in specific module
+   uv run grep-yml-ids --id <element-id> --path docs/development/project/fastapi/
    ```
 
 3. **If covered**: Mark as REMOVE_COVERED and provide movement command template

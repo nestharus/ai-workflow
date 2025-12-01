@@ -16,6 +16,31 @@ overview:
     - CSV storage for queryability with DuckDB
     - Full audit trail of resolutions and migrations
     - Automated validation of migration completeness
+    - AI-assisted classification via knowledge-analyzer agent
+
+  analysis_tools:
+    knowledge_analyzer:
+      path: ".claude/agents/knowledge-analyzer.md"
+      purpose: |
+        AI agent for analyzing YAML documentation items. Chunks text into atomic
+        information units and classifies each across domain (rest, fastapi, python),
+        scope (GENERAL vs PROJECT), and pattern dimensions. Detects MIXED content,
+        verifies coverage in target files, and suggests actions (KEEP_GENERAL,
+        KEEP_PROJECT, REMOVE_COVERED, SPLIT).
+      usage: |
+        Invoke via Claude Code Task tool with subagent_type='knowledge-analyzer'.
+        Provide --id and --source-file arguments for single item analysis, or
+        --source-file with optional --ids for batch processing.
+
+    grep_yml_ids:
+      command: "uv run grep-yml-ids --id <element-id> [--path <directory>] [--exact]"
+      purpose: |
+        Search for element IDs across YAML documentation files. Useful for verifying
+        coverage and finding where information is documented before making movement
+        decisions.
+      examples:
+        - "uv run grep-yml-ids --id url.prefix --path docs/development/project"
+        - "uv run grep-yml-ids --id validation --output json"
 
 directory_structure:
   root: ".knowledge/"

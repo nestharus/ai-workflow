@@ -66,9 +66,6 @@ track-additions = "scripts.track_additions:main_track"
 validate-addition = "scripts.track_additions:main_validate"
 start-migration = "scripts.migration_manager:main_start"
 validate-migration = "scripts.migration_manager:main_validate"
-create-breakdown = "scripts.create_breakdown_table:main"
-rebuild-from-breakdown = "scripts.rebuild_from_breakdown:main"
-batch-mark-resolved = "scripts.batch_mark_resolved:main"
 grep-yml-ids = "scripts.grep_yml_ids:main"
 
 [tool.uv]
