@@ -7,7 +7,7 @@ description: Navigation index for development documentation covering code patter
 scope: Provides overview and navigation to all development-related documentation files with topic summaries and usage guidance.
 module_organization:
   description: Development documentation is organized into four specialized modules for targeted guidance.
-  note: This is phase one of a multi-phase reorganization. Subsequent phases will move additional pattern files into their respective modules.
+  note: All pattern documents have been successfully split into Python, FastAPI, SurrealDB, and Elasticsearch modules for clear separation of concerns and improved discoverability.
   modules[4]:
     - name: python
       path: python/
@@ -26,20 +26,32 @@ module_organization:
       description: Elasticsearch-specific patterns including client configuration, search query patterns, and index management.
       consult_when: Implementing search functionality, configuring Elasticsearch clients, or managing indices.
 primary_runtime_references[0]:
-related_pattern_docs[13]:
+related_pattern_docs[24]:
   - python/settings-patterns.toon
   - fastapi/settings-patterns.toon
   - python/dependency-patterns.toon
   - fastapi/dependency-patterns.toon
-  - factory-patterns.toon
-  - router-patterns.toon
-  - service-patterns.toon
-  - repository-patterns.toon
-  - middleware-patterns.toon
-  - exception-patterns.toon
-  - connection-pooling-patterns.toon
-  - api-patterns.toon
-  - architectural-patterns.toon
+  - python/factory-patterns.toon
+  - fastapi/factory-patterns.toon
+  - python/router-patterns.toon
+  - fastapi/router-patterns.toon
+  - python/api-patterns.toon
+  - fastapi/api-patterns.toon
+  - python/service-patterns.toon
+  - fastapi/service-patterns.toon
+  - python/repository-patterns.toon
+  - surrealdb/repository-patterns.toon
+  - elasticsearch/repository-patterns.toon
+  - python/middleware-patterns.toon
+  - fastapi/middleware-patterns.toon
+  - python/exception-patterns.toon
+  - fastapi/exception-patterns.toon
+  - python/connection-pooling-patterns.toon
+  - fastapi/connection-pooling-patterns.toon
+  - surrealdb/connection-pooling-patterns.toon
+  - elasticsearch/connection-pooling-patterns.toon
+  - python/architectural-patterns.toon
+  - fastapi/architectural-patterns.toon
 sections[12]:
   - id: settings-patterns
     index: 1
@@ -69,17 +81,26 @@ sections[12]:
     index: 2
     title: Factory Patterns
     category: navigation
-    summary: Covers application construction, lifespan management, and configuration patterns for building FastAPI applications.
-    items[3]:
-      - id: factory-patterns.file
+    summary: Covers application construction, lifespan management, and configuration patterns for building applications.
+    items[6]:
+      - id: factory-patterns-python.file
         type: reference
-        text: "File: factory-patterns.toon"
-      - id: factory-patterns.description
+        text: "File: python/factory-patterns.toon"
+      - id: factory-patterns-python.description
         type: note
-        text: Establishes how to wire together routers, middleware, and services during application startup.
-      - id: factory-patterns.apply-when
+        text: Covers generic Python factory functions, resource initialization patterns, dependency composition, and factory testing strategies.
+      - id: factory-patterns-python.apply-when
         type: guidance
-        text: "Apply when: Setting up application entry points, configuring application lifespan events, or wiring routers and middleware."
+        text: "Apply when: Designing factory functions, implementing resource initialization with cleanup, or composing dependency graphs."
+      - id: factory-patterns-fastapi.file
+        type: reference
+        text: "File: fastapi/factory-patterns.toon"
+      - id: factory-patterns-fastapi.description
+        type: note
+        text: Covers FastAPI create_app pattern, lifespan context managers, middleware and router registration, and OpenAPI customization.
+      - id: factory-patterns-fastapi.apply-when
+        type: guidance
+        text: "Apply when: Setting up FastAPI application entry points, configuring lifespan events, or wiring middleware and routers."
   - id: dependency-patterns
     index: 3
     title: Dependency Patterns
@@ -108,107 +129,197 @@ sections[12]:
     index: 4
     title: Router Patterns
     category: navigation
-    summary: Defines FastAPI router organization, route handler structure, and OpenAPI documentation standards.
-    items[3]:
-      - id: router-patterns.file
+    summary: Defines route handler structure and FastAPI router organization for building consistent API endpoints.
+    items[6]:
+      - id: router-patterns-python.file
         type: reference
-        text: "File: router-patterns.toon"
-      - id: router-patterns.description
+        text: "File: python/router-patterns.toon"
+      - id: router-patterns-python.description
         type: note
-        text: Covers how to structure endpoints, handle request/response models, and document APIs for clarity.
-      - id: router-patterns.apply-when
+        text: Covers thin handler principles, service delegation patterns, handler responsibilities, and error propagation.
+      - id: router-patterns-python.apply-when
         type: guidance
-        text: "Apply when: Creating new API endpoints, organizing routes by domain, or adding OpenAPI documentation to handlers."
+        text: "Apply when: Designing handler structure, understanding service delegation, or implementing error handling in handlers."
+      - id: router-patterns-fastapi.file
+        type: reference
+        text: "File: fastapi/router-patterns.toon"
+      - id: router-patterns-fastapi.description
+        type: note
+        text: Covers APIRouter organization, dependency injection with Depends(), request validation, response_model configuration, and OpenAPI documentation.
+      - id: router-patterns-fastapi.apply-when
+        type: guidance
+        text: "Apply when: Creating FastAPI endpoints, configuring routers, injecting dependencies, or documenting routes in OpenAPI."
   - id: service-patterns
     index: 5
-    title: Service Patterns
+    title: Service Layer Patterns
     category: navigation
     summary: Establishes service layer architecture for encapsulating business logic and transaction management.
-    items[3]:
-      - id: service-patterns.file
+    items[6]:
+      - id: service-patterns-python.file
         type: reference
-        text: "File: service-patterns.toon"
-      - id: service-patterns.description
+        text: "File: python/service-patterns.toon"
+      - id: service-patterns-python.description
         type: note
-        text: Defines how services coordinate between routers and repositories while maintaining separation of concerns.
-      - id: service-patterns.apply-when
+        text: Framework-agnostic service layer concepts including responsibilities, class structure, constructor injection, transaction management, domain errors, testing, and lifecycle.
+      - id: service-patterns-python.apply-when
         type: guidance
-        text: "Apply when: Writing business logic for domain operations, coordinating multiple repository calls, or managing transactions and rollbacks."
+        text: "Apply when: Designing service classes, implementing business logic, managing transactions, or understanding service responsibilities."
+      - id: service-patterns-fastapi.file
+        type: reference
+        text: "File: fastapi/service-patterns.toon"
+      - id: service-patterns-fastapi.description
+        type: note
+        text: FastAPI-specific service integration including factory dependencies, Depends() usage, app.state integration, and testing with overrides.
+      - id: service-patterns-fastapi.apply-when
+        type: guidance
+        text: "Apply when: Wiring services into FastAPI routers, creating service factories, or testing with dependency overrides."
   - id: repository-patterns
     index: 6
-    title: Repository Patterns
+    title: Repository Layer Patterns
     category: navigation
     summary: Defines data access layer patterns, repository interfaces, and query patterns for persistence code.
-    items[3]:
-      - id: repository-patterns.file
+    items[9]:
+      - id: repository-patterns-python.file
         type: reference
-        text: "File: repository-patterns.toon"
-      - id: repository-patterns.description
+        text: "File: python/repository-patterns.toon"
+      - id: repository-patterns-python.description
         type: note
-        text: Covers how to abstract database operations behind clean interfaces for testability.
-      - id: repository-patterns.apply-when
+        text: Framework-agnostic repository patterns including responsibilities, Protocol interfaces, implementation classes, transaction management, query patterns, error handling, testing, and anti-patterns.
+      - id: repository-patterns-python.apply-when
         type: guidance
-        text: "Apply when: Writing database query code, defining repository interfaces, or implementing CRUD operations."
+        text: "Apply when: Designing repository interfaces, implementing CRUD operations, or understanding repository responsibilities."
+      - id: repository-patterns-surrealdb.file
+        type: reference
+        text: "File: surrealdb/repository-patterns.toon"
+      - id: repository-patterns-surrealdb.description
+        type: note
+        text: SurrealDB-specific patterns including pool usage, parameterized queries, schema operations, and result mapping.
+      - id: repository-patterns-surrealdb.apply-when
+        type: guidance
+        text: "Apply when: Implementing SurrealDB repositories, writing queries, or managing connections."
+      - id: repository-patterns-elasticsearch.file
+        type: reference
+        text: "File: elasticsearch/repository-patterns.toon"
+      - id: repository-patterns-elasticsearch.description
+        type: note
+        text: Elasticsearch-specific patterns including search queries, indexing operations, bulk operations, and index management.
+      - id: repository-patterns-elasticsearch.apply-when
+        type: guidance
+        text: "Apply when: Implementing search repositories, building queries, or managing indices."
   - id: middleware-patterns
     index: 7
     title: Middleware Patterns
     category: navigation
     summary: Covers HTTP middleware implementation, ordering, and configuration for cross-cutting concerns.
-    items[3]:
-      - id: middleware-patterns.file
+    items[6]:
+      - id: middleware-patterns-python.file
         type: reference
-        text: "File: middleware-patterns.toon"
-      - id: middleware-patterns.description
+        text: "File: python/middleware-patterns.toon"
+      - id: middleware-patterns-python.description
         type: note
-        text: Defines how to add request/response processing for logging, security headers, and error handling.
-      - id: middleware-patterns.apply-when
+        text: Covers ASGI middleware fundamentals, stack behavior, implementation patterns, and cross-cutting concern design.
+      - id: middleware-patterns-python.apply-when
         type: guidance
-        text: "Apply when: Adding cross-cutting HTTP behavior, configuring security headers, or implementing request/response logging."
+        text: "Apply when: Understanding ASGI middleware concepts, implementing custom middleware classes, or designing cross-cutting concerns."
+      - id: middleware-patterns-fastapi.file
+        type: reference
+        text: "File: fastapi/middleware-patterns.toon"
+      - id: middleware-patterns-fastapi.description
+        type: note
+        text: Covers FastAPI and Starlette middleware classes, recommended stack ordering, Settings-driven configuration, and factory integration.
+      - id: middleware-patterns-fastapi.apply-when
+        type: guidance
+        text: "Apply when: Configuring specific middleware in FastAPI, setting up security headers, compression, CORS, or rate limiting."
   - id: exception-patterns
     index: 8
     title: Exception Patterns
     category: navigation
     summary: Defines how to design domain exceptions, error handling, and HTTP error mapping.
-    items[3]:
-      - id: exception-patterns.file
+    items[6]:
+      - id: exception-patterns-python.file
         type: reference
-        text: "File: exception-patterns.toon"
-      - id: exception-patterns.description
+        text: "File: python/exception-patterns.toon"
+      - id: exception-patterns-python.description
         type: note
-        text: Establishes a consistent approach to raising, catching, and translating exceptions into appropriate API responses.
-      - id: exception-patterns.apply-when
+        text: Covers domain exception hierarchies, exception context and messages, error handling patterns, and testing strategies.
+      - id: exception-patterns-python.apply-when
         type: guidance
-        text: "Apply when: Defining domain-specific exceptions, mapping exceptions to HTTP status codes, or implementing error handling in services."
+        text: "Apply when: Designing domain exceptions, wrapping low-level errors, or implementing exception handling in services."
+      - id: exception-patterns-fastapi.file
+        type: reference
+        text: "File: fastapi/exception-patterns.toon"
+      - id: exception-patterns-fastapi.description
+        type: note
+        text: Covers HTTP error mapping, global exception handlers, AppError response model, validation handling, and OpenAPI documentation.
+      - id: exception-patterns-fastapi.apply-when
+        type: guidance
+        text: "Apply when: Implementing FastAPI exception handlers, mapping domain errors to HTTP responses, or documenting error responses."
   - id: connection-pooling-patterns
     index: 9
     title: Connection Pooling Patterns
     category: navigation
-    summary: Describes how to create, configure, and manage database and search client pools.
-    items[3]:
-      - id: connection-pooling-patterns.file
+    summary: Describes how to create, configure, and manage database and search client pools across different technologies.
+    items[12]:
+      - id: connection-pooling-patterns-python.file
         type: reference
-        text: "File: connection-pooling-patterns.toon"
-      - id: connection-pooling-patterns.description
+        text: "File: python/connection-pooling-patterns.toon"
+      - id: connection-pooling-patterns-python.description
         type: note
-        text: Covers pool sizing, connection lifecycle, and health checking for infrastructure resources.
-      - id: connection-pooling-patterns.apply-when
+        text: Framework-agnostic pooling fundamentals including pool sizing, timeout handling, connection recycling, error handling, testing strategies, anti-patterns, and monitoring.
+      - id: connection-pooling-patterns-python.apply-when
         type: guidance
-        text: "Apply when: Configuring database connection pools, setting up search client connections, or managing pool lifecycle and cleanup."
+        text: "Apply when: Understanding generic pooling concepts, designing pool implementations, or implementing pool testing strategies."
+      - id: connection-pooling-patterns-fastapi.file
+        type: reference
+        text: "File: fastapi/connection-pooling-patterns.toon"
+      - id: connection-pooling-patterns-fastapi.description
+        type: note
+        text: FastAPI-specific integration including lifespan management, app.state attachment, dependency providers, HTTP client pooling, and testing fixtures.
+      - id: connection-pooling-patterns-fastapi.apply-when
+        type: guidance
+        text: "Apply when: Integrating pools with FastAPI lifespan, attaching resources to app.state, or creating pool dependency providers."
+      - id: connection-pooling-patterns-surrealdb.file
+        type: reference
+        text: "File: surrealdb/connection-pooling-patterns.toon"
+      - id: connection-pooling-patterns-surrealdb.description
+        type: note
+        text: SurrealDB-specific patterns including SurrealDBPool implementation, asyncio.Queue-based pooling, configuration, lifecycle management, and schema initialization.
+      - id: connection-pooling-patterns-surrealdb.apply-when
+        type: guidance
+        text: "Apply when: Implementing or configuring SurrealDB connection pools, managing pool lifecycle, or initializing schemas."
+      - id: connection-pooling-patterns-elasticsearch.file
+        type: reference
+        text: "File: elasticsearch/connection-pooling-patterns.toon"
+      - id: connection-pooling-patterns-elasticsearch.description
+        type: note
+        text: Elasticsearch-specific patterns including ElasticsearchWrapper implementation, HTTP connection pool configuration, async wrapper patterns, and index initialization.
+      - id: connection-pooling-patterns-elasticsearch.apply-when
+        type: guidance
+        text: "Apply when: Implementing or configuring Elasticsearch clients, managing HTTP connection pools, or initializing indices."
   - id: api-patterns
     index: 10
     title: API Patterns
     category: navigation
-    summary: Establishes REST API design standards including URL structure, request/response modeling, and OpenAPI documentation conventions.
-    items[3]:
-      - id: api-patterns.file
+    summary: Establishes REST API design standards and FastAPI-specific implementation patterns.
+    items[6]:
+      - id: api-patterns-python.file
         type: reference
-        text: "File: api-patterns.toon"
-      - id: api-patterns.description
+        text: "File: python/api-patterns.toon"
+      - id: api-patterns-python.description
         type: note
-        text: Defines consistent patterns for resource naming, pagination, and error responses.
-      - id: api-patterns.apply-when
+        text: Covers REST principles, HTTP methods and status codes, URL structure, request/response modeling with Pydantic, pagination, content negotiation, and versioning strategies.
+      - id: api-patterns-python.apply-when
         type: guidance
-        text: "Apply when: Designing new API endpoints, modeling request and response schemas, or documenting API contracts."
+        text: "Apply when: Designing REST APIs, choosing HTTP methods and status codes, modeling requests/responses, or planning API versioning."
+      - id: api-patterns-fastapi.file
+        type: reference
+        text: "File: fastapi/api-patterns.toon"
+      - id: api-patterns-fastapi.description
+        type: note
+        text: Covers FastAPI application construction, OpenAPI documentation standards, validation error handling, response_model usage, and router registration.
+      - id: api-patterns-fastapi.apply-when
+        type: guidance
+        text: "Apply when: Configuring FastAPI applications, documenting APIs in OpenAPI, handling validation errors, or registering routers."
   - id: docstrings-guide
     index: 11
     title: Docstrings Guide
@@ -228,14 +339,23 @@ sections[12]:
     index: 12
     title: Architectural Patterns
     category: navigation
-    summary: Defines the strict layered architecture for separation of concerns and testability.
-    items[3]:
-      - id: architectural-patterns.file
+    summary: Defines the layered architecture for separation of concerns and testability, with Python-generic concepts and FastAPI-specific wiring.
+    items[6]:
+      - id: architectural-patterns-python.file
         type: reference
-        text: "File: architectural-patterns.toon"
-      - id: architectural-patterns.description
+        text: "File: python/architectural-patterns.toon"
+      - id: architectural-patterns-python.description
         type: note
-        text: Covers Routers (HTTP request/response lifecycle), Services (business logic encapsulation with dependency injection), and Contracts/DTOs (data structures and validation rules with Pydantic). Includes standards, patterns, and lifecycle details for each layer.
-      - id: architectural-patterns.apply-when
+        text: Framework-agnostic layered architecture including layer responsibilities, call directions, dependency flow, request lifecycle concepts, and testability principles.
+      - id: architectural-patterns-python.apply-when
         type: guidance
-        text: "Apply when: Designing new application components, understanding layer responsibilities and boundaries, or implementing routers, services, or contracts."
+        text: "Apply when: Understanding layered architecture principles, designing layer boundaries, or learning framework-agnostic separation of concerns."
+      - id: architectural-patterns-fastapi.file
+        type: reference
+        text: "File: fastapi/architectural-patterns.toon"
+      - id: architectural-patterns-fastapi.description
+        type: note
+        text: FastAPI-specific layer wiring including APIRouter registration, Depends() integration, middleware configuration, lifespan management, application factory patterns, and testing integration.
+      - id: architectural-patterns-fastapi.apply-when
+        type: guidance
+        text: "Apply when: Wiring layers in FastAPI applications, configuring the application factory, integrating middleware and exception handlers, or setting up dependency injection."

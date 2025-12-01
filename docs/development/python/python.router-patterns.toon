@@ -1,0 +1,129 @@
+doc_id: python-router-patterns
+title: Python Router Patterns
+project: ai-workflow
+version_hint: "2024-2025"
+kind: python_router_standards
+description: Framework-agnostic patterns for route handler structure, service delegation, and error handling in HTTP handlers.
+scope: Covers thin handler principles, service layer delegation, handler responsibilities, error handling patterns, and anti-patterns. FastAPI-specific APIRouter and dependency injection is in docs/development/fastapi/router-patterns.toon.
+primary_runtime_references[2]:
+  - path: app/services/example_service.py
+    role: Service implementation example for handler delegation.
+  - path: app/core/errors.py
+    role: Domain error definitions raised by services.
+related_pattern_docs[4]:
+  - fastapi/router-patterns.toon
+  - python/api-patterns.toon
+  - python/exception-patterns.toon
+  - python/service-patterns.toon
+sections[5]:
+  - id: handler-structure-principles
+    index: 1
+    title: Handler structure principles
+    category: standard
+    summary: Route handlers should be thin, focusing on validation, service calls, and response returns.
+    items[4]:
+      - id: handler.thin
+        type: rule
+        text: Keep route handlers thin; they should only validate input, call services, and return responses.
+      - id: handler.no-business-logic
+        type: rule
+        text: Do not implement business logic in handlers; delegate all processing to the service layer.
+      - id: handler.validation
+        type: rule
+        text: Let the framework and Pydantic models handle input validation automatically via type hints and models.
+      - id: handler.return-models
+        type: rule
+        text: Return Pydantic models from handlers; let the framework handle serialization.
+  - id: service-delegation-pattern
+    index: 2
+    title: Service delegation pattern
+    category: standard
+    summary: Delegate business logic to service layer methods rather than implementing logic in handlers.
+    sample_code:
+      description: Generic handler pattern showing service delegation.
+      imports[2]: typing.Annotated,app.services.item_service.ItemService
+      code: |
+        async def get_item(item_id: int, service: ItemService) -> ItemResponse:
+            """Retrieve an item by ID.
+
+            Args:
+                item_id: The unique identifier of the item.
+                service: The item service for business logic.
+
+            Returns:
+                ItemResponse: The item details.
+            """
+            return await service.get_item(item_id)
+    items[4]:
+      - id: delegation.call-service
+        type: rule
+        text: Call the appropriate service layer method for all business logic; handlers orchestrate but do not implement domain rules.
+      - id: delegation.pass-validated-input
+        type: pattern
+        text: Pass validated input from the framework directly to service methods without additional transformation in the handler.
+      - id: delegation.return-service-result
+        type: pattern
+        text: Return the result from service methods directly; the framework will serialize response models automatically.
+      - id: delegation.no-db-access
+        type: rule
+        text: Handlers must not access databases or repositories directly; all data access goes through services.
+  - id: handler-responsibilities
+    index: 3
+    title: Handler responsibilities
+    category: standard
+    summary: Consolidate handler responsibilities for consistent request processing.
+    items[5]:
+      - id: responsibilities.input-validation
+        type: note
+        text: Input validation is delegated to the framework and Pydantic models; handlers receive pre-validated data.
+      - id: responsibilities.service-invocation
+        type: rule
+        text: Invoke the appropriate service method(s) to fulfill the request.
+      - id: responsibilities.response-construction
+        type: pattern
+        text: Construct and return the response model; the framework handles serialization and status codes.
+      - id: responsibilities.error-propagation
+        type: rule
+        text: Let domain exceptions propagate out of handlers for global exception handlers to translate into HTTP responses.
+      - id: responsibilities.no-http-concerns-in-logic
+        type: rule
+        text: Keep HTTP concerns (status codes, headers, error responses) out of handler logic; rely on framework configuration and global handlers.
+  - id: error-handling-in-handlers
+    index: 4
+    title: Error handling in handlers
+    category: standard
+    summary: Handlers should let services raise domain exceptions and rely on global handlers for HTTP translation.
+    items[4]:
+      - id: errors.domain-exceptions
+        type: rule
+        text: Let the service layer raise specific domain exceptions (e.g., ItemNotFound, DuplicateItem); do not catch and re-wrap them in handlers.
+      - id: errors.global-handlers
+        type: rule
+        text: Rely on global exception handlers to translate domain and infrastructure exceptions into HTTP responses.
+      - id: errors.no-try-except
+        type: rule
+        text: Avoid try/except blocks in handlers unless handling router-specific concerns like authentication or rate limiting.
+      - id: errors.propagation
+        type: pattern
+        text: Allow exceptions to propagate naturally so global handlers can provide consistent error responses across all endpoints.
+  - id: anti-patterns
+    index: 5
+    title: Anti-patterns to avoid
+    category: anti_patterns
+    summary: Common pitfalls that undermine handler design.
+    items[5]:
+      - id: anti.business-logic
+        type: anti_pattern
+        text: Business logic in handlers; do not perform calculations, complex conditionals, or validation rules beyond what Pydantic provides.
+      - id: anti.direct-db
+        type: anti_pattern
+        text: Direct database access; avoid db.execute(...) or repository calls in handlers; use a service.
+      - id: anti.manual-json
+        type: anti_pattern
+        text: Manual JSON response construction; avoid returning dictionaries or constructing responses manually.
+      - id: anti.catching-domain-errors
+        type: anti_pattern
+        text: Catching domain exceptions in handlers and returning ad hoc error responses instead of letting global handlers process them.
+      - id: anti.blocking-code
+        type: anti_pattern
+        text: Blocking code; do not use sync I/O methods in async def handlers or mix heavy synchronous work into async routes without proper offloading.

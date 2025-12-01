@@ -83,7 +83,7 @@ Runs a comprehensive suite of static analysis and security tools.
   `app/schemas/**`), keep imports loaded at runtime and rely on the scoped TCH003 ignore
   already configured.
 
-For docstring linter errors, see `docs/development/docstrings-guide.md`.
+For docstring linter errors, see `docs/development/python/docstrings-guide.toon`.
 
 ## Code Review
 
