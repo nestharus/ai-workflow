@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -298,7 +297,8 @@ source.yml,item-2,original,text2,split.yml,text2-mod
         comp_csv.write_text(comparison_content)
 
         # Create resolution CSV that resolves item-1
-        res_content = """resolution_id,id,source_file,split_file,original_text_hash,split_text_hash,source_file_hash,split_file_hash,resolved_at
+        res_content = """resolution_id,id,source_file,split_file,original_text_hash,\
+split_text_hash,source_file_hash,split_file_hash,resolved_at
 res-1,item-1,source.yml,split.yml,abc,def,ghi,jkl,20240101T120000Z
 """
         res_csv = real_knowledge_path / "resolutions" / "resolved.csv"
@@ -359,7 +359,7 @@ class TestStartMigration:
     """Tests for start_migration function."""
 
     def test_returns_one_for_missing_file(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when original file doesn't exist."""
         fs.create_dir("/knowledge")
@@ -371,7 +371,7 @@ class TestStartMigration:
         assert "not found" in captured.err
 
     def test_returns_one_for_non_file(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when path is not a file."""
         fs.create_dir("/knowledge")
@@ -388,7 +388,7 @@ class TestStartMigrationSuccess:
     """Tests for start_migration success path."""
 
     def test_creates_task_on_success(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should create task and save original on success.
 
@@ -410,7 +410,7 @@ class TestStartMigrationSuccess:
         assert (knowledge_path / "originals").exists()
 
     def test_returns_one_for_file_outside_repo(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when file is outside repo.
 
@@ -433,15 +433,16 @@ class TestStartMigrationSuccess:
 class TestMainStart:
     """Tests for main_start function."""
 
-    def test_handles_exception(self, fs: FakeFilesystem, capsys: pytest.CaptureFixture) -> None:
+    def test_handles_exception(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Should return 1 and print error on exception."""
         # Missing required argument triggers error
-        with patch("sys.argv", ["script", "--original-file"]):
-            with pytest.raises(SystemExit):
-                main_start()
+        with patch("sys.argv", ["script", "--original-file"]), pytest.raises(SystemExit):
+            main_start()
 
     def test_returns_zero_on_success(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 0 on success.
 
@@ -450,21 +451,25 @@ class TestMainStart:
         source_file = tmp_path / "original.test.yml"
         source_file.write_text("content")
 
-        with patch.object(migration_manager, "REPO_ROOT", tmp_path):
-            with patch(
+        with (
+            patch.object(migration_manager, "REPO_ROOT", tmp_path),
+            patch(
                 "sys.argv",
                 [
                     "script",
-                    "--original-file", str(source_file),
-                    "--knowledge-path", str(tmp_path / ".knowledge"),
+                    "--original-file",
+                    str(source_file),
+                    "--knowledge-path",
+                    str(tmp_path / ".knowledge"),
                 ],
-            ):
-                result = main_start()
+            ),
+        ):
+            result = main_start()
 
         assert result == 0
 
     def test_handles_absolute_knowledge_path(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should handle absolute knowledge path.
 
@@ -474,16 +479,20 @@ class TestMainStart:
         source_file.write_text("content")
         abs_knowledge = tmp_path / "custom_knowledge"
 
-        with patch.object(migration_manager, "REPO_ROOT", tmp_path):
-            with patch(
+        with (
+            patch.object(migration_manager, "REPO_ROOT", tmp_path),
+            patch(
                 "sys.argv",
                 [
                     "script",
-                    "--original-file", str(source_file),
-                    "--knowledge-path", str(abs_knowledge),
+                    "--original-file",
+                    str(source_file),
+                    "--knowledge-path",
+                    str(abs_knowledge),
                 ],
-            ):
-                result = main_start()
+            ),
+        ):
+            result = main_start()
 
         assert result == 0
         assert abs_knowledge.exists()
@@ -493,7 +502,7 @@ class TestValidateMigration:
     """Tests for validate_migration function."""
 
     def test_returns_one_for_missing_task(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when task not found.
 
@@ -512,7 +521,7 @@ class TestValidateMigration:
         assert "not found" in captured.err
 
     def test_returns_zero_for_completed_task(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 0 and skip validation for completed task.
 
@@ -532,7 +541,7 @@ class TestValidateMigration:
         assert "already completed" in captured.out
 
     def test_returns_one_for_missing_original(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when original file is missing.
 
@@ -555,14 +564,13 @@ class TestValidateMigration:
 class TestMainValidate:
     """Tests for main_validate function."""
 
-    def test_handles_exception(self, capsys: pytest.CaptureFixture) -> None:
+    def test_handles_exception(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should return 1 and print error on exception."""
-        with patch("sys.argv", ["script", "--task-id"]):
-            with pytest.raises(SystemExit):
-                main_validate()
+        with patch("sys.argv", ["script", "--task-id"]), pytest.raises(SystemExit):
+            main_validate()
 
     def test_returns_one_for_missing_task(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when task not found.
 
@@ -574,21 +582,25 @@ class TestMainValidate:
         header = ",".join(CSV_COLUMNS)
         csv_path.write_text(f"{header}\n")
 
-        with patch.object(migration_manager, "REPO_ROOT", tmp_path):
-            with patch(
+        with (
+            patch.object(migration_manager, "REPO_ROOT", tmp_path),
+            patch(
                 "sys.argv",
                 [
                     "script",
-                    "--task-id", "nonexistent",
-                    "--knowledge-path", str(knowledge_path),
+                    "--task-id",
+                    "nonexistent",
+                    "--knowledge-path",
+                    str(knowledge_path),
                 ],
-            ):
-                result = main_validate()
+            ),
+        ):
+            result = main_validate()
 
         assert result == 1
 
     def test_handles_absolute_paths(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should handle absolute knowledge and comparison paths.
 
@@ -602,16 +614,21 @@ class TestMainValidate:
         csv_path.write_text(f"{header}\n{row}\n")
         comparison_path = tmp_path / "custom_docs"
 
-        with patch.object(migration_manager, "REPO_ROOT", tmp_path):
-            with patch(
+        with (
+            patch.object(migration_manager, "REPO_ROOT", tmp_path),
+            patch(
                 "sys.argv",
                 [
                     "script",
-                    "--task-id", "task-1",
-                    "--knowledge-path", str(knowledge_path),
-                    "--comparison-path", str(comparison_path),
+                    "--task-id",
+                    "task-1",
+                    "--knowledge-path",
+                    str(knowledge_path),
+                    "--comparison-path",
+                    str(comparison_path),
                 ],
-            ):
-                result = main_validate()
+            ),
+        ):
+            result = main_validate()
 
         assert result == 0

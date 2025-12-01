@@ -91,8 +91,10 @@ def sample_yaml_file(fake_repo_root: Path, fs: FakeFilesystem, sample_yaml_conte
 def sample_csv_content() -> str:
     """Return sample CSV content for comparison testing."""
     return """source_file,id,origin_type,original_text,split_file,split_text
-docs/original.api-patterns.yml,item-1,original,First item text,docs/python/python.api-patterns.yml,First item text modified
-docs/original.api-patterns.yml,item-2,original,Second item text,docs/python/python.api-patterns.yml,Second item text
+docs/original.api-patterns.yml,item-1,original,First item text,docs/python/\
+python.api-patterns.yml,First item text modified
+docs/original.api-patterns.yml,item-2,original,Second item text,docs/python/\
+python.api-patterns.yml,Second item text
 docs/python/python.api-patterns.yml,item-3,split_only,New item text,,
 """
 

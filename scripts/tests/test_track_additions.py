@@ -186,7 +186,7 @@ target.yml,item-2,original,existing,,
         csv_path = real_knowledge_path / "comparisons" / "test.csv"
         csv_path.write_text(csv_content)
 
-        results, failed = query_split_only_additions(real_knowledge_path)
+        results, _ = query_split_only_additions(real_knowledge_path)
 
         assert "test" in results
         assert len(results["test"]) == 1
@@ -224,12 +224,15 @@ class TestParseValidateArgs:
 
     def test_parses_validation_flags(self) -> None:
         """Should parse validation flag arguments."""
-        args = parse_validate_args([
-            "--id", "add-1",
-            "--validated",
-            "--in-scope",
-            "--meaningful",
-        ])
+        args = parse_validate_args(
+            [
+                "--id",
+                "add-1",
+                "--validated",
+                "--in-scope",
+                "--meaningful",
+            ]
+        )
 
         assert args.validated is True
         assert args.in_scope is True
@@ -240,7 +243,7 @@ class TestTrackAdditionsMain:
     """Tests for track_additions_main function."""
 
     def test_returns_one_for_missing_directory(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when knowledge directory doesn't exist."""
         nonexistent = tmp_path / "nonexistent"
@@ -253,7 +256,7 @@ class TestTrackAdditionsMain:
         assert "not found" in captured.err
 
     def test_returns_zero_when_no_additions_found(
-        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture
+        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 0 with message when no additions found.
 
@@ -277,7 +280,7 @@ class TestValidateAdditionMain:
     """Tests for validate_addition_main function."""
 
     def test_returns_one_for_missing_csv(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when additions CSV doesn't exist."""
         with patch.object(track_additions, "REPO_ROOT", Path("/fake")):
@@ -291,7 +294,7 @@ class TestValidateAdditionMain:
         assert "not found" in captured.err
 
     def test_returns_one_for_missing_addition(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when addition ID not found.
 
@@ -311,7 +314,7 @@ class TestValidateAdditionMain:
         assert "not found" in captured.err
 
     def test_updates_validation_flags(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should update validation flags on success.
 
@@ -365,9 +368,7 @@ class TestIsAlreadyTrackedExtended:
 class TestQuerySplitOnlyAdditionsExtended:
     """Extended tests for query_split_only_additions function."""
 
-    def test_raises_comparison_query_error_when_all_fail(
-        self, tmp_path: Path
-    ) -> None:
+    def test_raises_comparison_query_error_when_all_fail(self, tmp_path: Path) -> None:
         """Should raise ComparisonQueryError when all files fail to query."""
         (tmp_path / "comparisons").mkdir(parents=True)
         # Create invalid CSV that will fail DuckDB parsing
@@ -426,7 +427,7 @@ class TestTrackAdditionsMainExtended:
     """Extended tests for track_additions_main function."""
 
     def test_handles_absolute_knowledge_path(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should handle absolute knowledge path."""
         (tmp_path / "comparisons").mkdir(parents=True)
@@ -441,7 +442,7 @@ source.yml,item-1,original,text,split.yml,text
         assert result == 0
 
     def test_returns_one_for_file_not_found(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when no comparison files found."""
         tmp_path.mkdir(exist_ok=True)
@@ -453,9 +454,7 @@ source.yml,item-1,original,text,split.yml,text
         captured = capsys.readouterr()
         assert "Error" in captured.err
 
-    def test_tracks_new_additions(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
-    ) -> None:
+    def test_tracks_new_additions(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Should track new additions from split_only entries."""
         (tmp_path / "comparisons").mkdir(parents=True)
         (tmp_path / "additions").mkdir(parents=True)
@@ -477,7 +476,7 @@ target.yml,item-2,split_only,more text,,
         assert additions_csv.exists()
 
     def test_skips_already_tracked_additions(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should skip already tracked additions."""
         (tmp_path / "comparisons").mkdir(parents=True)
@@ -502,7 +501,7 @@ target.yml,item-1,split_only,new text,,
         assert "skipped" in captured.out.lower()
 
     def test_warns_about_partial_failures(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should warn when some but not all CSVs fail."""
         (tmp_path / "comparisons").mkdir(parents=True)
@@ -527,7 +526,7 @@ class TestValidateAdditionMainExtended:
     """Extended tests for validate_addition_main function."""
 
     def test_handles_absolute_knowledge_path(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should handle absolute knowledge path."""
         (tmp_path / "additions").mkdir(parents=True)
@@ -537,16 +536,20 @@ class TestValidateAdditionMainExtended:
         csv_path.write_text(f"{header}\n{row}\n")
 
         with patch.object(track_additions, "REPO_ROOT", Path("/different/root")):
-            args = parse_validate_args([
-                "--id", "add-1",
-                "--knowledge-path", str(tmp_path),
-            ])
+            args = parse_validate_args(
+                [
+                    "--id",
+                    "add-1",
+                    "--knowledge-path",
+                    str(tmp_path),
+                ]
+            )
             result = validate_addition_main(args)
 
         assert result == 0
 
     def test_updates_only_validated_flag(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should update only validated flag when specified alone."""
         (tmp_path / ".knowledge" / "additions").mkdir(parents=True)
@@ -564,7 +567,7 @@ class TestValidateAdditionMainExtended:
         assert "validated: true" in captured.out
 
     def test_updates_only_in_scope_flag(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should update only in_scope flag when specified alone."""
         (tmp_path / ".knowledge" / "additions").mkdir(parents=True)
@@ -582,7 +585,7 @@ class TestValidateAdditionMainExtended:
         assert "in_scope: true" in captured.out
 
     def test_updates_only_meaningful_flag(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should update only meaningful flag when specified alone."""
         (tmp_path / ".knowledge" / "additions").mkdir(parents=True)
@@ -600,7 +603,7 @@ class TestValidateAdditionMainExtended:
         assert "meaningful: true" in captured.out
 
     def test_no_update_when_no_flags(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should still succeed when no flags are specified."""
         (tmp_path / ".knowledge" / "additions").mkdir(parents=True)
@@ -620,7 +623,7 @@ class TestTrackAdditionsMainRelativePath:
     """Tests for track_additions_main with relative knowledge path."""
 
     def test_handles_relative_knowledge_path(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should resolve relative knowledge path from REPO_ROOT."""
         (tmp_path / ".knowledge" / "comparisons").mkdir(parents=True)
@@ -637,7 +640,7 @@ source.yml,item-1,original,text,split.yml,text
         assert result == 0
 
     def test_returns_one_for_comparison_query_error(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 and print error on ComparisonQueryError."""
         (tmp_path / ".knowledge" / "comparisons").mkdir(parents=True)
@@ -653,7 +656,7 @@ source.yml,item-1,original,text,split.yml,text
         assert "Error" in captured.err
 
     def test_skips_empty_pattern_additions(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should skip pattern with no additions (0 tracked, 0 skipped)."""
         (tmp_path / "comparisons").mkdir(parents=True)
@@ -676,12 +679,14 @@ class TestMainTrack:
     """Tests for main_track entry point."""
 
     def test_calls_track_additions_main(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should call track_additions_main with parsed args."""
-        with patch("sys.argv", ["script", "--knowledge-path", str(tmp_path)]):
-            with patch.object(track_additions, "REPO_ROOT", tmp_path):
-                result = main_track()
+        with (
+            patch("sys.argv", ["script", "--knowledge-path", str(tmp_path)]),
+            patch.object(track_additions, "REPO_ROOT", tmp_path),
+        ):
+            result = main_track()
 
         # Will return 1 because directory doesn't exist
         assert result == 1
@@ -691,7 +696,7 @@ class TestMainValidate:
     """Tests for main_validate entry point."""
 
     def test_calls_validate_addition_main(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should call validate_addition_main with parsed args."""
         with patch.object(track_additions, "REPO_ROOT", Path("/fake")):

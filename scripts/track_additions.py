@@ -236,11 +236,13 @@ def query_split_only_additions(
             added_text = str(row[2] or "")
 
             if element_id and target_file:
-                additions.append({
-                    "element_id": element_id,
-                    "target_file": target_file,
-                    "added_text": added_text,
-                })
+                additions.append(
+                    {
+                        "element_id": element_id,
+                        "target_file": target_file,
+                        "added_text": added_text,
+                    }
+                )
 
         if additions:
             results_by_pattern[pattern_name] = additions

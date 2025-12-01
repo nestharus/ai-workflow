@@ -128,17 +128,28 @@ class TestParseArgs:
 
     def test_parses_all_arguments(self) -> None:
         """Should parse all arguments correctly."""
-        args = parse_args([
-            "--id", "item-1",
-            "--source-file", "/source.yml",
-            "--target-file", "/target.yml",
-            "--reason", "Restructuring",
-            "--coverage", "Coverage description",
-            "--before-text", "Before sentence",
-            "--after-text-source", "After sentence",
-            "--target-before", "Target before",
-            "--target-after", "Target after",
-        ])
+        args = parse_args(
+            [
+                "--id",
+                "item-1",
+                "--source-file",
+                "/source.yml",
+                "--target-file",
+                "/target.yml",
+                "--reason",
+                "Restructuring",
+                "--coverage",
+                "Coverage description",
+                "--before-text",
+                "Before sentence",
+                "--after-text-source",
+                "After sentence",
+                "--target-before",
+                "Target before",
+                "--target-after",
+                "Target after",
+            ]
+        )
 
         assert args.id == "item-1"
         assert args.source_file == Path("/source.yml")
@@ -148,17 +159,28 @@ class TestParseArgs:
 
     def test_default_knowledge_path(self) -> None:
         """Should default to .knowledge directory."""
-        args = parse_args([
-            "--id", "item-1",
-            "--source-file", "/source.yml",
-            "--target-file", "/target.yml",
-            "--reason", "Reason",
-            "--coverage", "Coverage",
-            "--before-text", "Before",
-            "--after-text-source", "After",
-            "--target-before", "Target before",
-            "--target-after", "Target after",
-        ])
+        args = parse_args(
+            [
+                "--id",
+                "item-1",
+                "--source-file",
+                "/source.yml",
+                "--target-file",
+                "/target.yml",
+                "--reason",
+                "Reason",
+                "--coverage",
+                "Coverage",
+                "--before-text",
+                "Before",
+                "--after-text-source",
+                "After",
+                "--target-before",
+                "Target before",
+                "--target-after",
+                "Target after",
+            ]
+        )
 
         assert args.knowledge_path == Path(".knowledge")
 
@@ -167,7 +189,7 @@ class TestMain:
     """Tests for main function."""
 
     def test_returns_one_for_missing_source(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when source file doesn't exist."""
         with patch.object(movement_tracker, "REPO_ROOT", Path("/fake")):
@@ -177,15 +199,24 @@ class TestMain:
                 "sys.argv",
                 [
                     "script",
-                    "--id", "item-1",
-                    "--source-file", "missing.yml",
-                    "--target-file", "target.yml",
-                    "--reason", "Reason",
-                    "--coverage", "Coverage",
-                    "--before-text", "Before",
-                    "--after-text-source", "After",
-                    "--target-before", "Target before",
-                    "--target-after", "Target after",
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "missing.yml",
+                    "--target-file",
+                    "target.yml",
+                    "--reason",
+                    "Reason",
+                    "--coverage",
+                    "Coverage",
+                    "--before-text",
+                    "Before",
+                    "--after-text-source",
+                    "After",
+                    "--target-before",
+                    "Target before",
+                    "--target-after",
+                    "Target after",
                 ],
             ):
                 result = main()
@@ -195,7 +226,7 @@ class TestMain:
         assert "not found" in captured.err
 
     def test_returns_one_for_missing_target(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when target file doesn't exist."""
         with patch.object(movement_tracker, "REPO_ROOT", Path("/fake")):
@@ -206,15 +237,24 @@ class TestMain:
                 "sys.argv",
                 [
                     "script",
-                    "--id", "item-1",
-                    "--source-file", "source.yml",
-                    "--target-file", "missing.yml",
-                    "--reason", "Reason",
-                    "--coverage", "Coverage",
-                    "--before-text", "Before",
-                    "--after-text-source", "After",
-                    "--target-before", "Target before",
-                    "--target-after", "Target after",
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "source.yml",
+                    "--target-file",
+                    "missing.yml",
+                    "--reason",
+                    "Reason",
+                    "--coverage",
+                    "Coverage",
+                    "--before-text",
+                    "Before",
+                    "--after-text-source",
+                    "After",
+                    "--target-before",
+                    "Target before",
+                    "--target-after",
+                    "Target after",
                 ],
             ):
                 result = main()
@@ -224,7 +264,7 @@ class TestMain:
         assert "not found" in captured.err
 
     def test_returns_zero_on_success(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 0 and print success message.
 
@@ -233,23 +273,34 @@ class TestMain:
         (tmp_path / "source.yml").write_text("content")
         (tmp_path / "target.yml").write_text("content")
 
-        with patch.object(movement_tracker, "REPO_ROOT", tmp_path):
-            with patch(
+        with (
+            patch.object(movement_tracker, "REPO_ROOT", tmp_path),
+            patch(
                 "sys.argv",
                 [
                     "script",
-                    "--id", "item-1",
-                    "--source-file", "source.yml",
-                    "--target-file", "target.yml",
-                    "--reason", "Reason",
-                    "--coverage", "Coverage",
-                    "--before-text", "Before",
-                    "--after-text-source", "After",
-                    "--target-before", "Target before",
-                    "--target-after", "Target after",
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "source.yml",
+                    "--target-file",
+                    "target.yml",
+                    "--reason",
+                    "Reason",
+                    "--coverage",
+                    "Coverage",
+                    "--before-text",
+                    "Before",
+                    "--after-text-source",
+                    "After",
+                    "--target-before",
+                    "Target before",
+                    "--target-after",
+                    "Target after",
                 ],
-            ):
-                result = main()
+            ),
+        ):
+            result = main()
 
         assert result == 0
         captured = capsys.readouterr()

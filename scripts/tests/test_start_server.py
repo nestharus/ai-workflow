@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -35,9 +33,6 @@ from scripts.start_server import (
     parse_args,
     perform_health_check,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 class TestHealthCheckStatusError:
@@ -114,7 +109,7 @@ class TestFormatHealthProbeHost:
 
     def test_normalizes_all_interfaces_ipv4(self) -> None:
         """Should normalize 0.0.0.0 to 127.0.0.1."""
-        assert _format_health_probe_host("0.0.0.0") == "127.0.0.1"
+        assert _format_health_probe_host("0.0.0.0") == "127.0.0.1"  # noqa: S104
 
     def test_normalizes_all_interfaces_ipv6(self) -> None:
         """Should normalize :: to ::1."""
@@ -159,7 +154,7 @@ class TestResolveHost:
         """Should fall back to default host."""
         args = MagicMock()
         args.host = None
-        env = {}
+        env: dict[str, str] = {}
 
         result = _resolve_host(args, env)
 
@@ -169,7 +164,7 @@ class TestResolveHost:
         """Should exit if host contains port (not IPv6)."""
         args = MagicMock()
         args.host = "localhost:8000"
-        env = {}
+        env: dict[str, str] = {}
 
         with pytest.raises(SystemExit):
             _resolve_host(args, env)
@@ -202,7 +197,7 @@ class TestResolvePort:
         """Should fall back to default port."""
         args = MagicMock()
         args.port = None
-        env = {}
+        env: dict[str, str] = {}
 
         result = _resolve_port(args, env)
 
@@ -221,7 +216,7 @@ class TestResolvePort:
         """Should exit for port outside valid range."""
         args = MagicMock()
         args.port = 0
-        env = {}
+        env: dict[str, str] = {}
 
         with pytest.raises(SystemExit):
             _resolve_port(args, env)
@@ -270,8 +265,8 @@ class TestBuildParser:
     def test_has_host_argument(self) -> None:
         """Should have --host argument."""
         parser = build_parser()
-        args = parser.parse_args(["--host", "0.0.0.0"])
-        assert args.host == "0.0.0.0"
+        args = parser.parse_args(["--host", "0.0.0.0"])  # noqa: S104
+        assert args.host == "0.0.0.0"  # noqa: S104
 
     def test_has_port_argument(self) -> None:
         """Should have --port argument."""
@@ -315,9 +310,11 @@ class TestRequestHealthPayload:
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
 
-        with patch("urllib.request.urlopen", return_value=mock_response):
-            with pytest.raises(HealthCheckStatusError):
-                _request_health_payload("http://localhost:8000/health")
+        with (
+            patch("urllib.request.urlopen", return_value=mock_response),
+            pytest.raises(HealthCheckStatusError),
+        ):
+            _request_health_payload("http://localhost:8000/health")
 
     def test_raises_for_non_object_payload(self) -> None:
         """Should raise HealthPayloadTypeError for non-object payload."""
@@ -327,9 +324,11 @@ class TestRequestHealthPayload:
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
 
-        with patch("urllib.request.urlopen", return_value=mock_response):
-            with pytest.raises(HealthPayloadTypeError):
-                _request_health_payload("http://localhost:8000/health")
+        with (
+            patch("urllib.request.urlopen", return_value=mock_response),
+            pytest.raises(HealthPayloadTypeError),
+        ):
+            _request_health_payload("http://localhost:8000/health")
 
     def test_returns_payload_on_success(self) -> None:
         """Should return payload dict on success."""
@@ -408,7 +407,7 @@ class TestEnsureProcessRunning:
         # Should not raise
         _ensure_process_running(mock_process)
 
-    def test_exits_if_process_exited(self, capsys: pytest.CaptureFixture) -> None:
+    def test_exits_if_process_exited(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should exit if process has exited."""
         mock_process = MagicMock()
         mock_process.poll.return_value = 1  # Exited with code 1
@@ -433,7 +432,7 @@ class TestHandleProbeError:
         mock_sleep.assert_called_once()
         mock_process.terminate.assert_not_called()
 
-    def test_exits_on_final_attempt(self, capsys: pytest.CaptureFixture) -> None:
+    def test_exits_on_final_attempt(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should exit on final attempt."""
         mock_process = MagicMock()
         mock_process.poll.side_effect = [None, 0]
@@ -455,7 +454,7 @@ class TestHandleUnexpectedPayload:
 
         mock_sleep.assert_called_once()
 
-    def test_exits_on_final_attempt(self, capsys: pytest.CaptureFixture) -> None:
+    def test_exits_on_final_attempt(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should exit on final attempt."""
         mock_process = MagicMock()
         mock_process.poll.side_effect = [None, 0]
@@ -476,17 +475,21 @@ class TestLaunchUvicorn:
         mock_popen_class.assert_called_once()
         assert result == mock_popen
 
-    def test_exits_for_file_not_found(self, capsys: pytest.CaptureFixture) -> None:
+    def test_exits_for_file_not_found(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should exit when uvicorn not found."""
-        with patch("subprocess.Popen", side_effect=FileNotFoundError("uvicorn")):
-            with pytest.raises(SystemExit):
-                _launch_uvicorn(["uvicorn", "app:main"], {})
+        with (
+            patch("subprocess.Popen", side_effect=FileNotFoundError("uvicorn")),
+            pytest.raises(SystemExit),
+        ):
+            _launch_uvicorn(["uvicorn", "app:main"], {})
 
-    def test_exits_for_os_error(self, capsys: pytest.CaptureFixture) -> None:
+    def test_exits_for_os_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should exit on OS error."""
-        with patch("subprocess.Popen", side_effect=OSError("Permission denied")):
-            with pytest.raises(SystemExit):
-                _launch_uvicorn(["uvicorn", "app:main"], {})
+        with (
+            patch("subprocess.Popen", side_effect=OSError("Permission denied")),
+            pytest.raises(SystemExit),
+        ):
+            _launch_uvicorn(["uvicorn", "app:main"], {})
 
 
 class TestWaitForProcess:
@@ -518,7 +521,7 @@ class TestWaitForProcess:
 class TestPerformHealthCheck:
     """Tests for perform_health_check function."""
 
-    def test_succeeds_on_healthy_response(self, capsys: pytest.CaptureFixture) -> None:
+    def test_succeeds_on_healthy_response(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should succeed when health endpoint returns ok."""
         mock_process = MagicMock()
         mock_process.poll.return_value = None  # Running
@@ -529,14 +532,13 @@ class TestPerformHealthCheck:
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
 
-        with patch("time.sleep"):
-            with patch("urllib.request.urlopen", return_value=mock_response):
-                perform_health_check("127.0.0.1", 8000, mock_process)
+        with patch("time.sleep"), patch("urllib.request.urlopen", return_value=mock_response):
+            perform_health_check("127.0.0.1", 8000, mock_process)
 
         captured = capsys.readouterr()
         assert "healthy" in captured.out
 
-    def test_retries_on_error(self, capsys: pytest.CaptureFixture) -> None:
+    def test_retries_on_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should retry on connection errors."""
         mock_process = MagicMock()
         mock_process.poll.return_value = None  # Running
@@ -547,14 +549,16 @@ class TestPerformHealthCheck:
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
 
-        with patch("time.sleep"):
-            with patch(
+        with (
+            patch("time.sleep"),
+            patch(
                 "urllib.request.urlopen",
                 side_effect=[OSError("Connection refused"), mock_response],
-            ):
-                perform_health_check("127.0.0.1", 8000, mock_process)
+            ),
+        ):
+            perform_health_check("127.0.0.1", 8000, mock_process)
 
-    def test_handles_unexpected_payload(self, capsys: pytest.CaptureFixture) -> None:
+    def test_handles_unexpected_payload(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should handle unexpected status in payload."""
         mock_process = MagicMock()
         mock_process.poll.return_value = None  # Running
@@ -571,12 +575,14 @@ class TestPerformHealthCheck:
         mock_response_ok.__enter__ = MagicMock(return_value=mock_response_ok)
         mock_response_ok.__exit__ = MagicMock(return_value=False)
 
-        with patch("time.sleep"):
-            with patch(
+        with (
+            patch("time.sleep"),
+            patch(
                 "urllib.request.urlopen",
                 side_effect=[mock_response_bad, mock_response_ok],
-            ):
-                perform_health_check("127.0.0.1", 8000, mock_process)
+            ),
+        ):
+            perform_health_check("127.0.0.1", 8000, mock_process)
 
 
 class TestFormatHealthProbeHostNonIpv6Colon:
@@ -608,7 +614,6 @@ class TestInstallSignalHandlers:
 
     def test_installs_sigint_handler(self) -> None:
         """Should install SIGINT handler."""
-        import signal
 
         mock_process = MagicMock()
 
@@ -626,7 +631,7 @@ class TestInstallSignalHandlers:
         mock_process.poll.return_value = None  # Running
 
         # Capture the handler
-        handlers = {}
+        handlers: dict[int, object] = {}
 
         def capture_handler(signum: int, handler: object) -> None:
             handlers[signum] = handler
@@ -635,7 +640,8 @@ class TestInstallSignalHandlers:
             _install_signal_handlers(mock_process)
 
         # Call the handler
-        handlers[signal.SIGINT](signal.SIGINT, None)
+        assert callable(handlers[signal.SIGINT])
+        handlers[signal.SIGINT](signal.SIGINT, None)  # type: ignore[operator]
 
         mock_process.send_signal.assert_called_once_with(signal.SIGINT)
 
@@ -646,7 +652,7 @@ class TestInstallSignalHandlers:
         mock_process = MagicMock()
         mock_process.poll.return_value = 0  # Exited
 
-        handlers = {}
+        handlers: dict[int, object] = {}
 
         def capture_handler(signum: int, handler: object) -> None:
             handlers[signum] = handler
@@ -654,7 +660,8 @@ class TestInstallSignalHandlers:
         with patch("signal.signal", side_effect=capture_handler):
             _install_signal_handlers(mock_process)
 
-        handlers[signal.SIGINT](signal.SIGINT, None)
+        assert callable(handlers[signal.SIGINT])
+        handlers[signal.SIGINT](signal.SIGINT, None)  # type: ignore[operator]
 
         mock_process.send_signal.assert_not_called()
 
@@ -674,12 +681,14 @@ class TestMain:
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
 
-        with patch("subprocess.Popen", return_value=mock_process):
-            with patch("signal.signal"):
-                with patch("time.sleep"):
-                    with patch("urllib.request.urlopen", return_value=mock_response):
-                        with pytest.raises(SystemExit) as exc_info:
-                            main([])
+        with (
+            patch("subprocess.Popen", return_value=mock_process),
+            patch("signal.signal"),
+            patch("time.sleep"),
+            patch("urllib.request.urlopen", return_value=mock_response),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main([])
 
         assert exc_info.value.code == 0
 
@@ -689,11 +698,13 @@ class TestMain:
         mock_process.poll.return_value = 0
         mock_process.wait.return_value = 0
 
-        with patch("subprocess.Popen", return_value=mock_process):
-            with patch("signal.signal"):
-                with patch("urllib.request.urlopen") as mock_urlopen:
-                    with pytest.raises(SystemExit):
-                        main(["--skip-health-check"])
+        with (
+            patch("subprocess.Popen", return_value=mock_process),
+            patch("signal.signal"),
+            patch("urllib.request.urlopen") as mock_urlopen,
+            pytest.raises(SystemExit),
+        ):
+            main(["--skip-health-check"])
 
         # Health check should not have been called
         mock_urlopen.assert_not_called()
@@ -704,9 +715,11 @@ class TestMain:
         mock_process.poll.return_value = 42
         mock_process.wait.return_value = 42
 
-        with patch("subprocess.Popen", return_value=mock_process):
-            with patch("signal.signal"):
-                with pytest.raises(SystemExit) as exc_info:
-                    main(["--skip-health-check"])
+        with (
+            patch("subprocess.Popen", return_value=mock_process),
+            patch("signal.signal"),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main(["--skip-health-check"])
 
         assert exc_info.value.code == 42

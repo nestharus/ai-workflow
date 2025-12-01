@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -63,9 +62,8 @@ class TestRunCommandWithTee:
         mock_process.stdout = mock_stdout
         mock_process.wait.return_value = 0
 
-        with patch("subprocess.Popen", return_value=mock_process):
-            with patch("sys.stdout.write"):
-                result = run_command_with_tee(["echo", "test"], output_path)
+        with patch("subprocess.Popen", return_value=mock_process), patch("sys.stdout.write"):
+            result = run_command_with_tee(["echo", "test"], output_path)
 
         assert result == 0
 
@@ -94,9 +92,11 @@ class TestRunCommandWithTee:
         mock_process = MagicMock()
         mock_process.stdout = None
 
-        with patch("subprocess.Popen", return_value=mock_process):
-            with pytest.raises(StdoutCaptureError):
-                run_command_with_tee(["echo", "test"], output_path)
+        with (
+            patch("subprocess.Popen", return_value=mock_process),
+            pytest.raises(StdoutCaptureError),
+        ):
+            run_command_with_tee(["echo", "test"], output_path)
 
         mock_process.kill.assert_called_once()
 

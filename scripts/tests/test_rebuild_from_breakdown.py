@@ -10,6 +10,7 @@ import pytest
 
 from scripts import rebuild_from_breakdown
 from scripts.rebuild_from_breakdown import (
+    ClassificationEntry,
     load_variants_file,
     main,
     merge_variants,
@@ -103,7 +104,7 @@ class TestParseBreakdownTable:
         assert "http_defaults" in result
 
     def test_warns_on_malformed_rows(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should warn on rows with too few columns."""
         content = """
@@ -189,7 +190,7 @@ item-1:
         assert result["item-1"]["project_text"] == "Project version"
 
     def test_returns_empty_for_invalid_yaml(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return empty dict on invalid YAML."""
         fs.create_file("/variants.yml", contents="invalid: yaml: content:")
@@ -233,10 +234,14 @@ class TestMergeVariants:
             "item-1": {"classification": "MIXED→split", "general_text": None, "project_text": None}
         }
         variants = {
-            "item-1": {"classification": "MIXED→split", "general_text": "Gen", "project_text": "Proj"}
+            "item-1": {
+                "classification": "MIXED→split",
+                "general_text": "Gen",
+                "project_text": "Proj",
+            }
         }
 
-        result = merge_variants(classifications, variants)
+        result = merge_variants(classifications, variants)  # type: ignore[arg-type]
 
         assert result["item-1"]["general_text"] == "Gen"
         assert result["item-1"]["project_text"] == "Proj"
@@ -248,20 +253,20 @@ class TestRebuildFile:
     def test_sets_general_doc_id(self) -> None:
         """Should set general doc_id for GENERAL target."""
         data = {"doc_id": "project.api-patterns", "sections": []}
-        classifications: dict = {}
+        classifications: dict[str, ClassificationEntry] = {}
 
-        result = rebuild_file(data, classifications, "GENERAL", Path("general.yml"))
+        result = rebuild_file(data, classifications, "GENERAL", Path("general.yml"))  # type: ignore[arg-type]
 
-        assert "general" in result["doc_id"]
+        assert "general" in result["doc_id"]  # type: ignore[operator]
 
     def test_sets_project_doc_id(self) -> None:
         """Should set project doc_id for PROJECT target."""
         data = {"doc_id": "general.api-patterns", "sections": []}
-        classifications: dict = {}
+        classifications: dict[str, ClassificationEntry] = {}
 
-        result = rebuild_file(data, classifications, "PROJECT", Path("project.yml"))
+        result = rebuild_file(data, classifications, "PROJECT", Path("project.yml"))  # type: ignore[arg-type]
 
-        assert "project" in result["doc_id"]
+        assert "project" in result["doc_id"]  # type: ignore[operator]
 
     def test_excludes_parked_items(self) -> None:
         """Should exclude items classified as PARK."""
@@ -273,22 +278,22 @@ class TestRebuildFile:
                     "items": [
                         {"id": "item-1", "text": "Keep this"},
                         {"id": "item-2", "text": "Park this"},
-                    ]
+                    ],
                 }
-            ]
+            ],
         }
         # Classifications use ClassificationEntry dict structure
         classifications = {
             "item-2": {"classification": "PARK", "general_text": None, "project_text": None}
         }
 
-        result = rebuild_file(data, classifications, "GENERAL", Path("general.yml"))
+        result = rebuild_file(data, classifications, "GENERAL", Path("general.yml"))  # type: ignore[arg-type]
 
         # The structure should not include item-2
         if "sections" in result:
-            for section in result["sections"]:
-                if "items" in section:
-                    ids = [item["id"] for item in section["items"]]
+            for section in result["sections"]:  # type: ignore[union-attr]
+                if "items" in section:  # type: ignore[operator]
+                    ids = [item["id"] for item in section["items"]]  # type: ignore[union-attr,index,call-overload]
                     assert "item-2" not in ids
 
 
@@ -300,7 +305,7 @@ class TestWriteYamlFile:
         data = {"key": "value", "list": [1, 2, 3]}
         output_path = Path("/output/test.yml")
 
-        write_yaml_file(data, output_path)
+        write_yaml_file(data, output_path)  # type: ignore[arg-type]
 
         assert output_path.exists()
         content = output_path.read_text()
@@ -311,7 +316,7 @@ class TestWriteYamlFile:
         data = {"key": "value"}
         output_path = Path("/nested/deep/path/test.yml")
 
-        write_yaml_file(data, output_path)
+        write_yaml_file(data, output_path)  # type: ignore[arg-type]
 
         assert output_path.parent.exists()
 
@@ -326,12 +331,18 @@ class TestParseArgs:
 
     def test_parses_all_arguments(self) -> None:
         """Should parse all arguments correctly."""
-        args = parse_args([
-            "--breakdown-table", "/table.md",
-            "--original-file", "/original.yml",
-            "--general-output", "/general.yml",
-            "--project-output", "/project.yml",
-        ])
+        args = parse_args(
+            [
+                "--breakdown-table",
+                "/table.md",
+                "--original-file",
+                "/original.yml",
+                "--general-output",
+                "/general.yml",
+                "--project-output",
+                "/project.yml",
+            ]
+        )
 
         assert args.breakdown_table == Path("/table.md")
         assert args.original_file == Path("/original.yml")
@@ -343,7 +354,7 @@ class TestMain:
     """Tests for main function."""
 
     def test_returns_one_for_missing_breakdown(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when breakdown table doesn't exist."""
         with patch.object(rebuild_from_breakdown, "REPO_ROOT", Path("/fake")):
@@ -353,10 +364,14 @@ class TestMain:
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "missing.md",
-                    "--original-file", "original.yml",
-                    "--general-output", "general.yml",
-                    "--project-output", "project.yml",
+                    "--breakdown-table",
+                    "missing.md",
+                    "--original-file",
+                    "original.yml",
+                    "--general-output",
+                    "general.yml",
+                    "--project-output",
+                    "project.yml",
                 ],
             ):
                 result = main()
@@ -366,21 +381,27 @@ class TestMain:
         assert "not found" in captured.err
 
     def test_returns_one_for_missing_original(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when original file doesn't exist."""
         with patch.object(rebuild_from_breakdown, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake")
-            fs.create_file("/fake/table.md", contents="| ID | Summary | Classification | Rationale | Target |")
+            fs.create_file(
+                "/fake/table.md", contents="| ID | Summary | Classification | Rationale | Target |"
+            )
 
             with patch(
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "table.md",
-                    "--original-file", "missing.yml",
-                    "--general-output", "general.yml",
-                    "--project-output", "project.yml",
+                    "--breakdown-table",
+                    "table.md",
+                    "--original-file",
+                    "missing.yml",
+                    "--general-output",
+                    "general.yml",
+                    "--project-output",
+                    "project.yml",
                 ],
             ):
                 result = main()
@@ -390,7 +411,7 @@ class TestMain:
         assert "not found" in captured.err
 
     def test_returns_zero_on_success(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 0 and generate files on success."""
         with patch.object(rebuild_from_breakdown, "REPO_ROOT", Path("/fake")):
@@ -417,10 +438,14 @@ sections:
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "table.md",
-                    "--original-file", "original.yml",
-                    "--general-output", "general.yml",
-                    "--project-output", "project.yml",
+                    "--breakdown-table",
+                    "table.md",
+                    "--original-file",
+                    "original.yml",
+                    "--general-output",
+                    "general.yml",
+                    "--project-output",
+                    "project.yml",
                 ],
             ):
                 result = main()
@@ -431,7 +456,7 @@ sections:
         assert "Wrote PROJECT file" in captured.out
 
     def test_handles_absolute_paths(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should handle absolute paths for all arguments."""
         with patch.object(rebuild_from_breakdown, "REPO_ROOT", Path("/fake")):
@@ -455,10 +480,14 @@ sections: []
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "/abs_path/table.md",
-                    "--original-file", "/abs_path/original.yml",
-                    "--general-output", "/abs_path/general.yml",
-                    "--project-output", "/abs_path/project.yml",
+                    "--breakdown-table",
+                    "/abs_path/table.md",
+                    "--original-file",
+                    "/abs_path/original.yml",
+                    "--general-output",
+                    "/abs_path/general.yml",
+                    "--project-output",
+                    "/abs_path/project.yml",
                 ],
             ):
                 result = main()
@@ -466,7 +495,7 @@ sections: []
         assert result == 0
 
     def test_warns_on_empty_classifications(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should warn when no classifications found."""
         with patch.object(rebuild_from_breakdown, "REPO_ROOT", Path("/fake")):
@@ -489,10 +518,14 @@ sections: []
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "table.md",
-                    "--original-file", "original.yml",
-                    "--general-output", "general.yml",
-                    "--project-output", "project.yml",
+                    "--breakdown-table",
+                    "table.md",
+                    "--original-file",
+                    "original.yml",
+                    "--general-output",
+                    "general.yml",
+                    "--project-output",
+                    "project.yml",
                 ],
             ):
                 result = main()
@@ -502,7 +535,7 @@ sections: []
         assert "No classifications found" in captured.err
 
     def test_loads_variants_file(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should load and merge variants file."""
         with patch.object(rebuild_from_breakdown, "REPO_ROOT", Path("/fake")):
@@ -536,11 +569,16 @@ item-1:
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "table.md",
-                    "--original-file", "original.yml",
-                    "--general-output", "general.yml",
-                    "--project-output", "project.yml",
-                    "--variants-file", "variants.yml",
+                    "--breakdown-table",
+                    "table.md",
+                    "--original-file",
+                    "original.yml",
+                    "--general-output",
+                    "general.yml",
+                    "--project-output",
+                    "project.yml",
+                    "--variants-file",
+                    "variants.yml",
                 ],
             ):
                 result = main()
@@ -551,7 +589,7 @@ item-1:
         assert "explicit text variant" in captured.out
 
     def test_returns_one_for_yaml_error(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when YAML parsing fails."""
         with patch.object(rebuild_from_breakdown, "REPO_ROOT", Path("/fake")):
@@ -569,10 +607,14 @@ item-1:
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "table.md",
-                    "--original-file", "original.yml",
-                    "--general-output", "general.yml",
-                    "--project-output", "project.yml",
+                    "--breakdown-table",
+                    "table.md",
+                    "--original-file",
+                    "original.yml",
+                    "--general-output",
+                    "general.yml",
+                    "--project-output",
+                    "project.yml",
                 ],
             ):
                 result = main()
@@ -582,7 +624,7 @@ item-1:
         assert "Error parsing YAML" in captured.err
 
     def test_returns_one_for_non_dict_yaml(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when YAML is not a dictionary."""
         with patch.object(rebuild_from_breakdown, "REPO_ROOT", Path("/fake")):
@@ -600,10 +642,14 @@ item-1:
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "table.md",
-                    "--original-file", "original.yml",
-                    "--general-output", "general.yml",
-                    "--project-output", "project.yml",
+                    "--breakdown-table",
+                    "table.md",
+                    "--original-file",
+                    "original.yml",
+                    "--general-output",
+                    "general.yml",
+                    "--project-output",
+                    "project.yml",
                 ],
             ):
                 result = main()

@@ -50,6 +50,7 @@ class ClassificationEntry(TypedDict, total=False):
     general_text: str | None  # Explicit GENERAL text variant for MIXED→split
     project_text: str | None  # Explicit PROJECT text variant for MIXED→split
 
+
 # PROJECT-related patterns to strip from GENERAL text
 PROJECT_PATTERNS = [
     r"\s*in\s+app/[^\s,;.]+",
@@ -147,8 +148,10 @@ def parse_breakdown_table(table_path: Path) -> dict[str, ClassificationEntry]:
     """Parse markdown table to extract classifications and optional text variants per ID.
 
     Supports two table formats:
-    1. Basic (5 columns): | ID | Original Text Summary | Classification | Rationale | Target |
-    2. Extended (7 columns): | ID | Original Text | Classification | Rationale | Target | GENERAL Text | PROJECT Text |
+    1. Basic (5 columns): | ID | Original Text Summary | Classification | Rationale |
+       Target |
+    2. Extended (7 columns): | ID | Original Text | Classification | Rationale |
+       Target | GENERAL Text | PROJECT Text |
 
     Uses tolerant parsing that splits on `|` rather than strict regex matching.
 
@@ -232,8 +235,8 @@ def parse_breakdown_table(table_path: Path) -> dict[str, ClassificationEntry]:
         }
 
         # Check for extended format with explicit text variants
-        general_text_idx = header_indices.get("GENERAL TEXT", None)
-        project_text_idx = header_indices.get("PROJECT TEXT", None)
+        general_text_idx = header_indices.get("GENERAL TEXT")
+        project_text_idx = header_indices.get("PROJECT TEXT")
 
         if general_text_idx is not None and general_text_idx < len(columns):
             general_text = columns[general_text_idx].strip()
@@ -419,7 +422,7 @@ def _process_item(
                 # Fallback: strip PROJECT references from text fields
                 for field in ("text", "description", "summary"):
                     if field in processed and isinstance(processed[field], str):
-                        processed[field] = strip_project_refs(processed[field])
+                        processed[field] = strip_project_refs(processed[field])  # type: ignore[arg-type]
 
         elif target == "PROJECT":
             # Use explicit PROJECT variant if available
@@ -481,7 +484,7 @@ def _process_section(
         if key == "items" and isinstance(value, list):
             processed_items = _process_items_list(value, classifications, target)
             if processed_items:
-                result[key] = processed_items
+                result[key] = processed_items  # type: ignore[assignment]
         elif key in ("id", "title", "description", "summary"):
             result[key] = value
         else:
@@ -497,7 +500,7 @@ def _process_section(
             result[key] = value
 
     # Only return section if it has items or is meaningful
-    if "items" in result and result["items"]:
+    if result.get("items"):
         return result
     if not any(key for key in result if key not in ("id", "title", "description", "summary")):
         return None
@@ -566,7 +569,7 @@ def rebuild_file(
                 if processed is not None:
                     processed_sections.append(processed)
         if processed_sections:
-            result["sections"] = processed_sections
+            result["sections"] = processed_sections  # type: ignore[assignment]
 
     # Copy other top-level fields that aren't sections or metadata
     for key, value in original_data.items():
@@ -664,7 +667,8 @@ def main() -> int:
 
     # Count explicit variants
     explicit_variant_count = sum(
-        1 for entry in classifications.values()
+        1
+        for entry in classifications.values()
         if entry.get("general_text") or entry.get("project_text")
     )
     if explicit_variant_count > 0:
@@ -693,23 +697,23 @@ def main() -> int:
 
     # Summary
     general_count = sum(
-        1 for entry in classifications.values()
+        1
+        for entry in classifications.values()
         if entry.get("classification") in ("GENERAL", "MIXED→split")
     )
     project_count = sum(
-        1 for entry in classifications.values()
+        1
+        for entry in classifications.values()
         if entry.get("classification") in ("PROJECT", "MIXED→split")
     )
     mixed_count = sum(
-        1 for entry in classifications.values()
-        if entry.get("classification") == "MIXED→split"
+        1 for entry in classifications.values() if entry.get("classification") == "MIXED→split"
     )
     parked_count = sum(
-        1 for entry in classifications.values()
-        if entry.get("classification") == "PARK"
+        1 for entry in classifications.values() if entry.get("classification") == "PARK"
     )
 
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  GENERAL items: {general_count}")
     print(f"  PROJECT items: {project_count}")
     print(f"  MIXED→split items: {mixed_count}")

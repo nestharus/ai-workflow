@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 import pytest
 
-from scripts import generate_migration_report
 from scripts.generate_migration_report import (
     ReviewItem,
     compute_text_similarity,
@@ -217,7 +216,7 @@ class TestMain:
     """Tests for main function."""
 
     def test_returns_one_for_missing_directory(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when knowledge directory doesn't exist."""
         nonexistent = tmp_path / "nonexistent"
@@ -229,7 +228,7 @@ class TestMain:
         assert "not found" in captured.err
 
     def test_returns_zero_when_no_items_need_review(
-        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture
+        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 0 with message when no items need review.
 
@@ -250,7 +249,7 @@ source.yml,item-1,original,same text,split.yml,same text
         assert "No items requiring review" in captured.out
 
     def test_returns_zero_and_generates_reports(
-        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture
+        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 0 and generate reports on success.
 

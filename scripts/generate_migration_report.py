@@ -152,13 +152,13 @@ def query_non_identical_items(
                 AND c.source_file = r.source_file
                 AND c.split_file = r.split_file
                 WHERE r.id IS NULL
-            """  # noqa: S608
+            """
         else:
             query = f"""
                 WITH comparisons AS ({comparisons_cte})
                 SELECT c.*
                 FROM comparisons c
-            """  # noqa: S608
+            """
 
         result = duckdb.execute(query, params)
         rows = result.fetchall()

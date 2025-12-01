@@ -137,7 +137,9 @@ class TestParseArgs:
 class TestMain:
     """Tests for main function."""
 
-    def test_returns_zero_on_success(self, fs: FakeFilesystem, capsys: pytest.CaptureFixture) -> None:
+    def test_returns_zero_on_success(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Should return 0 and print path on success."""
         fs.create_dir(".review")
         fs.create_file(".review/20240101T120000Z.review.coderabbit", contents="content")
@@ -149,7 +151,7 @@ class TestMain:
         assert "20240101T120000Z.review.coderabbit" in captured.out
 
     def test_returns_one_when_directory_missing(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when directory doesn't exist."""
         result = main(["--type", "coderabbit"])
@@ -159,7 +161,7 @@ class TestMain:
         assert "not found" in captured.out
 
     def test_returns_one_when_no_files(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when no matching files exist."""
         fs.create_dir(".review")

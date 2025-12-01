@@ -6,8 +6,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-import pytest
-
 from scripts import (
     concat_app,
     concat_docs,
@@ -16,11 +14,16 @@ from scripts import (
     concat_tools,
     utils,
 )
-from scripts.concat_app import concatenate_app, main as concat_app_main
-from scripts.concat_docs import concatenate_docs, main as concat_docs_main
-from scripts.concat_scripts import concatenate_scripts, main as concat_scripts_main
-from scripts.concat_tests import concatenate_tests, main as concat_tests_main
-from scripts.concat_tools import concatenate_tools, main as concat_tools_main
+from scripts.concat_app import concatenate_app
+from scripts.concat_app import main as concat_app_main
+from scripts.concat_docs import concatenate_docs
+from scripts.concat_docs import main as concat_docs_main
+from scripts.concat_scripts import concatenate_scripts
+from scripts.concat_scripts import main as concat_scripts_main
+from scripts.concat_tests import concatenate_tests
+from scripts.concat_tests import main as concat_tests_main
+from scripts.concat_tools import concatenate_tools
+from scripts.concat_tools import main as concat_tools_main
 
 if TYPE_CHECKING:
     from pyfakefs.fake_filesystem import FakeFilesystem

@@ -147,12 +147,18 @@ class TestParseArgs:
 
     def test_parses_all_arguments(self) -> None:
         """Should parse all arguments correctly."""
-        args = parse_args([
-            "--breakdown-table", "/table.md",
-            "--original-file", "/original.yml",
-            "--general-file", "/general.yml",
-            "--project-file", "/project.yml",
-        ])
+        args = parse_args(
+            [
+                "--breakdown-table",
+                "/table.md",
+                "--original-file",
+                "/original.yml",
+                "--general-file",
+                "/general.yml",
+                "--project-file",
+                "/project.yml",
+            ]
+        )
 
         assert args.breakdown_table == Path("/table.md")
         assert args.original_file == Path("/original.yml")
@@ -161,12 +167,18 @@ class TestParseArgs:
 
     def test_default_knowledge_path(self) -> None:
         """Should default to .knowledge directory."""
-        args = parse_args([
-            "--breakdown-table", "/table.md",
-            "--original-file", "/original.yml",
-            "--general-file", "/general.yml",
-            "--project-file", "/project.yml",
-        ])
+        args = parse_args(
+            [
+                "--breakdown-table",
+                "/table.md",
+                "--original-file",
+                "/original.yml",
+                "--general-file",
+                "/general.yml",
+                "--project-file",
+                "/project.yml",
+            ]
+        )
 
         assert args.knowledge_path == Path(".knowledge")
 
@@ -175,7 +187,7 @@ class TestMain:
     """Tests for main function."""
 
     def test_returns_one_for_missing_breakdown(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when breakdown table doesn't exist."""
         with patch.object(batch_mark_resolved, "REPO_ROOT", Path("/fake")):
@@ -185,10 +197,14 @@ class TestMain:
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "missing.md",
-                    "--original-file", "original.yml",
-                    "--general-file", "general.yml",
-                    "--project-file", "project.yml",
+                    "--breakdown-table",
+                    "missing.md",
+                    "--original-file",
+                    "original.yml",
+                    "--general-file",
+                    "general.yml",
+                    "--project-file",
+                    "project.yml",
                 ],
             ):
                 result = main()
@@ -198,21 +214,27 @@ class TestMain:
         assert "not found" in captured.err
 
     def test_returns_one_for_missing_original(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when original file doesn't exist."""
         with patch.object(batch_mark_resolved, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake")
-            fs.create_file("/fake/table.md", contents="| ID | Summary | Classification | Rationale | Target |")
+            fs.create_file(
+                "/fake/table.md", contents="| ID | Summary | Classification | Rationale | Target |"
+            )
 
             with patch(
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "table.md",
-                    "--original-file", "missing.yml",
-                    "--general-file", "general.yml",
-                    "--project-file", "project.yml",
+                    "--breakdown-table",
+                    "table.md",
+                    "--original-file",
+                    "missing.yml",
+                    "--general-file",
+                    "general.yml",
+                    "--project-file",
+                    "project.yml",
                 ],
             ):
                 result = main()
@@ -222,7 +244,7 @@ class TestMain:
         assert "not found" in captured.err
 
     def test_returns_zero_when_no_mixed_items(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 0 when no MIXED→split items found."""
         with patch.object(batch_mark_resolved, "REPO_ROOT", Path("/fake")):
@@ -242,10 +264,14 @@ class TestMain:
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "table.md",
-                    "--original-file", "original.yml",
-                    "--general-file", "general.yml",
-                    "--project-file", "project.yml",
+                    "--breakdown-table",
+                    "table.md",
+                    "--original-file",
+                    "original.yml",
+                    "--general-file",
+                    "general.yml",
+                    "--project-file",
+                    "project.yml",
                 ],
             ):
                 result = main()
@@ -255,7 +281,7 @@ class TestMain:
         assert "No MIXED→split items" in captured.out
 
     def test_returns_one_for_missing_general(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when GENERAL file doesn't exist."""
         with patch.object(batch_mark_resolved, "REPO_ROOT", Path("/fake")):
@@ -267,10 +293,14 @@ class TestMain:
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "table.md",
-                    "--original-file", "original.yml",
-                    "--general-file", "missing_general.yml",
-                    "--project-file", "project.yml",
+                    "--breakdown-table",
+                    "table.md",
+                    "--original-file",
+                    "original.yml",
+                    "--general-file",
+                    "missing_general.yml",
+                    "--project-file",
+                    "project.yml",
                 ],
             ):
                 result = main()
@@ -280,7 +310,7 @@ class TestMain:
         assert "GENERAL file not found" in captured.err
 
     def test_returns_one_for_missing_project(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when PROJECT file doesn't exist."""
         with patch.object(batch_mark_resolved, "REPO_ROOT", Path("/fake")):
@@ -293,10 +323,14 @@ class TestMain:
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "table.md",
-                    "--original-file", "original.yml",
-                    "--general-file", "general.yml",
-                    "--project-file", "missing_project.yml",
+                    "--breakdown-table",
+                    "table.md",
+                    "--original-file",
+                    "original.yml",
+                    "--general-file",
+                    "general.yml",
+                    "--project-file",
+                    "missing_project.yml",
                 ],
             ):
                 result = main()
@@ -306,7 +340,7 @@ class TestMain:
         assert "PROJECT file not found" in captured.err
 
     def test_processes_mixed_items_with_success(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should process MIXED→split items and return 0 on all success."""
         with patch.object(batch_mark_resolved, "REPO_ROOT", Path("/fake")):
@@ -330,10 +364,14 @@ class TestMain:
                     "sys.argv",
                     [
                         "script",
-                        "--breakdown-table", "table.md",
-                        "--original-file", "original.yml",
-                        "--general-file", "general.yml",
-                        "--project-file", "project.yml",
+                        "--breakdown-table",
+                        "table.md",
+                        "--original-file",
+                        "original.yml",
+                        "--general-file",
+                        "general.yml",
+                        "--project-file",
+                        "project.yml",
                     ],
                 ):
                     result = main()
@@ -343,7 +381,7 @@ class TestMain:
         assert "Successfully marked" in captured.out
 
     def test_processes_mixed_items_with_failure(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when some items fail."""
         with patch.object(batch_mark_resolved, "REPO_ROOT", Path("/fake")):
@@ -367,10 +405,14 @@ class TestMain:
                     "sys.argv",
                     [
                         "script",
-                        "--breakdown-table", "table.md",
-                        "--original-file", "original.yml",
-                        "--general-file", "general.yml",
-                        "--project-file", "project.yml",
+                        "--breakdown-table",
+                        "table.md",
+                        "--original-file",
+                        "original.yml",
+                        "--general-file",
+                        "general.yml",
+                        "--project-file",
+                        "project.yml",
                     ],
                 ):
                     result = main()
@@ -380,7 +422,7 @@ class TestMain:
         assert "failed" in captured.out.lower()
 
     def test_handles_absolute_paths(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should handle absolute paths without resolving."""
         with patch.object(batch_mark_resolved, "REPO_ROOT", Path("/fake")):
@@ -401,11 +443,16 @@ class TestMain:
                 "sys.argv",
                 [
                     "script",
-                    "--breakdown-table", "/abs/table.md",
-                    "--original-file", "/abs/original.yml",
-                    "--general-file", "/abs/general.yml",
-                    "--project-file", "/abs/project.yml",
-                    "--knowledge-path", "/abs/.knowledge",
+                    "--breakdown-table",
+                    "/abs/table.md",
+                    "--original-file",
+                    "/abs/original.yml",
+                    "--general-file",
+                    "/abs/general.yml",
+                    "--project-file",
+                    "/abs/project.yml",
+                    "--knowledge-path",
+                    "/abs/.knowledge",
                 ],
             ):
                 result = main()
@@ -459,7 +506,7 @@ class TestParseBreakdownTableExtended:
     """Extended tests for parse_breakdown_table function."""
 
     def test_warns_for_malformed_rows(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should warn for rows with wrong column count."""
         content = """
@@ -504,9 +551,7 @@ class TestParseBreakdownTableExtended:
         assert "ID" not in result
         assert "item-1" in result
 
-    def test_handles_short_classification_column(
-        self, fs: FakeFilesystem
-    ) -> None:
+    def test_handles_short_classification_column(self, fs: FakeFilesystem) -> None:
         """Should skip rows where classification column is missing."""
         # Row with 5+ cols but classification index exceeds actual columns
         content = """
@@ -536,7 +581,7 @@ class TestParseBreakdownTableExtended:
         assert "(unclosed" in result
 
     def test_prints_skipped_count(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should print note when rows are skipped."""
         content = """
@@ -567,9 +612,7 @@ class TestParseBreakdownTableExtended:
 
         assert "item-1" not in [r for r in result if r.startswith("#")]
 
-    def test_handles_row_with_missing_classification_column(
-        self, fs: FakeFilesystem
-    ) -> None:
+    def test_handles_row_with_missing_classification_column(self, fs: FakeFilesystem) -> None:
         """Should skip rows where classification column index is out of bounds."""
         # Create a custom header with CLASSIFICATION at index 5
         # but have a data row with fewer columns (but >= 5 to pass len check)

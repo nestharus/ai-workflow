@@ -97,7 +97,7 @@ class TestRunSonar:
             assert exc_info.value.code == 1
 
     def test_returns_output_path(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return output path on success."""
         scripts_dir = Path(__file__).resolve().parent.parent

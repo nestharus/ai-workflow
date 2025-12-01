@@ -19,7 +19,6 @@ from scripts.compare_yaml_docs import (
     _strip_timestamp_prefix,
     _validate_yaml_result,
     aggregate_split_texts,
-    compare_all,
     compare_original_to_splits,
     extract_ids_and_text,
     find_all_yml,
@@ -117,13 +116,13 @@ class TestExtractTextContent:
     def test_extracts_text_field(self) -> None:
         """Should extract text field."""
         element = {"text": "Some text"}
-        result = _extract_text_content(element)
+        result = _extract_text_content(element)  # type: ignore[arg-type]
         assert result == "Some text"
 
     def test_extracts_multiple_fields(self) -> None:
         """Should concatenate multiple text fields."""
         element = {"text": "Text", "description": "Description"}
-        result = _extract_text_content(element)
+        result = _extract_text_content(element)  # type: ignore[arg-type]
         assert "Text" in result
         assert "Description" in result
         assert " | " in result
@@ -131,13 +130,13 @@ class TestExtractTextContent:
     def test_ignores_empty_fields(self) -> None:
         """Should ignore empty or whitespace-only fields."""
         element = {"text": "Valid", "description": "   "}
-        result = _extract_text_content(element)
+        result = _extract_text_content(element)  # type: ignore[arg-type]
         assert result == "Valid"
 
     def test_returns_empty_for_no_text_fields(self) -> None:
         """Should return empty string when no text fields present."""
         element = {"id": "test", "other": "value"}
-        result = _extract_text_content(element)
+        result = _extract_text_content(element)  # type: ignore[arg-type]
         assert result == ""
 
 
@@ -150,7 +149,7 @@ class TestExtractIdsAndText:
             "id": "item-1",
             "text": "Item text",
         }
-        result = extract_ids_and_text(data)
+        result = extract_ids_and_text(data)  # type: ignore[arg-type]
         assert "item-1" in result
         assert result["item-1"] == "Item text"
 
@@ -162,7 +161,7 @@ class TestExtractIdsAndText:
                 "text": "Section text",
             }
         }
-        result = extract_ids_and_text(data)
+        result = extract_ids_and_text(data)  # type: ignore[arg-type]
         assert "section-1" in result
 
     def test_extracts_from_list(self) -> None:
@@ -171,14 +170,14 @@ class TestExtractIdsAndText:
             {"id": "item-1", "text": "Text 1"},
             {"id": "item-2", "text": "Text 2"},
         ]
-        result = extract_ids_and_text(data)
+        result = extract_ids_and_text(data)  # type: ignore[arg-type]
         assert "item-1" in result
         assert "item-2" in result
 
     def test_ignores_non_string_ids(self) -> None:
         """Should ignore non-string ID values."""
         data = {"id": 123, "text": "Text"}
-        result = extract_ids_and_text(data)
+        result = extract_ids_and_text(data)  # type: ignore[arg-type]
         assert len(result) == 0
 
 
@@ -239,7 +238,7 @@ class TestFindOriginals:
         assert result[0].name == "custom.yml"
 
     def test_filters_nonexistent_original_files(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should filter out non-existent provided files with warning."""
         fs.create_dir("/docs")
@@ -413,7 +412,7 @@ class TestWriteCompareFiles:
                 }
             }
 
-            count = write_compare_files(results)
+            count = write_compare_files(results)  # type: ignore[arg-type]
 
             assert count == 1
 
@@ -435,7 +434,7 @@ class TestMain:
     """Tests for main function."""
 
     def test_returns_one_for_invalid_path(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 for non-existent path."""
         nonexistent = tmp_path / "nonexistent"
@@ -447,7 +446,7 @@ class TestMain:
         assert "does not exist" in captured.err
 
     def test_returns_zero_when_no_differences(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 0 when no differences found."""
         # Create docs structure

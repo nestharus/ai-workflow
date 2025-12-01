@@ -30,28 +30,32 @@ from scripts.compare_yaml_docs import (
 from scripts.utils import REPO_ROOT
 
 # Keywords indicating PROJECT classification
-PROJECT_KEYWORDS = frozenset({
-    "app/",
-    "FastAPI",
-    "fastapi",
-    "Pydantic",
-    "pydantic",
-    "create_app",
-    "uvicorn",
-    "ORJSONResponse",
-    "response_model",
-    "include_in_schema",
-    "BaseModel",
-    "ConfigDict",
-    "Field(",
-})
+PROJECT_KEYWORDS = frozenset(
+    {
+        "app/",
+        "FastAPI",
+        "fastapi",
+        "Pydantic",
+        "pydantic",
+        "create_app",
+        "uvicorn",
+        "ORJSONResponse",
+        "response_model",
+        "include_in_schema",
+        "BaseModel",
+        "ConfigDict",
+        "Field(",
+    }
+)
 
 # Keywords indicating PARK classification (structural blocks, code samples)
-PARK_KEYWORDS = frozenset({
-    "sample_code",
-    "type_hints",
-    "code_example",
-})
+PARK_KEYWORDS = frozenset(
+    {
+        "sample_code",
+        "type_hints",
+        "code_example",
+    }
+)
 
 Classification = Literal["GENERAL", "PROJECT", "MIXED→split", "PARK"]
 
@@ -381,9 +385,7 @@ def generate_markdown_table(
     # Header
     lines.append("# ID Breakdown Table")
     lines.append("")
-    lines.append(
-        f"This table classifies EVERY ID and element from the original timestamped file"
-    )
+    lines.append("This table classifies EVERY ID and element from the original timestamped file")
     lines.append(f"`{original_file.as_posix()}`.")
     lines.append("")
 
@@ -392,8 +394,12 @@ def generate_markdown_table(
     lines.append("")
     lines.append("* **GENERAL**: Pure REST/HTTP protocol rules (no lang/framework/app references)")
     lines.append("* **PROJECT**: Concrete wiring with app/* paths, FastAPI/Pydantic specifics")
-    lines.append("* **MIXED→split**: Original text contains both; split into GENERAL rule + PROJECT wiring")
-    lines.append("* **PARK**: Content belongs in another module (e.g., general.python for Pydantic)")
+    lines.append(
+        "* **MIXED→split**: Original text contains both; split into GENERAL rule + PROJECT wiring"
+    )
+    lines.append(
+        "* **PARK**: Content belongs in another module (e.g., general.python for Pydantic)"
+    )
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -440,11 +446,13 @@ def generate_markdown_table(
                 else:  # PARK
                     target = "N/A"
             else:
-                classification = ""
+                classification = ""  # type: ignore[assignment]
                 rationale = ""
                 target = ""
 
-            lines.append(f"| {entry_id} | {text_summary} | {classification} | {rationale} | {target} |")
+            lines.append(
+                f"| {entry_id} | {text_summary} | {classification} | {rationale} | {target} |"
+            )
 
         lines.append("")
         section_num += 1
@@ -459,20 +467,23 @@ def generate_markdown_table(
 
     if auto_classify:
         lines.append(
-            f"| GENERAL only | {counts['GENERAL']} | Pure protocol/principle rules (only in GENERAL) |"
+            f"| GENERAL only | {counts['GENERAL']} | Pure protocol/principle rules "
+            f"(only in GENERAL) |"
         )
         lines.append(
-            f"| PROJECT only | {counts['PROJECT']} | App wiring, FastAPI/Pydantic specifics (only in PROJECT) |"
+            f"| PROJECT only | {counts['PROJECT']} | App wiring, FastAPI/Pydantic "
+            f"specifics (only in PROJECT) |"
         )
         lines.append(
-            f"| MIXED→split | {counts['MIXED→split']} | Split to both files with appropriate text variants |"
+            f"| MIXED→split | {counts['MIXED→split']} | Split to both files with "
+            f"appropriate text variants |"
         )
-        lines.append(
-            f"| PARK | {counts['PARK']} | Structural blocks to be moved elsewhere |"
-        )
+        lines.append(f"| PARK | {counts['PARK']} | Structural blocks to be moved elsewhere |")
     else:
         lines.append("| GENERAL only | - | Pure protocol/principle rules (only in GENERAL) |")
-        lines.append("| PROJECT only | - | App wiring, FastAPI/Pydantic specifics (only in PROJECT) |")
+        lines.append(
+            "| PROJECT only | - | App wiring, FastAPI/Pydantic specifics (only in PROJECT) |"
+        )
         lines.append("| MIXED→split | - | Split to both files with appropriate text variants |")
         lines.append("| PARK | - | Structural blocks to be moved elsewhere |")
 

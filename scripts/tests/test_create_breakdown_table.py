@@ -75,7 +75,7 @@ class TestClassifyId:
             element_type="item",
         )
 
-        classification, rationale = classify_id(entry)
+        classification, _ = classify_id(entry)
 
         assert classification == "GENERAL"
 
@@ -88,7 +88,7 @@ class TestClassifyId:
             element_type="item",
         )
 
-        classification, rationale = classify_id(entry)
+        classification, _ = classify_id(entry)
 
         assert classification == "MIXED→split"
 
@@ -101,7 +101,7 @@ class TestClassifyId:
             element_type="block",
         )
 
-        classification, rationale = classify_id(entry)
+        classification, _ = classify_id(entry)
 
         assert classification == "PARK"
 
@@ -111,14 +111,9 @@ class TestExtractAllIds:
 
     def test_extracts_from_dict_with_id(self) -> None:
         """Should extract ID from dict with id field."""
-        data = {
-            "doc_id": "test",
-            "sections": [
-                {"id": "section-1", "text": "Section text"}
-            ]
-        }
+        data = {"doc_id": "test", "sections": [{"id": "section-1", "text": "Section text"}]}
 
-        entries = extract_all_ids(data)
+        entries = extract_all_ids(data)  # type: ignore[arg-type]
 
         ids = [e["id"] for e in entries]
         assert "section-1" in ids
@@ -132,12 +127,12 @@ class TestExtractAllIds:
                     "items": [
                         {"id": "item-1", "text": "Item 1"},
                         {"id": "item-2", "text": "Item 2"},
-                    ]
+                    ],
                 }
             ]
         }
 
-        entries = extract_all_ids(data)
+        entries = extract_all_ids(data)  # type: ignore[arg-type]
 
         ids = [e["id"] for e in entries]
         assert "item-1" in ids
@@ -150,7 +145,7 @@ class TestExtractAllIds:
             {"id": "item-2", "text": "Text 2"},
         ]
 
-        entries = extract_all_ids(data)
+        entries = extract_all_ids(data)  # type: ignore[arg-type]
 
         ids = [e["id"] for e in entries]
         assert "item-1" in ids
@@ -239,11 +234,15 @@ class TestParseArgs:
 
     def test_parses_all_arguments(self) -> None:
         """Should parse all arguments correctly."""
-        args = parse_args([
-            "--original-file", "/path/to/original.yml",
-            "--output", "/path/to/output.md",
-            "--auto-classify",
-        ])
+        args = parse_args(
+            [
+                "--original-file",
+                "/path/to/original.yml",
+                "--output",
+                "/path/to/output.md",
+                "--auto-classify",
+            ]
+        )
 
         assert args.original_file == Path("/path/to/original.yml")
         assert args.output == Path("/path/to/output.md")
@@ -254,7 +253,7 @@ class TestMain:
     """Tests for main function."""
 
     def test_returns_one_for_missing_file(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when original file doesn't exist."""
         with patch.object(create_breakdown_table, "REPO_ROOT", Path("/fake")):
@@ -271,7 +270,7 @@ class TestMain:
         assert "not found" in captured.err
 
     def test_returns_one_for_non_dict_yaml(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when YAML root is not a dict."""
         with patch.object(create_breakdown_table, "REPO_ROOT", Path("/fake")):
@@ -289,7 +288,7 @@ class TestMain:
         assert "dictionary" in captured.err
 
     def test_returns_zero_on_success(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 0 and generate output on success."""
         with patch.object(create_breakdown_table, "REPO_ROOT", Path("/fake")):
@@ -321,7 +320,7 @@ class TestExtractTextContent:
     def test_extracts_text_from_fields(self) -> None:
         """Should extract text from text fields."""
         element = {"text": "Hello", "description": "World"}
-        result = _extract_text_content(element)
+        result = _extract_text_content(element)  # type: ignore[arg-type]
 
         assert "Hello" in result
         assert "World" in result
@@ -329,7 +328,7 @@ class TestExtractTextContent:
     def test_handles_non_string_values(self) -> None:
         """Should skip non-string values in text fields."""
         element = {"text": 123, "description": "Valid"}
-        result = _extract_text_content(element)
+        result = _extract_text_content(element)  # type: ignore[arg-type]
 
         assert "Valid" in result
         assert "123" not in result
@@ -406,7 +405,7 @@ class TestExtractAllIdsExtended:
             ],
         }
 
-        entries = extract_all_ids(data)
+        entries = extract_all_ids(data)  # type: ignore[arg-type]
         ids = [e["id"] for e in entries]
 
         # Should have synthetic ID for the table
@@ -421,7 +420,7 @@ class TestExtractAllIdsExtended:
             ],
         }
 
-        entries = extract_all_ids(data)
+        entries = extract_all_ids(data)  # type: ignore[arg-type]
         ids = [e["id"] for e in entries]
 
         # Should have explicit ID but no synthetic
@@ -438,7 +437,7 @@ class TestExtractAllIdsExtended:
             },
         }
 
-        entries = extract_all_ids(data)
+        entries = extract_all_ids(data)  # type: ignore[arg-type]
 
         # Find the synthetic entry
         synthetic = [e for e in entries if "config_fields" in e["id"]]
@@ -452,7 +451,7 @@ class TestExtractAllIdsExtended:
             "sample_code": "def hello():\n    print('Hello')\n" * 10,
         }
 
-        entries = extract_all_ids(data)
+        entries = extract_all_ids(data)  # type: ignore[arg-type]
 
         synthetic = [e for e in entries if "sample_code" in e["id"]]
         assert len(synthetic) > 0
@@ -468,10 +467,10 @@ class TestExtractAllIdsExtended:
                     "id": "nested-item",
                     "text": "Nested text",
                 }
-            }
+            },
         }
 
-        entries = extract_all_ids(data)
+        entries = extract_all_ids(data)  # type: ignore[arg-type]
         ids = [e["id"] for e in entries]
 
         assert "nested-item" in ids
@@ -485,7 +484,7 @@ class TestExtractAllIdsExtended:
             ],
         }
 
-        entries = extract_all_ids(data)
+        entries = extract_all_ids(data)  # type: ignore[arg-type]
         ids = [e["id"] for e in entries]
 
         assert "section-1" in ids
@@ -587,7 +586,7 @@ class TestMainExtended:
     """Extended tests for main function."""
 
     def test_handles_absolute_paths(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should handle absolute paths correctly."""
         with patch.object(create_breakdown_table, "REPO_ROOT", Path("/fake")):
@@ -609,7 +608,7 @@ sections:
         assert result == 0
 
     def test_handles_yaml_parse_error(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 on YAML parse error."""
         with patch.object(create_breakdown_table, "REPO_ROOT", Path("/fake")):
@@ -627,7 +626,7 @@ sections:
         assert "Error" in captured.err
 
     def test_warns_for_no_entries(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should warn when no IDs found."""
         with patch.object(create_breakdown_table, "REPO_ROOT", Path("/fake")):
@@ -645,7 +644,7 @@ sections:
         assert "Warning" in captured.err or "No IDs" in captured.err
 
     def test_handles_path_outside_repo_root(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should handle paths outside REPO_ROOT gracefully."""
         with patch.object(create_breakdown_table, "REPO_ROOT", Path("/repo")):

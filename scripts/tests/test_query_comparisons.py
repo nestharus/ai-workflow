@@ -8,13 +8,14 @@ from unittest.mock import patch
 
 import pytest
 
-from scripts import query_comparisons
 from scripts.query_comparisons import (
     build_query,
     format_results,
     get_comparison_csv_paths,
     main,
     parse_args,
+)
+from scripts.query_comparisons import (
     query_comparisons as query_comparisons_func,
 )
 
@@ -81,9 +82,7 @@ class TestBuildQuery:
         """Should include element_id filter in query."""
         fs.create_file("/knowledge/comparisons/test.csv", contents="")
 
-        query, params = build_query(
-            [Path("/knowledge/comparisons/test.csv")], element_id="item-1"
-        )
+        query, params = build_query([Path("/knowledge/comparisons/test.csv")], element_id="item-1")
 
         assert "id = ?" in query
         assert "item-1" in params
@@ -104,7 +103,7 @@ class TestBuildQuery:
         fs.create_file("/knowledge/comparisons/test.csv", contents="")
         fs.create_file("/knowledge/resolutions/resolved.csv", contents="")
 
-        query, params = build_query(
+        query, _ = build_query(
             [Path("/knowledge/comparisons/test.csv")],
             exclude_resolved=True,
             resolutions_path=Path("/knowledge/resolutions/resolved.csv"),
@@ -118,10 +117,12 @@ class TestBuildQuery:
         fs.create_file("/knowledge/comparisons/test1.csv", contents="")
         fs.create_file("/knowledge/comparisons/test2.csv", contents="")
 
-        query, params = build_query([
-            Path("/knowledge/comparisons/test1.csv"),
-            Path("/knowledge/comparisons/test2.csv"),
-        ])
+        query, _ = build_query(
+            [
+                Path("/knowledge/comparisons/test1.csv"),
+                Path("/knowledge/comparisons/test2.csv"),
+            ]
+        )
 
         assert "UNION ALL" in query
 
@@ -139,7 +140,7 @@ class TestFormatResults:
         rows = [("value1", "value2"), ("value3", "value4")]
         columns = ["col1", "col2"]
 
-        result = format_results(rows, columns)
+        result = format_results(rows, columns)  # type: ignore[arg-type]
 
         assert "col1" in result
         assert "col2" in result
@@ -152,7 +153,7 @@ class TestFormatResults:
         rows = [(long_value, "short")]
         columns = ["col1", "col2"]
 
-        result = format_results(rows, columns)
+        result = format_results(rows, columns)  # type: ignore[arg-type]
 
         # Should be truncated
         assert len(result.split("\n")[2].split("|")[1].strip()) <= 50
@@ -162,7 +163,7 @@ class TestFormatResults:
         rows = [(None, "value")]
         columns = ["col1", "col2"]
 
-        result = format_results(rows, columns)
+        result = format_results(rows, columns)  # type: ignore[arg-type]
 
         assert "value" in result
 
@@ -231,7 +232,7 @@ class TestMain:
     """Tests for main function."""
 
     def test_returns_one_for_missing_directory(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when knowledge directory doesn't exist."""
         nonexistent = tmp_path / "nonexistent"
@@ -243,7 +244,7 @@ class TestMain:
         assert "not found" in captured.err
 
     def test_returns_one_for_no_csv_files(
-        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture
+        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when no CSV files found."""
         with patch("sys.argv", ["script", "--knowledge-path", str(real_knowledge_path)]):
@@ -254,7 +255,7 @@ class TestMain:
         assert "No comparison CSV files" in captured.err
 
     def test_returns_zero_on_success(
-        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture
+        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 0 and print results on success.
 

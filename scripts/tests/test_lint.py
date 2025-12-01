@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -100,7 +100,7 @@ class TestRunChecked:
 class TestMain:
     """Tests for main function."""
 
-    def test_returns_one_when_uv_not_found(self, capsys: pytest.CaptureFixture) -> None:
+    def test_returns_one_when_uv_not_found(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should return 1 when uv is not found."""
         with patch("shutil.which", return_value=None):
             result = main()
@@ -110,19 +110,20 @@ class TestMain:
         assert "uv CLI required" in captured.err
 
     def test_returns_one_when_openapi_missing(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when OpenAPI schema is missing."""
         # Create minimal repo structure
         fs.create_dir("/fake/repo/openapi")
 
-        with patch.object(lint, "REPO_ROOT", Path("/fake/repo")):
-            with patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")):
-                with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
-                    with patch("subprocess.check_call"):
-                        # Mock hadolint to find no Dockerfiles
-                        with patch.object(lint, "HADOLINT_EXCLUDE_DIRS", set()):
-                            result = main()
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
+            patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
+            patch("subprocess.check_call"),
+            patch.object(lint, "HADOLINT_EXCLUDE_DIRS", set()),
+        ):
+            result = main()
 
         assert result == 1
         captured = capsys.readouterr()
@@ -130,10 +131,12 @@ class TestMain:
 
     def test_returns_one_on_subprocess_error(self) -> None:
         """Should return exit code from subprocess error."""
-        with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
-            with patch("subprocess.check_call") as mock_check:
-                mock_check.side_effect = subprocess.CalledProcessError(42, ["ruff"])
-                result = main()
+        with (
+            patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            mock_check.side_effect = subprocess.CalledProcessError(42, ["ruff"])
+            result = main()
 
         assert result == 42
 
@@ -147,19 +150,21 @@ class TestMain:
         fs.create_file("/fake/repo/.pymarkdown.json", contents="{}")
         fs.create_file("/fake/repo/.yamllint.yaml", contents="")
 
-        with patch.object(lint, "REPO_ROOT", Path("/fake/repo")):
-            with patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")):
-                with patch.object(lint, "CHECKOV_CONFIG", Path("/fake/repo/.checkov.yaml")):
-                    with patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")):
-                        with patch.object(lint, "HADOLINT_EXCLUDE_DIRS", set()):
-                            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
-                                with patch("subprocess.check_call"):
-                                    result = main()
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
+            patch.object(lint, "CHECKOV_CONFIG", Path("/fake/repo/.checkov.yaml")),
+            patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")),
+            patch.object(lint, "HADOLINT_EXCLUDE_DIRS", set()),
+            patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
+            patch("subprocess.check_call"),
+        ):
+            result = main()
 
         assert result == 0
 
     def test_prints_no_dockerfiles_message(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should print message when no Dockerfiles found."""
         fs.create_dir("/fake/repo/openapi")
@@ -169,14 +174,16 @@ class TestMain:
         fs.create_file("/fake/repo/.pymarkdown.json", contents="{}")
         fs.create_file("/fake/repo/.yamllint.yaml", contents="")
 
-        with patch.object(lint, "REPO_ROOT", Path("/fake/repo")):
-            with patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")):
-                with patch.object(lint, "CHECKOV_CONFIG", Path("/fake/repo/.checkov.yaml")):
-                    with patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")):
-                        with patch.object(lint, "HADOLINT_EXCLUDE_DIRS", set()):
-                            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
-                                with patch("subprocess.check_call"):
-                                    main()
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
+            patch.object(lint, "CHECKOV_CONFIG", Path("/fake/repo/.checkov.yaml")),
+            patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")),
+            patch.object(lint, "HADOLINT_EXCLUDE_DIRS", set()),
+            patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
+            patch("subprocess.check_call"),
+        ):
+            main()
 
         captured = capsys.readouterr()
         assert "No Dockerfiles found" in captured.out

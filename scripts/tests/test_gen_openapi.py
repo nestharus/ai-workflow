@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -13,9 +12,6 @@ from scripts.gen_openapi import (
     _is_local_environment,
     main,
 )
-
-if TYPE_CHECKING:
-    from pyfakefs.fake_filesystem import FakeFilesystem
 
 
 class TestDebugEnabled:
@@ -81,22 +77,26 @@ class TestMain:
 
     def test_sets_default_credentials_locally(self) -> None:
         """Should set default credentials in local environment."""
-        with patch.dict(os.environ, {}, clear=True):
-            with patch("scripts.gen_openapi._is_local_environment", return_value=True):
-                with patch("scripts.gen_openapi.generate_openapi") as mock_gen:
-                    main()
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("scripts.gen_openapi._is_local_environment", return_value=True),
+            patch("scripts.gen_openapi.generate_openapi"),
+        ):
+            main()
 
-                    # Check credentials were set inside the context
-                    assert "SURREALDB_USER" in os.environ
-                    assert "SURREALDB_PASS" in os.environ
+            # Check credentials were set inside the context
+            assert "SURREALDB_USER" in os.environ
+            assert "SURREALDB_PASS" in os.environ
 
     def test_returns_one_without_credentials_in_ci(
-        self, capsys: pytest.CaptureFixture
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when credentials missing in non-local environment."""
-        with patch.dict(os.environ, {}, clear=True):
-            with patch("scripts.gen_openapi._is_local_environment", return_value=False):
-                result = main()
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("scripts.gen_openapi._is_local_environment", return_value=False),
+        ):
+            result = main()
 
         assert result == 1
         captured = capsys.readouterr()
@@ -104,46 +104,54 @@ class TestMain:
 
     def test_returns_zero_on_success(self) -> None:
         """Should return 0 on successful generation."""
-        with patch.dict(os.environ, {}, clear=True):
-            with patch("scripts.gen_openapi._is_local_environment", return_value=True):
-                with patch("scripts.gen_openapi.generate_openapi"):
-                    result = main()
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("scripts.gen_openapi._is_local_environment", return_value=True),
+            patch("scripts.gen_openapi.generate_openapi"),
+        ):
+            result = main()
 
         assert result == 0
 
     def test_handles_system_exit(self) -> None:
         """Should propagate SystemExit with correct code."""
-        with patch.dict(os.environ, {}, clear=True):
-            with patch("scripts.gen_openapi._is_local_environment", return_value=True):
-                with patch("scripts.gen_openapi.generate_openapi") as mock_gen:
-                    mock_gen.side_effect = SystemExit(42)
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("scripts.gen_openapi._is_local_environment", return_value=True),
+            patch("scripts.gen_openapi.generate_openapi") as mock_gen,
+        ):
+            mock_gen.side_effect = SystemExit(42)
 
-                    with pytest.raises(SystemExit) as exc_info:
-                        main()
+            with pytest.raises(SystemExit) as exc_info:
+                main()
 
-                    assert exc_info.value.code == 42
+            assert exc_info.value.code == 42
 
-    def test_handles_exception(self, capsys: pytest.CaptureFixture) -> None:
+    def test_handles_exception(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should return 1 and print error on exception."""
-        with patch.dict(os.environ, {}, clear=True):
-            with patch("scripts.gen_openapi._is_local_environment", return_value=True):
-                with patch("scripts.gen_openapi.generate_openapi") as mock_gen:
-                    mock_gen.side_effect = RuntimeError("Generation failed")
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("scripts.gen_openapi._is_local_environment", return_value=True),
+            patch("scripts.gen_openapi.generate_openapi") as mock_gen,
+        ):
+            mock_gen.side_effect = RuntimeError("Generation failed")
 
-                    result = main()
+            result = main()
 
         assert result == 1
         captured = capsys.readouterr()
         assert "Generation failed" in captured.err
 
-    def test_prints_traceback_in_debug_mode(self, capsys: pytest.CaptureFixture) -> None:
+    def test_prints_traceback_in_debug_mode(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should print traceback when debug is enabled."""
-        with patch.dict(os.environ, {"DEBUG": "1"}, clear=True):
-            with patch("scripts.gen_openapi._is_local_environment", return_value=True):
-                with patch("scripts.gen_openapi.generate_openapi") as mock_gen:
-                    mock_gen.side_effect = RuntimeError("Generation failed")
+        with (
+            patch.dict(os.environ, {"DEBUG": "1"}, clear=True),
+            patch("scripts.gen_openapi._is_local_environment", return_value=True),
+            patch("scripts.gen_openapi.generate_openapi") as mock_gen,
+        ):
+            mock_gen.side_effect = RuntimeError("Generation failed")
 
-                    main()
+            main()
 
         captured = capsys.readouterr()
         assert "Traceback" in captured.err or "RuntimeError" in captured.err

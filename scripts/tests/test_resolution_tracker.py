@@ -261,11 +261,17 @@ class TestParseArgs:
     def test_parses_all_arguments(self) -> None:
         """Should parse all arguments correctly."""
         # nargs="*" means multiple values after single --split-file
-        args = parse_args([
-            "--id", "item-1",
-            "--source-file", "/source.yml",
-            "--split-file", "/split1.yml", "/split2.yml",
-        ])
+        args = parse_args(
+            [
+                "--id",
+                "item-1",
+                "--source-file",
+                "/source.yml",
+                "--split-file",
+                "/split1.yml",
+                "/split2.yml",
+            ]
+        )
 
         assert args.id == "item-1"
         assert args.source_file == Path("/source.yml")
@@ -297,7 +303,7 @@ class TestGetDisplayPath:
 class TestMain:
     """Tests for main function."""
 
-    def test_returns_one_without_split_files(self, capsys: pytest.CaptureFixture) -> None:
+    def test_returns_one_without_split_files(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should return 1 when no split files provided."""
         with patch("sys.argv", ["script", "--id", "item-1", "--source-file", "/source.yml"]):
             result = main()
@@ -307,7 +313,7 @@ class TestMain:
         assert "At least one --split-file" in captured.err
 
     def test_returns_one_for_missing_source(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when source file doesn't exist."""
         with patch.object(resolution_tracker, "REPO_ROOT", Path("/fake")):
@@ -315,7 +321,15 @@ class TestMain:
 
             with patch(
                 "sys.argv",
-                ["script", "--id", "item-1", "--source-file", "missing.yml", "--split-file", "split.yml"],
+                [
+                    "script",
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "missing.yml",
+                    "--split-file",
+                    "split.yml",
+                ],
             ):
                 result = main()
 
@@ -324,7 +338,7 @@ class TestMain:
         assert "not found" in captured.err
 
     def test_returns_zero_on_success(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 0 and create record on success.
 
@@ -343,25 +357,31 @@ items:
         (tmp_path / "source.yml").write_text(source_content)
         (tmp_path / "split.yml").write_text(split_content)
 
-        with patch.object(resolution_tracker, "REPO_ROOT", tmp_path):
-            with patch(
+        with (
+            patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+            patch(
                 "sys.argv",
                 [
                     "script",
-                    "--id", "item-1",
-                    "--source-file", "source.yml",
-                    "--split-file", "split.yml",
-                    "--knowledge-path", str(tmp_path / ".knowledge"),
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "source.yml",
+                    "--split-file",
+                    "split.yml",
+                    "--knowledge-path",
+                    str(tmp_path / ".knowledge"),
                 ],
-            ):
-                result = main()
+            ),
+        ):
+            result = main()
 
         assert result == 0
         captured = capsys.readouterr()
         assert "Resolution recorded" in captured.out
 
     def test_skips_already_resolved(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should skip already resolved items.
 
@@ -387,25 +407,31 @@ items:
         row = "res-1,item-1,source.yml,split.yml,abc,def,ghi,jkl,20240101T120000Z"
         csv_path.write_text(f"{header}\n{row}\n")
 
-        with patch.object(resolution_tracker, "REPO_ROOT", tmp_path):
-            with patch(
+        with (
+            patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+            patch(
                 "sys.argv",
                 [
                     "script",
-                    "--id", "item-1",
-                    "--source-file", "source.yml",
-                    "--split-file", "split.yml",
-                    "--knowledge-path", str(tmp_path / ".knowledge"),
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "source.yml",
+                    "--split-file",
+                    "split.yml",
+                    "--knowledge-path",
+                    str(tmp_path / ".knowledge"),
                 ],
-            ):
-                result = main()
+            ),
+        ):
+            result = main()
 
         assert result == 0
         captured = capsys.readouterr()
         assert "already resolved" in captured.out
 
     def test_returns_one_for_missing_split_file(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when split file doesn't exist.
 
@@ -418,25 +444,31 @@ items:
 """
         (tmp_path / "source.yml").write_text(source_content)
 
-        with patch.object(resolution_tracker, "REPO_ROOT", tmp_path):
-            with patch(
+        with (
+            patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+            patch(
                 "sys.argv",
                 [
                     "script",
-                    "--id", "item-1",
-                    "--source-file", "source.yml",
-                    "--split-file", "missing.yml",
-                    "--knowledge-path", str(tmp_path / ".knowledge"),
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "source.yml",
+                    "--split-file",
+                    "missing.yml",
+                    "--knowledge-path",
+                    str(tmp_path / ".knowledge"),
                 ],
-            ):
-                result = main()
+            ),
+        ):
+            result = main()
 
         assert result == 1
         captured = capsys.readouterr()
         assert "Split file not found" in captured.err
 
     def test_returns_one_for_missing_id_in_split(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when ID not found in split file.
 
@@ -455,25 +487,31 @@ items:
         (tmp_path / "source.yml").write_text(source_content)
         (tmp_path / "split.yml").write_text(split_content)
 
-        with patch.object(resolution_tracker, "REPO_ROOT", tmp_path):
-            with patch(
+        with (
+            patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+            patch(
                 "sys.argv",
                 [
                     "script",
-                    "--id", "item-1",
-                    "--source-file", "source.yml",
-                    "--split-file", "split.yml",
-                    "--knowledge-path", str(tmp_path / ".knowledge"),
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "source.yml",
+                    "--split-file",
+                    "split.yml",
+                    "--knowledge-path",
+                    str(tmp_path / ".knowledge"),
                 ],
-            ):
-                result = main()
+            ),
+        ):
+            result = main()
 
         assert result == 1
         captured = capsys.readouterr()
         assert "not found" in captured.err
 
     def test_handles_absolute_knowledge_path(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should handle absolute knowledge path.
 
@@ -493,25 +531,31 @@ items:
         (tmp_path / "split.yml").write_text(split_content)
         knowledge_path = tmp_path / "custom_knowledge"
 
-        with patch.object(resolution_tracker, "REPO_ROOT", tmp_path):
-            with patch(
+        with (
+            patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+            patch(
                 "sys.argv",
                 [
                     "script",
-                    "--id", "item-1",
-                    "--source-file", "source.yml",
-                    "--split-file", "split.yml",
-                    "--knowledge-path", str(knowledge_path),
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "source.yml",
+                    "--split-file",
+                    "split.yml",
+                    "--knowledge-path",
+                    str(knowledge_path),
                 ],
-            ):
-                result = main()
+            ),
+        ):
+            result = main()
 
         assert result == 0
         # Check that files were created in the custom knowledge path
         assert (knowledge_path / "resolutions" / "resolved.csv").exists()
 
     def test_returns_one_for_missing_id_in_source(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when ID not found in source file.
 
@@ -525,25 +569,31 @@ items:
         (tmp_path / "source.yml").write_text(source_content)
         (tmp_path / "split.yml").write_text("content")
 
-        with patch.object(resolution_tracker, "REPO_ROOT", tmp_path):
-            with patch(
+        with (
+            patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+            patch(
                 "sys.argv",
                 [
                     "script",
-                    "--id", "item-1",
-                    "--source-file", "source.yml",
-                    "--split-file", "split.yml",
-                    "--knowledge-path", str(tmp_path / ".knowledge"),
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "source.yml",
+                    "--split-file",
+                    "split.yml",
+                    "--knowledge-path",
+                    str(tmp_path / ".knowledge"),
                 ],
-            ):
-                result = main()
+            ),
+        ):
+            result = main()
 
         assert result == 1
         captured = capsys.readouterr()
         assert "not found" in captured.err
 
     def test_handles_multiple_split_files(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should handle multiple split files.
 
@@ -563,18 +613,25 @@ items:
         (tmp_path / "split1.yml").write_text(split_content)
         (tmp_path / "split2.yml").write_text(split_content)
 
-        with patch.object(resolution_tracker, "REPO_ROOT", tmp_path):
-            with patch(
+        with (
+            patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+            patch(
                 "sys.argv",
                 [
                     "script",
-                    "--id", "item-1",
-                    "--source-file", "source.yml",
-                    "--split-file", "split1.yml", "split2.yml",
-                    "--knowledge-path", str(tmp_path / ".knowledge"),
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "source.yml",
+                    "--split-file",
+                    "split1.yml",
+                    "split2.yml",
+                    "--knowledge-path",
+                    str(tmp_path / ".knowledge"),
                 ],
-            ):
-                result = main()
+            ),
+        ):
+            result = main()
 
         assert result == 0
         captured = capsys.readouterr()
