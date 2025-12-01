@@ -16,7 +16,7 @@ dependencies = [
     "elasticsearch>=9.2.0,<9.3.0",
     "anyio>=4.11.0,<4.12.0",
     "duckdb>=1.4.2,<1.5.0",
-    "pyyaml>=6.0.2,<6.1.0",
+    "pyyaml>=6.0.3,<6.1.0",
     "pytz>=2025.2,<2026.0",
 ]
 
@@ -69,6 +69,7 @@ validate-migration = "scripts.migration_manager:main_validate"
 create-breakdown = "scripts.create_breakdown_table:main"
 rebuild-from-breakdown = "scripts.rebuild_from_breakdown:main"
 batch-mark-resolved = "scripts.batch_mark_resolved:main"
+grep-yml-ids = "scripts.grep_yml_ids:main"
 
 [tool.uv]
 link-mode = "copy"

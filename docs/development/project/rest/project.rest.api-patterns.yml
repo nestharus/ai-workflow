@@ -2,158 +2,54 @@ doc_id: project-rest-api-patterns
 title: REST API Patterns (Project Implementation)
 version_hint: 2024-2025
 kind: rest_api_standards
-description: How REST/HTTP standards are implemented in this FastAPI project via app/core and app/contracts modules. For protocol
-  rules, see general/rest/general.rest.api-patterns.yml.
-scope: Describes project-specific implementation of REST patterns using FastAPI, create_app, app/contracts/, app/core/exceptions.py,
-  and app/core/factory.py. Does not repeat protocol rules (see GENERAL file). Follow GENERAL rules via these implementations.
+description: Project-specific contract locations and conventions for REST APIs. Implementation wiring (create_app,
+  exception handlers, router registration) is covered by fastapi patterns files. Error handling is covered by
+  exception-patterns.
+scope: Describes where request/response contracts and error models live in this project (app/contracts/). Does not
+  cover implementation wiring (see factory-patterns, exception-patterns) or protocol rules (see GENERAL).
 primary_runtime_references:
-  - path: app/contracts/errors.py
-    role: Error response contracts and AppError envelope.
   - path: app/contracts/
     role: Pydantic contract models for request/response payloads.
-  - path: app/core/factory.py
-    role: Application factory and router mounting for versioned APIs.
-  - path: app/core/exceptions.py
-    role: Validation exception handler registration.
+  - path: app/contracts/errors.py
+    role: Error response contracts (AppError, ErrorCode, VALIDATION_ERROR_RESPONSE).
+  - path: app/contracts/pagination.py
+    role: Generic Paginated[T] envelope for collection endpoints.
 related_pattern_docs:
   - general/rest/general.rest.api-patterns.yml
+  - project/fastapi/project.fastapi.factory-patterns.yml
+  - project/fastapi/project.fastapi.exception-patterns.yml
+  - project/fastapi/project.fastapi.api-patterns.yml
 sections:
-  - id: url-structure-versioning
+  - id: contract-locations
     index: 1
-    title: URL structure and versioning (project wiring)
+    title: Contract locations
     category: standard
-    summary: How URL structure rules are implemented via create_app and routers.
-    items:
-      - id: url.prefix
-        type: rule
-        text: Mount all versioned endpoints under /api/{version} (for example /api/v1) using create_app in app/core/factory.py.
-      - id: url.health.liveness
-        type: rule
-        text: Expose GET /health as an unversioned liveness probe, exclude it from OpenAPI via include_in_schema=False, and let
-          orchestrators use it to check process aliveness.
-      - id: url.health.readiness
-        type: rule
-        text: Expose GET /api/{version}/health as the versioned readiness endpoint, register it in the versioned API router, and
-          document it in OpenAPI.
-      - id: url.trailing-slashes
-        type: note
-        text: FastAPI redirect handling for trailing slashes is not part of the API contract; declare canonical paths without
-          trailing slashes.
-  - id: http-methods-and-status-codes
-    index: 2
-    title: HTTP methods and status codes (project wiring)
-    category: standard
-    summary: FastAPI status constants and validation handler wiring.
-    items:
-      - id: http.status.named-constants
-        type: rule
-        text: Use fastapi.status named constants such as status.HTTP_201_CREATED instead of hard-coded integer literals.
-      - id: http.validation.use-400
-        type: rule
-        text: Surface all request validation failures as HTTP 400 Bad Request by relying on the global validation exception handler
-          registered in create_app instead of the FastAPI default 422 for RequestValidationError.
-      - id: http.validation.error-model
-        type: note
-        text: The validation exception handler returns a 400 response with an AppError envelope containing the HTTPValidationError
-          payload in the details field. This ensures all error responses share the same top-level structure (code, message, statusCode,
-          details).
-      - id: http.validation.handler-registration
-        type: note
-        text: create_app registers validation_exception_handler from app/core/exceptions.py as the global handler for RequestValidationError.
-      - id: http.validation.route-responses
-        type: rule
-        text: Route decorators must reuse VALIDATION_ERROR_RESPONSE from app/contracts/errors.py in the responses mapping for
-          400 entries. This constant references AppError for OpenAPI documentation consistency.
-  - id: request-response-modeling
-    index: 3
-    title: Request and response modeling (project wiring)
-    category: standard
-    summary: Where request and response contracts live in this project and Pydantic conventions.
+    summary: Where request, response, and error contracts live in this project.
     items:
       - id: modeling.contracts-location
         type: rule
-        text: Define all request and response contract models under app/contracts/ and its submodules so API payload schemas are
-          centralized and reusable across routers and services.
+        text: Define all request and response contract models under app/contracts/ and its submodules so API
+          payload schemas are centralized and reusable across routers and services.
       - id: modeling.error-contracts-location
         type: note
-        text: Error envelopes, validation error payloads, and error codes live in app/contracts/errors.py; reuse these contracts
-          in routers and services instead of redefining ad-hoc models.
-      - id: modeling.pydantic-extra-forbid
-        type: rule
-        text: Define all request and response payloads as Pydantic BaseModel subclasses with ConfigDict(extra="forbid") so unknown
-          JSON keys are rejected.
-      - id: modeling.json-snake-case
-        type: rule
-        text: Use snake_case for all JSON field names and represent datetimes as timezone-aware UTC ISO 8601 strings via Pydantic
-          serializers.
-      - id: modeling.response-model-required
-        type: rule
-        text: Every endpoint should set an explicit response_model so that outbound schemas are enforced, extra fields from services
-          are filtered out, and OpenAPI schemas are derived from the contracts.
-      - id: modeling.describe-side-effects
-        type: rule
-        text: When a route has non-trivial side effects such as writes or external calls, the description must explain these behaviors
-          for API consumers.
-  - id: response-shape-and-pagination
-    index: 4
-    title: Response shape and pagination (project wiring)
+        text: Error envelopes, validation error payloads, and error codes live in app/contracts/errors.py; reuse
+          these contracts in routers and services instead of redefining ad-hoc models.
+  - id: pagination
+    index: 2
+    title: Pagination contracts
     category: standard
-    summary: AppError envelope and pagination implementation in app/contracts/.
+    summary: Canonical pagination model for collection endpoints.
     items:
-      - id: pagination.standard-fields
-        type: note
-        text: Use items, total, page, and page_size fields for paginated collections until a generic Paginated[T] model exists
-          under app/contracts/.
-      - id: errors.app-error-envelope
+      - id: pagination.paginated-model
         type: rule
-        text: All error responses share a common top-level envelope using the AppError schema defined in app/contracts/errors.py
-          with code, message, statusCode, and optional details fields.
-      - id: errors.validation-through-app-error
-        type: rule
-        text: Validation failures use the AppError envelope with code="VALIDATION_ERROR" and the HTTPValidationError payload (containing
-          field-level detail and optional body) placed in the details field. This provides a consistent top-level structure while
-          preserving detailed validation information.
-      - id: errors.non-validation-through-app-error
-        type: rule
-        text: Non-validation errors such as domain or infrastructure failures use the AppError envelope with domain-specific code
-          values (from the ErrorCode enum in app/contracts/errors.py) and contextual details where applicable.
-      - id: errors.route-decorator-usage
-        type: rule
-        text: 'Route decorators use VALIDATION_ERROR_RESPONSE (which references AppError) for 400 responses and {"model": AppError,
-          "description": "..."} for other error status codes.'
-      - id: errors.todo.paginated-model
-        type: todo
-        text: Once a generic Paginated[T] model exists under app/contracts/, update routers and this document to reference it
-          as the canonical pagination schema.
-  - id: content-negotiation
-    index: 5
-    title: Content negotiation (project wiring)
-    category: standard
-    summary: ORJSONResponse configuration in create_app.
-    items:
-      - id: content.serializer-orjson
-        type: rule
-        text: Configure ORJSONResponse as the default_response_class in create_app and avoid per-route overrides unless a different
-          content type is required.
-  - id: deprecation-wiring
-    index: 6
-    title: Deprecation wiring (project implementation)
-    category: standard
-    summary: How deprecation is implemented in FastAPI route decorators.
-    items:
-      - id: deprecation.flag-endpoints
-        type: rule
-        text: When deprecating an endpoint, set deprecated=True in the FastAPI route decorator so OpenAPI and interactive docs
-          show deprecation state.
+        text: Use Paginated[T] from app/contracts/pagination.py as the response model for all collection endpoints;
+          the model provides items, total, page, and page_size fields with validation constraints.
   - id: anti-patterns
-    index: 7
-    title: Anti-patterns (project-specific)
+    index: 3
+    title: Anti-patterns
     category: anti_patterns
-    summary: Project-specific anti-pattern guidance.
+    summary: Contract-related anti-patterns.
     items:
       - id: anti-patterns.orm-models-as-contracts
         type: anti_pattern
-        text: Returning ORM or database models directly from endpoints instead of Pydantic contract models from app/contracts/.
-      - id: anti-patterns.missing-response-model
-        type: anti_pattern
-        text: Omitting response_model in FastAPI route decorators or leaving success and error status codes implicit.
+        text: Return Pydantic contract models from app/contracts/ instead of ORM or database models.
