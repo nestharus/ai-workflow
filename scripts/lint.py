@@ -43,7 +43,11 @@ PYMARKDOWN_EXCLUDES = [
     "out",
     ".uv-cache",
     ".cache",
+    # .knowledge exclusions are defensive; PYMARKDOWN_TARGETS does not include .knowledge
+    # paths, so these patterns are currently unused but prevent accidental future matches
     ".knowledge/knowledge.duckdb",
+    ".knowledge/**/*.csv",
+    ".knowledge/originals/**",
     ".serena/**",
     "docs/plans/**",
     "docs/references/**",
@@ -140,6 +144,7 @@ def main() -> int:
             ".cache",
             ".uv-cache",
             "node_modules",
+            ".knowledge",  # Exclude timestamped YAML originals in .knowledge/originals/
         }
         yaml_files = [
             str(path)

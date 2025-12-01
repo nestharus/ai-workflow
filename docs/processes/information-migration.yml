@@ -1,0 +1,466 @@
+# Information Migration Workflow
+#
+# This document defines the structured workflow for migrating and restructuring
+# documentation while ensuring no information is dropped or altered.
+
+overview:
+  purpose: |
+    The information migration system ensures that no content is lost or inadvertently
+    altered during documentation restructuring. It uses hash-based resolution tracking
+    and CSV storage for complete auditability. The system provides four CLI commands
+    for managing the migration lifecycle: start-migration, compare-yml-docs,
+    query-comparisons, mark-resolved, and validate-migration.
+
+  key_features:
+    - Hash-based content verification using SHA-256
+    - CSV storage for queryability with DuckDB
+    - Full audit trail of resolutions and migrations
+    - Automated validation of migration completeness
+
+directory_structure:
+  root: ".knowledge/"
+  description: |
+    The .knowledge/ directory stores all migration tracking data. The directory
+    structure is tracked in git, but generated data files are ignored.
+
+  subdirectories:
+    originals:
+      path: ".knowledge/originals/"
+      purpose: |
+        Stores timestamped copies of original files before migration. Files are
+        named with UTC timestamps in ISO 8601 basic format (YYYYMMDDTHHMMSSZ) to
+        preserve the exact state at migration start.
+      contents: |
+        Timestamped YAML/YML files with two naming variants:
+        - resolution_tracker: preserves original filename (e.g., 20241201T103045Z-original.api-patterns.yml)
+        - migration_manager: uses pattern name (e.g., 20241201T103045Z-api-patterns.yml)
+
+    migrations:
+      path: ".knowledge/migrations/"
+      purpose: |
+        Tracks migration tasks with their status and validation timestamps.
+      contents: "tasks.csv"
+
+    comparisons:
+      path: ".knowledge/comparisons/"
+      purpose: |
+        Stores comparison results between original and split documentation files.
+        Each comparison generates a CSV file named after the source pattern.
+      contents: "Pattern-named CSV files (e.g., api-patterns.csv)"
+
+    resolutions:
+      path: ".knowledge/resolutions/"
+      purpose: |
+        Records intentional differences that have been reviewed and approved.
+        Resolutions include content hashes to detect if source files change.
+      contents: "resolved.csv"
+
+csv_schemas:
+  resolutions:
+    file: "resolutions/resolved.csv"
+    columns:
+      resolution_id:
+        type: "UUID"
+        description: "Unique identifier for the resolution record"
+      id:
+        type: "string"
+        description: "Element identifier from the comparison (e.g., YAML key path)"
+      source_file:
+        type: "path"
+        description: "Path to the original source file"
+      split_file:
+        type: "path"
+        description: "Path to the split/target file"
+      original_text_hash:
+        type: "SHA-256"
+        description: "Hash of the original text content at resolution time"
+      split_text_hash:
+        type: "SHA-256"
+        description: "Hash of the split text content at resolution time"
+      source_file_hash:
+        type: "SHA-256"
+        description: "Hash of the entire source file at resolution time"
+      split_file_hash:
+        type: "SHA-256"
+        description: "Hash of the entire split file at resolution time"
+      resolved_at:
+        type: "ISO 8601 basic format timestamp"
+        description: "When the resolution was recorded (YYYYMMDDTHHMMSSZ, UTC)"
+
+  comparisons:
+    file: "comparisons/<pattern>.csv"
+    columns:
+      source_file:
+        type: "path"
+        description: "Path to the original source file"
+      id:
+        type: "string"
+        description: "Element identifier (e.g., YAML key path)"
+      origin_type:
+        type: "enum"
+        description: "Source of the element"
+        values:
+          original: "ID from an original.*.yml file with differing or missing split text"
+          split_only: "ID found in split files but not in the corresponding original"
+          orphan: "ID from a file in a subdirectory with no corresponding original file"
+      original_text:
+        type: "string"
+        description: "Text content from the source file (populated from source_text for all origin types)"
+      split_file:
+        type: "path"
+        description: "Path to the split/target file"
+      split_text:
+        type: "string"
+        description: "Text content from the split file (empty if split_only or orphan)"
+
+  migrations:
+    file: "migrations/tasks.csv"
+    columns:
+      task_id:
+        type: "UUID"
+        description: "Unique identifier for the migration task"
+      original_file_ref:
+        type: "path"
+        description: "Path to the timestamped original in originals/"
+      pattern_name:
+        type: "string"
+        description: "Name derived from the original file (e.g., api-patterns)"
+      status:
+        type: "enum"
+        description: "Current state of the migration"
+        values:
+          pending: "Migration started but not yet validated"
+          in_progress: "Migration work is actively being performed"
+          completed: "Migration validated successfully with no unresolved differences"
+          failed: "Validation found unresolved differences"
+      created_at:
+        type: "ISO 8601 basic format timestamp"
+        description: "When the migration task was created (YYYYMMDDTHHMMSSZ, UTC)"
+      validated_at:
+        type: "ISO 8601 basic format timestamp"
+        description: "When validation was last run (YYYYMMDDTHHMMSSZ, UTC; empty if never validated)"
+
+workflow_steps:
+  step_1_start_migration:
+    title: "Start Migration"
+    command: "uv run start-migration --original-file <path>"
+    description: |
+      Initiates a new migration task by storing a timestamped copy of the original
+      file and creating a task record with status='pending'.
+    example: |
+      uv run start-migration --original-file docs/development/original.api-patterns.yml
+    outputs:
+      - "Timestamped copy in .knowledge/originals/"
+      - "New task record in .knowledge/migrations/tasks.csv"
+      - "Task ID printed to stdout"
+
+  step_2_perform_migration:
+    title: "Perform Migration Work"
+    description: |
+      Manually restructure, split, or modify the target documentation files.
+      This step is performed by the developer/agent, not by a CLI command.
+    activities:
+      - "Split content into multiple files"
+      - "Restructure YAML hierarchies"
+      - "Update cross-references"
+      - "Apply formatting improvements"
+
+  step_3_run_comparison:
+    title: "Run Comparison"
+    command: "uv run compare-yml-docs --path <directory>"
+    description: |
+      Generates comparison CSV files by analyzing differences between original
+      and split documentation files in the specified directory.
+    example: |
+      uv run compare-yml-docs --path docs/development
+    outputs:
+      - "Comparison CSV files in .knowledge/comparisons/"
+
+  step_4_query_differences:
+    title: "Query Differences"
+    command: "uv run query-comparisons [options]"
+    description: |
+      Uses DuckDB to query comparison results and identify unresolved differences.
+      Supports filtering by pattern, origin type, and resolution status.
+    examples:
+      - command: "uv run query-comparisons --pattern api-patterns"
+        description: "Show all differences for api-patterns"
+      - command: "uv run query-comparisons --exclude-resolved"
+        description: "Show only unresolved differences"
+      - command: "uv run query-comparisons --origin-type original"
+        description: "Show elements from original files with differing or missing split text"
+
+  step_5_resolve_differences:
+    title: "Resolve Intentional Differences"
+    command: "uv run mark-resolved --id <element_id> --source-file <path> --split-file <path>"
+    description: |
+      Records an intentional difference as resolved. Computes SHA-256 hashes of
+      both the text content and full files to enable future change detection.
+    example: |
+      uv run mark-resolved \
+        --id "api_patterns.authentication.jwt_validation" \
+        --source-file docs/development/original.api-patterns.yml \
+        --split-file docs/development/python/api-patterns.yml
+    outputs:
+      - "New record appended to .knowledge/resolutions/resolved.csv"
+
+  step_6_validate_migration:
+    title: "Validate Migration"
+    command: "uv run validate-migration --task-id <uuid>"
+    description: |
+      Reruns comparison and checks for unresolved differences. Updates task
+      status to 'completed' if all differences are resolved, or 'failed' if
+      unresolved differences remain.
+    example: |
+      uv run validate-migration --task-id 550e8400-e29b-41d4-a716-446655440000
+    outcomes:
+      success: "Task status updated to 'completed', validated_at timestamp set"
+      failure: "Task status updated to 'failed', count of unresolved differences shown"
+
+command_reference:
+  mark_resolved:
+    command: "uv run mark-resolved"
+    description: "Record an intentional difference as resolved"
+    arguments:
+      --id:
+        required: true
+        description: "Element identifier from the comparison"
+      --source-file:
+        required: true
+        description: "Path to the original source file"
+      --split-file:
+        required: true
+        description: "Path to the split/target file"
+      --knowledge-path:
+        required: false
+        default: ".knowledge"
+        description: "Path to the knowledge directory"
+
+  query_comparisons:
+    command: "uv run query-comparisons"
+    description: "Query comparison results using DuckDB"
+    arguments:
+      --id:
+        required: false
+        description: "Filter by specific element ID"
+      --origin-type:
+        required: false
+        description: "Filter by origin type (original, split_only, orphan)"
+      --source-file:
+        required: false
+        description: "Filter by source file path"
+      --split-file:
+        required: false
+        description: "Filter by split file path"
+      --exclude-resolved:
+        required: false
+        description: "Exclude elements that have been marked as resolved"
+      --pattern:
+        required: false
+        description: "Filter by pattern name (matches comparison CSV filename)"
+      --knowledge-path:
+        required: false
+        default: ".knowledge"
+        description: "Path to the knowledge directory"
+
+  start_migration:
+    command: "uv run start-migration"
+    description: "Start a new migration task"
+    arguments:
+      --original-file:
+        required: true
+        description: "Path to the original file to migrate"
+      --knowledge-path:
+        required: false
+        default: ".knowledge"
+        description: "Path to the knowledge directory"
+
+  validate_migration:
+    command: "uv run validate-migration"
+    description: "Validate a migration task for completion"
+    arguments:
+      --task-id:
+        required: true
+        description: "UUID of the migration task to validate"
+      --knowledge-path:
+        required: false
+        default: ".knowledge"
+        description: "Path to the knowledge directory"
+      --comparison-path:
+        required: false
+        description: "Path to run comparisons against"
+
+duckdb_query_patterns:
+  description: |
+    The query-comparisons command uses DuckDB internally, but these patterns
+    illustrate the underlying queries for debugging or custom analysis.
+
+  examples:
+    find_unresolved_by_pattern:
+      description: "Find all unresolved differences for a specific pattern"
+      query: |
+        SELECT c.*
+        FROM read_csv_auto('.knowledge/comparisons/api-patterns.csv') c
+        LEFT JOIN read_csv_auto('.knowledge/resolutions/resolved.csv') r
+          ON c.id = r.id
+          AND c.source_file = r.source_file
+          AND c.split_file = r.split_file
+        WHERE r.resolution_id IS NULL
+
+    check_resolution_status:
+      description: "Check if a specific ID has been resolved"
+      query: |
+        SELECT *
+        FROM read_csv_auto('.knowledge/resolutions/resolved.csv')
+        WHERE id = 'api_patterns.authentication.jwt_validation'
+
+    list_pending_migrations:
+      description: "List all pending or failed migrations"
+      query: |
+        SELECT *
+        FROM read_csv_auto('.knowledge/migrations/tasks.csv')
+        WHERE status IN ('pending', 'failed')
+        ORDER BY created_at DESC
+
+    join_comparisons_resolutions:
+      description: "Full join of comparisons with resolution status"
+      query: |
+        SELECT
+          c.id,
+          c.source_file,
+          c.split_file,
+          c.origin_type,
+          CASE WHEN r.resolution_id IS NOT NULL THEN 'resolved' ELSE 'unresolved' END as status
+        FROM read_csv_auto('.knowledge/comparisons/*.csv') c
+        LEFT JOIN read_csv_auto('.knowledge/resolutions/resolved.csv') r
+          ON c.id = r.id
+          AND c.source_file = r.source_file
+          AND c.split_file = r.split_file
+
+practical_examples:
+  example_1_full_migration:
+    title: "Complete Migration of api-patterns.yml"
+    steps:
+      - step: "Start the migration"
+        command: |
+          uv run start-migration --original-file docs/development/original.api-patterns.yml
+        output: |
+          Migration task created: 550e8400-e29b-41d4-a716-446655440000
+          Original file saved to: .knowledge/originals/20240115T103045Z-api-patterns.yml
+          Pattern: api-patterns
+
+      - step: "Perform migration work (manual)"
+        description: "Split content into domain-specific files"
+
+      - step: "Run comparison"
+        command: |
+          uv run compare-yml-docs --path docs/development
+        output: |
+          Comparison complete: .knowledge/comparisons/api-patterns.csv
+          Found 45 elements, 12 differences detected
+
+      - step: "Query unresolved differences"
+        command: |
+          uv run query-comparisons --pattern api-patterns --exclude-resolved
+        output: |
+          12 unresolved differences found
+
+      - step: "Resolve intentional differences"
+        command: |
+          uv run mark-resolved \
+            --id "api_patterns.deprecated_endpoints" \
+            --source-file docs/development/original.api-patterns.yml \
+            --split-file docs/development/python/api-patterns.yml
+
+      - step: "Validate migration"
+        command: |
+          uv run validate-migration --task-id 550e8400-e29b-41d4-a716-446655440000
+        output: |
+          Validation complete: 0 unresolved differences
+          Task status updated to 'completed'
+
+  example_2_resolve_and_validate:
+    title: "Resolving a Specific Difference"
+    steps:
+      - step: "Identify the difference"
+        command: |
+          uv run query-comparisons --id "config.database.pool_size"
+        output: |
+          source_file: docs/development/original.config.yml
+          split_file: docs/development/infrastructure/database.yml
+          origin_type: original
+          original_text: "pool_size: 10"
+          split_text: "pool_size: 20  # Updated for production"
+
+      - step: "Mark as intentionally resolved"
+        command: |
+          uv run mark-resolved \
+            --id "config.database.pool_size" \
+            --source-file docs/development/original.config.yml \
+            --split-file docs/development/infrastructure/database.yml
+        output: |
+          Resolution recorded: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+
+  example_3_query_unresolved:
+    title: "Finding All Unresolved Items"
+    steps:
+      - step: "Query all patterns excluding resolved"
+        command: |
+          uv run query-comparisons --exclude-resolved
+        output: |
+          Pattern: api-patterns
+            - api_patterns.auth.oauth2 (original)
+            - api_patterns.endpoints.v2 (split_only)
+          Pattern: config
+            - config.logging.level (original)
+          Total: 3 unresolved differences
+
+hash_algorithm:
+  type: "SHA-256"
+  description: |
+    All content hashing uses SHA-256 for cryptographic integrity verification.
+    Hashes are computed for:
+    - Individual text content (original_text_hash, split_text_hash)
+    - Complete file contents (source_file_hash, split_file_hash)
+  purpose: |
+    Hash values enable detection of changes since resolution. If a file is
+    modified after a resolution is recorded, the hash mismatch indicates
+    that the resolution may need to be reviewed.
+
+timestamp_format:
+  format: "ISO 8601 basic format"
+  pattern: "YYYYMMDDTHHMMSSZ"
+  examples:
+    - "20240115T103045Z"
+    - "20241201T142233Z"
+  timezone: "UTC (indicated by Z suffix)"
+  implementation: |
+    Generated by scripts.utils.utc_timestamp() using:
+    datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+git_tracking:
+  tracked:
+    - ".knowledge/README.md"
+    - ".knowledge/originals/.gitkeep"
+    - ".knowledge/migrations/.gitkeep"
+    - ".knowledge/comparisons/.gitkeep"
+    - ".knowledge/resolutions/.gitkeep"
+  ignored:
+    - ".knowledge/**/*.csv"
+    - ".knowledge/originals/*.yml"
+    - ".knowledge/originals/*.yaml"
+    - ".knowledge/knowledge.duckdb"
+  rationale: |
+    Directory structure and README documentation are tracked to ensure the
+    knowledge system is available in all clones. Generated data files (CSVs,
+    timestamped originals, DuckDB database) are ignored as they are
+    environment-specific artifacts.
+
+apply_when:
+  - "Restructuring or splitting YAML documentation files"
+  - "Migrating content between original and split documentation patterns"
+  - "Validating that migrations preserve all information without data loss"
+  - "Tracking and resolving intentional differences during documentation updates"
+  - "Querying comparison results to identify unresolved differences"
+  - "Auditing migration history and resolution decisions"
+  - "Ensuring documentation changes are deliberate and reviewed"

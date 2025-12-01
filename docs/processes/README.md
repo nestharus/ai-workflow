@@ -105,3 +105,20 @@ use only and should NOT be executed by humans or agents directly.
 * Understanding agent execution environment
 * Debugging orchestrator agent invocation
 * Implementing orchestrator service logic
+
+### Information Migration Workflow
+
+**File:** `information-migration.yml`
+
+Defines the structured workflow for migrating and restructuring documentation while
+ensuring no information is dropped or altered. Uses CSV-based tracking with DuckDB
+queries, hash-based resolution verification, and four CLI commands: `start-migration`,
+`query-comparisons`, `mark-resolved`, and `validate-migration`.
+
+**Apply when:**
+
+* Restructuring or splitting YAML documentation files
+* Migrating content between original and split documentation patterns
+* Validating that migrations preserve all information
+* Tracking and resolving intentional differences during migrations
+* Querying comparison results to identify unresolved differences
