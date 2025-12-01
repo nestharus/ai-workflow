@@ -1,0 +1,9 @@
+# Lint script configuration for hadolint
+# Directories to exclude when searching for Dockerfiles
+
+exclude_dirs:
+  - to_adapt
+  - docs/plans
+  - docs/references
+  - .venv
+  - .venv2

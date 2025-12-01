@@ -179,10 +179,9 @@ def _search_structure(
     if isinstance(data, dict):
         # Track section context
         section_id = current_section
-        if "id" in data and isinstance(data["id"], str):
+        if "id" in data and isinstance(data["id"], str) and ("items" in data or "index" in data):
             # Check if this is a section (has 'items' or 'index')
-            if "items" in data or "index" in data:
-                section_id = data["id"]
+            section_id = data["id"]
 
         # Check if this element has a matching ID
         if "id" in data:
@@ -203,7 +202,7 @@ def _search_structure(
                     )
 
         # Recurse into child elements
-        for key, value in data.items():
+        for _key, value in data.items():
             child_results = _search_structure(value, search_id, exact, file_path, section_id)
             results.extend(child_results)
 

@@ -4,7 +4,7 @@ This directory contains structured YAML documentation for development patterns a
 
 ## Directory Structure
 
-```
+```text
 docs/development/
 ├── general/          # Framework/protocol patterns (no app/* references)
 │   ├── rest/         # REST/HTTP protocol patterns
@@ -22,12 +22,12 @@ docs/development/
 
 ## Naming Convention
 
-- **GENERAL files**: `general.<module>.<pattern>.yml`
-- **PROJECT files**: `project.<module>.<pattern>.yml`
+* **GENERAL files**: `general.<module>.<pattern>.yml`
+* **PROJECT files**: `project.<module>.<pattern>.yml`
 
 Examples:
-- `general/rest/general.rest.api-patterns.yml`
-- `project/fastapi/project.fastapi.factory-patterns.yml`
+* `general/rest/general.rest.api-patterns.yml`
+* `project/fastapi/project.fastapi.factory-patterns.yml`
 
 ## GENERAL vs PROJECT Scope
 
@@ -35,10 +35,10 @@ Examples:
 
 Documentation that describes patterns without referencing project-specific files:
 
-- REST/HTTP protocol rules (status codes, methods, headers)
-- Framework best practices (FastAPI, Pydantic) described generically
-- Language conventions (Python docstrings, type hints)
-- Database patterns described without `app/*` paths
+* REST/HTTP protocol rules (status codes, methods, headers)
+* Framework best practices (FastAPI, Pydantic) described generically
+* Language conventions (Python docstrings, type hints)
+* Database patterns described without `app/*` paths
 
 **Key rule**: No references to `app/*` paths or project-specific components.
 
@@ -46,9 +46,9 @@ Documentation that describes patterns without referencing project-specific files
 
 Documentation that references actual project implementation:
 
-- Concrete `app/*` paths (`app/contracts/`, `app/core/factory.py`)
-- Project-specific components (`AppError`, `VALIDATION_ERROR_RESPONSE`, `create_app`)
-- Implementation wiring showing where patterns are applied in this codebase
+* Concrete `app/*` paths (`app/contracts/`, `app/core/factory.py`)
+* Project-specific components (`AppError`, `VALIDATION_ERROR_RESPONSE`, `create_app`)
+* Implementation wiring showing where patterns are applied in this codebase
 
 **Key rule**: Must reference concrete `app/*` paths or project-specific code.
 
@@ -65,9 +65,9 @@ Documentation that references actual project implementation:
 ## Classification Criteria
 
 For detailed classification rules when creating or modifying documentation, see:
-- `.claude/agents/knowledge-analyzer.md` - Multi-dimensional classification criteria
+* `.claude/agents/knowledge-analyzer.md` - Multi-dimensional classification criteria
 
 ## Migration Workflow
 
 For restructuring documentation between GENERAL and PROJECT files, see:
-- `docs/processes/information-migration.yml` - Full workflow with CLI commands
+* `docs/processes/information-migration.yml` - Full workflow with CLI commands

@@ -11,9 +11,19 @@ import pytest
 
 from scripts import lint
 from scripts.lint import (
+    LINTER_NAMES,
+    LINTER_RUNNERS,
     InvalidCommandError,
     _hadolint,
+    _load_yaml_config,
+    _parse_args,
     _run_checked,
+    _run_checkov,
+    _run_hadolint,
+    _run_mypy,
+    _run_pymarkdown,
+    _run_ruff,
+    _run_yamllint,
     _uv,
     main,
 )
@@ -97,12 +107,294 @@ class TestRunChecked:
                 _run_checked(["false"])
 
 
+class TestLoadYamlConfig:
+    """Tests for _load_yaml_config function."""
+
+    def test_loads_yaml_file(self, fs: FakeFilesystem) -> None:
+        """Should load and parse YAML file."""
+        fs.create_file("/config.yaml", contents="key: value\nlist:\n  - item1\n  - item2")
+        result = _load_yaml_config(Path("/config.yaml"))
+        assert result == {"key": "value", "list": ["item1", "item2"]}
+
+    def test_returns_empty_dict_for_empty_file(self, fs: FakeFilesystem) -> None:
+        """Should return empty dict for empty YAML file."""
+        fs.create_file("/config.yaml", contents="")
+        result = _load_yaml_config(Path("/config.yaml"))
+        assert result == {}
+
+
+class TestLinterConstants:
+    """Tests for linter constants."""
+
+    def test_linter_names_defined(self) -> None:
+        """Should have all expected linter names."""
+        expected = ["ruff", "mypy", "hadolint", "pymarkdown", "yamllint", "checkov"]
+        assert expected == LINTER_NAMES
+
+    def test_linter_runners_has_all_linters(self) -> None:
+        """Should have runner for each linter name."""
+        for name in LINTER_NAMES:
+            assert name in LINTER_RUNNERS
+            assert callable(LINTER_RUNNERS[name])
+
+
+class TestParseArgs:
+    """Tests for _parse_args function."""
+
+    def test_no_args_returns_empty_list(self) -> None:
+        """Should return empty linters list when no args provided."""
+        with patch("sys.argv", ["lint"]):
+            args = _parse_args()
+        assert args.linters == []
+
+    def test_single_linter_arg(self) -> None:
+        """Should parse single linter argument."""
+        with patch("sys.argv", ["lint", "ruff"]):
+            args = _parse_args()
+        assert args.linters == ["ruff"]
+
+    def test_multiple_linter_args(self) -> None:
+        """Should parse multiple linter arguments."""
+        with patch("sys.argv", ["lint", "ruff", "mypy", "yamllint"]):
+            args = _parse_args()
+        assert args.linters == ["ruff", "mypy", "yamllint"]
+
+    def test_invalid_linter_raises_error(self) -> None:
+        """Should raise SystemExit for invalid linter name."""
+        with patch("sys.argv", ["lint", "invalid_linter"]), pytest.raises(SystemExit):
+            _parse_args()
+
+
+class TestRunRuff:
+    """Tests for _run_ruff function."""
+
+    def test_runs_format_and_check(self) -> None:
+        """Should run ruff format and ruff check."""
+        with (
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_ruff()
+
+        assert mock_check.call_count == 2
+        calls = mock_check.call_args_list
+        assert calls[0][0][0] == ["/usr/bin/uv", "run", "ruff", "format", "."]
+        assert calls[1][0][0] == ["/usr/bin/uv", "run", "ruff", "check", "--fix", "."]
+
+
+class TestRunMypy:
+    """Tests for _run_mypy function."""
+
+    def test_runs_mypy(self) -> None:
+        """Should run mypy."""
+        with (
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_mypy()
+
+        mock_check.assert_called_once_with(["/usr/bin/uv", "run", "mypy"])
+
+
+class TestRunHadolint:
+    """Tests for _run_hadolint function."""
+
+    def test_prints_message_when_no_dockerfiles(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should print message when no Dockerfiles found."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/.lint.hadolint.yaml", contents="exclude_dirs: []")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/hadolint"),
+        ):
+            _run_hadolint()
+
+        captured = capsys.readouterr()
+        assert "No Dockerfiles found" in captured.out
+
+    def test_runs_hadolint_on_dockerfiles(self, fs: FakeFilesystem) -> None:
+        """Should run hadolint on found Dockerfiles."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/Dockerfile", contents="FROM alpine")
+        fs.create_file("/fake/repo/.hadolint.yaml", contents="")
+        fs.create_file("/fake/repo/.lint.hadolint.yaml", contents="exclude_dirs: []")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")),
+            patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/hadolint"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_hadolint()
+
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+        assert call_args[0] == "/usr/bin/hadolint"
+        assert "--config" in call_args
+
+    def test_excludes_directories_from_config(self, fs: FakeFilesystem) -> None:
+        """Should exclude directories specified in config."""
+        fs.create_dir("/fake/repo")
+        fs.create_dir("/fake/repo/excluded")
+        fs.create_file("/fake/repo/Dockerfile", contents="FROM alpine")
+        fs.create_file("/fake/repo/excluded/Dockerfile", contents="FROM alpine")
+        fs.create_file("/fake/repo/.hadolint.yaml", contents="")
+        fs.create_file("/fake/repo/.lint.hadolint.yaml", contents="exclude_dirs:\n  - excluded")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")),
+            patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/hadolint"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_hadolint()
+
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+        # Only the root Dockerfile should be included, not the excluded one
+        dockerfile_args = [arg for arg in call_args if "Dockerfile" in arg]
+        assert len(dockerfile_args) == 1
+        assert "excluded" not in dockerfile_args[0]
+
+
+class TestRunPymarkdown:
+    """Tests for _run_pymarkdown function."""
+
+    def test_runs_pymarkdown(self, fs: FakeFilesystem) -> None:
+        """Should run pymarkdown with config and excludes."""
+        fs.create_dir("/fake/repo")
+        fs.create_file(
+            "/fake/repo/.lint.pymarkdown.yaml",
+            contents="targets:\n  - README.md\nexcludes:\n  - .venv",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_pymarkdown()
+
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+        assert "/usr/bin/uv" in call_args
+        assert "pymarkdown" in call_args
+        assert "-c" in call_args
+        assert "README.md" in call_args
+        assert "-e" in call_args
+        assert ".venv" in call_args
+
+
+class TestRunYamllint:
+    """Tests for _run_yamllint function."""
+
+    def test_runs_yamllint_when_yaml_files_exist(self, fs: FakeFilesystem) -> None:
+        """Should run yamllint when YAML files exist."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/config.yml", contents="key: value")
+        fs.create_file("/fake/repo/.yamllint.yaml", contents="")
+        fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs: []")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_yamllint()
+
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+        assert "yamllint" in call_args
+
+    def test_skips_when_no_yaml_files(self, fs: FakeFilesystem) -> None:
+        """Should not call yamllint when no YAML files exist."""
+        fs.create_dir("/fake/repo")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "_load_yaml_config", return_value={"exclude_dirs": []}),
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_yamllint()
+
+        mock_check.assert_not_called()
+
+    def test_excludes_directories_from_config(self, fs: FakeFilesystem) -> None:
+        """Should exclude directories specified in config."""
+        fs.create_dir("/fake/repo")
+        fs.create_dir("/fake/repo/excluded")
+        fs.create_file("/fake/repo/config.yml", contents="key: value")
+        fs.create_file("/fake/repo/excluded/other.yml", contents="key: value")
+        fs.create_file("/fake/repo/.yamllint.yaml", contents="")
+        fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs:\n  - excluded")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_yamllint()
+
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+        # Only config.yml should be included, not the one in excluded/
+        yaml_file_args = [arg for arg in call_args if arg.endswith(".yml")]
+        assert len(yaml_file_args) == 1
+        assert "excluded" not in yaml_file_args[0]
+
+
+class TestRunCheckov:
+    """Tests for _run_checkov function."""
+
+    def test_returns_one_when_schema_missing(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when OpenAPI schema is missing."""
+        fs.create_dir("/fake/repo/openapi")
+
+        with patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")):
+            result = _run_checkov()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "OpenAPI schema missing" in captured.err
+
+    def test_returns_zero_on_success(self, fs: FakeFilesystem) -> None:
+        """Should return 0 when checkov runs successfully."""
+        fs.create_dir("/fake/repo/openapi")
+        fs.create_file("/fake/repo/openapi/openapi.json", contents="{}")
+        fs.create_file("/fake/repo/.checkov.yaml", contents="")
+
+        with (
+            patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
+            patch.object(lint, "CHECKOV_CONFIG", Path("/fake/repo/.checkov.yaml")),
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call"),
+        ):
+            result = _run_checkov()
+
+        assert result == 0
+
+
 class TestMain:
     """Tests for main function."""
 
     def test_returns_one_when_uv_not_found(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should return 1 when uv is not found."""
-        with patch("shutil.which", return_value=None):
+        with (
+            patch("sys.argv", ["lint"]),
+            patch("shutil.which", return_value=None),
+        ):
             result = main()
 
         assert result == 1
@@ -115,13 +407,19 @@ class TestMain:
         """Should return 1 when OpenAPI schema is missing."""
         # Create minimal repo structure
         fs.create_dir("/fake/repo/openapi")
+        fs.create_file("/fake/repo/.lint.hadolint.yaml", contents="exclude_dirs: []")
+        fs.create_file("/fake/repo/.lint.pymarkdown.yaml", contents="targets: []\nexcludes: []")
+        fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs: []")
 
         with (
+            patch("sys.argv", ["lint"]),
             patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
             patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
+            patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
+            patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
+            patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
-            patch.object(lint, "HADOLINT_EXCLUDE_DIRS", set()),
         ):
             result = main()
 
@@ -132,6 +430,7 @@ class TestMain:
     def test_returns_one_on_subprocess_error(self) -> None:
         """Should return exit code from subprocess error."""
         with (
+            patch("sys.argv", ["lint"]),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call") as mock_check,
         ):
@@ -149,13 +448,19 @@ class TestMain:
         fs.create_file("/fake/repo/.hadolint.yaml", contents="")
         fs.create_file("/fake/repo/.pymarkdown.json", contents="{}")
         fs.create_file("/fake/repo/.yamllint.yaml", contents="")
+        fs.create_file("/fake/repo/.lint.hadolint.yaml", contents="exclude_dirs: []")
+        fs.create_file("/fake/repo/.lint.pymarkdown.yaml", contents="targets: []\nexcludes: []")
+        fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs: []")
 
         with (
+            patch("sys.argv", ["lint"]),
             patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
             patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
             patch.object(lint, "CHECKOV_CONFIG", Path("/fake/repo/.checkov.yaml")),
             patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")),
-            patch.object(lint, "HADOLINT_EXCLUDE_DIRS", set()),
+            patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
+            patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
+            patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
         ):
@@ -173,13 +478,19 @@ class TestMain:
         fs.create_file("/fake/repo/.hadolint.yaml", contents="")
         fs.create_file("/fake/repo/.pymarkdown.json", contents="{}")
         fs.create_file("/fake/repo/.yamllint.yaml", contents="")
+        fs.create_file("/fake/repo/.lint.hadolint.yaml", contents="exclude_dirs: []")
+        fs.create_file("/fake/repo/.lint.pymarkdown.yaml", contents="targets: []\nexcludes: []")
+        fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs: []")
 
         with (
+            patch("sys.argv", ["lint"]),
             patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
             patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
             patch.object(lint, "CHECKOV_CONFIG", Path("/fake/repo/.checkov.yaml")),
             patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")),
-            patch.object(lint, "HADOLINT_EXCLUDE_DIRS", set()),
+            patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
+            patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
+            patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
         ):
@@ -187,3 +498,44 @@ class TestMain:
 
         captured = capsys.readouterr()
         assert "No Dockerfiles found" in captured.out
+
+    def test_runs_only_specified_linter(self, fs: FakeFilesystem) -> None:
+        """Should run only the specified linter when argument provided."""
+        fs.create_dir("/fake/repo/openapi")
+        fs.create_file("/fake/repo/openapi/openapi.json", contents="{}")
+
+        with (
+            patch("sys.argv", ["lint", "ruff"]),
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            result = main()
+
+        assert result == 0
+        # ruff runs format and check = 2 calls
+        assert mock_check.call_count == 2
+
+    def test_runs_multiple_specified_linters_in_order(self, fs: FakeFilesystem) -> None:
+        """Should run multiple specified linters in canonical order."""
+        fs.create_dir("/fake/repo/openapi")
+        fs.create_file("/fake/repo/openapi/openapi.json", contents="{}")
+
+        with (
+            patch("sys.argv", ["lint", "mypy", "ruff"]),
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            result = main()
+
+        assert result == 0
+        # ruff (2 calls) + mypy (1 call) = 3 calls
+        assert mock_check.call_count == 3
+        # Verify order: ruff comes before mypy in LINTER_NAMES
+        calls = mock_check.call_args_list
+        # First two calls should be ruff
+        assert "ruff" in str(calls[0])
+        assert "ruff" in str(calls[1])
+        # Third call should be mypy
+        assert "mypy" in str(calls[2])

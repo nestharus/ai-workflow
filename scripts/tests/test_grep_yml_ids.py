@@ -236,9 +236,7 @@ class TestSearchStructure:
             fs.create_dir("/fake")
             data = {"id": "url.prefix", "text": "Test text"}
 
-            results = _search_structure(
-                data, "url", exact=False, file_path=Path("/fake/test.yml")
-            )
+            results = _search_structure(data, "url", exact=False, file_path=Path("/fake/test.yml"))
 
             assert len(results) == 1
             assert results[0]["element_id"] == "url.prefix"
@@ -249,9 +247,7 @@ class TestSearchStructure:
             fs.create_dir("/fake")
             data = {"id": "url.prefix", "text": "Test text"}
 
-            results = _search_structure(
-                data, "url", exact=True, file_path=Path("/fake/test.yml")
-            )
+            results = _search_structure(data, "url", exact=True, file_path=Path("/fake/test.yml"))
 
             assert len(results) == 0
 
@@ -281,9 +277,7 @@ class TestSearchStructure:
                 {"id": "item-2", "text": "Second"},
             ]
 
-            results = _search_structure(
-                data, "item", exact=False, file_path=Path("/fake/test.yml")
-            )
+            results = _search_structure(data, "item", exact=False, file_path=Path("/fake/test.yml"))
 
             assert len(results) == 2
 
@@ -322,9 +316,7 @@ class TestSearchStructure:
             fs.create_dir("/fake")
             data = {"id": 123, "text": "Text"}
 
-            results = _search_structure(
-                data, "123", exact=True, file_path=Path("/fake/test.yml")
-            )
+            results = _search_structure(data, "123", exact=True, file_path=Path("/fake/test.yml"))
 
             assert len(results) == 0
 
@@ -652,9 +644,7 @@ class TestMain:
         assert len(parsed) == 1
         assert parsed[0]["element_id"] == "test.id"
 
-    def test_exact_match_mode(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_exact_match_mode(self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]) -> None:
         """Should respect exact match mode."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/docs")
@@ -665,9 +655,7 @@ class TestMain:
                 result_partial = main()
 
             # Exact match should not find it
-            with patch(
-                "sys.argv", ["script", "--id", "url", "--path", "/fake/docs", "--exact"]
-            ):
+            with patch("sys.argv", ["script", "--id", "url", "--path", "/fake/docs", "--exact"]):
                 result_exact = main()
 
         assert result_partial == 0

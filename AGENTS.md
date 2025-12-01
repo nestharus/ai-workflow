@@ -59,17 +59,23 @@ uv run pytest --cov --cov-report=term-missing
 
 Runs a comprehensive suite of static analysis and security tools.
 
-* **Usage**: `uv run lint`
-* **Operations Performed**:
-  1. `ruff format .`: Auto-formats code
-  2. `ruff check --fix .`: Fixes linting issues
-  3. `mypy`: Type checking
-  4. `hadolint`: Lints Dockerfiles
-  5. `pymarkdown`: Validates Markdown files
-  6. `yamllint`: Validates all `.yml` and `.yaml` files for syntax and style per the
+* **Usage**: `uv run lint [LINTER ...]`
+* **Arguments**: Specify one or more linter names to run only those linters. If no
+  arguments are provided, all linters run in order.
+* **Available Linters** (in execution order):
+  1. `ruff`: Auto-formats code (`ruff format .`) and fixes linting issues
+     (`ruff check --fix .`)
+  2. `mypy`: Type checking
+  3. `hadolint`: Lints Dockerfiles
+  4. `pymarkdown`: Validates Markdown files
+  5. `yamllint`: Validates all `.yml` and `.yaml` files for syntax and style per the
      configuration in `.yamllint.yaml`
-  7. `checkov`: Scans the generated `openapi/openapi.json` against policies in
+  6. `checkov`: Scans the generated `openapi/openapi.json` against policies in
      `.checkov.yaml`
+* **Examples**:
+  * `uv run lint` - Run all linters
+  * `uv run lint ruff` - Run only ruff (format and check)
+  * `uv run lint mypy yamllint` - Run mypy and yamllint
 * **Prerequisite**: Run `uv run gen_openapi` first to generate the schema for Checkov
 * **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
   invoked via `uv run`
@@ -137,20 +143,18 @@ Generates the OpenAPI 3.1 schema JSON file from the FastAPI application code.
 * **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
   invoked via `uv run`
 
-## Custom Droids (Sub-agents)
+## Sub-agents
 
-This project includes specialized sub-agents (droids) for automated task delegation.
-Droids are defined in `.factory/droids/` and can be invoked via the Task tool.
+This project includes specialized Claude sub-agents for automated task delegation.
+Sub-agents are defined in `.claude/agents/` and can be invoked via the Task tool.
 
-**Prerequisite**: Enable Custom Droids in settings (`/settings` → Experimental → Custom
-Droids) and restart droid.
+### Available Sub-agents
 
-### Available Droids
-
-| Droid | Model | Purpose |
-|-------|-------|---------|
-| `lint-fixer` | `gpt-5.1-codex-max-low` | Resolves all lint errors iteratively |
-| `test-fixer` | `claude-opus-4-5-thinking-high` | Runs tests, debugs failures, meets coverage |
+| Sub-agent | Model | Purpose |
+|-----------|-------|---------|
+| `lint-fixer` | haiku | Resolves all lint errors iteratively |
+| `test-fixer` | opus | Runs tests, debugs failures, meets coverage |
+| `knowledge-analyzer` | opus | Analyzes YAML items, classifies content, suggests SPLIT/KEEP/REMOVE |
 
 ### lint-fixer
 
@@ -160,8 +164,8 @@ Resolves and fixes lint errors until all issues pass.
   1. Runs `uv run gen_openapi` first (required before lint)
   2. Runs `uv run lint`
   3. Fixes errors iteratively until all checks pass
-* **Usage**: "Run the subagent `lint-fixer` to fix all lint errors"
-* **Tools**: Read, Edit, MultiEdit, Create, Execute, Grep, Glob, LS
+* **Prompt**: Pass an empty string (`""`). The agent has its own instructions.
+* **Tools**: Read, Edit, Bash, Grep, Glob, TodoWrite
 
 ### test-fixer
 
@@ -172,25 +176,35 @@ Runs all tests, debugs failures, and ensures coverage requirements are met.
   2. Runs `uv run pytest --cov`
   3. Debugs and fixes test failures
   4. Ensures 80% coverage threshold is met
-* **Usage**: "Run the subagent `test-fixer` to fix all failing tests"
-* **Tools**: Read, Edit, MultiEdit, Create, Execute, Grep, Glob, LS, TodoWrite, firecrawl
+* **Prompt**: Pass an empty string (`""`). The agent has its own instructions.
+* **Tools**: Read, Edit, Bash, Grep, Glob, TodoWrite, WebFetch, WebSearch
 
-### Creating New Droids
+### knowledge-analyzer
 
-Droids are Markdown files with YAML frontmatter in `.factory/droids/`:
+Analyzes YAML documentation items with chunking and multi-dimensional classification.
+
+* **Workflow**:
+  1. Extracts text from YAML items
+  2. Chunks text into atomic information units
+  3. Classifies each chunk by domain, scope, and pattern
+  4. Detects MIXED content (general + project)
+  5. Suggests SPLIT/KEEP/REMOVE actions
+* **Prompt**: Pass an empty string (`""`). The agent has its own instructions.
+* **Tools**: Read, Grep, Glob, Bash, TodoWrite
+
+### Creating New Sub-agents
+
+Sub-agents are Markdown files with YAML frontmatter in `.claude/agents/`:
 
 ```markdown
 ---
-name: my-droid
-description: Short description of what this droid does
-model: inherit
-tools: ["Read", "Edit", "Execute"]
+name: my-agent
+description: Short description of what this agent does
+model: haiku
+tools: Read, Edit, Bash, Grep, Glob
 ---
 
-System prompt instructions for the droid...
+System prompt instructions for the agent...
 ```
-
-For more information, see the
-[Factory Custom Droids documentation](https://docs.factory.ai/cli/configuration/custom-droids).
 
 </coding_guidelines>
