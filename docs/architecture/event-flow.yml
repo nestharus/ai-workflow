@@ -1,58 +1,62 @@
 doc_id: original-architecture-event-flow
 title: Event Flow Architecture
-description: This document visualizes the end-to-end event flow from GitHub webhook
-  to agent execution and result processing.
+description: This document visualizes the end-to-end event flow from GitHub webhook to agent execution
+  and result processing.
 domain: []
 scope: general
 sections:
-  - id: sequence-diagram
-    index: 1
-    title: Sequence Diagram
-    category: workflow
-    summary: ''
-    items:
-      - id: sequence-diagram-code-1
-        type: code
-        text: "sequenceDiagram\n    participant GH as GitHub\n    participant WR as\
-          \ Webhook Receiver\n    participant Orch as Orchestrator\n    participant\
-          \ Agent as Agent (via droid exec)\n    participant MCP as GitHub MCP\n\n\
-          \    GH->>WR: Webhook (PR comment/new issue)\n    WR->>WR: Verify signature\n\
-          \    WR->>Orch: Forward event\n    Orch->>Orch: Route to workflow\n    Orch->>Agent:\
-          \ Invoke via subprocess\n    Agent->>MCP: Fetch PR/issue details\n    MCP->>Agent:\
-          \ Return data\n    Agent->>Orch: Submit result message\n    Orch->>Orch:\
-          \ Process result"
-  - id: flow-stages
-    index: 2
-    title: Flow Stages
-    category: workflow
-    summary: ''
-    items:
-      - id: flow-stages-webhook-reception-github
-        type: text
-        text: '**Webhook Reception**: GitHub sends a webhook to the Webhook Receiver
-          service'
-      - id: flow-stages-signature-verification-th
-        type: text
-        text: '**Signature Verification**: The receiver verifies the HMAC SHA256 signature'
-      - id: flow-stages-event-forwarding-validate
-        type: text
-        text: '**Event Forwarding**: Validated events are forwarded to the Orchestrator'
-      - id: flow-stages-workflow-routing-the-orch
-        type: rule
-        text: '**Workflow Routing**: The orchestrator determines which workflow should
-          handle the event'
-      - id: flow-stages-agent-invocation-the-orch
-        type: text
-        text: '**Agent Invocation**: The orchestrator spawns an agent via `droid exec`
-          subprocess'
-      - id: flow-stages-github-mcp-access-the-age
-        type: text
-        text: '**GitHub MCP Access**: The agent fetches additional details from GitHub
-          using MCP'
-      - id: flow-stages-result-submission-the-age
-        type: text
-        text: '**Result Submission**: The agent submits its result back to the orchestrator'
-      - id: flow-stages-result-processing-the-orc
-        type: text
-        text: '**Result Processing**: The orchestrator processes the result and continues
-          the workflow'
+- id: sequence-diagram
+  index: 1
+  title: Sequence Diagram
+  category: workflow
+  summary: ''
+  items:
+  - id: sequence-diagram-code-1
+    type: code
+    text: |
+      sequenceDiagram
+          participant GH as GitHub
+          participant WR as Webhook Receiver
+          participant Orch as Orchestrator
+          participant Agent as Agent (via droid exec)
+          participant MCP as GitHub MCP
+
+          GH->>WR: Webhook (PR comment/new issue)
+          WR->>WR: Verify signature
+          WR->>Orch: Forward event
+          Orch->>Orch: Route to workflow
+          Orch->>Agent: Invoke via subprocess
+          Agent->>MCP: Fetch PR/issue details
+          MCP->>Agent: Return data
+          Agent->>Orch: Submit result message
+          Orch->>Orch: Process result
+- id: flow-stages
+  index: 2
+  title: Flow Stages
+  category: workflow
+  summary: ''
+  items:
+  - id: flow-stages-webhook-reception-github
+    type: text
+    text: '**Webhook Reception**: GitHub sends a webhook to the Webhook Receiver service'
+  - id: flow-stages-signature-verification-th
+    type: text
+    text: '**Signature Verification**: The receiver verifies the HMAC SHA256 signature'
+  - id: flow-stages-event-forwarding-validate
+    type: text
+    text: '**Event Forwarding**: Validated events are forwarded to the Orchestrator'
+  - id: flow-stages-workflow-routing-the-orch
+    type: rule
+    text: '**Workflow Routing**: The orchestrator determines which workflow should handle the event'
+  - id: flow-stages-agent-invocation-the-orch
+    type: text
+    text: '**Agent Invocation**: The orchestrator spawns an agent via `droid exec` subprocess'
+  - id: flow-stages-github-mcp-access-the-age
+    type: text
+    text: '**GitHub MCP Access**: The agent fetches additional details from GitHub using MCP'
+  - id: flow-stages-result-submission-the-age
+    type: text
+    text: '**Result Submission**: The agent submits its result back to the orchestrator'
+  - id: flow-stages-result-processing-the-orc
+    type: text
+    text: '**Result Processing**: The orchestrator processes the result and continues the workflow'

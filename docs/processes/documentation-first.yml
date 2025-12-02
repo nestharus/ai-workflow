@@ -1,68 +1,66 @@
 doc_id: original-processes-documentation-first
 title: Documentation-First Approach
-description: When an agent makes a mistake, corrections are made by updating the Knowledge
-  Graph (via R1 agents) rather than editing output directly. This ensures the system
-  learns and maintains a single source of truth.
+description: When an agent makes a mistake, corrections are made by updating the Knowledge Graph (via
+  R1 agents) rather than editing output directly. This ensures the system learns and maintains a single
+  source of truth.
 domain: []
 scope: general
 sections:
-  - id: core-principle
-    index: 1
-    title: Core Principle
-    category: standard
-    summary: ''
-    items:
-      - id: core-principle-1
-        type: step
-        text: Documentation in `docs/` serves as the authoritative reference for all
-          agent behavior. When patterns or standards need correction, the documentation
-          is updated first, and agents then follow the updated documentation.
-  - id: benefits
-    index: 2
-    title: Benefits
-    category: standard
-    summary: ''
-    items:
-      - id: benefits-system-learning-correctio
-        type: text
-        text: '**System Learning**: Corrections persist and improve future agent behavior'
-      - id: benefits-single-source-of-truth-al
-        type: text
-        text: '**Single Source of Truth**: All agents reference the same authoritative
-          documentation'
-      - id: benefits-consistency-updated-docum
-        type: text
-        text: '**Consistency**: Updated documentation ensures consistent behavior
-          across all agents'
-      - id: benefits-traceability-changes-to-s
-        type: text
-        text: '**Traceability**: Changes to standards are tracked in version control'
-  - id: process
-    index: 3
-    title: Process
-    category: workflow
-    summary: ''
-    items:
-      - id: process-an-agent-makes-a-mistake-or-a
-        type: text
-        text: An agent makes a mistake or a pattern needs correction
-      - id: process-r1-agents-identify-the-relevan
-        type: text
-        text: R1 agents identify the relevant documentation file
-      - id: process-the-documentation-is-updated-t
-        type: text
-        text: The documentation is updated to clarify or correct the standard
-      - id: process-all-agents-follow-the-updated
-        type: text
-        text: All agents follow the updated documentation going forward
-  - id: r1-agent-responsibility
-    index: 4
-    title: R1 Agent Responsibility
-    category: standard
-    summary: ''
-    items:
-      - id: r1-agent-responsibility-1
-        type: text
-        text: R1 (Strategy Planner) agents are responsible for maintaining the Knowledge
-          Graph. When corrections are needed, R1 agents update the relevant documentation
-          files rather than applying ad-hoc fixes to individual agent outputs.
+- id: core-principle
+  index: 1
+  title: Core Principle
+  category: standard
+  summary: ''
+  items:
+  - id: core-principle-1
+    type: step
+    text: Documentation in `docs/` serves as the authoritative reference for all agent behavior. When
+      patterns or standards need correction, the documentation is updated first, and agents then follow
+      the updated documentation.
+- id: benefits
+  index: 2
+  title: Benefits
+  category: standard
+  summary: ''
+  items:
+  - id: benefits-system-learning-correctio
+    type: text
+    text: '**System Learning**: Corrections persist and improve future agent behavior'
+  - id: benefits-single-source-of-truth-al
+    type: text
+    text: '**Single Source of Truth**: All agents reference the same authoritative documentation'
+  - id: benefits-consistency-updated-docum
+    type: text
+    text: '**Consistency**: Updated documentation ensures consistent behavior across all agents'
+  - id: benefits-traceability-changes-to-s
+    type: text
+    text: '**Traceability**: Changes to standards are tracked in version control'
+- id: process
+  index: 3
+  title: Process
+  category: workflow
+  summary: ''
+  items:
+  - id: process-an-agent-makes-a-mistake-or-a
+    type: text
+    text: An agent makes a mistake or a pattern needs correction
+  - id: process-r1-agents-identify-the-relevan
+    type: text
+    text: R1 agents identify the relevant documentation file
+  - id: process-the-documentation-is-updated-t
+    type: text
+    text: The documentation is updated to clarify or correct the standard
+  - id: process-all-agents-follow-the-updated
+    type: text
+    text: All agents follow the updated documentation going forward
+- id: r1-agent-responsibility
+  index: 4
+  title: R1 Agent Responsibility
+  category: standard
+  summary: ''
+  items:
+  - id: r1-agent-responsibility-1
+    type: text
+    text: R1 (Strategy Planner) agents are responsible for maintaining the Knowledge Graph. When corrections
+      are needed, R1 agents update the relevant documentation files rather than applying ad-hoc fixes
+      to individual agent outputs.

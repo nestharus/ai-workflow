@@ -1,602 +1,577 @@
 doc_id: original-testing-testing-patterns
 title: Use-Case-Based Test Coverage
-description: This document defines the approach for tracking test coverage at the
-  use-case level, ensuring that tests validate user-facing scenarios and system requirements
-  rather than just exercising code paths.
+description: This document defines the approach for tracking test coverage at the use-case level, ensuring
+  that tests validate user-facing scenarios and system requirements rather than just exercising code paths.
 domain: []
 scope: general
 sections:
-  - id: 1-introduction
-    index: 1
-    title: 1. Introduction
-    category: standard
-    summary: ''
-    items:
-      - id: 1-introduction-1
-        type: rule
-        text: Traditional code coverage metrics (line coverage, branch coverage) measure
-          which code is executed during tests but do not indicate whether user scenarios
-          are actually validated. Use-case coverage addresses this gap by tracking
-          which user-facing scenarios have corresponding tests.
-      - id: 1-introduction-key-distinctions
-        type: text
-        text: '**Key distinctions:**'
-      - id: 1-introduction-code-coverage-measures-wh
-        type: step
-        text: '**Code coverage**: Measures what percentage of source lines or branches
-          are executed during tests.'
-      - id: 1-introduction-use-case-coverage-measure
-        type: text
-        text: '**Use-case coverage**: Measures how many defined user scenarios have
-          tests that validate them.'
-      - id: 1-introduction-5
-        type: text
-        text: A codebase can have 100% line coverage but still miss critical user
-          scenarios if tests only exercise code paths without asserting on expected
-          behaviors. Conversely, well-designed use-case tests often achieve high code
-          coverage as a side effect of validating real functionality.
-      - id: 1-introduction-6
-        type: text
-        text: This approach aligns testing with user needs and system requirements,
-          making test gaps visible and actionable.
-  - id: 2-use-case-registry
-    index: 2
-    title: 2. Use-Case Registry
-    category: standard
-    summary: ''
-    items:
-      - id: 2-use-case-registry-1
-        type: text
-        text: The canonical use-case registry lives at `tests/use_cases.yaml`. This
-          file catalogs all testable scenarios for the API, organized by feature area.
-  - id: 21-registry-structure
-    index: 3
-    title: 2.1 Registry Structure
-    category: standard
-    summary: ''
-    items:
-      - id: 21-registry-structure-code-1
-        type: code
-        text: "features:\n  health:\n    name: Health Checks\n    description: Liveness\
-          \ and readiness probes for monitoring\n    use_cases:\n      - id: UC-HEALTH-001\n\
-          \        endpoint: /health\n        method: GET\n        description: Root\
-          \ liveness check returns 200 OK\n        expected_behavior: |\n        \
-          \  Returns HTTP 200 with JSON body {\"status\": \"ok\"}.\n        test_tier:\
-          \ e2e"
-  - id: 22-field-definitions
-    index: 4
-    title: 2.2 Field Definitions
-    category: standard
-    summary: ''
-    items:
-      - id: 22-field-definitions-1
-        type: rule
-        text: '| Field | Description | |-------|-------------| | `id` | Unique identifier
-          following `UC-{FEATURE}-{NUMBER}` pattern | | `endpoint` | Full API path
-          (e.g., `/api/v1/health`) | | `method` | HTTP method (GET, POST, PUT, DELETE,
-          PATCH) | | `description` | Human-readable scenario description | | `expected_behavior`
-          | Detailed expected outcome including status codes and response characteristics
-          | | `test_tier` | Where the test should live: `integration` or `e2e` |'
-      - id: 22-field-definitions-2
-        type: note
-        text: '**Note:** Coverage status is calculated dynamically from `@pytest.mark.usecase`
-          markers in tests, not stored in the registry. Uncovered use cases will appear
-          in coverage reports.'
-  - id: 23-naming-convention
-    index: 5
-    title: 2.3 Naming Convention
-    category: standard
-    summary: ''
-    items:
-      - id: 23-naming-convention-1
-        type: text
-        text: 'Use-case IDs follow the pattern `UC-{FEATURE}-{NUMBER}`:'
-      - id: 23-naming-convention-uc-health-001-first-health
-        type: step
-        text: '`UC-HEALTH-001`: First health-related use-case'
-      - id: 23-naming-convention-uc-example-007-seventh-exam
-        type: text
-        text: '`UC-EXAMPLE-007`: Seventh example-feature use-case'
-      - id: 23-naming-convention-uc-auth-003-third-authentic
-        type: step
-        text: '`UC-AUTH-003`: Third authentication use-case'
-      - id: 23-naming-convention-5
-        type: step
-        text: Numbers are zero-padded to three digits for consistent sorting. When
-          adding new use-cases, use the next available number in the sequence.
-  - id: 24-when-to-add-use-cases
-    index: 6
-    title: 2.4 When to Add Use-Cases
-    category: standard
-    summary: ''
-    items:
-      - id: 24-when-to-add-use-cases-1
-        type: text
-        text: 'Add new use-cases when:'
-      - id: 24-when-to-add-use-cases-adding-a-new-api-endpoint
-        type: text
-        text: Adding a new API endpoint
-      - id: 24-when-to-add-use-cases-discovering-new-scenarios-duri
-        type: text
-        text: Discovering new scenarios during testing or code review
-      - id: 24-when-to-add-use-cases-identifying-edge-cases-that-sh
-        type: rule
-        text: Identifying edge cases that should be explicitly tested
-      - id: 24-when-to-add-use-cases-documenting-validation-rules-t
-        type: text
-        text: Documenting validation rules that need test coverage
-      - id: 24-when-to-add-use-cases-breaking-down-complex-behavior
-        type: text
-        text: Breaking down complex behaviors into atomic testable scenarios
-      - id: 24-when-to-add-use-cases-7
-        type: rule
-        text: Each use-case should represent an **atomic, testable scenario** with
-          a single clear expected outcome.
-  - id: 3-tagging-tests-with-use-case-markers
-    index: 7
-    title: 3. Tagging Tests with Use-Case Markers
-    category: standard
-    summary: ''
-    items:
-      - id: 3-tagging-tests-with-use-case-markers-1
-        type: text
-        text: Tests are linked to use-cases using the `@pytest.mark.usecase` marker.
-  - id: 31-basic-usage
-    index: 8
-    title: 3.1 Basic Usage
-    category: standard
-    summary: ''
-    items:
-      - id: 31-basic-usage-code-1
-        type: code
-        text: "import pytest\n\n@pytest.mark.usecase(\"UC-HEALTH-001\")\nasync def\
-          \ test_root_health_check_returns_ok(api_client):\n    \"\"\"Verify root\
-          \ liveness probe returns healthy status.\"\"\"\n    response = await api_client.get(\"\
-          /health\")\n    assert response.status_code == 200\n    assert response.json()\
-          \ == {\"status\": \"ok\"}"
-  - id: 32-multiple-use-cases-per-test
-    index: 9
-    title: 3.2 Multiple Use-Cases per Test
-    category: standard
-    summary: ''
-    items:
-      - id: 32-multiple-use-cases-per-test-1
-        type: text
-        text: 'When a single test validates multiple related scenarios, apply multiple
-          markers:'
-      - id: 32-multiple-use-cases-per-test-code-2
-        type: code
-        text: "@pytest.mark.usecase(\"UC-EXAMPLE-010\")\n@pytest.mark.usecase(\"UC-EXAMPLE-011\"\
-          )\nasync def test_pagination_validation_errors(async_client):\n    \"\"\"\
-          Verify pagination parameters are validated.\"\"\"\n    # Test page < 1\n\
-          \    response = await async_client.get(\"/api/v1/examples/processed-messages?page=0\"\
-          )\n    assert response.status_code == 422\n\n    # Test page_size < 1\n\
-          \    response = await async_client.get(\"/api/v1/examples/processed-messages?page_size=0\"\
-          )\n    assert response.status_code == 422"
-  - id: 33-marker-registration
-    index: 10
-    title: 3.3 Marker Registration
-    category: standard
-    summary: ''
-    items:
-      - id: 33-marker-registration-1
-        type: rule
-        text: 'The `usecase` marker must be registered in `pyproject.toml` under `[tool.pytest.ini_options]`:'
-      - id: 33-marker-registration-code-2
-        type: code
-        text: "[tool.pytest.ini_options]\nmarkers = [\n    \"e2e: marks tests as end-to-end\
-          \ (requires running server)\",\n    \"usecase(id): links test to a use-case\
-          \ ID from tests/use_cases.yaml\"\n]"
-  - id: 34-best-practice-one-test-per-use-case
-    index: 11
-    title: '3.4 Best Practice: One Test Per Use-Case'
-    category: standard
-    summary: ''
-    items:
-      - id: 34-best-practice-one-test-per-use-case-1
-        type: text
-        text: 'For maximum traceability, strive for a 1:1 mapping between use-cases
-          and tests:'
-      - id: 34-best-practice-one-test-per-use-case-each-use-case-has-exactly-one
-        type: text
-        text: Each use-case has exactly one test that validates it
-      - id: 34-best-practice-one-test-per-use-case-each-test-links-to-exactly-one
-        type: text
-        text: Each test links to exactly one use-case (unless scenarios are closely
-          related)
-      - id: 34-best-practice-one-test-per-use-case-test-names-reflect-the-use-cas
-        type: text
-        text: Test names reflect the use-case description
-      - id: 34-best-practice-one-test-per-use-case-5
-        type: text
-        text: This makes it trivial to identify which test validates which scenario
-          and vice versa.
-  - id: 4-use-case-coverage-reporting
-    index: 12
-    title: 4. Use-Case Coverage Reporting
-    category: standard
-    summary: ''
-    items:
-      - id: 4-use-case-coverage-reporting-1
-        type: text
-        text: Coverage reporting will be implemented via pytest hooks in `tests/conftest.py`.
-  - id: 41-report-format
-    index: 13
-    title: 4.1 Report Format
-    category: standard
-    summary: ''
-    items:
-      - id: 41-report-format-1
-        type: step
-        text: 'After test runs, a summary will display:'
-      - id: 41-report-format-code-2
-        type: code
-        text: "========== Use-Case Coverage Report ==========\nTotal use-cases: 20\n\
-          Covered: 15 (75%)\nUncovered: 5\n\nUncovered use-cases:\n  - UC-HEALTH-003:\
-          \ Readiness check returns \"unhealthy\" when SurrealDB pool missing\n  -\
-          \ UC-HEALTH-004: Readiness check returns \"unhealthy\" when Elasticsearch\
-          \ client missing\n  - UC-EXAMPLE-008: List processed messages supports custom\
-          \ pagination parameters\n  - UC-EXAMPLE-009: List processed messages returns\
-          \ page 2 correctly\n  - UC-EXAMPLE-015: Get processed message handles different\
-          \ message types\n=============================================="
-  - id: 42-ci-integration
-    index: 14
-    title: 4.2 CI Integration
-    category: standard
-    summary: ''
-    items:
-      - id: 42-ci-integration-1
-        type: text
-        text: 'The coverage report can fail the build if coverage falls below the
-          configured threshold:'
-      - id: 42-ci-integration-code-2
-        type: code
-        text: '# Fail if use-case coverage is below threshold
+- id: 1-introduction
+  index: 1
+  title: 1. Introduction
+  category: standard
+  summary: ''
+  items:
+  - id: 1-introduction-1
+    type: rule
+    text: Traditional code coverage metrics (line coverage, branch coverage) measure which code is executed
+      during tests but do not indicate whether user scenarios are actually validated. Use-case coverage
+      addresses this gap by tracking which user-facing scenarios have corresponding tests.
+  - id: 1-introduction-key-distinctions
+    type: text
+    text: '**Key distinctions:**'
+  - id: 1-introduction-code-coverage-measures-wh
+    type: step
+    text: '**Code coverage**: Measures what percentage of source lines or branches are executed during
+      tests.'
+  - id: 1-introduction-use-case-coverage-measure
+    type: text
+    text: '**Use-case coverage**: Measures how many defined user scenarios have tests that validate them.'
+  - id: 1-introduction-5
+    type: text
+    text: A codebase can have 100% line coverage but still miss critical user scenarios if tests only
+      exercise code paths without asserting on expected behaviors. Conversely, well-designed use-case
+      tests often achieve high code coverage as a side effect of validating real functionality.
+  - id: 1-introduction-6
+    type: text
+    text: This approach aligns testing with user needs and system requirements, making test gaps visible
+      and actionable.
+- id: 2-use-case-registry
+  index: 2
+  title: 2. Use-Case Registry
+  category: standard
+  summary: ''
+  items:
+  - id: 2-use-case-registry-1
+    type: text
+    text: The canonical use-case registry lives at `tests/use_cases.yaml`. This file catalogs all testable
+      scenarios for the API, organized by feature area.
+- id: 21-registry-structure
+  index: 3
+  title: 2.1 Registry Structure
+  category: standard
+  summary: ''
+  items:
+  - id: 21-registry-structure-code-1
+    type: code
+    text: "features:\n  health:\n    name: Health Checks\n    description: Liveness and readiness probes\
+      \ for monitoring\n    use_cases:\n      - id: UC-HEALTH-001\n        endpoint: /health\n       \
+      \ method: GET\n        description: Root liveness check returns 200 OK\n        expected_behavior:\
+      \ |\n          Returns HTTP 200 with JSON body {\"status\": \"ok\"}.\n        test_tier: e2e"
+- id: 22-field-definitions
+  index: 4
+  title: 2.2 Field Definitions
+  category: standard
+  summary: ''
+  items:
+  - id: 22-field-definitions-1
+    type: rule
+    text: |
+      Use case field definitions:
+      - id: Unique identifier following UC-{FEATURE}-{NUMBER} pattern
+      - endpoint: Full API path (e.g., /api/v1/health)
+      - method: HTTP method (GET, POST, PUT, DELETE, PATCH)
+      - description: Human-readable scenario description
+      - expected_behavior: Detailed expected outcome including status codes and
+        response characteristics
+      - test_tier: Where the test should live (integration or e2e)
+  - id: 22-field-definitions-2
+    type: note
+    text: '**Note:** Coverage status is calculated dynamically from `@pytest.mark.usecase` markers in
+      tests, not stored in the registry. Uncovered use cases will appear in coverage reports.'
+- id: 23-naming-convention
+  index: 5
+  title: 2.3 Naming Convention
+  category: standard
+  summary: ''
+  items:
+  - id: 23-naming-convention-1
+    type: text
+    text: 'Use-case IDs follow the pattern `UC-{FEATURE}-{NUMBER}`:'
+  - id: 23-naming-convention-uc-health-001-first-health
+    type: step
+    text: '`UC-HEALTH-001`: First health-related use-case'
+  - id: 23-naming-convention-uc-example-007-seventh-exam
+    type: text
+    text: '`UC-EXAMPLE-007`: Seventh example-feature use-case'
+  - id: 23-naming-convention-uc-auth-003-third-authentic
+    type: step
+    text: '`UC-AUTH-003`: Third authentication use-case'
+  - id: 23-naming-convention-5
+    type: step
+    text: Numbers are zero-padded to three digits for consistent sorting. When adding new use-cases, use
+      the next available number in the sequence.
+- id: 24-when-to-add-use-cases
+  index: 6
+  title: 2.4 When to Add Use-Cases
+  category: standard
+  summary: ''
+  items:
+  - id: 24-when-to-add-use-cases-1
+    type: text
+    text: 'Add new use-cases when:'
+  - id: 24-when-to-add-use-cases-adding-a-new-api-endpoint
+    type: text
+    text: Adding a new API endpoint
+  - id: 24-when-to-add-use-cases-discovering-new-scenarios-duri
+    type: text
+    text: Discovering new scenarios during testing or code review
+  - id: 24-when-to-add-use-cases-identifying-edge-cases-that-sh
+    type: rule
+    text: Identifying edge cases that should be explicitly tested
+  - id: 24-when-to-add-use-cases-documenting-validation-rules-t
+    type: text
+    text: Documenting validation rules that need test coverage
+  - id: 24-when-to-add-use-cases-breaking-down-complex-behavior
+    type: text
+    text: Breaking down complex behaviors into atomic testable scenarios
+  - id: 24-when-to-add-use-cases-7
+    type: rule
+    text: Each use-case should represent an **atomic, testable scenario** with a single clear expected
+      outcome.
+- id: 3-tagging-tests-with-use-case-markers
+  index: 7
+  title: 3. Tagging Tests with Use-Case Markers
+  category: standard
+  summary: ''
+  items:
+  - id: 3-tagging-tests-with-use-case-markers-1
+    type: text
+    text: Tests are linked to use-cases using the `@pytest.mark.usecase` marker.
+- id: 31-basic-usage
+  index: 8
+  title: 3.1 Basic Usage
+  category: standard
+  summary: ''
+  items:
+  - id: 31-basic-usage-code-1
+    type: code
+    text: "import pytest\n\n@pytest.mark.usecase(\"UC-HEALTH-001\")\nasync def test_root_health_check_returns_ok(api_client):\n\
+      \    \"\"\"Verify root liveness probe returns healthy status.\"\"\"\n    response = await api_client.get(\"\
+      /health\")\n    assert response.status_code == 200\n    assert response.json() == {\"status\": \"\
+      ok\"}"
+- id: 32-multiple-use-cases-per-test
+  index: 9
+  title: 3.2 Multiple Use-Cases per Test
+  category: standard
+  summary: ''
+  items:
+  - id: 32-multiple-use-cases-per-test-1
+    type: text
+    text: 'When a single test validates multiple related scenarios, apply multiple markers:'
+  - id: 32-multiple-use-cases-per-test-code-2
+    type: code
+    text: "@pytest.mark.usecase(\"UC-EXAMPLE-010\")\n@pytest.mark.usecase(\"UC-EXAMPLE-011\")\nasync def\
+      \ test_pagination_validation_errors(async_client):\n    \"\"\"Verify pagination parameters are validated.\"\
+      \"\"\n    # Test page < 1\n    response = await async_client.get(\"/api/v1/examples/processed-messages?page=0\"\
+      )\n    assert response.status_code == 422\n\n    # Test page_size < 1\n    response = await async_client.get(\"\
+      /api/v1/examples/processed-messages?page_size=0\")\n    assert response.status_code == 422"
+- id: 33-marker-registration
+  index: 10
+  title: 3.3 Marker Registration
+  category: standard
+  summary: ''
+  items:
+  - id: 33-marker-registration-1
+    type: rule
+    text: 'The `usecase` marker must be registered in `pyproject.toml` under `[tool.pytest.ini_options]`:'
+  - id: 33-marker-registration-code-2
+    type: code
+    text: "[tool.pytest.ini_options]\nmarkers = [\n    \"e2e: marks tests as end-to-end (requires running\
+      \ server)\",\n    \"usecase(id): links test to a use-case ID from tests/use_cases.yaml\"\n]"
+- id: 34-best-practice-one-test-per-use-case
+  index: 11
+  title: '3.4 Best Practice: One Test Per Use-Case'
+  category: standard
+  summary: ''
+  items:
+  - id: 34-best-practice-one-test-per-use-case-1
+    type: text
+    text: 'For maximum traceability, strive for a 1:1 mapping between use-cases and tests:'
+  - id: 34-best-practice-one-test-per-use-case-each-use-case-has-exactly-one
+    type: text
+    text: Each use-case has exactly one test that validates it
+  - id: 34-best-practice-one-test-per-use-case-each-test-links-to-exactly-one
+    type: text
+    text: Each test links to exactly one use-case (unless scenarios are closely related)
+  - id: 34-best-practice-one-test-per-use-case-test-names-reflect-the-use-cas
+    type: text
+    text: Test names reflect the use-case description
+  - id: 34-best-practice-one-test-per-use-case-5
+    type: text
+    text: This makes it trivial to identify which test validates which scenario and vice versa.
+- id: 4-use-case-coverage-reporting
+  index: 12
+  title: 4. Use-Case Coverage Reporting
+  category: standard
+  summary: ''
+  items:
+  - id: 4-use-case-coverage-reporting-1
+    type: text
+    text: Coverage reporting will be implemented via pytest hooks in `tests/conftest.py`.
+- id: 41-report-format
+  index: 13
+  title: 4.1 Report Format
+  category: standard
+  summary: ''
+  items:
+  - id: 41-report-format-1
+    type: step
+    text: 'After test runs, a summary will display:'
+  - id: 41-report-format-code-2
+    type: code
+    text: "========== Use-Case Coverage Report ==========\nTotal use-cases: 20\nCovered: 15 (75%)\nUncovered:\
+      \ 5\n\nUncovered use-cases:\n  - UC-HEALTH-003: Readiness check returns \"unhealthy\" when SurrealDB\
+      \ pool missing\n  - UC-HEALTH-004: Readiness check returns \"unhealthy\" when Elasticsearch client\
+      \ missing\n  - UC-EXAMPLE-008: List processed messages supports custom pagination parameters\n \
+      \ - UC-EXAMPLE-009: List processed messages returns page 2 correctly\n  - UC-EXAMPLE-015: Get processed\
+      \ message handles different message types\n=============================================="
+- id: 42-ci-integration
+  index: 14
+  title: 4.2 CI Integration
+  category: standard
+  summary: ''
+  items:
+  - id: 42-ci-integration-1
+    type: text
+    text: 'The coverage report can fail the build if coverage falls below the configured threshold:'
+  - id: 42-ci-integration-code-2
+    type: code
+    text: '# Fail if use-case coverage is below threshold
 
-          pytest --usecase-coverage-fail-under=<threshold>'
-  - id: 43-implementation-status
-    index: 15
-    title: 4.3 Implementation Status
-    category: standard
-    summary: ''
-    items:
-      - id: 43-implementation-status-1
-        type: rule
-        text: Use-case coverage is calculated automatically by scanning test files
-          for `@pytest.mark.usecase` markers. The coverage script (`scripts/dev/test_coverage.py`)
-          detects which use-cases have corresponding tests and reports coverage accordingly.
-          No manual tracking is required.
-  - id: 5-stub-tests-for-uncovered-use-cases
-    index: 16
-    title: 5. Stub Tests for Uncovered Use-Cases
-    category: standard
-    summary: ''
-    items:
-      - id: 5-stub-tests-for-uncovered-use-cases-1
-        type: step
-        text: For use-cases that are known but not yet implemented, create stub tests
-          with skip decorators.
-  - id: 51-stub-pattern
-    index: 17
-    title: 5.1 Stub Pattern
-    category: standard
-    summary: ''
-    items:
-      - id: 51-stub-pattern-code-1
-        type: code
-        text: "import pytest\n\n@pytest.mark.skip(reason=\"Not implemented yet\")\n\
-          @pytest.mark.usecase(\"UC-HEALTH-003\")\nasync def test_health_unhealthy_when_surrealdb_missing(async_client):\n\
-          \    \"\"\"Readiness check returns unhealthy when SurrealDB pool is missing.\n\
-          \n    TODO: Implement by:\n    1. Override app.state to set surrealdb_pool\
-          \ = None\n    2. Call /api/v1/health\n    3. Assert status is \"unhealthy\"\
-          \n    \"\"\"\n    pass"
-  - id: 52-benefits-of-stub-tests
-    index: 18
-    title: 5.2 Benefits of Stub Tests
-    category: standard
-    summary: ''
-    items:
-      - id: 52-benefits-of-stub-tests-visibility-missing-covera
-        type: text
-        text: '**Visibility**: Missing coverage is explicit in test reports, not silently
-          absent'
-      - id: 52-benefits-of-stub-tests-documentation-stubs-descr
-        type: text
-        text: '**Documentation**: Stubs describe what needs to be tested and how'
-      - id: 52-benefits-of-stub-tests-planning-easy-to-see-tota
-        type: text
-        text: '**Planning**: Easy to see total test work remaining'
-      - id: 52-benefits-of-stub-tests-ci-integration-skipped-te
-        type: text
-        text: '**CI integration**: Skipped tests appear in reports with clear reasons'
-  - id: 53-todo-comments
-    index: 19
-    title: 5.3 TODO Comments
-    category: standard
-    summary: ''
-    items:
-      - id: 53-todo-comments-1
-        type: text
-        text: 'Include implementation guidance in stub docstrings:'
-      - id: 53-todo-comments-what-setup-is-required
-        type: rule
-        text: What setup is required
-      - id: 53-todo-comments-what-actions-to-perform
-        type: text
-        text: What actions to perform
-      - id: 53-todo-comments-what-assertions-to-make
-        type: text
-        text: What assertions to make
-      - id: 53-todo-comments-any-dependencies-or-prerequisi
-        type: text
-        text: Any dependencies or prerequisites
-  - id: 6-best-practices
-    index: 20
-    title: 6. Best Practices
-    category: standard
-    summary: ''
-    items: []
-  - id: 61-registry-maintenance
-    index: 21
-    title: 6.1 Registry Maintenance
-    category: standard
-    summary: ''
-    items:
-      - id: 61-registry-maintenance-update-testsuse_casesyaml
-        type: text
-        text: Update `tests/use_cases.yaml` when adding new endpoints or discovering
-          new scenarios
-      - id: 61-registry-maintenance-add-pytestmarkusecaseuc
-        type: text
-        text: Add `@pytest.mark.usecase("UC-XXX-NNN")` markers to tests for automatic
-          coverage detection
-      - id: 61-registry-maintenance-review-the-registry-during-spr
-        type: text
-        text: Review the registry during sprint planning to identify coverage gaps
-      - id: 61-registry-maintenance-archive-deprecated-use-cases-r
-        type: text
-        text: 'Archive deprecated use-cases rather than deleting them (add `deprecated:
-          true` field)'
-  - id: 62-ci-enforcement
-    index: 22
-    title: 6.2 CI Enforcement
-    category: standard
-    summary: ''
-    items:
-      - id: 62-ci-enforcement-run-use-case-coverage-reports
-        type: step
-        text: Run use-case coverage reports in CI
-      - id: 62-ci-enforcement-set-a-minimum-coverage-thresho
-        type: text
-        text: Set a minimum coverage threshold in project settings
-      - id: 62-ci-enforcement-block-merges-that-reduce-cover
-        type: text
-        text: Block merges that reduce coverage without justification
-      - id: 62-ci-enforcement-review-new-endpoints-to-ensure
-        type: text
-        text: Review new endpoints to ensure corresponding use-cases are added
-  - id: 63-traceability
-    index: 23
-    title: 6.3 Traceability
-    category: standard
-    summary: ''
-    items:
-      - id: 63-traceability-include-use-case-ids-in-test-d
-        type: text
-        text: Include use-case IDs in test docstrings for documentation
-      - id: 63-traceability-reference-use-case-ids-in-pull
-        type: text
-        text: Reference use-case IDs in pull request descriptions when adding coverage
-      - id: 63-traceability-link-test-failures-to-use-case
-        type: text
-        text: Link test failures to use-case IDs in bug reports
-  - id: 64-review-unlinked-tests
-    index: 24
-    title: 6.4 Review Unlinked Tests
-    category: standard
-    summary: ''
-    items:
-      - id: 64-review-unlinked-tests-1
-        type: text
-        text: 'Periodically audit tests without use-case markers:'
-      - id: 64-review-unlinked-tests-code-2
-        type: code
-        text: '# Find tests without usecase markers (future tooling)
+      pytest --usecase-coverage-fail-under=<threshold>'
+- id: 43-implementation-status
+  index: 15
+  title: 4.3 Implementation Status
+  category: standard
+  summary: ''
+  items:
+  - id: 43-implementation-status-1
+    type: rule
+    text: Use-case coverage is calculated automatically by scanning test files for `@pytest.mark.usecase`
+      markers. The coverage script (`scripts/dev/test_coverage.py`) detects which use-cases have corresponding
+      tests and reports coverage accordingly. No manual tracking is required.
+- id: 5-stub-tests-for-uncovered-use-cases
+  index: 16
+  title: 5. Stub Tests for Uncovered Use-Cases
+  category: standard
+  summary: ''
+  items:
+  - id: 5-stub-tests-for-uncovered-use-cases-1
+    type: step
+    text: For use-cases that are known but not yet implemented, create stub tests with skip decorators.
+- id: 51-stub-pattern
+  index: 17
+  title: 5.1 Stub Pattern
+  category: standard
+  summary: ''
+  items:
+  - id: 51-stub-pattern-code-1
+    type: code
+    text: "import pytest\n\n@pytest.mark.skip(reason=\"Not implemented yet\")\n@pytest.mark.usecase(\"\
+      UC-HEALTH-003\")\nasync def test_health_unhealthy_when_surrealdb_missing(async_client):\n    \"\"\
+      \"Readiness check returns unhealthy when SurrealDB pool is missing.\n\n    TODO: Implement by:\n\
+      \    1. Override app.state to set surrealdb_pool = None\n    2. Call /api/v1/health\n    3. Assert\
+      \ status is \"unhealthy\"\n    \"\"\"\n    pass"
+- id: 52-benefits-of-stub-tests
+  index: 18
+  title: 5.2 Benefits of Stub Tests
+  category: standard
+  summary: ''
+  items:
+  - id: 52-benefits-of-stub-tests-visibility-missing-covera
+    type: text
+    text: '**Visibility**: Missing coverage is explicit in test reports, not silently absent'
+  - id: 52-benefits-of-stub-tests-documentation-stubs-descr
+    type: text
+    text: '**Documentation**: Stubs describe what needs to be tested and how'
+  - id: 52-benefits-of-stub-tests-planning-easy-to-see-tota
+    type: text
+    text: '**Planning**: Easy to see total test work remaining'
+  - id: 52-benefits-of-stub-tests-ci-integration-skipped-te
+    type: text
+    text: '**CI integration**: Skipped tests appear in reports with clear reasons'
+- id: 53-todo-comments
+  index: 19
+  title: 5.3 TODO Comments
+  category: standard
+  summary: ''
+  items:
+  - id: 53-todo-comments-1
+    type: text
+    text: 'Include implementation guidance in stub docstrings:'
+  - id: 53-todo-comments-what-setup-is-required
+    type: rule
+    text: What setup is required
+  - id: 53-todo-comments-what-actions-to-perform
+    type: text
+    text: What actions to perform
+  - id: 53-todo-comments-what-assertions-to-make
+    type: text
+    text: What assertions to make
+  - id: 53-todo-comments-any-dependencies-or-prerequisi
+    type: text
+    text: Any dependencies or prerequisites
+- id: 6-best-practices
+  index: 20
+  title: 6. Best Practices
+  category: standard
+  summary: ''
+  items: []
+- id: 61-registry-maintenance
+  index: 21
+  title: 6.1 Registry Maintenance
+  category: standard
+  summary: ''
+  items:
+  - id: 61-registry-maintenance-update-testsuse_casesyaml
+    type: text
+    text: Update `tests/use_cases.yaml` when adding new endpoints or discovering new scenarios
+  - id: 61-registry-maintenance-add-pytestmarkusecaseuc
+    type: text
+    text: Add `@pytest.mark.usecase("UC-XXX-NNN")` markers to tests for automatic coverage detection
+  - id: 61-registry-maintenance-review-the-registry-during-spr
+    type: text
+    text: Review the registry during sprint planning to identify coverage gaps
+  - id: 61-registry-maintenance-archive-deprecated-use-cases-r
+    type: text
+    text: 'Archive deprecated use-cases rather than deleting them (add `deprecated: true` field)'
+- id: 62-ci-enforcement
+  index: 22
+  title: 6.2 CI Enforcement
+  category: standard
+  summary: ''
+  items:
+  - id: 62-ci-enforcement-run-use-case-coverage-reports
+    type: step
+    text: Run use-case coverage reports in CI
+  - id: 62-ci-enforcement-set-a-minimum-coverage-thresho
+    type: text
+    text: Set a minimum coverage threshold in project settings
+  - id: 62-ci-enforcement-block-merges-that-reduce-cover
+    type: text
+    text: Block merges that reduce coverage without justification
+  - id: 62-ci-enforcement-review-new-endpoints-to-ensure
+    type: text
+    text: Review new endpoints to ensure corresponding use-cases are added
+- id: 63-traceability
+  index: 23
+  title: 6.3 Traceability
+  category: standard
+  summary: ''
+  items:
+  - id: 63-traceability-include-use-case-ids-in-test-d
+    type: text
+    text: Include use-case IDs in test docstrings for documentation
+  - id: 63-traceability-reference-use-case-ids-in-pull
+    type: text
+    text: Reference use-case IDs in pull request descriptions when adding coverage
+  - id: 63-traceability-link-test-failures-to-use-case
+    type: text
+    text: Link test failures to use-case IDs in bug reports
+- id: 64-review-unlinked-tests
+  index: 24
+  title: 6.4 Review Unlinked Tests
+  category: standard
+  summary: ''
+  items:
+  - id: 64-review-unlinked-tests-1
+    type: text
+    text: 'Periodically audit tests without use-case markers:'
+  - id: 64-review-unlinked-tests-code-2
+    type: code
+    text: '# Find tests without usecase markers (future tooling)
 
-          pytest --collect-only -q | grep -v usecase'
-      - id: 64-review-unlinked-tests-3
-        type: text
-        text: 'Tests without markers may indicate:'
-      - id: 64-review-unlinked-tests-missing-use-cases-in-the-regis
-        type: text
-        text: Missing use-cases in the registry
-      - id: 64-review-unlinked-tests-tests-that-should-be-removed-o
-        type: rule
-        text: Tests that should be removed or consolidated
-      - id: 64-review-unlinked-tests-implementation-tests-that-belo
-        type: text
-        text: Implementation tests that belong at the unit level
-  - id: 65-human-readable-descriptions
-    index: 25
-    title: 6.5 Human-Readable Descriptions
-    category: standard
-    summary: ''
-    items:
-      - id: 65-human-readable-descriptions-1
-        type: text
-        text: 'Write descriptions and expected behaviors that non-developers can understand:'
-      - id: 65-human-readable-descriptions-avoid-implementation-jargon
-        type: text
-        text: Avoid implementation jargon
-      - id: 65-human-readable-descriptions-focus-on-what-the-user-or-syst
-        type: text
-        text: Focus on what the user or system observes
-      - id: 65-human-readable-descriptions-include-concrete-examples-of-i
-        type: text
-        text: Include concrete examples of inputs and outputs
-  - id: 7-integration-with-existing-testing-tiers
-    index: 26
-    title: 7. Integration with Existing Testing Tiers
-    category: standard
-    summary: ''
-    items:
-      - id: 7-integration-with-existing-testing-tiers-1
-        type: text
-        text: 'This use-case approach integrates with the four-tier testing architecture.
-          Different tiers have different coverage requirements:'
-  - id: 71-coverage-types-by-tier
-    index: 27
-    title: 7.1 Coverage Types by Tier
-    category: standard
-    summary: ''
-    items:
-      - id: 71-coverage-types-by-tier-1
-        type: rule
-        text: '| Tier | Coverage Type | Use-Case Markers | |------|---------------|------------------|
-          | **Unit** | Line/branch per function | Not used | | **Component** | Line/branch
-          per function | Not used | | **Integration** | Use-case coverage | Required
-          | | **E2E** | Use-case coverage | Required |'
-      - id: 71-coverage-types-by-tier-2
-        type: text
-        text: Coverage thresholds are configured in project settings.
-  - id: 72-tier-assignment
-    index: 28
-    title: 7.2 Tier Assignment
-    category: standard
-    summary: ''
-    items:
-      - id: 72-tier-assignment-1
-        type: rule
-        text: '| Tier | Use-Case Applicability | |------|------------------------|
-          | **Unit tests** | Do not need use-case markers; test implementation details
-          with per-function coverage | | **Component tests** | Do not need use-case
-          markers; test service layer with per-function coverage | | **Integration
-          tests** | Primary tier for use-case validation; most use-cases live here
-          | | **E2E tests** | For scenarios requiring full stack validation (startup,
-          Docker, network) |'
-  - id: 73-test-tier-field
-    index: 29
-    title: 7.3 Test Tier Field
-    category: standard
-    summary: ''
-    items:
-      - id: 73-test-tier-field-1
-        type: rule
-        text: 'The `test_tier` field in the use-case registry indicates where tests
-          should live:'
-      - id: 73-test-tier-field-integration-use-async_clie
-        type: text
-        text: '`integration`: Use `async_client` fixture, in-process testing'
-      - id: 73-test-tier-field-e2e-use-api_client-fixtur
-        type: text
-        text: '`e2e`: Use `api_client` fixture, requires Docker stack'
-      - id: 73-test-tier-field-4
-        type: text
-        text: Reference the test tier when creating new tests to ensure consistent
-          organization.
-  - id: 74-fixture-selection
-    index: 30
-    title: 7.4 Fixture Selection
-    category: standard
-    summary: ''
-    items:
-      - id: 74-fixture-selection-1
-        type: text
-        text: '| Tier | Fixture | Transport | |------|---------|-----------| | Unit
-          | Mocks/fakes | Direct function calls | | Component | Mocks/fakes | Direct
-          function calls | | Integration | `async_client` | `httpx.ASGITransport`
-          (in-process) | | E2E | `api_client` | HTTP to live server |'
-  - id: 75-per-function-vs-use-case-coverage
-    index: 31
-    title: 7.5 Per-Function vs Use-Case Coverage
-    category: standard
-    summary: ''
-    items:
-      - id: 75-per-function-vs-use-case-coverage-1
-        type: rule
-        text: '* **Unit/Component/Scripts tiers**: Each function must individually
-          meet the configured line and branch coverage threshold. This is not an average—every
-          single function is validated separately. * **Integration/E2E tiers**: Use-cases
-          must have corresponding tests with `@pytest.mark.usecase` markers (threshold
-          configured in settings).'
-  - id: 8-examples
-    index: 32
-    title: 8. Examples
-    category: example
-    summary: ''
-    items: []
-  - id: 81-complete-example-use-case-to-test
-    index: 33
-    title: '8.1 Complete Example: Use-Case to Test'
-    category: example
-    summary: ''
-    items:
-      - id: 81-complete-example-use-case-to-test-use-case-definition-in-test
-        type: text
-        text: '**Use-case definition in `tests/use_cases.yaml`:**'
-      - id: 81-complete-example-use-case-to-test-code-2
-        type: code
-        text: "- id: UC-EXAMPLE-002\n  endpoint: /api/v1/examples/process\n  method:\
-          \ POST\n  description: Process endpoint succeeds with valid message\n  expected_behavior:\
-          \ |\n    Given a valid ExampleRequest with message between 1-500 chars,\n\
-          \    returns HTTP 200 with ExampleResponse containing processed result.\n\
-          \  test_tier: integration"
-      - id: 81-complete-example-use-case-to-test-corresponding-test-in-tests
-        type: text
-        text: '**Corresponding test in `tests/integration/test_example_process.py`:**'
-      - id: 81-complete-example-use-case-to-test-code-4
-        type: code
-        text: "import pytest\nfrom datetime import datetime, UTC\n\n@pytest.mark.usecase(\"\
-          UC-EXAMPLE-002\")\nasync def test_process_valid_message_succeeds(async_client):\n\
-          \    \"\"\"Process endpoint returns ExampleResponse for valid input.\n\n\
-          \    Use-case: UC-EXAMPLE-002\n    \"\"\"\n    payload = {\"message\": \"\
-          Hello World\", \"type\": \"info\"}\n\n    response = await async_client.post(\"\
-          /api/v1/examples/process\", json=payload)\n\n    assert response.status_code\
-          \ == 200\n    data = response.json()\n    assert \"[PROCESSED]\" in data[\"\
-          result\"]\n    assert data[\"original_length\"] == len(\"Hello World\")\n\
-          \    assert \"processed_at\" in data"
-  - id: 82-stub-test-example
-    index: 34
-    title: 8.2 Stub Test Example
-    category: example
-    summary: ''
-    items:
-      - id: 82-stub-test-example-code-1
-        type: code
-        text: "import pytest\n\n@pytest.mark.skip(reason=\"Not implemented yet\")\n\
-          @pytest.mark.usecase(\"UC-EXAMPLE-014\")\nasync def test_get_message_returns_404_for_nonexistent_id(async_client):\n\
-          \    \"\"\"Get processed message returns 404 for non-existent ID.\n\n  \
-          \  Use-case: UC-EXAMPLE-014\n\n    TODO: Implement by:\n    1. Request /api/v1/examples/processed-messages/nonexistent-id\n\
-          \    2. Assert HTTP 404\n    3. Assert response body contains AppError with\
-          \ appropriate message\n    \"\"\"\n    pass"
-  - id: 83-test-covering-multiple-use-cases
-    index: 35
-    title: 8.3 Test Covering Multiple Use-Cases
-    category: standard
-    summary: ''
-    items:
-      - id: 83-test-covering-multiple-use-cases-code-1
-        type: code
-        text: "import pytest\n\n@pytest.mark.usecase(\"UC-EXAMPLE-004\")\n@pytest.mark.usecase(\"\
-          UC-EXAMPLE-005\")\nasync def test_process_message_length_validation(async_client):\n\
-          \    \"\"\"Process endpoint validates message length constraints.\n\n  \
-          \  Use-cases:\n    - UC-EXAMPLE-004: Message exceeding 500 chars fails\n\
-          \    - UC-EXAMPLE-005: Empty message fails\n    \"\"\"\n    # Too long\n\
-          \    long_message = \"x\" * 501\n    response = await async_client.post(\n\
-          \        \"/api/v1/examples/process\",\n        json={\"message\": long_message}\n\
-          \    )\n    assert response.status_code == 422\n\n    # Too short (empty\
-          \ after validation)\n    response = await async_client.post(\n        \"\
-          /api/v1/examples/process\",\n        json={\"message\": \"\"}\n    )\n \
-          \   assert response.status_code == 422"
-  - id: related-documentation
-    index: 36
-    title: Related Documentation
-    category: standard
-    summary: ''
-    items:
-      - id: related-documentation-1
-        type: text
-        text: '* [API Testing Patterns](api-testing-patterns.md) - Fixture composition,
-          dependency overrides, assertion patterns * [Testing Workflow](testing-workflow.md)
-          - Test execution commands and tier descriptions * [tests/use_cases.yaml](../../tests/use_cases.yaml)
-          - The canonical use-case registry'
+      pytest --collect-only -q | grep -v usecase'
+  - id: 64-review-unlinked-tests-3
+    type: text
+    text: 'Tests without markers may indicate:'
+  - id: 64-review-unlinked-tests-missing-use-cases-in-the-regis
+    type: text
+    text: Missing use-cases in the registry
+  - id: 64-review-unlinked-tests-tests-that-should-be-removed-o
+    type: rule
+    text: Tests that should be removed or consolidated
+  - id: 64-review-unlinked-tests-implementation-tests-that-belo
+    type: text
+    text: Implementation tests that belong at the unit level
+- id: 65-human-readable-descriptions
+  index: 25
+  title: 6.5 Human-Readable Descriptions
+  category: standard
+  summary: ''
+  items:
+  - id: 65-human-readable-descriptions-1
+    type: text
+    text: 'Write descriptions and expected behaviors that non-developers can understand:'
+  - id: 65-human-readable-descriptions-avoid-implementation-jargon
+    type: text
+    text: Avoid implementation jargon
+  - id: 65-human-readable-descriptions-focus-on-what-the-user-or-syst
+    type: text
+    text: Focus on what the user or system observes
+  - id: 65-human-readable-descriptions-include-concrete-examples-of-i
+    type: text
+    text: Include concrete examples of inputs and outputs
+- id: 7-integration-with-existing-testing-tiers
+  index: 26
+  title: 7. Integration with Existing Testing Tiers
+  category: standard
+  summary: ''
+  items:
+  - id: 7-integration-with-existing-testing-tiers-1
+    type: text
+    text: 'This use-case approach integrates with the four-tier testing architecture. Different tiers
+      have different coverage requirements:'
+- id: 71-coverage-types-by-tier
+  index: 27
+  title: 7.1 Coverage Types by Tier
+  category: standard
+  summary: ''
+  items:
+  - id: 71-coverage-types-by-tier-1
+    type: rule
+    text: |
+      Coverage types by tier:
+      - Unit: Line/branch per function, use-case markers not used
+      - Component: Line/branch per function, use-case markers not used
+      - Integration: Use-case coverage, markers required
+      - E2E: Use-case coverage, markers required
+  - id: 71-coverage-types-by-tier-2
+    type: text
+    text: Coverage thresholds are configured in project settings.
+- id: 72-tier-assignment
+  index: 28
+  title: 7.2 Tier Assignment
+  category: standard
+  summary: ''
+  items:
+  - id: 72-tier-assignment-1
+    type: rule
+    text: |
+      Tier assignment rules:
+      - Unit tests: Do not need use-case markers; test implementation details with
+        per-function coverage
+      - Component tests: Do not need use-case markers; test service layer with
+        per-function coverage
+      - Integration tests: Primary tier for use-case validation; most use-cases
+        live here
+      - E2E tests: For scenarios requiring full stack validation (startup, Docker,
+        network)
+- id: 73-test-tier-field
+  index: 29
+  title: 7.3 Test Tier Field
+  category: standard
+  summary: ''
+  items:
+  - id: 73-test-tier-field-1
+    type: rule
+    text: 'The `test_tier` field in the use-case registry indicates where tests should live:'
+  - id: 73-test-tier-field-integration-use-async_clie
+    type: text
+    text: '`integration`: Use `async_client` fixture, in-process testing'
+  - id: 73-test-tier-field-e2e-use-api_client-fixtur
+    type: text
+    text: '`e2e`: Use `api_client` fixture, requires Docker stack'
+  - id: 73-test-tier-field-4
+    type: text
+    text: Reference the test tier when creating new tests to ensure consistent organization.
+- id: 74-fixture-selection
+  index: 30
+  title: 7.4 Fixture Selection
+  category: standard
+  summary: ''
+  items:
+  - id: 74-fixture-selection-1
+    type: text
+    text: |
+      Fixture selection by tier:
+      - Unit: Mocks/fakes with direct function calls
+      - Component: Mocks/fakes with direct function calls
+      - Integration: async_client fixture with httpx.ASGITransport (in-process)
+      - E2E: api_client fixture with HTTP to live server
+- id: 75-per-function-vs-use-case-coverage
+  index: 31
+  title: 7.5 Per-Function vs Use-Case Coverage
+  category: standard
+  summary: ''
+  items:
+  - id: 75-per-function-vs-use-case-coverage-1
+    type: rule
+    text: '* **Unit/Component/Scripts tiers**: Each function must individually meet the configured line
+      and branch coverage threshold. This is not an average—every single function is validated separately.
+      * **Integration/E2E tiers**: Use-cases must have corresponding tests with `@pytest.mark.usecase`
+      markers (threshold configured in settings).'
+- id: 8-examples
+  index: 32
+  title: 8. Examples
+  category: example
+  summary: ''
+  items: []
+- id: 81-complete-example-use-case-to-test
+  index: 33
+  title: '8.1 Complete Example: Use-Case to Test'
+  category: example
+  summary: ''
+  items:
+  - id: 81-complete-example-use-case-to-test-use-case-definition-in-test
+    type: text
+    text: '**Use-case definition in `tests/use_cases.yaml`:**'
+  - id: 81-complete-example-use-case-to-test-code-2
+    type: code
+    text: "- id: UC-EXAMPLE-002\n  endpoint: /api/v1/examples/process\n  method: POST\n  description:\
+      \ Process endpoint succeeds with valid message\n  expected_behavior: |\n    Given a valid ExampleRequest\
+      \ with message between 1-500 chars,\n    returns HTTP 200 with ExampleResponse containing processed\
+      \ result.\n  test_tier: integration"
+  - id: 81-complete-example-use-case-to-test-corresponding-test-in-tests
+    type: text
+    text: '**Corresponding test in `tests/integration/test_example_process.py`:**'
+  - id: 81-complete-example-use-case-to-test-code-4
+    type: code
+    text: "import pytest\nfrom datetime import datetime, UTC\n\n@pytest.mark.usecase(\"UC-EXAMPLE-002\"\
+      )\nasync def test_process_valid_message_succeeds(async_client):\n    \"\"\"Process endpoint returns\
+      \ ExampleResponse for valid input.\n\n    Use-case: UC-EXAMPLE-002\n    \"\"\"\n    payload = {\"\
+      message\": \"Hello World\", \"type\": \"info\"}\n\n    response = await async_client.post(\"/api/v1/examples/process\"\
+      , json=payload)\n\n    assert response.status_code == 200\n    data = response.json()\n    assert\
+      \ \"[PROCESSED]\" in data[\"result\"]\n    assert data[\"original_length\"] == len(\"Hello World\"\
+      )\n    assert \"processed_at\" in data"
+- id: 82-stub-test-example
+  index: 34
+  title: 8.2 Stub Test Example
+  category: example
+  summary: ''
+  items:
+  - id: 82-stub-test-example-code-1
+    type: code
+    text: "import pytest\n\n@pytest.mark.skip(reason=\"Not implemented yet\")\n@pytest.mark.usecase(\"\
+      UC-EXAMPLE-014\")\nasync def test_get_message_returns_404_for_nonexistent_id(async_client):\n  \
+      \  \"\"\"Get processed message returns 404 for non-existent ID.\n\n    Use-case: UC-EXAMPLE-014\n\
+      \n    TODO: Implement by:\n    1. Request /api/v1/examples/processed-messages/nonexistent-id\n \
+      \   2. Assert HTTP 404\n    3. Assert response body contains AppError with appropriate message\n\
+      \    \"\"\"\n    pass"
+- id: 83-test-covering-multiple-use-cases
+  index: 35
+  title: 8.3 Test Covering Multiple Use-Cases
+  category: standard
+  summary: ''
+  items:
+  - id: 83-test-covering-multiple-use-cases-code-1
+    type: code
+    text: "import pytest\n\n@pytest.mark.usecase(\"UC-EXAMPLE-004\")\n@pytest.mark.usecase(\"UC-EXAMPLE-005\"\
+      )\nasync def test_process_message_length_validation(async_client):\n    \"\"\"Process endpoint validates\
+      \ message length constraints.\n\n    Use-cases:\n    - UC-EXAMPLE-004: Message exceeding 500 chars\
+      \ fails\n    - UC-EXAMPLE-005: Empty message fails\n    \"\"\"\n    # Too long\n    long_message\
+      \ = \"x\" * 501\n    response = await async_client.post(\n        \"/api/v1/examples/process\",\n\
+      \        json={\"message\": long_message}\n    )\n    assert response.status_code == 422\n\n   \
+      \ # Too short (empty after validation)\n    response = await async_client.post(\n        \"/api/v1/examples/process\"\
+      ,\n        json={\"message\": \"\"}\n    )\n    assert response.status_code == 422"
+- id: related-documentation
+  index: 36
+  title: Related Documentation
+  category: standard
+  summary: ''
+  items:
+  - id: related-documentation-1
+    type: text
+    text: '* [API Testing Patterns](api-testing-patterns.md) - Fixture composition, dependency overrides,
+      assertion patterns * [Testing Workflow](testing-workflow.md) - Test execution commands and tier
+      descriptions * [tests/use_cases.yaml](../../tests/use_cases.yaml) - The canonical use-case registry'

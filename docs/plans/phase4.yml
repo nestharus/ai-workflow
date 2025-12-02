@@ -1,282 +1,292 @@
 doc_id: original-plans-phase4
 title: 'Phase 4: Integrate Automated Feedback Routing and QA Monitoring'
-description: This implements the Quality Reviewer (R4) and QA & Maintenance (R5) roles,
-  utilizing the orchestrator service to automatically route feedback and alerts to
-  the appropriate agents.
+description: This implements the Quality Reviewer (R4) and QA & Maintenance (R5) roles, utilizing the
+  orchestrator service to automatically route feedback and alerts to the appropriate agents.
 domain: []
 scope: project
 sections:
-  - id: 41-configure-quality-reviewer-r4-coderabbitmacroscope
-    index: 1
-    title: 4.1. Configure Quality Reviewer (R4 - CodeRabbit/Macroscope)
-    category: standard
-    summary: ''
-    items:
-      - id: 41-configure-quality-reviewer-r4-coderabbitmacroscope-1
-        type: text
-        text: We configure CodeRabbit (R4) to apply labels that the **Orchestrator
-          Service** uses for automatic routing.
-      - id: 41-configure-quality-reviewer-r4-coderabbitmacroscope-code-2
-        type: code
-        text: "cat << EOF > .coderabbit.yaml\nreviews:\n  profile: \"assertive\"\n\
-          \  request_changes_workflow: true\n  auto_review:\n    enabled: true\n \
-          \ # Intelligent Routing Labels for Automated Orchestrator\n  # The orchestrator\
-          \ parses these labels from GitHub webhook events and routes feedback to\
-          \ the appropriate agent automatically.\n  labeling_instructions:\n    -\
-          \ label: \"feedback:r1_strategy\"\n      instructions: \"Apply if comments\
-          \ question fundamental strategy, architecture, or high-level phasing. (Route\
-          \ to Strategy Planner).\"\n    - label: \"feedback:r2_planning\"\n     \
-          \ instructions: \"Apply if the implementation does not match the defined\
-          \ tasks or the plan was incomplete. (Route to Planner).\"\n    - label:\
-          \ \"feedback:r3_implementation\"\n      instructions: \"Apply for code style,\
-          \ bugs, performance issues, or security vulnerabilities. (Route to Editor).\"\
-          \nEOF"
-  - id: 42-implement-automated-feedback-routing
-    index: 2
-    title: 4.2. Implement Automated Feedback Routing
-    category: standard
-    summary: ''
-    items:
-      - id: 42-implement-automated-feedback-routing-1
-        type: text
-        text: We replace the manual feedback notifier with an automated routing architecture
-          integrated into the orchestrator.
-      - id: 42-implement-automated-feedback-routing-code-2
-        type: code
-        text: "cat << EOF > docs/architecture/feedback_routing.md\n# Automated Feedback\
-          \ Routing Architecture\n\n## R4 Feedback Flow (CodeRabbit)\n1. CodeRabbit\
-          \ posts PR review comments with labels\n2. GitHub sends webhook to webhook\
-          \ receiver service\n3. Webhook receiver verifies signature and parses event\n\
-          4. Webhook receiver forwards event to orchestrator\n5. Orchestrator extracts\
-          \ labels (feedback:r1_strategy, etc.)\n6. Orchestrator routes to appropriate\
-          \ agent based on label:\n   - feedback:r1_strategy → R1 Strategy Planner\n\
-          \   - feedback:r2_planning → R2 Planner\n   - feedback:r3_implementation\
-          \ → R3 Editor\n7. Orchestrator invokes agent via droid exec with feedback\
-          \ context\n8. Agent uses GitHub MCP to fetch full PR details\n9. Agent addresses\
-          \ feedback and submits result to orchestrator\n10. Orchestrator invokes\
-          \ GitHub Agent to post response comment\n\n## Orchestrator Routing Logic\n\
-          The OrchestratorService.route_feedback() method:\n- Parses GitHub webhook\
-          \ payload\n- Extracts PR URL and labels\n- Determines target agent role\
-          \ from label\n- Determines domain from file paths in PR\n- Constructs agent\
-          \ invocation message\n- Invokes agent via AgentInvokerService\n\n## Agent\
-          \ Feedback Handling\nAgents receive feedback context:\n- pr_url: GitHub\
-          \ PR URL\n- comment_id: Specific comment to address\n- file_path: File mentioned\
-          \ in feedback\n- line_number: Line number if applicable\n- feedback_text:\
-          \ The actual feedback comment\n\nAgents use GitHub MCP to:\n- Fetch full\
-          \ PR diff\n- Read comment thread\n- Post response comments\n- Update PR\
-          \ status\nEOF"
-  - id: 43-qa-maintenance-monitoring-integration-r5
-    index: 3
-    title: 4.3. QA & Maintenance Monitoring Integration (R5)
-    category: standard
-    summary: ''
-    items:
-      - id: 43-qa-maintenance-monitoring-integration-r5-1
-        type: text
-        text: The QA role (R5) lives in the cloud and observes metrics, feeding alerts
-          back into the workflow via webhooks.
-      - id: 43-qa-maintenance-monitoring-integration-r5-code-2
-        type: code
-        text: 'cat << EOF > docs/qa/r5_monitoring_integration.md
+- id: 41-configure-quality-reviewer-r4-coderabbitmacroscope
+  index: 1
+  title: 4.1. Configure Quality Reviewer (R4 - CodeRabbit/Macroscope)
+  category: standard
+  summary: ''
+  items:
+  - id: 41-configure-quality-reviewer-r4-coderabbitmacroscope-1
+    type: text
+    text: We configure CodeRabbit (R4) to apply labels that the **Orchestrator Service** uses for automatic
+      routing.
+  - id: 41-configure-quality-reviewer-r4-coderabbitmacroscope-code-2
+    type: code
+    text: "cat << EOF > .coderabbit.yaml\nreviews:\n  profile: \"assertive\"\n  request_changes_workflow:\
+      \ true\n  auto_review:\n    enabled: true\n  # Intelligent Routing Labels for Automated Orchestrator\n\
+      \  # The orchestrator parses these labels from GitHub webhook events and routes feedback to the\
+      \ appropriate agent automatically.\n  labeling_instructions:\n    - label: \"feedback:r1_strategy\"\
+      \n      instructions: \"Apply if comments question fundamental strategy, architecture, or high-level\
+      \ phasing. (Route to Strategy Planner).\"\n    - label: \"feedback:r2_planning\"\n      instructions:\
+      \ \"Apply if the implementation does not match the defined tasks or the plan was incomplete. (Route\
+      \ to Planner).\"\n    - label: \"feedback:r3_implementation\"\n      instructions: \"Apply for code\
+      \ style, bugs, performance issues, or security vulnerabilities. (Route to Editor).\"\nEOF"
+- id: 42-implement-automated-feedback-routing
+  index: 2
+  title: 4.2. Implement Automated Feedback Routing
+  category: standard
+  summary: ''
+  items:
+  - id: 42-implement-automated-feedback-routing-1
+    type: text
+    text: We replace the manual feedback notifier with an automated routing architecture integrated into
+      the orchestrator.
+  - id: 42-implement-automated-feedback-routing-code-2
+    type: code
+    text: "cat << EOF > docs/architecture/feedback_routing.md\n# Automated Feedback Routing Architecture\n\
+      \n## R4 Feedback Flow (CodeRabbit)\n1. CodeRabbit posts PR review comments with labels\n2. GitHub\
+      \ sends webhook to webhook receiver service\n3. Webhook receiver verifies signature and parses event\n\
+      4. Webhook receiver forwards event to orchestrator\n5. Orchestrator extracts labels (feedback:r1_strategy,\
+      \ etc.)\n6. Orchestrator routes to appropriate agent based on label:\n   - feedback:r1_strategy\
+      \ → R1 Strategy Planner\n   - feedback:r2_planning → R2 Planner\n   - feedback:r3_implementation\
+      \ → R3 Editor\n7. Orchestrator invokes agent via droid exec with feedback context\n8. Agent uses\
+      \ GitHub MCP to fetch full PR details\n9. Agent addresses feedback and submits result to orchestrator\n\
+      10. Orchestrator invokes GitHub Agent to post response comment\n\n## Orchestrator Routing Logic\n\
+      The OrchestratorService.route_feedback() method:\n- Parses GitHub webhook payload\n- Extracts PR\
+      \ URL and labels\n- Determines target agent role from label\n- Determines domain from file paths\
+      \ in PR\n- Constructs agent invocation message\n- Invokes agent via AgentInvokerService\n\n## Agent\
+      \ Feedback Handling\nAgents receive feedback context:\n- pr_url: GitHub PR URL\n- comment_id: Specific\
+      \ comment to address\n- file_path: File mentioned in feedback\n- line_number: Line number if applicable\n\
+      - feedback_text: The actual feedback comment\n\nAgents use GitHub MCP to:\n- Fetch full PR diff\n\
+      - Read comment thread\n- Post response comments\n- Update PR status\nEOF"
+- id: 43-qa-maintenance-monitoring-integration-r5
+  index: 3
+  title: 4.3. QA & Maintenance Monitoring Integration (R5)
+  category: standard
+  summary: ''
+  items:
+  - id: 43-qa-maintenance-monitoring-integration-r5-1
+    type: text
+    text: The QA role (R5) lives in the cloud and observes metrics, feeding alerts back into the workflow
+      via webhooks.
+  - id: 43-qa-maintenance-monitoring-integration-r5-code-2
+    type: code
+    text: 'cat << EOF > docs/qa/r5_monitoring_integration.md
 
-          # QA & Maintenance Monitoring Integration (Role 5)
+      # QA & Maintenance Monitoring Integration (Role 5)
 
 
-          ## Monitoring Platform Webhook Configuration
+      ## Monitoring Platform Webhook Configuration
 
-          Configure monitoring platform (Datadog, Sentry, Prometheus Alertmanager)
-          to send alerts to webhook receiver:
+      Configure monitoring platform (Datadog, Sentry, Prometheus Alertmanager) to send alerts to webhook
+      receiver:
 
-          - Webhook URL: https://your-domain.com/webhook/monitoring
+      - Webhook URL: https://your-domain.com/webhook/monitoring
 
-          - Payload format: JSON with event_type, severity, metric_name, threshold
+      - Payload format: JSON with event_type, severity, metric_name, threshold
 
-          - Signature: HMAC SHA256 using MONITORING_WEBHOOK_SECRET
+      - Signature: HMAC SHA256 using MONITORING_WEBHOOK_SECRET
 
 
-          ## Webhook Receiver Monitoring Event Handling
+      ## Webhook Receiver Monitoring Event Handling
 
-          The webhook receiver parses monitoring alerts:
+      The webhook receiver parses monitoring alerts:
 
-          - SLO violations
+      - SLO violations
 
-          - Error rate spikes
+      - Error rate spikes
 
-          - Performance degradation
+      - Performance degradation
 
-          - Security incidents
+      - Security incidents
 
 
-          Forwards to orchestrator with event type "monitoring_alert"
+      Forwards to orchestrator with event type "monitoring_alert"
 
 
-          ## Orchestrator R5 Routing
+      ## Orchestrator R5 Routing
 
-          When orchestrator receives monitoring alert:
+      When orchestrator receives monitoring alert:
 
-          1. Determine severity (critical, warning, info)
+      1. Determine severity (critical, warning, info)
 
-          2. For critical alerts, invoke R1 Strategy Planner to initiate new workflow
-          cycle
+      2. For critical alerts, invoke R1 Strategy Planner to initiate new workflow cycle
 
-          3. For warnings, invoke R3 Editor to apply hotfix
+      3. For warnings, invoke R3 Editor to apply hotfix
 
-          4. For info, log to database for trend analysis
+      4. For info, log to database for trend analysis
 
 
-          ## R5 Feedback Loop
+      ## R5 Feedback Loop
 
-          R5 monitoring creates tickets in GitHub:
+      R5 monitoring creates tickets in GitHub:
 
-          - Orchestrator invokes GitHub Agent to create issue
+      - Orchestrator invokes GitHub Agent to create issue
 
-          - Issue includes alert details, metrics, logs
+      - Issue includes alert details, metrics, logs
 
-          - Issue is labeled with "monitoring:r5" and severity
+      - Issue is labeled with "monitoring:r5" and severity
 
-          - Orchestrator routes issue to appropriate R1 agent
+      - Orchestrator routes issue to appropriate R1 agent
 
-          - R1 agent analyzes and initiates fix workflow
+      - R1 agent analyzes and initiates fix workflow
 
 
-          ## Automated Incident Response
+      ## Automated Incident Response
 
-          For critical production issues:
+      For critical production issues:
 
-          1. Monitoring alert triggers webhook
+      1. Monitoring alert triggers webhook
 
-          2. Orchestrator invokes R1 Strategy Planner (emergency mode)
+      2. Orchestrator invokes R1 Strategy Planner (emergency mode)
 
-          3. R1 creates incident response plan
+      3. R1 creates incident response plan
 
-          4. Orchestrator invokes R3 Editor to apply hotfix
+      4. Orchestrator invokes R3 Editor to apply hotfix
 
-          5. R3 submits PR with fix
+      5. R3 submits PR with fix
 
-          6. Orchestrator invokes GitHub Agent to request review
+      6. Orchestrator invokes GitHub Agent to request review
 
-          7. After approval, orchestrator triggers deployment
+      7. After approval, orchestrator triggers deployment
 
-          EOF'
-  - id: 44-configure-webhook-receiver-for-multiple-event-sources
-    index: 4
-    title: 4.4. Configure Webhook Receiver for Multiple Event Sources
-    category: standard
-    summary: ''
-    items:
-      - id: 44-configure-webhook-receiver-for-multiple-event-sources-code-1
-        type: code
-        text: '# Update webhook_receiver/main.py to handle multiple endpoints
+      EOF'
+- id: 44-configure-webhook-receiver-for-multiple-event-sources
+  index: 4
+  title: 4.4. Configure Webhook Receiver for Multiple Event Sources
+  category: standard
+  summary: ''
+  items:
+  - id: 44-configure-webhook-receiver-for-multiple-event-sources-code-1
+    type: code
+    text: '# Update webhook_receiver/main.py to handle multiple endpoints
 
-          # - POST /webhook/github: GitHub events (PR comments, issues)
+      # - POST /webhook/github: GitHub events (PR comments, issues)
 
-          # - POST /webhook/monitoring: Monitoring alerts (Datadog, Sentry)
+      # - POST /webhook/monitoring: Monitoring alerts (Datadog, Sentry)
 
-          # - POST /webhook/coderabbit: CodeRabbit-specific events
+      # - POST /webhook/coderabbit: CodeRabbit-specific events
 
 
-          # Each endpoint has its own signature verification
+      # Each endpoint has its own signature verification
 
-          # Each endpoint forwards to orchestrator with appropriate event type
+      # Each endpoint forwards to orchestrator with appropriate event type
 
 
-          # Update webhook_receiver/contracts.py
+      # Update webhook_receiver/contracts.py
 
-          # - GitHubWebhookPayload
+      # - GitHubWebhookPayload
 
-          # - MonitoringAlertPayload
+      # - MonitoringAlertPayload
 
-          # - CodeRabbitWebhookPayload'
-  - id: 45-document-ticket-claiming-and-pr-comment-subscription
-    index: 5
-    title: 4.5. Document Ticket Claiming and PR Comment Subscription
-    category: standard
-    summary: ''
-    items:
-      - id: 45-document-ticket-claiming-and-pr-comment-subscription-1
-        type: note
-        text: '**Note:** Refer to `docs/architecture/orchestrator_api.md` for the
-          canonical API definition for ticket claiming.'
-      - id: 45-document-ticket-claiming-and-pr-comment-subscription-code-2
-        type: code
-        text: 'cat << EOF > docs/architecture/ticket_claiming.md
+      # - CodeRabbitWebhookPayload'
+- id: 45-document-ticket-claiming-and-pr-comment-subscription
+  index: 5
+  title: 4.5. Document Ticket Claiming and PR Comment Subscription
+  category: standard
+  summary: ''
+  items:
+  - id: 45-document-ticket-claiming-and-pr-comment-subscription-1
+    type: note
+    text: '**Note:** Refer to `docs/architecture/orchestrator_api.md` for the canonical API definition
+      for ticket claiming.'
+  - id: 45-document-ticket-claiming-and-pr-comment-subscription-code-2
+    type: code
+    text: 'cat << EOF > docs/architecture/ticket_claiming.md
 
-          # Ticket Claiming and Subscription Mechanism
+      # Ticket Claiming and Subscription Mechanism
 
 
-          ## New Ticket Flow
+      ## New Ticket Flow
 
-          1. GitHub webhook for new issue arrives at receiver
+      1. GitHub webhook for new issue arrives at receiver
 
-          2. Receiver forwards to orchestrator
+      2. Receiver forwards to orchestrator
 
-          3. Orchestrator broadcasts "new_ticket" event
+      3. Orchestrator broadcasts "new_ticket" event
 
-          4. First available agent (determined by orchestrator) claims ticket
+      4. First available agent (determined by orchestrator) claims ticket
 
-          5. Orchestrator records claim in database
+      5. Orchestrator records claim in database
 
-          6. Orchestrator subscribes claiming agent to ticket updates
+      6. Orchestrator subscribes claiming agent to ticket updates
 
 
-          ## Ticket Claiming API
+      ## Ticket Claiming API
 
-          POST /api/v1/orchestrator/claim-ticket
+      POST /api/v1/orchestrator/claim-ticket
 
 
-          **Note:** See \`docs/architecture/orchestrator_api.md\` for the exact request
-          and response fields.
+      **Note:** See \`docs/architecture/orchestrator_api.md\` for the exact request and response fields.
 
 
-          ## PR Comment Subscription
+      ## PR Comment Subscription
 
-          When agent creates PR:
+      When agent creates PR:
 
-          1. Agent submits PR creation request to orchestrator
+      1. Agent submits PR creation request to orchestrator
 
-          2. Orchestrator invokes GitHub Agent to create PR
+      2. Orchestrator invokes GitHub Agent to create PR
 
-          3. Orchestrator automatically subscribes creating agent to PR comments
+      3. Orchestrator automatically subscribes creating agent to PR comments
 
-          4. When new comment arrives via webhook, orchestrator routes to subscribed
-          agent
+      4. When new comment arrives via webhook, orchestrator routes to subscribed agent
 
 
-          ## Subscription Management
+      ## Subscription Management
 
-          - Orchestrator maintains subscription table in database
+      - Orchestrator maintains subscription table in database
 
-          - Maps ticket/PR URLs to agent IDs
+      - Maps ticket/PR URLs to agent IDs
 
-          - Routes incoming webhook events based on subscriptions
+      - Routes incoming webhook events based on subscriptions
 
-          - Agents can unsubscribe when work completes
+      - Agents can unsubscribe when work completes
 
-          EOF'
-  - id: 46-document-user-provided-url-handling
-    index: 6
-    title: 4.6. Document User-Provided URL Handling
-    category: standard
-    summary: ''
-    items:
-      - id: 46-document-user-provided-url-handling-code-1
-        type: code
-        text: "cat << EOF > docs/guides/user_url_handling.md\n# User-Provided URL\
-          \ Handling\n\n## Manual QA Response Workflow\nUser provides ticket URL to\
-          \ orchestrator:\n\\`\\`\\`bash\ncurl -X POST http://localhost:8000/api/v1/orchestrator/submit\
-          \ \\\\\n  -H \"Content-Type: application/json\" \\\\\n  -d '{\n    \"role\"\
-          : \"GitHub Agent\",\n    \"task\": \"fetch ticket details and route to appropriate\
-          \ agent\",\n    \"context\": {\"ticket_url\": \"https://github.com/owner/repo/issues/123\"\
-          },\n    \"requesting_agent\": \"user\"\n  }'\n\\`\\`\\`\n\nOrchestrator:\n\
-          1. Invokes GitHub Agent to fetch ticket details\n2. Analyzes ticket labels\
-          \ and content\n3. Determines appropriate domain and role\n4. Routes to agent\
-          \ (e.g., R2 Tech Planner)\n5. Agent processes ticket and submits response\n\
-          \n## Manual PR Review Response Workflow\nUser provides PR URL with new comments:\n\
-          \\`\\`\\`bash\ncurl -X POST http://localhost:8000/api/v1/orchestrator/submit\
-          \ \\\\\n  -H \"Content-Type: application/json\" \\\\\n  -d '{\n    \"role\"\
-          : \"GitHub Agent\",\n    \"task\": \"fetch PR comments and route to appropriate\
-          \ agent\",\n    \"context\": {\"pr_url\": \"https://github.com/owner/repo/pull/456\"\
-          },\n    \"requesting_agent\": \"user\"\n  }'\n\\`\\`\\`\n\nOrchestrator:\n\
-          1. Invokes GitHub Agent to fetch PR comments\n2. Identifies new comments\
-          \ since last check\n3. Routes each comment to appropriate agent based on\
-          \ file/domain\n4. Agents address comments and submit responses\nEOF"
+      EOF'
+- id: 46-document-user-provided-url-handling
+  index: 6
+  title: 4.6. Document User-Provided URL Handling
+  category: standard
+  summary: ''
+  items:
+  - id: 46-document-user-provided-url-handling-code-1
+    type: code
+    text: |
+      cat << 'EOF' > docs/guides/user_url_handling.md
+      # User-Provided URL Handling
+
+      ## Manual QA Response Workflow
+      User provides ticket URL to orchestrator:
+      ```bash
+      curl -X POST http://localhost:8000/api/v1/orchestrator/submit \
+        -H "Content-Type: application/json" \
+        -d '{
+          "role": "GitHub Agent",
+          "task": "fetch ticket details and route to appropriate agent",
+          "context": {"ticket_url": "https://github.com/owner/repo/issues/123"},
+          "requesting_agent": "user"
+        }'
+      ```
+
+      Orchestrator:
+      1. Invokes GitHub Agent to fetch ticket details
+      2. Analyzes ticket labels and content
+      3. Determines appropriate domain and role
+      4. Routes to agent (e.g., R2 Tech Planner)
+      5. Agent processes ticket and submits response
+
+      ## Manual PR Review Response Workflow
+      User provides PR URL with new comments:
+      ```bash
+      curl -X POST http://localhost:8000/api/v1/orchestrator/submit \
+        -H "Content-Type: application/json" \
+        -d '{
+          "role": "GitHub Agent",
+          "task": "fetch PR comments and route to appropriate agent",
+          "context": {"pr_url": "https://github.com/owner/repo/pull/456"},
+          "requesting_agent": "user"
+        }'
+      ```
+
+      Orchestrator:
+      1. Invokes GitHub Agent to fetch PR comments
+      2. Identifies new comments since last check
+      3. Routes each comment to appropriate agent based on file/domain
+      4. Agents address comments and submit responses
+      EOF

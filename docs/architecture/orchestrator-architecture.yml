@@ -1,72 +1,67 @@
 doc_id: original-architecture-orchestrator-architecture
 title: Orchestrator Architecture
-description: The system is built around a central **FastAPI Orchestrator Service**
-  that manages the lifecycle of all workflows.
+description: The system is built around a central **FastAPI Orchestrator Service** that manages the lifecycle
+  of all workflows.
 domain: []
 scope: project
 sections:
-  - id: message-routing
-    index: 1
-    title: Message Routing
-    category: standard
-    summary: ''
-    items:
-      - id: message-routing-1
-        type: text
-        text: The orchestrator receives messages from agents and routes them to the
-          appropriate workflow instance. Messages include role, task, context, and
-          requesting agent information.
-  - id: workflow-state
-    index: 2
-    title: Workflow State
-    category: workflow
-    summary: ''
-    items:
-      - id: workflow-state-1
-        type: text
-        text: Manages the state of active workflows and coordinates handoffs between
-          roles. Tracks which workflows are in progress and what stage each is at.
-  - id: agent-invocation
-    index: 3
-    title: Agent Invocation
-    category: standard
-    summary: ''
-    items:
-      - id: agent-invocation-1
-        type: text
-        text: Uses `app/services/agent_invoker.py` to spawn `droid exec` subprocesses
-          for agent execution. The orchestrator manages the execution environment
-          and context for each agent invocation.
-  - id: ticket-claiming
-    index: 4
-    title: Ticket Claiming
-    category: standard
-    summary: ''
-    items:
-      - id: ticket-claiming-1
-        type: step
-        text: Implements a first-come-first-served mechanism for agents to claim tasks.
-          The ticket manager (`app/services/ticket_manager.py`) broadcasts availability
-          and handles claim requests.
-  - id: pr-comment-routing
-    index: 5
-    title: PR Comment Routing
-    category: standard
-    summary: ''
-    items:
-      - id: pr-comment-routing-1
-        type: rule
-        text: Analyzes PR comments and routes them to the appropriate agent based
-          on context. The PR comment router (`app/services/pr_comment_router.py`)
-          determines which role should handle each comment.
-  - id: git-worktrees
-    index: 6
-    title: Git Worktrees
-    category: standard
-    summary: ''
-    items:
-      - id: git-worktrees-1
-        type: text
-        text: Manages temporary git worktrees to allow multiple agents to work in
-          parallel without conflict. Each agent can work in an isolated worktree while
-          the orchestrator coordinates merging results.
+- id: message-routing
+  index: 1
+  title: Message Routing
+  category: standard
+  summary: ''
+  items:
+  - id: message-routing-1
+    type: text
+    text: The orchestrator receives messages from agents and routes them to the appropriate workflow instance.
+      Messages include role, task, context, and requesting agent information.
+- id: workflow-state
+  index: 2
+  title: Workflow State
+  category: workflow
+  summary: ''
+  items:
+  - id: workflow-state-1
+    type: text
+    text: Manages the state of active workflows and coordinates handoffs between roles. Tracks which workflows
+      are in progress and what stage each is at.
+- id: agent-invocation
+  index: 3
+  title: Agent Invocation
+  category: standard
+  summary: ''
+  items:
+  - id: agent-invocation-1
+    type: text
+    text: Uses `app/services/agent_invoker.py` to spawn `droid exec` subprocesses for agent execution.
+      The orchestrator manages the execution environment and context for each agent invocation.
+- id: ticket-claiming
+  index: 4
+  title: Ticket Claiming
+  category: standard
+  summary: ''
+  items:
+  - id: ticket-claiming-1
+    type: step
+    text: Implements a first-come-first-served mechanism for agents to claim tasks. The ticket manager
+      (`app/services/ticket_manager.py`) broadcasts availability and handles claim requests.
+- id: pr-comment-routing
+  index: 5
+  title: PR Comment Routing
+  category: standard
+  summary: ''
+  items:
+  - id: pr-comment-routing-1
+    type: rule
+    text: Analyzes PR comments and routes them to the appropriate agent based on context. The PR comment
+      router (`app/services/pr_comment_router.py`) determines which role should handle each comment.
+- id: git-worktrees
+  index: 6
+  title: Git Worktrees
+  category: standard
+  summary: ''
+  items:
+  - id: git-worktrees-1
+    type: text
+    text: Manages temporary git worktrees to allow multiple agents to work in parallel without conflict.
+      Each agent can work in an isolated worktree while the orchestrator coordinates merging results.

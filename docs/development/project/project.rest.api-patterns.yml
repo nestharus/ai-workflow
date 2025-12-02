@@ -2,13 +2,13 @@ doc_id: project-rest-api-patterns
 title: REST API Patterns (Project Implementation)
 version_hint: 2024-2025
 kind: rest_api_standards
-description: |
-  Project-specific contract locations and conventions for REST APIs. Implementation wiring (create_app, exception handlers, router registration) is covered by fastapi patterns files. Error handling is covered by exception-patterns.
-scope: 'Describes where request/response contracts and error models live in this project
-  (app/contracts/). Does not cover implementation wiring (see factory-patterns, exception-patterns)
-  or protocol rules (see GENERAL).
-
-  '
+description: >
+  Project-specific contract locations and conventions for REST APIs. Implementation wiring (create_app, exception
+  handlers, router registration) is covered by fastapi patterns files. Error handling is covered by exception-patterns.
+scope: >
+  Describes where request/response contracts and error models live in this project (app/contracts/). Does not cover
+  implementation
+  wiring (see factory-patterns, exception-patterns) or protocol rules (see GENERAL).
 domain:
   - rest
   - python
@@ -33,18 +33,15 @@ sections:
     items:
       - id: modeling.contracts-location
         type: rule
-        text: 'Define all request and response contract models under app/contracts/
-          and its submodules so API payload schemas are centralized and reusable across
-          routers and services.
-
-          '
+        text: >
+          Define all request and response contract models under app/contracts/ and its submodules so API payload schemas
+          are centralized and reusable across routers and services.
       - id: modeling.error-contracts-location
         type: note
-        text: 'Error envelopes, validation error payloads, and error codes live in
-          app/contracts/errors.py; reuse these contracts in routers and services instead
-          of redefining ad-hoc models.
-
-          '
+        text: >
+          Error envelopes, validation error payloads, and error codes live in app/contracts/errors.py; reuse these
+          contracts
+          in routers and services instead of redefining ad-hoc models.
   - id: pagination
     index: 2
     title: Pagination contracts
@@ -53,11 +50,10 @@ sections:
     items:
       - id: pagination.paginated-model
         type: rule
-        text: 'Use Paginated[T] from app/contracts/pagination.py as the response model
-          for all collection endpoints; the model provides items, total, page, and
-          page_size fields with validation constraints.
-
-          '
+        text: >
+          Use Paginated[T] from app/contracts/pagination.py as the response model for all collection endpoints; the
+          model
+          provides items, total, page, and page_size fields with validation constraints.
   - id: anti-patterns
     index: 3
     title: Anti-patterns
@@ -66,5 +62,4 @@ sections:
     items:
       - id: anti-patterns.orm-models-as-contracts
         type: anti_pattern
-        text: Return Pydantic contract models from app/contracts/ instead of ORM or
-          database models.
+        text: Return Pydantic contract models from app/contracts/ instead of ORM or database models.
