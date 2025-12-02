@@ -33,10 +33,10 @@ Agents retrieve the latest review artifact using:
 
 ```bash
 # Get latest CodeRabbit review
-uv run latest-review --type coderabbit
+uv run review.latest --type coderabbit
 
 # Get latest SonarQube review
-uv run latest-review --type sonar
+uv run review.latest --type sonar
 ```
 
 These commands print the path to the newest review file of the specified type.

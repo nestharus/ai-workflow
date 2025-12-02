@@ -38,5 +38,6 @@ This document provides a comprehensive directory and file reference for the code
 
 ## Tooling
 
-* **`tools/`**: Workflow support tools (e.g., deep research)
-* **`scripts/`**: Helper scripts for setup and validation
+* **`scripts/`**: Runtime and development scripts
+* **`scripts/dev/`**: Development tools (linting, testing, code review)
+* **`scripts/knowledge/`**: Knowledge management system scripts

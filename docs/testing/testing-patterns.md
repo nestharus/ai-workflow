@@ -172,7 +172,7 @@ pytest --usecase-coverage-fail-under=<threshold>
 ### 4.3 Implementation Status
 
 Use-case coverage is calculated automatically by scanning test files for `@pytest.mark.usecase`
-markers. The coverage script (`scripts/test_coverage.py`) detects which use-cases have
+markers. The coverage script (`scripts/dev/test_coverage.py`) detects which use-cases have
 corresponding tests and reports coverage accordingly. No manual tracking is required.
 
 ## 5. Stub Tests for Uncovered Use-Cases

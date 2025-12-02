@@ -112,8 +112,8 @@ use only and should NOT be executed by humans or agents directly.
 
 Defines the structured workflow for migrating and restructuring documentation while
 ensuring no information is dropped or altered. Uses CSV-based tracking with DuckDB
-queries, hash-based resolution verification, and four CLI commands: `start-migration`,
-`query-comparisons`, `mark-resolved`, and `validate-migration`.
+queries, hash-based resolution verification, and four CLI commands: `knowledge.start-migration`,
+`knowledge.query-comparisons`, `knowledge.mark-resolved`, and `knowledge.validate-migration`.
 
 **Apply when:**
 

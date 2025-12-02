@@ -119,7 +119,7 @@ Runs a comprehensive suite of static analysis and security tools.
   * `uv run lint` - Run all linters
   * `uv run lint ruff` - Run only ruff (format and check)
   * `uv run lint mypy yamllint` - Run mypy and yamllint
-* **Prerequisite**: Run `uv run gen_openapi` first to generate the schema for Checkov
+* **Prerequisite**: Run `uv run app.api.generate` first to generate the schema for Checkov
 * **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
   invoked via `uv run`
 * **Markdown lint expectation**: The lint job runs `pymarkdown` with the repo config
@@ -144,14 +144,14 @@ Automated CodeRabbit review wrapper (adds `--prompt-only` automatically). Agents
 run this command; a human must run it, and the agent will fetch the latest artifact
 afterward.
 
-* **Human-run command**: `uv run coderabbit-review -- [--base <branch> | --type <mode> |
+* **Human-run command**: `uv run review.coderabbit -- [--base <branch> | --type <mode> |
   --base-commit <sha>] [extra coderabbit args]` (defaults to `--base main` when no target
   flag is provided)
 * **Selection rule**: Choose exactly one of `--base`, `--type`, or `--base-commit`;
   do not combine
 * **Purpose**: Provides AI-driven feedback on work-in-progress code before it is committed
 * **Agent retrieval**: After the human run, the agent will fetch the newest artifact via
-  `uv run latest-review --type coderabbit` (prints the newest
+  `uv run review.latest --type coderabbit` (prints the newest
   `.review/*.review.coderabbit` path)
 * **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
   invoked via `uv run`
@@ -168,9 +168,9 @@ afterward.
   * `-u, --url`: SonarQube server URL (default: `http://localhost:9000`)
   * `--`: Arguments after this flag are passed directly to `sonar-scanner-cli`
 * **Environment Variables**: `SONAR_TOKEN`, `SONAR_HOST_URL`
-* **Human-run wrapper**: `uv run sonar-review -- [sonar_scan args]`
+* **Human-run wrapper**: `uv run review.sonar -- [sonar_scan args]`
 * **Agent retrieval**: After the human run, the agent will fetch the newest artifact via
-  `uv run latest-review --type sonar` (prints the newest `.review/*.review.sonar` path)
+  `uv run review.latest --type sonar` (prints the newest `.review/*.review.sonar` path)
 * **Log output**: Wrapper writes to `.review/<timestamp>.review.sonar` and echoes the path
 * **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
   invoked via `uv run`
@@ -179,7 +179,7 @@ afterward.
 
 Generates the OpenAPI 3.1 schema JSON file from the FastAPI application code.
 
-* **Usage**: `uv run gen_openapi`
+* **Usage**: `uv run app.api.generate`
 * **Output**: Saves to `openapi/openapi.json`
 * **Note**: This script must be run before `lint` or security scans to ensure the schema
   is up-to-date

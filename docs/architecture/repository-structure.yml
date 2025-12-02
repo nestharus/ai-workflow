@@ -74,9 +74,12 @@ sections:
   category: standard
   summary: ''
   items:
-  - id: tooling-tools-workflow-support
-    type: example
-    text: '**`tools/`**: Workflow support tools (e.g., deep research)'
   - id: tooling-scripts-helper-scripts
     type: text
-    text: '**`scripts/`**: Helper scripts for setup and validation'
+    text: '**`scripts/`**: Runtime and development scripts'
+  - id: tooling-scripts-dev-folder
+    type: text
+    text: '**`scripts/dev/`**: Development tools (linting, testing, code review)'
+  - id: tooling-scripts-knowledge-folder
+    type: text
+    text: '**`scripts/knowledge/`**: Knowledge management system scripts'

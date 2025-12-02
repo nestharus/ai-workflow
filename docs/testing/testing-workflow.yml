@@ -17,7 +17,7 @@ sections:
       | **Unit** | `tests/unit/` | Line/branch per function | All `app/` functions | Fast | | **Component**
       | `tests/unit/` | Line/branch per function | `app/services/` only | Fast | | **Integration** | `tests/integration/`
       | Use-case | Use cases from YAML | Fast | | **E2E** | `tests/e2e/` | Use-case | Use cases from YAML
-      | Slow | | **Scripts** | `scripts/tests/` | Line/branch per function | `scripts/`, `tools/` | Fast
+      | Slow | | **Scripts** | `scripts/tests/` | Line/branch per function | `scripts/` | Fast
       |'
 - id: unit-tests
   index: 2

@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from scripts import utils
-from scripts.utils import (
+from scripts.dev import utils
+from scripts.dev.utils import (
     StdoutCaptureError,
     build_concat_parser,
     iter_directory_files,

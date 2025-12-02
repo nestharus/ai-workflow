@@ -15,9 +15,6 @@ dependencies = [
     "surrealdb>=1.0.6,<1.1.0",
     "elasticsearch>=9.2.0,<9.3.0",
     "anyio>=4.11.0,<4.12.0",
-    "duckdb>=1.4.2,<1.5.0",
-    "pyyaml>=6.0.3,<6.1.0",
-    "pytz>=2025.2,<2026.0",
 ]
 
 [build-system]
@@ -25,11 +22,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["app", "scripts", "tools"]
-exclude = ["tests*"]
+packages = ["app", "scripts"]
+exclude = ["tests*", "scripts/dev*", "scripts/knowledge*", "scripts/tests*"]
 
 [dependency-groups]
-dev = [
+# Core testing dependencies for tests/ (app tests)
+test = [
     "httpx==0.28.1",
     "pytest==9.0.1",
     "pytest-asyncio==1.3.0",
@@ -39,6 +37,10 @@ dev = [
     "pytest-randomly>=4.0.1,<4.1.0",
     "pytest-xdist==3.8.0",
     "pyfakefs>=5.8.0,<5.9.0",
+]
+# Linters, formatters, type checkers, and pre-commit hooks
+dev = [
+    { include-group = "test" },
     "mypy>=1.18.2,<1.19.0",
     "ruff>=0.14.5,<0.15",
     "checkov>=3.2.494,<3.3",
@@ -48,27 +50,54 @@ dev = [
     "types-pyyaml>=6.0.12.20250915,<6.0.13",
     "yamllint>=1.37.1,<1.38.0",
 ]
+# Knowledge management system dependencies (scripts/knowledge/)
+knowledge = [
+    { include-group = "test" },
+    "duckdb>=1.4.2,<1.5.0",
+    "pyyaml>=6.0.3,<6.1.0",
+    "pytz>=2025.2,<2026.0",
+    "spacy>=3.8.11,<3.9.0",
+    "transformers>=4.57.3,<4.58.0",
+    "accelerate>=1.12.0,<1.13.0",
+    "torch>=2.9.1,<3.0.0",
+]
 
 [project.scripts]
-setup = "scripts.setup:main"
-lint = "scripts.lint:main"
-start-server = "scripts.start_server:main"
-gen_openapi = "scripts.gen_openapi:main"
-coderabbit-review = "scripts.coderabbit_review:main"
-compare-yml-docs = "scripts.compare_yaml_docs:main"
-sonar-review = "scripts.sonar_review:main"
-latest-review = "scripts.latest_review:main"
-llm-coverage-report = "scripts.llm_coverage_report:main"
-mark-resolved = "scripts.resolution_tracker:main"
-query-comparisons = "scripts.query_comparisons:main"
-record-movement = "scripts.movement_tracker:main"
-generate-migration-report = "scripts.generate_migration_report:main"
-track-additions = "scripts.track_additions:main_track"
-validate-addition = "scripts.track_additions:main_validate"
-start-migration = "scripts.migration_manager:main_start"
-validate-migration = "scripts.migration_manager:main_validate"
-grep-yml-ids = "scripts.grep_yml_ids:main"
-test-coverage = "scripts.test_coverage:main"
+# Runtime scripts (included in Docker via scripts/app/)
+"app.start" = "scripts.app.start_server:main"
+"app.api.generate" = "scripts.app.gen_openapi:main"
+# Development scripts (NOT included in Docker)
+setup = "scripts.dev.setup:main"
+lint = "scripts.dev.lint:main"
+# Review scripts (scripts/dev/review/)
+"review.coderabbit" = "scripts.dev.review.coderabbit_review:main"
+"review.sonar" = "scripts.dev.review.sonar_review:main"
+"review.latest" = "scripts.dev.review.latest_review:main"
+# Test runner scripts (scripts/dev/test_runner/)
+llm-coverage-report = "scripts.dev.test_runner.llm_coverage_report:main"
+test-coverage = "scripts.dev.test_runner.test_coverage:main"
+# Knowledge scripts (scripts/knowledge/)
+"knowledge.compare-yml-docs" = "scripts.knowledge.compare_yaml_docs:main"
+"knowledge.grep-yml-ids" = "scripts.knowledge.grep_yml_ids:main"
+# Knowledge management scripts (NOT included in Docker)
+"knowledge.mark-resolved" = "scripts.knowledge.resolution_tracker:main"
+"knowledge.query-comparisons" = "scripts.knowledge.query_comparisons:main"
+"knowledge.record-movement" = "scripts.knowledge.movement_tracker:main"
+"knowledge.generate-migration-report" = "scripts.knowledge.generate_migration_report:main"
+"knowledge.track-additions" = "scripts.knowledge.track_additions:main_track"
+"knowledge.validate-addition" = "scripts.knowledge.track_additions:main_validate"
+"knowledge.start-migration" = "scripts.knowledge.migration_manager:main_start"
+"knowledge.validate-migration" = "scripts.knowledge.migration_manager:main_validate"
+# Keyword extraction pipeline entry points
+"knowledge.extract-keyword-candidates" = "scripts.knowledge.candidate_extraction:main"
+"knowledge.query-keyword-candidates" = "scripts.knowledge.query_keyword_candidates:main"
+"knowledge.classify-keyword" = "scripts.knowledge.classify_keyword:main"
+"knowledge.apply-keywords-to-yaml" = "scripts.knowledge.keyword_store:main_apply"
+"knowledge.score-candidates-with-qwen" = "scripts.knowledge.qwen_scoring:main"
+"knowledge.track-keyword-variants" = "scripts.knowledge.variant_resolver:main_track"
+"knowledge.query-variants" = "scripts.knowledge.query_variants:main"
+"knowledge.validate-variant" = "scripts.knowledge.validate_variant:main"
+"knowledge.extract-keywords" = "scripts.knowledge.extraction_pipeline:main"
 
 [tool.uv]
 link-mode = "copy"
@@ -125,7 +154,6 @@ convention = "google"
 "app/schemas/**/*.py" = ["TCH003"]
 "app/api/**/*.py" = ["TC001"]
 "scripts/**/*.py" = ["TRY003", "TCH003", "TC002", "TC001", "S608"]
-"tools/**/*.py" = ["TRY003", "TCH003", "TC002", "TC001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "scripts/tests"]
@@ -142,7 +170,7 @@ usecase_coverage_threshold_e2e = 100  # Minimum e2e use-case coverage percentage
 usecase_coverage_threshold_integration = 100  # Minimum integration use-case coverage percentage (0-100)
 
 [tool.coverage.run]
-source = ["app", "scripts", "tools"]
+source = ["app", "scripts"]
 branch = true  # Enable branch coverage
 omit = [
     "tests/*",
@@ -176,7 +204,6 @@ exclude_lines = [
 source = [
     "app/",
     "scripts/",
-    "tools/",
 ]
 
 # Custom coverage settings used by test_coverage.py

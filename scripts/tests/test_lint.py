@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
-from scripts import lint
-from scripts.lint import (
+from scripts.dev import lint
+from scripts.dev.lint import (
     LINTER_NAMES,
     LINTER_RUNNERS,
     InvalidCommandError,

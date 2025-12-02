@@ -15,24 +15,19 @@ WORKDIR /app
 # Set shell to strict mode
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Install build dependencies for packages requiring compilation (e.g., duckdb)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends g++=4:14.2.0-1 && \
-    rm -rf /var/lib/apt/lists/*
-
 # Install uv by copying the prebuilt binary from the official image.
 COPY --from=uv /uv /usr/local/bin/uv
 
 # Copy dependency files
 COPY pyproject.toml uv.lock README.md LICENSE ./
 
-# Install dependencies
-RUN uv sync --frozen --no-cache
+# Install only production dependencies (no test/dev/knowledge groups)
+RUN uv sync --frozen --no-cache --no-dev
 
-# Copy application code
+# Copy application code (only runtime - excludes scripts/dev, scripts/knowledge, scripts/tests)
 COPY app ./app
-COPY scripts ./scripts
-COPY tools ./tools
+COPY scripts/__init__.py ./scripts/
+COPY scripts/app ./scripts/app
 
 # Install the project
 RUN uv pip install --no-cache .
@@ -59,9 +54,10 @@ RUN apt-get update && \
 # Copy virtual environment from builder
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 
-# Copy application code and scripts
+# Copy application code and runtime scripts only
 COPY --from=builder --chown=appuser:appuser /app/app /app/app
-COPY --from=builder --chown=appuser:appuser /app/scripts /app/scripts
+COPY --from=builder --chown=appuser:appuser /app/scripts/__init__.py /app/scripts/
+COPY --from=builder --chown=appuser:appuser /app/scripts/app /app/scripts/app
 COPY --from=builder --chown=appuser:appuser /app/pyproject.toml /app/pyproject.toml
 COPY --from=builder --chown=appuser:appuser /app/README.md /app/README.md
 COPY --from=builder --chown=appuser:appuser /app/LICENSE /app/LICENSE
@@ -80,4 +76,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Start the application
-CMD ["start-server", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["app.start", "--host", "0.0.0.0", "--port", "8000"]

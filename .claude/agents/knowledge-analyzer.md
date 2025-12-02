@@ -114,10 +114,10 @@ Before analyzing any items, gather context to inform your classification decisio
 2. **Search existing YAML files**: Use Grep to understand what content already exists in each module:
    ```bash
    # Search for similar content in GENERAL files
-   uv run grep-yml-ids --path docs/development/general/ --id <relevant-keyword>
+   uv run knowledge.grep-yml-ids --path docs/development/general/ --id <relevant-keyword>
 
    # Search for similar content in PROJECT files
-   uv run grep-yml-ids --path docs/development/project/ --id <relevant-keyword>
+   uv run knowledge.grep-yml-ids --path docs/development/project/ --id <relevant-keyword>
    ```
 
 3. **Use this research to inform decisions**: When classifying, reference the multi-domain tagging rules and pattern definitions from MODULE-DEFINITIONS.md rather than relying on keyword matching alone.
@@ -154,13 +154,13 @@ Before analyzing any items, gather context to inform your classification decisio
 9. **Verify coverage**: For PROJECT chunks, search for existing coverage in other PROJECT files:
    ```bash
    # Search for ID in project files (partial match)
-   uv run grep-yml-ids --id <element-id> --path docs/development/project/
+   uv run knowledge.grep-yml-ids --id <element-id> --path docs/development/project/
 
    # Search for exact ID match
-   uv run grep-yml-ids --id <element-id> --path docs/development/project/ --exact
+   uv run knowledge.grep-yml-ids --id <element-id> --path docs/development/project/ --exact
 
    # Get JSON output for programmatic use
-   uv run grep-yml-ids --id <element-id> --output json
+   uv run knowledge.grep-yml-ids --id <element-id> --output json
    ```
 
 10. **Suggest action**:
@@ -322,13 +322,13 @@ When PROJECT content is detected, check if it's already covered by other PROJECT
 2. **Search methods**:
    ```bash
    # Search by ID (returns file path, section, type, and text)
-   uv run grep-yml-ids --id <element-id> --path docs/development/project/
+   uv run knowledge.grep-yml-ids --id <element-id> --path docs/development/project/
 
    # Search with exact match
-   uv run grep-yml-ids --id <element-id> --path docs/development/project/ --exact
+   uv run knowledge.grep-yml-ids --id <element-id> --path docs/development/project/ --exact
 
    # Search in specific module
-   uv run grep-yml-ids --id <element-id> --path docs/development/project/fastapi/
+   uv run knowledge.grep-yml-ids --id <element-id> --path docs/development/project/fastapi/
    ```
 
 3. **If covered**: Mark as REMOVE_COVERED and provide movement command template
@@ -338,7 +338,7 @@ When PROJECT content is detected, check if it's already covered by other PROJECT
 When suggesting REMOVE_COVERED, provide the command:
 
 ```bash
-uv run record-movement \
+uv run knowledge.record-movement \
   --id <element-id> \
   --source-file <source> \
   --target-file <covering-file> \

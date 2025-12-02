@@ -244,7 +244,7 @@ sections:
   - id: 43-implementation-status-1
     type: rule
     text: Use-case coverage is calculated automatically by scanning test files for `@pytest.mark.usecase`
-      markers. The coverage script (`scripts/test_coverage.py`) detects which use-cases have corresponding
+      markers. The coverage script (`scripts/dev/test_coverage.py`) detects which use-cases have corresponding
       tests and reports coverage accordingly. No manual tracking is required.
 - id: 5-stub-tests-for-uncovered-use-cases
   index: 16

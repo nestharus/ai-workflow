@@ -15,6 +15,10 @@ for documentation migrations.
 ├── movements/      # Information movement tracking (records where content moved from/to)
 ├── additions/      # Addition tracking (new IDs in target files not in originals)
 ├── reports/        # Generated YML review reports for non-identical text comparisons
+├── keywords/       # Keyword extraction pipeline data (candidates, keywords, variants)
+│   ├── candidates.csv         # Extracted keyword candidates from NLP processing
+│   ├── keywords.csv           # Classified and promoted keywords
+│   └── variant_candidates.csv # Keyword variant tracking via embeddings
 └── README.md       # This file
 ```
 
@@ -41,7 +45,7 @@ Duplicate detection is based on (id, source_file, split_file) for path-level uni
 
 Flattened comparison results (one file per pattern, e.g., `api-patterns.csv`).
 
-**Note**: Comparison CSVs are regenerated on each run of `uv run compare-yml-docs`.
+**Note**: Comparison CSVs are regenerated on each run of `uv run knowledge.compare-yml-docs`.
 Older data is intentionally discarded to ensure the CSV always reflects the current
 state of the YAML files being compared.
 
@@ -134,6 +138,57 @@ Stores generated YAML review reports for migration items requiring human review 
 
 **Note**: Reports are regenerated on each run and excluded from git tracking. Reports exclude items already marked as resolved, items with identical text (similarity score = 1.0), and items with origin_type 'split_only' or 'orphan'.
 
+### keywords/candidates.csv
+
+Stores keyword candidates extracted from YAML documentation using spaCy NLP processing. Candidates include noun phrases, named entities, and technical terms identified through part-of-speech tagging.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| candidate_id | string | Unique identifier for this candidate (UUID) |
+| term | string | The extracted term or phrase |
+| source_file | string | Relative path to the source YAML file |
+| source_element_id | string | YAML element ID where term was found |
+| extraction_method | string | Method used (noun_phrase, named_entity, technical_term) |
+| pos_tags | string | Part-of-speech tags for the term |
+| confidence_score | string | Extraction confidence (0.0-1.0) |
+| extracted_at | string | ISO 8601 basic format timestamp (YYYYMMDDTHHMMSSZ) |
+
+**Note**: Duplicate detection is based on `(term, source_file)` pairs to avoid re-extracting the same term from the same source.
+
+### keywords/keywords.csv
+
+Stores classified keywords that have been promoted from candidates. Keywords are assigned categories and subcategories for organization.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| keyword_id | string | Unique identifier for this keyword (UUID) |
+| term | string | The canonical keyword term |
+| category | string | Primary category (domain, pattern, concept, entity) |
+| subcategory | string | Subcategory within primary category |
+| source_candidate_id | string | Original candidate ID this was promoted from |
+| source_file | string | Original source file where term was found |
+| classified_at | string | ISO 8601 basic format timestamp (YYYYMMDDTHHMMSSZ) |
+| classification_notes | string | Optional notes about classification |
+
+**Note**: Keywords represent the canonical, validated terms extracted from documentation.
+
+### keywords/variant_candidates.csv
+
+Tracks keyword variants (synonyms, abbreviations, alternate spellings) identified using embedding similarity from Qwen models.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| variant_id | string | Unique identifier for this variant (UUID) |
+| keyword_id | string | ID of the canonical keyword this is a variant of |
+| variant_term | string | The variant term |
+| similarity_score | string | Embedding similarity score (0.0-1.0) |
+| source_file | string | File where variant was found |
+| detected_at | string | ISO 8601 basic format timestamp (YYYYMMDDTHHMMSSZ) |
+| validated | string | Whether variant has been validated ("true" or "false") |
+| is_canonical | string | Whether this is the canonical form ("true" or "false") |
+
+**Note**: Variants link to keywords via `keyword_id` and can be validated to confirm they are true synonyms or alternate forms.
+
 ## Hash Algorithm
 
 All hash fields use **SHA-256** for content hashing.
@@ -217,6 +272,52 @@ SELECT * FROM glob('.knowledge/reports/*-review.yml');
 --     for item in report['items']:
 --         if item['text_similarity_score'] < 0.8:
 --             print(f"Low similarity: {item['element_id']}")
+
+-- Query all keyword candidates
+SELECT * FROM read_csv_auto('.knowledge/keywords/candidates.csv')
+ORDER BY extracted_at DESC;
+
+-- Find candidates by extraction method
+SELECT * FROM read_csv_auto('.knowledge/keywords/candidates.csv')
+WHERE extraction_method = 'noun_phrase';
+
+-- Find high-confidence candidates
+SELECT * FROM read_csv_auto('.knowledge/keywords/candidates.csv')
+WHERE CAST(confidence_score AS DOUBLE) >= 0.8;
+
+-- Query all classified keywords
+SELECT * FROM read_csv_auto('.knowledge/keywords/keywords.csv')
+ORDER BY category, subcategory, term;
+
+-- Find keywords by category
+SELECT * FROM read_csv_auto('.knowledge/keywords/keywords.csv')
+WHERE category = 'domain';
+
+-- Query keyword variants
+SELECT * FROM read_csv_auto('.knowledge/keywords/variant_candidates.csv')
+WHERE validated = 'true';
+
+-- Find variants for a specific keyword
+SELECT * FROM read_csv_auto('.knowledge/keywords/variant_candidates.csv')
+WHERE keyword_id = '<keyword-uuid>';
+
+-- Join keywords with their variants
+SELECT
+  k.keyword_id,
+  k.term AS canonical_term,
+  k.category,
+  v.variant_term,
+  v.similarity_score,
+  v.validated
+FROM read_csv_auto('.knowledge/keywords/keywords.csv') k
+LEFT JOIN read_csv_auto('.knowledge/keywords/variant_candidates.csv') v
+  ON k.keyword_id = v.keyword_id
+ORDER BY k.term, v.similarity_score DESC;
+
+-- Find unvalidated variants with high similarity
+SELECT * FROM read_csv_auto('.knowledge/keywords/variant_candidates.csv')
+WHERE validated = 'false'
+  AND CAST(similarity_score AS DOUBLE) >= 0.9;
 ```
 
 ## Addition Tracking Workflow
@@ -227,20 +328,20 @@ The addition tracking system identifies and validates new content (IDs) that app
 
 ```bash
 # Track all additions across all patterns
-uv run track-additions
+uv run knowledge.track-additions
 
 # Track additions for a specific pattern
-uv run track-additions --pattern api-patterns
+uv run knowledge.track-additions --pattern api-patterns
 ```
 
 ### Validating Additions
 
 ```bash
 # Mark an addition as validated, in-scope, and meaningful
-uv run validate-addition --id <addition_id> --validated --in-scope --meaningful
+uv run knowledge.validate-addition --id <addition_id> --validated --in-scope --meaningful
 
 # Mark only as validated (leave in-scope/meaningful unchanged)
-uv run validate-addition --id <addition_id> --validated
+uv run knowledge.validate-addition --id <addition_id> --validated
 ```
 
 ### Querying Additions
@@ -255,10 +356,10 @@ The report generation system creates YAML review reports for migration items tha
 
 ```bash
 # Generate reports for all patterns
-uv run generate-migration-report
+uv run knowledge.generate-migration-report
 
 # Generate report for a specific pattern
-uv run generate-migration-report --pattern api-patterns
+uv run knowledge.generate-migration-report --pattern api-patterns
 ```
 
 ### Report Structure
@@ -284,6 +385,70 @@ Reports exclude:
 - Items with identical text (similarity score = 1.0)
 - Items with origin_type 'split_only' or 'orphan'
 
+## Keyword Extraction Workflow
+
+The keyword extraction system extracts, classifies, and tracks terminology from YAML documentation using spaCy NLP and Qwen embeddings.
+
+### Extracting Candidates
+
+```bash
+# Extract candidates from all YAML docs
+uv run knowledge.extract-keyword-candidates
+
+# Extract from specific directory
+uv run knowledge.extract-keyword-candidates --source docs/architecture/
+
+# Query extracted candidates
+uv run knowledge.query-keyword-candidates --method noun_phrase --min-confidence 0.8
+```
+
+### Classifying Keywords
+
+```bash
+# Classify a candidate
+uv run knowledge.classify-keyword --id <candidate_id> --category domain --subcategory fastapi
+
+# Reject a candidate
+uv run knowledge.classify-keyword --id <candidate_id> --reject --reason "too generic"
+```
+
+### Scoring with Qwen (Optional)
+
+```bash
+# Score unscored candidates with Qwen embeddings
+uv run knowledge.score-candidates-with-qwen
+
+# Use specific model
+uv run knowledge.score-candidates-with-qwen --model Qwen/Qwen3-Embedding-0.6B
+```
+
+### Tracking Variants
+
+```bash
+# Track variants for all keywords
+uv run knowledge.track-keyword-variants
+
+# Track with custom threshold
+uv run knowledge.track-keyword-variants --threshold 0.9
+
+# Query variants
+uv run knowledge.query-variants --validated --min-similarity 0.85
+
+# Validate a variant
+uv run knowledge.validate-variant --id <variant_id> --accept
+```
+
+### Running Full Pipeline
+
+```bash
+# Run complete extraction pipeline
+uv run knowledge.extract-keywords
+
+# Run specific stage
+uv run knowledge.extract-keywords --stage extract
+uv run knowledge.extract-keywords --stage classify
+```
+
 ## Comparison Workflow with Timestamped Originals
 
 The `compare-yml-docs` command accepts an optional `--original-files` parameter to compare
@@ -294,11 +459,11 @@ timestamped original files from the `originals/` directory instead of globbing f
 
 ```bash
 # Compare a specific timestamped original
-uv run compare-yml-docs --path docs/development \
+uv run knowledge.compare-yml-docs --path docs/development \
     --original-files .knowledge/originals/20251201T134735Z-api-patterns.yml
 
 # Compare multiple timestamped originals
-uv run compare-yml-docs --path docs/development \
+uv run knowledge.compare-yml-docs --path docs/development \
     --original-files .knowledge/originals/20251201T134735Z-api-patterns.yml \
     .knowledge/originals/20251201T135000Z-docstrings-guide.yml
 ```
@@ -309,7 +474,7 @@ The `validate-migration` command automatically passes the original file referenc
 `tasks.csv` to the comparison command:
 
 ```bash
-uv run validate-migration --task-id <uuid>
+uv run knowledge.validate-migration --task-id <uuid>
 ```
 
 This reads the `original_file_ref` column from the task record and constructs the
@@ -331,7 +496,8 @@ existing workflows.
   - `.knowledge/movements/.gitkeep`
   - `.knowledge/additions/.gitkeep`
   - `.knowledge/reports/.gitkeep`
+  - `.knowledge/keywords/.gitkeep`
 - `README.md` is tracked
 - Generated data files (`*.csv`, `*.yml`, `*.yaml`) are ignored via `.gitignore`
 - DuckDB database file (`knowledge.duckdb`) is ignored
-- Movement and addition CSV files, and generated review reports (YML) are also ignored as environment-specific artifacts that track content validation during migrations
+- Movement, addition, and keyword CSV files, and generated review reports (YML) are also ignored as environment-specific artifacts that track content validation during migrations

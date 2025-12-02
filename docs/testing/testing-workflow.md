@@ -11,7 +11,7 @@ coverage metrics for each testing level.
 | **Component** | `tests/unit/` | Line/branch per function | `app/services/` only | Fast |
 | **Integration** | `tests/integration/` | Use-case | Use cases from YAML | Fast |
 | **E2E** | `tests/e2e/` | Use-case | Use cases from YAML | Slow |
-| **Scripts** | `scripts/tests/` | Line/branch per function | `scripts/`, `tools/` | Fast |
+| **Scripts** | `scripts/tests/` | Line/branch per function | `scripts/` | Fast |
 
 ## Unit Tests
 

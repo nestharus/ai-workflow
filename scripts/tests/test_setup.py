@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from scripts.setup import (
+from scripts.dev.setup import (
     UvNotFoundError,
     main,
     run_pre_commit_install,

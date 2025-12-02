@@ -24,7 +24,7 @@ The lint script accepts arguments to run specific linters. Available linters (in
 
 1. **First, run gen_openapi** (required before lint):
    ```bash
-   uv run gen_openapi
+   uv run app.api.generate
    ```
 
 2. **Run each linter step individually in order**. For each linter, keep running and

@@ -14,7 +14,7 @@ You are a lint-fixing specialist. Your task is to resolve all linting errors in 
 
 1. **First, run gen_openapi** (required before lint):
    ```bash
-   uv run gen_openapi
+   uv run app.api.generate
    ```
 
 2. **Run the lint command**:

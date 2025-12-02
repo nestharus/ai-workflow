@@ -11,6 +11,25 @@ if TYPE_CHECKING:
     from pyfakefs.fake_filesystem import FakeFilesystem
 
 
+# --- Patch thinc's fix_random_seed to handle seeds >= 2**32 ---
+# pytest-randomly may pass seeds that exceed numpy's 32-bit limit.
+# thinc registers a pytest_randomly.random_seeder entry point that calls
+# numpy.random.seed() directly without constraining the seed value.
+# This patch applies modulo 2**32 to prevent ValueError.
+try:
+    import thinc.util as _thinc_util
+
+    _original_fix_random_seed = _thinc_util.fix_random_seed
+
+    def _patched_fix_random_seed(seed: int = 0) -> None:
+        """Wrapper that constrains seed to 32-bit range for numpy compatibility."""
+        _original_fix_random_seed(seed % (2**32))
+
+    _thinc_util.fix_random_seed = _patched_fix_random_seed
+except ImportError:
+    pass  # thinc not installed, no patch needed
+
+
 @pytest.fixture
 def fake_repo_root(fs: FakeFilesystem) -> Path:
     """Create a fake repository root with standard structure.

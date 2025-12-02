@@ -45,7 +45,7 @@ See `.pre-commit-config.yaml` for code quality standards.
 Use the start script for a robust development server with health checks:
 
 ```bash
-uv run start-server
+uv run app.start
 ```
 
 #### Options
@@ -185,7 +185,7 @@ Available via `uv run <script>`:
 |--------|-------------|
 | `setup` | Install pre-commit hooks |
 | `lint` | Run comprehensive linting (Ruff, mypy, Checkov, pymarkdown) |
-| `start-server` | Start development server with health checks |
+| `app.start` | Start development server with health checks |
 | `gen_openapi` | Generate OpenAPI schema JSON to `openapi/openapi.json` |
 | `coderabbit-review` | Run CodeRabbit AI code review (human-initiated) |
 | `sonar-review` | Run SonarQube analysis (human-initiated) |
