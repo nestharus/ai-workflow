@@ -10,13 +10,18 @@ sections:
   category: standard
   summary: ''
   items:
-  - id: application-code-1
+  - id: application-code-app-routes
     type: text
-    text: |
-      * `app/routes/`: API endpoint routers, including `orchestrator_router.py` * `app/services/`: Business
-      logic layer, including `orchestrator_service.py` and `agent_invoker.py` * `app/contracts/`: Pydantic models,
-      including `orchestrator_contracts.py` * `app/core/`: Core application setup including `factory.py` for app
-      construction
+    text: '`app/routes/`: API endpoint routers, including `orchestrator_router.py`'
+  - id: application-code-app-services
+    type: text
+    text: '`app/services/`: Business logic layer, including `orchestrator_service.py` and `agent_invoker.py`'
+  - id: application-code-app-contracts
+    type: text
+    text: '`app/contracts/`: Pydantic models, including `orchestrator_contracts.py`'
+  - id: application-code-app-core
+    type: text
+    text: '`app/core/`: Core application setup including `factory.py` for app construction'
 - id: agent-definitions
   index: 2
   title: Agent Definitions
@@ -32,13 +37,24 @@ sections:
   category: standard
   summary: ''
   items:
-  - id: documentation-1
-    type: step
-    text: |
-      * `docs/`: The Coarse Knowledge Graph (source of truth) with subdirectories for each domain: * `docs/usage/`:
-      Documentation for using the application * `docs/development/`: Writing application code, docstrings, code style *
-      `docs/testing/`: Writing and running test code * `docs/architecture/`: Folder structure, services, endpoints,
-      integrations * `docs/processes/`: Development processes like git releases, code reviews
+  - id: documentation-docs-root
+    type: text
+    text: '`docs/`: The Coarse Knowledge Graph (source of truth) with subdirectories for each domain'
+  - id: documentation-docs-usage
+    type: text
+    text: '`docs/usage/`: Documentation for using the application'
+  - id: documentation-docs-development
+    type: text
+    text: '`docs/development/`: Writing application code, docstrings, code style'
+  - id: documentation-docs-testing
+    type: text
+    text: '`docs/testing/`: Writing and running test code'
+  - id: documentation-docs-architecture
+    type: text
+    text: '`docs/architecture/`: Folder structure, services, endpoints, integrations'
+  - id: documentation-docs-processes
+    type: text
+    text: '`docs/processes/`: Development processes like git releases, code reviews'
 - id: infrastructure
   index: 4
   title: Infrastructure

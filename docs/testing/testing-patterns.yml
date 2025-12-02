@@ -656,9 +656,12 @@ sections:
   category: standard
   summary: ''
   items:
-  - id: related-documentation-1
+  - id: related-documentation-1-api-patterns
     type: text
-    text: |
-      * [API Testing Patterns](api-testing-patterns.md) - Fixture composition, dependency overrides, assertion patterns
-      * [Testing Workflow](testing-workflow.md) - Test execution commands and tier descriptions *
-      [tests/use_cases.yaml](../../tests/use_cases.yaml) - The canonical use-case registry
+    text: '[API Testing Patterns](api-testing-patterns.md) - Fixture composition, dependency overrides, assertion patterns'
+  - id: related-documentation-1-workflow
+    type: text
+    text: '[Testing Workflow](testing-workflow.md) - Test execution commands and tier descriptions'
+  - id: related-documentation-1-use-cases
+    type: text
+    text: '[tests/use_cases.yaml](../../tests/use_cases.yaml) - The canonical use-case registry'
