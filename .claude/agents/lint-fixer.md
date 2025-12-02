@@ -18,6 +18,7 @@ The lint script accepts arguments to run specific linters. Available linters (in
 | `hadolint` | Dockerfile linting |
 | `pymarkdown` | Markdown validation |
 | `yamllint` | YAML validation |
+| `yamldocs` | YAML documentation schema validation (doc_id files) |
 | `checkov` | OpenAPI schema security scans |
 
 ## Workflow
@@ -51,7 +52,11 @@ The lint script accepts arguments to run specific linters. Available linters (in
    uv run lint yamllint
    # Fix all violations, re-run until clean
 
-   # Step 6: Run checkov until it passes
+   # Step 6: Run yamldocs until it passes
+   uv run lint yamldocs
+   # Fix all violations, re-run until clean
+
+   # Step 7: Run checkov until it passes
    uv run lint checkov
    # Fix all violations, re-run until clean
    ```
@@ -86,7 +91,26 @@ If you cannot fix a lint error without changing configuration, report it as a re
 ## YAML Schema Guidelines
 
 See `docs/development/general/general.yaml.schema-guidelines.yml` for the YAML schema standard.
-The only required field is `id` - every object must have one. Structure is otherwise flexible.
+
+### Document-level schema (yamldocs linter)
+
+The yamldocs linter validates YAML documentation files (identified by having `doc_id` at root).
+A file is a documentation file if and only if it has a `doc_id` field at root level.
+
+**Document root requirements:**
+- `doc_id` - required, unique identifier for the document
+- `title` - required, human-readable title
+- `sections` - required, list of section objects
+
+**Section requirements:**
+- Root elements of `sections` list MUST have an `id` field
+- Child element IDs are optional (no lint error if missing)
+
+### Fixing yamldocs errors
+
+- **missing_required_field**: Add the missing field (`doc_id`, `title`, or `sections`)
+- **missing_section_id**: Add an `id` field to the section using kebab-case
+- **invalid_type**: Ensure `sections` is a list, not a scalar or dict
 
 ## YAML Formatting Rules
 

@@ -1,0 +1,15 @@
+# Configuration for YAML documentation schema linter
+# See: docs/development/general/general.yaml.schema-guidelines.yml
+
+# Directories to search for documentation YAML files
+targets:
+  - docs/
+  - scripts/docs/
+  - tests/docs/
+
+# Directories to exclude from linting
+exclude_dirs:
+  - to_adapt
+  - node_modules
+  - .venv
+  - __pycache__

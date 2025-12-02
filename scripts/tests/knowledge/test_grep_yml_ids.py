@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -11,9 +12,7 @@ import yaml
 
 from scripts.knowledge import grep_yml_ids
 from scripts.knowledge.grep_yml_ids import (
-    TEXT_FIELDS,
     MatchResult,
-    _extract_text_content,
     _search_structure,
     _validate_yaml_result,
     format_json,
@@ -26,17 +25,6 @@ from scripts.knowledge.grep_yml_ids import (
 
 if TYPE_CHECKING:
     from pyfakefs.fake_filesystem import FakeFilesystem
-
-
-class TestTextFields:
-    """Tests for TEXT_FIELDS constant."""
-
-    def test_has_required_fields(self) -> None:
-        """Should have all expected text fields."""
-        assert "text" in TEXT_FIELDS
-        assert "description" in TEXT_FIELDS
-        assert "summary" in TEXT_FIELDS
-        assert "title" in TEXT_FIELDS
 
 
 class TestParseArgs:
@@ -160,60 +148,6 @@ class TestParseYamlFile:
             parse_yaml_file(Path("/nonexistent.yml"))
 
 
-class TestExtractTextContent:
-    """Tests for _extract_text_content function."""
-
-    def test_extracts_text_field(self) -> None:
-        """Should extract text field."""
-        element = {"id": "test", "text": "Some text"}
-        result = _extract_text_content(element)
-        assert result == "Some text"
-
-    def test_extracts_description_field(self) -> None:
-        """Should extract description field."""
-        element = {"id": "test", "description": "A description"}
-        result = _extract_text_content(element)
-        assert result == "A description"
-
-    def test_extracts_summary_field(self) -> None:
-        """Should extract summary field."""
-        element = {"id": "test", "summary": "A summary"}
-        result = _extract_text_content(element)
-        assert result == "A summary"
-
-    def test_extracts_title_field(self) -> None:
-        """Should extract title field."""
-        element = {"id": "test", "title": "A title"}
-        result = _extract_text_content(element)
-        assert result == "A title"
-
-    def test_concatenates_multiple_fields(self) -> None:
-        """Should concatenate multiple text fields with separator."""
-        element = {"text": "Text", "description": "Description"}
-        result = _extract_text_content(element)
-        assert "Text" in result
-        assert "Description" in result
-        assert " | " in result
-
-    def test_ignores_empty_fields(self) -> None:
-        """Should ignore empty or whitespace-only fields."""
-        element = {"text": "Valid", "description": "   "}
-        result = _extract_text_content(element)
-        assert result == "Valid"
-
-    def test_returns_empty_for_no_text_fields(self) -> None:
-        """Should return empty string when no text fields present."""
-        element = {"id": "test", "type": "rule"}
-        result = _extract_text_content(element)
-        assert result == ""
-
-    def test_ignores_non_string_values(self) -> None:
-        """Should ignore non-string text field values."""
-        element = {"text": ["list", "items"]}
-        result = _extract_text_content(element)
-        assert result == ""
-
-
 class TestSearchStructure:
     """Tests for _search_structure function."""
 
@@ -221,7 +155,7 @@ class TestSearchStructure:
         """Should find exact ID match."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake")
-            data = {"id": "test.item", "text": "Test text"}
+            data = {"id": "test.item"}
 
             results = _search_structure(
                 data, "test.item", exact=True, file_path=Path("/fake/test.yml")
@@ -234,7 +168,7 @@ class TestSearchStructure:
         """Should find partial ID match."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake")
-            data = {"id": "url.prefix", "text": "Test text"}
+            data = {"id": "url.prefix"}
 
             results = _search_structure(data, "url", exact=False, file_path=Path("/fake/test.yml"))
 
@@ -245,7 +179,7 @@ class TestSearchStructure:
         """Should reject partial match when exact=True."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake")
-            data = {"id": "url.prefix", "text": "Test text"}
+            data = {"id": "url.prefix"}
 
             results = _search_structure(data, "url", exact=True, file_path=Path("/fake/test.yml"))
 
@@ -258,7 +192,7 @@ class TestSearchStructure:
             data = {
                 "sections": {
                     "id": "section-1",
-                    "items": {"id": "nested.item", "text": "Nested text"},
+                    "items": {"id": "nested.item"},
                 }
             }
 
@@ -273,52 +207,49 @@ class TestSearchStructure:
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake")
             data = [
-                {"id": "item-1", "text": "First"},
-                {"id": "item-2", "text": "Second"},
+                {"id": "item-1"},
+                {"id": "item-2"},
             ]
 
             results = _search_structure(data, "item", exact=False, file_path=Path("/fake/test.yml"))
 
             assert len(results) == 2
 
-    def test_tracks_section_context(self, fs: FakeFilesystem) -> None:
-        """Should track section context for nested items."""
+    def test_captures_full_object_data(self, fs: FakeFilesystem) -> None:
+        """Should capture full object in object_data field."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake")
-            data = {
-                "id": "parent-section",
-                "items": [{"id": "child.item", "text": "Child text"}],
-            }
-
-            results = _search_structure(
-                data, "child.item", exact=True, file_path=Path("/fake/test.yml")
-            )
-
-            assert len(results) == 1
-            assert results[0]["section_id"] == "parent-section"
-
-    def test_extracts_item_type(self, fs: FakeFilesystem) -> None:
-        """Should extract item type if present."""
-        with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
-            fs.create_dir("/fake")
-            data = {"id": "test.rule", "type": "rule", "text": "Rule text"}
+            data = {"id": "test.rule", "custom_field": "value", "number": 42}
 
             results = _search_structure(
                 data, "test.rule", exact=True, file_path=Path("/fake/test.yml")
             )
 
             assert len(results) == 1
-            assert results[0]["item_type"] == "rule"
+            assert results[0]["object_data"] == data
 
     def test_ignores_non_string_ids(self, fs: FakeFilesystem) -> None:
         """Should ignore non-string ID values."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake")
-            data = {"id": 123, "text": "Text"}
+            data = {"id": 123}
 
             results = _search_structure(data, "123", exact=True, file_path=Path("/fake/test.yml"))
 
             assert len(results) == 0
+
+    def test_handles_minimal_object_with_only_id(self, fs: FakeFilesystem) -> None:
+        """Should handle objects with only id field (minimal schema)."""
+        with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake")
+            data = {"id": "minimal-item"}
+
+            results = _search_structure(
+                data, "minimal-item", exact=True, file_path=Path("/fake/test.yml")
+            )
+
+            assert len(results) == 1
+            assert results[0]["object_data"] == {"id": "minimal-item"}
 
 
 class TestSearchYamlFiles:
@@ -328,7 +259,7 @@ class TestSearchYamlFiles:
         """Should search .yml files in directory."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/docs")
-            content = "id: test.id\ntext: Test text\n"
+            content = "id: test.id\n"
             fs.create_file("/fake/docs/test.yml", contents=content)
 
             results = search_yaml_files("test.id", Path("/fake/docs"), exact=True)
@@ -340,7 +271,7 @@ class TestSearchYamlFiles:
         """Should search .yaml files in directory."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/docs")
-            content = "id: test.id\ntext: Test text\n"
+            content = "id: test.id\n"
             fs.create_file("/fake/docs/test.yaml", contents=content)
 
             results = search_yaml_files("test.id", Path("/fake/docs"), exact=True)
@@ -351,7 +282,7 @@ class TestSearchYamlFiles:
         """Should search recursively in subdirectories."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/docs/subdir")
-            content = "id: nested.id\ntext: Nested text\n"
+            content = "id: nested.id\n"
             fs.create_file("/fake/docs/subdir/test.yml", contents=content)
 
             results = search_yaml_files("nested.id", Path("/fake/docs"), exact=True)
@@ -362,8 +293,8 @@ class TestSearchYamlFiles:
         """Should aggregate results from multiple files."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/docs")
-            fs.create_file("/fake/docs/file1.yml", contents="id: url.prefix\ntext: One\n")
-            fs.create_file("/fake/docs/file2.yml", contents="id: url.suffix\ntext: Two\n")
+            fs.create_file("/fake/docs/file1.yml", contents="id: url.prefix\n")
+            fs.create_file("/fake/docs/file2.yml", contents="id: url.suffix\n")
 
             results = search_yaml_files("url", Path("/fake/docs"), exact=False)
 
@@ -375,7 +306,7 @@ class TestSearchYamlFiles:
         """Should warn and continue when YAML parsing fails."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/docs")
-            fs.create_file("/fake/docs/valid.yml", contents="id: test\ntext: Valid\n")
+            fs.create_file("/fake/docs/valid.yml", contents="id: test\n")
             fs.create_file("/fake/docs/invalid.yml", contents="bad: yaml: content:")
 
             results = search_yaml_files("test", Path("/fake/docs"), exact=True)
@@ -388,7 +319,7 @@ class TestSearchYamlFiles:
         """Should return empty list when no matches found."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/docs")
-            fs.create_file("/fake/docs/test.yml", contents="id: other.id\ntext: Text\n")
+            fs.create_file("/fake/docs/test.yml", contents="id: other.id\n")
 
             results = search_yaml_files("nonexistent", Path("/fake/docs"), exact=True)
 
@@ -404,14 +335,12 @@ class TestFormatTable:
         assert "No matches found" in result
 
     def test_formats_single_match(self) -> None:
-        """Should format single match."""
+        """Should format single match with keys."""
         results: list[MatchResult] = [
             MatchResult(
                 file_path="docs/test.yml",
                 element_id="test.id",
-                text="Test text",
-                section_id=None,
-                item_type=None,
+                object_data={"id": "test.id", "name": "Test"},
             )
         ]
 
@@ -420,7 +349,9 @@ class TestFormatTable:
         assert "1 match" in output
         assert "test.id" in output
         assert "docs/test.yml" in output
-        assert "Test text" in output
+        assert "Keys:" in output
+        assert "id" in output
+        assert "name" in output
 
     def test_formats_multiple_matches(self) -> None:
         """Should format multiple matches."""
@@ -428,16 +359,12 @@ class TestFormatTable:
             MatchResult(
                 file_path="docs/test1.yml",
                 element_id="id-1",
-                text="Text 1",
-                section_id=None,
-                item_type=None,
+                object_data={"id": "id-1"},
             ),
             MatchResult(
                 file_path="docs/test2.yml",
                 element_id="id-2",
-                text="Text 2",
-                section_id=None,
-                item_type=None,
+                object_data={"id": "id-2"},
             ),
         ]
 
@@ -447,55 +374,19 @@ class TestFormatTable:
         assert "[1]" in output
         assert "[2]" in output
 
-    def test_includes_section_id(self) -> None:
-        """Should include section ID when present."""
+    def test_shows_object_keys(self) -> None:
+        """Should show sorted object keys."""
         results: list[MatchResult] = [
             MatchResult(
                 file_path="docs/test.yml",
                 element_id="test.id",
-                text="Test text",
-                section_id="parent-section",
-                item_type=None,
+                object_data={"id": "test.id", "zebra": "z", "alpha": "a"},
             )
         ]
 
         output = format_table(results)
 
-        assert "Section: parent-section" in output
-
-    def test_includes_item_type(self) -> None:
-        """Should include item type when present."""
-        results: list[MatchResult] = [
-            MatchResult(
-                file_path="docs/test.yml",
-                element_id="test.id",
-                text="Test text",
-                section_id=None,
-                item_type="rule",
-            )
-        ]
-
-        output = format_table(results)
-
-        assert "Type: rule" in output
-
-    def test_truncates_long_text(self) -> None:
-        """Should truncate text longer than 200 characters."""
-        long_text = "x" * 250
-        results: list[MatchResult] = [
-            MatchResult(
-                file_path="docs/test.yml",
-                element_id="test.id",
-                text=long_text,
-                section_id=None,
-                item_type=None,
-            )
-        ]
-
-        output = format_table(results)
-
-        assert "..." in output
-        assert len(long_text) > 200
+        assert "Keys: alpha, id, zebra" in output
 
 
 class TestFormatJson:
@@ -507,16 +398,12 @@ class TestFormatJson:
         assert result == "[]"
 
     def test_formats_results_as_json(self) -> None:
-        """Should format results as valid JSON."""
-        import json
-
+        """Should format results as valid JSON with object_data."""
         results: list[MatchResult] = [
             MatchResult(
                 file_path="docs/test.yml",
                 element_id="test.id",
-                text="Test text",
-                section_id="section-1",
-                item_type="rule",
+                object_data={"id": "test.id", "custom": "value"},
             )
         ]
 
@@ -526,29 +413,25 @@ class TestFormatJson:
         assert len(parsed) == 1
         assert parsed[0]["file_path"] == "docs/test.yml"
         assert parsed[0]["element_id"] == "test.id"
-        assert parsed[0]["text"] == "Test text"
-        assert parsed[0]["section_id"] == "section-1"
-        assert parsed[0]["item_type"] == "rule"
+        assert parsed[0]["object_data"] == {"id": "test.id", "custom": "value"}
 
-    def test_includes_null_for_none_values(self) -> None:
-        """Should include null for None values in JSON."""
-        import json
-
+    def test_preserves_nested_object_data(self) -> None:
+        """Should preserve nested structures in object_data."""
         results: list[MatchResult] = [
             MatchResult(
                 file_path="docs/test.yml",
                 element_id="test.id",
-                text="Test text",
-                section_id=None,
-                item_type=None,
+                object_data={
+                    "id": "test.id",
+                    "items": [{"id": "child-1"}, {"id": "child-2"}],
+                },
             )
         ]
 
         output = format_json(results)
         parsed = json.loads(output)
 
-        assert parsed[0]["section_id"] is None
-        assert parsed[0]["item_type"] is None
+        assert len(parsed[0]["object_data"]["items"]) == 2
 
 
 class TestMain:
@@ -584,7 +467,7 @@ class TestMain:
         """Should return 1 when no matches found."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/docs")
-            fs.create_file("/fake/docs/test.yml", contents="id: other.id\ntext: Text\n")
+            fs.create_file("/fake/docs/test.yml", contents="id: other.id\n")
 
             with patch("sys.argv", ["script", "--id", "nonexistent", "--path", "/fake/docs"]):
                 result = main()
@@ -599,7 +482,7 @@ class TestMain:
         """Should return 0 when matches found."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/docs")
-            fs.create_file("/fake/docs/test.yml", contents="id: test.id\ntext: Found\n")
+            fs.create_file("/fake/docs/test.yml", contents="id: test.id\n")
 
             with patch("sys.argv", ["script", "--id", "test.id", "--path", "/fake/docs"]):
                 result = main()
@@ -614,24 +497,22 @@ class TestMain:
         """Should output table format by default."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/docs")
-            fs.create_file("/fake/docs/test.yml", contents="id: test.id\ntext: Text\n")
+            fs.create_file("/fake/docs/test.yml", contents="id: test.id\n")
 
             with patch("sys.argv", ["script", "--id", "test.id", "--path", "/fake/docs"]):
                 main()
 
         captured = capsys.readouterr()
         assert "File:" in captured.out
-        assert "Text:" in captured.out
+        assert "Keys:" in captured.out
 
     def test_outputs_json_when_requested(
         self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should output JSON format when requested."""
-        import json
-
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/docs")
-            fs.create_file("/fake/docs/test.yml", contents="id: test.id\ntext: Text\n")
+            fs.create_file("/fake/docs/test.yml", contents="id: test.id\n")
 
             with patch(
                 "sys.argv",
@@ -643,12 +524,13 @@ class TestMain:
         parsed = json.loads(captured.out)
         assert len(parsed) == 1
         assert parsed[0]["element_id"] == "test.id"
+        assert "object_data" in parsed[0]
 
     def test_exact_match_mode(self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]) -> None:
         """Should respect exact match mode."""
         with patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/docs")
-            fs.create_file("/fake/docs/test.yml", contents="id: url.prefix\ntext: Text\n")
+            fs.create_file("/fake/docs/test.yml", contents="id: url.prefix\n")
 
             # Partial match without --exact should find it
             with patch("sys.argv", ["script", "--id", "url", "--path", "/fake/docs"]):

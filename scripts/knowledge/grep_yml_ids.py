@@ -1,8 +1,9 @@
 """Search for element IDs in YAML documentation files.
 
 This module provides a command-line tool to search for specific IDs across YAML
-documentation files, returning the file paths, IDs, and associated text content.
-Useful for verifying coverage and finding where information is documented.
+documentation files, returning the file paths, IDs, and full object data for
+dict-to-dict comparison. Per the YAML schema guidelines, only the `id` field
+is required - all other structure is flexible.
 
 Usage:
     uv run knowledge.grep-yml-ids --id <element-id> [--path <directory>] \
@@ -31,18 +32,20 @@ import yaml
 
 from scripts.dev.utils import REPO_ROOT
 
-TEXT_FIELDS = ("text", "description", "summary", "title")
 DEVELOPMENT_DIR = REPO_ROOT / "docs" / "development"
 
 
 class MatchResult(TypedDict):
-    """Result of an ID match in a YAML file."""
+    """Result of an ID match in a YAML file.
+
+    The object_data field contains the full dict for dict-to-dict comparison,
+    enabling change tracking per the YAML schema guidelines. Only `id` is
+    required in the schema - all other fields are flexible.
+    """
 
     file_path: str
     element_id: str
-    text: str
-    section_id: str | None
-    item_type: str | None
+    object_data: dict[str, Any]
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -137,30 +140,11 @@ def parse_yaml_file(file_path: Path) -> dict[str, Any] | list[Any]:
         return _validate_yaml_result(result, file_path)
 
 
-def _extract_text_content(element: dict[str, Any]) -> str:
-    """Extract text content from a YAML element's text fields.
-
-    Args:
-        element: A dictionary element from the parsed YAML structure.
-
-    Returns:
-        Concatenated text content from available text fields, or empty string.
-    """
-    text_parts: list[str] = []
-    for field in TEXT_FIELDS:
-        if field in element:
-            value = element[field]
-            if isinstance(value, str) and value.strip():
-                text_parts.append(value.strip())
-    return " | ".join(text_parts)
-
-
 def _search_structure(
     data: Any,  # noqa: ANN401
     search_id: str,
     exact: bool,
     file_path: Path,
-    current_section: str | None = None,
 ) -> list[MatchResult]:
     """Recursively search YAML structure for matching IDs.
 
@@ -169,7 +153,6 @@ def _search_structure(
         search_id: The ID to search for.
         exact: Whether to require exact match.
         file_path: Path to the source file.
-        current_section: Current section ID for context.
 
     Returns:
         List of match results found in this structure.
@@ -178,38 +161,28 @@ def _search_structure(
     relative_path = file_path.relative_to(REPO_ROOT).as_posix()
 
     if isinstance(data, dict):
-        # Track section context
-        section_id = current_section
-        if "id" in data and isinstance(data["id"], str) and ("items" in data or "index" in data):
-            # Check if this is a section (has 'items' or 'index')
-            section_id = data["id"]
-
         # Check if this element has a matching ID
         if "id" in data:
             element_id = data["id"]
             if isinstance(element_id, str):
                 matches = (element_id == search_id) if exact else (search_id in element_id)
                 if matches:
-                    text_content = _extract_text_content(data)
-                    item_type = data.get("type")
                     results.append(
                         MatchResult(
                             file_path=relative_path,
                             element_id=element_id,
-                            text=text_content,
-                            section_id=section_id if section_id != element_id else None,
-                            item_type=item_type if isinstance(item_type, str) else None,
+                            object_data=dict(data),
                         )
                     )
 
         # Recurse into child elements
         for _key, value in data.items():
-            child_results = _search_structure(value, search_id, exact, file_path, section_id)
+            child_results = _search_structure(value, search_id, exact, file_path)
             results.extend(child_results)
 
     elif isinstance(data, list):
         for item in data:
-            child_results = _search_structure(item, search_id, exact, file_path, current_section)
+            child_results = _search_structure(item, search_id, exact, file_path)
             results.extend(child_results)
 
     return results
@@ -263,15 +236,9 @@ def format_table(results: list[MatchResult]) -> str:
     for i, result in enumerate(results, 1):
         lines.append(f"[{i}] {result['element_id']}")
         lines.append(f"    File: {result['file_path']}")
-        if result["section_id"]:
-            lines.append(f"    Section: {result['section_id']}")
-        if result["item_type"]:
-            lines.append(f"    Type: {result['item_type']}")
-        # Truncate long text
-        text = result["text"]
-        if len(text) > 200:
-            text = text[:200] + "..."
-        lines.append(f"    Text: {text}")
+        # Show object keys for structural overview
+        obj_keys = sorted(result["object_data"].keys())
+        lines.append(f"    Keys: {', '.join(obj_keys)}")
         lines.append("")
 
     return "\n".join(lines)

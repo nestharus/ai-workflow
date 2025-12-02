@@ -14,17 +14,16 @@ from scripts.knowledge.compare_yaml_docs import (
     CSV_COLUMNS,
     ComparisonEntry,
     SplitEntry,
-    _extract_text_content,
     _flatten_entry_to_rows,
     _strip_timestamp_prefix,
     _validate_yaml_result,
-    aggregate_split_texts,
+    aggregate_split_objects,
     compare_original_to_splits,
-    extract_ids_and_text,
+    extract_ids_and_objects,
     find_all_yml,
     find_mapped_splits,
     find_originals,
-    get_ids_text,
+    get_ids_objects,
     main,
     parse_args,
     parse_yaml_file,
@@ -110,48 +109,19 @@ class TestParseYamlFile:
             parse_yaml_file(Path("/nonexistent.yml"))
 
 
-class TestExtractTextContent:
-    """Tests for _extract_text_content function."""
-
-    def test_extracts_text_field(self) -> None:
-        """Should extract text field."""
-        element = {"text": "Some text"}
-        result = _extract_text_content(element)  # type: ignore[arg-type]
-        assert result == "Some text"
-
-    def test_extracts_multiple_fields(self) -> None:
-        """Should concatenate multiple text fields."""
-        element = {"text": "Text", "description": "Description"}
-        result = _extract_text_content(element)  # type: ignore[arg-type]
-        assert "Text" in result
-        assert "Description" in result
-        assert " | " in result
-
-    def test_ignores_empty_fields(self) -> None:
-        """Should ignore empty or whitespace-only fields."""
-        element = {"text": "Valid", "description": "   "}
-        result = _extract_text_content(element)  # type: ignore[arg-type]
-        assert result == "Valid"
-
-    def test_returns_empty_for_no_text_fields(self) -> None:
-        """Should return empty string when no text fields present."""
-        element = {"id": "test", "other": "value"}
-        result = _extract_text_content(element)  # type: ignore[arg-type]
-        assert result == ""
-
-
-class TestExtractIdsAndText:
-    """Tests for extract_ids_and_text function."""
+class TestExtractIdsAndObjects:
+    """Tests for extract_ids_and_objects function."""
 
     def test_extracts_from_dict(self) -> None:
-        """Should extract IDs from dictionary structure."""
+        """Should extract IDs and full objects from dictionary structure."""
         data = {
             "id": "item-1",
             "text": "Item text",
+            "category": "test",
         }
-        result = extract_ids_and_text(data)  # type: ignore[arg-type]
+        result = extract_ids_and_objects(data)  # type: ignore[arg-type]
         assert "item-1" in result
-        assert result["item-1"] == "Item text"
+        assert result["item-1"] == {"id": "item-1", "text": "Item text", "category": "test"}
 
     def test_extracts_from_nested_dict(self) -> None:
         """Should extract IDs from nested dictionaries."""
@@ -161,8 +131,9 @@ class TestExtractIdsAndText:
                 "text": "Section text",
             }
         }
-        result = extract_ids_and_text(data)  # type: ignore[arg-type]
+        result = extract_ids_and_objects(data)  # type: ignore[arg-type]
         assert "section-1" in result
+        assert result["section-1"]["text"] == "Section text"
 
     def test_extracts_from_list(self) -> None:
         """Should extract IDs from list items."""
@@ -170,14 +141,14 @@ class TestExtractIdsAndText:
             {"id": "item-1", "text": "Text 1"},
             {"id": "item-2", "text": "Text 2"},
         ]
-        result = extract_ids_and_text(data)  # type: ignore[arg-type]
+        result = extract_ids_and_objects(data)  # type: ignore[arg-type]
         assert "item-1" in result
         assert "item-2" in result
 
     def test_ignores_non_string_ids(self) -> None:
         """Should ignore non-string ID values."""
         data = {"id": 123, "text": "Text"}
-        result = extract_ids_and_text(data)  # type: ignore[arg-type]
+        result = extract_ids_and_objects(data)  # type: ignore[arg-type]
         assert len(result) == 0
 
 
@@ -282,11 +253,11 @@ class TestFindMappedSplits:
         assert result["python"].name == "python.api-patterns.yml"
 
 
-class TestGetIdsText:
-    """Tests for get_ids_text function."""
+class TestGetIdsObjects:
+    """Tests for get_ids_objects function."""
 
-    def test_extracts_ids_and_text(self, fs: FakeFilesystem) -> None:
-        """Should extract IDs and text from YAML file."""
+    def test_extracts_ids_and_objects(self, fs: FakeFilesystem) -> None:
+        """Should extract IDs and full objects from YAML file."""
         with patch.object(compare_yaml_docs, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake")
             content = """
@@ -294,39 +265,44 @@ id: root
 items:
   - id: item-1
     text: Item 1 text
+    category: test
 """
             fs.create_file("/fake/test.yml", contents=content)
 
-            result = get_ids_text(Path("/fake/test.yml"))
+            result = get_ids_objects(Path("/fake/test.yml"))
 
             assert "item-1" in result
+            assert result["item-1"]["text"] == "Item 1 text"
+            assert result["item-1"]["category"] == "test"
 
 
-class TestAggregateSplitTexts:
-    """Tests for aggregate_split_texts function."""
+class TestAggregateSplitObjects:
+    """Tests for aggregate_split_objects function."""
 
-    def test_aggregates_text_by_id(self, fs: FakeFilesystem) -> None:
-        """Should aggregate text content by ID across files."""
+    def test_aggregates_objects_by_id(self, fs: FakeFilesystem) -> None:
+        """Should aggregate object data by ID across files."""
         with patch.object(compare_yaml_docs, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/python")
             content = """
 items:
   - id: item-1
     text: Python item text
+    category: python
 """
             fs.create_file("/fake/python/python.test.yml", contents=content)
 
             split_map = {"python": Path("/fake/python/python.test.yml")}
-            result = aggregate_split_texts(split_map)
+            result = aggregate_split_objects(split_map)
 
             assert "item-1" in result
+            assert "python/python.test.yml" in result["item-1"]
 
 
 class TestCompareOriginalToSplits:
     """Tests for compare_original_to_splits function."""
 
     def test_finds_differences(self, fs: FakeFilesystem) -> None:
-        """Should find text differences between original and splits."""
+        """Should find dict differences between original and splits."""
         with patch.object(compare_yaml_docs, "REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake/python")
 
@@ -334,11 +310,13 @@ class TestCompareOriginalToSplits:
 items:
   - id: item-1
     text: Original text
+    category: original
 """
             split_content = """
 items:
   - id: item-1
     text: Modified text
+    category: modified
 """
             fs.create_file("/fake/original.yml", contents=orig_content)
             fs.create_file("/fake/python/python.test.yml", contents=split_content)
@@ -347,6 +325,8 @@ items:
             result = compare_original_to_splits(Path("/fake/original.yml"), split_map)
 
             assert len(result) > 0
+            # Verify it's using dict comparison
+            assert result[0]["source_data"]["text"] == "Original text"
 
 
 class TestFlattenEntryToRows:
@@ -357,10 +337,10 @@ class TestFlattenEntryToRows:
         entry = ComparisonEntry(
             source_file="source.yml",
             id="item-1",
-            source_text="Original",
+            source_data={"id": "item-1", "text": "Original"},
             splits=[
-                SplitEntry(split_text="Split 1", source_file="split1.yml"),
-                SplitEntry(split_text="Split 2", source_file="split2.yml"),
+                SplitEntry(split_data={"id": "item-1", "text": "Split 1"}, source_file="split1.yml"),
+                SplitEntry(split_data={"id": "item-1", "text": "Split 2"}, source_file="split2.yml"),
             ],
             origin_type="original",
         )
@@ -374,7 +354,7 @@ class TestFlattenEntryToRows:
         entry = ComparisonEntry(
             source_file="source.yml",
             id="item-1",
-            source_text="Original",
+            source_data={"id": "item-1", "text": "Original"},
             splits=[],
             origin_type="split_only",
         )
@@ -383,7 +363,7 @@ class TestFlattenEntryToRows:
 
         assert len(rows) == 1
         assert rows[0]["split_file"] == ""
-        assert rows[0]["split_text"] == ""
+        assert rows[0]["split_data"] == ""
 
 
 class TestWriteCompareFiles:
@@ -404,7 +384,7 @@ class TestWriteCompareFiles:
                         ComparisonEntry(
                             source_file="docs/original.api-patterns.yml",
                             id="item-1",
-                            source_text="Text",
+                            source_data={"id": "item-1", "text": "Text"},
                             splits=[],
                             origin_type="original",
                         )
@@ -425,9 +405,9 @@ class TestCsvColumns:
         assert "source_file" in CSV_COLUMNS
         assert "id" in CSV_COLUMNS
         assert "origin_type" in CSV_COLUMNS
-        assert "original_text" in CSV_COLUMNS
+        assert "original_data" in CSV_COLUMNS
         assert "split_file" in CSV_COLUMNS
-        assert "split_text" in CSV_COLUMNS
+        assert "split_data" in CSV_COLUMNS
 
 
 class TestMain:

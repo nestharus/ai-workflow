@@ -645,9 +645,7 @@ def apply_variant_decisions_to_yaml(
         if not file_path.exists():
             continue
 
-        replacements, updates = apply_variants_to_yaml_file(
-            file_path, mapping, dry_run=dry_run
-        )
+        replacements, updates = apply_variants_to_yaml_file(file_path, mapping, dry_run=dry_run)
 
         if replacements > 0:
             print(f"\n  {source_file}:")

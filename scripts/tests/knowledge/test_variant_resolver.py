@@ -163,9 +163,7 @@ class TestLoadExistingPairs:
         csv_path = tmp_path / "variant_candidates.csv"
         header = ",".join(VARIANT_COLUMNS)
         csv_path.write_text(
-            f"{header}\n"
-            "pair-1,term_a,term_b,0.9,,,,\n"
-            "pair-2,term_c,term_d,0.85,,,,\n"
+            f"{header}\npair-1,term_a,term_b,0.9,,,,\npair-2,term_c,term_d,0.85,,,,\n"
         )
 
         result = load_existing_pairs(csv_path)
@@ -267,9 +265,7 @@ keywords:
 """)
         mapping = {"term_b": "term_a"}
 
-        replacements, updates = apply_variants_to_yaml_file(
-            yaml_file, mapping, dry_run=False
-        )
+        replacements, updates = apply_variants_to_yaml_file(yaml_file, mapping, dry_run=False)
 
         assert replacements == 1
         content = yaml_file.read_text()
@@ -288,9 +284,7 @@ keywords:
         yaml_file.write_text(original_content)
         mapping = {"term_b": "term_a"}
 
-        replacements, updates = apply_variants_to_yaml_file(
-            yaml_file, mapping, dry_run=True
-        )
+        replacements, updates = apply_variants_to_yaml_file(yaml_file, mapping, dry_run=True)
 
         assert replacements == 1
         assert len(updates) == 1
@@ -309,9 +303,7 @@ keywords:
 """)
         mapping = {"term_a": "canonical"}
 
-        replacements, updates = apply_variants_to_yaml_file(
-            yaml_file, mapping, dry_run=False
-        )
+        replacements, updates = apply_variants_to_yaml_file(yaml_file, mapping, dry_run=False)
 
         assert replacements == 0
         assert len(updates) == 0

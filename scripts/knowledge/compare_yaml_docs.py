@@ -1,11 +1,16 @@
-"""Compare YAML documents by extracting IDs and their associated text content.
+"""Compare YAML documents by extracting IDs and their associated object data.
 
-This module provides utilities for parsing YAML files and extracting ID-to-text
-mappings, enabling comparison of document content across different versions or files.
-It compares original YAML files with their split counterparts in subdirectories.
+This module provides utilities for parsing YAML files and extracting ID-to-object
+mappings, enabling dict-to-dict comparison of document content across different
+versions or files. It compares original YAML files with their split counterparts
+in subdirectories.
+
+Per the YAML schema guidelines, `id` is the only field that may exist on elements.
+It is required for root elements of sections but optional for children. The
+comparison logic handles this by only tracking elements that have an `id` field.
 
 Outputs flattened CSV files to `.knowledge/comparisons/` with columns:
-source_file, id, origin_type, original_text, split_file, split_text
+source_file, id, origin_type, original_data, split_file, split_data
 
 Usage:
     uv run knowledge.compare-yml-docs [--path <directory>] [--original-files <file> ...]
@@ -24,6 +29,7 @@ Example:
 """
 
 import argparse
+import json
 import re
 import sys
 from collections.abc import Sequence
@@ -35,7 +41,6 @@ import yaml
 
 from scripts.dev.utils import REPO_ROOT
 
-TEXT_FIELDS = ("text", "description", "summary", "title")
 DEVELOPMENT_DIR = REPO_ROOT / "docs" / "development"
 SUBDIRS = ("python", "fastapi", "elasticsearch", "surrealdb")
 
@@ -78,9 +83,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 class SplitEntry(TypedDict):
-    """A split file's text content for a specific ID."""
+    """A split file's object data for a specific ID."""
 
-    split_text: str
+    split_data: dict[str, Any]
     source_file: str
 
 
@@ -88,14 +93,14 @@ class ComparisonEntry(TypedDict):
     """Comparison result for a single ID.
 
     The origin_type field indicates the source of this entry:
-    - original: ID from an original.*.yml file with differing or missing split text
+    - original: ID from an original.*.yml file with differing or missing split data
     - split_only: ID found in split files but not in the corresponding original
     - orphan: ID from a file in a subdirectory with no corresponding original file
     """
 
     source_file: str
     id: str
-    source_text: str
+    source_data: dict[str, Any]
     splits: list[SplitEntry]
     origin_type: OriginType
 
@@ -164,62 +169,43 @@ def parse_yaml_file(file_path: Path) -> YamlStructure:
         return _validate_yaml_result(result, file_path)
 
 
-def _extract_text_content(element: dict[str, YamlValue]) -> str:
-    """Extract text content from a YAML element's text fields.
-
-    Checks text fields in priority order and concatenates all non-empty
-    values found.
-
-    Args:
-        element: A dictionary element from the parsed YAML structure.
-
-    Returns:
-        Concatenated text content from available text fields, or empty string.
-    """
-    text_parts: list[str] = []
-    for field in TEXT_FIELDS:
-        if field in element:
-            value = element[field]
-            if isinstance(value, str) and value.strip():
-                text_parts.append(value.strip())
-    return " | ".join(text_parts)
-
-
-def extract_ids_and_text(
+def extract_ids_and_objects(
     data: YamlValue,
     parent_path: str = "",
-) -> dict[str, str]:
-    """Recursively extract IDs and their associated text from a YAML structure.
+) -> dict[str, dict[str, Any]]:
+    """Recursively extract IDs and their associated objects from a YAML structure.
 
     Traverses the parsed YAML structure to find all elements with an 'id' field
-    and extracts their text content from associated fields like 'text',
-    'description', 'summary', or 'title'.
+    and returns the full dict for each, enabling dict-to-dict comparison.
+
+    Per the YAML schema guidelines, `id` is required for root elements of sections
+    but optional for children. This function only tracks elements that have an `id`
+    field.
 
     Args:
         data: The parsed YAML structure (dict, list, or primitive).
         parent_path: Path string for debugging purposes (tracks traversal path).
 
     Returns:
-        Dictionary mapping element IDs to their associated text content.
+        Dictionary mapping element IDs to their full object data.
     """
-    result: dict[str, str] = {}
+    result: dict[str, dict[str, Any]] = {}
 
     if isinstance(data, dict):
         if "id" in data:
             element_id = data["id"]
             if isinstance(element_id, str):
-                text_content = _extract_text_content(data)
-                result[element_id] = text_content
+                result[element_id] = dict(data)
 
         for key, value in data.items():
             child_path = f"{parent_path}.{key}" if parent_path else key
-            child_results = extract_ids_and_text(value, child_path)
+            child_results = extract_ids_and_objects(value, child_path)
             result.update(child_results)
 
     elif isinstance(data, list):
         for index, item in enumerate(data):
             child_path = f"{parent_path}[{index}]"
-            child_results = extract_ids_and_text(item, child_path)
+            child_results = extract_ids_and_objects(item, child_path)
             result.update(child_results)
 
     return result
@@ -342,57 +328,55 @@ def find_mapped_splits(pattern: str, base_path: Path) -> dict[str, Path]:
     return result
 
 
-def get_ids_text(file_path: Path) -> dict[str, str]:
-    """Extract IDs and text content from a YAML file.
+def get_ids_objects(file_path: Path) -> dict[str, dict[str, Any]]:
+    """Extract IDs and object data from a YAML file.
 
     Args:
         file_path: Path to the YAML file.
 
     Returns:
-        Dictionary mapping IDs to their text content.
+        Dictionary mapping IDs to their full object data.
     """
     data = parse_yaml_file(file_path)
-    return extract_ids_and_text(data)
+    return extract_ids_and_objects(data)
 
 
-def aggregate_split_texts(
+def aggregate_split_objects(
     split_map: dict[str, Path],
-) -> dict[str, dict[str, str]]:
-    """Aggregate text content from split files by ID.
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Aggregate object data from split files by ID.
 
-    Collects text for each ID across all split files. Warns if the same ID
-    has conflicting text in different split files.
+    Collects the full object data for each ID across all split files. Warns if
+    the same ID has conflicting data in different split files.
 
     Args:
         split_map: Dictionary mapping subdirectory name to file path.
 
     Returns:
-        Dictionary mapping ID to {relative_file_path: text_content}.
+        Dictionary mapping ID to {relative_file_path: object_data}.
     """
-    result: dict[str, dict[str, str]] = {}
-    id_texts: dict[str, dict[str, str]] = {}
+    result: dict[str, dict[str, dict[str, Any]]] = {}
 
     for _, file_path in split_map.items():
         relative_path = file_path.relative_to(REPO_ROOT).as_posix()
         try:
-            ids_text = get_ids_text(file_path)
+            ids_objects = get_ids_objects(file_path)
         except Exception as exc:
             print(f"Warning: Failed to parse {relative_path}: {exc}", file=sys.stderr)
             continue
 
-        for element_id, text in ids_text.items():
+        for element_id, obj_data in ids_objects.items():
             if element_id not in result:
                 result[element_id] = {}
-                id_texts[element_id] = {}
-            result[element_id][relative_path] = text
-            id_texts[element_id][relative_path] = text
+            result[element_id][relative_path] = obj_data
 
-    for element_id, file_texts in id_texts.items():
-        unique_texts = {t.strip() for t in file_texts.values()}
-        if len(unique_texts) > 1:
-            files = ", ".join(file_texts.keys())
+    # Check for conflicting data across split files for the same ID
+    for element_id, file_objects in result.items():
+        unique_data = {json.dumps(obj, sort_keys=True) for obj in file_objects.values()}
+        if len(unique_data) > 1:
+            files = ", ".join(file_objects.keys())
             print(
-                f"Warning: Conflicting text for ID '{element_id}' in: {files}",
+                f"Warning: Conflicting data for ID '{element_id}' in: {files}",
                 file=sys.stderr,
             )
 
@@ -403,10 +387,10 @@ def compare_original_to_splits(
     orig_path: Path,
     split_map: dict[str, Path],
 ) -> list[ComparisonEntry]:
-    """Compare an original file to its split files.
+    """Compare an original file to its split files using dict equality.
 
     Performs bidirectional comparison:
-    1. For each ID in the original, checks if any split has matching text.
+    1. For each ID in the original, checks if any split has matching data (dict == dict).
     2. For IDs in splits not in the original, adds them as extras.
 
     Args:
@@ -420,43 +404,43 @@ def compare_original_to_splits(
     orig_relative = orig_path.relative_to(REPO_ROOT).as_posix()
 
     try:
-        orig_ids = get_ids_text(orig_path)
+        orig_ids = get_ids_objects(orig_path)
     except Exception as exc:
         print(f"Warning: Failed to parse {orig_relative}: {exc}", file=sys.stderr)
         return entries
 
-    split_texts = aggregate_split_texts(split_map)
+    split_objects = aggregate_split_objects(split_map)
 
-    for element_id, orig_text in orig_ids.items():
-        orig_text_stripped = orig_text.strip()
-        split_data = split_texts.get(element_id, {})
+    for element_id, orig_data in orig_ids.items():
+        split_data = split_objects.get(element_id, {})
 
-        has_exact_match = any(text.strip() == orig_text_stripped for text in split_data.values())
+        # Dict-to-dict comparison for exact match
+        has_exact_match = any(obj == orig_data for obj in split_data.values())
 
         if not has_exact_match:
             splits: list[SplitEntry] = [
-                SplitEntry(split_text=text, source_file=file_path)
-                for file_path, text in split_data.items()
+                SplitEntry(split_data=obj, source_file=file_path)
+                for file_path, obj in split_data.items()
             ]
             entries.append(
                 ComparisonEntry(
                     source_file=orig_relative,
                     id=element_id,
-                    source_text=orig_text,
+                    source_data=orig_data,
                     splits=splits,
                     origin_type="original",
                 )
             )
 
     orig_id_set = set(orig_ids.keys())
-    for element_id, file_texts in split_texts.items():
+    for element_id, file_objects in split_objects.items():
         if element_id not in orig_id_set:
-            for file_path, text in file_texts.items():
+            for file_path, obj in file_objects.items():
                 entries.append(
                     ComparisonEntry(
                         source_file=file_path,
                         id=element_id,
-                        source_text=text,
+                        source_data=obj,
                         splits=[],
                         origin_type="split_only",
                     )
@@ -514,7 +498,7 @@ def compare_all(
     for orphan_path in orphan_paths:
         orphan_relative = orphan_path.relative_to(REPO_ROOT).as_posix()
         try:
-            orphan_ids = get_ids_text(orphan_path)
+            orphan_ids = get_ids_objects(orphan_path)
         except Exception as exc:
             print(
                 f"Warning: Failed to parse orphan {orphan_relative}: {exc}",
@@ -523,12 +507,12 @@ def compare_all(
             continue
 
         orphan_entries: list[ComparisonEntry] = []
-        for element_id, text in orphan_ids.items():
+        for element_id, obj_data in orphan_ids.items():
             orphan_entries.append(
                 ComparisonEntry(
                     source_file=orphan_relative,
                     id=element_id,
-                    source_text=text,
+                    source_data=obj_data,
                     splits=[],
                     origin_type="orphan",
                 )
@@ -561,7 +545,7 @@ def _get_compare_output_path(source_path: str) -> Path:
     return comparisons_dir / f"{pattern}.csv"
 
 
-CSV_COLUMNS = ["source_file", "id", "origin_type", "original_text", "split_file", "split_text"]
+CSV_COLUMNS = ["source_file", "id", "origin_type", "original_data", "split_file", "split_data"]
 
 
 def _flatten_entry_to_rows(entry: ComparisonEntry) -> list[dict[str, str]]:
@@ -570,10 +554,10 @@ def _flatten_entry_to_rows(entry: ComparisonEntry) -> list[dict[str, str]]:
     For entries with splits, creates one row per split.
     For entries without splits, creates one row with empty split columns.
 
-    Note: The `original_text` column is populated from `source_text` for all origin
-    types. For `split_only` and `orphan` entries, this represents the text from the
-    split or orphan file respectively, not from an original file. Query authors
-    should be aware of this semantic when filtering by origin_type.
+    Note: The `original_data` column is populated from `source_data` (JSON-serialized)
+    for all origin types. For `split_only` and `orphan` entries, this represents the
+    data from the split or orphan file respectively, not from an original file. Query
+    authors should be aware of this semantic when filtering by origin_type.
 
     Args:
         entry: The comparison entry to flatten.
@@ -582,26 +566,26 @@ def _flatten_entry_to_rows(entry: ComparisonEntry) -> list[dict[str, str]]:
         List of dictionaries representing CSV rows.
     """
     rows: list[dict[str, str]] = []
-    # Note: original_text is populated from source_text for all origin types.
-    # For "original" entries, this is text from the original file.
-    # For "split_only" and "orphan" entries, this is text from the split/orphan file.
+    # Serialize source_data as JSON for CSV storage
+    source_data_json = json.dumps(entry["source_data"], sort_keys=True)
     base_row = {
         "source_file": entry["source_file"],
         "id": entry["id"],
         "origin_type": entry["origin_type"],
-        "original_text": entry["source_text"],
+        "original_data": source_data_json,
     }
 
     if entry["splits"]:
         for split in entry["splits"]:
+            split_data_json = json.dumps(split["split_data"], sort_keys=True)
             row = {
                 **base_row,
                 "split_file": split["source_file"],
-                "split_text": split["split_text"],
+                "split_data": split_data_json,
             }
             rows.append(row)
     else:
-        row = {**base_row, "split_file": "", "split_text": ""}
+        row = {**base_row, "split_file": "", "split_data": ""}
         rows.append(row)
 
     return rows

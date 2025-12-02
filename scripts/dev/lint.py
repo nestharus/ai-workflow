@@ -13,7 +13,16 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Linter names in execution order
-LINTER_NAMES = ["scripts", "ruff", "mypy", "hadolint", "pymarkdown", "yamllint", "checkov"]
+LINTER_NAMES = [
+    "scripts",
+    "ruff",
+    "mypy",
+    "hadolint",
+    "pymarkdown",
+    "yamllint",
+    "yamldocs",
+    "checkov",
+]
 OPENAPI_SCHEMA = REPO_ROOT / "openapi" / "openapi.json"
 CHECKOV_CONFIG = REPO_ROOT / ".checkov.yaml"
 HADOLINT_CONFIG = REPO_ROOT / ".hadolint.yaml"
@@ -25,6 +34,7 @@ LINT_SCRIPTS_CONFIG = REPO_ROOT / ".lint.scripts.yaml"
 LINT_HADOLINT_CONFIG = REPO_ROOT / ".lint.hadolint.yaml"
 LINT_PYMARKDOWN_CONFIG = REPO_ROOT / ".lint.pymarkdown.yaml"
 LINT_YAMLLINT_CONFIG = REPO_ROOT / ".lint.yamllint.yaml"
+LINT_YAMLDOCS_CONFIG = REPO_ROOT / ".lint.yamldocs.yaml"
 
 
 def _load_yaml_config(config_path: Path) -> dict[str, Any]:
@@ -219,6 +229,57 @@ def _run_yamllint() -> None:
         _run_checked([uv_exe, "run", "yamllint", "-c", yamllint_config, *yaml_files])
 
 
+def _run_yamldocs() -> int:
+    """Run YAML documentation schema linter.
+
+    Validates that YAML documentation files (identified by doc_id at root)
+    follow the schema defined in general.yaml.schema-guidelines.yml.
+
+    Returns:
+        0 if all files pass, 1 if errors found.
+    """
+    from scripts.dev.lint_yaml_docs import lint_directory
+
+    config = _load_yaml_config(LINT_YAMLDOCS_CONFIG)
+    targets = config.get("targets", ["docs/"])
+    exclude_dirs = set(config.get("exclude_dirs", []))
+
+    total_errors = 0
+    total_docs = 0
+
+    for target in targets:
+        target_path = REPO_ROOT / target
+        if not target_path.exists():
+            continue
+
+        # Filter out excluded directories
+        results, doc_count, error_count = lint_directory(target_path)
+
+        # Filter results to exclude configured directories
+        filtered_results = [
+            r for r in results if not any(excl in r["file_path"] for excl in exclude_dirs)
+        ]
+        filtered_errors = sum(len(r["errors"]) for r in filtered_results)
+        filtered_docs = sum(1 for r in filtered_results if r["is_doc_file"])
+
+        total_errors += filtered_errors
+        total_docs += filtered_docs
+
+        # Print errors
+        for result in filtered_results:
+            if result["errors"]:
+                print(f"\n{result['file_path']}:")
+                for error in result["errors"]:
+                    print(f"  {error['error_type']}: {error['message']}")
+
+    if total_errors > 0:
+        print(f"\nFound {total_errors} error(s) in {total_docs} documentation file(s)")
+        return 1
+
+    print(f"Checked {total_docs} documentation file(s). No errors found.")
+    return 0
+
+
 def _run_checkov() -> int:
     """Run checkov on OpenAPI schema. Returns 1 if schema is missing, 0 otherwise."""
     if not OPENAPI_SCHEMA.exists():
@@ -252,6 +313,7 @@ LINTER_RUNNERS: dict[str, Callable[[], int | None]] = {
     "hadolint": _run_hadolint,
     "pymarkdown": _run_pymarkdown,
     "yamllint": _run_yamllint,
+    "yamldocs": _run_yamldocs,
     "checkov": _run_checkov,
 }
 

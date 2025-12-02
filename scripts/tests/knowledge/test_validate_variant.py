@@ -122,21 +122,33 @@ class TestParseArgs:
     def test_merge_choices(self) -> None:
         """Should only accept true or false for --merge."""
         with pytest.raises(SystemExit):
-            parse_args([
-                "--id", "pair-1",
-                "--merge", "maybe",
-                "--canonical", "API",
-                "--reason", "test",
-            ])
+            parse_args(
+                [
+                    "--id",
+                    "pair-1",
+                    "--merge",
+                    "maybe",
+                    "--canonical",
+                    "API",
+                    "--reason",
+                    "test",
+                ]
+            )
 
     def test_merge_true(self) -> None:
         """Should parse --merge true."""
-        args = parse_args([
-            "--id", "pair-1",
-            "--merge", "true",
-            "--canonical", "API",
-            "--reason", "Abbreviation",
-        ])
+        args = parse_args(
+            [
+                "--id",
+                "pair-1",
+                "--merge",
+                "true",
+                "--canonical",
+                "API",
+                "--reason",
+                "Abbreviation",
+            ]
+        )
         assert args.pair_id == "pair-1"
         assert args.merge == "true"
         assert args.canonical == "API"
@@ -144,34 +156,53 @@ class TestParseArgs:
 
     def test_merge_false(self) -> None:
         """Should parse --merge false."""
-        args = parse_args([
-            "--id", "pair-1",
-            "--merge", "false",
-            "--canonical", "",
-            "--reason", "Different concepts",
-        ])
+        args = parse_args(
+            [
+                "--id",
+                "pair-1",
+                "--merge",
+                "false",
+                "--canonical",
+                "",
+                "--reason",
+                "Different concepts",
+            ]
+        )
         assert args.merge == "false"
         assert args.canonical == ""
 
     def test_default_knowledge_path(self) -> None:
         """Should have default knowledge path."""
-        args = parse_args([
-            "--id", "pair-1",
-            "--merge", "true",
-            "--canonical", "API",
-            "--reason", "test",
-        ])
+        args = parse_args(
+            [
+                "--id",
+                "pair-1",
+                "--merge",
+                "true",
+                "--canonical",
+                "API",
+                "--reason",
+                "test",
+            ]
+        )
         assert args.knowledge_path == Path(".knowledge")
 
     def test_custom_knowledge_path(self) -> None:
         """Should parse --knowledge-path argument."""
-        args = parse_args([
-            "--id", "pair-1",
-            "--merge", "true",
-            "--canonical", "API",
-            "--reason", "test",
-            "--knowledge-path", "custom/.knowledge",
-        ])
+        args = parse_args(
+            [
+                "--id",
+                "pair-1",
+                "--merge",
+                "true",
+                "--canonical",
+                "API",
+                "--reason",
+                "test",
+                "--knowledge-path",
+                "custom/.knowledge",
+            ]
+        )
         assert args.knowledge_path == Path("custom/.knowledge")
 
 

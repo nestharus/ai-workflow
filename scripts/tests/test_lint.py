@@ -24,6 +24,7 @@ from scripts.dev.lint import (
     _run_pymarkdown,
     _run_ruff,
     _run_scripts,
+    _run_yamldocs,
     _run_yamllint,
     _uv,
     main,
@@ -362,7 +363,16 @@ class TestLinterConstants:
 
     def test_linter_names_defined(self) -> None:
         """Should have all expected linter names."""
-        expected = ["scripts", "ruff", "mypy", "hadolint", "pymarkdown", "yamllint", "checkov"]
+        expected = [
+            "scripts",
+            "ruff",
+            "mypy",
+            "hadolint",
+            "pymarkdown",
+            "yamllint",
+            "yamldocs",
+            "checkov",
+        ]
         assert expected == LINTER_NAMES
 
     def test_linter_runners_has_all_linters(self) -> None:
@@ -587,6 +597,106 @@ class TestRunYamllint:
         assert "excluded" not in yaml_file_args[0]
 
 
+class TestRunYamldocs:
+    """Tests for _run_yamldocs function."""
+
+    def test_returns_zero_when_no_errors(self, fs: FakeFilesystem) -> None:
+        """Should return 0 when no documentation errors found."""
+        from scripts.dev import lint_yaml_docs
+
+        fs.create_dir("/fake/repo/docs")
+        fs.create_file(
+            "/fake/repo/docs/valid.yml",
+            contents="doc_id: test-doc\ntitle: Test\nsections:\n  - id: section-1\n    text: content",
+        )
+        fs.create_file(
+            "/fake/repo/.lint.yamldocs.yaml",
+            contents="targets:\n  - docs/\nexclude_dirs: []",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint_yaml_docs, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
+        ):
+            result = _run_yamldocs()
+
+        assert result == 0
+
+    def test_returns_one_when_errors_found(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when documentation errors found."""
+        from scripts.dev import lint_yaml_docs
+
+        fs.create_dir("/fake/repo/docs")
+        # Missing required title
+        fs.create_file(
+            "/fake/repo/docs/invalid.yml",
+            contents="doc_id: test-doc\nsections:\n  - id: section-1",
+        )
+        fs.create_file(
+            "/fake/repo/.lint.yamldocs.yaml",
+            contents="targets:\n  - docs/\nexclude_dirs: []",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint_yaml_docs, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
+        ):
+            result = _run_yamldocs()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "missing_required_field" in captured.out
+
+    def test_excludes_directories_from_config(self, fs: FakeFilesystem) -> None:
+        """Should exclude directories specified in config."""
+        from scripts.dev import lint_yaml_docs
+
+        fs.create_dir("/fake/repo/docs")
+        fs.create_dir("/fake/repo/docs/excluded")
+        fs.create_file(
+            "/fake/repo/docs/valid.yml",
+            contents="doc_id: test-doc\ntitle: Test\nsections:\n  - id: section-1",
+        )
+        # Invalid file in excluded dir should be ignored
+        fs.create_file(
+            "/fake/repo/docs/excluded/invalid.yml",
+            contents="doc_id: bad-doc\nsections:\n  - no-id: true",
+        )
+        fs.create_file(
+            "/fake/repo/.lint.yamldocs.yaml",
+            contents="targets:\n  - docs/\nexclude_dirs:\n  - excluded",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint_yaml_docs, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
+        ):
+            result = _run_yamldocs()
+
+        assert result == 0
+
+    def test_skips_nonexistent_targets(self, fs: FakeFilesystem) -> None:
+        """Should skip targets that don't exist."""
+        fs.create_dir("/fake/repo")
+        fs.create_file(
+            "/fake/repo/.lint.yamldocs.yaml",
+            contents="targets:\n  - nonexistent/\nexclude_dirs: []",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
+        ):
+            result = _run_yamldocs()
+
+        assert result == 0
+
+
 class TestRunCheckov:
     """Tests for _run_checkov function."""
 
@@ -639,6 +749,8 @@ class TestMain:
         self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should return 1 when OpenAPI schema is missing."""
+        from scripts.dev import lint_yaml_docs
+
         # Create minimal repo structure
         fs.create_dir("/fake/repo/openapi")
         fs.create_file(
@@ -648,16 +760,19 @@ class TestMain:
         fs.create_file("/fake/repo/.lint.hadolint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/.lint.pymarkdown.yaml", contents="targets: []\nexcludes: []")
         fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs: []")
+        fs.create_file("/fake/repo/.lint.yamldocs.yaml", contents="targets: []\nexclude_dirs: []")
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
             patch("sys.argv", ["lint"]),
             patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint_yaml_docs, "REPO_ROOT", Path("/fake/repo")),
             patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
             patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
             patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
+            patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
         ):
@@ -681,6 +796,8 @@ class TestMain:
 
     def test_successful_run(self, fs: FakeFilesystem) -> None:
         """Should return 0 on successful run with all checks passing."""
+        from scripts.dev import lint_yaml_docs
+
         # Create minimal repo structure with OpenAPI schema
         fs.create_dir("/fake/repo/openapi")
         fs.create_file("/fake/repo/openapi/openapi.json", contents="{}")
@@ -695,11 +812,13 @@ class TestMain:
         fs.create_file("/fake/repo/.lint.hadolint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/.lint.pymarkdown.yaml", contents="targets: []\nexcludes: []")
         fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs: []")
+        fs.create_file("/fake/repo/.lint.yamldocs.yaml", contents="targets: []\nexclude_dirs: []")
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
             patch("sys.argv", ["lint"]),
             patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint_yaml_docs, "REPO_ROOT", Path("/fake/repo")),
             patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
             patch.object(lint, "CHECKOV_CONFIG", Path("/fake/repo/.checkov.yaml")),
             patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")),
@@ -707,6 +826,7 @@ class TestMain:
             patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
+            patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
         ):
@@ -718,6 +838,8 @@ class TestMain:
         self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Should print message when no Dockerfiles found."""
+        from scripts.dev import lint_yaml_docs
+
         fs.create_dir("/fake/repo/openapi")
         fs.create_file("/fake/repo/openapi/openapi.json", contents="{}")
         fs.create_file("/fake/repo/.checkov.yaml", contents="")
@@ -731,11 +853,13 @@ class TestMain:
         fs.create_file("/fake/repo/.lint.hadolint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/.lint.pymarkdown.yaml", contents="targets: []\nexcludes: []")
         fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs: []")
+        fs.create_file("/fake/repo/.lint.yamldocs.yaml", contents="targets: []\nexclude_dirs: []")
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
             patch("sys.argv", ["lint"]),
             patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint_yaml_docs, "REPO_ROOT", Path("/fake/repo")),
             patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
             patch.object(lint, "CHECKOV_CONFIG", Path("/fake/repo/.checkov.yaml")),
             patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")),
@@ -743,6 +867,7 @@ class TestMain:
             patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
+            patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
         ):

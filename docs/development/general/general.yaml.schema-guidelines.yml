@@ -1,131 +1,179 @@
 doc_id: general-yaml-schema-guidelines
-title: YAML Schema Guidelines
+title: YAML Documentation Schema Guidelines
 version_hint: 2024-2025
 kind: schema_standard
-description: |
-  Guidelines for structuring YAML documentation files. The schema is intentionally
-  flexible to allow natural YAML structures while requiring unique identifiers
-  for change tracking and comparison.
 scope: |
-  All YAML documentation files in docs/, scripts/docs/, and tests/docs/. Applies
-  to knowledge graph documents, pattern definitions, and any structured documentation.
-  Excludes to_adapt/ directories.
+  All YAML documentation files in docs/, scripts/docs/, and tests/docs/. A file is
+  considered a documentation file when it has a `doc_id` field at the root level.
+  Excludes to_adapt/ directories and non-documentation YAML files.
+description: |
+  Defines the schema for YAML documentation files. The document-level schema has
+  fixed fields while section content is flexible. IDs are required for root elements
+  of sections but optional for their children.
 domain:
   - yaml
   - documentation
 
 sections:
-  - id: core-principle
+  - id: document-level-schema
     index: 1
-    title: Core Principle
+    title: Document-Level Schema
     category: standard
-    summary: Every object must have an id field.
+    summary: Required and optional fields at the document root.
     items:
-      - id: core-principle-rule
+      - id: doc-schema-overview
+        text: |
+          A YAML documentation file is identified by having `doc_id` at the root level.
+          The following fields are supported at the document root.
+
+      - id: doc-schema-required-fields
+        title: Required Fields
+        fields:
+          - name: doc_id
+            type: string
+            required: true
+            description: Unique identifier for this document. Used for cross-references.
+
+          - name: title
+            type: string
+            required: true
+            description: Human-readable title of the document.
+
+          - name: sections
+            type: list
+            required: true
+            description: List of section objects containing the document content.
+
+      - id: doc-schema-optional-fields
+        title: Optional Fields
+        fields:
+          - name: version_hint
+            type: string
+            required: false
+            description: Version range or timeframe for the content (e.g., "2024-2025").
+
+          - name: kind
+            type: string
+            required: false
+            description: |
+              Document type classification (e.g., schema_standard, pattern, guideline).
+
+          - name: scope
+            type: string
+            required: false
+            description: What files or contexts this document applies to.
+
+          - name: description
+            type: string
+            required: false
+            description: Extended description of the document's purpose.
+
+          - name: domain
+            type: list[string]
+            required: false
+            description: Topic domains this document covers (e.g., yaml, python, fastapi).
+
+          - name: primary_runtime_references
+            type: list
+            required: false
+            description: Links to primary code or runtime references.
+
+          - name: related_docs
+            type: list
+            required: false
+            description: References to related documentation files.
+
+          - name: external_references
+            type: list
+            required: false
+            description: Links to external resources (URLs, specifications).
+
+  - id: section-schema
+    index: 2
+    title: Section Schema
+    category: standard
+    summary: Structure of section elements within the sections list.
+    items:
+      - id: section-id-requirement
         type: rule
         text: |
-          Every dict/object in the YAML structure must have an `id` field populated.
-          This is the only required field. All other structure is flexible.
+          Root elements of the `sections` list MUST have an `id` field. This enables
+          change tracking and comparison between document versions.
 
-  - id: why-ids-matter
-    index: 2
-    title: Why IDs Matter
-    category: standard
-    summary: IDs enable change tracking and comparison.
-    items:
-      - id: why-ids-change-tracking
-        text: Enable tracking changes between document versions
-      - id: why-ids-dict-comparison
-        text: Allow dict-to-dict comparison (dict == dict) for detecting differences
-      - id: why-ids-reference-stable
-        text: Provide stable references for linking between documents
-      - id: why-ids-granular-updates
-        text: Support granular updates without affecting unrelated content
-
-  - id: flexible-structure
-    index: 3
-    title: Flexible Structure
-    category: standard
-    summary: Structure adapts to content type.
-    items:
-      - id: flexible-structure-no-forced-wrapper
+      - id: section-common-fields
+        title: Common Section Fields
         text: |
-          Do NOT force all content into {id, type, text} wrappers. Use natural YAML
-          structures that match the data being represented.
+          Sections typically include these fields, but structure is flexible beyond `id`.
+        fields:
+          - name: id
+            required: true
+            description: Unique identifier for the section within this document.
 
-  - id: examples
-    index: 4
-    title: Examples
-    category: example
-    summary: Correct and incorrect patterns.
-    examples:
-      - id: example-simple-text
-        title: Simple text item
-        correct:
-          - id: my-rule
-            text: This is a simple rule or statement.
-        incorrect:
-          - text: This rule has no id and cannot be tracked.
+          - name: index
+            required: false
+            description: Ordering hint for section display.
 
-      - id: example-structured-data
-        title: Structured data (tables, configs)
-        correct:
-          - id: http-method-get
-            method: GET
-            usage: Retrieve a resource
-            success_status: 200
-            error_statuses:
-              - 404
-        incorrect:
-          - method: GET
-            usage: Retrieve a resource
-            success_status: 200
+          - name: title
+            required: false
+            description: Human-readable section title.
 
-      - id: example-nested-items
-        title: Nested items with titles
-        correct:
-          - id: section-includes
-            title: Includes
-            items:
-              - id: includes-rest
-                text: REST/HTTP protocol rules
-              - id: includes-fastapi
-                text: FastAPI framework practices
-        incorrect:
-          - id: section-includes
-            type: text
-            text: 'Includes:'
-          - id: item-rest
-            type: text
-            text: REST/HTTP protocol rules
+          - name: category
+            required: false
+            description: Classification (e.g., standard, example, workflow).
 
-      - id: example-code-blocks
-        title: Code blocks
-        correct:
-          - id: example-code-pagination
-            type: code
-            language: python
-            text: |
-              offset = (page - 1) * page_size
-              results = query.offset(offset).limit(page_size)
+          - name: summary
+            required: false
+            description: Brief summary of section content.
+
+          - name: items
+            required: false
+            description: List of content items within the section.
+
+          - name: examples
+            required: false
+            description: Example content for the section.
+
+  - id: child-elements
+    index: 3
+    title: Child Element IDs
+    category: standard
+    summary: ID requirements for nested content.
+    items:
+      - id: child-id-optional
+        type: rule
+        text: |
+          Children of section root elements MAY have `id` fields but they are NOT
+          required. This allows flexibility in structuring nested content.
+
+      - id: child-id-benefits
+        title: When to Add IDs to Children
+        text: Add IDs to child elements when you want to enable
+        reasons:
+          - Granular change tracking for specific items
+          - Cross-document references to specific content
+          - Dict-to-dict comparison for that element
+
+      - id: child-structure-flexible
+        text: |
+          Children can be inside any type of field (items, examples, fields, etc.).
+          The structure adapts to the content being represented.
 
   - id: id-naming-conventions
-    index: 5
+    index: 4
     title: ID Naming Conventions
     category: standard
     summary: How to generate meaningful IDs.
     items:
-      - id: id-naming-kebab-case
-        text: Use kebab-case (lowercase with hyphens)
-      - id: id-naming-hierarchical
-        text: Use hierarchical prefixes for context (section-subsection-item)
-      - id: id-naming-descriptive
-        text: Make IDs descriptive enough to understand without context
-      - id: id-naming-stable
-        text: Keep IDs stable across edits (don't renumber)
-    examples:
-      - id: id-naming-good-examples
-        title: Good ID examples
+      - id: id-naming-rules
+        title: ID Format Rules
+        rules:
+          - Use kebab-case (lowercase with hyphens)
+          - Use hierarchical prefixes for context (section-subsection-item)
+          - Make IDs descriptive enough to understand without context
+          - Keep IDs stable across edits (don't renumber)
+
+      - id: id-naming-examples
+        title: ID Examples
         good:
           - http-method-get
           - url-versioning-rule
@@ -134,27 +182,48 @@ sections:
         bad:
           - item-1
           - section-3-2
-          - 42
-          - ''
+          - "42"
+          - ""
 
-  - id: migration-from-strict-schema
-    index: 6
-    title: Migration from Strict Schema
-    category: workflow
-    summary: Converting {id, type, text} wrappers to natural structure.
+  - id: detection-and-linting
+    index: 5
+    title: Documentation File Detection
+    category: standard
+    summary: How to identify and validate documentation YAML files.
     items:
-      - id: migration-when-to-convert
-        title: When to convert
+      - id: detection-rule
+        type: rule
         text: |
-          Convert when the strict {id, type, text} structure obscures the natural
-          data representation. Tables, configs, and structured data benefit most.
+          A YAML file is a documentation file if and only if it has a `doc_id` field
+          at the root level. Linters and tools use this to distinguish documentation
+          from configuration or data YAML files.
 
-      - id: migration-preserve-ids
-        title: Preserve existing IDs
-        text: Keep existing id values when converting to maintain tracking continuity.
+      - id: linter-rules
+        title: Linter Validation Rules
+        rules:
+          - doc_id must be present at root for documentation files
+          - title must be present at root for documentation files
+          - sections must be a list for documentation files
+          - Root elements of sections must have an id field
+          - Child element IDs are optional (no lint error if missing)
 
-      - id: migration-add-missing-ids
-        title: Add missing IDs
+  - id: comparison-semantics
+    index: 6
+    title: Comparison Semantics
+    category: standard
+    summary: How document comparison works.
+    items:
+      - id: comparison-dict-equality
+        type: rule
         text: |
-          When objects lack ids, generate them using the naming conventions above.
-          Base the id on the content or context.
+          The compare_yaml_docs.py tool uses dict-to-dict comparison (dict == dict)
+          to detect differences. Only elements with `id` fields are tracked. Changes
+          to any field within an ID'd element will be detected as a difference.
+
+      - id: comparison-tracking-scope
+        title: What Gets Tracked
+        text: |
+          Elements with an `id` field are tracked for comparison. Elements without
+          IDs are invisible to the comparison tool. This means child elements without
+          IDs won't be individually compared - only their parent (if it has an ID)
+          will show as changed.

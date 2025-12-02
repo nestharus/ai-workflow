@@ -707,7 +707,9 @@ def test_login():
 """
         fs.create_file("/repo/tests/test_auth.py", contents=test_code)
 
-        result = _collect_usecase_gaps(Path("/repo"), Path("/repo/tests/docs/use_cases.yaml"), ["tests"])
+        result = _collect_usecase_gaps(
+            Path("/repo"), Path("/repo/tests/docs/use_cases.yaml"), ["tests"]
+        )
 
         assert result["totals"]["total_use_cases"] == 2
         assert result["totals"]["covered_use_cases"] == 1

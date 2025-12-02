@@ -195,6 +195,39 @@ Additional concatenation tools (`concat_app`, `concat_docs`, `concat_scripts`, `
 `concat_tools`) are available for codebase analysis. See `AGENTS.md` for detailed usage of review
 tools.
 
+## Keyword Extraction Pipeline Tests
+
+The keyword extraction pipeline has comprehensive test coverage in `scripts/tests/knowledge/`:
+
+| Test File | Description |
+|-----------|-------------|
+| `test_candidate_extraction.py` | Unit tests for Stage 1 candidate extraction |
+| `test_query_keyword_candidates.py` | Tests for querying candidates from CSV |
+| `test_classify_keyword.py` | Tests for Stage 2 classification CLI |
+| `test_qwen_scoring.py` | Tests for Qwen model scoring |
+| `test_keyword_store.py` | Tests for keyword storage and application |
+| `test_variant_resolver.py` | Tests for variant tracking and resolution |
+| `test_extraction_pipeline.py` | Integration tests for full pipeline |
+
+### Running Tests
+
+```bash
+# Run all knowledge tests
+uv run pytest scripts/tests/knowledge/
+
+# Run specific test file
+uv run pytest scripts/tests/knowledge/test_extraction_pipeline.py
+
+# Run golden keyword validation
+uv run pytest scripts/tests/knowledge/test_extraction_pipeline.py::TestPipelineIntegration
+```
+
+### Golden Keywords
+
+The test fixture `scripts/tests/knowledge/fixtures/golden_keywords_test.yml` contains a curated
+set of technical terms that must be extracted. The integration test validates that all golden
+keywords are captured, ensuring the pipeline maintains high recall (zero false negatives).
+
 ## Documentation Modules
 
 Documentation is organized into focused modules under `docs/`:

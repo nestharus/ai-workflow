@@ -271,7 +271,7 @@ def run_apply_stage(
     print("Stage 4: Apply Keywords to YAML")
     print(f"  Input: {knowledge_path / 'keywords' / 'candidates.csv'} (kept candidates)")
     print(f"  Output: {knowledge_path / 'keywords' / 'keywords.csv'} (keyword index)")
-    print(f"  Target: YAML files referenced in candidates.csv")
+    print("  Target: YAML files referenced in candidates.csv")
 
     if dry_run:
         print("  (dry run - showing changes without modifying files)")
