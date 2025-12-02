@@ -729,6 +729,125 @@ to be considered successful. This ensures no semantic content is lost during ext
 - `1`: Error - CLI or validation failure
 - `2`: Partial success - facts extracted but entity still present in residual
 
+## Fact Store Workflow
+
+Organize extracted facts into domain/pattern-specific YAML files and decorate source YAML documentation with fact IDs and entity IDs.
+
+### Storing Facts
+
+```bash
+# Store facts for a specific entity to domain/pattern YAML
+uv run knowledge.store-fact \
+  --entity "create_app" \
+  --domain "fastapi" \
+  --pattern "factory-patterns"
+
+# Specify custom knowledge path
+uv run knowledge.store-fact --entity "FastAPI" --domain "rest" --pattern "api-patterns" --knowledge-path .knowledge
+
+# Include source file and element ID metadata
+uv run knowledge.store-fact \
+  --entity "create_app" \
+  --domain "fastapi" \
+  --pattern "factory-patterns" \
+  --source-file "docs/development/project/fastapi/project.fastapi.factory-patterns.yml" \
+  --source-element-id "factory.create_app"
+```
+
+### Querying Facts
+
+```bash
+# Query all facts for a domain
+uv run knowledge.query-facts --domain "fastapi"
+
+# Query facts for a specific pattern
+uv run knowledge.query-facts --domain "fastapi" --pattern "factory-patterns"
+
+# Query facts for a specific entity
+uv run knowledge.query-facts --entity "create_app"
+
+# Query specific fact by ID
+uv run knowledge.query-facts --fact-id <uuid>
+```
+
+### Decorating YAML with Fact IDs
+
+```bash
+# Decorate YAML element with fact IDs
+uv run knowledge.decorate-yaml-with-fact-ids \
+  --yaml-file docs/development/project/fastapi/project.fastapi.factory-patterns.yml \
+  --element-id "factory.create_app" \
+  --fact-ids <uuid1> <uuid2>
+
+# Decorate with entity ID from variant resolution
+uv run knowledge.decorate-yaml-with-fact-ids \
+  --yaml-file docs/development/project/fastapi/project.fastapi.factory-patterns.yml \
+  --element-id "factory.create_app" \
+  --entity "create_app"
+
+# Combine fact IDs and entity ID
+uv run knowledge.decorate-yaml-with-fact-ids \
+  --yaml-file docs/development/project/fastapi/project.fastapi.factory-patterns.yml \
+  --element-id "factory.create_app" \
+  --fact-ids <uuid1> <uuid2> \
+  --entity "create_app"
+
+# Dry run (show changes without applying)
+uv run knowledge.decorate-yaml-with-fact-ids --yaml-file ... --element-id ... --fact-ids ... --dry-run
+```
+
+### Fact YAML File Schema
+
+Facts are stored in `.knowledge/facts/<domain>.<pattern>.facts.yml` with the following structure:
+
+```yaml
+facts:
+  - fact_id: <uuid>
+    entity: <entity_name>
+    fact_text: <atomic_fact>
+    source_file: <yaml_path>
+    source_element_id: <element_id>
+    confidence: <0.0-1.0>
+    extracted_at: <timestamp>
+    domain: <domain_tag>
+    pattern: <pattern_name>
+```
+
+### Decorated YAML Schema
+
+YAML elements can be decorated with fact IDs and entity IDs:
+
+```yaml
+items:
+  - id: factory.create_app
+    text: Factory function for creating FastAPI application instances.
+    fact_ids:
+      - <uuid1>
+      - <uuid2>
+    entity_id: <uuid>  # From variant resolution
+    keywords:
+      - create_app
+      - factory
+```
+
+### Querying Fact YAML Files (Python)
+
+Fact YAML files require Python yaml library for programmatic access:
+
+```python
+# Example Python usage for querying fact YAML files:
+import yaml
+from pathlib import Path
+
+facts_dir = Path('.knowledge/facts')
+for fact_file in facts_dir.glob('*.facts.yml'):
+    with open(fact_file) as f:
+        data = yaml.safe_load(f)
+        for fact in data.get('facts', []):
+            if fact['entity'] == 'create_app':
+                print(f"Fact: {fact['fact_text']}")
+```
+
 ## Iterative Movement Tracking Workflow
 
 The iterative movement tracking system records sentence-level changes during fact extraction, validating semantic similarity at each step.
