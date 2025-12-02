@@ -1,147 +1,37 @@
 # Module Definitions
 
-This document serves as the authoritative reference for module hierarchy, precedence rules, scope
-definitions, and pattern definitions. It is the foundation for semantic classification by the
-knowledge-analyzer agent and validation tooling.
+This document serves as the authoritative reference for domain definitions, scope definitions, and
+pattern definitions. It is the foundation for semantic classification by the knowledge-analyzer
+agent and validation tooling.
 
-## Section 1: Module Hierarchy
+> **Note:** Legacy precedence rules removed. Classifier now supports multi-domain tagging per
+> chunk. See `docs/development/domain-definitions.yml` for the canonical domain registry.
 
-Modules have parent-child relationships that determine precedence. A child module inherits context
-from its parent but addresses more specific concerns.
+## Section 1: Domain Descriptions
 
-```plaintext
-root
-├── rest                    # HTTP/REST protocol (parent of web frameworks)
-│   └── fastapi             # FastAPI framework (implements REST via Python)
-├── python                  # Python language (parent of Python-based tools)
-│   ├── fastapi             # FastAPI framework (built on Python)
-│   ├── surrealdb           # SurrealDB Python client
-│   └── elasticsearch       # Elasticsearch Python client
-├── surrealdb               # SurrealDB database patterns
-└── elasticsearch           # Elasticsearch patterns
-```
+Domains are independent tags for classification and searching. Content can have multiple domains.
 
-### Module Definitions
+### Domain Registry
 
-| Module | Description | Parent(s) |
-|--------|-------------|-----------|
-| `rest` | HTTP/REST protocol rules, URL structure, status codes, HTTP methods | - |
-| `fastapi` | FastAPI framework patterns, decorators, dependencies | `rest`, `python` |
-| `python` | Python language conventions, async/await, type hints | - |
-| `surrealdb` | SurrealDB database patterns, SurrealQL, client usage | `python` |
-| `elasticsearch` | Elasticsearch patterns, queries, client usage | `python` |
+| Domain | Description |
+|--------|-------------|
+| `rest` | HTTP/REST protocol rules, URL structure, status codes, HTTP methods |
+| `fastapi` | FastAPI framework patterns, decorators, dependencies |
+| `python` | Python language conventions, async/await, type hints |
+| `surrealdb` | SurrealDB database patterns, SurrealQL, client usage |
+| `elasticsearch` | Elasticsearch patterns, queries, client usage |
 
-### Dual Parentage
-
-`fastapi` has two parents:
-
-* **rest**: FastAPI implements REST protocol conventions
-* **python**: FastAPI is a Python framework
-
-This dual parentage affects precedence (see Section 2).
+> **Canonical Reference:** See `docs/development/domain-definitions.yml` for the authoritative
+> domain registry with full descriptions.
 
 ---
 
-## Section 2: Precedence Rules
+## Section 2: Multi-Domain Tagging
 
-When content fits multiple modules, apply these precedence rules in order:
-
-### Rule 1: Protocol Takes Precedence Over Framework
-
-Content about HTTP/REST protocol belongs in `rest`, not in framework modules.
-
-| Content | Correct Module | Incorrect Module | Reason |
-|---------|----------------|------------------|--------|
-| URL structure `/api/{version}` | `rest` | `fastapi` | REST protocol convention |
-| HTTP methods (GET, POST, PUT, DELETE) | `rest` | `fastapi` | HTTP protocol |
-| Status codes (200, 404, 500) | `rest` | `fastapi` | HTTP protocol |
-| Content-Type headers | `rest` | `fastapi` | HTTP protocol |
-| RESTful resource naming | `rest` | `fastapi` | REST convention |
-
-**Example - Correct Classification:**
-
-```yaml
-# general.rest.api-patterns.yml
-- id: url-versioning
-  content: "Use /api/{version} prefix for API versioning (e.g., /api/v1/users)"
-```
-
-**Example - Incorrect Classification:**
-
-```yaml
-# general.fastapi.api-patterns.yml (WRONG - this is REST, not FastAPI)
-- id: url-versioning
-  content: "Use /api/{version} prefix for API versioning"
-```
-
-### Handling Existing Violations in Protocol Modules
-
-The precedence rules apply bidirectionally. Just as framework content should not appear in protocol
-modules, **protocol modules must not contain framework- or library-specific details**. When REST
-documentation includes implementation-specific references—such as `fastapi.status` constants, Pydantic
-validation rules, or framework-specific response handling—these constitute **precedence violations** that
-require migration.
-
-**Current known violations in `general.rest.api-patterns.yml`:**
-
-* References to `fastapi.status` constants → should migrate to `general.fastapi.api-patterns.yml`
-* Pydantic model validation rules → should migrate to `general.python.validation-patterns.yml` or
-  `general.fastapi.api-patterns.yml`
-* Framework-specific response modeling → should migrate to the appropriate `fastapi` module
-
-These items are expected to be migrated to their correct modules in future cleanup phases.
-**MODULE-DEFINITIONS.md is the normative source** for determining where content ultimately belongs.
-Until migration occurs, the presence of such items in protocol modules should be treated as technical
-debt, not as precedent for adding similar content.
-
-### Rule 2: Framework Takes Precedence Over Language
-
-Content about framework-specific features belongs in the framework module, not the language module.
-
-| Content | Correct Module | Incorrect Module | Reason |
-|---------|----------------|------------------|--------|
-| `response_model` | `fastapi` | `python` | FastAPI decorator parameter |
-| `APIRouter` | `fastapi` | `python` | FastAPI class |
-| `Depends()` | `fastapi` | `python` | FastAPI dependency injection |
-| `@app.get()` decorators | `fastapi` | `python` | FastAPI route decorators |
-| `BackgroundTasks` | `fastapi` | `python` | FastAPI background tasks |
-
-**Example - Correct Classification:**
-
-```yaml
-# general.fastapi.dependency-patterns.yml
-- id: depends-usage
-  content: "Use Depends() for dependency injection in route functions"
-```
-
-### Rule 3: Language Takes Precedence Over Database
-
-Content about language features belongs in the language module, even when used with databases.
-
-| Content | Correct Module | Incorrect Module | Reason |
-|---------|----------------|------------------|--------|
-| `async/await` patterns | `python` | `surrealdb` | Python language feature |
-| Type hints (`List[User]`) | `python` | `elasticsearch` | Python language feature |
-| Context managers (`async with`) | `python` | `surrealdb` | Python language feature |
-| Pydantic models | `python` | `surrealdb` | Python library |
-
-**Example - Correct Classification:**
-
-```yaml
-# general.python.async-patterns.yml
-- id: async-context-manager
-  content: "Use async with for database connections"
-```
-
-### Rule 4: Most Specific Module Wins
-
-When precedence rules don't apply, use the most specific module.
-
-| Content | Correct Module | Reason |
-|---------|----------------|--------|
-| SurrealQL query syntax | `surrealdb` | SurrealDB-specific |
-| Elasticsearch DSL | `elasticsearch` | Elasticsearch-specific |
-| FastAPI lifespan events | `fastapi` | FastAPI-specific |
+Domains are independent tags. Content mentioning multiple domains (REST URL + FastAPI mounting)
+gets all relevant tags (`['rest', 'fastapi']`). No precedence or single-domain rule. Classifier
+outputs represent applied domain tags as a `domains` field containing a list (e.g.,
+`"domains": ["rest", "fastapi"]`).
 
 ---
 
@@ -647,15 +537,16 @@ Use this document for classification decisions.
 
 ### Classification Workflow
 
-1. Identify the Technology
+1. Identify All Relevant Domains
 
-   Determine which module(s) the content relates to: `rest`, `fastapi`, `python`, `surrealdb`,
-   `elasticsearch`
+   Determine which domain(s) the content relates to: `rest`, `fastapi`, `python`, `surrealdb`,
+   `elasticsearch`. Content can have multiple domains.
 
-2. Apply Precedence Rules
+2. Apply All Applicable Domain Tags
 
-   * If content fits multiple modules, use Section 2 rules
-   * Protocol > Framework > Language > Database
+   * If content relates to multiple domains, tag it with ALL of them
+   * Do not reduce to a single domain—use multi-domain tagging (see Section 2)
+   * Example: FastAPI route with URL versioning → `['rest', 'fastapi']`
 
 3. Determine Scope
 
@@ -673,6 +564,7 @@ Use this document for classification decisions.
 
    * If content spans multiple scopes or patterns, split into separate items
    * Each item should have a single scope and pattern
+   * Multi-domain items do NOT need splitting—domains are independent tags
 
 ### Example Classification
 
@@ -681,15 +573,17 @@ Use this document for classification decisions.
 
 **Analysis:**
 
-1. Technology: `rest` (URL structure) + `fastapi` (router mounting)
-2. Precedence: URL structure is REST protocol → `rest`; router mounting is FastAPI → `fastapi`
-3. Scope: References `create_app` → PROJECT for the mounting part
-4. Pattern: URL structure → `api-patterns`; mounting → `factory-patterns`
+1. Domains: `['rest', 'fastapi']` — URL structure relates to REST, router mounting relates to FastAPI
+2. Scope: References `create_app` → PROJECT for the mounting part; URL convention → GENERAL
+3. Pattern: URL structure → `api-patterns`; mounting → `factory-patterns`
 
-**Decision:** Split into two items:
+**Decision:** Split by scope (not by domain):
 
-* `general.rest.api-patterns.yml`: URL versioning convention
-* `project.fastapi.factory-patterns.yml`: Router mounting implementation
+* `general.rest.api-patterns.yml`: URL versioning convention (domains: `['rest']`)
+* `project.fastapi.factory-patterns.yml`: Router mounting implementation (domains: `['fastapi']`)
+
+Note: The split is based on scope (GENERAL vs PROJECT), not domain. If both parts were GENERAL,
+they could remain together with domains: `['rest', 'fastapi']`.
 
 ### Primary Consumer
 
@@ -697,6 +591,6 @@ The knowledge-analyzer agent (`.claude/agents/knowledge-analyzer.md`) is the pri
 document. The agent should:
 
 1. Use these definitions for semantic classification instead of keyword matching
-2. Apply precedence rules to resolve multi-module content
-3. Use test questions to validate classifications
+2. Apply all relevant domain tags to content (no single-domain resolution)
+3. Use test questions to validate scope and pattern classifications
 4. Reference this document when explaining classification decisions

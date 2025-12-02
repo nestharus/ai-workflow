@@ -1,0 +1,106 @@
+doc_id: general-python-docstrings-guide
+title: Docstrings Guide
+version_hint: 2024-2025
+kind: documentation_style_guide
+description: >
+  Google-style docstring conventions and standards for documenting Python code, enforced through ruff (with pydocstyle)
+  and pymarkdown.
+scope: Use these conventions for all public modules, classes, functions, and methods.
+domain:
+  - python
+primary_runtime_references: []
+related_pattern_docs: []
+external_references:
+  - url: https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings
+    title: Google Python Style Guide - Comments and Docstrings
+sections:
+  - id: general-rules
+    index: 1
+    title: General Rules
+    category: standard
+    summary: Core conventions for writing docstrings in this project.
+    items:
+      - id: general.triple-quotes
+        type: rule
+        text: Use triple double quotes (""") and keep the opening summary on one line.
+      - id: general.summary-format
+        type: rule
+        text: Write clear, sentence-case summaries ending with a period.
+      - id: general.type-hints
+        type: rule
+        text: Prefer type hints in code; avoid duplicating types in docstrings unless it aids clarity.
+      - id: general.focus
+        type: rule
+        text: Keep docstrings focused on behavior, side effects, and important constraints.
+      - id: general.sections
+        type: rule
+        text: Include argument, return, and raises sections only when they add information beyond type hints.
+  - id: recommended-structure
+    index: 2
+    title: Recommended Structure
+    category: standard
+    summary: Ordering and organization of docstring content.
+    items:
+      - id: structure.summary-line
+        type: rule
+        text: Begin with a summary line.
+      - id: structure.blank-line
+        type: rule
+        text: Add an optional blank line when additional detail follows the summary.
+      - id: structure.section-order
+        type: rule
+        text: 'Order sections as: Args, Returns, Yields, Raises, Examples.'
+  - id: function-example
+    index: 3
+    title: Function Example
+    category: example
+    summary: Complete example of a properly documented function.
+    sample_code:
+      description: Example function with Args, Returns, and Raises sections.
+      language: python
+      code: "def fetch_user(user_id: str, *, include_inactive: bool = False) -> User:\n    \"\"\"Retrieve a user record from\
+        \ storage.\n    Args:\n        user_id: Identifier of the user to fetch.\n        include_inactive: When true, also\
+        \ allow inactive users to match.\n    Returns:\n        User: The matching user instance.\n    Raises:\n        UserNotFoundError:\
+        \ No user matched the provided id and filters.\n    \"\"\""
+    items:
+      - id: function-example.note
+        type: note
+        text: This example demonstrates a complete function docstring with summary, Args, Returns, and Raises sections.
+  - id: class-example
+    index: 4
+    title: Class Example
+    category: example
+    summary: Complete example of a properly documented class.
+    sample_code:
+      description: Example class with docstrings for the class, __init__, and methods.
+      language: python
+      code: "class TaskQueue:\n    \"\"\"Queue wrapper that limits concurrent tasks.\"\"\"\n    def __init__(self, capacity:\
+        \ int) -> None:\n        \"\"\"Create a queue with a maximum in-flight capacity.\"\"\"\n    def acquire(self) -> None:\n\
+        \        \"\"\"Block until a slot is available, then reserve it.\"\"\""
+    items:
+      - id: class-example.note
+        type: note
+        text: This example shows class-level docstrings plus method docstrings for __init__ and public methods.
+  - id: additional-guidance
+    index: 5
+    title: Additional Guidance
+    category: guidance
+    summary: Supplementary conventions for specific scenarios.
+    items:
+      - id: additional.modules
+        type: rule
+        text: 'Modules: Provide a brief description when the module exposes public APIs or significant setup logic.'
+      - id: additional.properties
+        type: rule
+        text: >
+          'Properties: Document behavior in the getter; setters rarely need separate docstrings unless they perform
+          non-trivial
+          work.'
+      - id: additional.async
+        type: rule
+        text: 'Async functions: Document awaited side effects and cancellation behavior if relevant.'
+      - id: additional.examples
+        type: rule
+        text: >
+          'Examples: Use fenced code blocks with the language set (```python) and keep them minimal and runnable when
+          possible.'

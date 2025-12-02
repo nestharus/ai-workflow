@@ -1,0 +1,47 @@
+# Domain Definitions
+#
+# Domains are independent tags for classification and searching. They are NOT
+# hierarchical and do NOT imply folder structure. Content can have multiple
+# domains (e.g., ['rest', 'fastapi'] for an item about REST conventions
+# implemented via FastAPI).
+#
+# There is no precedence or hierarchy between domains. When content relates to
+# multiple domains, apply ALL relevant domain tags rather than choosing one.
+
+version: 1
+
+domains:
+  - id: rest
+    title: REST / HTTP
+    description: >
+      HTTP/REST protocol rules, URL structure, status codes, HTTP methods,
+      content-type headers, and RESTful resource naming conventions. Covers
+      protocol-level concerns independent of any specific framework.
+
+  - id: fastapi
+    title: FastAPI
+    description: >
+      FastAPI framework patterns including routers, dependencies, decorators,
+      lifespan events, middleware configuration, and response modeling. Covers
+      framework-specific implementation details.
+
+  - id: python
+    title: Python
+    description: >
+      Python language conventions including async/await patterns, type hints,
+      context managers, Pydantic models, and general Python idioms. Covers
+      language-level concerns applicable across frameworks and libraries.
+
+  - id: surrealdb
+    title: SurrealDB
+    description: >
+      SurrealDB database patterns including SurrealQL query syntax, client
+      usage, connection management, and database-specific operations. Covers
+      SurrealDB-specific concerns.
+
+  - id: elasticsearch
+    title: Elasticsearch
+    description: >
+      Elasticsearch patterns including query DSL, client usage, index
+      management, and search operations. Covers Elasticsearch-specific
+      concerns.

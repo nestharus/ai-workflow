@@ -46,7 +46,11 @@ Content is likely PROJECT if it:
 
 > **Note:** These are strong indicators, not requirements. Use the conceptual definitions and test questions above for classification.
 
-### Domains
+### Domain Classification
+
+Identify all applicable domains (rest, fastapi, python, surrealdb, elasticsearch). Domains are a
+set—tag multiple if relevant (e.g., URL structure + APIRouter → `['rest', 'fastapi']`). No dropping
+or choosing one.
 
 - **rest**: HTTP/URL patterns, status codes, headers, REST conventions
 - **fastapi**: FastAPI framework (response_model, APIRouter, Depends, lifespan)
@@ -101,8 +105,8 @@ When text is MIXED (contains both GENERAL and PROJECT chunks), it should be spli
 Before analyzing any items, gather context to inform your classification decisions:
 
 1. **Read MODULE-DEFINITIONS.md**: Use the Read tool to read `docs/development/MODULE-DEFINITIONS.md`. This document contains:
-   - Module hierarchy (Section 1): Understand parent-child relationships between modules
-   - Precedence rules (Section 2): Protocol > Framework > Language > Database
+   - Domain definitions (Section 1): Independent, non-hierarchical domain tags
+   - Multi-domain tagging (Section 2): How to apply multiple domain tags to content
    - Scope definitions (Section 3): GENERAL vs PROJECT criteria and test questions
    - Pattern definitions (Section 4): Each pattern's purpose, inclusions, exclusions, and test questions
    - Cross-reference quality rules (Section 5): How to write quality PROJECT references
@@ -116,7 +120,7 @@ Before analyzing any items, gather context to inform your classification decisio
    uv run grep-yml-ids --path docs/development/project/ --id <relevant-keyword>
    ```
 
-3. **Use this research to inform decisions**: When classifying, reference the precedence rules and pattern definitions from MODULE-DEFINITIONS.md rather than relying on keyword matching alone.
+3. **Use this research to inform decisions**: When classifying, reference the multi-domain tagging rules and pattern definitions from MODULE-DEFINITIONS.md rather than relying on keyword matching alone.
 
 ## Analysis Process (per item)
 
@@ -132,19 +136,18 @@ Before analyzing any items, gather context to inform your classification decisio
    - **Scope**: What scope does it have? (protocol, framework, language, project)
    - **Pattern**: What pattern does it describe? (api-patterns, architecture, factory-patterns)
 
-5. **Apply precedence rules** (from MODULE-DEFINITIONS.md Section 2):
-   - Protocol takes precedence over framework (e.g., URL structure → `rest`, not `fastapi`)
-   - Framework takes precedence over language (e.g., `response_model` → `fastapi`, not `python`)
-   - Language takes precedence over database (e.g., `async/await` → `python`, not `surrealdb`)
-   - When content fits multiple modules, choose based on precedence
-   - When content spans multiple scopes, suggest SPLIT
+5. **Detect all matching domains** using semantic analysis:
+   - Identify ALL applicable domains (rest, fastapi, python, surrealdb, elasticsearch)
+   - Domains are a set—tag multiple if relevant (e.g., URL structure + APIRouter → `['rest', 'fastapi']`)
+   - No dropping or choosing one—output as list
+   - When content spans multiple scopes, suggest SPLIT (but multi-domain does NOT require splitting)
 
 6. **Classify each chunk** across three dimensions:
-   - **Domain**: rest, fastapi, python, surrealdb, elasticsearch
+   - **Domains**: list of applicable domains (always an array, even single-item)
    - **Scope**: general (no app/* refs) vs project (has app/* refs)
    - **Pattern**: api-patterns, exception-patterns, factory-patterns, etc.
 
-7. **Provide reasoning**: For each chunk, explain why it was classified that way using semantic analysis and precedence rules
+7. **Provide reasoning**: For each chunk, explain why it was classified that way using semantic analysis
 
 8. **Detect MIXED**: If chunks have different scopes (general + project), mark as MIXED
 
@@ -176,7 +179,7 @@ Before analyzing any items, gather context to inform your classification decisio
   "chunks": [
     {
       "text": "<chunk-text>",
-      "domain": "rest|fastapi|python|surrealdb|elasticsearch",
+      "domains": ["rest", "fastapi"],
       "scope": "general|project",
       "pattern": "api-patterns|exception-patterns|factory-patterns|...|OTHER",
       "reasoning": "<why-this-classification>",
@@ -210,21 +213,19 @@ These are strong indicators that content is PROJECT scope. However, the absence 
 
 ### Domain Detection
 
-Use semantic analysis and precedence rules from MODULE-DEFINITIONS.md Section 2 to determine the correct module. Do not rely on keyword matching alone.
-
-**Precedence Rules (from MODULE-DEFINITIONS.md):**
-1. Protocol takes precedence over framework (URL structure → `rest`, not `fastapi`)
-2. Framework takes precedence over language (`response_model` → `fastapi`, not `python`)
-3. Language takes precedence over database (`async/await` → `python`, not `surrealdb`)
-4. Most specific module wins when precedence rules don't apply
+Identify ALL applicable domains. Domains are a set—tag multiple if relevant. No dropping or
+choosing one. Output as list (e.g., `["rest", "fastapi"]`).
 
 **Semantic Analysis Questions:**
-- What is the **purpose** of this content? (protocol convention vs framework feature vs language pattern)
-- Could this apply to **any REST API** regardless of framework? → `rest`
-- Is this a **FastAPI-specific feature** not general to REST? → `fastapi`
-- Is this a **Python language pattern** not specific to a framework? → `python`
+- Does this involve **REST/HTTP conventions**? → include `rest`
+- Does this involve **FastAPI-specific features**? → include `fastapi`
+- Does this involve **Python language patterns**? → include `python`
+- Does this involve **database-specific syntax**? → include `surrealdb` or `elasticsearch`
 
-See `docs/development/MODULE-DEFINITIONS.md` Section 2 for detailed precedence rules and examples.
+**Examples:**
+- URL structure + APIRouter → `['rest', 'fastapi']`
+- async/await + SurrealDB query → `['python', 'surrealdb']`
+- Pydantic model + response_model → `['python', 'fastapi']`
 
 ### Pattern Detection
 
@@ -375,8 +376,8 @@ When processing multiple items:
 
 ## Guidelines
 
-1. **Use semantic analysis, not keyword matching**: Read MODULE-DEFINITIONS.md to understand precedence rules. Keywords are hints, not decisions.
-2. **Apply precedence rules**: When content fits multiple modules, use: protocol > framework > language > database
+1. **Use semantic analysis, not keyword matching**: Read MODULE-DEFINITIONS.md to understand domain tagging. Keywords are hints, not decisions.
+2. **Apply multi-domain tagging**: When content relates to multiple domains, apply ALL applicable domain tags
 3. **Follow cross-reference quality rules**: When suggesting PROJECT text, use MODULE-DEFINITIONS.md Section 5 rules (explain implementation, include file path, include function/class/field name, describe what it does, explain why it's relevant)
 4. **Be thorough**: One sentence may contain multiple chunks with different classifications
 5. **Be precise**: Simple regex (app/*) is necessary but not sufficient - understand context
@@ -392,9 +393,9 @@ When processing multiple items:
 
 **Semantic Analysis Process**:
 1. **Intent**: This text describes both a REST convention (URL versioning) and implementation wiring (how it's done in this project)
-2. **Technology**: REST protocol (URL structure) + FastAPI framework (router mounting)
-3. **Precedence**: URL structure is a REST protocol convention (MODULE-DEFINITIONS.md Section 2, Rule 1: Protocol > Framework)
-4. **Scope**: First part is GENERAL (applies to any REST API), second part is PROJECT (references app/core/factory.py)
+2. **Domains**: `['rest', 'fastapi']` — URL structure relates to REST, router mounting relates to FastAPI
+3. **Scope**: First part is GENERAL (applies to any REST API), second part is PROJECT (references app/core/factory.py)
+4. **Split reason**: Different scopes (GENERAL vs PROJECT), not different domains
 
 **Output**:
 ```json
@@ -405,18 +406,18 @@ When processing multiple items:
   "chunks": [
     {
       "text": "Mount all versioned endpoints under /api/{version}",
-      "domain": "rest",
+      "domains": ["rest"],
       "scope": "general",
       "pattern": "api-patterns",
-      "reasoning": "URL versioning is a REST protocol convention (MODULE-DEFINITIONS.md Section 2, Rule 1: Protocol takes precedence over framework). This belongs in `rest` module, not `fastapi`, because it applies to any REST API regardless of framework.",
+      "reasoning": "URL versioning is a REST protocol convention. Domains is `['rest']` because it describes HTTP/URL patterns applicable to any REST API. The split is due to scope (GENERAL), not domain.",
       "project_markers": []
     },
     {
       "text": "using create_app in app/core/factory.py",
-      "domain": "fastapi",
+      "domains": ["fastapi"],
       "scope": "project",
       "pattern": "factory-patterns",
-      "reasoning": "References project-specific wiring (create_app function, app/core/factory.py path). Pattern is factory-patterns because it's about how to wire up the application at startup (MODULE-DEFINITIONS.md Section 4 test question).",
+      "reasoning": "References project-specific wiring (create_app function, app/core/factory.py path). Pattern is factory-patterns because it's about how to wire up the application at startup.",
       "project_markers": ["create_app", "app/core/factory.py"]
     }
   ],

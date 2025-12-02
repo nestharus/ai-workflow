@@ -1,0 +1,200 @@
+doc_id: project-surrealdb-repository-patterns
+title: SurrealDB Repository Patterns
+version_hint: 2024-2025
+kind: surrealdb_data_access_standards
+description: >
+  SurrealDB-specific repository implementation patterns using SurrealDBPool for connection management and parameterized
+  queries.
+scope: >
+  Covers SurrealDB connection acquisition, parameterized queries, schema operations, auto-commit behavior, and result
+  mapping. Generic repository patterns are in docs/development/python/repository-patterns.toon.
+domain:
+  - surrealdb
+primary_runtime_references:
+  - path: app/infrastructure/surrealdb/pool.py
+    role: SurrealDB pool implementation.
+  - path: app/repositories/example_repository.py
+    role: SurrealDB repository example.
+related_pattern_docs:
+  - python/repository-patterns.toon
+  - surrealdb/connection-pooling-patterns.toon
+  - python/dependency-patterns.toon
+sections:
+  - id: surrealdb-pattern
+    index: 1
+    title: SurrealDB repository pattern
+    category: standard
+    summary: >
+      SurrealDB access is coordinated via SurrealDBPool; repositories use parameterized queries and connection
+      acquisition.
+    sample_code:
+      description: SurrealDB query pattern inside a repository method.
+      code: "from app.infrastructure.surrealdb.pool import SurrealDBPool\nfrom app.contracts.users import User\nclass SurrealUserRepository:\n\
+        \    \"\"\"Repository for user persistence in SurrealDB.\"\"\"\n    def __init__(self, pool: SurrealDBPool) -> None:\n\
+        \        \"\"\"Create repository with SurrealDB pool.\"\"\"\n        self._pool = pool\n    async def get_by_id(self,\
+        \ user_id: str) -> User | None:\n        \"\"\"Retrieve user by ID from SurrealDB.\"\"\"\n        async with self._pool.acquire()\
+        \ as conn:\n            result = await conn.query(\n                \"SELECT * FROM users WHERE id = $id LIMIT 1;\"\
+        ,\n                {\"id\": user_id}\n            )\n        # Process result and return domain model\n        ..."
+    items:
+      - id: surrealdb.connection
+        type: rule
+        text: >
+          Use async with pool.acquire() as conn to obtain connections; the pool handles timeouts and returning
+          connections
+          to the queue.
+      - id: surrealdb.parameterized
+        type: rule
+        text: >
+          Call await conn.query(sql, params) with parameter dictionaries instead of interpolating values into SQL
+          strings
+          to avoid injection.
+      - id: surrealdb.schema
+        type: rule
+        text: >
+          Schema and migration operations are centralized on SurrealDBPool via helpers like initialize_schema() and
+          execute_schema().
+          Repositories should not define or migrate schema.
+      - id: surrealdb.autocommit
+        type: note
+        text: >
+          In the current architecture, SurrealDB queries are auto-committed by the driver. Transaction boundary guidance
+          prepares for future transactional stores.
+      - id: surrealdb.mapping
+        type: rule
+        text: >
+          Repositories encapsulate mapping from SurrealDB records to domain models, shielding services from
+          driver-specific
+          result shapes.
+  - id: surrealdb-connection-management
+    index: 2
+    title: SurrealDB connection management
+    category: standard
+    summary: Patterns for using SurrealDBPool in repository implementations.
+    sample_code:
+      description: Repository constructor and connection acquisition pattern.
+      imports:
+        - app.infrastructure.surrealdb.pool.SurrealDBPool
+        - app.contracts.users.User
+      code: "async def list_by_status(self, status: str, limit: int = 100) -> list[Order]:\n    sql = \"\"\"\n        SELECT\
+        \ * FROM orders\n        WHERE status = $status\n        ORDER BY created_at DESC\n        LIMIT $limit;\n    \"\"\
+        \"\n    params = {\"status\": status, \"limit\": limit}\n    async with self._pool.acquire() as conn:\n        result\
+        \ = await conn.query(sql, params)\n    if not result or not result[0].get(\"result\"):\n        return []\n    return\
+        \ [Order(**record) for record in result[0][\"result\"]]"
+    items:
+      - id: conn.constructor
+        type: rule
+        text: >
+          Accept SurrealDBPool in the repository constructor via dependency injection; do not create pools inside
+          repositories.
+      - id: conn.acquire-context
+        type: pattern
+        text: >
+          Use async with pool.acquire() as conn for connection lifecycle; the context manager ensures connections are
+          returned to the pool.
+      - id: conn.timeout-handling
+        type: note
+        text: >
+          The pool enforces acquire timeouts; if no connection is available within the configured timeout, an error is
+          raised. Handle this at the service or global error handler level.
+      - id: conn.ref-pool-patterns
+        type: note
+        text: >
+          See app/infrastructure/surrealdb/pool.py and surrealdb/connection-pooling-patterns.toon for pool configuration
+          and lifecycle details.
+  - id: surrealdb-query-patterns
+    index: 3
+    title: SurrealDB query patterns
+    category: standard
+    summary: Patterns for building and executing SurrealDB queries.
+    sample_code:
+      description: Parameterized query with result handling.
+      code: "def list_by_status(self, status: str, limit: int = 100) -> list[Order]:\nl = \"\"\"\n  SELECT * FROM orders\n\
+        \  WHERE status = $status\n  ORDER BY created_at DESC\n  LIMIT $limit;\n\"\nrams = {\"status\": status, \"limit\"\
+        : limit}\nync with self._pool.acquire() as conn:\n  result = await conn.query(sql, params)\n not result or not result[0].get(\"\
+        result\"):\n  return []\nturn [Order(**record) for record in result[0][\"result\"]]"
+    items:
+      - id: query.parameterized-syntax
+        type: rule
+        text: >
+          Use $variable syntax for parameters in SurrealDB SQL and pass a dictionary as the second argument to
+          conn.query().
+      - id: query.result-structure
+        type: note
+        text: >
+          SurrealDB returns results as a list of response objects; each contains a result key with the actual data.
+          Always
+          check for empty or None results.
+      - id: query.model-mapping
+        type: rule
+        text: >
+          Map SurrealDB records to Pydantic domain models in the repository; services should never see raw SurrealDB
+          response
+          structures.
+      - id: query.record-ids
+        type: note
+        text: >
+          SurrealDB uses type::thing() functions for record IDs (e.g., type::thing("users", "123")). Handle ID
+          conversion
+          in repository mapping code.
+      - id: surrealdb.query.pagination
+        type: pattern
+        text: >
+          Use LIMIT and START (or calculate offset) for pagination; map offset/limit parameters from service calls to
+          SurrealDB clauses.
+  - id: surrealdb-schema-operations
+    index: 4
+    title: SurrealDB schema operations
+    category: standard
+    summary: Schema management patterns for SurrealDB repositories.
+    items:
+      - id: schema.pool-responsibility
+        type: rule
+        text: >
+          Schema initialization is handled by SurrealDBPool.initialize_schema() called during application startup;
+          repositories
+          assume schema exists.
+      - id: schema.versioning
+        type: note
+        text: Track schema versions using a schema_versions table or similar mechanism to manage migrations safely.
+      - id: schema.define-patterns
+        type: note
+        text: >
+          Use DEFINE TABLE, DEFINE FIELD, and DEFINE INDEX statements in schema initialization scripts. See
+          app/infrastructure/surrealdb/pool.py.
+      - id: schema.no-repo-schema
+        type: rule
+        text: >
+          Repositories must not execute schema changes; they perform only data operations (SELECT, CREATE, UPDATE,
+          DELETE).
+      - id: schema.ref-connection-pooling
+        type: note
+        text: >
+          See surrealdb/connection-pooling-patterns.toon for schema initialization lifecycle and error handling details.
+  - id: surrealdb-testing
+    index: 5
+    title: Testing SurrealDB repositories
+    category: testing
+    summary: Strategies for testing repositories that use SurrealDB.
+    items:
+      - id: testing.unit-mocks
+        type: rule
+        text: >
+          For unit tests, mock SurrealDBPool and configure mock.acquire() to return a mock connection that captures
+          query
+          arguments.
+      - id: testing.integration-db
+        type: pattern
+        text: >
+          For integration tests, use a separate SurrealDB namespace/database (e.g., test_namespace, test_database) to
+          isolate test data.
+      - id: testing.cleanup
+        type: rule
+        text: >
+          Clean up test data between test runs by deleting records or resetting the test database; avoid side effects
+          between tests.
+      - id: testing.docker-setup
+        type: note
+        text: Integration tests can use docker-compose to spin up a SurrealDB instance for the test suite.
+      - id: testing.ref-conftest
+        type: note
+        text: See tests/conftest.py for fixtures that set up SurrealDB pools for integration testing.
