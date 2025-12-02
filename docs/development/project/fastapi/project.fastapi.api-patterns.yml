@@ -27,7 +27,9 @@ sections:
     items:
       - id: construction.response-class-wiring
         type: rule
-        text: See project.fastapi.factory-patterns.yml for create_app configuration of ORJSONResponse as default_response_class.
+        text: >
+          See project.fastapi.factory-patterns.yml for create_app configuration of ORJSONResponse as
+          default_response_class.
       - id: construction.version-prefix-wiring
         type: rule
         text: See project.fastapi.factory-patterns.yml for /api/{version} mounting in create_app.
@@ -39,7 +41,8 @@ sections:
     items:
       - id: validation.handler-wiring
         type: rule
-        text: See project.fastapi.exception-patterns.yml for validation_exception_handler registration and AppError envelope
+        text: >
+          See project.fastapi.exception-patterns.yml for validation_exception_handler registration and AppError envelope
           configuration in app/core/exceptions.py.
   - id: response-model-configuration
     index: 3
@@ -49,7 +52,8 @@ sections:
     items:
       - id: response.validation-response-wiring
         type: rule
-        text: See project.fastapi.exception-patterns.yml for VALIDATION_ERROR_RESPONSE usage from app/contracts/errors.py.
+        text: >
+          See project.fastapi.exception-patterns.yml for VALIDATION_ERROR_RESPONSE usage from app/contracts/errors.py.
   - id: openapi-documentation
     index: 4
     title: OpenAPI documentation standards
@@ -58,7 +62,9 @@ sections:
     items:
       - id: openapi.errors.schema-registration-wiring
         type: rule
-        text: See project.fastapi.factory-patterns.yml for AppError and HTTPValidationError schema registration in create_app.
+        text: >
+          See project.fastapi.factory-patterns.yml for AppError and HTTPValidationError schema registration in
+          create_app.
   - id: router-registration
     index: 5
     title: Router registration
@@ -67,7 +73,9 @@ sections:
     items:
       - id: registration.versioned-mount-wiring
         type: rule
-        text: See project.fastapi.factory-patterns.yml for app.include_router(api_router, prefix=settings.api_prefix) in create_app.
+        text: >
+          See project.fastapi.factory-patterns.yml for app.include_router(api_router, prefix=settings.api_prefix) in
+          create_app.
       - id: registration.router-inclusion-wiring
         type: rule
         text: See project.fastapi.router-patterns.yml for domain router inclusion in app/api/v1/router.py.

@@ -2,9 +2,11 @@ doc_id: project-fastapi-architectural-patterns
 title: FastAPI Layered Architecture Integration (Project Wiring)
 version_hint: 2024-2025
 kind: fastapi_architecture_integration
-description: Project-specific FastAPI wiring for layered architecture with APIRouter, Depends(), middleware, lifespan management,
+description: >
+  Project-specific FastAPI wiring for layered architecture with APIRouter, Depends(), middleware, lifespan management,
   and application factory.
-scope: Project-specific implementation wiring. For general FastAPI patterns, see general.fastapi.architectural-patterns.yml.
+scope: >
+  Project-specific implementation wiring. For general FastAPI patterns, see general.fastapi.architectural-patterns.yml.
 primary_runtime_references:
   - path: app/core/factory.py
     role: Application factory wiring middleware, routers, and lifespan.
@@ -59,13 +61,17 @@ sections:
     items:
       - id: repository.state-access-wiring
         type: rule
-        text: See project.fastapi.dependency-patterns.yml for request.app.state wiring with surrealdb_pool and elasticsearch_client.
+        text: >
+          See project.fastapi.dependency-patterns.yml for request.app.state wiring with surrealdb_pool and
+          elasticsearch_client.
       - id: repository.constructor-injection-wiring
         type: rule
         text: Repositories do not access app.state directly; see project.fastapi.dependency-patterns.yml.
       - id: repository.db-reference
         type: reference
-        text: See project.surrealdb.repository-patterns.yml and project.elasticsearch.repository-patterns.yml for database-specific
+        text: >
+          See project.surrealdb.repository-patterns.yml and project.elasticsearch.repository-patterns.yml for
+          database-specific
           patterns.
       - id: repository.python-reference
         type: reference
@@ -81,7 +87,8 @@ sections:
         text: See project.fastapi.settings-patterns.yml for get_settings dependency and app.state.settings wiring.
       - id: factory.reference
         type: reference
-        text: See project.fastapi.factory-patterns.yml for detailed factory implementation patterns in app/core/factory.py.
+        text: >
+          See project.fastapi.factory-patterns.yml for detailed factory implementation patterns in app/core/factory.py.
   - id: dependency-injection
     index: 5
     title: Dependency injection patterns

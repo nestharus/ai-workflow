@@ -48,22 +48,29 @@ sections:
     items:
       - id: es.wrapper-role
         type: pattern
-        text: Use ElasticsearchWrapper in app/infrastructure/db_connections.py to adapt the synchronous elasticsearch client
+        text: >
+          Use ElasticsearchWrapper in app/infrastructure/db_connections.py to adapt the synchronous elasticsearch client
           for async use and centralize connection management.
       - id: es.client-managed-pool
         type: rule
-        text: Rely on the Elasticsearch client’s internal HTTP connection pool, configured via Settings.elasticsearch_connections_per_node.
+        text: >
+          Rely on the Elasticsearch client’s internal HTTP connection pool, configured via
+          Settings.elasticsearch_connections_per_node.
       - id: es.async-wrapper
         type: note
-        text: Execute potentially blocking operations (ping, search, index, bulk, indices.create) via anyio.to_thread.run_sync()
+        text: >
+          Execute potentially blocking operations (ping, search, index, bulk, indices.create) via
+          anyio.to_thread.run_sync()
           so they do not block the event loop.
       - id: es.init-handshake
         type: rule
-        text: Have ElasticsearchWrapper.init() ping the cluster at startup to verify connectivity before marking the client
+        text: >
+          Have ElasticsearchWrapper.init() ping the cluster at startup to verify connectivity before marking the client
           ready.
       - id: es.initialized-check
         type: pattern
-        text: Use _ensure_initialized() guard in wrapper methods to raise ElasticsearchNotInitializedError if called before
+        text: >
+          Use _ensure_initialized() guard in wrapper methods to raise ElasticsearchNotInitializedError if called before
           init() completes.
   - id: elasticsearch-configuration
     index: 2
@@ -73,19 +80,25 @@ sections:
     items:
       - id: es.config.connections-per-node
         type: rule
-        text: Configure elasticsearch_connections_per_node with a moderate default (for example 25) and increase only when
+        text: >
+          Configure elasticsearch_connections_per_node with a moderate default (for example 25) and increase only when
           metrics show underutilized nodes and connection pool exhaustion.
       - id: es.config.request-timeout
         type: rule
-        text: Set elasticsearch_request_timeout to a bounded value that reflects expected query latency; avoid unbounded waits
+        text: >
+          Set elasticsearch_request_timeout to a bounded value that reflects expected query latency; avoid unbounded
+          waits
           that tie up worker threads.
       - id: es.config.retry-on-timeout
         type: note
-        text: Enable retry_on_timeout only when it is acceptable to retry operations on transient issues; do not use it to
+        text: >
+          Enable retry_on_timeout only when it is acceptable to retry operations on transient issues; do not use it to
           hide persistent performance problems.
       - id: es.config.hosts
         type: note
-        text: Point elasticsearch_url at a load balancer or list of node URLs; the client will maintain a pool of HTTP connections
+        text: >
+          Point elasticsearch_url at a load balancer or list of node URLs; the client will maintain a pool of HTTP
+          connections
           across these nodes.
   - id: index-initialization
     index: 3
@@ -105,27 +118,34 @@ sections:
     items:
       - id: es.index-initialization
         type: pattern
-        text: Use initialize_indices() on the wrapper to create required indices with configured shard and replica counts,
+        text: >
+          Use initialize_indices() on the wrapper to create required indices with configured shard and replica counts,
           handling already-existing indices gracefully.
       - id: es.index-init.initialize-method
         type: pattern
-        text: Use initialize_indices() on the wrapper to create required indices with configured shard and replica counts
+        text: >
+          Use initialize_indices() on the wrapper to create required indices with configured shard and replica counts
           during startup.
       - id: es.index-init.already-exists
         type: rule
-        text: Handle resource_already_exists_exception gracefully in create_index() by logging and continuing; do not fail
+        text: >
+          Handle resource_already_exists_exception gracefully in create_index() by logging and continuing; do not fail
           startup for existing indices.
       - id: es.index-init.mappings
         type: note
-        text: Define index mappings with appropriate field types (text for full-text search, keyword for exact match) in the
+        text: >
+          Define index mappings with appropriate field types (text for full-text search, keyword for exact match) in the
           initialization code.
       - id: es.index-init.shards-replicas
         type: note
-        text: Configure number_of_shards and number_of_replicas via Settings fields; use appropriate values for environment
+        text: >
+          Configure number_of_shards and number_of_replicas via Settings fields; use appropriate values for environment
           (fewer replicas for dev, more for production).
       - id: es.index-init.factory-integration
         type: rule
-        text: Ensure create_elasticsearch_wrapper() calls initialize_indices() and closes the wrapper if initialization fails.
+        text: >
+          Ensure create_elasticsearch_wrapper() calls initialize_indices() and closes the wrapper if initialization
+          fails.
   - id: elasticsearch-lifecycle
     index: 4
     title: Elasticsearch client lifecycle
@@ -146,19 +166,24 @@ sections:
     items:
       - id: es.lifecycle.startup
         type: pattern
-        text: Call create_elasticsearch_wrapper(settings) during startup to build the wrapper, verify connectivity, and initialize
+        text: >
+          Call create_elasticsearch_wrapper(settings) during startup to build the wrapper, verify connectivity, and
+          initialize
           indices.
       - id: es.lifecycle.init-ping
         type: rule
-        text: The init() method pings the cluster to verify connectivity; if ping fails, the client should not be marked as
+        text: >
+          The init() method pings the cluster to verify connectivity; if ping fails, the client should not be marked as
           initialized.
       - id: es.lifecycle.fail-fast
         type: rule
-        text: If index initialization fails, close the wrapper and propagate the error so the application fails fast instead
+        text: >
+          If index initialization fails, close the wrapper and propagate the error so the application fails fast instead
           of running without required indices.
       - id: es.lifecycle.shutdown
         type: rule
-        text: During shutdown, call wrapper.close() to release HTTP connections; log any failures without preventing process
+        text: >
+          During shutdown, call wrapper.close() to release HTTP connections; log any failures without preventing process
           termination.
   - id: elasticsearch-testing
     index: 5
@@ -179,21 +204,28 @@ sections:
     items:
       - id: elasticsearch.test.monkeypatch-factory
         type: pattern
-        text: Monkeypatch create_elasticsearch_wrapper() to return mock wrappers in tests that only care about validation
+        text: >
+          Monkeypatch create_elasticsearch_wrapper() to return mock wrappers in tests that only care about validation
           or error behavior.
       - id: test.mock-search
         type: rule
-        text: Configure mock wrappers with mock.search() returning canned response structures that match Elasticsearch result
+        text: >
+          Configure mock wrappers with mock.search() returning canned response structures that match Elasticsearch
+          result
           format.
       - id: test.integration-indices
         type: pattern
-        text: For integration tests, use test-specific index names (for example test_facts_index) to isolate test data from
+        text: >
+          For integration tests, use test-specific index names (for example test_facts_index) to isolate test data from
           development indices.
       - id: elasticsearch.test.cleanup
         type: rule
-        text: Clean up test indices between test runs by deleting indices or clearing documents; avoid side effects between
+        text: >
+          Clean up test indices between test runs by deleting indices or clearing documents; avoid side effects between
           tests.
       - id: elasticsearch.test.docker-compose
         type: note
-        text: Integration tests can use docker-compose to spin up an Elasticsearch instance for the test suite; see tests/conftest.py
+        text: >
+          Integration tests can use docker-compose to spin up an Elasticsearch instance for the test suite; see
+          tests/conftest.py
           for fixture examples.

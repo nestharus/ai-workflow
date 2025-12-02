@@ -2,9 +2,11 @@ doc_id: project-fastapi-dependency-patterns
 title: FastAPI Dependency Injection Patterns
 version_hint: 2024-2025
 kind: fastapi_dependency_standards
-description: FastAPI-specific dependency injection patterns using Depends(), Annotated type aliases, yield-based dependencies,
+description: >
+  FastAPI-specific dependency injection patterns using Depends(), Annotated type aliases, yield-based dependencies,
   and app.dependency_overrides for testability.
-scope: Covers FastAPI Depends(), Annotated type aliases, centralized dependency providers, database session dependencies,
+scope: >
+  Covers FastAPI Depends(), Annotated type aliases, centralized dependency providers, database session dependencies,
   router-level dependencies, and testing with overrides. Python DI concepts are in docs/development/python/dependency-patterns.toon.
 primary_runtime_references:
   - path: app/api/v1/dependencies.py
@@ -40,25 +42,33 @@ sections:
     items:
       - id: fundamentals.depends-usage
         type: rule
-        text: Declare dependencies in path operation signatures using fastapi.Depends() so FastAPI can resolve and inject
+        text: >
+          Declare dependencies in path operation signatures using fastapi.Depends() so FastAPI can resolve and inject
           them automatically for each request.
       - id: fundamentals.composition
         type: note
-        text: Treat dependencies as composable building blocks; dependency functions and classes may themselves declare dependencies,
+        text: >
+          Treat dependencies as composable building blocks; dependency functions and classes may themselves declare
+          dependencies,
           forming a DAG.
       - id: fundamentals.async-support
         type: note
         text: Dependencies can be async def or plain def and FastAPI handles both styles transparently.
       - id: fundamentals.request-cache
         type: rule
-        text: Rely on FastAPI’s per-request dependency cache, which ensures each dependency is resolved at most once per request
+        text: >
+          Rely on FastAPI’s per-request dependency cache, which ensures each dependency is resolved at most once per
+          request
           unless use_cache=False is specified.
       - id: fundamentals.common-parameters-example
         type: pattern
-        text: Use small helper dependencies such as common_parameters to share query parameter handling across endpoints.
+        text: >
+          Use small helper dependencies such as common_parameters to share query parameter handling across endpoints.
       - id: fundamentals.http-surface
         type: note
-        text: Design dependencies around HTTP concerns at the router boundary (for example pagination, authentication, headers)
+        text: >
+          Design dependencies around HTTP concerns at the router boundary (for example pagination, authentication,
+          headers)
           and separate them from pure domain services.
   - id: annotated-type-aliases
     index: 2
@@ -82,21 +92,26 @@ sections:
     items:
       - id: annotated.pattern
         type: rule
-        text: Use typing.Annotated with Depends to define reusable dependency type aliases such as CommonsDep and PageParams.
+        text: >
+          Use typing.Annotated with Depends to define reusable dependency type aliases such as CommonsDep and
+          PageParams.
       - id: annotated.example-pagination
         type: note
-        text: Wrap pagination logic in a dependency like common_pagination_params that returns a Pagination value object and
+        text: >
+          Wrap pagination logic in a dependency like common_pagination_params that returns a Pagination value object and
           expose it as a PageParams alias.
       - id: annotated.benefits-dry
         type: note
         text: Type aliases reduce repetition and keep route signatures concise while centralizing dependency wiring.
       - id: annotated.ide-support
         type: note
-        text: Annotated aliases provide better IDE autocompletion and static checking because handlers see strongly typed
+        text: >
+          Annotated aliases provide better IDE autocompletion and static checking because handlers see strongly typed
           parameters rather than raw Depends expressions.
       - id: annotated.storage-location
         type: rule
-        text: Place shared dependency aliases next to their providers in app/api/v1/dependencies.py so routers import them
+        text: >
+          Place shared dependency aliases next to their providers in app/api/v1/dependencies.py so routers import them
           from a single versioned module.
   - id: centralized-dependency-providers
     index: 3
@@ -125,22 +140,31 @@ sections:
     items:
       - id: providers.central-file
         type: rule
-        text: Centralize reusable dependency providers for a given API version in app/api/v1/dependencies.py rather than defining
+        text: >
+          Centralize reusable dependency providers for a given API version in app/api/v1/dependencies.py rather than
+          defining
           them inline in routers.
       - id: providers.layers
         type: note
-        text: Organize providers into configuration (settings), infrastructure (database pools, search clients), and services
+        text: >
+          Organize providers into configuration (settings), infrastructure (database pools, search clients), and
+          services
           (domain services built on repositories and infrastructure).
       - id: providers.lower-level
         type: note
-        text: Expose framework-agnostic providers such as get_settings in app/core/dependencies.py and connection factories
+        text: >
+          Expose framework-agnostic providers such as get_settings in app/core/dependencies.py and connection factories
           in app/infrastructure/db_connections.py, and build router-facing providers on top of them.
       - id: providers.router-import-surface
         type: rule
-        text: Treat app/api/v1/dependencies.py as the DI surface imported by routers so they do not access app.state directly.
+        text: >
+          Treat app/api/v1/dependencies.py as the DI surface imported by routers so they do not access app.state
+          directly.
       - id: providers.app-state
         type: note
-        text: Infrastructure providers typically read from request.app.state (for example surrealdb_pool and elasticsearch_client)
+        text: >
+          Infrastructure providers typically read from request.app.state (for example surrealdb_pool and
+          elasticsearch_client)
           to stay aligned with the application factory.
   - id: database-session-dependencies
     index: 4
@@ -159,23 +183,31 @@ sections:
     items:
       - id: db-session.yield-pattern
         type: rule
-        text: Implement database session dependencies as async generators that yield a session (for example a Surreal connection)
+        text: >
+          Implement database session dependencies as async generators that yield a session (for example a Surreal
+          connection)
           and ensure cleanup after the yield.
       - id: db-session.pool-acquire
         type: pattern
-        text: Acquire connections from SurrealDBPool via async with pool.acquire() inside the dependency so sessions are request-scoped
+        text: >
+          Acquire connections from SurrealDBPool via async with pool.acquire() inside the dependency so sessions are
+          request-scoped
           while the pool is shared.
       - id: db-session.exception-safety
         type: note
-        text: The async context manager used in get_db_session ensures connections are returned to the pool even when downstream
+        text: >
+          The async context manager used in get_db_session ensures connections are returned to the pool even when
+          downstream
           code raises exceptions.
       - id: db-session.thin-dependency
         type: rule
-        text: Keep get_db_session thin; it should only acquire and release connections, leaving query logic and transactions
+        text: >
+          Keep get_db_session thin; it should only acquire and release connections, leaving query logic and transactions
           to repositories and services.
       - id: db-session.fastapi-yield
         type: note
-        text: FastAPI automatically handles yield-based dependencies, running code after yield during response finalization
+        text: >
+          FastAPI automatically handles yield-based dependencies, running code after yield during response finalization
           to ensure cleanup.
   - id: settings-dependency
     index: 5
@@ -185,23 +217,29 @@ sections:
     items:
       - id: settings.lru-cache
         type: rule
-        text: Implement get_settings in app/core/dependencies.py as an @lru_cache-decorated function that builds a single
+        text: >
+          Implement get_settings in app/core/dependencies.py as an @lru_cache-decorated function that builds a single
           Settings instance from environment variables.
       - id: settings.route-usage
         type: pattern
-        text: Inject Settings into routes using Annotated[Settings, Depends(get_settings)] so handlers do not construct Settings
+        text: >
+          Inject Settings into routes using Annotated[Settings, Depends(get_settings)] so handlers do not construct
+          Settings
           directly.
       - id: settings.test-overrides
         type: rule
-        text: Override get_settings via app.dependency_overrides in tests to supply test-specific configuration and clear
+        text: >
+          Override get_settings via app.dependency_overrides in tests to supply test-specific configuration and clear
           overrides after each test.
       - id: settings.no-globals
         type: rule
-        text: Avoid importing or mutating a global Settings instance; rely on the cached dependency everywhere configuration
+        text: >
+          Avoid importing or mutating a global Settings instance; rely on the cached dependency everywhere configuration
           is needed.
       - id: settings.debugging
         type: note
-        text: Prefer toggling behavior through Settings fields such as include_error_body rather than patching module-level
+        text: >
+          Prefer toggling behavior through Settings fields such as include_error_body rather than patching module-level
           constants.
   - id: router-level-dependencies
     index: 6
@@ -211,19 +249,24 @@ sections:
     items:
       - id: router-level.cross-cutting
         type: pattern
-        text: Attach shared concerns such as authentication, rate limiting, or auditing at the APIRouter level via dependencies=[Depends(...)]
+        text: >
+          Attach shared concerns such as authentication, rate limiting, or auditing at the APIRouter level via
+          dependencies=[Depends(...)]
           instead of repeating them on each route.
       - id: router-level.execution-order
         type: note
-        text: Router-level dependencies run before route-specific dependencies, ensuring that cross-cutting checks execute
+        text: >
+          Router-level dependencies run before route-specific dependencies, ensuring that cross-cutting checks execute
           consistently for all endpoints in the router.
       - id: router-level.security
         type: rule
-        text: Use Security() instead of Depends() for security schemes that carry scopes (for example OAuth2) while still
+        text: >
+          Use Security() instead of Depends() for security schemes that carry scopes (for example OAuth2) while still
           attaching them at the router level.
       - id: router-level.api-keys
         type: rule
-        text: Wire API key–based dependencies (for example APIKeyHeader or APIKeyQuery) at the router level when they guard
+        text: >
+          Wire API key–based dependencies (for example APIKeyHeader or APIKeyQuery) at the router level when they guard
           entire groups of endpoints.
   - id: service-dependencies
     index: 7
@@ -233,23 +276,32 @@ sections:
     items:
       - id: service.factory-functions
         type: pattern
-        text: Define factory dependencies such as get_user_service that assemble service instances from lower-level dependencies
+        text: >
+          Define factory dependencies such as get_user_service that assemble service instances from lower-level
+          dependencies
           like DB sessions and Settings.
       - id: service.router-usage
         type: note
-        text: 'In routers, depend on services via Annotated types (service: Annotated[UserService, Depends(get_user_service)])
+        text: >
+          'In routers, depend on services via Annotated types (service: Annotated[UserService,
+          Depends(get_user_service)])
           and call service methods directly.'
       - id: service.layer-pattern
         type: rule
-        text: Adopt the Service Layer pattern where services encapsulate domain workflows and are injected into routers instead
+        text: >
+          Adopt the Service Layer pattern where services encapsulate domain workflows and are injected into routers
+          instead
           of being instantiated inside route handlers.
       - id: service.domain-errors
         type: rule
-        text: Expect services to raise domain-specific exceptions (for example TicketNotFoundError or InvalidTransitionError)
+        text: >
+          Expect services to raise domain-specific exceptions (for example TicketNotFoundError or
+          InvalidTransitionError)
           and avoid fastapi.HTTPException in service methods.
       - id: service.testability
         type: note
-        text: Override service factories with mocks or fakes in tests via app.dependency_overrides to test routers without
+        text: >
+          Override service factories with mocks or fakes in tests via app.dependency_overrides to test routers without
           modifying production code.
   - id: testing-dependency-overrides
     index: 8
@@ -273,23 +325,30 @@ sections:
     items:
       - id: testing.factory-app
         type: rule
-        text: Construct FastAPI apps in tests using create_app with explicit Settings instances instead of importing an app
+        text: >
+          Construct FastAPI apps in tests using create_app with explicit Settings instances instead of importing an app
           from app.main.
       - id: testing.override-deps
         type: rule
-        text: Use app.dependency_overrides to replace dependencies such as get_db_session, get_settings, or service factories
+        text: >
+          Use app.dependency_overrides to replace dependencies such as get_db_session, get_settings, or service
+          factories
           with test doubles.
       - id: testing.override-example
         type: note
-        text: Implement overrides as async dependencies that yield test resources (for example test_db_pool.acquire()) and
+        text: >
+          Implement overrides as async dependencies that yield test resources (for example test_db_pool.acquire()) and
           clear app.dependency_overrides after each test.
       - id: testing.conftest-composition-root
         type: note
-        text: Centralize common test wiring in tests/conftest.py, including fixtures like test_settings, test_app, async_client,
+        text: >
+          Centralize common test wiring in tests/conftest.py, including fixtures like test_settings, test_app,
+          async_client,
           live_server, and api_client.
       - id: testing.integration-vs-e2e
         type: note
-        text: Use async_client plus dependency overrides for in-process integration tests and live_server plus api_client
+        text: >
+          Use async_client plus dependency overrides for in-process integration tests and live_server plus api_client
           (with real backends) for end-to-end tests.
       - id: testing.no-global-state
         type: rule

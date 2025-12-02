@@ -2,9 +2,12 @@ doc_id: project-fastapi-factory-patterns
 title: FastAPI Factory Patterns
 version_hint: 2024-2025
 kind: fastapi_factory_standards
-description: FastAPI-specific patterns for application construction, lifespan management, middleware/router registration,
+description: >
+  FastAPI-specific patterns for application construction, lifespan management, middleware/router registration,
   and OpenAPI customization using the create_app factory pattern.
-scope: Covers create_app pattern, lifespan context managers, resource initialization in FastAPI, exception handler registration,
+scope: >
+  Covers create_app pattern, lifespan context managers, resource initialization in FastAPI, exception handler
+  registration,
   middleware configuration, router registration, OpenAPI customization, settings integration, testing factory usage, and anti-patterns.
 primary_runtime_references:
   - path: app/core/factory.py
@@ -47,22 +50,30 @@ sections:
     items:
       - id: factory.create-app-rationale
         type: rule
-        text: 'Use an explicit create_app(settings: Settings) factory to construct FastAPI instances so configuration can
+        text: >
+          'Use an explicit create_app(settings: Settings) factory to construct FastAPI instances so configuration can
           be injected at runtime and tests can create isolated apps.'
       - id: factory.single-wiring-point
         type: note
-        text: Centralize routers, middleware, exception handlers, and OpenAPI customization in create_app so the HTTP surface
+        text: >
+          Centralize routers, middleware, exception handlers, and OpenAPI customization in create_app so the HTTP
+          surface
           is wired from a single function.
       - id: factory.fastapi-construction
         type: pattern
-        text: Initialize FastAPI with title, version, description, docs_url, redoc_url, default_response_class=ORJSONResponse,
+        text: >
+          Initialize FastAPI with title, version, description, docs_url, redoc_url,
+          default_response_class=ORJSONResponse,
           and lifespan=_lifespan(settings) for consistent configuration.
       - id: factory.store-settings-state
         type: rule
-        text: Store the provided Settings instance on app.state.settings immediately after app creation for downstream access.
+        text: >
+          Store the provided Settings instance on app.state.settings immediately after app creation for downstream
+          access.
       - id: factory.no-global-app
         type: rule
-        text: Avoid creating a global FastAPI app at import time; always use create_app so multiple instances can coexist
+        text: >
+          Avoid creating a global FastAPI app at import time; always use create_app so multiple instances can coexist
           in tests and different environments.
   - id: lifespan-management
     index: 2
@@ -96,23 +107,31 @@ sections:
     items:
       - id: lifespan.use-context-manager
         type: rule
-        text: Use FastAPI’s lifespan context manager instead of on_event startup/shutdown hooks to manage initialization and
+        text: >
+          Use FastAPI’s lifespan context manager instead of on_event startup/shutdown hooks to manage initialization and
           cleanup in a single async function.
       - id: lifespan.resource-safety
         type: note
-        text: Structure lifespan so that cleanup runs even if exceptions occur during startup, ensuring resources are not
+        text: >
+          Structure lifespan so that cleanup runs even if exceptions occur during startup, ensuring resources are not
           leaked when initialization fails.
       - id: lifespan.startup-phase
         type: pattern
-        text: In the startup block, create shared resources such as SurrealDBPool and ElasticsearchWrapper via create_surrealdb_pool(settings)
+        text: >
+          In the startup block, create shared resources such as SurrealDBPool and ElasticsearchWrapper via
+          create_surrealdb_pool(settings)
           and create_elasticsearch_wrapper(settings) and attach them to app.state.
       - id: lifespan.error-handling
         type: rule
-        text: Wrap startup logic in try/except blocks that log exceptions and re-raise them so failed resource initialization
+        text: >
+          Wrap startup logic in try/except blocks that log exceptions and re-raise them so failed resource
+          initialization
           prevents the app from serving requests.
       - id: lifespan.shutdown-phase
         type: rule
-        text: In the finally block, close Elasticsearch and SurrealDB pools if they were created, logging but swallowing close
+        text: >
+          In the finally block, close Elasticsearch and SurrealDB pools if they were created, logging but swallowing
+          close
           errors to allow a clean shutdown.
   - id: resource-initialization
     index: 3
@@ -131,23 +150,31 @@ sections:
     items:
       - id: resources.factory-functions
         type: rule
-        text: Use dedicated factory functions such as create_surrealdb_pool() and create_elasticsearch_wrapper() to initialize
+        text: >
+          Use dedicated factory functions such as create_surrealdb_pool() and create_elasticsearch_wrapper() to
+          initialize
           external resources instead of building them inline in create_app.
       - id: resources.attach-to-state
         type: pattern
-        text: After factories create resources, attach them to app.state (for example app.state.surrealdb_pool, app.state.elasticsearch_client,
+        text: >
+          After factories create resources, attach them to app.state (for example app.state.surrealdb_pool,
+          app.state.elasticsearch_client,
           app.state.cache) for access via dependency providers.
       - id: resources.schema-index-setup
         type: rule
-        text: Perform schema and index setup (initialize_schema() for SurrealDB and index initialization for Elasticsearch)
+        text: >
+          Perform schema and index setup (initialize_schema() for SurrealDB and index initialization for Elasticsearch)
           during startup so requests do not perform ad-hoc migrations.
       - id: resources.cache-first-class
         type: note
-        text: Treat caches such as Redis clients or in-memory caches as first-class resources created during startup and closed
+        text: >
+          Treat caches such as Redis clients or in-memory caches as first-class resources created during startup and
+          closed
           or flushed during shutdown.
       - id: resources.error-handling
         type: rule
-        text: If resource initialization or schema setup fails, close any partially created resources and raise an error so
+        text: >
+          If resource initialization or schema setup fails, close any partially created resources and raise an error so
           the application does not run in a degraded state.
   - id: exception-handler-registration
     index: 4
@@ -157,23 +184,32 @@ sections:
     items:
       - id: exceptions.register-in-factory
         type: rule
-        text: Register all custom exception handlers from create_app using app.add_exception_handler() or @app.exception_handler
+        text: >
+          Register all custom exception handlers from create_app using app.add_exception_handler() or
+          @app.exception_handler
           so error handling remains centralized.
       - id: exceptions.consistent-json
         type: rule
-        text: Ensure handlers serialize errors using the AppError envelope and HTTPValidationError models from app/contracts/errors.py
+        text: >
+          Ensure handlers serialize errors using the AppError envelope and HTTPValidationError models from
+          app/contracts/errors.py
           so all error responses share a standard JSON format.
       - id: exceptions.secure-sanitization
         type: note
-        text: Configure handlers to avoid exposing internal details in production, returning generic messages for INTERNAL_ERROR
+        text: >
+          Configure handlers to avoid exposing internal details in production, returning generic messages for
+          INTERNAL_ERROR
           while logging full stack traces.
       - id: exceptions.ordering
         type: rule
-        text: Register specific handlers such as RequestValidationError and DomainError before generic fallbacks like Exception
+        text: >
+          Register specific handlers such as RequestValidationError and DomainError before generic fallbacks like
+          Exception
           so the most specific handler is chosen first.
       - id: exceptions-updates
         type: note
-        text: Keep exception registration aligned with exception-patterns.toon; add or update handlers as new DomainError
+        text: >
+          Keep exception registration aligned with exception-patterns.toon; add or update handlers as new DomainError
           subclasses or error codes are introduced.
   - id: middleware-configuration-factory
     index: 5
@@ -183,19 +219,25 @@ sections:
     items:
       - id: middleware.centralized-config
         type: rule
-        text: Configure all middleware in create_app using app.add_middleware() to control ordering and environment-driven
+        text: >
+          Configure all middleware in create_app using app.add_middleware() to control ordering and environment-driven
           toggles from a single place.
       - id: middleware.ordering
         type: note
-        text: Follow the recommended stack ordering documented in middleware-patterns.toon (for example TrustedHost → security
+        text: >
+          Follow the recommended stack ordering documented in middleware-patterns.toon (for example TrustedHost →
+          security
           headers → GZip → logging) and adjust for CORS and proxies as needed.
       - id: middleware.settings-driven
         type: rule
-        text: Drive middleware registration from Settings fields such as allowed_hosts, CORS configuration, compression toggles,
+        text: >
+          Drive middleware registration from Settings fields such as allowed_hosts, CORS configuration, compression
+          toggles,
           and proxy settings instead of hardcoding values.
       - id: middleware.proxy-awareness
         type: note
-        text: When running behind a reverse proxy, configure ProxyHeadersMiddleware or Uvicorn proxy header options in the
+        text: >
+          When running behind a reverse proxy, configure ProxyHeadersMiddleware or Uvicorn proxy header options in the
           factory so client IPs and schemes are preserved correctly.
   - id: router-registration
     index: 6
@@ -205,19 +247,24 @@ sections:
     items:
       - id: router.version-prefix
         type: rule
-        text: Include the main API router under a versioned prefix such as settings.api_prefix (for example /api/v1) using
+        text: >
+          Include the main API router under a versioned prefix such as settings.api_prefix (for example /api/v1) using
           app.include_router(api_router, prefix=settings.api_prefix).
       - id: router.modular-structure
         type: note
-        text: Keep router definitions in separate modules and register them from create_app so the HTTP surface is modular
+        text: >
+          Keep router definitions in separate modules and register them from create_app so the HTTP surface is modular
           yet centrally wired.
       - id: router.internal-endpoints
         type: pattern
-        text: Register internal endpoints such as /health as separate routes on the app (for example app.add_api_route("/health",
+        text: >
+          Register internal endpoints such as /health as separate routes on the app (for example
+          app.add_api_route("/health",
           health_check, include_in_schema=False)).
       - id: router.future-versioning
         type: note
-        text: Use versioned prefixes to support future API versions (such as /api/v2) without breaking existing consumers.
+        text: >
+          Use versioned prefixes to support future API versions (such as /api/v2) without breaking existing consumers.
   - id: openapi-customization
     index: 7
     title: OpenAPI Customization
@@ -226,22 +273,31 @@ sections:
     items:
       - id: openapi.custom-fn
         type: rule
-        text: Override app.openapi with a custom_openapi() function that caches app.openapi_schema after the first generation
+        text: >
+          Override app.openapi with a custom_openapi() function that caches app.openapi_schema after the first
+          generation
           to avoid recomputation.
       - id: openapi.flatten-defs
         type: note
-        text: Flatten nested $defs into components.schemas to improve compatibility with OpenAPI tooling and client generators.
+        text: >
+          Flatten nested $defs into components.schemas to improve compatibility with OpenAPI tooling and client
+          generators.
       - id: openapi.register-error-schemas
         type: rule
-        text: Ensure shared error models such as HTTPValidationError and AppError from app/contracts/errors.py are registered
+        text: >
+          Ensure shared error models such as HTTPValidationError and AppError from app/contracts/errors.py are
+          registered
           under components.schemas so routes can reference them consistently.
       - id: openapi.align-validation-shape
         type: note
-        text: Normalize validation error schemas to match the AppError-wrapped HTTPValidationError structure described in
+        text: >
+          Normalize validation error schemas to match the AppError-wrapped HTTPValidationError structure described in
           api-patterns.toon and exception-patterns.toon.
       - id: openapi-doc-quality
         type: note
-        text: Treat custom OpenAPI wiring as part of the public API contract and update it whenever error or metadata schemas
+        text: >
+          Treat custom OpenAPI wiring as part of the public API contract and update it whenever error or metadata
+          schemas
           change.
   - id: settings-integration-factory
     index: 8
@@ -251,23 +307,29 @@ sections:
     items:
       - id: settings.store-on-state
         type: rule
-        text: Store the Settings instance on app.state.settings inside create_app so any component with access to Request
+        text: >
+          Store the Settings instance on app.state.settings inside create_app so any component with access to Request
           or App can read configuration.
       - id: settings.factory-entrypoint
         type: note
-        text: 'Treat create_app(settings: Settings) as the canonical composition root; production startup and tests should
+        text: >
+          'Treat create_app(settings: Settings) as the canonical composition root; production startup and tests should
           both construct apps by passing in validated Settings instances.'
       - id: settings.dependency-access
         type: pattern
-        text: 'Provide a get_settings dependency that reads from request.app.state.settings so routers and services can declare
+        text: >
+          'Provide a get_settings dependency that reads from request.app.state.settings so routers and services can
+          declare
           settings: Settings = Depends(get_settings).'
       - id: settings.env-config
         type: note
-        text: Implement Settings using pydantic-settings.BaseSettings so configuration is driven by environment variables
+        text: >
+          Implement Settings using pydantic-settings.BaseSettings so configuration is driven by environment variables
           rather than alternate configuration systems.
       - id: settings.feature-flags
         type: rule
-        text: Use Settings fields as feature flags (for example enable_experimental_routes) in create_app to conditionally
+        text: >
+          Use Settings fields as feature flags (for example enable_experimental_routes) in create_app to conditionally
           include routers, middleware, or behavior per environment.
   - id: testing-factory-usage
     index: 9
@@ -289,18 +351,24 @@ sections:
         text: Define a test_settings fixture that instantiates Settings with safe defaults suitable for tests.
       - id: testing.test-app-fixture
         type: pattern
-        text: Define a test_app fixture that calls create_app(test_settings) to provide isolated FastAPI instances for tests.
+        text: >
+          Define a test_app fixture that calls create_app(test_settings) to provide isolated FastAPI instances for
+          tests.
       - id: testing.dependency-overrides
         type: rule
-        text: Prefer FastAPI’s dependency override system (see api-testing-patterns.toon) to replace external integrations
+        text: >
+          Prefer FastAPI’s dependency override system (see api-testing-patterns.toon) to replace external integrations
           while still exercising the same create_app wiring.
       - id: testing.minimize-monkeypatch
         type: note
-        text: Reserve monkeypatching for low-level edge cases; it must not be the primary mechanism for swapping dependencies
+        text: >
+          Reserve monkeypatching for low-level edge cases; it must not be the primary mechanism for swapping
+          dependencies
           since it can diverge from production wiring.
       - id: testing.factory-benefits
         type: note
-        text: Relying on the factory pattern allows tests to run with different configurations (for example DB URLs or pool
+        text: >
+          Relying on the factory pattern allows tests to run with different configurations (for example DB URLs or pool
           sizes) without altering global state or production code.
   - id: factory-anti-patterns
     index: 10
@@ -310,21 +378,28 @@ sections:
     items:
       - id: anti.global-app-instance
         type: anti_pattern
-        text: Defining app = FastAPI() at module load time instead of using create_app, which makes testing and configuration
+        text: >
+          Defining app = FastAPI() at module load time instead of using create_app, which makes testing and
+          configuration
           difficult.
       - id: anti.init-outside-lifespan
         type: anti_pattern
-        text: Initializing DB clients or other long-lived resources at import time or in __init__ blocks without registering
+        text: >
+          Initializing DB clients or other long-lived resources at import time or in __init__ blocks without registering
           corresponding shutdown hooks.
       - id: anti.missing-shutdown-cleanup
         type: anti_pattern
-        text: Creating connection pools or clients during startup without closing them in the lifespan shutdown phase, leading
+        text: >
+          Creating connection pools or clients during startup without closing them in the lifespan shutdown phase,
+          leading
           to resource leaks across deploys or tests.
       - id: anti.hardcoded-config
         type: anti_pattern
-        text: Hardcoding configuration values such as DSNs, hostnames, or secrets directly in the factory instead of reading
+        text: >
+          Hardcoding configuration values such as DSNs, hostnames, or secrets directly in the factory instead of reading
           them from Settings.
       - id: anti.business-logic-in-factory
         type: anti_pattern
-        text: Embedding complex business logic or workflows directly inside create_app; the factory should focus on wiring
+        text: >
+          Embedding complex business logic or workflows directly inside create_app; the factory should focus on wiring
           and delegate behavior to dedicated modules and services.

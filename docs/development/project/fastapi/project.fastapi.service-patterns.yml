@@ -2,8 +2,10 @@ doc_id: project-fastapi-service-patterns
 title: FastAPI Service Layer Integration
 version_hint: 2024-2025
 kind: fastapi_service_integration
-description: FastAPI-specific patterns for integrating services with dependency injection, app.state, and router handlers.
-scope: Covers service factory dependencies, Depends() usage, app.state integration, and testing with dependency overrides.
+description: >
+  FastAPI-specific patterns for integrating services with dependency injection, app.state, and router handlers.
+scope: >
+  Covers service factory dependencies, Depends() usage, app.state integration, and testing with dependency overrides.
   Core service layer concepts are in docs/development/python/service-patterns.toon.
 primary_runtime_references:
   - path: app/api/v1/dependencies.py
@@ -40,23 +42,29 @@ sections:
     items:
       - id: factory.pattern
         type: rule
-        text: Define service factory functions that accept dependencies via Depends() and construct service instances with
+        text: >
+          Define service factory functions that accept dependencies via Depends() and construct service instances with
           explicit constructor injection.
       - id: factory.repository-deps
         type: pattern
-        text: Service factories depend on repository factories which in turn retrieve pools from app.state, forming a clear
+        text: >
+          Service factories depend on repository factories which in turn retrieve pools from app.state, forming a clear
           dependency chain.
       - id: factory.settings-injection
         type: rule
-        text: Inject Settings into service factories using SettingsDep type alias rather than reading environment variables
+        text: >
+          Inject Settings into service factories using SettingsDep type alias rather than reading environment variables
           or accessing globals.
       - id: factory.location
         type: rule
-        text: Place service factory functions in app/api/v1/dependencies.py alongside other dependency providers for the versioned
+        text: >
+          Place service factory functions in app/api/v1/dependencies.py alongside other dependency providers for the
+          versioned
           API.
       - id: factory.type-aliases
         type: pattern
-        text: Define type aliases like UserServiceDep = Annotated[UserService, Depends(get_user_service)] for cleaner route
+        text: >
+          Define type aliases like UserServiceDep = Annotated[UserService, Depends(get_user_service)] for cleaner route
           handler signatures.
   - id: app-state-integration
     index: 2
@@ -75,21 +83,27 @@ sections:
     items:
       - id: app-state.initialization
         type: rule
-        text: Initialize infrastructure resources (SurrealDBPool, ElasticsearchWrapper) in the lifespan context manager and
+        text: >
+          Initialize infrastructure resources (SurrealDBPool, ElasticsearchWrapper) in the lifespan context manager and
           store them on app.state. See fastapi/factory-patterns.toon.
       - id: app-state.access-via-request
         type: pattern
-        text: Access app.state resources via request.app.state in dependency providers, not by importing a global app instance.
+        text: >
+          Access app.state resources via request.app.state in dependency providers, not by importing a global app
+          instance.
       - id: app-state.no-direct-service-access
         type: rule
-        text: Services must not access app.state directly; they receive dependencies via constructor injection from factory
+        text: >
+          Services must not access app.state directly; they receive dependencies via constructor injection from factory
           functions.
       - id: app-state.cleanup
         type: rule
         text: Close pools and clients in the lifespan shutdown phase to ensure proper resource cleanup.
       - id: app-state.ref-factory
         type: note
-        text: The app/core/factory.py create_app function handles initialization; see fastapi/factory-patterns.toon for implementation
+        text: >
+          The app/core/factory.py create_app function handles initialization; see fastapi/factory-patterns.toon for
+          implementation
           details.
   - id: router-service-injection
     index: 3
@@ -146,7 +160,8 @@ sections:
     items:
       - id: testing.override-pattern
         type: rule
-        text: Override service factory functions via app.dependency_overrides[get_service] = lambda to inject mocks without
+        text: >
+          Override service factory functions via app.dependency_overrides[get_service] = lambda to inject mocks without
           modifying production code.
       - id: testing.mock-services
         type: pattern
@@ -168,16 +183,21 @@ sections:
     items:
       - id: anti.framework-imports
         type: anti_pattern
-        text: Services that import FastAPI or Starlette types such as Request, Response, or HTTPException; services must remain
+        text: >
+          Services that import FastAPI or Starlette types such as Request, Response, or HTTPException; services must
+          remain
           framework-agnostic.
       - id: anti.direct-app-state
         type: anti_pattern
-        text: Services that directly access app.state or request objects instead of receiving dependencies via constructor
+        text: >
+          Services that directly access app.state or request objects instead of receiving dependencies via constructor
           injection.
       - id: anti.inline-construction
         type: anti_pattern
         text: Constructing services inside route handlers instead of using Depends() with factory functions.
       - id: anti.hardcoded-deps
         type: anti_pattern
-        text: Service factory functions that create dependencies internally instead of receiving them via Depends(), preventing
+        text: >
+          Service factory functions that create dependencies internally instead of receiving them via Depends(),
+          preventing
           test overrides.

@@ -2,7 +2,8 @@ doc_id: general-python-docstrings-guide
 title: Docstrings Guide
 version_hint: 2024-2025
 kind: documentation_style_guide
-description: Google-style docstring conventions and standards for documenting Python code, enforced through ruff (with pydocstyle)
+description: >
+  Google-style docstring conventions and standards for documenting Python code, enforced through ruff (with pydocstyle)
   and pymarkdown.
 scope: Use these conventions for all public modules, classes, functions, and methods.
 primary_runtime_references: []
@@ -89,12 +90,15 @@ sections:
         text: 'Modules: Provide a brief description when the module exposes public APIs or significant setup logic.'
       - id: additional.properties
         type: rule
-        text: 'Properties: Document behavior in the getter; setters rarely need separate docstrings unless they perform non-trivial
+        text: >
+          'Properties: Document behavior in the getter; setters rarely need separate docstrings unless they perform
+          non-trivial
           work.'
       - id: additional.async
         type: rule
         text: 'Async functions: Document awaited side effects and cancellation behavior if relevant.'
       - id: additional.examples
         type: rule
-        text: 'Examples: Use fenced code blocks with the language set (```python) and keep them minimal and runnable when
+        text: >
+          'Examples: Use fenced code blocks with the language set (```python) and keep them minimal and runnable when
           possible.'

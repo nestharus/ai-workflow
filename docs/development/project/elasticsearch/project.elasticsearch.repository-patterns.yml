@@ -2,8 +2,10 @@ doc_id: project-elasticsearch-repository-patterns
 title: Elasticsearch Repository Patterns
 version_hint: 2024-2025
 kind: elasticsearch_search_standards
-description: Elasticsearch-specific repository patterns using ElasticsearchWrapper for search operations and index management.
-scope: Covers Elasticsearch search queries, indexing operations, bulk operations, index initialization, and result mapping.
+description: >
+  Elasticsearch-specific repository patterns using ElasticsearchWrapper for search operations and index management.
+scope: >
+  Covers Elasticsearch search queries, indexing operations, bulk operations, index initialization, and result mapping.
   Generic repository patterns are in docs/development/python/repository-patterns.toon.
 primary_runtime_references:
   - path: app/infrastructure/elasticsearch/client.py
@@ -17,7 +19,8 @@ sections:
     index: 1
     title: Elasticsearch repository pattern
     category: standard
-    summary: Search-oriented repositories depend on ElasticsearchWrapper for async-friendly methods and index initialization.
+    summary: >
+      Search-oriented repositories depend on ElasticsearchWrapper for async-friendly methods and index initialization.
     sample_code:
       description: Elasticsearch search repository pattern.
       imports:
@@ -39,25 +42,33 @@ sections:
     items:
       - id: es.wrapper-methods
         type: rule
-        text: Use search, index, bulk, and create_index on ElasticsearchWrapper rather than calling the Elasticsearch client
+        text: >
+          Use search, index, bulk, and create_index on ElasticsearchWrapper rather than calling the Elasticsearch client
           directly.
       - id: es.async-threads
         type: note
-        text: The wrapper executes blocking client calls via anyio.to_thread.run_sync, allowing repository methods to remain
+        text: >
+          The wrapper executes blocking client calls via anyio.to_thread.run_sync, allowing repository methods to remain
           async.
       - id: es.index-init
         type: rule
-        text: Indices like facts_index and entity_aliases_index are created during application startup via initialize_indices().
+        text: >
+          Indices like facts_index and entity_aliases_index are created during application startup via
+          initialize_indices().
           Repositories may assume these indices exist.
       - id: es.search-vs-write
         type: note
-        text: Some repositories only perform searches (read-only reporting) while others support indexing and bulk operations.
+        text: >
+          Some repositories only perform searches (read-only reporting) while others support indexing and bulk
+          operations.
       - id: es.index-names
         type: rule
         text: Centralize index names and query shapes in repositories so they remain discoverable and consistent.
       - id: es.alternative-example
         type: note
-        text: Similarly, an ElasticsearchUserSearchRepository could depend on an ElasticsearchWrapper to provide search capabilities
+        text: >
+          Similarly, an ElasticsearchUserSearchRepository could depend on an ElasticsearchWrapper to provide search
+          capabilities
           over user indices.
   - id: elasticsearch-connection-management
     index: 2
@@ -78,18 +89,22 @@ sections:
     items:
       - id: elasticsearch.conn.constructor
         type: rule
-        text: Accept ElasticsearchWrapper in the repository constructor via dependency injection; do not create wrappers inside
+        text: >
+          Accept ElasticsearchWrapper in the repository constructor via dependency injection; do not create wrappers
+          inside
           repositories.
       - id: conn.wrapper-methods
         type: pattern
         text: Use wrapper methods (search, index, bulk, create_index) which handle async-to-thread execution internally.
       - id: conn.async-execution
         type: note
-        text: The wrapper uses anyio.to_thread.run_sync to execute blocking Elasticsearch client calls without blocking the
+        text: >
+          The wrapper uses anyio.to_thread.run_sync to execute blocking Elasticsearch client calls without blocking the
           event loop.
       - id: elasticsearch.conn.ref-pool-patterns
         type: note
-        text: See app/infrastructure/elasticsearch/client.py and elasticsearch/connection-pooling-patterns.toon for wrapper
+        text: >
+          See app/infrastructure/elasticsearch/client.py and elasticsearch/connection-pooling-patterns.toon for wrapper
           configuration and lifecycle details.
   - id: elasticsearch-search-patterns
     index: 3
@@ -107,21 +122,28 @@ sections:
     items:
       - id: search.query-dsl
         type: rule
-        text: Build Elasticsearch query DSL as Python dictionaries; use match for full-text, term for exact, and bool for
+        text: >
+          Build Elasticsearch query DSL as Python dictionaries; use match for full-text, term for exact, and bool for
           compound queries.
       - id: search.result-extraction
         type: pattern
-        text: Extract hits from raw["hits"]["hits"] and access document data via hit["_source"]; handle empty results gracefully.
+        text: >
+          Extract hits from raw["hits"]["hits"] and access document data via hit["_source"]; handle empty results
+          gracefully.
       - id: search.model-mapping
         type: rule
-        text: Map Elasticsearch documents to Pydantic domain models in the repository; services should never see raw Elasticsearch
+        text: >
+          Map Elasticsearch documents to Pydantic domain models in the repository; services should never see raw
+          Elasticsearch
           response structures.
       - id: search.pagination
         type: pattern
         text: Use from_ and size parameters for pagination; calculate from_ as (page - 1) * size for page-based APIs.
       - id: search.scoring
         type: note
-        text: Elasticsearch returns relevance scores in hit["_score"]; include these in response models if ranking information
+        text: >
+          Elasticsearch returns relevance scores in hit["_score"]; include these in response models if ranking
+          information
           is needed by consumers.
   - id: elasticsearch-indexing-patterns
     index: 4
@@ -137,14 +159,18 @@ sections:
     items:
       - id: indexing.single
         type: pattern
-        text: Use wrapper.index(index, id, document) for single document indexing; provide explicit document IDs for idempotent
+        text: >
+          Use wrapper.index(index, id, document) for single document indexing; provide explicit document IDs for
+          idempotent
           updates.
       - id: indexing.bulk
         type: pattern
-        text: Use wrapper.bulk(body) for multiple documents; alternate action metadata and document source in the body list.
+        text: >
+          Use wrapper.bulk(body) for multiple documents; alternate action metadata and document source in the body list.
       - id: indexing.id-management
         type: rule
-        text: Use stable, domain-derived IDs for Elasticsearch documents to enable idempotent upserts and direct lookups.
+        text: >
+          Use stable, domain-derived IDs for Elasticsearch documents to enable idempotent upserts and direct lookups.
       - id: indexing.error-handling
         type: note
         text: Bulk operations may partially succeed; check response for errors and handle failed items appropriately.
@@ -156,22 +182,30 @@ sections:
     items:
       - id: index.creation
         type: rule
-        text: Index creation is handled by ElasticsearchWrapper.create_index() called via initialize_indices() during application
+        text: >
+          Index creation is handled by ElasticsearchWrapper.create_index() called via initialize_indices() during
+          application
           startup.
       - id: index.mappings
         type: note
-        text: Define index mappings and settings (analyzers, shards, replicas) in the wrapper initialization code, not in
+        text: >
+          Define index mappings and settings (analyzers, shards, replicas) in the wrapper initialization code, not in
           repositories.
       - id: index.assume-exists
         type: rule
-        text: Repositories assume indices exist; they do not create indices on demand. Index creation failure should prevent
+        text: >
+          Repositories assume indices exist; they do not create indices on demand. Index creation failure should prevent
           application startup.
       - id: index.examples
         type: note
-        text: Common indices include facts_index for knowledge graph facts and entity_aliases_index for entity name variations.
+        text: >
+          Common indices include facts_index for knowledge graph facts and entity_aliases_index for entity name
+          variations.
       - id: index.ref-connection-pooling
         type: note
-        text: See elasticsearch/connection-pooling-patterns.toon for index initialization lifecycle and configuration details.
+        text: >
+          See elasticsearch/connection-pooling-patterns.toon for index initialization lifecycle and configuration
+          details.
   - id: elasticsearch-testing
     index: 6
     title: Testing Elasticsearch repositories
@@ -180,14 +214,18 @@ sections:
     items:
       - id: elasticsearch.testing.unit-mocks
         type: rule
-        text: For unit tests, mock ElasticsearchWrapper and configure mock.search() to return canned response structures.
+        text: >
+          For unit tests, mock ElasticsearchWrapper and configure mock.search() to return canned response structures.
       - id: elasticsearch.testing.integration-indices
         type: pattern
-        text: For integration tests, use test-specific index names (e.g., test_facts_index) to isolate test data from development
+        text: >
+          For integration tests, use test-specific index names (e.g., test_facts_index) to isolate test data from
+          development
           indices.
       - id: elasticsearch.testing.cleanup
         type: rule
-        text: Clean up test indices between test runs by deleting indices or clearing documents; avoid side effects between
+        text: >
+          Clean up test indices between test runs by deleting indices or clearing documents; avoid side effects between
           tests.
       - id: elasticsearch.testing.docker-setup
         type: note

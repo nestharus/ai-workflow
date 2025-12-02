@@ -2,10 +2,14 @@ doc_id: general-rest-api-patterns
 title: REST API Patterns (General)
 version_hint: 2024-2025
 kind: rest_api_standards
-description: General REST patterns covering HTTP protocol rules and FastAPI/Pydantic best practices applicable generally.
-  No app/* wiring. See project/rest for implementation.
-scope: REST/HTTP protocol rules plus FastAPI/Pydantic framework practices that apply to any project. Does not reference app/*
-  paths, AppError, VALIDATION_ERROR_RESPONSE, or create_app. See project/rest/project.rest.api-patterns.yml for this codebase's
+description: >
+  General REST patterns covering HTTP protocol rules and FastAPI/Pydantic best
+  practices applicable generally. No app/* wiring. See project/rest for
+  implementation.
+scope: >
+  REST/HTTP protocol rules plus FastAPI/Pydantic framework practices that apply to
+  any project. Does not reference app/* paths, AppError, VALIDATION_ERROR_RESPONSE,
+  or create_app. See project/rest/project.rest.api-patterns.yml for this codebase's
   implementation wiring.
 primary_runtime_references: []
 related_pattern_docs:
@@ -19,15 +23,19 @@ sections:
     items:
       - id: url.prefix
         type: rule
-        text: Mount versioned endpoints under a stable /api/{version} prefix (for example /api/v1) and keep the prefix consistent
+        text: >
+          Mount versioned endpoints under a stable /api/{version} prefix (for example /api/v1) and keep the prefix
+          consistent
           across all routes in a given version.
       - id: url.health.liveness
         type: rule
-        text: Expose an unversioned liveness probe such as GET /health that checks only basic process aliveness and can be
+        text: >
+          Expose an unversioned liveness probe such as GET /health that checks only basic process aliveness and can be
           excluded from public API documentation.
       - id: url.health.readiness
         type: rule
-        text: Expose a versioned readiness endpoint such as GET /api/{version}/health that verifies dependencies (databases,
+        text: >
+          Expose a versioned readiness endpoint such as GET /api/{version}/health that verifies dependencies (databases,
           message brokers, upstream services) and is documented in the API definition.
       - id: url.resource-naming
         type: rule
@@ -37,7 +45,9 @@ sections:
         text: Use descriptive path parameter names like {user_id} instead of generic {id}.
       - id: url.trailing-slashes
         type: rule
-        text: Declare canonical paths without a trailing slash (for example /users and /users/{user_id}); handling of redirect
+        text: >
+          Declare canonical paths without a trailing slash (for example /users and /users/{user_id}); handling of
+          redirect
           variants is implementation-specific.
   - id: http-methods-and-status-codes
     index: 2
@@ -84,7 +94,8 @@ sections:
         text: Use fastapi.status named constants such as status.HTTP_201_CREATED instead of hard-coded integer literals.
       - id: http.validation.use-400
         type: rule
-        text: Surface all request validation failures as HTTP 400 Bad Request rather than nonstandard validation-specific
+        text: >
+          Surface all request validation failures as HTTP 400 Bad Request rather than nonstandard validation-specific
           status codes so clients can treat them consistently.
   - id: request-response-modeling
     index: 3
@@ -94,19 +105,24 @@ sections:
     items:
       - id: modeling.pydantic-extra-forbid
         type: rule
-        text: Define all request and response payloads as Pydantic BaseModel subclasses with ConfigDict(extra="forbid") so
+        text: >
+          Define all request and response payloads as Pydantic BaseModel subclasses with ConfigDict(extra="forbid") so
           unknown JSON keys are rejected.
       - id: modeling.json-snake-case
         type: rule
-        text: Use snake_case for all JSON field names and represent datetimes as timezone-aware UTC ISO 8601 strings via Pydantic
+        text: >
+          Use snake_case for all JSON field names and represent datetimes as timezone-aware UTC ISO 8601 strings via
+          Pydantic
           serializers.
       - id: modeling.response-model-required
         type: rule
-        text: Every endpoint should set an explicit response_model so that outbound schemas are enforced, extra fields from
+        text: >
+          Every endpoint should set an explicit response_model so that outbound schemas are enforced, extra fields from
           services are filtered out, and OpenAPI schemas are derived from the contracts.
       - id: modeling.describe-side-effects
         type: note
-        text: When a route has non-trivial side effects such as writes or external calls, the API documentation must explain
+        text: >
+          When a route has non-trivial side effects such as writes or external calls, the API documentation must explain
           these behaviors for consumers.
   - id: response-shape-and-pagination
     index: 4
@@ -121,22 +137,32 @@ sections:
     items:
       - id: responses.no-generic-envelopes
         type: rule
-        text: 'Do not wrap successful responses in generic envelopes such as {"status": "ok", "data": ...}; return the domain
+        text: >
+          'Do not wrap successful responses in generic envelopes such as {"status": "ok", "data": ...}; return the
+          domain
           model directly.'
       - id: pagination.standard-fields
         type: rule
-        text: For paginated collections, use a structure with items, total, page, and page_size fields as a common convention.
+        text: >
+          For paginated collections, use a structure with items, total, page, and page_size fields as a common
+          convention.
       - id: errors.common-envelope
         type: rule
-        text: All error responses should share a common top-level envelope with code, message, statusCode, and optional details
+        text: >
+          All error responses should share a common top-level envelope with code, message, statusCode, and optional
+          details
           fields so clients can handle errors consistently across endpoints.
       - id: errors.validation-envelope
         type: rule
-        text: Validation failures should use the common error envelope with a stable validation error code and place structured
+        text: >
+          Validation failures should use the common error envelope with a stable validation error code and place
+          structured
           validation details in the details field.
       - id: errors.domain-envelope
         type: rule
-        text: Non-validation errors such as domain or infrastructure failures should use the same error envelope with domain-specific
+        text: >
+          Non-validation errors such as domain or infrastructure failures should use the same error envelope with
+          domain-specific
           error codes and contextual details where applicable.
   - id: content-negotiation
     index: 5
@@ -146,10 +172,12 @@ sections:
     items:
       - id: content.json-default
         type: rule
-        text: Use application/json as the default Content-Type unless a route explicitly declares a different media type.
+        text: >
+          Use application/json as the default Content-Type unless a route explicitly declares a different media type.
       - id: content.compression-gzip
         type: rule
-        text: 'Support Accept-Encoding: gzip via middleware and ensure compressed responses remain valid JSON at the payload
+        text: >
+          'Support Accept-Encoding: gzip via middleware and ensure compressed responses remain valid JSON at the payload
           level.'
   - id: versioning-and-deprecation
     index: 6
@@ -159,29 +187,37 @@ sections:
     items:
       - id: versioning.path-based
         type: rule
-        text: Version all public endpoints in the path such as /api/v1 or /api/v2, and require a new major version for any
+        text: >
+          Version all public endpoints in the path such as /api/v1 or /api/v2, and require a new major version for any
           breaking change.
       - id: versioning.compatibility-additive
         type: rule
         text: Within a given API version, allow only additive changes such as new optional fields or new endpoints.
       - id: versioning.compatibility-no-breaking
         type: rule
-        text: Do not remove fields or change semantics within an existing API version; such changes require a new version.
+        text: >
+          Do not remove fields or change semantics within an existing API version; such changes require a new version.
       - id: deprecation.header-deprecation
         type: rule
-        text: 'For deprecated endpoints, include a Deprecation response header such as Deprecation: true or a deprecation
+        text: >
+          'For deprecated endpoints, include a Deprecation response header such as Deprecation: true or a deprecation
           date string.'
       - id: deprecation.header-sunset
         type: rule
-        text: When a removal date is known for a deprecated endpoint, include a Sunset header with an RFC 1123 timestamp such
+        text: >
+          When a removal date is known for a deprecated endpoint, include a Sunset header with an RFC 1123 timestamp
+          such
           as Mon, 30 Jun 2025 23:59:59 GMT.
       - id: deprecation.changelog
         type: rule
-        text: Record every breaking or deprecating change in the API changelog with migration guidance to replacement endpoints
+        text: >
+          Record every breaking or deprecating change in the API changelog with migration guidance to replacement
+          endpoints
           or versions.
       - id: deprecation.flag-endpoints
         type: rule
-        text: When deprecating an endpoint, set deprecated=True in the FastAPI route decorator so OpenAPI and interactive
+        text: >
+          When deprecating an endpoint, set deprecated=True in the FastAPI route decorator so OpenAPI and interactive
           docs show deprecation state.
   - id: anti-patterns
     index: 7
@@ -206,5 +242,6 @@ sections:
         text: Catching broad exceptions in ways that hide root causes or bypass global exception handling.
       - id: anti-patterns.missing-openapi-docs
         type: anti_pattern
-        text: Leaving API documentation incomplete, for example by omitting summary, description, tags, or documented error
+        text: >
+          Leaving API documentation incomplete, for example by omitting summary, description, tags, or documented error
           responses.

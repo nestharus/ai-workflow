@@ -2,9 +2,12 @@ doc_id: project-python-architectural-patterns
 title: Python Layered Architecture Patterns
 version_hint: 2024-2025
 kind: layered_architecture_guide
-description: Framework-agnostic layered architecture patterns for separation of concerns, testability, and maintainability
+description: >
+  Framework-agnostic layered architecture patterns for separation of concerns, testability, and maintainability
   across handlers, services, repositories, and contracts/DTOs.
-scope: Establishes high-level architectural layers, their responsibilities, allowed call directions, and typical request lifecycle
+scope: >
+  Establishes high-level architectural layers, their responsibilities, allowed call directions, and typical request
+  lifecycle
   concepts. FastAPI-specific wiring is in docs/development/fastapi/architectural-patterns.toon.
 primary_runtime_references:
   - path: app/services/example_service.py
@@ -25,42 +28,57 @@ sections:
     index: 1
     title: Layer overview and call directions
     category: architecture
-    summary: The architecture enforces strict unidirectional dependencies to ensure testability and separation of concerns.
+    summary: >
+      The architecture enforces strict unidirectional dependencies to ensure testability and separation of concerns.
     items:
       - id: overview.layers
         type: rule
-        text: 'The application is organized into four primary layers: Routers (HTTP), Services (business logic), Repositories
+        text: >
+          'The application is organized into four primary layers: Routers (HTTP), Services (business logic),
+          Repositories
           (data access), and Contracts/DTOs (data structures).'
       - id: overview.call-direction
         type: rule
-        text: 'Allowed call direction is strictly downward: Routers -> Services -> Repositories. Upper layers may depend on
+        text: >
+          'Allowed call direction is strictly downward: Routers -> Services -> Repositories. Upper layers may depend on
           lower layers, but never the reverse.'
       - id: overview.contracts-shared
         type: rule
-        text: Contracts/DTOs are shared across all layers for type safety; they define the data shapes passed between layers.
+        text: >
+          Contracts/DTOs are shared across all layers for type safety; they define the data shapes passed between
+          layers.
       - id: overview.no-skip-layers
         type: rule
-        text: Routers must not call repositories directly; all data access must go through services to maintain business logic
+        text: >
+          Routers must not call repositories directly; all data access must go through services to maintain business
+          logic
           centralization.
       - id: overview.transport-boundary
         type: rule
-        text: Only handlers handle transport concerns (HTTP status codes, headers, request/response objects, message queue
+        text: >
+          Only handlers handle transport concerns (HTTP status codes, headers, request/response objects, message queue
           acknowledgments); services and repositories are transport-agnostic.
       - id: overview.di-flow
         type: rule
-        text: Dependencies flow via constructor injection; infrastructure resources (pools, clients) are created at application
+        text: >
+          Dependencies flow via constructor injection; infrastructure resources (pools, clients) are created at
+          application
           startup and injected into repositories and services.
       - id: overview.http-boundary
         type: rule
-        text: Only routers handle HTTP concerns (status codes, headers, request/response objects); services and repositories
+        text: >
+          Only routers handle HTTP concerns (status codes, headers, request/response objects); services and repositories
           are HTTP-agnostic.
       - id: overview.di-wiring
         type: rule
-        text: Dependencies flow via constructor injection; the application factory in app/core/factory.py wires infrastructure
+        text: >
+          Dependencies flow via constructor injection; the application factory in app/core/factory.py wires
+          infrastructure
           (pools, wrappers) into repositories and services.
       - id: overview.testability
         type: rule
-        text: Each layer can be tested in isolation by mocking the layer below; this is the primary benefit of strict layer
+        text: >
+          Each layer can be tested in isolation by mocking the layer below; this is the primary benefit of strict layer
           separation.
   - id: layer-responsibilities
     index: 2
@@ -70,23 +88,29 @@ sections:
     items:
       - id: responsibilities.handlers
         type: rule
-        text: 'Handlers/Presentation Layer: Handle request/response lifecycle, validate input using framework mechanisms,
+        text: >
+          'Handlers/Presentation Layer: Handle request/response lifecycle, validate input using framework mechanisms,
           delegate all processing to services, return response models.'
       - id: responsibilities.handlers-no-logic
         type: rule
-        text: Handlers contain no business logic; they are thin wrappers that translate transport input to service calls and
+        text: >
+          Handlers contain no business logic; they are thin wrappers that translate transport input to service calls and
           service output to transport responses.
       - id: responsibilities.services
         type: rule
-        text: 'Services Layer: Encapsulate business logic, orchestrate repository calls, define transaction boundaries, raise
+        text: >
+          'Services Layer: Encapsulate business logic, orchestrate repository calls, define transaction boundaries,
+          raise
           domain-specific exceptions, remain transport-agnostic.'
       - id: responsibilities.services-coordination
         type: rule
-        text: Services may call multiple repositories and external clients; they own units of work and coordinate complex
+        text: >
+          Services may call multiple repositories and external clients; they own units of work and coordinate complex
           operations across data stores.
       - id: responsibilities.repositories
         type: rule
-        text: 'Repositories Layer: Encapsulate data access, hide storage implementation details, return domain models, never
+        text: >
+          'Repositories Layer: Encapsulate data access, hide storage implementation details, return domain models, never
           commit or roll back transactions.'
       - id: responsibilities.repositories-abstraction
         type: rule
@@ -96,7 +120,8 @@ sections:
         text: 'Contracts/DTOs Layer: Define data structures and validation rules shared across layers using Pydantic models.'
       - id: responsibilities.contracts-validation
         type: rule
-        text: Use strict Pydantic configuration (ConfigDict with extra="forbid") to reject unknown fields and enforce data
+        text: >
+          Use strict Pydantic configuration (ConfigDict with extra="forbid") to reject unknown fields and enforce data
           integrity.
   - id: request-lifecycle
     index: 3
@@ -121,7 +146,8 @@ sections:
         text: 5. Service orchestrates business logic, calling one or more repositories for data access.
       - id: lifecycle.step6
         type: note
-        text: 6. Repositories execute queries against SurrealDB, Elasticsearch, or other stores and return domain models.
+        text: >
+          6. Repositories execute queries against SurrealDB, Elasticsearch, or other stores and return domain models.
       - id: lifecycle.step7
         type: note
         text: 7. Service returns result to router; router returns Pydantic response model to FastAPI.
@@ -136,26 +162,33 @@ sections:
     items:
       - id: di.constructor-injection
         type: rule
-        text: Dependencies flow via constructor injection; services receive repositories via constructors, handlers receive
+        text: >
+          Dependencies flow via constructor injection; services receive repositories via constructors, handlers receive
           services via framework DI mechanisms.
       - id: di.infrastructure
         type: rule
-        text: Infrastructure resources (connection pools, HTTP clients) are created at application startup and injected into
+        text: >
+          Infrastructure resources (connection pools, HTTP clients) are created at application startup and injected into
           repositories or services as constructor arguments.
       - id: di.factory-functions
         type: rule
-        text: Factory functions compose dependencies, constructing services with their required repositories and configuration.
+        text: >
+          Factory functions compose dependencies, constructing services with their required repositories and
+          configuration.
       - id: di.no-globals
         type: rule
-        text: Avoid module-level global state; all dependencies should be explicitly passed through constructors or factory
+        text: >
+          Avoid module-level global state; all dependencies should be explicitly passed through constructors or factory
           functions.
       - id: di.testability
         type: rule
-        text: Each layer can be tested in isolation by mocking the layer below; services mock repositories, handlers mock
+        text: >
+          Each layer can be tested in isolation by mocking the layer below; services mock repositories, handlers mock
           services.
       - id: di.lifecycle
         type: rule
-        text: Resource lifecycle (initialization, cleanup) is managed by the application factory or lifespan manager, not
+        text: >
+          Resource lifecycle (initialization, cleanup) is managed by the application factory or lifespan manager, not
           by individual services or repositories.
   - id: anti-patterns
     index: 5
@@ -165,30 +198,39 @@ sections:
     items:
       - id: anti.layer-skipping
         type: anti_pattern
-        text: Layer skipping (handlers calling repositories directly) bypasses business logic centralization and makes testing
+        text: >
+          Layer skipping (handlers calling repositories directly) bypasses business logic centralization and makes
+          testing
           harder.
       - id: anti.logic-in-handlers
         type: anti_pattern
         text: Business logic in handlers violates separation of concerns and makes logic harder to reuse and test.
       - id: anti.transport-in-services
         type: anti_pattern
-        text: HTTP or transport concerns in services or repositories couples them to specific frameworks and prevents reuse.
+        text: >
+          HTTP or transport concerns in services or repositories couples them to specific frameworks and prevents reuse.
       - id: anti.global-state
         type: anti_pattern
         text: Global state instead of dependency injection hides dependencies and makes testing unreliable.
       - id: anti.mixed-responsibilities
         type: anti_pattern
-        text: Mixed responsibilities within a single layer (e.g., services handling HTTP exceptions) violates single responsibility
+        text: >
+          Mixed responsibilities within a single layer (e.g., services handling HTTP exceptions) violates single
+          responsibility
           principle.
       - id: anti.upward-dependencies
         type: anti_pattern
-        text: Upward dependencies (repositories importing services, services importing handlers) create circular dependencies
+        text: >
+          Upward dependencies (repositories importing services, services importing handlers) create circular
+          dependencies
           and coupling.
   - id: routers-layer
     index: 3
     title: Routers layer
     category: layer_definition
-    summary: Handle HTTP request/response lifecycle using APIRouter instances registered in app/core/factory.py. See app/routes/example_router.py
+    summary: >
+      Handle HTTP request/response lifecycle using APIRouter instances registered in app/core/factory.py. See
+      app/routes/example_router.py
       for a reference implementation.
     items:
       - id: routers.role
@@ -202,20 +244,25 @@ sections:
         text: No business logic in routers; delegate all processing to the service layer.
       - id: routers.response-model
         type: rule
-        text: Use Pydantic models for response_model and include summary, description, and responses for OpenAPI documentation.
+        text: >
+          Use Pydantic models for response_model and include summary, description, and responses for OpenAPI
+          documentation.
       - id: routers.error-handling
         type: rule
-        text: Let services raise domain exceptions; global exception handlers (registered in factory) translate them to HTTP
+        text: >
+          Let services raise domain exceptions; global exception handlers (registered in factory) translate them to HTTP
           responses.
       - id: routers.dependencies
         type: rule
-        text: Use FastAPI Depends() with Annotated type aliases to inject services; routers should not construct services
+        text: >
+          Use FastAPI Depends() with Annotated type aliases to inject services; routers should not construct services
           directly.
   - id: services-layer
     index: 4
     title: Services layer
     category: layer_definition
-    summary: Encapsulate business logic with class-based services and dependency injection. See app/services/example_service.py
+    summary: >
+      Encapsulate business logic with class-based services and dependency injection. See app/services/example_service.py
       for a reference implementation.
     items:
       - id: services.role
@@ -229,35 +276,45 @@ sections:
         text: Use __init__ to initialize dependencies explicitly via constructor parameters.
       - id: services.lifecycle.process
         type: rule
-        text: Implement core logic in named methods representing business actions (verbs like create, process, calculate).
+        text: >
+          Implement core logic in named methods representing business actions (verbs like create, process, calculate).
       - id: services.lifecycle.shutdown
         type: rule
         text: Provide an optional shutdown() method for cleanup of resources when needed.
       - id: services.orchestration
         type: rule
-        text: Services may call multiple repositories and external clients; they own transaction boundaries and coordinate
+        text: >
+          Services may call multiple repositories and external clients; they own transaction boundaries and coordinate
           units of work.
       - id: services.domain-errors
         type: rule
-        text: Raise domain-specific exceptions (from app/core/errors.py) rather than HTTP exceptions; see exception-patterns.md
+        text: >
+          Raise domain-specific exceptions (from app/core/errors.py) rather than HTTP exceptions; see
+          exception-patterns.md
           for the error hierarchy.
   - id: repositories-layer
     index: 5
     title: Repositories layer
     category: layer_definition
-    summary: Provide storage-agnostic data access abstraction over SurrealDB, Elasticsearch, and future stores. See app/repositories/example_repository.py
+    summary: >
+      Provide storage-agnostic data access abstraction over SurrealDB, Elasticsearch, and future stores. See
+      app/repositories/example_repository.py
       for a reference implementation.
     items:
       - id: repositories.role
         type: rule
-        text: Encapsulate all direct database and search index interactions; hide storage details behind stable Python interfaces.
+        text: >
+          Encapsulate all direct database and search index interactions; hide storage details behind stable Python
+          interfaces.
       - id: repositories.pattern
         type: rule
-        text: Define repository protocols (typing.Protocol) and implement concrete classes that accept connection pools via
+        text: >
+          Define repository protocols (typing.Protocol) and implement concrete classes that accept connection pools via
           constructor.
       - id: repositories.domain-mapping
         type: rule
-        text: Return domain models or DTOs (Pydantic models from app/contracts/), not raw database rows or driver-specific
+        text: >
+          Return domain models or DTOs (Pydantic models from app/contracts/), not raw database rows or driver-specific
           structures.
       - id: repositories.no-transactions
         type: rule
@@ -272,7 +329,9 @@ sections:
     index: 6
     title: Contracts and DTOs layer
     category: layer_definition
-    summary: Define data structures and validation rules using Pydantic models with strict configuration. See app/contracts/example_contract.py
+    summary: >
+      Define data structures and validation rules using Pydantic models with strict configuration. See
+      app/contracts/example_contract.py
       for a reference implementation.
     items:
       - id: contracts.role
@@ -286,11 +345,14 @@ sections:
         text: Always set ConfigDict(extra="forbid") to reject unknown fields in JSON payloads.
       - id: contracts.validation
         type: rule
-        text: Use Annotated and Field for validation constraints; define custom validators (@model_validator) for complex
+        text: >
+          Use Annotated and Field for validation constraints; define custom validators (@model_validator) for complex
           logic.
       - id: contracts.shared
         type: rule
-        text: Contracts are shared across layers; routers use them for request/response, services for internal transfer, repositories
+        text: >
+          Contracts are shared across layers; routers use them for request/response, services for internal transfer,
+          repositories
           for domain models.
   - id: cross-cutting-concerns
     index: 7
@@ -300,21 +362,28 @@ sections:
     items:
       - id: crosscutting.middleware
         type: rule
-        text: Middleware (logging, security headers, compression) is registered in app/core/factory.py and processes requests
+        text: >
+          Middleware (logging, security headers, compression) is registered in app/core/factory.py and processes
+          requests
           before routers and responses after serialization. See middleware-patterns.md.
       - id: crosscutting.exception-handlers
         type: rule
-        text: Global exception handlers translate domain errors to HTTP responses; they are registered in the application
+        text: >
+          Global exception handlers translate domain errors to HTTP responses; they are registered in the application
           factory and documented in exception-patterns.md.
       - id: crosscutting.lifespan
         type: rule
-        text: Application lifespan events (startup/shutdown) initialize and clean up infrastructure resources (connection
+        text: >
+          Application lifespan events (startup/shutdown) initialize and clean up infrastructure resources (connection
           pools, search clients) in app/core/factory.py.
       - id: crosscutting.settings
         type: rule
-        text: Configuration flows from a single Settings instance created at startup; it is injected into services and infrastructure
+        text: >
+          Configuration flows from a single Settings instance created at startup; it is injected into services and
+          infrastructure
           via dependency injection.
       - id: crosscutting.health-checks
         type: rule
-        text: Health endpoints (/health for liveness, /api/v1/health for readiness) are registered separately from domain
+        text: >
+          Health endpoints (/health for liveness, /api/v1/health for readiness) are registered separately from domain
           routers and documented in api-patterns.toon.

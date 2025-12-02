@@ -2,9 +2,11 @@ doc_id: project-surrealdb-connection-pooling-patterns
 title: SurrealDB Connection Pooling Patterns
 version_hint: 2024-2025
 kind: surrealdb_pooling_standards
-description: SurrealDB-specific patterns for connection pool implementation, configuration, lifecycle management, and schema
+description: >
+  SurrealDB-specific patterns for connection pool implementation, configuration, lifecycle management, and schema
   initialization using SurrealDBPool.
-scope: Covers SurrealDB pool design, asyncio.Queue-based pooling, pool configuration (size, timeouts), connection lifecycle
+scope: >
+  Covers SurrealDB pool design, asyncio.Queue-based pooling, pool configuration (size, timeouts), connection lifecycle
   (startup, auth, schema init, shutdown), schema initialization patterns, and SurrealDB-specific testing. Generic pooling
   concepts are in python/connection-pooling-patterns.toon.
 out_of_scope:
@@ -39,23 +41,31 @@ sections:
     items:
       - id: surreal.pool-async-queue
         type: rule
-        text: SurrealDBPool maintains multiple WebSocket connections to SurrealDB in an asyncio.Queue, creating them up front
+        text: >
+          SurrealDBPool maintains multiple WebSocket connections to SurrealDB in an asyncio.Queue, creating them up
+          front
           during initialization.
       - id: surreal.pool-config-size
         type: rule
-        text: Control pool size via Settings.surrealdb_pool_size so concurrency can be tuned per environment without code
+        text: >
+          Control pool size via Settings.surrealdb_pool_size so concurrency can be tuned per environment without code
           changes.
       - id: surreal.pre-authenticated
         type: note
-        text: During initialization, each SurrealDB connection is authenticated and pointed at the configured namespace and
+        text: >
+          During initialization, each SurrealDB connection is authenticated and pointed at the configured namespace and
           database so queries do not repeat this work.
       - id: surreal.acquire-context-manager
         type: pattern
-        text: Use SurrealDBPool.acquire() as an async context manager that enforces an acquire timeout and automatically returns
+        text: >
+          Use SurrealDBPool.acquire() as an async context manager that enforces an acquire timeout and automatically
+          returns
           connections to the pool when the context exits.
       - id: surreal.exception-safety
         type: note
-        text: The async with pool.acquire() pattern ensures connections are returned even if downstream queries raise exceptions.
+        text: >
+          The async with pool.acquire() pattern ensures connections are returned even if downstream queries raise
+          exceptions.
   - id: surrealdb-pool-configuration
     index: 2
     title: SurrealDB pool configuration
@@ -64,19 +74,25 @@ sections:
     items:
       - id: surreal.config.pool-size
         type: rule
-        text: Start with a conservative surrealdb_pool_size (for example 5) and increase only when metrics show SurrealDB
+        text: >
+          Start with a conservative surrealdb_pool_size (for example 5) and increase only when metrics show SurrealDB
           is the bottleneck and the server can handle more concurrent connections.
       - id: surreal.config.acquire-timeout
         type: rule
-        text: Configure an acquire_timeout of several seconds on SurrealDBPool and enforce it via asyncio.wait_for() so callers
+        text: >
+          Configure an acquire_timeout of several seconds on SurrealDBPool and enforce it via asyncio.wait_for() so
+          callers
           fail fast rather than hanging indefinitely.
       - id: surreal.config.env-specific
         type: note
-        text: Treat pool size and acquire timeout as environment-specific knobs, using smaller values for local development
+        text: >
+          Treat pool size and acquire timeout as environment-specific knobs, using smaller values for local development
           and tuned values for staging and production.
       - id: surreal.config-focus
         type: note
-        text: Keep pool-related settings focused on connection counts and wait times rather than unrelated SurrealDB configuration.
+        text: >
+          Keep pool-related settings focused on connection counts and wait times rather than unrelated SurrealDB
+          configuration.
   - id: surrealdb-connection-lifecycle
     index: 3
     title: SurrealDB connection lifecycle
@@ -97,19 +113,25 @@ sections:
     items:
       - id: surreal.lifecycle.startup
         type: pattern
-        text: In lifespan startup, call create_surrealdb_pool(settings) to build a SurrealDBPool, initialize connections,
+        text: >
+          In lifespan startup, call create_surrealdb_pool(settings) to build a SurrealDBPool, initialize connections,
           and attach it to app.state.surrealdb_pool.
       - id: surreal.lifecycle.auth
         type: note
-        text: During initialization, the pool authenticates each connection and selects the configured namespace and database
+        text: >
+          During initialization, the pool authenticates each connection and selects the configured namespace and
+          database
           so subsequent queries can assume a ready session.
       - id: surreal.lifecycle.schema-init
         type: rule
-        text: After creating the pool, call pool.initialize_schema() to set up tables, relationships, and vector indexes required
+        text: >
+          After creating the pool, call pool.initialize_schema() to set up tables, relationships, and vector indexes
+          required
           by the application.
       - id: surreal.lifecycle.fail-fast
         type: rule
-        text: If schema initialization fails, close the pool and propagate the error so the application fails fast instead
+        text: >
+          If schema initialization fails, close the pool and propagate the error so the application fails fast instead
           of running with partial schema state.
       - id: surreal.lifecycle.shutdown
         type: rule
@@ -122,7 +144,8 @@ sections:
     items:
       - id: schema.initialize-in-pool
         type: rule
-        text: Run SurrealDB schema initialization inside SurrealDBPool.initialize_schema() so it executes immediately after
+        text: >
+          Run SurrealDB schema initialization inside SurrealDBPool.initialize_schema() so it executes immediately after
           pool creation.
       - id: schema.versioning
         type: note
@@ -132,7 +155,9 @@ sections:
         text: Ensure create_surrealdb_pool() calls initialize_schema() and closes the pool if initialization fails.
       - id: schema.failure-fatal
         type: rule
-        text: Treat schema initialization failures as fatal; the app must not start with an inconsistent or partially-applied
+        text: >
+          Treat schema initialization failures as fatal; the app must not start with an inconsistent or
+          partially-applied
           schema.
   - id: surrealdb-testing
     index: 5
@@ -151,19 +176,28 @@ sections:
     items:
       - id: surrealdb.test.monkeypatch-factory
         type: pattern
-        text: Monkeypatch create_surrealdb_pool() to return mock pools in tests that only care about validation or error behavior.
+        text: >
+          Monkeypatch create_surrealdb_pool() to return mock pools in tests that only care about validation or error
+          behavior.
       - id: test.mock-acquire
         type: rule
-        text: Configure mock pools with mock.acquire() returning a mock connection that captures query arguments for assertion.
+        text: >
+          Configure mock pools with mock.acquire() returning a mock connection that captures query arguments for
+          assertion.
       - id: test.integration-namespace
         type: pattern
-        text: For integration tests, use a separate SurrealDB namespace/database (for example test_namespace) to isolate test
+        text: >
+          For integration tests, use a separate SurrealDB namespace/database (for example test_namespace) to isolate
+          test
           data from development data.
       - id: surrealdb.test.cleanup
         type: rule
-        text: Clean up test data between test runs by deleting records or resetting the test database; avoid side effects
+        text: >
+          Clean up test data between test runs by deleting records or resetting the test database; avoid side effects
           between tests.
       - id: surrealdb.test.docker-compose
         type: note
-        text: Integration tests can use docker-compose to spin up a SurrealDB instance for the test suite; see tests/conftest.py
+        text: >
+          Integration tests can use docker-compose to spin up a SurrealDB instance for the test suite; see
+          tests/conftest.py
           for fixture examples.

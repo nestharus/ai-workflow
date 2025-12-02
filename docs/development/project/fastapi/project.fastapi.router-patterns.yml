@@ -2,9 +2,11 @@ doc_id: project-fastapi-router-patterns
 title: FastAPI Router Patterns
 version_hint: 2024-2025
 kind: fastapi_router_standards
-description: FastAPI-specific patterns for APIRouter organization, dependency injection with Depends(), request validation,
+description: >
+  FastAPI-specific patterns for APIRouter organization, dependency injection with Depends(), request validation,
   response handling, and OpenAPI documentation.
-scope: Covers APIRouter instantiation and configuration, route handler decorators, dependency injection with Annotated and
+scope: >
+  Covers APIRouter instantiation and configuration, route handler decorators, dependency injection with Annotated and
   Depends(), request validation with Path/Query/Header, response_model configuration, OpenAPI documentation, router registration,
   and anti-patterns. Generic handler structure is in docs/development/python/router-patterns.toon.
 primary_runtime_references:
@@ -46,11 +48,15 @@ sections:
         text: Group related endpoints within the same router file for discoverability.
       - id: organization.versioned-registration
         type: rule
-        text: Register each router with the versioned API router so the application factory can apply the /api/{version} prefix
+        text: >
+          Register each router with the versioned API router so the application factory can apply the /api/{version}
+          prefix
           and shared dependencies.
       - id: organization.trailing-slashes
         type: rule
-        text: Use canonical paths without a trailing slash; allow FastAPI redirect behavior to handle variants while documenting
+        text: >
+          Use canonical paths without a trailing slash; allow FastAPI redirect behavior to handle variants while
+          documenting
           only the non-slashed form.
   - id: router-configuration
     index: 2
@@ -60,25 +66,31 @@ sections:
     items:
       - id: config.prefix
         type: rule
-        text: Set the prefix argument at router level (e.g., prefix="/items") when including the router; prefer registration
+        text: >
+          Set the prefix argument at router level (e.g., prefix="/items") when including the router; prefer registration
           time so paths follow the no-trailing-slash convention.
       - id: config.tags
         type: rule
-        text: Use tags for grouping endpoints in OpenAPI UI; apply consistently either at router registration time (preferred)
+        text: >
+          Use tags for grouping endpoints in OpenAPI UI; apply consistently either at router registration time
+          (preferred)
           or on individual route decorators, but do not mix both patterns.
       - id: config.dependencies
         type: rule
-        text: Apply shared dependencies (authentication, authorization, rate limiting, request logging) at router level when
+        text: >
+          Apply shared dependencies (authentication, authorization, rate limiting, request logging) at router level when
           they apply to all endpoints.
       - id: config.responses
         type: rule
-        text: When many routes share the same response shapes, define common responses at router or registration time using
+        text: >
+          When many routes share the same response shapes, define common responses at router or registration time using
           shared contracts from the contracts module.
   - id: handler-structure
     index: 3
     title: Route handler structure
     category: standard
-    summary: Keep route handlers thin; their responsibility is to validate input, call service methods, and return responses.
+    summary: >
+      Keep route handlers thin; their responsibility is to validate input, call service methods, and return responses.
     sample_code:
       description: Standard pattern for a thin route handler delegating to a service.
       imports:
@@ -131,10 +143,13 @@ sections:
         text: Inject services rather than repositories or DB connections directly into routers.
       - id: di.settings-injection
         type: rule
-        text: Inject configuration via Depends(get_settings) instead of reading environment variables inside route handlers.
+        text: >
+          Inject configuration via Depends(get_settings) instead of reading environment variables inside route handlers.
       - id: di.shared-providers
         type: rule
-        text: Keep get_*_service, get_settings, and other provider functions in dedicated dependency modules for reuse across
+        text: >
+          Keep get_*_service, get_settings, and other provider functions in dedicated dependency modules for reuse
+          across
           routers, background tasks, and tests.
   - id: request-validation
     index: 5
@@ -180,7 +195,9 @@ sections:
     items:
       - id: response.model-required
         type: rule
-        text: Always specify response_model in the decorator for output data filtering, validation, and OpenAPI schema derivation.
+        text: >
+          Always specify response_model in the decorator for output data filtering, validation, and OpenAPI schema
+          derivation.
       - id: response.status-codes
         type: rule
         text: Explicitly set status_code for non-200 success cases (e.g., 201 Created).
@@ -189,7 +206,8 @@ sections:
         text: For 204 No Content, use response_model=None and status_code=204.
       - id: response.serializer
         type: rule
-        text: Prefer the global default response class from the application factory; override only when a different content
+        text: >
+          Prefer the global default response class from the application factory; override only when a different content
           type or serialization behavior is required.
   - id: error-handling
     index: 7
@@ -208,7 +226,9 @@ sections:
         text: Rely on global exception handlers to translate domain and infrastructure exceptions into HTTP responses.
       - id: errors.router-specific
         type: rule
-        text: Only raise HTTPException directly in routers for router-specific concerns such as authentication failures, authorization
+        text: >
+          Only raise HTTPException directly in routers for router-specific concerns such as authentication failures,
+          authorization
           checks, and rate limiting.
   - id: openapi-documentation
     index: 8
@@ -236,11 +256,13 @@ sections:
         text: Every route must define a concise summary that describes its primary behavior.
       - id: openapi.description
         type: rule
-        text: Complex routes must define a description explaining important details, side effects, and edge cases (Markdown
+        text: >
+          Complex routes must define a description explaining important details, side effects, and edge cases (Markdown
           supported).
       - id: openapi.responses
         type: rule
-        text: Document all relevant responses (success and error) using the responses parameter so status codes, schemas,
+        text: >
+          Document all relevant responses (success and error) using the responses parameter so status codes, schemas,
           and examples are explicit.
   - id: router-registration
     index: 9
@@ -276,7 +298,9 @@ sections:
     items:
       - id: anti.business-logic
         type: anti_pattern
-        text: Business logic in routers; do not perform calculations, complex conditionals, or raw DB queries in route handlers.
+        text: >
+          Business logic in routers; do not perform calculations, complex conditionals, or raw DB queries in route
+          handlers.
       - id: anti.direct-db
         type: anti_pattern
         text: Direct DB access; avoid db.execute(...) in routers; use a service.
@@ -288,12 +312,15 @@ sections:
         text: Missing response model; always define the return schema via response_model.
       - id: anti.inconsistent-docs
         type: anti_pattern
-        text: Inconsistent documentation or error schemas; do not omit summary, description, or error responses, and do not
+        text: >
+          Inconsistent documentation or error schemas; do not omit summary, description, or error responses, and do not
           handcraft unique error shapes per route.
       - id: anti.bypass-error-handling
         type: anti_pattern
         text: Bypassing global error handling; do not raise HTTP errors directly from services or infrastructure layers.
       - id: anti.blocking-code
         type: anti_pattern
-        text: Blocking code; do not use sync I/O methods in async def handlers or mix heavy synchronous work into async routes
+        text: >
+          Blocking code; do not use sync I/O methods in async def handlers or mix heavy synchronous work into async
+          routes
           without proper offloading.
