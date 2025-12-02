@@ -78,22 +78,59 @@ When text is MIXED (contains both GENERAL and PROJECT chunks), it should be spli
 - Batch mode: `--source-file <file> [--ids <id1,id2,id3>]`
 - If `--ids` not provided, analyze all items in the source file
 
+## Research Phase (Before Analysis)
+
+Before analyzing any items, gather context to inform your classification decisions:
+
+1. **Read MODULE-DEFINITIONS.md**: Use the Read tool to read `docs/development/MODULE-DEFINITIONS.md`. This document contains:
+   - Module hierarchy (Section 1): Understand parent-child relationships between modules
+   - Precedence rules (Section 2): Protocol > Framework > Language > Database
+   - Scope definitions (Section 3): GENERAL vs PROJECT criteria and test questions
+   - Pattern definitions (Section 4): Each pattern's purpose, inclusions, exclusions, and test questions
+   - Cross-reference quality rules (Section 5): How to write quality PROJECT references
+
+2. **Search existing YAML files**: Use Grep to understand what content already exists in each module:
+   ```bash
+   # Search for similar content in GENERAL files
+   uv run grep-yml-ids --path docs/development/general/ --id <relevant-keyword>
+
+   # Search for similar content in PROJECT files
+   uv run grep-yml-ids --path docs/development/project/ --id <relevant-keyword>
+   ```
+
+3. **Use this research to inform decisions**: When classifying, reference the precedence rules and pattern definitions from MODULE-DEFINITIONS.md rather than relying on keyword matching alone.
+
 ## Analysis Process (per item)
 
-1. **Extract text**: Read the YAML file and extract the `text`, `description`, `summary`, or `title` field for the given ID
+1. **Research the codebase** (if not already done): Read MODULE-DEFINITIONS.md and search existing YAML files to understand module structure (see Research Phase above)
 
-2. **Chunk text**: Break the text into atomic information units (sentences or logical phrases) that can be independently classified
+2. **Extract text**: Read the YAML file and extract the `text`, `description`, `summary`, or `title` field for the given ID
 
-3. **Classify each chunk** across three dimensions:
+3. **Chunk text**: Break the text into atomic information units (sentences or logical phrases) that can be independently classified
+
+4. **Analyze semantic context**: For each chunk, determine:
+   - **Intent**: What is the purpose? (rule, pattern, documentation, wiring)
+   - **Technology**: What technology does it reference? (REST, FastAPI, Python, database)
+   - **Scope**: What scope does it have? (protocol, framework, language, project)
+   - **Pattern**: What pattern does it describe? (api-patterns, architecture, factory-patterns)
+
+5. **Apply precedence rules** (from MODULE-DEFINITIONS.md Section 2):
+   - Protocol takes precedence over framework (e.g., URL structure → `rest`, not `fastapi`)
+   - Framework takes precedence over language (e.g., `response_model` → `fastapi`, not `python`)
+   - Language takes precedence over database (e.g., `async/await` → `python`, not `surrealdb`)
+   - When content fits multiple modules, choose based on precedence
+   - When content spans multiple scopes, suggest SPLIT
+
+6. **Classify each chunk** across three dimensions:
    - **Domain**: rest, fastapi, python, surrealdb, elasticsearch
    - **Scope**: general (no app/* refs) vs project (has app/* refs)
    - **Pattern**: api-patterns, exception-patterns, factory-patterns, etc.
 
-4. **Provide reasoning**: For each chunk, explain why it was classified that way
+7. **Provide reasoning**: For each chunk, explain why it was classified that way using semantic analysis and precedence rules
 
-5. **Detect MIXED**: If chunks have different scopes (general + project), mark as MIXED
+8. **Detect MIXED**: If chunks have different scopes (general + project), mark as MIXED
 
-6. **Verify coverage**: For PROJECT chunks, search for existing coverage in other PROJECT files:
+9. **Verify coverage**: For PROJECT chunks, search for existing coverage in other PROJECT files:
    ```bash
    # Search for ID in project files (partial match)
    uv run grep-yml-ids --id <element-id> --path docs/development/project/
@@ -105,7 +142,7 @@ When text is MIXED (contains both GENERAL and PROJECT chunks), it should be spli
    uv run grep-yml-ids --id <element-id> --output json
    ```
 
-7. **Suggest action**:
+10. **Suggest action**:
    - **KEEP_GENERAL**: Pure general content, keep in GENERAL file only
    - **KEEP_PROJECT**: Pure project content, unique, keep in PROJECT file
    - **REMOVE_COVERED**: Project content already covered elsewhere, remove and record movement
@@ -151,24 +188,102 @@ When text is MIXED (contains both GENERAL and PROJECT chunks), it should be spli
 - References: `app.state`, `request.app.state`
 
 ### Domain Detection
-- **rest**: HTTP methods (GET, POST, PUT, PATCH, DELETE), status codes (200, 201, 400, 404, 500), URL patterns (/api/, /health), headers (Content-Type, Deprecation, Sunset)
-- **fastapi**: response_model, status.HTTP_*, APIRouter, Depends, include_in_schema, deprecated=True, ORJSONResponse
-- **python**: Pydantic (BaseModel, ConfigDict, Field), type hints (list[T], Annotated), async/await
-- **surrealdb**: SurrealDB, surreal, SurrealDBPool
-- **elasticsearch**: Elasticsearch, ElasticsearchWrapper
+
+Use semantic analysis and precedence rules from MODULE-DEFINITIONS.md Section 2 to determine the correct module. Do not rely on keyword matching alone.
+
+**Precedence Rules (from MODULE-DEFINITIONS.md):**
+1. Protocol takes precedence over framework (URL structure → `rest`, not `fastapi`)
+2. Framework takes precedence over language (`response_model` → `fastapi`, not `python`)
+3. Language takes precedence over database (`async/await` → `python`, not `surrealdb`)
+4. Most specific module wins when precedence rules don't apply
+
+**Semantic Analysis Questions:**
+- What is the **purpose** of this content? (protocol convention vs framework feature vs language pattern)
+- Could this apply to **any REST API** regardless of framework? → `rest`
+- Is this a **FastAPI-specific feature** not general to REST? → `fastapi`
+- Is this a **Python language pattern** not specific to a framework? → `python`
+
+See `docs/development/MODULE-DEFINITIONS.md` Section 2 for detailed precedence rules and examples.
 
 ### Pattern Detection
-- **api-patterns**: URL structure, versioning, pagination, response shapes, contract locations
-- **exception-patterns**: Error handling, AppError usage, validation errors, exception handlers
-- **factory-patterns**: create_app, lifespan, middleware registration, router mounting
-- **router-patterns**: APIRouter, route decorators, endpoint wiring
-- **service-patterns**: Service layer, business logic delegation
-- **repository-patterns**: Data access, query patterns
-- **middleware-patterns**: Middleware stack, ordering, configuration
-- **settings-patterns**: Settings model, environment variables, configuration
-- **connection-pooling-patterns**: Connection pools, client management, cleanup
-- **architectural-patterns**: Layer integration, request lifecycle, dependency flow
-- **dependency-patterns**: Depends(), factory functions, injection patterns
+
+Use pattern definitions and test questions from MODULE-DEFINITIONS.md Section 4 to determine the correct pattern. Each pattern has a specific purpose and test question.
+
+**Pattern Test Questions (from MODULE-DEFINITIONS.md):**
+- **api-patterns**: "Is this a rule for how to create an API, or documentation of an existing API?"
+- **architecture**: "Is this describing the system's structure, or prescribing how to build it?"
+- **factory-patterns**: "Is this about how to wire up the application at startup?"
+- **exception-patterns**: "Is this about how to handle exceptions?"
+- **router-patterns**: "Is this about how to organize routers?"
+- **service-patterns**: "Is this about how to implement services?"
+- **repository-patterns**: "Is this about how to access data?"
+- **middleware-patterns**: "Is this about how to configure middleware?"
+- **settings-patterns**: "Is this about how to manage configuration?"
+- **connection-pooling-patterns**: "Is this about how to manage connections?"
+- **dependency-patterns**: "Is this about how to inject dependencies?"
+
+**Common Misclassifications to Avoid:**
+- URL structure `/api/{version}` belongs in `api-patterns` under `rest`, not `fastapi`
+- Router mounting implementation belongs in `factory-patterns`, not `api-patterns`
+- Health endpoint documentation belongs in `architecture`, not `api-patterns`
+
+See `docs/development/MODULE-DEFINITIONS.md` Section 4 for detailed pattern definitions, inclusions, and exclusions.
+
+## Cross-Reference Quality Rules
+
+When writing PROJECT text (especially split suggestions), follow these rules from MODULE-DEFINITIONS.md Section 5:
+
+### Rule 1: Explain the Implementation
+Don't just point to a file; explain what it does.
+
+**Bad:**
+```yaml
+content: "See project.fastapi.factory-patterns.yml for ORJSONResponse configuration."
+```
+
+**Good:**
+```yaml
+content: |
+  ORJSONResponse is configured as default_response_class in the create_app
+  function (app/core/factory.py) via FastAPI(default_response_class=ORJSONResponse).
+  This enables automatic orjson serialization for all endpoints.
+```
+
+### Rule 2: Include the File Path
+Always include the concrete file path.
+
+**Bad:** `"Errors are handled centrally."`
+**Good:** `"Errors are handled centrally in app/core/errors.py."`
+
+### Rule 3: Include Function, Class, or Field Name
+Help readers find the exact location.
+
+**Bad:** `"See app/core/factory.py for application setup."`
+**Good:** `"The create_app function in app/core/factory.py sets up the application."`
+
+### Rule 4: Describe What It Does
+Explain the purpose, not just the location.
+
+**Bad:** `"Middleware is configured in app/core/factory.py."`
+**Good:**
+```yaml
+content: |
+  Middleware is registered in the create_app function (app/core/factory.py):
+  - CORSMiddleware for cross-origin requests
+  - RequestLoggingMiddleware for request/response logging
+```
+
+### Rule 5: Explain Why It's Relevant
+Connect the reference to the current pattern.
+
+**Bad:** `"Routers are mounted in create_app."`
+**Good:**
+```yaml
+content: |
+  Routers are mounted in the create_app function (app/core/factory.py) using
+  app.include_router(). This centralizes route registration and ensures
+  consistent prefix application (/api/v1).
+```
 
 ## Coverage Verification
 
@@ -239,17 +354,26 @@ When processing multiple items:
 
 ## Guidelines
 
-1. **Be thorough**: One sentence may contain multiple chunks with different classifications
-2. **Be precise**: Simple regex (app/*) is necessary but not sufficient - understand context
-3. **Be conservative**: When in doubt about MIXED, prefer SPLIT over KEEP
-4. **Never delete without coverage**: Always verify content exists elsewhere before REMOVE_COVERED
-5. **PROJECT doesn't restate GENERAL**: Split suggestions must not repeat principles in PROJECT text
-6. **Check multiple files**: Content may be covered by factory-patterns, exception-patterns, etc.
-7. **Provide reasoning**: Every classification needs clear justification
+1. **Use semantic analysis, not keyword matching**: Read MODULE-DEFINITIONS.md to understand precedence rules. Keywords are hints, not decisions.
+2. **Apply precedence rules**: When content fits multiple modules, use: protocol > framework > language > database
+3. **Follow cross-reference quality rules**: When suggesting PROJECT text, use MODULE-DEFINITIONS.md Section 5 rules (explain implementation, include file path, include function/class/field name, describe what it does, explain why it's relevant)
+4. **Be thorough**: One sentence may contain multiple chunks with different classifications
+5. **Be precise**: Simple regex (app/*) is necessary but not sufficient - understand context
+6. **Be conservative**: When in doubt about MIXED, prefer SPLIT over KEEP
+7. **Never delete without coverage**: Always verify content exists elsewhere before REMOVE_COVERED
+8. **PROJECT doesn't restate GENERAL**: Split suggestions must not repeat principles in PROJECT text
+9. **Check multiple files**: Content may be covered by factory-patterns, exception-patterns, etc.
+10. **Provide reasoning**: Every classification needs clear justification using semantic analysis
 
 ## Example Analysis
 
 **Input**: `url.prefix` with text "Mount all versioned endpoints under /api/{version} using create_app in app/core/factory.py."
+
+**Semantic Analysis Process**:
+1. **Intent**: This text describes both a REST convention (URL versioning) and implementation wiring (how it's done in this project)
+2. **Technology**: REST protocol (URL structure) + FastAPI framework (router mounting)
+3. **Precedence**: URL structure is a REST protocol convention (MODULE-DEFINITIONS.md Section 2, Rule 1: Protocol > Framework)
+4. **Scope**: First part is GENERAL (applies to any REST API), second part is PROJECT (references app/core/factory.py)
 
 **Output**:
 ```json
@@ -263,7 +387,7 @@ When processing multiple items:
       "domain": "rest",
       "scope": "general",
       "pattern": "api-patterns",
-      "reasoning": "URL versioning convention with no app/* references",
+      "reasoning": "URL versioning is a REST protocol convention (MODULE-DEFINITIONS.md Section 2, Rule 1: Protocol takes precedence over framework). This belongs in `rest` module, not `fastapi`, because it applies to any REST API regardless of framework.",
       "project_markers": []
     },
     {
@@ -271,7 +395,7 @@ When processing multiple items:
       "domain": "fastapi",
       "scope": "project",
       "pattern": "factory-patterns",
-      "reasoning": "References create_app and app/core/factory.py path",
+      "reasoning": "References project-specific wiring (create_app function, app/core/factory.py path). Pattern is factory-patterns because it's about how to wire up the application at startup (MODULE-DEFINITIONS.md Section 4 test question).",
       "project_markers": ["create_app", "app/core/factory.py"]
     }
   ],
@@ -283,11 +407,18 @@ When processing multiple items:
   },
   "split_suggestion": {
     "general_text": "Mount versioned endpoints under a stable /api/{version} prefix.",
-    "project_text": "See factory-patterns router.version-prefix for create_app wiring."
+    "project_text": "Versioned endpoints are mounted in the create_app function (app/core/factory.py) via app.include_router(api_router, prefix=settings.api_prefix). This centralizes route registration and ensures consistent prefix application."
   },
   "movement_needed": true
 }
 ```
+
+**Why the project_text follows cross-reference quality rules**:
+- ✅ Rule 1: Explains implementation (not just "see factory-patterns")
+- ✅ Rule 2: Includes file path (app/core/factory.py)
+- ✅ Rule 3: Includes function name (create_app function)
+- ✅ Rule 4: Describes what it does (centralizes route registration)
+- ✅ Rule 5: Explains why it's relevant (ensures consistent prefix application)
 
 ## Output Format
 
