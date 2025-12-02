@@ -583,6 +583,92 @@ Both modes use Qwen embeddings (loaded lazily after extraction) to validate sema
 
 - `--input-file`: Batch processing from YAML/JSONL file (not yet implemented)
 
+## Fact Isolation Workflow
+
+Orchestrates fact extraction with validation and writes isolation records to CSV.
+
+### CLI Usage
+
+```bash
+# Isolate facts about an entity from a sentence
+uv run knowledge.isolate-entity-facts \
+  --sentence "Mount all versioned endpoints under /api/{version} using create_app in app/core/factory.py." \
+  --entity "create_app"
+
+# Dry run (show report without storing)
+uv run knowledge.isolate-entity-facts --sentence "..." --entity "FastAPI" --dry-run
+
+# Specify custom knowledge path
+uv run knowledge.isolate-entity-facts --sentence "..." --entity "FastAPI" --knowledge-path .knowledge
+
+# Specify custom output CSV for isolation records
+uv run knowledge.isolate-entity-facts --sentence "..." --entity "FastAPI" --output custom/isolation.csv
+```
+
+### CLI Arguments
+
+| Argument | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `--sentence` | Yes | - | The sentence to extract facts from |
+| `--entity` | Yes | - | The entity/keyword to extract facts about |
+| `--knowledge-path` | No | `.knowledge` | Base knowledge directory |
+| `--dry-run` | No | `False` | Show report without storing to CSV |
+| `--model` | No | `Qwen/Qwen3-Embedding-0.6B` | HuggingFace model for embeddings |
+| `--output` | No | `<knowledge-path>/facts/isolation_records.csv` | Output CSV for isolation records |
+
+### Workflow
+
+```text
+CLI -> fact_extraction.extract_facts_main() -> read CSV -> validate -> write isolation CSV -> report
+```
+
+1. CLI calls `fact_extraction.extract_facts_main()` directly
+2. Reads per-iteration results from `facts/extractions.csv`
+3. Validates extraction completeness (entity absence, semantic similarity >= 0.95)
+4. Writes isolation records to output CSV with fact linkage
+5. Outputs detailed report with validation status and similarity score
+
+### Isolation Records CSV Schema
+
+The `--output` CSV contains isolation records that track sentence changes per iteration:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `fact_id` | VARCHAR | UUID linking to the originating fact in `extractions.csv` |
+| `iteration` | VARCHAR | Iteration number (1-indexed) |
+| `entity` | VARCHAR | The entity being extracted |
+| `before_sentence` | VARCHAR | Sentence before this fact extraction |
+| `isolated_fact` | VARCHAR | The atomic fact extracted in this iteration |
+| `after_sentence` | VARCHAR | Sentence after this fact was removed |
+
+This CSV provides traceability between isolation records and the underlying fact extractions.
+
+### Output Report
+
+The command outputs:
+
+- Extraction results (facts per iteration)
+- Residual sentence after all extractions
+- Validation status with semantic similarity score
+- Isolation records written to CSV path
+- Movement record summary with fact IDs
+
+### Semantic Similarity Validation
+
+The validation step computes semantic similarity between:
+
+- **Original**: The source sentence before any extraction
+- **Reconstructed**: All extracted fact texts joined with the final residual
+
+Using Qwen embeddings, the cosine similarity must be >= 0.95 for information preservation
+to be considered successful. This ensures no semantic content is lost during extraction.
+
+### Exit Codes
+
+- `0`: Success - extraction complete and validated
+- `1`: Error - CLI or validation failure
+- `2`: Partial success - facts extracted but entity still present in residual
+
 ## Comparison Workflow with Timestamped Originals
 
 The `compare-yml-docs` command accepts an optional `--original-files` parameter to compare
