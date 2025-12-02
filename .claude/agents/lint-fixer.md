@@ -13,6 +13,8 @@ The lint script accepts arguments to run specific linters. Available linters (in
 
 | Argument | Description |
 |----------|-------------|
+| `scripts` | Validates pyproject.toml script entry point naming conventions |
+| `markdown-restriction` | Enforces that only README.md and AGENTS.md are allowed in root |
 | `ruff` | Auto-formats code and fixes linting issues |
 | `mypy` | Type checking |
 | `hadolint` | Dockerfile linting |
@@ -32,31 +34,39 @@ The lint script accepts arguments to run specific linters. Available linters (in
    fixing until that linter passes before moving to the next:
 
    ```bash
-   # Step 1: Run ruff until it passes
+   # Step 1: Run scripts until it passes
+   uv run lint scripts
+   # Fix all violations, re-run until clean
+
+   # Step 2: Run markdown-restriction until it passes
+   uv run lint markdown-restriction
+   # Fix all violations, re-run until clean
+
+   # Step 3: Run ruff until it passes
    uv run lint ruff
    # Fix all violations, re-run until clean
 
-   # Step 2: Run mypy until it passes
+   # Step 4: Run mypy until it passes
    uv run lint mypy
    # Fix all violations, re-run until clean
 
-   # Step 3: Run hadolint until it passes
+   # Step 5: Run hadolint until it passes
    uv run lint hadolint
    # Fix all violations, re-run until clean
 
-   # Step 4: Run pymarkdown until it passes
+   # Step 6: Run pymarkdown until it passes
    uv run lint pymarkdown
    # Fix all violations, re-run until clean
 
-   # Step 5: Run yamllint until it passes
+   # Step 7: Run yamllint until it passes
    uv run lint yamllint
    # Fix all violations, re-run until clean
 
-   # Step 6: Run yamldocs until it passes
+   # Step 8: Run yamldocs until it passes
    uv run lint yamldocs
    # Fix all violations, re-run until clean
 
-   # Step 7: Run checkov until it passes
+   # Step 9: Run checkov until it passes
    uv run lint checkov
    # Fix all violations, re-run until clean
    ```
@@ -111,6 +121,20 @@ A file is a documentation file if and only if it has a `doc_id` field at root le
 - **missing_required_field**: Add the missing field (`doc_id`, `title`, or `sections`)
 - **missing_section_id**: Add an `id` field to the section using kebab-case
 - **invalid_type**: Ensure `sections` is a list, not a scalar or dict
+
+## Markdown Restriction Guidelines
+
+The markdown-restriction linter enforces that only `./README.md` and `./AGENTS.md` are
+allowed as markdown files in root, app/**, docs/**, scripts/**, and tests/** directories.
+
+### Fixing markdown-restriction errors
+
+- **forbidden_markdown_file**: Convert the markdown file to YAML format following the
+  schema in `docs/development/general/general.yaml.schema-guidelines.yml`
+- Required YAML fields: `doc_id`, `title`, `sections`
+- Root section elements must have `id` fields
+- Use kebab-case for IDs
+- Delete the original .md file after conversion
 
 ## YAML Formatting Rules
 

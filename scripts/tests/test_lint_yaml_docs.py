@@ -125,6 +125,89 @@ class TestValidateDocumentRoot:
         assert len(errors) == 1
         assert errors[0]["error_type"] == "invalid_type"
 
+    def test_accepts_valid_list_type_fields(self) -> None:
+        """Should accept valid list-type optional fields."""
+        data = {
+            "doc_id": "test",
+            "title": "Test",
+            "sections": [],
+            "domain": ["yaml", "documentation"],
+            "primary_runtime_references": [{"path": "app/main.py"}],
+            "related_docs": [{"doc_id": "other-doc"}],
+            "external_references": [{"url": "https://example.com"}],
+        }
+        errors = validate_document_root(data, "test.yml")
+        assert errors == []
+
+    def test_reports_invalid_domain_type(self) -> None:
+        """Should report when domain is not a list."""
+        data = {"doc_id": "test", "title": "Test", "sections": [], "domain": "yaml"}
+        errors = validate_document_root(data, "test.yml")
+        assert len(errors) == 1
+        assert errors[0]["error_type"] == "invalid_type"
+        assert "domain" in errors[0]["message"]
+        assert "str" in errors[0]["message"]
+
+    def test_reports_invalid_primary_runtime_references_type(self) -> None:
+        """Should report when primary_runtime_references is not a list."""
+        data = {
+            "doc_id": "test",
+            "title": "Test",
+            "sections": [],
+            "primary_runtime_references": "app/main.py",
+        }
+        errors = validate_document_root(data, "test.yml")
+        assert len(errors) == 1
+        assert errors[0]["error_type"] == "invalid_type"
+        assert "primary_runtime_references" in errors[0]["message"]
+
+    def test_reports_invalid_related_docs_type(self) -> None:
+        """Should report when related_docs is not a list."""
+        data = {
+            "doc_id": "test",
+            "title": "Test",
+            "sections": [],
+            "related_docs": "other-doc",
+        }
+        errors = validate_document_root(data, "test.yml")
+        assert len(errors) == 1
+        assert errors[0]["error_type"] == "invalid_type"
+        assert "related_docs" in errors[0]["message"]
+
+    def test_reports_invalid_external_references_type(self) -> None:
+        """Should report when external_references is not a list."""
+        data = {
+            "doc_id": "test",
+            "title": "Test",
+            "sections": [],
+            "external_references": "https://example.com",
+        }
+        errors = validate_document_root(data, "test.yml")
+        assert len(errors) == 1
+        assert errors[0]["error_type"] == "invalid_type"
+        assert "external_references" in errors[0]["message"]
+
+    def test_reports_multiple_invalid_list_type_fields(self) -> None:
+        """Should report all invalid list-type fields."""
+        data = {
+            "doc_id": "test",
+            "title": "Test",
+            "sections": [],
+            "domain": "yaml",
+            "related_docs": "other-doc",
+        }
+        errors = validate_document_root(data, "test.yml")
+        assert len(errors) == 2
+        error_fields = {e["message"].split("'")[1] for e in errors}
+        assert "domain" in error_fields
+        assert "related_docs" in error_fields
+
+    def test_omitted_list_type_fields_pass(self) -> None:
+        """Should pass when optional list-type fields are omitted."""
+        data = {"doc_id": "test", "title": "Test", "sections": []}
+        errors = validate_document_root(data, "test.yml")
+        assert errors == []
+
 
 class TestValidateSections:
     """Tests for validate_sections function."""

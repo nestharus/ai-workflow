@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # Linter names in execution order
 LINTER_NAMES = [
     "scripts",
+    "markdown-restriction",
     "ruff",
     "mypy",
     "hadolint",
@@ -35,6 +36,7 @@ LINT_HADOLINT_CONFIG = REPO_ROOT / ".lint.hadolint.yaml"
 LINT_PYMARKDOWN_CONFIG = REPO_ROOT / ".lint.pymarkdown.yaml"
 LINT_YAMLLINT_CONFIG = REPO_ROOT / ".lint.yamllint.yaml"
 LINT_YAMLDOCS_CONFIG = REPO_ROOT / ".lint.yamldocs.yaml"
+LINT_MARKDOWN_RESTRICTION_CONFIG = REPO_ROOT / ".lint.markdown-restriction.yaml"
 
 
 def _load_yaml_config(config_path: Path) -> dict[str, Any]:
@@ -280,6 +282,34 @@ def _run_yamldocs() -> int:
     return 0
 
 
+def _run_markdown_restriction() -> int:
+    """Run markdown restriction linter.
+
+    Validates that only README.md and AGENTS.md are allowed as markdown files
+    in root, app/**, docs/**, scripts/**, and tests/** directories.
+
+    Returns:
+        0 if all files pass, 1 if violations found.
+    """
+    from scripts.dev.lint_markdown_restriction import (
+        format_violations,
+        lint_markdown_restriction,
+    )
+
+    violations, exit_code = lint_markdown_restriction(LINT_MARKDOWN_RESTRICTION_CONFIG)
+
+    if violations:
+        print(format_violations(violations), file=sys.stderr)
+        print(
+            f"\nFound {len(violations)} forbidden markdown file(s).",
+            file=sys.stderr,
+        )
+    else:
+        print("No forbidden markdown files found.")
+
+    return exit_code
+
+
 def _run_checkov() -> int:
     """Run checkov on OpenAPI schema. Returns 1 if schema is missing, 0 otherwise."""
     if not OPENAPI_SCHEMA.exists():
@@ -308,6 +338,7 @@ def _run_checkov() -> int:
 # Map linter names to their runner functions
 LINTER_RUNNERS: dict[str, Callable[[], int | None]] = {
     "scripts": _run_scripts,
+    "markdown-restriction": _run_markdown_restriction,
     "ruff": _run_ruff,
     "mypy": _run_mypy,
     "hadolint": _run_hadolint,

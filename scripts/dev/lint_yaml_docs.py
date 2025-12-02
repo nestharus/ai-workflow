@@ -32,6 +32,9 @@ from scripts.dev.utils import REPO_ROOT
 # Required fields at document root level for documentation files
 REQUIRED_ROOT_FIELDS = ("doc_id", "title", "sections")
 
+# Optional fields that must be lists if present
+LIST_TYPE_FIELDS = ("domain", "primary_runtime_references", "related_docs", "external_references")
+
 
 class LintError(TypedDict):
     """A single lint error for a YAML documentation file."""
@@ -112,14 +115,14 @@ def validate_document_root(
     data: dict[str, Any],
     file_path: str,
 ) -> list[LintError]:
-    """Validate document-level required fields.
+    """Validate document-level required fields and type constraints.
 
     Args:
         data: Parsed YAML data.
         file_path: Relative path to the file.
 
     Returns:
-        List of lint errors for missing required fields.
+        List of lint errors for missing required fields or type mismatches.
     """
     errors: list[LintError] = []
 
@@ -144,6 +147,18 @@ def validate_document_root(
                 message="'sections' must be a list",
             )
         )
+
+    # Validate optional list-type fields have correct type if present
+    for field in LIST_TYPE_FIELDS:
+        if field in data and not isinstance(data[field], list):
+            errors.append(
+                LintError(
+                    file_path=file_path,
+                    line=None,
+                    error_type="invalid_type",
+                    message=f"'{field}' must be a list, got {type(data[field]).__name__}",
+                )
+            )
 
     return errors
 

@@ -106,19 +106,27 @@ Runs a comprehensive suite of static analysis and security tools.
 * **Arguments**: Specify one or more linter names to run only those linters. If no
   arguments are provided, all linters run in order.
 * **Available Linters** (in execution order):
-  1. `ruff`: Auto-formats code (`ruff format .`) and fixes linting issues
+  1. `scripts`: Validates pyproject.toml script entry point naming conventions
+  2. `markdown-restriction`: Enforces that only `./README.md` and `./AGENTS.md` are
+     allowed as markdown files in root, app/**, docs/**, scripts/**, and tests/**
+     directories. All other documentation must be in YAML format following the schema
+     defined in `docs/development/general/general.yaml.schema-guidelines.yml`
+  3. `ruff`: Auto-formats code (`ruff format .`) and fixes linting issues
      (`ruff check --fix .`)
-  2. `mypy`: Type checking
-  3. `hadolint`: Lints Dockerfiles
-  4. `pymarkdown`: Validates Markdown files
-  5. `yamllint`: Validates all `.yml` and `.yaml` files for syntax and style per the
+  4. `mypy`: Type checking
+  5. `hadolint`: Lints Dockerfiles
+  6. `pymarkdown`: Validates Markdown files
+  7. `yamllint`: Validates all `.yml` and `.yaml` files for syntax and style per the
      configuration in `.yamllint.yaml`
-  6. `checkov`: Scans the generated `openapi/openapi.json` against policies in
+  8. `yamldocs`: Validates YAML documentation files (identified by `doc_id` at root)
+     follow the schema defined in `general.yaml.schema-guidelines.yml`
+  9. `checkov`: Scans the generated `openapi/openapi.json` against policies in
      `.checkov.yaml`
 * **Examples**:
   * `uv run lint` - Run all linters
   * `uv run lint ruff` - Run only ruff (format and check)
   * `uv run lint mypy yamllint` - Run mypy and yamllint
+  * `uv run lint markdown-restriction` - Run only markdown restriction linter
 * **Prerequisite**: Run `uv run app.api.generate` first to generate the schema for Checkov
 * **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
   invoked via `uv run`
@@ -229,5 +237,20 @@ tools: Read, Edit, Bash, Grep, Glob
 
 System prompt instructions for the agent...
 ```
+
+## External Resources
+
+When stuck on implementation details, library usage, or unfamiliar patterns, use the
+Firecrawl MCP tools to search the web for documentation and examples:
+
+* **Search**: `mcp__firecrawl__firecrawl_search` - Search for documentation, Stack Overflow
+  answers, or best practices
+* **Scrape**: `mcp__firecrawl__firecrawl_scrape` - Fetch and read specific documentation pages
+
+Examples of when to use Firecrawl:
+
+* Unfamiliar with pyfakefs test patterns? Search for "pyfakefs modules_to_reload pytest"
+* Need FastAPI middleware examples? Search for "FastAPI middleware authentication 2025"
+* Library API unclear? Scrape the official documentation page
 
 </coding_guidelines>

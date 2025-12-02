@@ -11,6 +11,7 @@ import pytest
 
 from scripts.dev import lint
 from scripts.dev.lint import (
+    LINT_MARKDOWN_RESTRICTION_CONFIG,
     LINTER_NAMES,
     LINTER_RUNNERS,
     InvalidCommandError,
@@ -20,6 +21,7 @@ from scripts.dev.lint import (
     _run_checked,
     _run_checkov,
     _run_hadolint,
+    _run_markdown_restriction,
     _run_mypy,
     _run_pymarkdown,
     _run_ruff,
@@ -365,6 +367,7 @@ class TestLinterConstants:
         """Should have all expected linter names."""
         expected = [
             "scripts",
+            "markdown-restriction",
             "ruff",
             "mypy",
             "hadolint",
@@ -380,6 +383,17 @@ class TestLinterConstants:
         for name in LINTER_NAMES:
             assert name in LINTER_RUNNERS
             assert callable(LINTER_RUNNERS[name])
+
+    def test_markdown_restriction_config_path(self) -> None:
+        """Should have config path for markdown restriction linter."""
+        assert LINT_MARKDOWN_RESTRICTION_CONFIG.name == ".lint.markdown-restriction.yaml"
+
+    def test_markdown_restriction_execution_order(self) -> None:
+        """Should have markdown-restriction after scripts and before ruff."""
+        scripts_index = LINTER_NAMES.index("scripts")
+        md_restriction_index = LINTER_NAMES.index("markdown-restriction")
+        ruff_index = LINTER_NAMES.index("ruff")
+        assert scripts_index < md_restriction_index < ruff_index
 
 
 class TestParseArgs:
@@ -695,6 +709,117 @@ class TestRunYamldocs:
             result = _run_yamldocs()
 
         assert result == 0
+
+
+class TestRunMarkdownRestriction:
+    """Tests for _run_markdown_restriction function."""
+
+    def test_returns_zero_when_no_violations(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 0 when no forbidden markdown files found."""
+        from pyfakefs.fake_filesystem_unittest import Patcher
+
+        from scripts.dev import lint_markdown_restriction
+
+        with Patcher(modules_to_reload=[lint_markdown_restriction]) as patcher:
+            patcher.fs.create_dir("/fake/repo")
+            patcher.fs.create_file("/fake/repo/README.md", contents="# README")
+            patcher.fs.create_file("/fake/repo/AGENTS.md", contents="# AGENTS")
+            patcher.fs.create_file(
+                "/fake/repo/.lint.markdown-restriction.yaml",
+                contents=(
+                    "restricted_dirs:\n  - .\nallowed_files:\n"
+                    "  - README.md\n  - AGENTS.md\nexclude_dirs: []"
+                ),
+            )
+
+            with (
+                patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+                patch.object(lint_markdown_restriction, "REPO_ROOT", Path("/fake/repo")),
+                patch.object(
+                    lint,
+                    "LINT_MARKDOWN_RESTRICTION_CONFIG",
+                    Path("/fake/repo/.lint.markdown-restriction.yaml"),
+                ),
+            ):
+                result = _run_markdown_restriction()
+
+            assert result == 0
+            captured = capsys.readouterr()
+            assert "No forbidden markdown files found" in captured.out
+
+    def test_returns_one_when_violations_found(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when forbidden markdown files found."""
+        from pyfakefs.fake_filesystem_unittest import Patcher
+
+        from scripts.dev import lint_markdown_restriction
+
+        with Patcher(modules_to_reload=[lint_markdown_restriction]) as patcher:
+            patcher.fs.create_dir("/fake/repo")
+            patcher.fs.create_dir("/fake/repo/docs")
+            patcher.fs.create_file("/fake/repo/README.md", contents="# README")
+            patcher.fs.create_file("/fake/repo/docs/guide.md", contents="# Guide")
+            patcher.fs.create_file(
+                "/fake/repo/.lint.markdown-restriction.yaml",
+                contents=(
+                    "restricted_dirs:\n  - .\n  - docs\nallowed_files:\n"
+                    "  - README.md\n  - AGENTS.md\nexclude_dirs: []"
+                ),
+            )
+
+            with (
+                patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+                patch.object(lint_markdown_restriction, "REPO_ROOT", Path("/fake/repo")),
+                patch.object(
+                    lint,
+                    "LINT_MARKDOWN_RESTRICTION_CONFIG",
+                    Path("/fake/repo/.lint.markdown-restriction.yaml"),
+                ),
+            ):
+                result = _run_markdown_restriction()
+
+            assert result == 1
+            captured = capsys.readouterr()
+            assert "forbidden_markdown_file" in captured.err
+            assert "docs/guide.md" in captured.err
+
+    def test_excludes_directories_from_config(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should exclude directories specified in config."""
+        from pyfakefs.fake_filesystem_unittest import Patcher
+
+        from scripts.dev import lint_markdown_restriction
+
+        with Patcher(modules_to_reload=[lint_markdown_restriction]) as patcher:
+            patcher.fs.create_dir("/fake/repo")
+            patcher.fs.create_dir("/fake/repo/docs")
+            patcher.fs.create_dir("/fake/repo/excluded")
+            patcher.fs.create_file("/fake/repo/README.md", contents="# README")
+            patcher.fs.create_file("/fake/repo/excluded/guide.md", contents="# Guide")
+            patcher.fs.create_file(
+                "/fake/repo/.lint.markdown-restriction.yaml",
+                contents=(
+                    "restricted_dirs:\n  - .\n  - excluded\nallowed_files:\n"
+                    "  - README.md\n  - AGENTS.md\nexclude_dirs:\n  - excluded"
+                ),
+            )
+
+            with (
+                patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+                patch.object(lint_markdown_restriction, "REPO_ROOT", Path("/fake/repo")),
+                patch.object(
+                    lint,
+                    "LINT_MARKDOWN_RESTRICTION_CONFIG",
+                    Path("/fake/repo/.lint.markdown-restriction.yaml"),
+                ),
+            ):
+                result = _run_markdown_restriction()
+
+            assert result == 0
 
 
 class TestRunCheckov:
