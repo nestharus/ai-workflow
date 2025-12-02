@@ -19,6 +19,8 @@ for documentation migrations.
 │   ├── candidates.csv         # Extracted keyword candidates from NLP processing
 │   ├── keywords.csv           # Classified and promoted keywords
 │   └── variant_candidates.csv # Keyword variant tracking via embeddings
+├── facts/          # Fact extraction data
+│   └── extractions.csv        # Extracted atomic facts about entities/keywords
 └── README.md       # This file
 ```
 
@@ -189,6 +191,23 @@ Tracks keyword variants (synonyms, abbreviations, alternate spellings) identifie
 
 **Note**: Variants link to keywords via `keyword_id` and can be validated to confirm they are true synonyms or alternate forms.
 
+### facts/extractions.csv
+
+Stores extracted atomic facts about entities/keywords from sentences. Facts are extracted iteratively, with the sentence rewritten after each extraction until no facts about the target entity remain.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| fact_id | string | Unique identifier for this fact extraction record (UUID) |
+| source_sentence | string | Original sentence before any extraction |
+| entity | string | Entity/keyword being extracted |
+| fact_text | string | Extracted atomic fact about the entity |
+| rewritten_sentence | string | Sentence after this fact was removed |
+| iteration | string | Iteration number (1-indexed) |
+| confidence | string | Confidence score (0.0-1.0) |
+| extracted_at | string | ISO 8601 basic format timestamp (YYYYMMDDTHHMMSSZ) |
+
+**Note**: Facts are extracted using the logic puzzle approach where `original_sentence = fact1 + fact2 + ... + residual_sentence`. Semantic similarity validation ensures no information is lost during extraction.
+
 ## Hash Algorithm
 
 All hash fields use **SHA-256** for content hashing.
@@ -318,6 +337,34 @@ ORDER BY k.term, v.similarity_score DESC;
 SELECT * FROM read_csv_auto('.knowledge/keywords/variant_candidates.csv')
 WHERE validated = 'false'
   AND CAST(similarity_score AS DOUBLE) >= 0.9;
+
+-- Query all extracted facts
+SELECT * FROM read_csv_auto('.knowledge/facts/extractions.csv')
+ORDER BY extracted_at DESC, iteration;
+
+-- Get all facts about a specific entity
+SELECT fact_text, confidence, iteration
+FROM read_csv_auto('.knowledge/facts/extractions.csv', ALL_VARCHAR=TRUE)
+WHERE entity = 'create_app'
+ORDER BY iteration;
+
+-- Get facts with high confidence
+SELECT entity, fact_text, confidence
+FROM read_csv_auto('.knowledge/facts/extractions.csv', ALL_VARCHAR=TRUE)
+WHERE CAST(confidence AS DOUBLE) >= 0.95;
+
+-- Get extraction chains (all facts from same source sentence)
+SELECT source_sentence, entity, fact_text, iteration
+FROM read_csv_auto('.knowledge/facts/extractions.csv', ALL_VARCHAR=TRUE)
+WHERE source_sentence LIKE '%create_app%'
+ORDER BY source_sentence, iteration;
+
+-- Find entities with multiple facts extracted
+SELECT entity, COUNT(*) as fact_count
+FROM read_csv_auto('.knowledge/facts/extractions.csv', ALL_VARCHAR=TRUE)
+GROUP BY entity
+HAVING COUNT(*) > 1
+ORDER BY fact_count DESC;
 ```
 
 ## Addition Tracking Workflow
@@ -449,6 +496,93 @@ uv run knowledge.extract-keywords --stage extract
 uv run knowledge.extract-keywords --stage classify
 ```
 
+## Fact Extraction
+
+Iterative extraction of atomic facts about entities from sentences.
+
+### CLI Usage
+
+```bash
+# Extract facts about an entity from a sentence
+uv run knowledge.extract-facts \
+  --sentence "Mount all versioned endpoints under /api/{version} using create_app in app/core/factory.py." \
+  --entity "create_app"
+
+# Dry run (show facts without storing)
+uv run knowledge.extract-facts --sentence "..." --entity "FastAPI" --dry-run
+
+# Specify custom knowledge path
+uv run knowledge.extract-facts --sentence "..." --entity "FastAPI" --knowledge-path .knowledge
+```
+
+### Workflow
+
+```
+CLI → claude(fact-extractor, haiku) → JSON → validate(Qwen) → CSV
+```
+
+1. CLI generates structured prompt for fact-extractor sub-agent
+2. CLI invokes `claude --agent fact-extractor --model haiku --prompt ...`
+3. Sub-agent iteratively extracts facts, outputs JSON
+4. CLI validates with Qwen embeddings (similarity >= 0.95)
+5. CLI stores results to `facts/extractions.csv`
+
+### Schema (`facts/extractions.csv`)
+
+| Column | Description |
+|--------|-------------|
+| fact_id | UUID |
+| source_sentence | Original sentence |
+| entity | Target entity |
+| fact_text | Extracted atomic fact |
+| rewritten_sentence | Sentence after fact removal |
+| iteration | 1, 2, 3, ... |
+| confidence | 0.0-1.0 |
+| extracted_at | Timestamp |
+
+### Queries
+
+```sql
+-- Facts for an entity
+SELECT fact_text, confidence, iteration
+FROM read_csv_auto('.knowledge/facts/extractions.csv', ALL_VARCHAR=TRUE)
+WHERE entity = 'FastAPI'
+ORDER BY iteration;
+
+-- High-confidence facts
+SELECT entity, fact_text, confidence
+FROM read_csv_auto('.knowledge/facts/extractions.csv', ALL_VARCHAR=TRUE)
+WHERE CAST(confidence AS DOUBLE) >= 0.95;
+```
+
+### Logic Puzzle Approach
+
+```
+original_sentence = fact1 + fact2 + ... + residual_sentence
+```
+
+- Each iteration extracts exactly ONE atomic fact
+- Facts validated using Qwen embeddings (similarity >= 0.95)
+- Extraction continues until entity is absent from residual
+
+### Extraction Modes
+
+**Sub-agent mode**: Uses `fact-extractor` Claude sub-agent (haiku model for cost-efficiency) for comprehensive extraction with pattern matching. After sub-agent returns results, CLI re-validates using Qwen embeddings.
+
+**Inline mode (fallback)**: When sub-agent unavailable, uses best-effort heuristics with Qwen embeddings for validation. May not fully extract all entity facts. Check `extraction_complete` field.
+
+Both modes use Qwen embeddings (loaded lazily after extraction) to validate semantic similarity >= 0.95.
+
+### Exit Codes
+
+- `0`: Success - extraction complete
+- `1`: Error - CLI or model failure
+- `2`: Partial success - facts extracted but entity still present in residual
+
+### Future Enhancements
+
+- `--input-file`: Batch processing from YAML/JSONL file (not yet implemented)
+
 ## Comparison Workflow with Timestamped Originals
 
 The `compare-yml-docs` command accepts an optional `--original-files` parameter to compare
@@ -497,7 +631,8 @@ existing workflows.
   - `.knowledge/additions/.gitkeep`
   - `.knowledge/reports/.gitkeep`
   - `.knowledge/keywords/.gitkeep`
+  - `.knowledge/facts/.gitkeep`
 - `README.md` is tracked
 - Generated data files (`*.csv`, `*.yml`, `*.yaml`) are ignored via `.gitignore`
 - DuckDB database file (`knowledge.duckdb`) is ignored
-- Movement, addition, and keyword CSV files, and generated review reports (YML) are also ignored as environment-specific artifacts that track content validation during migrations
+- Movement, addition, keyword, and fact CSV files, and generated review reports (YML) are also ignored as environment-specific artifacts that track content validation during migrations
