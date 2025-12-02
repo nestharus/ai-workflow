@@ -97,6 +97,7 @@ test-coverage = "scripts.dev.test_runner.test_coverage:main"
 "knowledge.track-keyword-variants" = "scripts.knowledge.variant_resolver:main_track"
 "knowledge.query-variants" = "scripts.knowledge.query_variants:main"
 "knowledge.validate-variant" = "scripts.knowledge.validate_variant:main"
+"knowledge.apply-variant-decisions" = "scripts.knowledge.variant_resolver:main_apply"
 "knowledge.extract-keywords" = "scripts.knowledge.extraction_pipeline:main"
 
 [tool.uv]
