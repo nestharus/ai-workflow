@@ -40,13 +40,26 @@ sections:
       imports:
         - app.infrastructure.elasticsearch.client.ElasticsearchWrapper
         - typing.Any
-      code: "from typing import Any\nfrom app.infrastructure.elasticsearch.client import ElasticsearchWrapper\nasync def search_documents(\n\
-        \    wrapper: ElasticsearchWrapper,\n    index: str,\n    query: dict[str, Any],\n) -> list[dict[str, Any]]:\n   \
-        \ \"\"\"Search for documents using the Elasticsearch wrapper.\"\"\"\n    result = await wrapper.search(index=index,\
-        \ query=query)\n    hits = result.get(\"hits\", {}).get(\"hits\", [])\n    return [hit[\"_source\"] for hit in hits]\n\
-        async def index_document(\n    wrapper: ElasticsearchWrapper,\n    index: str,\n    doc_id: str,\n    document: dict[str,\
-        \ Any],\n) -> None:\n    \"\"\"Index a document using the Elasticsearch wrapper.\"\"\"\n    await wrapper.index(index=index,\
-        \ id=doc_id, document=document)"
+      code: |
+        from typing import Any
+        from app.infrastructure.elasticsearch.client import ElasticsearchWrapper
+        async def search_documents(
+            wrapper: ElasticsearchWrapper,
+            index: str,
+            query: dict[str, Any],
+        ) -> list[dict[str, Any]]:
+            """Search for documents using the Elasticsearch wrapper."""
+            result = await wrapper.search(index=index, query=query)
+            hits = result.get("hits", {}).get("hits", [])
+            return [hit["_source"] for hit in hits]
+        async def index_document(
+            wrapper: ElasticsearchWrapper,
+            index: str,
+            doc_id: str,
+            document: dict[str, Any],
+        ) -> None:
+            """Index a document using the Elasticsearch wrapper."""
+            await wrapper.index(index=index, id=doc_id, document=document)
     items:
       - id: es.wrapper-role
         type: pattern
@@ -110,13 +123,28 @@ sections:
     sample_code:
       description: Index creation with mappings and settings.
       language: python
-      code: "async def initialize_indices(self) -> None:\n    \"\"\"Initialize Knowledge Graph indices for facts and entity\
-        \ aliases.\"\"\"\n    self._ensure_initialized()\n    base_settings = {\n        \"number_of_shards\": self._number_of_shards,\n\
-        \        \"number_of_replicas\": self._number_of_replicas,\n    }\n    facts_mappings = {\n        \"properties\"\
-        : {\n            \"text\": {\"type\": \"text\"},\n            \"standardized_text\": {\"type\": \"text\"},\n     \
-        \       \"source_file\": {\"type\": \"keyword\"},\n            \"entity_ids\": {\"type\": \"keyword\"},\n        \
-        \    \"topic_ids\": {\"type\": \"keyword\"},\n        }\n    }\n    await self.create_index(\n        index=\"facts_index\"\
-        ,\n        mappings=facts_mappings,\n        settings=base_settings,\n    )"
+      code: |
+        async def initialize_indices(self) -> None:
+            """Initialize Knowledge Graph indices for facts and entity aliases."""
+            self._ensure_initialized()
+            base_settings = {
+                "number_of_shards": self._number_of_shards,
+                "number_of_replicas": self._number_of_replicas,
+            }
+            facts_mappings = {
+                "properties": {
+                    "text": {"type": "text"},
+                    "standardized_text": {"type": "text"},
+                    "source_file": {"type": "keyword"},
+                    "entity_ids": {"type": "keyword"},
+                    "topic_ids": {"type": "keyword"},
+                }
+            }
+            await self.create_index(
+                index="facts_index",
+                mappings=facts_mappings,
+                settings=base_settings,
+            )
     items:
       - id: es.index-initialization
         type: pattern
@@ -158,13 +186,25 @@ sections:
       imports:
         - app.core.settings.Settings
         - app.infrastructure.elasticsearch.client.ElasticsearchWrapper
-      code: "from app.core.settings import Settings\nfrom app.infrastructure.elasticsearch.client import ElasticsearchWrapper\n\
-        async def create_elasticsearch_wrapper(settings: Settings) -> ElasticsearchWrapper:\n    \"\"\"Factory that builds\
-        \ and initializes an Elasticsearch wrapper from settings.\"\"\"\n    wrapper = ElasticsearchWrapper(\n        hosts=settings.elasticsearch_url,\n\
-        \        connections_per_node=settings.elasticsearch_connections_per_node,\n        request_timeout=settings.elasticsearch_request_timeout,\n\
-        \        number_of_shards=settings.elasticsearch_shards,\n        number_of_replicas=settings.elasticsearch_replicas,\n\
-        \    )\n    await wrapper.init()\n    try:\n        await wrapper.initialize_indices()\n    except Exception:\n  \
-        \      await wrapper.close()\n        raise\n    return wrapper"
+      code: |
+        from app.core.settings import Settings
+        from app.infrastructure.elasticsearch.client import ElasticsearchWrapper
+        async def create_elasticsearch_wrapper(settings: Settings) -> ElasticsearchWrapper:
+            """Factory that builds and initializes an Elasticsearch wrapper from settings."""
+            wrapper = ElasticsearchWrapper(
+                hosts=settings.elasticsearch_url,
+                connections_per_node=settings.elasticsearch_connections_per_node,
+                request_timeout=settings.elasticsearch_request_timeout,
+                number_of_shards=settings.elasticsearch_shards,
+                number_of_replicas=settings.elasticsearch_replicas,
+            )
+            await wrapper.init()
+            try:
+                await wrapper.initialize_indices()
+            except Exception:
+                await wrapper.close()
+                raise
+            return wrapper
     items:
       - id: es.lifecycle.startup
         type: pattern
@@ -195,14 +235,30 @@ sections:
     sample_code:
       description: Monkeypatching create_elasticsearch_wrapper for tests.
       language: python
-      code: "import pytest\nfrom unittest.mock import AsyncMock, MagicMock\n@pytest.fixture\ndef mock_elasticsearch_wrapper():\n\
-        \    \"\"\"Create a mock ElasticsearchWrapper for unit tests.\"\"\"\n    wrapper = MagicMock()\n    wrapper.search\
-        \ = AsyncMock(return_value={\"hits\": {\"hits\": []}})\n    wrapper.index = AsyncMock()\n    wrapper.bulk = AsyncMock()\n\
-        \    wrapper.close = AsyncMock()\n    wrapper.init = AsyncMock()\n    wrapper.initialize_indices = AsyncMock()\n \
-        \   return wrapper\n@pytest.fixture\ndef patch_create_elasticsearch_wrapper(monkeypatch, mock_elasticsearch_wrapper):\n\
-        \    \"\"\"Patch create_elasticsearch_wrapper to return a mock wrapper.\"\"\"\n    async def mock_factory(settings):\n\
-        \        return mock_elasticsearch_wrapper\n    monkeypatch.setattr(\n        \"app.infrastructure.elasticsearch.client.create_elasticsearch_wrapper\"\
-        ,\n        mock_factory,\n    )\n    return mock_elasticsearch_wrapper"
+      code: |
+        import pytest
+        from unittest.mock import AsyncMock, MagicMock
+        @pytest.fixture
+        def mock_elasticsearch_wrapper():
+            """Create a mock ElasticsearchWrapper for unit tests."""
+            wrapper = MagicMock()
+            wrapper.search = AsyncMock(return_value={"hits": {"hits": []}})
+            wrapper.index = AsyncMock()
+            wrapper.bulk = AsyncMock()
+            wrapper.close = AsyncMock()
+            wrapper.init = AsyncMock()
+            wrapper.initialize_indices = AsyncMock()
+            return wrapper
+        @pytest.fixture
+        def patch_create_elasticsearch_wrapper(monkeypatch, mock_elasticsearch_wrapper):
+            """Patch create_elasticsearch_wrapper to return a mock wrapper."""
+            async def mock_factory(settings):
+                return mock_elasticsearch_wrapper
+            monkeypatch.setattr(
+                "app.infrastructure.elasticsearch.client.create_elasticsearch_wrapper",
+                mock_factory,
+            )
+            return mock_elasticsearch_wrapper
     items:
       - id: elasticsearch.test.monkeypatch-factory
         type: pattern

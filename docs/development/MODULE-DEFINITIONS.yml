@@ -43,10 +43,10 @@ sections:
   items:
   - id: section-2-multi-domain-tagging-1
     type: example
-    text: 'Domains are independent tags. Content mentioning multiple domains (REST URL + FastAPI mounting)
-      gets all relevant tags (`[''rest'', ''fastapi'']`). No precedence or single-domain rule. Classifier
-      outputs represent applied domain tags as a `domains` field containing a list (e.g., `"domains":
-      ["rest", "fastapi"]`).'
+    text: |
+      Domains are independent tags. Content mentioning multiple domains (REST URL + FastAPI mounting) gets all relevant
+      tags (`['rest', 'fastapi']`). No precedence or single-domain rule. Classifier outputs represent applied domain
+      tags as a `domains` field containing a list (e.g., `"domains": ["rest", "fastapi"]`).
   - id: section-2-multi-domain-tagging-2
     type: text
     text: '---'
@@ -103,9 +103,10 @@ sections:
     text: Project-specific naming conventions
   - id: general-scope-13
     type: rule
-    text: '**Note:** The absence of these exclusions (e.g., no `app/*` references) is necessary for GENERAL
-      scope but not sufficient. Content must also pass the test question: "Could this rule apply to a
-      different project using the same stack?"'
+    text: |
+      **Note:** The absence of these exclusions (e.g., no `app/*` references) is necessary for GENERAL scope but not
+      sufficient. Content must also pass the test question: "Could this rule apply to a different project using the same
+      stack?"
   - id: general-scope-test-question-could-this
     type: text
     text: '**Test Question:** "Could this rule apply to a different project using the same stack?"'
@@ -137,7 +138,8 @@ sections:
   items:
   - id: project-scope-definition-knowledge-spec
     type: definition
-    text: '**Definition:** Knowledge specific to this project''s implementation.'
+    text: |
+      **Definition:** Knowledge specific to this project's implementation.
   - id: project-scope-includes
     type: text
     text: '**Includes:**'
@@ -167,12 +169,14 @@ sections:
     text: Language tutorials
   - id: project-scope-11
     type: rule
-    text: '**Note:** PROJECT content should reference GENERAL principles where applicable rather than
-      restating them. PROJECT explains where and how general rules are implemented in this codebase.'
+    text: |
+      **Note:** PROJECT content should reference GENERAL principles where applicable rather than restating them. PROJECT
+      explains where and how general rules are implemented in this codebase.
   - id: project-scope-test-question-is-this-kn
     type: text
-    text: '**Test Question:** "Is this knowledge specific to this project''s implementation (files, components,
-      decisions, or conventions)?"'
+    text: |
+      **Test Question:** "Is this knowledge specific to this project's implementation (files, components, decisions, or
+      conventions)?"
   - id: project-scope-examples-project
     type: text
     text: '**Examples - PROJECT:**'
@@ -195,12 +199,12 @@ sections:
         # References project-specific base class
   - id: project-scope-15
     type: rule
-    text: '**Important:** While `app/*` references are a strong indicator of PROJECT scope, they are not
-      the only way content can be project-specific. Project-specific decisions, conventions, or rules
-      that don''t happen to mention file paths are still PROJECT scope if they cannot reasonably apply
-      to another project using the same stack. The flowchart below captures this logic: `app/*` references
-      immediately classify content as PROJECT, but absence of such references triggers further questions
-      to determine if the content is project-specific in other ways.'
+    text: |
+      **Important:** While `app/*` references are a strong indicator of PROJECT scope, they are not the only way content
+      can be project-specific. Project-specific decisions, conventions, or rules that don't happen to mention file paths
+      are still PROJECT scope if they cannot reasonably apply to another project using the same stack. The flowchart
+      below captures this logic: `app/*` references immediately classify content as PROJECT, but absence of such
+      references triggers further questions to determine if the content is project-specific in other ways.
 - id: scope-decision-flowchart
   index: 7
   title: Scope Decision Flowchart
@@ -209,9 +213,16 @@ sections:
   items:
   - id: scope-decision-flowchart-code-1
     type: code
-    text: "Is there a reference to app/* paths?\n├── Yes → PROJECT\n└── No\n    └── Does it reference\
-      \ a project-specific component?\n        ├── Yes → PROJECT\n        └── No\n            └── Could\
-      \ this apply to another project?\n                ├── Yes → GENERAL\n                └── No → PROJECT"
+    text: |
+      Is there a reference to app/* paths?
+      ├── Yes → PROJECT
+      └── No
+          └── Does it reference a project-specific component?
+              ├── Yes → PROJECT
+              └── No
+                  └── Could this apply to another project?
+                      ├── Yes → GENERAL
+                      └── No → PROJECT
   - id: scope-decision-flowchart-2
     type: text
     text: '---'
@@ -268,8 +279,8 @@ sections:
     text: Error response design → `exception-patterns`
   - id: api-patterns-test-question-is-this-a
     type: step
-    text: '**Test Question:** "Is this a rule for how to create an API, or documentation of an existing
-      API?"'
+    text: |
+      **Test Question:** "Is this a rule for how to create an API, or documentation of an existing API?"
   - id: api-patterns-general-examples
     type: text
     text: '**GENERAL Examples:**'
@@ -338,8 +349,8 @@ sections:
     text: How to implement services → `service-patterns`
   - id: architecture-or-architectural-patterns-test-question-is-this-de
     type: text
-    text: '**Test Question:** "Is this describing the system''s structure, or prescribing how to build
-      it?"'
+    text: |
+      **Test Question:** "Is this describing the system's structure, or prescribing how to build it?"
   - id: architecture-or-architectural-patterns-project-examples
     type: text
     text: '**PROJECT Examples:**'
@@ -354,9 +365,9 @@ sections:
     text: '"Routers depend on services via Depends()"'
   - id: architecture-or-architectural-patterns-18
     type: note
-    text: '**Note:** The `/health` endpoint discussion about readiness checks belongs in `architecture`,
-      not `api-patterns`, because it documents existing system behavior rather than prescribing API design
-      rules.'
+    text: |
+      **Note:** The `/health` endpoint discussion about readiness checks belongs in `architecture`, not `api-patterns`,
+      because it documents existing system behavior rather than prescribing API design rules.
 - id: factory-patterns
   index: 11
   title: factory-patterns
@@ -419,8 +430,9 @@ sections:
     text: Lifespan context manager setup
   - id: factory-patterns-19
     type: text
-    text: '**Clarification:** The `/api/{version}` URL structure is a REST convention (→ `general.rest.api-patterns.yml`),
-      but the code that mounts routers to that path is factory wiring (→ `project.fastapi.factory-patterns.yml`).'
+    text: |
+      **Clarification:** The `/api/{version}` URL structure is a REST convention (→ `general.rest.api-patterns.yml`),
+      but the code that mounts routers to that path is factory wiring (→ `project.fastapi.factory-patterns.yml`).
 - id: exception-patterns
   index: 12
   title: exception-patterns
@@ -951,8 +963,9 @@ sections:
     text: Identify All Relevant Domains
   - id: classification-workflow-2
     type: text
-    text: 'Determine which domain(s) the content relates to: `rest`, `fastapi`, `python`, `surrealdb`,
-      `elasticsearch`. Content can have multiple domains.'
+    text: |
+      Determine which domain(s) the content relates to: `rest`, `fastapi`, `python`, `surrealdb`, `elasticsearch`.
+      Content can have multiple domains.
   - id: classification-workflow-apply-all-applicable-domain-ta
     type: text
     text: Apply All Applicable Domain Tags
@@ -964,7 +977,8 @@ sections:
     text: Do not reduce to a single domain—use multi-domain tagging (see Section 2)
   - id: classification-workflow-example-fastapi-route-with-ur
     type: example
-    text: 'Example: FastAPI route with URL versioning → `[''rest'', ''fastapi'']`'
+    text: |
+      Example: FastAPI route with URL versioning → `['rest', 'fastapi']`
   - id: classification-workflow-determine-scope
     type: text
     text: Determine Scope
@@ -1006,15 +1020,16 @@ sections:
   items:
   - id: example-classification-1
     type: step
-    text: '**Content:** "The `/api/v1` prefix is used for all API routes. Routers are mounted in `create_app`
-      using `app.include_router(router, prefix=''/api/v1'')`."'
+    text: |
+      **Content:** "The `/api/v1` prefix is used for all API routes. Routers are mounted in `create_app` using
+      `app.include_router(router, prefix='/api/v1')`."
   - id: example-classification-analysis
     type: text
     text: '**Analysis:**'
   - id: example-classification-domains-rest-fastapi
     type: text
-    text: 'Domains: `[''rest'', ''fastapi'']` — URL structure relates to REST, router mounting relates
-      to FastAPI'
+    text: |
+      Domains: `['rest', 'fastapi']` — URL structure relates to REST, router mounting relates to FastAPI
   - id: example-classification-scope-references-create_app
     type: step
     text: 'Scope: References `create_app` → PROJECT for the mounting part; URL convention → GENERAL'
@@ -1026,14 +1041,17 @@ sections:
     text: '**Decision:** Split by scope (not by domain):'
   - id: example-classification-generalrestapi-patternsyml
     type: text
-    text: '`general.rest.api-patterns.yml`: URL versioning convention (domains: `[''rest'']`)'
+    text: |
+      `general.rest.api-patterns.yml`: URL versioning convention (domains: `['rest']`)
   - id: example-classification-projectfastapifactory-patte
     type: text
-    text: '`project.fastapi.factory-patterns.yml`: Router mounting implementation (domains: `[''fastapi'']`)'
+    text: |
+      `project.fastapi.factory-patterns.yml`: Router mounting implementation (domains: `['fastapi']`)
   - id: example-classification-9
     type: note
-    text: 'Note: The split is based on scope (GENERAL vs PROJECT), not domain. If both parts were GENERAL,
-      they could remain together with domains: `[''rest'', ''fastapi'']`.'
+    text: |
+      Note: The split is based on scope (GENERAL vs PROJECT), not domain. If both parts were GENERAL, they could remain
+      together with domains: `['rest', 'fastapi']`.
 - id: primary-consumer
   index: 30
   title: Primary Consumer
@@ -1042,8 +1060,9 @@ sections:
   items:
   - id: primary-consumer-1
     type: rule
-    text: 'The knowledge-analyzer agent (`.claude/agents/knowledge-analyzer.md`) is the primary consumer
-      of this document. The agent should:'
+    text: |
+      The knowledge-analyzer agent (`.claude/agents/knowledge-analyzer.md`) is the primary consumer of this document.
+      The agent should:
   - id: primary-consumer-use-these-definitions-for-sema
     type: text
     text: Use these definitions for semantic classification instead of keyword matching

@@ -19,17 +19,12 @@ sections:
       agent (see `docs/plans/phase3.md` for POML definition).
   - id: 20-install-tools-code-2
     type: code
-    text: '# Clone a pinned release of the deep research tool (update tag/SHA when upgrading)
-
-      git -c advice.detachedHead=false clone --depth 1 --branch v0.1.0 https://github.com/nickscamara/open-deep-research.git
-      tools/deep-research
-
-      # If the project publishes signed tags or checksums, verify the ref before use (e.g., git verify-tag
-      v0.1.0;
-
-      # otherwise compare git rev-parse HEAD to a published commit SHA or tarball checksum)
-
-      cd tools/deep-research && git rev-parse HEAD'
+    text: |
+      # Clone a pinned release of the deep research tool (update tag/SHA when upgrading) git -c
+      advice.detachedHead=false clone --depth 1 --branch v0.1.0 https://github.com/nickscamara/open-deep-research.git
+      tools/deep-research # If the project publishes signed tags or checksums, verify the ref before use (e.g., git
+      verify-tag v0.1.0; # otherwise compare git rev-parse HEAD to a published commit SHA or tarball checksum) cd
+      tools/deep-research && git rev-parse HEAD
   - id: 20-install-tools-3
     type: step
     text: Document the tool's license and any known risks in the project notes, and add `tools/deep-research/`
@@ -48,30 +43,13 @@ sections:
     text: '**Note:** Ensure implementation matches the canonical specifications in `docs/architecture/orchestrator_api.md`.'
   - id: 21-implement-orchestrator-router-and-contracts-code-3
     type: code
-    text: '# Implement orchestrator contracts following patterns from example_contract.py
-
-      # - OrchestratorMessage with role, task, context, requesting_agent fields
-
-      # - WorkflowEvent for internal routing
-
-      # - TicketClaimRequest/Response
-
-      # - PRCommentEvent
-
-      # Use ConfigDict(extra="forbid"), Annotated, Field, model_validator
-
-
-      # Implement orchestrator router following patterns from example_router.py
-
-      # - POST /api/v1/orchestrator/submit endpoint
-
-      # - POST /api/v1/orchestrator/claim-ticket endpoint
-
-      # - POST /api/v1/orchestrator/route-comment endpoint
-
-      # - GET /api/v1/orchestrator/workflow/{id}/status endpoint
-
-      # Register router in app/core/factory.py'
+    text: |
+      # Implement orchestrator contracts following patterns from example_contract.py # - OrchestratorMessage with role,
+      task, context, requesting_agent fields # - WorkflowEvent for internal routing # - TicketClaimRequest/Response # -
+      PRCommentEvent # Use ConfigDict(extra="forbid"), Annotated, Field, model_validator # Implement orchestrator router
+      following patterns from example_router.py # - POST /api/v1/orchestrator/submit endpoint # - POST
+      /api/v1/orchestrator/claim-ticket endpoint # - POST /api/v1/orchestrator/route-comment endpoint # - GET
+      /api/v1/orchestrator/workflow/{id}/status endpoint # Register router in app/core/factory.py
 - id: 22-implement-orchestrator-service-and-agent-invoker
   index: 3
   title: 2.2. Implement Orchestrator Service and Agent Invoker
@@ -83,32 +61,14 @@ sections:
     text: We implement the logic for managing workflows and executing agents.
   - id: 22-implement-orchestrator-service-and-agent-invoker-code-2
     type: code
-    text: '# Implement OrchestratorService following patterns from example_service.py
-
-      # - __init__: Initialize dependencies (database, agent_invoker)
-
-      # - submit_message(): Route incoming agent messages to workflows
-
-      # - route_to_workflow(): Determine target workflow based on message
-
-      # - manage_workflow_state(): Track workflow execution state
-
-      # - shutdown(): Cleanup resources
-
-
-      # Implement AgentInvokerService
-
-      # - __init__: Initialize droid exec configuration
-
-      # - invoke_agent(): Execute droid exec via subprocess.run()
-
-      # - manage_worktree(): Create/cleanup git worktrees for parallel work
-
-      # - handle_timeout(): Manage agent execution timeouts
-
-      # - parse_agent_output(): Extract results from agent execution
-
-      # - shutdown(): Cleanup worktrees and processes'
+    text: |
+      # Implement OrchestratorService following patterns from example_service.py # - __init__: Initialize dependencies
+      (database, agent_invoker) # - submit_message(): Route incoming agent messages to workflows # -
+      route_to_workflow(): Determine target workflow based on message # - manage_workflow_state(): Track workflow
+      execution state # - shutdown(): Cleanup resources # Implement AgentInvokerService # - __init__: Initialize droid
+      exec configuration # - invoke_agent(): Execute droid exec via subprocess.run() # - manage_worktree():
+      Create/cleanup git worktrees for parallel work # - handle_timeout(): Manage agent execution timeouts # -
+      parse_agent_output(): Extract results from agent execution # - shutdown(): Cleanup worktrees and processes
 - id: 23-implement-ticket-manager-and-pr-comment-router
   index: 4
   title: 2.3. Implement Ticket Manager and PR Comment Router
@@ -117,26 +77,13 @@ sections:
   items:
   - id: 23-implement-ticket-manager-and-pr-comment-router-code-1
     type: code
-    text: '# Implement TicketManagerService
-
-      # - claim_ticket(): First-come-first-served claiming logic
-
-      # - subscribe_to_ticket(): Register agent for ticket updates
-
-      # - get_ticket_status(): Query claim state from database
-
-      # - release_ticket(): Release claim when work completes
-
-
-      # Implement PRCommentRouterService
-
-      # - route_comment(): Analyze PR comment and determine target agent
-
-      # - extract_context(): Parse file paths, line numbers from comment
-
-      # - determine_domain(): Map file paths to domains (Product/UX/UI/Tech)
-
-      # - determine_role(): Map comment type to role (R1/R2/R3)'
+    text: |
+      # Implement TicketManagerService # - claim_ticket(): First-come-first-served claiming logic # -
+      subscribe_to_ticket(): Register agent for ticket updates # - get_ticket_status(): Query claim state from database
+      # - release_ticket(): Release claim when work completes # Implement PRCommentRouterService # - route_comment():
+      Analyze PR comment and determine target agent # - extract_context(): Parse file paths, line numbers from comment #
+      - determine_domain(): Map file paths to domains (Product/UX/UI/Tech) # - determine_role(): Map comment type to
+      role (R1/R2/R3)
 - id: 24-implement-webhook-receiver-service
   index: 5
   title: 2.4. Implement Webhook Receiver Service
@@ -145,57 +92,28 @@ sections:
   items:
   - id: 24-implement-webhook-receiver-service-code-1
     type: code
-    text: '# Create webhook_receiver/main.py
-
-      # - FastAPI application with single POST /webhook/github endpoint
-
-      # - Signature verification using HMAC SHA256
-
-      # - Event parsing for PR comments and new issues
-
-      # - HTTP client to forward events to orchestrator
-
-      # - Error handling and retry logic
-
-
-      # Create webhook_receiver/contracts.py
-
-      # - GitHubWebhookPayload: Schema for GitHub webhook events
-
-      # - OrchestratorEventForward: Schema for forwarding to orchestrator
-
-
-      # Create webhook_receiver/Dockerfile
-
-      # - Python 3.12+ base image
-
-      # - Install dependencies (FastAPI, uvicorn, httpx)
-
-      # - Expose port 5000
-
-      # - Health check endpoint
-
-
-      # Update docker-compose.yml
-
-      # - Add webhook_receiver service
-
-      # - Configure environment variables (WEBHOOK_SECRET, ORCHESTRATOR_URL)
-
-      # - Network configuration to allow receiver → orchestrator communication'
+    text: |
+      # Create webhook_receiver/main.py # - FastAPI application with single POST /webhook/github endpoint # - Signature
+      verification using HMAC SHA256 # - Event parsing for PR comments and new issues # - HTTP client to forward events
+      to orchestrator # - Error handling and retry logic # Create webhook_receiver/contracts.py # -
+      GitHubWebhookPayload: Schema for GitHub webhook events # - OrchestratorEventForward: Schema for forwarding to
+      orchestrator # Create webhook_receiver/Dockerfile # - Python 3.12+ base image # - Install dependencies (FastAPI,
+      uvicorn, httpx) # - Expose port 5000 # - Health check endpoint # Update docker-compose.yml # - Add
+      webhook_receiver service # - Configure environment variables (WEBHOOK_SECRET, ORCHESTRATOR_URL) # - Network
+      configuration to allow receiver → orchestrator communication
   - id: 24-implement-webhook-receiver-service-webhook-hardening-add-to-th
     type: text
     text: '**Webhook hardening (add to the design/implementation above):**'
   - id: 24-implement-webhook-receiver-service-3
     type: example
-    text: '* Validate `X-Hub-Signature-256` as the HMAC of the payload and source timestamps from payload
-      timestamp fields, the `Date` header, or server-side delivery tracking (e.g., combine `X-GitHub-Delivery`
-      with stored timestamps). Reject requests older than a configurable window (e.g., 5 minutes) and
-      enforce a maximum payload size on both the FastAPI endpoint and the forwarding HTTP client (set
-      explicit ASGI body limits and httpx request limits). Apply rate limiting per IP and per repository
-      with configurable ceilings; use exponential backoff on retries when forwarding to the orchestrator.
-      Optionally enforce IP allowlisting using GitHub’s published webhook CIDR ranges and refresh the
-      allowlist on a schedule.'
+    text: |
+      * Validate `X-Hub-Signature-256` as the HMAC of the payload and source timestamps from payload timestamp fields,
+      the `Date` header, or server-side delivery tracking (e.g., combine `X-GitHub-Delivery` with stored timestamps).
+      Reject requests older than a configurable window (e.g., 5 minutes) and enforce a maximum payload size on both the
+      FastAPI endpoint and the forwarding HTTP client (set explicit ASGI body limits and httpx request limits). Apply
+      rate limiting per IP and per repository with configurable ceilings; use exponential backoff on retries when
+      forwarding to the orchestrator. Optionally enforce IP allowlisting using GitHub’s published webhook CIDR ranges
+      and refresh the allowlist on a schedule.
 - id: 25-configure-orchestrator-settings
   index: 6
   title: 2.5. Configure Orchestrator Settings
@@ -204,29 +122,19 @@ sections:
   items:
   - id: 25-configure-orchestrator-settings-code-1
     type: code
-    text: '# Update app/core/settings.py
-
-      # Add orchestrator-specific settings:
-
-      # - DROID_EXEC_PATH: Path to droid executable
-
-      # - DROID_MODEL: Model to use (gemini-3-pro-preview or custom:gemini-3-pro-preview-low)
-
-      # - AGENT_TIMEOUT_SECONDS: Maximum agent execution time
-
-      # - WORKTREE_BASE_PATH: Base directory for git worktrees
-
-      # - ORCHESTRATOR_DB_TABLE: Database table for workflow state
-
-      # - GITHUB_WEBHOOK_SECRET: Secret for webhook signature verification'
+    text: |
+      # Update app/core/settings.py # Add orchestrator-specific settings: # - DROID_EXEC_PATH: Path to droid executable
+      # - DROID_MODEL: Model to use (gemini-3-pro-preview or custom:gemini-3-pro-preview-low) # - AGENT_TIMEOUT_SECONDS:
+      Maximum agent execution time # - WORKTREE_BASE_PATH: Base directory for git worktrees # - ORCHESTRATOR_DB_TABLE:
+      Database table for workflow state # - GITHUB_WEBHOOK_SECRET: Secret for webhook signature verification
   - id: 25-configure-orchestrator-settings-2
     type: rule
-    text: '**Secret management requirements:** * Never commit `GITHUB_WEBHOOK_SECRET` or database credentials;
-      store them in environment variables or a secrets manager (Vault, AWS Secrets Manager, GCP Secret
-      Manager, or CI secrets store). Git-ignore local `.env` files used for development and reference
-      env vars in `app/core/settings.py` via `os.environ`. Enforce least-privilege access, encryption
-      at rest, and regular rotation for all secrets. Configure CI/CD and deployment environments to source
-      secrets from their managed stores rather than repository files.'
+    text: |
+      **Secret management requirements:** * Never commit `GITHUB_WEBHOOK_SECRET` or database credentials; store them in
+      environment variables or a secrets manager (Vault, AWS Secrets Manager, GCP Secret Manager, or CI secrets store).
+      Git-ignore local `.env` files used for development and reference env vars in `app/core/settings.py` via
+      `os.environ`. Enforce least-privilege access, encryption at rest, and regular rotation for all secrets. Configure
+      CI/CD and deployment environments to source secrets from their managed stores rather than repository files.
 - id: 26-document-agent-to-orchestrator-communication-protocol
   index: 7
   title: 2.6. Document Agent-to-Orchestrator Communication Protocol

@@ -64,14 +64,9 @@ sections:
     text: 'Agents retrieve the latest review artifact using:'
   - id: agent-retrieval-code-2
     type: code
-    text: '# Get latest CodeRabbit review
-
-      uv run review.latest --type coderabbit
-
-
-      # Get latest SonarQube review
-
-      uv run review.latest --type sonar'
+    text: |
+      # Get latest CodeRabbit review uv run review.latest --type coderabbit # Get latest SonarQube review uv run
+      review.latest --type sonar
   - id: agent-retrieval-3
     type: text
     text: These commands print the path to the newest review file of the specified type.

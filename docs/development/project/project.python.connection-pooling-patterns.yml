@@ -8,7 +8,8 @@ description: >
 scope: >
   Covers generic pooling fundamentals, pool size tuning, timeout handling, connection recycling, error handling
   patterns,
-  testing strategies, anti-patterns, and monitoring. Technology-specific implementations are in surrealdb/, elasticsearch/,
+  testing strategies, anti-patterns, and monitoring. Technology-specific implementations are in surrealdb/,
+  elasticsearch/,
   and fastapi/ modules.
 out_of_scope:
   - SurrealDB-specific pool implementation (see surrealdb/connection-pooling-patterns.toon).
@@ -39,12 +40,24 @@ sections:
     sample_code:
       description: Generic pool initialization pattern with singleton-like access.
       language: python
-      code: "from typing import Protocol\nclass ConnectionPool(Protocol):\n    \"\"\"Protocol defining the interface for connection\
-        \ pools.\"\"\"\n    async def init(self) -> None:\n        \"\"\"Initialize pool connections.\"\"\"\n        ...\n\
-        \    async def close(self) -> None:\n        \"\"\"Close all connections in the pool.\"\"\"\n        ...\n    async\
-        \ def acquire(self):\n        \"\"\"Acquire a connection from the pool.\"\"\"\n        ...\nasync def create_pool(settings)\
-        \ -> ConnectionPool:\n    \"\"\"Factory function that creates and initializes a pool.\"\"\"\n    pool = SomePool(dsn=settings.url,\
-        \ size=settings.pool_size)\n    await pool.init()\n    return pool"
+      code: |
+        from typing import Protocol
+        class ConnectionPool(Protocol):
+            """Protocol defining the interface for connection pools."""
+            async def init(self) -> None:
+                """Initialize pool connections."""
+                ...
+            async def close(self) -> None:
+                """Close all connections in the pool."""
+                ...
+            async def acquire(self):
+                """Acquire a connection from the pool."""
+                ...
+        async def create_pool(settings) -> ConnectionPool:
+            """Factory function that creates and initializes a pool."""
+            pool = SomePool(dsn=settings.url, size=settings.pool_size)
+            await pool.init()
+            return pool
     items:
       - id: fundamentals.startup-only
         type: rule
@@ -125,10 +138,18 @@ sections:
     sample_code:
       description: Timeout handling with asyncio.wait_for.
       language: python
-      code: "import asyncio\nimport logging\nlogger = logging.getLogger(__name__)\nasync def acquire_with_timeout(pool, timeout:\
-        \ float):\n    \"\"\"Acquire a connection with explicit timeout handling.\"\"\"\n    try:\n        conn = await asyncio.wait_for(pool.get(),\
-        \ timeout=timeout)\n        return conn\n    except TimeoutError:\n        logger.warning(\"Timed out waiting for\
-        \ connection from pool\")\n        raise"
+      code: |
+        import asyncio
+        import logging
+        logger = logging.getLogger(__name__)
+        async def acquire_with_timeout(pool, timeout: float):
+            """Acquire a connection with explicit timeout handling."""
+            try:
+                conn = await asyncio.wait_for(pool.get(), timeout=timeout)
+                return conn
+            except TimeoutError:
+                logger.warning("Timed out waiting for connection from pool")
+                raise
     items:
       - id: timeouts.acquire
         type: rule
@@ -188,10 +209,20 @@ sections:
     sample_code:
       description: Error handling pattern for pool initialization.
       language: python
-      code: "import logging\nlogger = logging.getLogger(__name__)\nasync def create_pool_with_setup(settings):\n    \"\"\"\
-        Create pool with initialization and cleanup on failure.\"\"\"\n    pool = Pool(dsn=settings.url, size=settings.pool_size)\n\
-        \    await pool.init()\n    try:\n        await pool.initialize_schema()\n    except Exception:\n        logger.exception(\"\
-        Schema initialization failed\")\n        await pool.close()\n        raise\n    return pool"
+      code: |
+        import logging
+        logger = logging.getLogger(__name__)
+        async def create_pool_with_setup(settings):
+            """Create pool with initialization and cleanup on failure."""
+            pool = Pool(dsn=settings.url, size=settings.pool_size)
+            await pool.init()
+            try:
+                await pool.initialize_schema()
+            except Exception:
+                logger.exception("Schema initialization failed")
+                await pool.close()
+                raise
+            return pool
     items:
       - id: errors.startup-fail-fast
         type: rule
@@ -227,10 +258,22 @@ sections:
     sample_code:
       description: Pytest fixtures for pool testing without real backends.
       language: python
-      code: "import pytest\nfrom unittest.mock import AsyncMock, MagicMock\n@pytest.fixture\ndef mock_pool():\n    \"\"\"\
-        Create a mock pool for unit tests.\"\"\"\n    pool = MagicMock()\n    pool.acquire = AsyncMock(return_value=MagicMock())\n\
-        \    pool.close = AsyncMock()\n    return pool\n@pytest.fixture\ndef fake_connection():\n    \"\"\"Create a fake connection\
-        \ that captures queries.\"\"\"\n    conn = MagicMock()\n    conn.query = AsyncMock(return_value=[])\n    return conn"
+      code: |
+        import pytest
+        from unittest.mock import AsyncMock, MagicMock
+        @pytest.fixture
+        def mock_pool():
+            """Create a mock pool for unit tests."""
+            pool = MagicMock()
+            pool.acquire = AsyncMock(return_value=MagicMock())
+            pool.close = AsyncMock()
+            return pool
+        @pytest.fixture
+        def fake_connection():
+            """Create a fake connection that captures queries."""
+            conn = MagicMock()
+            conn.query = AsyncMock(return_value=[])
+            return conn
     items:
       - id: test.unit-doubles
         type: rule

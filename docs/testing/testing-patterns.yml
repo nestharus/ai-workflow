@@ -21,8 +21,8 @@ sections:
     text: '**Key distinctions:**'
   - id: 1-introduction-code-coverage-measures-wh
     type: step
-    text: '**Code coverage**: Measures what percentage of source lines or branches are executed during
-      tests.'
+    text: |
+      **Code coverage**: Measures what percentage of source lines or branches are executed during tests.
   - id: 1-introduction-use-case-coverage-measure
     type: text
     text: '**Use-case coverage**: Measures how many defined user scenarios have tests that validate them.'
@@ -85,8 +85,9 @@ sections:
       - test_tier: Where the test should live (integration or e2e)
   - id: 22-field-definitions-2
     type: note
-    text: '**Note:** Coverage status is calculated dynamically from `@pytest.mark.usecase` markers in
-      tests, not stored in the registry. Uncovered use cases will appear in coverage reports.'
+    text: |
+      **Note:** Coverage status is calculated dynamically from `@pytest.mark.usecase` markers in tests, not stored in
+      the registry. Uncovered use cases will appear in coverage reports.
 - id: 23-naming-convention
   index: 5
   title: 2.3 Naming Convention
@@ -268,9 +269,8 @@ sections:
     text: 'The coverage report can fail the build if coverage falls below the configured threshold:'
   - id: 42-ci-integration-code-2
     type: code
-    text: '# Fail if use-case coverage is below threshold
-
-      pytest --usecase-coverage-fail-under=<threshold>'
+    text: |
+      # Fail if use-case coverage is below threshold pytest --usecase-coverage-fail-under=<threshold>
 - id: 43-implementation-status
   index: 15
   title: 4.3 Implementation Status
@@ -420,9 +420,8 @@ sections:
     text: 'Periodically audit tests without use-case markers:'
   - id: 64-review-unlinked-tests-code-2
     type: code
-    text: '# Find tests without usecase markers (future tooling)
-
-      pytest --collect-only -q | grep -v usecase'
+    text: |
+      # Find tests without usecase markers (future tooling) pytest --collect-only -q | grep -v usecase
   - id: 64-review-unlinked-tests-3
     type: text
     text: 'Tests without markers may indicate:'
@@ -461,8 +460,9 @@ sections:
   items:
   - id: 7-integration-with-existing-testing-tiers-1
     type: text
-    text: 'This use-case approach integrates with the four-tier testing architecture. Different tiers
-      have different coverage requirements:'
+    text: |
+      This use-case approach integrates with the four-tier testing architecture. Different tiers have different coverage
+      requirements:
 - id: 71-coverage-types-by-tier
   index: 27
   title: 7.1 Coverage Types by Tier
@@ -538,10 +538,10 @@ sections:
   items:
   - id: 75-per-function-vs-use-case-coverage-1
     type: rule
-    text: '* **Unit/Component/Scripts tiers**: Each function must individually meet the configured line
-      and branch coverage threshold. This is not an average—every single function is validated separately.
-      * **Integration/E2E tiers**: Use-cases must have corresponding tests with `@pytest.mark.usecase`
-      markers (threshold configured in settings).'
+    text: |
+      * **Unit/Component/Scripts tiers**: Each function must individually meet the configured line and branch coverage
+      threshold. This is not an average—every single function is validated separately. * **Integration/E2E tiers**:
+      Use-cases must have corresponding tests with `@pytest.mark.usecase` markers (threshold configured in settings).
 - id: 8-examples
   index: 32
   title: 8. Examples
@@ -658,6 +658,7 @@ sections:
   items:
   - id: related-documentation-1
     type: text
-    text: '* [API Testing Patterns](api-testing-patterns.md) - Fixture composition, dependency overrides,
-      assertion patterns * [Testing Workflow](testing-workflow.md) - Test execution commands and tier
-      descriptions * [tests/use_cases.yaml](../../tests/use_cases.yaml) - The canonical use-case registry'
+    text: |
+      * [API Testing Patterns](api-testing-patterns.md) - Fixture composition, dependency overrides, assertion patterns
+      * [Testing Workflow](testing-workflow.md) - Test execution commands and tier descriptions *
+      [tests/use_cases.yaml](../../tests/use_cases.yaml) - The canonical use-case registry

@@ -7,7 +7,8 @@ description: >
   initialization using SurrealDBPool.
 scope: >
   Covers SurrealDB pool design, asyncio.Queue-based pooling, pool configuration (size, timeouts), connection lifecycle
-  (startup, auth, schema init, shutdown), schema initialization patterns, and SurrealDB-specific testing. Generic pooling
+  (startup, auth, schema init, shutdown), schema initialization patterns, and SurrealDB-specific testing. Generic
+  pooling
   concepts are in python/connection-pooling-patterns.toon.
 out_of_scope:
   - Generic pooling fundamentals (see python/connection-pooling-patterns.toon).
@@ -37,9 +38,13 @@ sections:
       imports:
         - app.infrastructure.surrealdb.pool.SurrealDBPool
         - typing.Any
-      code: "from typing import Any\nfrom app.infrastructure.surrealdb.pool import SurrealDBPool\nasync def run_query(pool:\
-        \ SurrealDBPool, sql: str, params: dict[str, Any] | None = None) -> Any:\n    async with pool.acquire() as conn:\n\
-        \        result = await conn.query(sql, params or {})\n        return result"
+      code: |
+        from typing import Any
+        from app.infrastructure.surrealdb.pool import SurrealDBPool
+        async def run_query(pool: SurrealDBPool, sql: str, params: dict[str, Any] | None = None) -> Any:
+            async with pool.acquire() as conn:
+                result = await conn.query(sql, params or {})
+                return result
     items:
       - id: surreal.pool-async-queue
         type: rule
@@ -105,13 +110,27 @@ sections:
       imports:
         - app.core.settings.Settings
         - app.infrastructure.surrealdb.pool.SurrealDBPool
-      code: "from app.core.settings import Settings\nfrom app.infrastructure.surrealdb.pool import SurrealDBPool\nasync def\
-        \ create_surrealdb_pool(settings: Settings) -> SurrealDBPool:\n    \"\"\"Factory that builds and initializes a SurrealDB\
-        \ pool from settings.\"\"\"\n    pool = SurrealDBPool(\n        dsn=settings.surrealdb_url,\n        namespace=settings.surrealdb_namespace,\n\
-        \        database=settings.surrealdb_database,\n        user=settings.surrealdb_user,\n        password=settings.surrealdb_pass,\n\
-        \        size=settings.surrealdb_pool_size,\n        embedding_dimension=settings.embedding_dimension,\n    )\n  \
-        \  await pool.init()\n    try:\n        await pool.initialize_schema()\n    except Exception:\n        await pool.close()\n\
-        \        raise\n    return pool"
+      code: |
+        from app.core.settings import Settings
+        from app.infrastructure.surrealdb.pool import SurrealDBPool
+        async def create_surrealdb_pool(settings: Settings) -> SurrealDBPool:
+            """Factory that builds and initializes a SurrealDB pool from settings."""
+            pool = SurrealDBPool(
+                dsn=settings.surrealdb_url,
+                namespace=settings.surrealdb_namespace,
+                database=settings.surrealdb_database,
+                user=settings.surrealdb_user,
+                password=settings.surrealdb_pass,
+                size=settings.surrealdb_pool_size,
+                embedding_dimension=settings.embedding_dimension,
+            )
+            await pool.init()
+            try:
+                await pool.initialize_schema()
+            except Exception:
+                await pool.close()
+                raise
+            return pool
     items:
       - id: surreal.lifecycle.startup
         type: pattern
@@ -169,12 +188,27 @@ sections:
     sample_code:
       description: Monkeypatching create_surrealdb_pool for tests.
       language: python
-      code: "import pytest\nfrom unittest.mock import AsyncMock, MagicMock\n@pytest.fixture\ndef mock_surrealdb_pool():\n\
-        \    \"\"\"Create a mock SurrealDBPool for unit tests.\"\"\"\n    pool = MagicMock()\n    pool.acquire = AsyncMock()\n\
-        \    pool.close = AsyncMock()\n    pool.initialize_schema = AsyncMock()\n    return pool\n@pytest.fixture\ndef patch_create_surrealdb_pool(monkeypatch,\
-        \ mock_surrealdb_pool):\n    \"\"\"Patch create_surrealdb_pool to return a mock pool.\"\"\"\n    async def mock_factory(settings):\n\
-        \        return mock_surrealdb_pool\n    monkeypatch.setattr(\n        \"app.infrastructure.surrealdb.pool.create_surrealdb_pool\"\
-        ,\n        mock_factory,\n    )\n    return mock_surrealdb_pool"
+      code: |
+        import pytest
+        from unittest.mock import AsyncMock, MagicMock
+        @pytest.fixture
+        def mock_surrealdb_pool():
+            """Create a mock SurrealDBPool for unit tests."""
+            pool = MagicMock()
+            pool.acquire = AsyncMock()
+            pool.close = AsyncMock()
+            pool.initialize_schema = AsyncMock()
+            return pool
+        @pytest.fixture
+        def patch_create_surrealdb_pool(monkeypatch, mock_surrealdb_pool):
+            """Patch create_surrealdb_pool to return a mock pool."""
+            async def mock_factory(settings):
+                return mock_surrealdb_pool
+            monkeypatch.setattr(
+                "app.infrastructure.surrealdb.pool.create_surrealdb_pool",
+                mock_factory,
+            )
+            return mock_surrealdb_pool
     items:
       - id: surrealdb.test.monkeypatch-factory
         type: pattern

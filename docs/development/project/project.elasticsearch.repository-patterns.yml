@@ -82,12 +82,22 @@ sections:
       imports:
         - app.infrastructure.elasticsearch.client.ElasticsearchWrapper
         - app.contracts.facts.Fact
-      code: "from app.infrastructure.elasticsearch.client import ElasticsearchWrapper\nfrom app.contracts.facts import Fact\n\
-        class ElasticsearchFactsRepository:\n    \"\"\"Repository for fact search operations.\"\"\"\n    def __init__(self,\
-        \ es: ElasticsearchWrapper) -> None:\n        \"\"\"Create repository with Elasticsearch wrapper.\"\"\"\n        self._es\
-        \ = es\n    async def search(self, query_text: str) -> list[Fact]:\n        \"\"\"Search for facts matching the query.\"\
-        \"\"\n        raw = await self._es.search(\n            index=\"facts_index\",\n            query={\"match\": {\"\
-        content\": query_text}}\n        )\n        # Map hits to domain models\n        ..."
+      code: |
+        from app.infrastructure.elasticsearch.client import ElasticsearchWrapper
+        from app.contracts.facts import Fact
+        class ElasticsearchFactsRepository:
+            """Repository for fact search operations."""
+            def __init__(self, es: ElasticsearchWrapper) -> None:
+                """Create repository with Elasticsearch wrapper."""
+                self._es = es
+            async def search(self, query_text: str) -> list[Fact]:
+                """Search for facts matching the query."""
+                raw = await self._es.search(
+                    index="facts_index",
+                    query={"match": {"content": query_text}}
+                )
+                # Map hits to domain models
+                ...
     items:
       - id: elasticsearch.conn.constructor
         type: rule
@@ -115,12 +125,27 @@ sections:
     summary: Patterns for building and executing Elasticsearch search queries.
     sample_code:
       description: Search query with multiple query types and pagination.
-      code: "async def search_with_filters(\n    self,\n    query_text: str,\n    category: str | None = None,\n    page:\
-        \ int = 1,\n    size: int = 20,\n) -> list[Document]:\n    must_clauses = [{\"match\": {\"content\": query_text}}]\n\
-        \    if category:\n        must_clauses.append({\"term\": {\"category\": category}})\n    query = {\"bool\": {\"must\"\
-        : must_clauses}}\n    from_offset = (page - 1) * size\n    raw = await self._es.search(\n        index=\"documents_index\"\
-        ,\n        query=query,\n        from_=from_offset,\n        size=size,\n    )\n    hits = raw.get(\"hits\", {}).get(\"\
-        hits\", [])\n    return [Document(**hit[\"_source\"]) for hit in hits]"
+      code: |
+        async def search_with_filters(
+            self,
+            query_text: str,
+            category: str | None = None,
+            page: int = 1,
+            size: int = 20,
+        ) -> list[Document]:
+            must_clauses = [{"match": {"content": query_text}}]
+            if category:
+                must_clauses.append({"term": {"category": category}})
+            query = {"bool": {"must": must_clauses}}
+            from_offset = (page - 1) * size
+            raw = await self._es.search(
+                index="documents_index",
+                query=query,
+                from_=from_offset,
+                size=size,
+            )
+            hits = raw.get("hits", {}).get("hits", [])
+            return [Document(**hit["_source"]) for hit in hits]
     items:
       - id: search.query-dsl
         type: rule
@@ -154,10 +179,19 @@ sections:
     summary: Patterns for indexing documents into Elasticsearch.
     sample_code:
       description: Single document and bulk indexing patterns.
-      code: "async def index_document(self, doc: Document) -> None:\n    await self._es.index(\n        index=\"documents_index\"\
-        ,\n        id=doc.id,\n        document=doc.model_dump(),\n    )\nasync def bulk_index(self, docs: list[Document])\
-        \ -> None:\n    actions = []\n    for doc in docs:\n        actions.append({\"index\": {\"_index\": \"documents_index\"\
-        , \"_id\": doc.id}})\n        actions.append(doc.model_dump())\n    await self._es.bulk(body=actions)"
+      code: |
+        async def index_document(self, doc: Document) -> None:
+            await self._es.index(
+                index="documents_index",
+                id=doc.id,
+                document=doc.model_dump(),
+            )
+        async def bulk_index(self, docs: list[Document]) -> None:
+            actions = []
+            for doc in docs:
+                actions.append({"index": {"_index": "documents_index", "_id": doc.id}})
+                actions.append(doc.model_dump())
+            await self._es.bulk(body=actions)
     items:
       - id: indexing.single
         type: pattern

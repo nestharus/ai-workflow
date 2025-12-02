@@ -58,10 +58,17 @@ sections:
     sample_code:
       description: Example function with Args, Returns, and Raises sections.
       language: python
-      code: "def fetch_user(user_id: str, *, include_inactive: bool = False) -> User:\n    \"\"\"Retrieve a user record from\
-        \ storage.\n    Args:\n        user_id: Identifier of the user to fetch.\n        include_inactive: When true, also\
-        \ allow inactive users to match.\n    Returns:\n        User: The matching user instance.\n    Raises:\n        UserNotFoundError:\
-        \ No user matched the provided id and filters.\n    \"\"\""
+      code: |
+        def fetch_user(user_id: str, *, include_inactive: bool = False) -> User:
+            """Retrieve a user record from storage.
+            Args:
+                user_id: Identifier of the user to fetch.
+                include_inactive: When true, also allow inactive users to match.
+            Returns:
+                User: The matching user instance.
+            Raises:
+                UserNotFoundError: No user matched the provided id and filters.
+            """
     items:
       - id: function-example.note
         type: note
@@ -74,9 +81,13 @@ sections:
     sample_code:
       description: Example class with docstrings for the class, __init__, and methods.
       language: python
-      code: "class TaskQueue:\n    \"\"\"Queue wrapper that limits concurrent tasks.\"\"\"\n    def __init__(self, capacity:\
-        \ int) -> None:\n        \"\"\"Create a queue with a maximum in-flight capacity.\"\"\"\n    def acquire(self) -> None:\n\
-        \        \"\"\"Block until a slot is available, then reserve it.\"\"\""
+      code: |
+        class TaskQueue:
+            """Queue wrapper that limits concurrent tasks."""
+            def __init__(self, capacity: int) -> None:
+                """Create a queue with a maximum in-flight capacity."""
+            def acquire(self) -> None:
+                """Block until a slot is available, then reserve it."""
     items:
       - id: class-example.note
         type: note

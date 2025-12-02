@@ -7,7 +7,8 @@ description: >
   patterns, and cross-cutting concern design independent of FastAPI.
 scope: >
   Covers ASGI middleware fundamentals, stack behavior, middleware implementation patterns, cross-cutting concerns, error
-  handling in middleware, testing patterns, and anti-patterns. FastAPI-specific middleware classes and configuration are in
+  handling in middleware, testing patterns, and anti-patterns. FastAPI-specific middleware classes and configuration are
+  in
   docs/development/fastapi/middleware-patterns.toon.
 domain:
   - python
@@ -92,15 +93,28 @@ sections:
     sample_code:
       description: Basic ASGI middleware class pattern.
       language: python
-      code: "from collections.abc import Awaitable, Callable\nfrom typing import Any\nScope = dict[str, Any]\nReceive = Callable[[],\
-        \ Awaitable[dict[str, Any]]]\nSend = Callable[[dict[str, Any]], Awaitable[None]]\nASGIApp = Callable[[Scope, Receive,\
-        \ Send], Awaitable[None]]\nclass ExampleMiddleware:\n    \"\"\"ASGI middleware that demonstrates the standard pattern.\"\
-        \"\"\n    def __init__(self, app: ASGIApp, *, config_option: str = \"default\") -> None:\n        \"\"\"Store the\
-        \ inner app and configuration.\"\"\"\n        self.app = app\n        self.config_option = config_option\n    async\
-        \ def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:\n        \"\"\"Wrap the inner application\
-        \ with custom behavior.\"\"\"\n        if scope[\"type\"] != \"http\":\n            await self.app(scope, receive,\
-        \ send)\n            return\n        # Pre-processing: runs before inner app\n        # ... custom logic here ...\n\
-        \        await self.app(scope, receive, send)\n        # Post-processing: runs after inner app (limited for streaming)"
+      code: |
+        from collections.abc import Awaitable, Callable
+        from typing import Any
+        Scope = dict[str, Any]
+        Receive = Callable[[], Awaitable[dict[str, Any]]]
+        Send = Callable[[dict[str, Any]], Awaitable[None]]
+        ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
+        class ExampleMiddleware:
+            """ASGI middleware that demonstrates the standard pattern."""
+            def __init__(self, app: ASGIApp, *, config_option: str = "default") -> None:
+                """Store the inner app and configuration."""
+                self.app = app
+                self.config_option = config_option
+            async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+                """Wrap the inner application with custom behavior."""
+                if scope["type"] != "http":
+                    await self.app(scope, receive, send)
+                    return
+                # Pre-processing: runs before inner app
+                # ... custom logic here ...
+                await self.app(scope, receive, send)
+                # Post-processing: runs after inner app (limited for streaming)
     items:
       - id: impl.class-structure
         type: rule
@@ -172,12 +186,22 @@ sections:
     sample_code:
       description: Middleware with proper error handling using try/finally.
       language: python
-      code: "class TimingMiddleware:\n    \"\"\"Middleware that times request processing.\"\"\"\n    def __init__(self, app:\
-        \ ASGIApp) -> None:\n        self.app = app\n    async def __call__(self, scope: Scope, receive: Receive, send: Send)\
-        \ -> None:\n        if scope[\"type\"] != \"http\":\n            await self.app(scope, receive, send)\n          \
-        \  return\n        start_time = time.perf_counter()\n        try:\n            await self.app(scope, receive, send)\n\
-        \        finally:\n            duration = time.perf_counter() - start_time\n            # Log duration even if an\
-        \ exception occurred\n            logger.info(\"Request completed\", duration=duration)"
+      code: |
+        class TimingMiddleware:
+            """Middleware that times request processing."""
+            def __init__(self, app: ASGIApp) -> None:
+                self.app = app
+            async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+                if scope["type"] != "http":
+                    await self.app(scope, receive, send)
+                    return
+                start_time = time.perf_counter()
+                try:
+                    await self.app(scope, receive, send)
+                finally:
+                    duration = time.perf_counter() - start_time
+                    # Log duration even if an exception occurred
+                    logger.info("Request completed", duration=duration)
     items:
       - id: errors.no-swallowing
         type: rule

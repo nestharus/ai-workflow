@@ -7,7 +7,8 @@ description: >
   than routers.
 scope: >
   Covers repository responsibilities, interface design with Protocol, implementation patterns, transaction management,
-  query patterns, error handling, testing strategies, factory functions, and anti-patterns. Database-specific patterns are
+  query patterns, error handling, testing strategies, factory functions, and anti-patterns. Database-specific patterns
+  are
   in docs/development/surrealdb/repository-patterns.toon and docs/development/elasticsearch/repository-patterns.toon.
 domain:
   - python
@@ -118,8 +119,10 @@ sections:
         text: >
           The repository pattern is illustrated in app/repositories/example_repository.py, where
           ExampleRepositoryProtocol
-          is implemented against SurrealDBPool for save_processed_message. Services such as ExampleService in app/services/example_service.py
-          depend on the protocol instead of the concrete pool, and API v1 wiring in app/api/v1/dependencies.py provides the
+          is implemented against SurrealDBPool for save_processed_message. Services such as ExampleService in
+          app/services/example_service.py
+          depend on the protocol instead of the concrete pool, and API v1 wiring in app/api/v1/dependencies.py provides
+          the
           repository via get_example_repository for service construction.
   - id: implementation-classes
     index: 3
@@ -128,10 +131,19 @@ sections:
     summary: Implement one or more concrete repository classes per protocol, encapsulating specific storage technology.
     sample_code:
       description: Repository constructor pattern with pool/session injection.
-      code: "class UserRepository:\n    \"\"\"Repository for user persistence.\"\"\"\n\n    def __init__(self, pool: DatabasePool)\
-        \ -> None:\n        \"\"\"Create repository with database pool.\"\"\"\n        self._pool = pool\n\n    async def\
-        \ get_by_id(self, user_id: str) -> User | None:\n        \"\"\"Retrieve user by ID.\"\"\"\n        async with self._pool.acquire()\
-        \ as conn:\n            # Execute query and map result to domain model\n            ..."
+      code: |
+        class UserRepository:
+            """Repository for user persistence."""
+
+            def __init__(self, pool: DatabasePool) -> None:
+                """Create repository with database pool."""
+                self._pool = pool
+
+            async def get_by_id(self, user_id: str) -> User | None:
+                """Retrieve user by ID."""
+                async with self._pool.acquire() as conn:
+                    # Execute query and map result to domain model
+                    ...
     items:
       - id: impl.one-per-aggregate
         type: rule
@@ -287,8 +299,10 @@ sections:
       factory in app/core/factory.py.
     sample_code:
       description: Factory function pattern for repository construction.
-      code: "def build_user_repository(pool: DatabasePool) -> UserRepository:\n    \"\"\"Create a UserRepository with the\
-        \ given pool.\"\"\"\n    return UserRepository(pool=pool)"
+      code: |
+        def build_user_repository(pool: DatabasePool) -> UserRepository:
+            """Create a UserRepository with the given pool."""
+            return UserRepository(pool=pool)
     items:
       - id: factory.functions
         type: rule

@@ -7,7 +7,8 @@ description: >
   response handling, and OpenAPI documentation.
 scope: >
   Covers APIRouter instantiation and configuration, route handler decorators, dependency injection with Annotated and
-  Depends(), request validation with Path/Query/Header, response_model configuration, OpenAPI documentation, router registration,
+  Depends(), request validation with Path/Query/Header, response_model configuration, OpenAPI documentation, router
+  registration,
   and anti-patterns. Generic handler structure is in docs/development/python/router-patterns.toon.
 domain:
   - fastapi
@@ -37,7 +38,12 @@ sections:
       description: Minimal router instantiation and route definition.
       imports:
         - fastapi.APIRouter
-      code: "router = APIRouter()\n\n@router.get(\"\")\nasync def list_items():\n    ..."
+      code: |
+        router = APIRouter()
+
+        @router.get("")
+        async def list_items():
+            ...
     items:
       - id: organization.granularity
         type: rule
@@ -134,8 +140,9 @@ sections:
         - name: type_alias
           code: ItemServiceDep = Annotated[ItemService, Depends(get_item_service)]
         - name: handler_with_deps
-          code: 'async def create_item(item: ItemCreate, service: ItemServiceDep, settings: Annotated[AppSettings, Depends(get_settings)]):
-            ...'
+          code: |
+            async def create_item(item: ItemCreate, service: ItemServiceDep, settings: Annotated[AppSettings,
+            Depends(get_settings)]): ...
     items:
       - id: di.annotated
         type: rule
@@ -163,8 +170,9 @@ sections:
       imports:
         - typing.Annotated
         - fastapi.Query
-      code: 'async def list_items(page: Annotated[int, Query(ge=1)] = 1, page_size: Annotated[int, Query(ge=1, le=100)] =
-        20, user_agent: Annotated[str | None, Header()] = None) -> ItemsPage: ...'
+      code: |
+        async def list_items(page: Annotated[int, Query(ge=1)] = 1, page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+        user_agent: Annotated[str | None, Header()] = None) -> ItemsPage: ...
     items:
       - id: validation.pydantic-models
         type: rule
@@ -187,13 +195,12 @@ sections:
         - fastapi.status
       snippets:
         - name: create_route
-          code: '@router.post("/", response_model=ItemResponse, status_code=201)
-
-            async def create_item(item: ItemCreate, ...): ...'
+          code: |
+            @router.post("/", response_model=ItemResponse, status_code=201) async def create_item(item: ItemCreate,
+            ...): ...
         - name: delete_route
-          code: '@router.delete("/{id}", response_model=None, status_code=204)
-
-            async def delete_item(id: int, ...): ...'
+          code: |
+            @router.delete("/{id}", response_model=None, status_code=204) async def delete_item(id: int, ...): ...
     items:
       - id: response.model-required
         type: rule
@@ -276,9 +283,8 @@ sections:
       imports:
         - fastapi.APIRouter
         - some_module.items_router
-      code: 'api_v1_router = APIRouter()
-
-        api_v1_router.include_router(items_router, prefix="/items", tags=["Items"])'
+      code: |
+        api_v1_router = APIRouter() api_v1_router.include_router(items_router, prefix="/items", tags=["Items"])
     items:
       - id: registration.include-router
         type: rule

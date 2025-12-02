@@ -7,7 +7,8 @@ description: >
   contracts using AppError and HTTPValidationError models.
 scope: >
   Covers HTTP exception usage, AppError response model, global exception handlers, validation error handling, domain
-  to HTTP mapping, custom handler implementation, error response structure, error logging, OpenAPI documentation, testing,
+  to HTTP mapping, custom handler implementation, error response structure, error logging, OpenAPI documentation,
+  testing,
   and anti-patterns.
 domain:
   - fastapi
@@ -73,13 +74,36 @@ sections:
     sample_code:
       description: JSON examples showing the three main AppError shapes for domain, infrastructure, and validation errors.
       imports: []
-      code: "# Domain error example (HTTP 404):\n{\n  \"code\": \"USER_NOT_FOUND\",\n  \"message\": \"User with ID 123 was\
-        \ not found\",\n  \"statusCode\": 404,\n  \"details\": null\n}\n# Infrastructure error example (HTTP 500):\n{\n  \"\
-        code\": \"INTERNAL_ERROR\",\n  \"message\": \"Unexpected error while processing request\",\n  \"statusCode\": 500,\n\
-        \  \"details\": {\"requestId\": \"b8a53f7b-9a5b-4e2b-9c0e-4f2d1c0f25b1\"}\n}\n# Validation error example (HTTP 400):\n\
-        {\n  \"code\": \"VALIDATION_ERROR\",\n  \"message\": \"Request validation failed\",\n  \"statusCode\": 400,\n  \"\
-        details\": {\n    \"detail\": [\n      {\n        \"loc\": [\"body\", \"message\"],\n        \"msg\": \"Field required\"\
-        ,\n        \"type\": \"missing\"\n      }\n    ]\n  }\n}"
+      code: |
+        # Domain error example (HTTP 404):
+        {
+          "code": "USER_NOT_FOUND",
+          "message": "User with ID 123 was not found",
+          "statusCode": 404,
+          "details": null
+        }
+        # Infrastructure error example (HTTP 500):
+        {
+          "code": "INTERNAL_ERROR",
+          "message": "Unexpected error while processing request",
+          "statusCode": 500,
+          "details": {"requestId": "b8a53f7b-9a5b-4e2b-9c0e-4f2d1c0f25b1"}
+        }
+        # Validation error example (HTTP 400):
+        {
+          "code": "VALIDATION_ERROR",
+          "message": "Request validation failed",
+          "statusCode": 400,
+          "details": {
+            "detail": [
+              {
+                "loc": ["body", "message"],
+                "msg": "Field required",
+                "type": "missing"
+              }
+            ]
+          }
+        }
     items:
       - id: apperror.canonical-envelope
         type: rule
@@ -102,7 +126,8 @@ sections:
         type: note
         text: >
           Use AppError for domain errors (for example USER_NOT_FOUND with 404), infrastructure errors (INTERNAL_ERROR
-          with 500 and a requestId in details), and validation errors (VALIDATION_ERROR with an HTTPValidationError payload
+          with 500 and a requestId in details), and validation errors (VALIDATION_ERROR with an HTTPValidationError
+          payload
           nested in details).
       - id: apperror.documentation
         type: rule
@@ -130,17 +155,32 @@ sections:
         - app.core.errors.DomainError
         - app.core.exceptions.validation_exception_handler
         - app.core.settings.Settings
-      code: "from fastapi import FastAPI, Request\nfrom fastapi.exceptions import RequestValidationError\nfrom fastapi.responses\
-        \ import ORJSONResponse\nfrom app.contracts.errors import AppError\nfrom app.core.errors import DomainError\nfrom\
-        \ app.core.exceptions import validation_exception_handler\nfrom app.core.settings import Settings\ndef create_app(settings:\
-        \ Settings) -> FastAPI:\n    app = FastAPI(default_response_class=ORJSONResponse, lifespan=_lifespan(settings))\n\
-        \    app.add_exception_handler(RequestValidationError, validation_exception_handler)\n    @app.exception_handler(DomainError)\n\
-        \    async def domain_error_handler(request: Request, exc: DomainError) -> ORJSONResponse:\n        error = AppError.from_domain(exc)\n\
-        \        return ORJSONResponse(\n            status_code=error.status_code,\n            content=error.model_dump(mode=\"\
-        json\", by_alias=True, exclude_none=True),\n        )\n    @app.exception_handler(Exception)\n    async def internal_error_handler(request:\
-        \ Request, exc: Exception) -> ORJSONResponse:\n        generic = AppError.internal_error()\n        return ORJSONResponse(\n\
-        \            status_code=generic.status_code,\n            content=generic.model_dump(mode=\"json\", by_alias=True),\n\
-        \        )\n    return app"
+      code: |
+        from fastapi import FastAPI, Request
+        from fastapi.exceptions import RequestValidationError
+        from fastapi.responses import ORJSONResponse
+        from app.contracts.errors import AppError
+        from app.core.errors import DomainError
+        from app.core.exceptions import validation_exception_handler
+        from app.core.settings import Settings
+        def create_app(settings: Settings) -> FastAPI:
+            app = FastAPI(default_response_class=ORJSONResponse, lifespan=_lifespan(settings))
+            app.add_exception_handler(RequestValidationError, validation_exception_handler)
+            @app.exception_handler(DomainError)
+            async def domain_error_handler(request: Request, exc: DomainError) -> ORJSONResponse:
+                error = AppError.from_domain(exc)
+                return ORJSONResponse(
+                    status_code=error.status_code,
+                    content=error.model_dump(mode="json", by_alias=True, exclude_none=True),
+                )
+            @app.exception_handler(Exception)
+            async def internal_error_handler(request: Request, exc: Exception) -> ORJSONResponse:
+                generic = AppError.internal_error()
+                return ORJSONResponse(
+                    status_code=generic.status_code,
+                    content=generic.model_dump(mode="json", by_alias=True),
+                )
+            return app
     items:
       - id: handlers.global-layers
         type: rule
@@ -187,7 +227,8 @@ sections:
         type: note
         text: >
           'Use ValidationErrorDetail and HTTPValidationError models in app/contracts/errors.py to represent validation
-          details; ValidationErrorDetail includes loc, msg, type, and optional ctx, while HTTPValidationError holds detail:
+          details; ValidationErrorDetail includes loc, msg, type, and optional ctx, while HTTPValidationError holds
+          detail:
           list[ValidationErrorDetail] and an optional body.'
       - id: validation.app-error-shape
         type: rule

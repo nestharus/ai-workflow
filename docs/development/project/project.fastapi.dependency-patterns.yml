@@ -7,7 +7,8 @@ description: >
   and app.dependency_overrides for testability.
 scope: >
   Covers FastAPI Depends(), Annotated type aliases, centralized dependency providers, database session dependencies,
-  router-level dependencies, and testing with overrides. Python DI concepts are in docs/development/python/dependency-patterns.toon.
+  router-level dependencies, and testing with overrides. Python DI concepts are in
+  docs/development/python/dependency-patterns.toon.
 domain:
   - fastapi
 primary_runtime_references:
@@ -38,9 +39,15 @@ sections:
         - fastapi.FastAPI
         - fastapi.Depends
         - typing.Optional
-      code: "from typing import Optional\nfrom fastapi import Depends, FastAPI\napp = FastAPI()\ndef common_parameters(q:\
-        \ Optional[str] = None, skip: int = 0, limit: int = 100) -> dict:\n    return {\"q\": q, \"skip\": skip, \"limit\"\
-        : limit}\n@app.get(\"/items/\")\nasync def read_items(commons: dict = Depends(common_parameters)):\n    return commons"
+      code: |
+        from typing import Optional
+        from fastapi import Depends, FastAPI
+        app = FastAPI()
+        def common_parameters(q: Optional[str] = None, skip: int = 0, limit: int = 100) -> dict:
+            return {"q": q, "skip": skip, "limit": limit}
+        @app.get("/items/")
+        async def read_items(commons: dict = Depends(common_parameters)):
+            return commons
     items:
       - id: fundamentals.depends-usage
         type: rule
@@ -85,12 +92,24 @@ sections:
         - fastapi.FastAPI
         - app.contracts.pagination.Pagination
         - typing.Optional
-      code: "from typing import Annotated, Optional\nfrom fastapi import Depends, FastAPI\nfrom app.contracts.pagination import\
-        \ Pagination\napp = FastAPI()\ndef common_parameters(q: Optional[str] = None, skip: int = 0, limit: int = 100) ->\
-        \ dict:\n    return {\"q\": q, \"skip\": skip, \"limit\": limit}\ndef common_pagination_params(\n    q: Optional[str]\
-        \ = None,\n    page: int = 1,\n    size: int = 50,\n) -> Pagination:\n    return Pagination(q=q, page=page, size=size)\n\
-        CommonsDep = Annotated[dict, Depends(common_parameters)]\nPageParams = Annotated[Pagination, Depends(common_pagination_params)]\n\
-        @app.get(\"/items/\")\nasync def read_items(commons: CommonsDep, page: PageParams):\n    ..."
+      code: |
+        from typing import Annotated, Optional
+        from fastapi import Depends, FastAPI
+        from app.contracts.pagination import Pagination
+        app = FastAPI()
+        def common_parameters(q: Optional[str] = None, skip: int = 0, limit: int = 100) -> dict:
+            return {"q": q, "skip": skip, "limit": limit}
+        def common_pagination_params(
+            q: Optional[str] = None,
+            page: int = 1,
+            size: int = 50,
+        ) -> Pagination:
+            return Pagination(q=q, page=page, size=size)
+        CommonsDep = Annotated[dict, Depends(common_parameters)]
+        PageParams = Annotated[Pagination, Depends(common_pagination_params)]
+        @app.get("/items/")
+        async def read_items(commons: CommonsDep, page: PageParams):
+            ...
     items:
       - id: annotated.pattern
         type: rule
@@ -131,14 +150,24 @@ sections:
         - app.infrastructure.db_connections.SurrealDBPool
         - app.infrastructure.db_connections.ElasticsearchWrapper
         - app.services.orchestrator_service.OrchestratorService
-      code: "from typing import Annotated\nfrom fastapi import Depends, Request\nfrom app.core.dependencies import get_settings\n\
-        from app.core.settings import Settings\nfrom app.infrastructure.db_connections import ElasticsearchWrapper, SurrealDBPool\n\
-        from app.services.orchestrator_service import OrchestratorService\nSettingsDep = Annotated[Settings, Depends(get_settings)]\n\
-        def get_surrealdb_pool(request: Request) -> SurrealDBPool:\n    return request.app.state.surrealdb_pool\ndef get_elasticsearch_client(request:\
-        \ Request) -> ElasticsearchWrapper:\n    return request.app.state.elasticsearch_client\ndef get_orchestrator_service(\n\
-        \    settings: SettingsDep,\n    pool: Annotated[SurrealDBPool, Depends(get_surrealdb_pool)],\n    search: Annotated[ElasticsearchWrapper,\
-        \ Depends(get_elasticsearch_client)],\n) -> OrchestratorService:\n    return OrchestratorService(settings=settings,\
-        \ db_pool=pool, search=search)"
+      code: |
+        from typing import Annotated
+        from fastapi import Depends, Request
+        from app.core.dependencies import get_settings
+        from app.core.settings import Settings
+        from app.infrastructure.db_connections import ElasticsearchWrapper, SurrealDBPool
+        from app.services.orchestrator_service import OrchestratorService
+        SettingsDep = Annotated[Settings, Depends(get_settings)]
+        def get_surrealdb_pool(request: Request) -> SurrealDBPool:
+            return request.app.state.surrealdb_pool
+        def get_elasticsearch_client(request: Request) -> ElasticsearchWrapper:
+            return request.app.state.elasticsearch_client
+        def get_orchestrator_service(
+            settings: SettingsDep,
+            pool: Annotated[SurrealDBPool, Depends(get_surrealdb_pool)],
+            search: Annotated[ElasticsearchWrapper, Depends(get_elasticsearch_client)],
+        ) -> OrchestratorService:
+            return OrchestratorService(settings=settings, db_pool=pool, search=search)
     items:
       - id: providers.central-file
         type: rule
@@ -179,9 +208,13 @@ sections:
         - collections.abc.AsyncGenerator
         - app.infrastructure.db_connections.SurrealDBPool
         - surrealdb.Surreal
-      code: "from collections.abc import AsyncGenerator\nfrom app.infrastructure.db_connections import SurrealDBPool\nfrom\
-        \ surrealdb import Surreal\nasync def get_db_session(pool: SurrealDBPool) -> AsyncGenerator[Surreal, None]:\n    async\
-        \ with pool.acquire() as conn:\n        yield conn"
+      code: |
+        from collections.abc import AsyncGenerator
+        from app.infrastructure.db_connections import SurrealDBPool
+        from surrealdb import Surreal
+        async def get_db_session(pool: SurrealDBPool) -> AsyncGenerator[Surreal, None]:
+            async with pool.acquire() as conn:
+                yield conn
     items:
       - id: db-session.yield-pattern
         type: rule
@@ -317,13 +350,25 @@ sections:
         - fastapi.FastAPI
         - app.core.dependencies.get_settings
         - app.core.settings.Settings
-      code: "import pytest\nfrom fastapi import FastAPI\nfrom httpx import AsyncClient, ASGITransport\nfrom app.core.factory\
-        \ import create_app\nfrom app.core.settings import Settings\nfrom app.core.dependencies import get_settings\n@pytest.fixture\n\
-        def test_settings() -> Settings:\n    return Settings()\n@pytest.fixture\ndef test_app(test_settings: Settings) ->\
-        \ FastAPI:\n    app = create_app(test_settings)\n    app.dependency_overrides[get_settings] = lambda: test_settings\n\
-        \    return app\n@pytest.fixture\nasync def async_client(test_app: FastAPI) -> AsyncGenerator[AsyncClient, None]:\n\
-        \    async with AsyncClient(transport=ASGITransport(app=test_app), base_url=\"http://test\") as client:\n        yield\
-        \ client"
+      code: |
+        import pytest
+        from fastapi import FastAPI
+        from httpx import AsyncClient, ASGITransport
+        from app.core.factory import create_app
+        from app.core.settings import Settings
+        from app.core.dependencies import get_settings
+        @pytest.fixture
+        def test_settings() -> Settings:
+            return Settings()
+        @pytest.fixture
+        def test_app(test_settings: Settings) -> FastAPI:
+            app = create_app(test_settings)
+            app.dependency_overrides[get_settings] = lambda: test_settings
+            return app
+        @pytest.fixture
+        async def async_client(test_app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
+            async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
+                yield client
     items:
       - id: testing.factory-app
         type: rule

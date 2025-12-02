@@ -7,7 +7,8 @@ description: >
   and testing strategies for building testable and modular applications.
 scope: >
   Covers factory function design, resource initialization patterns, dependency composition and wiring, factory testing
-  strategies, and anti-patterns. FastAPI-specific application construction is in docs/development/fastapi/factory-patterns.toon.
+  strategies, and anti-patterns. FastAPI-specific application construction is in
+  docs/development/fastapi/factory-patterns.toon.
 domain:
   - python
 primary_runtime_references:
@@ -31,9 +32,16 @@ sections:
     sample_code:
       description: Factory function that constructs a service with its dependencies.
       language: python
-      code: "from app.core.settings import Settings\nfrom app.repositories.user_repository import UserRepository\nfrom app.services.user_service\
-        \ import UserService\ndef build_user_service(\n    user_repo: UserRepository,\n    settings: Settings,\n) -> UserService:\n\
-        \    \"\"\"Create a UserService with its dependencies.\"\"\"\n    return UserService(user_repo=user_repo, settings=settings)"
+      code: |
+        from app.core.settings import Settings
+        from app.repositories.user_repository import UserRepository
+        from app.services.user_service import UserService
+        def build_user_service(
+            user_repo: UserRepository,
+            settings: Settings,
+        ) -> UserService:
+            """Create a UserService with its dependencies."""
+            return UserService(user_repo=user_repo, settings=settings)
     items:
       - id: factory.purpose
         type: note
@@ -75,11 +83,21 @@ sections:
     sample_code:
       description: Factory function that initializes a resource with error handling and cleanup on failure.
       language: python
-      code: "from app.core.settings import Settings\nasync def create_database_pool(settings: Settings) -> DatabasePool:\n\
-        \    \"\"\"Factory that builds and initializes a database pool from settings.\"\"\"\n    pool = DatabasePool(\n  \
-        \      dsn=settings.database_url,\n        pool_size=settings.pool_size,\n    )\n    await pool.init()\n    try:\n\
-        \        await pool.initialize_schema()\n    except Exception:\n        await pool.close()\n        raise\n    return\
-        \ pool"
+      code: |
+        from app.core.settings import Settings
+        async def create_database_pool(settings: Settings) -> DatabasePool:
+            """Factory that builds and initializes a database pool from settings."""
+            pool = DatabasePool(
+                dsn=settings.database_url,
+                pool_size=settings.pool_size,
+            )
+            await pool.init()
+            try:
+                await pool.initialize_schema()
+            except Exception:
+                await pool.close()
+                raise
+            return pool
     items:
       - id: resources.factory-functions-generic
         type: rule
@@ -116,12 +134,22 @@ sections:
     sample_code:
       description: Composing multiple factory functions to build a dependency graph.
       language: python
-      code: "from app.core.settings import Settings\nasync def build_application_context(settings: Settings) -> ApplicationContext:\n\
-        \    \"\"\"Compose the full application dependency graph.\"\"\"\n    db_pool = await create_database_pool(settings)\n\
-        \    search_client = await create_search_client(settings)\n    user_repo = UserRepository(db_pool)\n    user_service\
-        \ = build_user_service(user_repo, settings)\n    order_repo = OrderRepository(db_pool)\n    order_service = build_order_service(order_repo,\
-        \ user_service, search_client)\n    return ApplicationContext(\n        db_pool=db_pool,\n        search_client=search_client,\n\
-        \        user_service=user_service,\n        order_service=order_service,\n    )"
+      code: |
+        from app.core.settings import Settings
+        async def build_application_context(settings: Settings) -> ApplicationContext:
+            """Compose the full application dependency graph."""
+            db_pool = await create_database_pool(settings)
+            search_client = await create_search_client(settings)
+            user_repo = UserRepository(db_pool)
+            user_service = build_user_service(user_repo, settings)
+            order_repo = OrderRepository(db_pool)
+            order_service = build_order_service(order_repo, user_service, search_client)
+            return ApplicationContext(
+                db_pool=db_pool,
+                search_client=search_client,
+                user_service=user_service,
+                order_service=order_service,
+            )
     items:
       - id: composition.centralized
         type: rule
@@ -158,11 +186,22 @@ sections:
     sample_code:
       description: Test fixtures using factory functions for isolation.
       language: python
-      code: "import pytest\nfrom app.core.settings import Settings\nfrom app.services.user_service import UserService\n@pytest.fixture\n\
-        def test_settings() -> Settings:\n    \"\"\"Create Settings instance for tests.\"\"\"\n    return Settings()\n@pytest.fixture\n\
-        def mock_user_repo():\n    \"\"\"Create a mock user repository.\"\"\"\n    return MockUserRepository()\n@pytest.fixture\n\
-        def user_service(mock_user_repo, test_settings) -> UserService:\n    \"\"\"Create a UserService with test dependencies.\"\
-        \"\"\n    return build_user_service(mock_user_repo, test_settings)"
+      code: |
+        import pytest
+        from app.core.settings import Settings
+        from app.services.user_service import UserService
+        @pytest.fixture
+        def test_settings() -> Settings:
+            """Create Settings instance for tests."""
+            return Settings()
+        @pytest.fixture
+        def mock_user_repo():
+            """Create a mock user repository."""
+            return MockUserRepository()
+        @pytest.fixture
+        def user_service(mock_user_repo, test_settings) -> UserService:
+            """Create a UserService with test dependencies."""
+            return build_user_service(mock_user_repo, test_settings)
     items:
       - id: testing.fixture-composition
         type: pattern

@@ -36,11 +36,20 @@ sections:
         - app.core.dependencies.get_settings
         - app.core.settings.Settings
         - app.services.user_service.UserService
-      code: "from typing import Annotated\nfrom fastapi import Depends, Request\nfrom app.core.dependencies import get_settings\n\
-        from app.core.settings import Settings\nfrom app.services.user_service import UserService\nSettingsDep = Annotated[Settings,\
-        \ Depends(get_settings)]\ndef get_user_repository(request: Request) -> UserRepository:\n    return UserRepository(pool=request.app.state.surrealdb_pool)\n\
-        def get_user_service(\n    settings: SettingsDep,\n    user_repo: Annotated[UserRepository, Depends(get_user_repository)],\n\
-        ) -> UserService:\n    return UserService(user_repo=user_repo, settings=settings)"
+      code: |
+        from typing import Annotated
+        from fastapi import Depends, Request
+        from app.core.dependencies import get_settings
+        from app.core.settings import Settings
+        from app.services.user_service import UserService
+        SettingsDep = Annotated[Settings, Depends(get_settings)]
+        def get_user_repository(request: Request) -> UserRepository:
+            return UserRepository(pool=request.app.state.surrealdb_pool)
+        def get_user_service(
+            settings: SettingsDep,
+            user_repo: Annotated[UserRepository, Depends(get_user_repository)],
+        ) -> UserService:
+            return UserService(user_repo=user_repo, settings=settings)
     items:
       - id: factory.pattern
         type: rule
@@ -79,9 +88,13 @@ sections:
         - fastapi.Request
         - app.infrastructure.db_connections.SurrealDBPool
         - app.infrastructure.db_connections.ElasticsearchWrapper
-      code: "from fastapi import Request\nfrom app.infrastructure.db_connections import SurrealDBPool, ElasticsearchWrapper\n\
-        def get_surrealdb_pool(request: Request) -> SurrealDBPool:\n    return request.app.state.surrealdb_pool\ndef get_elasticsearch_client(request:\
-        \ Request) -> ElasticsearchWrapper:\n    return request.app.state.elasticsearch_client"
+      code: |
+        from fastapi import Request
+        from app.infrastructure.db_connections import SurrealDBPool, ElasticsearchWrapper
+        def get_surrealdb_pool(request: Request) -> SurrealDBPool:
+            return request.app.state.surrealdb_pool
+        def get_elasticsearch_client(request: Request) -> ElasticsearchWrapper:
+            return request.app.state.elasticsearch_client
     items:
       - id: app-state.initialization
         type: rule
@@ -119,10 +132,17 @@ sections:
         - fastapi.APIRouter
         - fastapi.Depends
         - app.services.user_service.UserService
-      code: "from typing import Annotated\nfrom fastapi import APIRouter, Depends\nfrom app.api.v1.dependencies import get_user_service\n\
-        from app.services.user_service import UserService\nfrom app.contracts.users import UserResponse\nUserServiceDep =\
-        \ Annotated[UserService, Depends(get_user_service)]\nrouter = APIRouter()\n@router.get(\"/{user_id}\", response_model=UserResponse)\n\
-        async def get_user(user_id: str, service: UserServiceDep) -> UserResponse:\n    return await service.get_user(user_id)"
+      code: |
+        from typing import Annotated
+        from fastapi import APIRouter, Depends
+        from app.api.v1.dependencies import get_user_service
+        from app.services.user_service import UserService
+        from app.contracts.users import UserResponse
+        UserServiceDep = Annotated[UserService, Depends(get_user_service)]
+        router = APIRouter()
+        @router.get("/{user_id}", response_model=UserResponse)
+        async def get_user(user_id: str, service: UserServiceDep) -> UserResponse:
+            return await service.get_user(user_id)
     items:
       - id: injection.type-alias
         type: rule
@@ -152,13 +172,28 @@ sections:
         - fastapi.FastAPI
         - app.core.factory.create_app
         - app.api.v1.dependencies.get_user_service
-      code: "import pytest\nfrom unittest.mock import AsyncMock\nfrom fastapi import FastAPI\nfrom httpx import AsyncClient,\
-        \ ASGITransport\nfrom app.core.factory import create_app\nfrom app.core.settings import Settings\nfrom app.api.v1.dependencies\
-        \ import get_user_service\n@pytest.fixture\ndef mock_user_service() -> AsyncMock:\n    service = AsyncMock()\n   \
-        \ service.get_user.return_value = User(id=\"123\", name=\"Test User\")\n    return service\n@pytest.fixture\ndef test_app(test_settings:\
-        \ Settings, mock_user_service: AsyncMock) -> FastAPI:\n    app = create_app(test_settings)\n    app.dependency_overrides[get_user_service]\
-        \ = lambda: mock_user_service\n    return app\n@pytest.fixture\nasync def async_client(test_app: FastAPI):\n    async\
-        \ with AsyncClient(transport=ASGITransport(app=test_app), base_url=\"http://test\") as client:\n        yield client"
+      code: |
+        import pytest
+        from unittest.mock import AsyncMock
+        from fastapi import FastAPI
+        from httpx import AsyncClient, ASGITransport
+        from app.core.factory import create_app
+        from app.core.settings import Settings
+        from app.api.v1.dependencies import get_user_service
+        @pytest.fixture
+        def mock_user_service() -> AsyncMock:
+            service = AsyncMock()
+            service.get_user.return_value = User(id="123", name="Test User")
+            return service
+        @pytest.fixture
+        def test_app(test_settings: Settings, mock_user_service: AsyncMock) -> FastAPI:
+            app = create_app(test_settings)
+            app.dependency_overrides[get_user_service] = lambda: mock_user_service
+            return app
+        @pytest.fixture
+        async def async_client(test_app: FastAPI):
+            async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
+                yield client
     items:
       - id: testing.override-pattern
         type: rule

@@ -12,10 +12,11 @@ sections:
   items:
   - id: application-code-1
     type: text
-    text: '* **`app/routes/`**: API endpoint routers, including `orchestrator_router.py` * **`app/services/`**:
-      Business logic layer, including `orchestrator_service.py` and `agent_invoker.py` * **`app/contracts/`**:
-      Pydantic models, including `orchestrator_contracts.py` * **`app/core/`**: Core application setup
-      including `factory.py` for app construction'
+    text: |
+      * **`app/routes/`**: API endpoint routers, including `orchestrator_router.py` * **`app/services/`**: Business
+      logic layer, including `orchestrator_service.py` and `agent_invoker.py` * **`app/contracts/`**: Pydantic models,
+      including `orchestrator_contracts.py` * **`app/core/`**: Core application setup including `factory.py` for app
+      construction
 - id: agent-definitions
   index: 2
   title: Agent Definitions
@@ -33,11 +34,11 @@ sections:
   items:
   - id: documentation-1
     type: step
-    text: '* **`docs/`**: The Coarse Knowledge Graph (source of truth) with subdirectories for each domain:
-      * `docs/usage/`: Documentation for using the application * `docs/development/`: Writing application
-      code, docstrings, code style * `docs/testing/`: Writing and running test code * `docs/architecture/`:
-      Folder structure, services, endpoints, integrations * `docs/processes/`: Development processes like
-      git releases, code reviews'
+    text: |
+      * **`docs/`**: The Coarse Knowledge Graph (source of truth) with subdirectories for each domain: * `docs/usage/`:
+      Documentation for using the application * `docs/development/`: Writing application code, docstrings, code style *
+      `docs/testing/`: Writing and running test code * `docs/architecture/`: Folder structure, services, endpoints,
+      integrations * `docs/processes/`: Development processes like git releases, code reviews
 - id: infrastructure
   index: 4
   title: Infrastructure

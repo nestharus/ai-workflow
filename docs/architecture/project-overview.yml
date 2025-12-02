@@ -14,9 +14,10 @@ sections:
   items:
   - id: system-description-1
     type: text
-    text: 'This project implements an automated AI workflow system using a 5-role skeleton across four
-      domains: Product, UX, UI, and Technical. The architecture separates concerns between workflow orchestration
-      and external event handling through two core services.'
+    text: |
+      This project implements an automated AI workflow system using a 5-role skeleton across four domains: Product, UX,
+      UI, and Technical. The architecture separates concerns between workflow orchestration and external event handling
+      through two core services.
 - id: core-components
   index: 2
   title: Core Components
@@ -52,8 +53,8 @@ sections:
   items:
   - id: agent-interaction-model-1
     type: step
-    text: 'Agents submit messages to the orchestrator rather than calling other agents directly. The orchestrator
-      then:'
+    text: |
+      Agents submit messages to the orchestrator rather than calling other agents directly. The orchestrator then:
   - id: agent-interaction-model-routes-messages-to-the-appropr
     type: text
     text: Routes messages to the appropriate workflow instance

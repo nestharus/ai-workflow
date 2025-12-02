@@ -136,8 +136,8 @@ sections:
   items:
   - id: coverage-rules-per-function-each-functio
     type: rule
-    text: '**Per-function**: Each function must individually meet the configured threshold (not averaged
-      across file)'
+    text: |
+      **Per-function**: Each function must individually meet the configured threshold (not averaged across file)
   - id: coverage-rules-class-fields-excluded-pyd
     type: text
     text: '**Class fields excluded**: Pydantic model type annotations are excluded from coverage'
@@ -146,8 +146,8 @@ sections:
     text: '**Service layer**: Component tests only validate functions within `app/services/`'
   - id: coverage-rules-use-case-coverage-integra
     type: text
-    text: '**Use-case coverage**: Integration/e2e require coverage of non-future use cases (threshold
-      in settings)'
+    text: |
+      **Use-case coverage**: Integration/e2e require coverage of non-future use cases (threshold in settings)
   - id: coverage-rules-private-functions-unit-te
     type: text
     text: '**Private functions**: Unit tests validate ALL functions; component/scripts skip private'
@@ -159,41 +159,17 @@ sections:
   items:
   - id: common-test-commands-1
     type: example
-    text: '> **Note**: `pytest-check` is available for multiple soft assertions in a single test. > Example:
-      `check.equal(result, expected)`.'
+    text: |
+      > **Note**: `pytest-check` is available for multiple soft assertions in a single test. > Example:
+      `check.equal(result, expected)`.
   - id: common-test-commands-code-2
     type: code
-    text: '# Run all test tiers with validation
-
-      uv run test-coverage
-
-
-      # Run specific tier
-
-      uv run test-coverage --tier unit
-
-      uv run test-coverage --tier integration
-
-
-      # Report only (no validation failures)
-
-      uv run test-coverage --no-validate
-
-
-      # Generate JSON report
-
-      uv run test-coverage --json-report coverage_report.json
-
-
-      # Legacy pytest commands
-
-      uv run pytest                       # Run all tests
-
-      uv run pytest -m "not e2e"          # Skip E2E tests
-
-      uv run pytest -m e2e                # Only E2E tests
-
-      uv run pytest -v                    # Verbose output'
+    text: |
+      # Run all test tiers with validation uv run test-coverage # Run specific tier uv run test-coverage --tier unit uv
+      run test-coverage --tier integration # Report only (no validation failures) uv run test-coverage --no-validate #
+      Generate JSON report uv run test-coverage --json-report coverage_report.json # Legacy pytest commands uv run
+      pytest                       # Run all tests uv run pytest -m "not e2e"          # Skip E2E tests uv run pytest -m
+      e2e                # Only E2E tests uv run pytest -v                    # Verbose output
 - id: llm-coverage-report
   index: 8
   title: LLM Coverage Report
@@ -227,19 +203,10 @@ sections:
   items:
   - id: usage-code-1
     type: code
-    text: '# Generate coverage report (requires coverage.json to exist)
-
-      uv run llm-coverage-report
-
-
-      # Specify custom paths
-
-      uv run llm-coverage-report --coverage-json coverage.json --output coverage_llm.json
-
-
-      # Increase context radius for more surrounding lines
-
-      uv run llm-coverage-report --context-radius 5'
+    text: |
+      # Generate coverage report (requires coverage.json to exist) uv run llm-coverage-report # Specify custom paths uv
+      run llm-coverage-report --coverage-json coverage.json --output coverage_llm.json # Increase context radius for
+      more surrounding lines uv run llm-coverage-report --context-radius 5
   - id: usage-2
     type: text
     text: Coverage thresholds are configured in project settings.

@@ -62,7 +62,8 @@ sections:
         type: note
         text: >
           Group Settings fields into logical areas such as application identity (app_name, app_version, debug), routing
-          (api_prefix, example_prefix), error handling flags (include_error_body), database, search, embeddings, and middleware
+          (api_prefix, example_prefix), error handling flags (include_error_body), database, search, embeddings, and
+          middleware
           toggles.
       - id: structure.surrealdb-fields
         type: note
@@ -101,7 +102,8 @@ sections:
         text: >
           Provide sensible default values on the Settings model for non-secret fields so local development can start
           with
-          minimal environment setup; defaults should suit local development, not production maximums (for example, pool sizes
+          minimal environment setup; defaults should suit local development, not production maximums (for example, pool
+          sizes
           should be modest, not scaled for production load).
       - id: env.secrets-production
         type: rule
@@ -141,7 +143,8 @@ sections:
         text: >
           Apply _validate_positive to numeric fields that must be strictly positive—surrealdb_pool_size,
           elasticsearch_connections_per_node,
-          elasticsearch_request_timeout, elasticsearch_shards, and embedding_dimension—and raise PositiveIntegerValidationError
+          elasticsearch_request_timeout, elasticsearch_shards, and embedding_dimension—and raise
+          PositiveIntegerValidationError
           on violation.
       - id: validation.non-negative-replicas
         type: rule
@@ -179,8 +182,10 @@ sections:
         text: >
           Enforce CREDENTIAL_COMPLEXITY_PATTERN so credentials include at least one uppercase letter, one lowercase
           letter,
-          one digit, one special character, and a minimum total length of 12 characters. Because Pydantic's underlying regex
-          engine does not support lookahead assertions, the pattern enumerates valid permutations instead of using lookaheads.
+          one digit, one special character, and a minimum total length of 12 characters. Because Pydantic's underlying
+          regex
+          engine does not support lookahead assertions, the pattern enumerates valid permutations instead of using
+          lookaheads.
       - id: creds.secret-repr
         type: rule
         text: >
@@ -286,7 +291,8 @@ sections:
         type: rule
         text: >
           Validators enforce positive values for pool sizes, timeouts, shards, and embedding dimensions and non-negative
-          values for replicas, while connection lifecycle and pooling details are handled in app/infrastructure/db_connections.py
+          values for replicas, while connection lifecycle and pooling details are handled in
+          app/infrastructure/db_connections.py
           and connection-pooling-patterns.toon.
   - id: feature-flags
     index: 9
@@ -303,7 +309,8 @@ sections:
         type: note
         text: >
           validation_exception_handler in app/core/exceptions.py reads request.app.state.settings.include_error_body to
-          decide whether to include the request body in HTTPValidationError (defined in app/contracts/errors.py) .body field.
+          decide whether to include the request body in HTTPValidationError (defined in app/contracts/errors.py) .body
+          field.
       - id: flags.adding-new
         type: rule
         text: >

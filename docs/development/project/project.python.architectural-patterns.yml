@@ -8,7 +8,8 @@ description: >
 scope: >
   Establishes high-level architectural layers, their responsibilities, allowed call directions, and dependency flow
   principles applicable to any Python web application. Includes a FastAPI request lifecycle walkthrough and router layer
-  guidance as concrete examples of these patterns in practice. For deeper FastAPI-specific wiring (APIRouter configuration,
+  guidance as concrete examples of these patterns in practice. For deeper FastAPI-specific wiring (APIRouter
+  configuration,
   Depends() patterns, middleware registration), see project/project.fastapi.architectural-patterns.yml.
 domain:
   - python

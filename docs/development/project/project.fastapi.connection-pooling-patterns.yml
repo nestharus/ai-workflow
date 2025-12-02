@@ -7,7 +7,8 @@ description: >
   injection, and HTTP client pooling.
 scope: >
   Covers FastAPI lifespan context manager integration with pools, app.state attachment patterns, dependency providers
-  for pool access, HTTP client pooling with httpx.AsyncClient, FastAPI-specific testing fixtures, and resource cleanup. Generic
+  for pool access, HTTP client pooling with httpx.AsyncClient, FastAPI-specific testing fixtures, and resource cleanup.
+  Generic
   pooling concepts are in python/connection-pooling-patterns.toon.
 out_of_scope:
   - Generic pooling fundamentals (see python/connection-pooling-patterns.toon).
@@ -45,21 +46,43 @@ sections:
         - collections.abc.Callable
         - fastapi.FastAPI
         - app.core.settings.Settings
-      code: "from contextlib import asynccontextmanager, AbstractAsyncContextManager\nfrom collections.abc import AsyncGenerator,\
-        \ Callable\nfrom fastapi import FastAPI\nfrom app.infrastructure.surrealdb.pool import SurrealDBPool, create_surrealdb_pool\n\
-        from app.infrastructure.elasticsearch.client import (\n    ElasticsearchWrapper,\n    create_elasticsearch_wrapper,\n\
-        )\ndef _lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:\n    @asynccontextmanager\n\
-        \    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:\n        surreal_pool: SurrealDBPool | None = None\n\
-        \        elasticsearch_client: ElasticsearchWrapper | None = None\n        try:\n            surreal_pool = await\
-        \ create_surrealdb_pool(settings)\n            app.state.surrealdb_pool = surreal_pool\n            logger.info(\"\
-        Initialized SurrealDB pool\")\n            elasticsearch_client = await create_elasticsearch_wrapper(settings)\n \
-        \           app.state.elasticsearch_client = elasticsearch_client\n            logger.info(\"Initialized Elasticsearch\
-        \ client\")\n            yield\n        except Exception:\n            logger.exception(\"Failed to initialize application\
-        \ resources\")\n            raise\n        finally:\n            if elasticsearch_client is not None:\n          \
-        \      try:\n                    await elasticsearch_client.close()\n                except Exception:\n         \
-        \           logger.exception(\"Failed to close Elasticsearch client cleanly\")\n            if surreal_pool is not\
-        \ None:\n                try:\n                    await surreal_pool.close()\n                except Exception:\n\
-        \                    logger.exception(\"Failed to close SurrealDB pool cleanly\")\n    return lifespan"
+      code: |
+        from contextlib import asynccontextmanager, AbstractAsyncContextManager
+        from collections.abc import AsyncGenerator, Callable
+        from fastapi import FastAPI
+        from app.infrastructure.surrealdb.pool import SurrealDBPool, create_surrealdb_pool
+        from app.infrastructure.elasticsearch.client import (
+            ElasticsearchWrapper,
+            create_elasticsearch_wrapper,
+        )
+        def _lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
+            @asynccontextmanager
+            async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+                surreal_pool: SurrealDBPool | None = None
+                elasticsearch_client: ElasticsearchWrapper | None = None
+                try:
+                    surreal_pool = await create_surrealdb_pool(settings)
+                    app.state.surrealdb_pool = surreal_pool
+                    logger.info("Initialized SurrealDB pool")
+                    elasticsearch_client = await create_elasticsearch_wrapper(settings)
+                    app.state.elasticsearch_client = elasticsearch_client
+                    logger.info("Initialized Elasticsearch client")
+                    yield
+                except Exception:
+                    logger.exception("Failed to initialize application resources")
+                    raise
+                finally:
+                    if elasticsearch_client is not None:
+                        try:
+                            await elasticsearch_client.close()
+                        except Exception:
+                            logger.exception("Failed to close Elasticsearch client cleanly")
+                    if surreal_pool is not None:
+                        try:
+                            await surreal_pool.close()
+                        except Exception:
+                            logger.exception("Failed to close SurrealDB pool cleanly")
+            return lifespan
     items:
       - id: lifespan.use-context-manager
         type: rule
@@ -129,11 +152,18 @@ sections:
         - fastapi.Request
         - typing.Annotated
         - fastapi.Depends
-      code: "from fastapi import Request, Depends\nfrom typing import Annotated\nfrom app.infrastructure.surrealdb.pool import\
-        \ SurrealDBPool\ndef get_surrealdb_pool(request: Request) -> SurrealDBPool:\n    \"\"\"Retrieve the SurrealDB pool\
-        \ from app.state.\"\"\"\n    return request.app.state.surrealdb_pool\nSurrealDBPoolDep = Annotated[SurrealDBPool,\
-        \ Depends(get_surrealdb_pool)]\n# Usage in a router:\n# async def get_user(pool: SurrealDBPoolDep, user_id: str) ->\
-        \ User:\n#     async with pool.acquire() as conn:\n#         ..."
+      code: |
+        from fastapi import Request, Depends
+        from typing import Annotated
+        from app.infrastructure.surrealdb.pool import SurrealDBPool
+        def get_surrealdb_pool(request: Request) -> SurrealDBPool:
+            """Retrieve the SurrealDB pool from app.state."""
+            return request.app.state.surrealdb_pool
+        SurrealDBPoolDep = Annotated[SurrealDBPool, Depends(get_surrealdb_pool)]
+        # Usage in a router:
+        # async def get_user(pool: SurrealDBPoolDep, user_id: str) -> User:
+        #     async with pool.acquire() as conn:
+        #         ...
     items:
       - id: deps.request-access
         type: pattern
@@ -168,11 +198,22 @@ sections:
         - httpx
         - fastapi.FastAPI
         - app.core.settings.Settings
-      code: "import httpx\nfrom fastapi import FastAPI\n@asynccontextmanager\nasync def lifespan(app: FastAPI) -> AsyncGenerator[None]:\n\
-        \    http_client: httpx.AsyncClient | None = None\n    try:\n        http_client = httpx.AsyncClient(\n          \
-        \  limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),\n            timeout=httpx.Timeout(10.0,\
-        \ connect=5.0),\n        )\n        app.state.http_client = http_client\n        yield\n    finally:\n        if http_client\
-        \ is not None:\n            await http_client.aclose()"
+      code: |
+        import httpx
+        from fastapi import FastAPI
+        @asynccontextmanager
+        async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+            http_client: httpx.AsyncClient | None = None
+            try:
+                http_client = httpx.AsyncClient(
+                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+                    timeout=httpx.Timeout(10.0, connect=5.0),
+                )
+                app.state.http_client = http_client
+                yield
+            finally:
+                if http_client is not None:
+                    await http_client.aclose()
     items:
       - id: http.pooling-shared-client
         type: rule
@@ -203,15 +244,35 @@ sections:
         - httpx
         - fastapi.FastAPI
         - app.core.factory.create_app
-      code: "import pytest\nfrom httpx import AsyncClient, ASGITransport\nfrom fastapi import FastAPI\nfrom app.core.settings\
-        \ import Settings\nfrom app.core.factory import create_app\n@pytest.fixture\ndef test_settings() -> Settings:\n  \
-        \  \"\"\"Create Settings instance for tests.\"\"\"\n    return Settings()\n@pytest.fixture\nasync def test_app(test_settings:\
-        \ Settings, monkeypatch) -> FastAPI:\n    \"\"\"Create a FastAPI app instance with mocked pools.\"\"\"\n    # Monkeypatch\
-        \ pool factories to return mocks\n    async def mock_create_pool(settings):\n        return MockSurrealDBPool()\n\
-        \    monkeypatch.setattr(\n        \"app.infrastructure.surrealdb.pool.create_surrealdb_pool\",\n        mock_create_pool,\n\
-        \    )\n    return create_app(test_settings)\n@pytest.fixture\nasync def async_client(test_app: FastAPI):\n    \"\"\
-        \"Create an async HTTP client for testing.\"\"\"\n    async with AsyncClient(\n        transport=ASGITransport(app=test_app),\n\
-        \        base_url=\"http://test\",\n    ) as client:\n        yield client"
+      code: |
+        import pytest
+        from httpx import AsyncClient, ASGITransport
+        from fastapi import FastAPI
+        from app.core.settings import Settings
+        from app.core.factory import create_app
+        @pytest.fixture
+        def test_settings() -> Settings:
+            """Create Settings instance for tests."""
+            return Settings()
+        @pytest.fixture
+        async def test_app(test_settings: Settings, monkeypatch) -> FastAPI:
+            """Create a FastAPI app instance with mocked pools."""
+            # Monkeypatch pool factories to return mocks
+            async def mock_create_pool(settings):
+                return MockSurrealDBPool()
+            monkeypatch.setattr(
+                "app.infrastructure.surrealdb.pool.create_surrealdb_pool",
+                mock_create_pool,
+            )
+            return create_app(test_settings)
+        @pytest.fixture
+        async def async_client(test_app: FastAPI):
+            """Create an async HTTP client for testing."""
+            async with AsyncClient(
+                transport=ASGITransport(app=test_app),
+                base_url="http://test",
+            ) as client:
+                yield client
     items:
       - id: test.test-settings
         type: pattern

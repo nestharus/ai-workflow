@@ -7,7 +7,8 @@ description: >
   handling patterns, and testing strategies independent of HTTP concerns.
 scope: >
   Covers exception hierarchy design, domain exception patterns, exception context and messages, error handling patterns,
-  exception testing, and anti-patterns. FastAPI-specific HTTP error handling is in docs/development/fastapi/exception-patterns.toon.
+  exception testing, and anti-patterns. FastAPI-specific HTTP error handling is in
+  docs/development/fastapi/exception-patterns.toon.
 domain:
   - python
 primary_runtime_references:
@@ -25,14 +26,26 @@ sections:
     sample_code:
       description: Domain exception hierarchy with base class and specific subclasses.
       language: python
-      code: "class DomainError(Exception):\n    \"\"\"Base class for all domain-specific exceptions.\"\"\"\n    def __init__(self,\
-        \ message: str) -> None:\n        self.message = message\n        super().__init__(message)\nclass ResourceNotFoundError(DomainError):\n\
-        \    \"\"\"Raised when a requested resource does not exist.\"\"\"\n    def __init__(self, resource_type: str, resource_id:\
-        \ str) -> None:\n        self.resource_type = resource_type\n        self.resource_id = resource_id\n        super().__init__(f\"\
-        {resource_type} with ID {resource_id} was not found\")\nclass DomainValidationError(DomainError):\n    \"\"\"Raised\
-        \ when a domain invariant is violated.\"\"\"\n    def __init__(self, message: str, field: str | None = None) -> None:\n\
-        \        self.field = field\n        super().__init__(message)\nclass UnauthorizedError(DomainError):\n    \"\"\"\
-        Raised when an operation is not permitted for the current context.\"\"\"\n    pass"
+      code: |
+        class DomainError(Exception):
+            """Base class for all domain-specific exceptions."""
+            def __init__(self, message: str) -> None:
+                self.message = message
+                super().__init__(message)
+        class ResourceNotFoundError(DomainError):
+            """Raised when a requested resource does not exist."""
+            def __init__(self, resource_type: str, resource_id: str) -> None:
+                self.resource_type = resource_type
+                self.resource_id = resource_id
+                super().__init__(f"{resource_type} with ID {resource_id} was not found")
+        class DomainValidationError(DomainError):
+            """Raised when a domain invariant is violated."""
+            def __init__(self, message: str, field: str | None = None) -> None:
+                self.field = field
+                super().__init__(message)
+        class UnauthorizedError(DomainError):
+            """Raised when an operation is not permitted for the current context."""
+            pass
     items:
       - id: hierarchy.domain-error-base
         type: rule
@@ -69,11 +82,20 @@ sections:
     sample_code:
       description: Service raising domain exceptions instead of returning None.
       language: python
-      code: "class UserService:\n    \"\"\"Service for user-related business logic.\"\"\"\n    def __init__(self, user_repo:\
-        \ UserRepository) -> None:\n        self._user_repo = user_repo\n    async def get_user(self, user_id: str) -> User:\n\
-        \        \"\"\"Retrieve a user by ID.\n        Raises:\n            UserNotFoundError: If the user does not exist.\n\
-        \        \"\"\"\n        user = await self._user_repo.get_by_id(user_id)\n        if user is None:\n            raise\
-        \ UserNotFoundError(user_id)\n        return user"
+      code: |
+        class UserService:
+            """Service for user-related business logic."""
+            def __init__(self, user_repo: UserRepository) -> None:
+                self._user_repo = user_repo
+            async def get_user(self, user_id: str) -> User:
+                """Retrieve a user by ID.
+                Raises:
+                    UserNotFoundError: If the user does not exist.
+                """
+                user = await self._user_repo.get_by_id(user_id)
+                if user is None:
+                    raise UserNotFoundError(user_id)
+                return user
     items:
       - id: domain.services-raise
         type: rule
@@ -141,13 +163,24 @@ sections:
     sample_code:
       description: Wrapping low-level exceptions in domain exceptions.
       language: python
-      code: "class OrderRepository:\n    \"\"\"Repository for order persistence.\"\"\"\n    async def create(self, order:\
-        \ Order) -> Order:\n        \"\"\"Create an order in the database.\n        Raises:\n            DuplicateOrderError:\
-        \ If an order with the same ID already exists.\n            DatabaseError: If the database operation fails.\n    \
-        \    \"\"\"\n        try:\n            await self._db.insert(\"orders\", order.to_dict())\n            return order\n\
-        \        except IntegrityError as e:\n            if \"duplicate key\" in str(e):\n                raise DuplicateOrderError(order.id)\
-        \ from e\n            raise DatabaseError(\"Failed to create order\") from e\n        except ConnectionError as e:\n\
-        \            raise DatabaseError(\"Database connection failed\") from e"
+      code: |
+        class OrderRepository:
+            """Repository for order persistence."""
+            async def create(self, order: Order) -> Order:
+                """Create an order in the database.
+                Raises:
+                    DuplicateOrderError: If an order with the same ID already exists.
+                    DatabaseError: If the database operation fails.
+                """
+                try:
+                    await self._db.insert("orders", order.to_dict())
+                    return order
+                except IntegrityError as e:
+                    if "duplicate key" in str(e):
+                        raise DuplicateOrderError(order.id) from e
+                    raise DatabaseError("Failed to create order") from e
+                except ConnectionError as e:
+                    raise DatabaseError("Database connection failed") from e
     items:
       - id: handling.wrap-low-level
         type: rule
@@ -185,13 +218,20 @@ sections:
     sample_code:
       description: Testing exception types and attributes with pytest.raises.
       language: python
-      code: "import pytest\nfrom app.core.errors import UserNotFoundError\nfrom app.services.user_service import UserService\n\
-        async def test_get_user_raises_not_found(user_service: UserService):\n    \"\"\"Test that get_user raises UserNotFoundError\
-        \ for missing users.\"\"\"\n    with pytest.raises(UserNotFoundError) as exc_info:\n        await user_service.get_user(\"\
-        nonexistent-id\")\n    assert exc_info.value.resource_id == \"nonexistent-id\"\n    assert \"nonexistent-id\" in str(exc_info.value)\n\
-        async def test_exception_propagation(user_service: UserService):\n    \"\"\"Test that domain exceptions propagate\
-        \ through service methods.\"\"\"\n    with pytest.raises(UserNotFoundError):\n        await user_service.update_user(\"\
-        nonexistent-id\", {\"name\": \"New Name\"})"
+      code: |
+        import pytest
+        from app.core.errors import UserNotFoundError
+        from app.services.user_service import UserService
+        async def test_get_user_raises_not_found(user_service: UserService):
+            """Test that get_user raises UserNotFoundError for missing users."""
+            with pytest.raises(UserNotFoundError) as exc_info:
+                await user_service.get_user("nonexistent-id")
+            assert exc_info.value.resource_id == "nonexistent-id"
+            assert "nonexistent-id" in str(exc_info.value)
+        async def test_exception_propagation(user_service: UserService):
+            """Test that domain exceptions propagate through service methods."""
+            with pytest.raises(UserNotFoundError):
+                await user_service.update_user("nonexistent-id", {"name": "New Name"})
     items:
       - id: testing.pytest-raises
         type: pattern

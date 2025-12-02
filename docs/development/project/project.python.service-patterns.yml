@@ -8,7 +8,8 @@ description: >
 scope: >
   Covers service responsibilities, class structure, constructor injection, transaction management, domain error
   handling,
-  testing strategy, lifecycle, and anti-patterns. FastAPI-specific DI wiring is in docs/development/fastapi/service-patterns.toon.
+  testing strategy, lifecycle, and anti-patterns. FastAPI-specific DI wiring is in
+  docs/development/fastapi/service-patterns.toon.
 domain:
   - python
 primary_runtime_references:
@@ -60,21 +61,51 @@ sections:
       Services are implemented as classes with constructor-based dependency injection and explicit lifecycle methods.
     sample_code:
       description: Standard service class pattern with constructor injection, business methods, and optional shutdown.
-      code: "class OrderService:\n    \"\"\"Service for managing order lifecycle.\n\n    Attributes:\n        order_repository:\
-        \ Repository for order persistence.\n        payment_gateway: Client for payment processing.\n    \"\"\"\n\n    def\
-        \ __init__(self, order_repository: OrderRepository, payment_gateway: PaymentGateway) -> None:\n        \"\"\"Create\
-        \ a service with its collaborators.\"\"\"\n        self.order_repository = order_repository\n        self.payment_gateway\
-        \ = payment_gateway\n\n    async def process_order(self, order_id: str) -> Order:\n        \"\"\"Process a pending\
-        \ order and return the updated order.\n\n        Args:\n            order_id: The unique identifier of the order.\n\
-        \n        Returns:\n            Order: The processed order details.\n\n        Raises:\n            OrderNotFoundError:\
-        \ If the order does not exist.\n            PaymentFailedError: If the payment capture fails.\n        \"\"\"\n  \
-        \      # 1. Fetch order from repository\n        order = await self.order_repository.get_by_id(order_id)\n       \
-        \ if order is None:\n            raise OrderNotFoundError(order_id)\n\n        # 2. Capture payment via gateway\n\
-        \        payment_result = await self.payment_gateway.capture(order.payment_intent_id)\n        if not payment_result.success:\n\
-        \            raise PaymentFailedError(order_id, payment_result.error)\n\n        # 3. Update order status and persist\n\
-        \        order.status = OrderStatus.PROCESSED\n        await self.order_repository.update(order)\n        return order\n\
-        \n    async def shutdown(self) -> None:\n        \"\"\"Cleanup resources if necessary (e.g., closing specific connections).\"\
-        \"\"\n        pass"
+      code: |
+        class OrderService:
+            """Service for managing order lifecycle.
+
+            Attributes:
+                order_repository: Repository for order persistence.
+                payment_gateway: Client for payment processing.
+            """
+
+            def __init__(self, order_repository: OrderRepository, payment_gateway: PaymentGateway) -> None:
+                """Create a service with its collaborators."""
+                self.order_repository = order_repository
+                self.payment_gateway = payment_gateway
+
+            async def process_order(self, order_id: str) -> Order:
+                """Process a pending order and return the updated order.
+
+                Args:
+                    order_id: The unique identifier of the order.
+
+                Returns:
+                    Order: The processed order details.
+
+                Raises:
+                    OrderNotFoundError: If the order does not exist.
+                    PaymentFailedError: If the payment capture fails.
+                """
+                # 1. Fetch order from repository
+                order = await self.order_repository.get_by_id(order_id)
+                if order is None:
+                    raise OrderNotFoundError(order_id)
+
+                # 2. Capture payment via gateway
+                payment_result = await self.payment_gateway.capture(order.payment_intent_id)
+                if not payment_result.success:
+                    raise PaymentFailedError(order_id, payment_result.error)
+
+                # 3. Update order status and persist
+                order.status = OrderStatus.PROCESSED
+                await self.order_repository.update(order)
+                return order
+
+            async def shutdown(self) -> None:
+                """Cleanup resources if necessary (e.g., closing specific connections)."""
+                pass
     items:
       - id: structure.constructor
         type: rule
@@ -106,11 +137,18 @@ sections:
       description: Constructor-based dependency injection with factory function pattern.
       snippets:
         - name: constructor
-          code: "class UserService:\n    def __init__(self, user_repo: UserRepository, settings: Settings) -> None:\n    \
-            \    self._user_repo = user_repo\n        self._settings = settings"
+          code: |
+            class UserService:
+                def __init__(self, user_repo: UserRepository, settings: Settings) -> None:
+                    self._user_repo = user_repo
+                    self._settings = settings
         - name: factory
-          code: "def build_user_service(\n    user_repo: UserRepository,\n    settings: Settings,\n) -> UserService:\n   \
-            \ return UserService(user_repo=user_repo, settings=settings)"
+          code: |
+            def build_user_service(
+                user_repo: UserRepository,
+                settings: Settings,
+            ) -> UserService:
+                return UserService(user_repo=user_repo, settings=settings)
     items:
       - id: di.constructor-based
         type: rule
@@ -134,7 +172,8 @@ sections:
         text: >
           Runtime configuration is provided by a Settings object via get_settings() dependency in
           app/core/dependencies.py;
-          detailed patterns for get_settings() and FastAPI dependency wiring are documented in docs/development/fastapi/settings-patterns.toon.
+          detailed patterns for get_settings() and FastAPI dependency wiring are documented in
+          docs/development/fastapi/settings-patterns.toon.
   - id: transaction-management
     index: 4
     title: Transaction management
@@ -142,10 +181,18 @@ sections:
     summary: Services define the boundaries of a unit of work; repositories must not commit or roll back transactions.
     sample_code:
       description: Transaction boundary pattern with async context manager.
-      code: "async def create_order(self, order_data: CreateOrderSchema) -> Order:\n    # Start transaction boundary\n   \
-        \ async with self.repository.transaction() as txn:\n        try:\n            order = await self.repository.create(order_data)\n\
-        \            await self.audit_log.log_creation(order.id)\n            await txn.commit()\n            return order\n\
-        \        except DomainError:\n            await txn.rollback()\n            raise"
+      code: |
+        async def create_order(self, order_data: CreateOrderSchema) -> Order:
+            # Start transaction boundary
+            async with self.repository.transaction() as txn:
+                try:
+                    order = await self.repository.create(order_data)
+                    await self.audit_log.log_creation(order.id)
+                    await txn.commit()
+                    return order
+                except DomainError:
+                    await txn.rollback()
+                    raise
     items:
       - id: txn.transactional-methods
         type: rule
@@ -173,12 +220,20 @@ sections:
       snippets:
         - name: anti_pattern
           label: Anti-Pattern (Do NOT do this)
-          code: "from some_framework import HTTPException\n\nclass BadService:\n    async def get_item(self, id: str):\n \
-            \       if not found:\n            raise HTTPException(status_code=404, detail=\"Item not found\")  # WRONG"
+          code: |
+            from some_framework import HTTPException
+
+            class BadService:
+                async def get_item(self, id: str):
+                    if not found:
+                        raise HTTPException(status_code=404, detail="Item not found")  # WRONG
         - name: correct_pattern
           label: Correct Pattern
-          code: "class GoodService:\n    async def get_item(self, id: str):\n        if not found:\n            raise ItemNotFoundError(f\"\
-            Item {id} not found\")  # RIGHT"
+          code: |
+            class GoodService:
+                async def get_item(self, id: str):
+                    if not found:
+                        raise ItemNotFoundError(f"Item {id} not found")  # RIGHT
     items:
       - id: errors.domain-exceptions
         type: rule

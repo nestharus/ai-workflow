@@ -8,7 +8,8 @@ description: >
 scope: >
   Covers FastAPI middleware registration, recommended middleware stack, security headers, GZip compression, trusted
   host,
-  CORS, proxy/HTTPS, observability and rate limiting, Settings-driven configuration, error handling, testing, and anti-patterns.
+  CORS, proxy/HTTPS, observability and rate limiting, Settings-driven configuration, error handling, testing, and
+  anti-patterns.
 domain:
   - fastapi
 primary_runtime_references:
@@ -101,7 +102,8 @@ sections:
         text: >
           'In production, target this request-path order from outermost to innermost: TrustedHostMiddleware →
           CORSMiddleware
-          (when enabled) → SecurityHeadersMiddleware → GZipMiddleware → request/response logging and metrics middleware.'
+          (when enabled) → SecurityHeadersMiddleware → GZipMiddleware → request/response logging and metrics
+          middleware.'
       - id: stack.reverse-registration
         type: rule
         text: >
@@ -260,7 +262,8 @@ sections:
         type: rule
         text: >
           Ensure CORSMiddleware executes immediately after TrustedHostMiddleware and before SecurityHeadersMiddleware
-          and GZipMiddleware so it can handle preflight OPTIONS requests and attach CORS headers before other transformations.
+          and GZipMiddleware so it can handle preflight OPTIONS requests and attach CORS headers before other
+          transformations.
       - id: cors.registration-order
         type: note
         text: >
@@ -272,7 +275,8 @@ sections:
         text: >
           'Configure CORS via Settings fields with the following defaults: cors_enabled: bool = False,
           cors_allow_origins:
-          list[str] = [], cors_allow_methods: list[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], cors_allow_headers:
+          list[str] = [], cors_allow_methods: list[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+          cors_allow_headers:
           list[str] = ["Authorization", "Content-Type"].'
       - id: cors.conditional-registration
         type: pattern
@@ -311,7 +315,8 @@ sections:
         text: >
           'With HTTPS enforcement and a proxy, register middleware in this order (first-added to last-added):
           logging/metrics
-          → GZipMiddleware → SecurityHeadersMiddleware → CORSMiddleware → HTTPSRedirectMiddleware → TrustedHostMiddleware
+          → GZipMiddleware → SecurityHeadersMiddleware → CORSMiddleware → HTTPSRedirectMiddleware →
+          TrustedHostMiddleware
           → ProxyHeadersMiddleware.'
       - id: https.hsts-combination
         type: rule
@@ -329,7 +334,8 @@ sections:
         text: >
           Use RequestLoggingMiddleware in app/core/middleware.py to log method, path, status code, and latency per
           request
-          using structured key–value logging instead of ad hoc logging in routers or services. Exceptions are logged with
+          using structured key–value logging instead of ad hoc logging in routers or services. Exceptions are logged
+          with
           traceback and re-raised.
       - id: obs.avoid-body-logging
         type: rule
@@ -353,7 +359,8 @@ sections:
         text: >
           Use MetricsMiddleware to collect in-memory per-route metrics such as request counts, duration totals, and
           status
-          code distributions, exposing them through a helper like get_metrics(). For production observability, integrate with
+          code distributions, exposing them through a helper like get_metrics(). For production observability, integrate
+          with
           Prometheus or OpenTelemetry via provider-specific middleware wrappers.
       - id: obs.rate-limiting-middleware
         type: pattern
@@ -365,7 +372,8 @@ sections:
         text: >
           Control observability middleware via Settings toggles such as enable_request_id (default True),
           enable_request_logging
-          (default True), enable_metrics (default False), enable_rate_limiting (default False), rate_limit_requests (default
+          (default True), enable_metrics (default False), enable_rate_limiting (default False), rate_limit_requests
+          (default
           100), and rate_limit_window_seconds (default 60), wired from create_app.
       - id: obs.metrics-distinct-errors
         type: note
@@ -415,7 +423,8 @@ sections:
         type: rule
         text: >
           'Represent middleware configuration as explicit Settings fields instead of hardcoding constants. Key defaults
-          include enable_gzip: bool = True, enforce_https: bool = False (set to True in production), and allowed_hosts: list[str]
+          include enable_gzip: bool = True, enforce_https: bool = False (set to True in production), and allowed_hosts:
+          list[str]
           = ["*"] (use explicit domains in production).'
       - id: config.factory-wiring
         type: pattern

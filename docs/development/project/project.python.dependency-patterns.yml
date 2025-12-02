@@ -69,11 +69,19 @@ sections:
     sample_code:
       description: Service class with constructor-based dependency injection.
       language: python
-      code: "class UserService:\n    \"\"\"Service for user-related business logic.\"\"\"\n    def __init__(self, user_repo:\
-        \ UserRepository, settings: Settings) -> None:\n        \"\"\"Create a service with its collaborators.\"\"\"\n   \
-        \     self._user_repo = user_repo\n        self._settings = settings\n    async def get_user(self, user_id: str) ->\
-        \ User:\n        \"\"\"Retrieve a user by ID.\"\"\"\n        user = await self._user_repo.get_by_id(user_id)\n   \
-        \     if user is None:\n            raise UserNotFoundError(user_id)\n        return user"
+      code: |
+        class UserService:
+            """Service for user-related business logic."""
+            def __init__(self, user_repo: UserRepository, settings: Settings) -> None:
+                """Create a service with its collaborators."""
+                self._user_repo = user_repo
+                self._settings = settings
+            async def get_user(self, user_id: str) -> User:
+                """Retrieve a user by ID."""
+                user = await self._user_repo.get_by_id(user_id)
+                if user is None:
+                    raise UserNotFoundError(user_id)
+                return user
     items:
       - id: constructor.parameters
         type: rule
@@ -106,11 +114,15 @@ sections:
     sample_code:
       description: Factory function that composes a service from its dependencies.
       language: python
-      code: "def build_user_service(user_repo: UserRepository, settings: Settings) -> UserService:\n    \"\"\"Create a UserService\
-        \ with its dependencies.\"\"\"\n    return UserService(user_repo=user_repo, settings=settings)\ndef build_order_service(\n\
-        \    order_repo: OrderRepository, user_service: UserService, payment_gateway: PaymentGateway\n) -> OrderService:\n\
-        \    \"\"\"Create an OrderService with its dependencies.\"\"\"\n    return OrderService(order_repo=order_repo, user_service=user_service,\
-        \ payment_gateway=payment_gateway)"
+      code: |
+        def build_user_service(user_repo: UserRepository, settings: Settings) -> UserService:
+            """Create a UserService with its dependencies."""
+            return UserService(user_repo=user_repo, settings=settings)
+        def build_order_service(
+            order_repo: OrderRepository, user_service: UserService, payment_gateway: PaymentGateway
+        ) -> OrderService:
+            """Create an OrderService with its dependencies."""
+            return OrderService(order_repo=order_repo, user_service=user_service, payment_gateway=payment_gateway)
     items:
       - id: factory.purpose
         type: note

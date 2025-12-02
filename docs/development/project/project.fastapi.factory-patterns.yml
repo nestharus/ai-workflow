@@ -8,7 +8,8 @@ description: >
 scope: >
   Covers create_app pattern, lifespan context managers, resource initialization in FastAPI, exception handler
   registration,
-  middleware configuration, router registration, OpenAPI customization, settings integration, testing factory usage, and anti-patterns.
+  middleware configuration, router registration, OpenAPI customization, settings integration, testing factory usage, and
+  anti-patterns.
 domain:
   - fastapi
 primary_runtime_references:
@@ -43,12 +44,24 @@ sections:
         - fastapi.FastAPI
         - fastapi.responses.ORJSONResponse
         - app.core.settings.Settings
-      code: "from fastapi import FastAPI\nfrom fastapi.responses import ORJSONResponse\nfrom app.core.settings import Settings\n\
-        def create_app(settings: Settings) -> FastAPI:\n    \"\"\"Construct and configure the FastAPI application instance.\"\
-        \"\"\n    app = FastAPI(\n        title=settings.app_name,\n        version=settings.app_version,\n        description=settings.app_description,\n\
-        \        docs_url=\"/docs\",\n        redoc_url=\"/redoc\",\n        default_response_class=ORJSONResponse,\n    \
-        \    lifespan=_lifespan(settings),\n    )\n    app.state.settings = settings\n    # ... router registration, middleware\
-        \ configuration, and exception handlers ...\n    return app"
+      code: |
+        from fastapi import FastAPI
+        from fastapi.responses import ORJSONResponse
+        from app.core.settings import Settings
+        def create_app(settings: Settings) -> FastAPI:
+            """Construct and configure the FastAPI application instance."""
+            app = FastAPI(
+                title=settings.app_name,
+                version=settings.app_version,
+                description=settings.app_description,
+                docs_url="/docs",
+                redoc_url="/redoc",
+                default_response_class=ORJSONResponse,
+                lifespan=_lifespan(settings),
+            )
+            app.state.settings = settings
+            # ... router registration, middleware configuration, and exception handlers ...
+            return app
     items:
       - id: factory.create-app-rationale
         type: rule
@@ -91,21 +104,43 @@ sections:
         - collections.abc.Callable
         - fastapi.FastAPI
         - app.infrastructure.surrealdb.pool.create_surrealdb_pool
-      code: "from contextlib import asynccontextmanager, AbstractAsyncContextManager\nfrom collections.abc import AsyncGenerator,\
-        \ Callable\nfrom fastapi import FastAPI\nfrom app.infrastructure.surrealdb.pool import SurrealDBPool, create_surrealdb_pool\n\
-        from app.infrastructure.elasticsearch.client import (\n    ElasticsearchWrapper,\n    create_elasticsearch_wrapper,\n\
-        )\ndef _lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:\n    @asynccontextmanager\n\
-        \    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:\n        surreal_pool: SurrealDBPool | None = None\n\
-        \        elasticsearch_client: ElasticsearchWrapper | None = None\n        try:\n            surreal_pool = await\
-        \ create_surrealdb_pool(settings)\n            app.state.surrealdb_pool = surreal_pool\n            logger.info(\"\
-        Initialized SurrealDB pool\")\n            elasticsearch_client = await create_elasticsearch_wrapper(settings)\n \
-        \           app.state.elasticsearch_client = elasticsearch_client\n            logger.info(\"Initialized Elasticsearch\
-        \ client\")\n            yield\n        except Exception:\n            logger.exception(\"Failed to initialize application\
-        \ resources\")\n            raise\n        finally:\n            if elasticsearch_client is not None:\n          \
-        \      try:\n                    await elasticsearch_client.close()\n                except Exception:\n         \
-        \           logger.exception(\"Failed to close Elasticsearch client cleanly\")\n            if surreal_pool is not\
-        \ None:\n                try:\n                    await surreal_pool.close()\n                except Exception:\n\
-        \                    logger.exception(\"Failed to close SurrealDB pool cleanly\")\n    return lifespan"
+      code: |
+        from contextlib import asynccontextmanager, AbstractAsyncContextManager
+        from collections.abc import AsyncGenerator, Callable
+        from fastapi import FastAPI
+        from app.infrastructure.surrealdb.pool import SurrealDBPool, create_surrealdb_pool
+        from app.infrastructure.elasticsearch.client import (
+            ElasticsearchWrapper,
+            create_elasticsearch_wrapper,
+        )
+        def _lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
+            @asynccontextmanager
+            async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+                surreal_pool: SurrealDBPool | None = None
+                elasticsearch_client: ElasticsearchWrapper | None = None
+                try:
+                    surreal_pool = await create_surrealdb_pool(settings)
+                    app.state.surrealdb_pool = surreal_pool
+                    logger.info("Initialized SurrealDB pool")
+                    elasticsearch_client = await create_elasticsearch_wrapper(settings)
+                    app.state.elasticsearch_client = elasticsearch_client
+                    logger.info("Initialized Elasticsearch client")
+                    yield
+                except Exception:
+                    logger.exception("Failed to initialize application resources")
+                    raise
+                finally:
+                    if elasticsearch_client is not None:
+                        try:
+                            await elasticsearch_client.close()
+                        except Exception:
+                            logger.exception("Failed to close Elasticsearch client cleanly")
+                    if surreal_pool is not None:
+                        try:
+                            await surreal_pool.close()
+                        except Exception:
+                            logger.exception("Failed to close SurrealDB pool cleanly")
+            return lifespan
     items:
       - id: lifespan.use-context-manager
         type: rule
@@ -145,10 +180,20 @@ sections:
       imports:
         - app.core.settings.Settings
         - app.infrastructure.surrealdb.pool.SurrealDBPool
-      code: "async def create_surrealdb_pool(settings: Settings) -> SurrealDBPool:\n    \"\"\"Factory that builds and initializes\
-        \ a SurrealDB pool from settings.\"\"\"\n    pool = SurrealDBPool(\n        dsn=settings.surrealdb_url,\n        #\
-        \ ... other args ...\n    )\n    await pool.init()\n    try:\n        await pool.initialize_schema()\n    except Exception:\n\
-        \        await pool.close()\n        raise\n    return pool"
+      code: |
+        async def create_surrealdb_pool(settings: Settings) -> SurrealDBPool:
+            """Factory that builds and initializes a SurrealDB pool from settings."""
+            pool = SurrealDBPool(
+                dsn=settings.surrealdb_url,
+                # ... other args ...
+            )
+            await pool.init()
+            try:
+                await pool.initialize_schema()
+            except Exception:
+                await pool.close()
+                raise
+            return pool
     items:
       - id: resources.factory-functions
         type: rule
@@ -344,9 +389,18 @@ sections:
         - pytest
         - app.core.settings.Settings
         - app.core.factory.create_app
-      code: "import pytest\nfrom fastapi import FastAPI\nfrom app.core.settings import Settings\nfrom app.core.factory import\
-        \ create_app\n@pytest.fixture\ndef test_settings() -> Settings:\n    return Settings()\n@pytest.fixture\ndef test_app(test_settings:\
-        \ Settings) -> FastAPI:\n    \"\"\"Create a FastAPI application instance for testing.\"\"\"\n    return create_app(test_settings)"
+      code: |
+        import pytest
+        from fastapi import FastAPI
+        from app.core.settings import Settings
+        from app.core.factory import create_app
+        @pytest.fixture
+        def test_settings() -> Settings:
+            return Settings()
+        @pytest.fixture
+        def test_app(test_settings: Settings) -> FastAPI:
+            """Create a FastAPI application instance for testing."""
+            return create_app(test_settings)
     items:
       - id: testing.settings-fixture
         type: pattern
