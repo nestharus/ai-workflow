@@ -1,0 +1,288 @@
+doc_id: task-5-rest-migration
+title: "Task 5: Phase 4 - Migrate REST (Fact-Based)"
+version_hint: 2024-2025
+kind: migration_task
+domain:
+  - rest
+  - fastapi
+scope: project
+
+sections:
+  - id: overview
+    heading: Overview
+    content: |
+      This task migrates REST content from `general.rest.api-patterns.yml` to
+      `project.rest.api-patterns.yml` using the fact-based migration workflow. Facts
+      about REST protocol rules (URL structure, status codes, HTTP methods) will be
+      extracted iteratively, classified as GENERAL vs PROJECT, and PROJECT facts moved
+      to the target file with semantic validation.
+
+      The fact-based workflow operates at element/sentence granularity rather than
+      file-level, enabling fine-grained multi-domain classification and ensuring no
+      information loss through semantic similarity validation (>= 0.95).
+
+  - id: source-target-files
+    heading: Source and Target Files
+    content: |
+      **Source file**: `docs/development/general/general.rest.api-patterns.yml`
+
+      The source contains multi-domain content (rest, fastapi, python) with 7 sections:
+      - URL structure and prefix conventions
+      - HTTP methods and status codes
+      - Request/response modeling
+      - Pagination patterns
+      - Content negotiation
+      - API versioning
+      - Anti-patterns
+
+      **Target file**: `docs/development/project/rest/project.rest.api-patterns.yml`
+
+  - id: workflow-steps
+    heading: Workflow Steps
+    subsections:
+      - id: step-1-start
+        heading: "Step 1: Start Fact Migration"
+        content: |
+          Run fact extraction on BOTH the GENERAL and PROJECT REST files. Use fact
+          migration on GENERAL to extract protocol rules and on PROJECT to extract any
+          existing project-specific REST wiring facts.
+
+          **Command for GENERAL file**:
+          ```bash
+          uv run knowledge.start-fact-migration \
+            --yaml-file docs/development/general/general.rest.api-patterns.yml \
+            --element-id <id>
+          ```
+
+          **Command for PROJECT file**:
+          ```bash
+          uv run knowledge.start-fact-migration \
+            --yaml-file docs/development/project/rest/project.rest.api-patterns.yml \
+            --element-id <id>
+          ```
+
+          **Element IDs to process in GENERAL file**:
+          - `url.prefix`
+          - `http.status.named-constants`
+          - `modeling.pydantic-extra-forbid`
+          - (other elements as identified in source file)
+
+          **Element IDs to process in PROJECT file**:
+          Process analogous element IDs if present in the PROJECT file. Inspect the
+          file structure to identify project-specific elements for fact extraction.
+
+          **Entities to extract**: FastAPI, APIRouter, status, URL, Pydantic,
+          response_model, deprecated, Content-Type
+
+          **Output**:
+          - Facts stored in `.knowledge/facts/extractions.csv`
+          - Task created in `.knowledge/migrations/fact_tasks.csv`
+          - Returns task ID and fact count
+
+      - id: step-2-classify
+        heading: "Step 2: Classify Facts"
+        content: |
+          Print instructions for invoking the knowledge-analyzer sub-agent to classify
+          each extracted fact.
+
+          **Command**:
+          ```bash
+          uv run knowledge.classify-facts --task-id <uuid>
+          ```
+
+          **Sub-agent invocation**:
+          ```python
+          Task(subagent_type="knowledge-analyzer", prompt="")
+          ```
+
+          The sub-agent classifies each fact across three dimensions:
+          - **Domain**: rest, fastapi, python (multi-domain tagging allowed)
+          - **Scope**: GENERAL vs PROJECT
+          - **Pattern**: api-patterns
+
+          **Classification output schema**:
+          ```json
+          {
+            "classifications": [
+              {
+                "fact_id": "<uuid>",
+                "domains": ["rest"],
+                "scope": "GENERAL",
+                "pattern": "api-patterns",
+                "target_file": "docs/development/general/general.rest.api-patterns.yml"
+              },
+              {
+                "fact_id": "<uuid>",
+                "domains": ["rest", "fastapi"],
+                "scope": "PROJECT",
+                "pattern": "api-patterns",
+                "target_file": "docs/development/project/rest/project.rest.api-patterns.yml"
+              }
+            ]
+          }
+          ```
+
+          The `domains` field is an array to support multi-domain tagging. Use the
+          appropriate array based on the fact's content:
+          - `["rest"]`: Pure REST protocol rules
+          - `["rest", "fastapi"]`: REST + FastAPI implementation
+          - `["rest", "fastapi", "python"]`: REST + FastAPI + Python patterns
+
+          When facts are written to YAML files, the `domains` array maps directly to
+          the YAML `domain` list field as shown in the multi-domain tagging examples.
+
+          Save classification output to a JSON file for the next step.
+
+      - id: step-3-move
+        heading: "Step 3: Move Facts"
+        content: |
+          Move classified PROJECT facts to the target file with semantic similarity
+          tracking.
+
+          **Command**:
+          ```bash
+          uv run knowledge.move-facts \
+            --task-id <uuid> \
+            --classification-file classification.json
+          ```
+
+          **Actions performed**:
+          - Parse classification JSON
+          - Store PROJECT facts in `.knowledge/facts/rest.api-patterns.facts.yml`
+          - Record movements in `.knowledge/movements/iterative_movements.csv`
+          - Calculate and store semantic similarity scores
+
+          GENERAL facts remain in the source file; only PROJECT facts are moved.
+
+      - id: step-4-validate
+        heading: "Step 4: Validate Migration"
+        content: |
+          Validate that all facts are stored, movements tracked, and semantic
+          preservation is maintained.
+
+          **Command**:
+          ```bash
+          uv run knowledge.validate-fact-migration --task-id <uuid>
+          ```
+
+          **Validation checks**:
+          - All facts from `extractions.csv` are stored in YAML files
+          - All facts have corresponding movement records
+          - All movements satisfy invariant: `original = isolated_fact + residual_sentence`
+          - Semantic similarity >= 0.95 for all movements
+          - Task `fact_count` matches actual extracted count
+
+          **Output**: Updates task status to 'completed' or 'failed'
+
+  - id: entity-extraction-targets
+    heading: Entity Extraction Targets
+    content: |
+      Expected entities to extract facts about:
+
+      | Entity | Description |
+      |--------|-------------|
+      | FastAPI | Framework references and imports |
+      | APIRouter | Routing configuration and mounting |
+      | status | HTTP status codes and constants |
+      | URL | URL structure, prefixes, path parameters |
+      | Pydantic | Validation models and configuration |
+      | response_model | Response modeling patterns |
+      | deprecated | Deprecation handling |
+      | Content-Type | Content negotiation headers |
+
+  - id: multi-domain-tagging
+    heading: Multi-Domain Tagging Rules
+    content: |
+      Tag ALL applicable domains; no precedence between domains.
+
+      **Pure REST protocol rules** (URL structure, status codes, HTTP methods):
+      ```yaml
+      domain:
+        - rest
+      ```
+
+      **REST + FastAPI implementation** (mounting, APIRouter, response_model):
+      ```yaml
+      domain:
+        - rest
+        - fastapi
+      ```
+
+      **REST + FastAPI + Python** (Pydantic models, type hints):
+      ```yaml
+      domain:
+        - rest
+        - fastapi
+        - python
+      ```
+
+  - id: classification-criteria
+    heading: GENERAL vs PROJECT Classification
+    content: |
+      **GENERAL facts**: REST/HTTP protocol rules that apply to any REST API project.
+
+      Examples:
+      - "Use /api/{version} prefix for versioning"
+      - "Return 201 for POST success"
+      - "Use snake_case for JSON fields"
+
+      **PROJECT facts**: FastAPI-specific wiring in this codebase.
+
+      Examples:
+      - "Mount versioned endpoints using APIRouter in app/api/v1/router.py"
+      - "Use fastapi.status constants from app/core/dependencies.py"
+
+      **Test question**: "Could this rule apply to a different project using REST/FastAPI?"
+      - Yes → GENERAL
+      - No (references `app/*` or project-specific components) → PROJECT
+
+  - id: validation-criteria
+    heading: Validation Criteria
+    content: |
+      All validations must pass for task completion:
+
+      - All facts from `extractions.csv` are stored in YAML files
+      - All facts have corresponding movement records in `iterative_movements.csv`
+      - All movements satisfy semantic similarity >= 0.95 (no information loss)
+      - Task `fact_count` matches actual extracted fact count
+      - GENERAL facts remain in `general.rest.api-patterns.yml` (no `app/*` references)
+      - PROJECT facts moved to `project.rest.api-patterns.yml` (have project indicators)
+
+  - id: expected-outcomes
+    heading: Expected Outcomes
+    content: |
+      **After successful migration**:
+
+      - `general.rest.api-patterns.yml`: Contains only GENERAL REST/HTTP protocol rules
+        (no `app/*` references)
+      - `project.rest.api-patterns.yml`: Contains PROJECT-specific FastAPI wiring and
+        implementation details
+      - `.knowledge/facts/rest.api-patterns.facts.yml`: Organized fact storage with
+        domain/pattern metadata
+      - `.knowledge/movements/iterative_movements.csv`: Sentence-level movement tracking
+        with similarity scores
+      - `.knowledge/migrations/fact_tasks.csv`: Task record with status='completed'
+
+  - id: related-files
+    heading: Related Files
+    content: |
+      - `docs/processes/fact-migration.yml`: Fact-based migration workflow reference
+      - `scripts/knowledge/fact_migration.py`: Fact-migration CLI implementation module
+      - `docs/processes/information-migration.yml`: File-level migration workflow (legacy)
+      - `docs/development/domain-definitions.yml`: Domain taxonomy and multi-domain
+        tagging rules
+      - `docs/development/MODULE-DEFINITIONS.yml`: Pattern definitions and scope criteria
+      - `.claude/agents/knowledge-analyzer.md`: Sub-agent for fact classification
+
+  - id: notes
+    heading: Important Notes
+    content: |
+      - This task uses the NEW fact-based migration workflow, not the old file-level
+        workflow
+      - Fact extraction is iterative: one fact per iteration until entity is completely
+        removed from the sentence
+      - Semantic validation ensures no information loss (similarity >= 0.95)
+      - Multi-domain tagging is required: do not drop applicable domains
+      - Classification is manual via knowledge-analyzer sub-agent (not automated)
+      - Always pass empty string for sub-agent prompt:
+        `Task(subagent_type="knowledge-analyzer", prompt="")`

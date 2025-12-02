@@ -1,0 +1,579 @@
+doc_id: task-6-fastapi-migration
+title: "Task 6: Phase 5 - Migrate FastAPI (Fact-Based)"
+version_hint: 2024-2025
+kind: migration_task
+domain:
+  - fastapi
+scope: project
+
+sections:
+  - id: overview
+    heading: Overview
+    content: |
+      This task migrates FastAPI content across 10 pattern files using the fact-based
+      migration workflow. Currently, these files are empty and will be populated with
+      facts extracted from existing documentation and codebase analysis. Facts about
+      FastAPI framework patterns (APIRouter, Depends, lifespan, etc.) will be extracted
+      iteratively, classified as GENERAL vs PROJECT, and stored in appropriate files
+      with semantic validation.
+
+      The fact-based workflow operates at element/sentence granularity rather than
+      file-level, enabling fine-grained multi-domain classification and ensuring no
+      information loss through semantic similarity validation (>= 0.95).
+
+      **Target pattern files (10 total)**:
+      - api-patterns
+      - architectural-patterns
+      - connection-pooling-patterns
+      - exception-patterns
+      - factory-patterns
+      - middleware-patterns
+      - repository-patterns
+      - router-patterns
+      - service-patterns
+      - settings-patterns
+
+  - id: source-target-files
+    heading: Source and Target Files
+    content: |
+      **Source files**: Existing YAML documentation files and codebase analysis
+
+      Facts will be extracted from:
+      - `docs/development/general/general.rest.api-patterns.yml` (FastAPI-related content)
+      - `docs/development/general/general.python.*.yml` (FastAPI/Pydantic content)
+      - Codebase analysis of `app/` directory for implementation patterns
+
+      **Target files (PROJECT scope)**:
+      Located in `docs/development/project/fastapi/`
+
+      | Pattern File | Purpose |
+      |--------------|---------|
+      | `project.fastapi.api-patterns.yml` | API design rules specific to this project |
+      | `project.fastapi.architectural-patterns.yml` | System structure documentation |
+      | `project.fastapi.connection-pooling-patterns.yml` | Database connection management |
+      | `project.fastapi.exception-patterns.yml` | Error handling strategies |
+      | `project.fastapi.factory-patterns.yml` | Application construction |
+      | `project.fastapi.middleware-patterns.yml` | Middleware configuration |
+      | `project.fastapi.repository-patterns.yml` | Data access layer implementation |
+      | `project.fastapi.router-patterns.yml` | Router organization |
+      | `project.fastapi.service-patterns.yml` | Service layer implementation |
+      | `project.fastapi.settings-patterns.yml` | Configuration management |
+
+      **Target files (GENERAL scope)**:
+      Located in `docs/development/general/`
+
+      | Pattern File | Purpose |
+      |--------------|---------|
+      | `general.fastapi.api-patterns.yml` | FastAPI API design best practices |
+      | `general.fastapi.architectural-patterns.yml` | FastAPI architecture patterns |
+      | `general.fastapi.connection-pooling-patterns.yml` | Connection pooling best practices |
+      | `general.fastapi.exception-patterns.yml` | Exception handling best practices |
+      | `general.fastapi.factory-patterns.yml` | Application factory patterns |
+      | `general.fastapi.middleware-patterns.yml` | Middleware best practices |
+      | `general.fastapi.repository-patterns.yml` | Repository and data access patterns |
+      | `general.fastapi.router-patterns.yml` | APIRouter patterns |
+      | `general.fastapi.service-patterns.yml` | Service layer best practices |
+      | `general.fastapi.settings-patterns.yml` | Pydantic settings patterns |
+
+  - id: workflow-steps
+    heading: Workflow Steps
+    subsections:
+      - id: step-1-start
+        heading: "Step 1: Start Fact Migration"
+        content: |
+          Run fact extraction on source files containing FastAPI-related content.
+          Process each pattern file systematically to extract facts about FastAPI
+          entities.
+
+          **Commands for each pattern file**:
+
+          **1. api-patterns** (Primary source: GENERAL - REST/FastAPI API conventions):
+          ```bash
+          uv run knowledge.start-fact-migration \
+            --yaml-file docs/development/general/general.rest.api-patterns.yml \
+            --element-id <id>
+          ```
+
+          **2. architectural-patterns** (Primary source: PROJECT - system structure):
+          ```bash
+          uv run knowledge.start-fact-migration \
+            --yaml-file docs/development/project/fastapi/project.fastapi.architectural-patterns.yml \
+            --element-id <id>
+          ```
+
+          **3. connection-pooling-patterns** (Primary source: PROJECT - database setup):
+          ```bash
+          uv run knowledge.start-fact-migration \
+            --yaml-file docs/development/project/fastapi/project.fastapi.connection-pooling-patterns.yml \
+            --element-id <id>
+          ```
+
+          **4. exception-patterns** (Primary source: GENERAL/PROJECT - error handling):
+          ```bash
+          uv run knowledge.start-fact-migration \
+            --yaml-file docs/development/general/general.fastapi.exception-patterns.yml \
+            --element-id <id>
+          ```
+
+          **5. factory-patterns** (Primary source: PROJECT - application wiring):
+          ```bash
+          uv run knowledge.start-fact-migration \
+            --yaml-file docs/development/project/fastapi/project.fastapi.factory-patterns.yml \
+            --element-id <id>
+          ```
+
+          **6. middleware-patterns** (Primary source: GENERAL/PROJECT - middleware config):
+          ```bash
+          uv run knowledge.start-fact-migration \
+            --yaml-file docs/development/general/general.fastapi.middleware-patterns.yml \
+            --element-id <id>
+          ```
+
+          **7. repository-patterns** (Primary source: PROJECT - data access layer):
+          ```bash
+          uv run knowledge.start-fact-migration \
+            --yaml-file docs/development/project/fastapi/project.fastapi.repository-patterns.yml \
+            --element-id <id>
+          ```
+
+          **8. router-patterns** (Primary source: GENERAL - APIRouter patterns):
+          ```bash
+          uv run knowledge.start-fact-migration \
+            --yaml-file docs/development/general/general.fastapi.router-patterns.yml \
+            --element-id <id>
+          ```
+
+          **9. service-patterns** (Primary source: PROJECT - service layer):
+          ```bash
+          uv run knowledge.start-fact-migration \
+            --yaml-file docs/development/project/fastapi/project.fastapi.service-patterns.yml \
+            --element-id <id>
+          ```
+
+          **10. settings-patterns** (Primary source: GENERAL/PROJECT - configuration):
+          ```bash
+          uv run knowledge.start-fact-migration \
+            --yaml-file docs/development/general/general.fastapi.settings-patterns.yml \
+            --element-id <id>
+          ```
+
+          Note: If a source file is empty, inspect codebase (`app/` directory) or related
+          documentation files to identify elements containing relevant FastAPI patterns.
+          Some patterns may require extraction from multiple source files.
+
+          **Entity extraction targets by pattern**:
+
+          | Pattern | Primary Entities |
+          |---------|------------------|
+          | api-patterns | response_model, status, Query, Path, Body |
+          | architectural-patterns | FastAPI, layer, component, boundary |
+          | connection-pooling-patterns | AsyncClient, pool, connection |
+          | exception-patterns | HTTPException, RequestValidationError, AppError |
+          | factory-patterns | create_app, lifespan, include_router |
+          | middleware-patterns | middleware, CORSMiddleware, RequestLoggingMiddleware |
+          | repository-patterns | RepositoryBase, find_by_id, find_all, query |
+          | router-patterns | APIRouter, prefix, tags, router |
+          | service-patterns | service, business_logic, transaction |
+          | settings-patterns | Settings, BaseSettings, env_prefix |
+
+          **Output**:
+          - Facts stored in `.knowledge/facts/extractions.csv`
+          - Task created in `.knowledge/migrations/fact_tasks.csv`
+          - Returns task ID and fact count per pattern
+
+      - id: step-2-classify
+        heading: "Step 2: Classify Facts"
+        content: |
+          Print instructions for invoking the knowledge-analyzer sub-agent to classify
+          each extracted fact.
+
+          **Command**:
+          ```bash
+          uv run knowledge.classify-facts --task-id <uuid>
+          ```
+
+          **Sub-agent invocation**:
+          ```python
+          Task(subagent_type="knowledge-analyzer", prompt="")
+          ```
+
+          The sub-agent classifies each fact across three dimensions:
+          - **Domain**: fastapi, rest, python (multi-domain tagging allowed)
+          - **Scope**: GENERAL vs PROJECT
+          - **Pattern**: One of the 10 FastAPI patterns
+
+          **Classification output schema**:
+          ```json
+          {
+            "classifications": [
+              {
+                "fact_id": "<uuid>",
+                "domains": ["fastapi"],
+                "scope": "GENERAL",
+                "pattern": "router-patterns",
+                "target_file": "docs/development/general/general.fastapi.router-patterns.yml"
+              },
+              {
+                "fact_id": "<uuid>",
+                "domains": ["fastapi", "python"],
+                "scope": "PROJECT",
+                "pattern": "repository-patterns",
+                "target_file": "docs/development/project/fastapi/project.fastapi.repository-patterns.yml"
+              }
+            ]
+          }
+          ```
+
+          The `domains` field is an array to support multi-domain tagging. Use the
+          appropriate array based on the fact's content:
+          - `["fastapi"]`: Pure FastAPI framework patterns
+          - `["fastapi", "rest"]`: FastAPI + REST protocol rules
+          - `["fastapi", "python"]`: FastAPI + Python patterns (Pydantic, async)
+          - `["fastapi", "rest", "python"]`: All three domains
+
+          Save classification output to a JSON file for the next step.
+
+      - id: step-3-move
+        heading: "Step 3: Move Facts"
+        content: |
+          Move classified facts to their target domain/pattern YAML files with
+          semantic similarity tracking.
+
+          **Command**:
+          ```bash
+          uv run knowledge.move-facts \
+            --task-id <uuid> \
+            --classification-file classification.json
+          ```
+
+          **Actions performed**:
+          - Parse classification JSON
+          - Store GENERAL facts in `.knowledge/facts/fastapi.<pattern>.facts.yml`
+          - Store PROJECT facts in `.knowledge/facts/fastapi.<pattern>.facts.yml`
+          - Record movements in `.knowledge/movements/iterative_movements.csv`
+          - Calculate and store semantic similarity scores
+
+          GENERAL facts go to `general.fastapi.*` files; PROJECT facts go to
+          `project.fastapi.*` files based on classification.
+
+      - id: step-4-validate
+        heading: "Step 4: Validate Migration"
+        content: |
+          Validate that all facts are stored, movements tracked, and semantic
+          preservation is maintained.
+
+          **Command**:
+          ```bash
+          uv run knowledge.validate-fact-migration --task-id <uuid>
+          ```
+
+          **Validation checks**:
+          - All facts from `extractions.csv` are stored in YAML files
+          - All facts have corresponding movement records
+          - All movements satisfy invariant: `original = isolated_fact + residual_sentence`
+          - Semantic similarity >= 0.95 for all movements
+          - Task `fact_count` matches actual extracted count
+
+          **Output**: Updates task status to 'completed' or 'failed'
+
+  - id: entity-extraction-targets
+    heading: Entity Extraction Targets
+    content: |
+      Expected entities to extract facts about, organized by category:
+
+      **Routing and Endpoints**:
+
+      | Entity | Description |
+      |--------|-------------|
+      | APIRouter | Router configuration and organization |
+      | router | Router instance references |
+      | prefix | URL prefix configuration |
+      | tags | OpenAPI tag configuration |
+      | include_router | Router mounting patterns |
+
+      **Repository/Data Access**:
+
+      | Entity | Description |
+      |--------|-------------|
+      | RepositoryBase | Base repository class |
+      | repository | Repository instance references |
+      | find_by_id | Single record lookup pattern |
+      | find_all | Collection query pattern |
+      | query | Query builder patterns |
+      | CRUD | Create/Read/Update/Delete operations |
+
+      **Request/Response**:
+
+      | Entity | Description |
+      |--------|-------------|
+      | response_model | Response schema declaration |
+      | status | HTTP status code constants |
+      | Request | Request object access |
+      | Response | Response object manipulation |
+      | Query | Query parameter declaration |
+      | Path | Path parameter declaration |
+      | Body | Request body declaration |
+
+      **Application Lifecycle**:
+
+      | Entity | Description |
+      |--------|-------------|
+      | FastAPI | Framework instance |
+      | create_app | Application factory function |
+      | lifespan | Lifecycle context manager |
+      | startup | Startup event handlers |
+      | shutdown | Shutdown event handlers |
+
+      **Error Handling**:
+
+      | Entity | Description |
+      |--------|-------------|
+      | HTTPException | HTTP error raising |
+      | RequestValidationError | Validation error handling |
+      | AppError | Project-specific error class |
+      | exception_handler | Exception handler registration |
+
+      **Middleware**:
+
+      | Entity | Description |
+      |--------|-------------|
+      | middleware | Middleware decorator/registration |
+      | CORSMiddleware | CORS configuration |
+      | add_middleware | Middleware addition method |
+
+      **Configuration**:
+
+      | Entity | Description |
+      |--------|-------------|
+      | Settings | Pydantic settings class |
+      | BaseSettings | Base settings configuration |
+      | env_prefix | Environment variable prefix |
+
+  - id: multi-domain-tagging
+    heading: Multi-Domain Tagging Rules
+    content: |
+      Tag ALL applicable domains; no precedence between domains.
+
+      **Pure FastAPI framework patterns** (APIRouter, Depends, lifespan):
+      ```yaml
+      domain:
+        - fastapi
+      ```
+
+      **FastAPI + REST protocol** (status codes, response_model with HTTP semantics):
+      ```yaml
+      domain:
+        - rest
+        - fastapi
+      ```
+
+      **FastAPI + Python patterns** (Pydantic models, async/await, type hints):
+      ```yaml
+      domain:
+        - python
+        - fastapi
+      ```
+
+      **FastAPI + REST + Python** (Pydantic response models with HTTP status):
+      ```yaml
+      domain:
+        - rest
+        - fastapi
+        - python
+      ```
+
+      **Examples**:
+
+      | Content | Domains |
+      |---------|---------|
+      | "Use APIRouter for route organization" | `['fastapi']` |
+      | "Return 201 status for POST success" | `['rest', 'fastapi']` |
+      | "Use Pydantic BaseModel for request validation" | `['python', 'fastapi']` |
+      | "Configure response_model with status_code=201" | `['rest', 'fastapi', 'python']` |
+      | "Use async def for endpoint handlers" | `['python', 'fastapi']` |
+      | "Mount versioned router at /api/v1" | `['rest', 'fastapi']` |
+
+  - id: classification-criteria
+    heading: GENERAL vs PROJECT Classification
+    content: |
+      **GENERAL facts**: FastAPI framework rules that apply to any FastAPI project.
+
+      Examples:
+      - "Use APIRouter for organizing related endpoints"
+      - "Depends() enables dependency injection in FastAPI"
+      - "Use lifespan context manager for startup/shutdown"
+      - "Configure response_model for automatic serialization"
+      - "Use BackgroundTasks for async background operations"
+
+      **PROJECT facts**: FastAPI-specific wiring in this codebase.
+
+      Examples:
+      - "Mount v1 router in app/api/v1/router.py"
+      - "Use get_settings() from app/core/dependencies.py"
+      - "AppError is defined in app/core/errors.py"
+      - "create_app function in app/core/factory.py constructs the application"
+      - "ORJSONResponse is configured as default_response_class"
+
+      **Test question**: "Could this rule apply to a different FastAPI project?"
+      - Yes → GENERAL
+      - No (references `app/*` or project-specific components) → PROJECT
+
+      **Classification indicators**:
+
+      | Indicator | Scope |
+      |-----------|-------|
+      | References `app/*` paths | PROJECT |
+      | Mentions `AppError`, `create_app`, `RepositoryBase` | PROJECT |
+      | Generic FastAPI/Pydantic patterns | GENERAL |
+      | Framework documentation style | GENERAL |
+      | Implementation wiring ("in our app...") | PROJECT |
+
+  - id: pattern-specific-guidance
+    heading: Pattern-Specific Guidance
+    content: |
+      Brief notes for each of the 10 FastAPI patterns:
+
+      **api-patterns**:
+      API design rules for FastAPI endpoints. Focus on URL structure, request/response
+      modeling, OpenAPI documentation, and query/path parameter conventions. Excludes
+      implementation wiring (→ factory-patterns) and error response design
+      (→ exception-patterns).
+
+      **architectural-patterns**:
+      System structure documentation. Layer integration (how services, repositories,
+      and routers interact), component inventory, dependency flow, and system
+      boundaries. Describes what exists, not how to build it.
+
+      **connection-pooling-patterns**:
+      Database connection management. Connection pool configuration, client management,
+      connection cleanup, and pool sizing. Specific to database client setup, not
+      repository patterns.
+
+      **exception-patterns**:
+      Error handling strategies. HTTPException usage, validation error handling,
+      AppError patterns, exception handler registration, and error response formatting.
+      Excludes HTTP status code conventions (→ rest module).
+
+      **factory-patterns**:
+      Application construction. create_app function, middleware registration, router
+      mounting, default_response_class configuration, lifespan management, and
+      startup/shutdown hooks. Central wiring of all components.
+
+      **middleware-patterns**:
+      Middleware configuration. Middleware stack configuration, ordering, options,
+      and request/response middleware. Excludes factory registration
+      (→ factory-patterns).
+
+      **repository-patterns**:
+      Data access layer implementation. Repository construction, data access patterns,
+      query patterns, CRUD operations, and query builders. Excludes service layer
+      (→ service-patterns) and database pooling (→ connection-pooling-patterns).
+
+      **router-patterns**:
+      Router organization. APIRouter usage, route decorators (@router.get, etc.),
+      endpoint wiring, router registration patterns, and route grouping. Excludes
+      API design rules (→ api-patterns) and factory mounting (→ factory-patterns).
+
+      **service-patterns**:
+      Service layer implementation. Business logic delegation, service construction,
+      service dependencies, and transaction boundaries. Excludes API layer
+      (→ router-patterns) and data access (→ repository-patterns).
+
+      **settings-patterns**:
+      Configuration management. Settings model design using Pydantic BaseSettings,
+      environment variable binding, configuration validation, and settings access
+      patterns. Excludes factory loading (→ factory-patterns).
+
+  - id: validation-criteria
+    heading: Validation Criteria
+    content: |
+      All validations must pass for task completion:
+
+      - All facts from `extractions.csv` are stored in YAML files
+      - All facts have corresponding movement records in `iterative_movements.csv`
+      - All movements satisfy semantic similarity >= 0.95 (no information loss)
+      - Task `fact_count` matches actual extracted fact count
+      - GENERAL facts remain in `general.fastapi.*` files (no `app/*` references)
+      - PROJECT facts moved to `project.fastapi.*` files (have project indicators)
+
+      **Per-pattern validation**:
+      Each of the 10 patterns should have:
+      - At least one fact extracted (may be empty if no relevant content exists)
+      - Correct domain tagging (fastapi as primary, with rest/python as applicable)
+      - Appropriate scope classification (GENERAL vs PROJECT)
+
+  - id: expected-outcomes
+    heading: Expected Outcomes
+    content: |
+      **After successful migration**:
+
+      **GENERAL files** (in `docs/development/general/`):
+      - `general.fastapi.api-patterns.yml`: FastAPI API design best practices
+      - `general.fastapi.architectural-patterns.yml`: FastAPI architecture patterns
+      - `general.fastapi.connection-pooling-patterns.yml`: Connection pooling patterns
+      - `general.fastapi.exception-patterns.yml`: Exception handling patterns
+      - `general.fastapi.factory-patterns.yml`: Application factory patterns
+      - `general.fastapi.middleware-patterns.yml`: Middleware patterns
+      - `general.fastapi.repository-patterns.yml`: Repository and data access patterns
+      - `general.fastapi.router-patterns.yml`: APIRouter patterns
+      - `general.fastapi.service-patterns.yml`: Service layer patterns
+      - `general.fastapi.settings-patterns.yml`: Pydantic settings patterns
+
+      **PROJECT files** (in `docs/development/project/fastapi/`):
+      - `project.fastapi.api-patterns.yml`: Project-specific API design
+      - `project.fastapi.architectural-patterns.yml`: Project architecture
+      - `project.fastapi.connection-pooling-patterns.yml`: Project connection config
+      - `project.fastapi.exception-patterns.yml`: Project error handling
+      - `project.fastapi.factory-patterns.yml`: Project factory wiring
+      - `project.fastapi.middleware-patterns.yml`: Project middleware config
+      - `project.fastapi.repository-patterns.yml`: Project repository implementation
+      - `project.fastapi.router-patterns.yml`: Project router organization
+      - `project.fastapi.service-patterns.yml`: Project service implementation
+      - `project.fastapi.settings-patterns.yml`: Project settings
+
+      **Fact storage** (in `.knowledge/facts/`):
+      - `fastapi.api-patterns.facts.yml`
+      - `fastapi.architectural-patterns.facts.yml`
+      - `fastapi.connection-pooling-patterns.facts.yml`
+      - `fastapi.exception-patterns.facts.yml`
+      - `fastapi.factory-patterns.facts.yml`
+      - `fastapi.middleware-patterns.facts.yml`
+      - `fastapi.repository-patterns.facts.yml`
+      - `fastapi.router-patterns.facts.yml`
+      - `fastapi.service-patterns.facts.yml`
+      - `fastapi.settings-patterns.facts.yml`
+
+      **Movement tracking**:
+      - `.knowledge/movements/iterative_movements.csv`: Sentence-level movement
+        tracking with similarity scores
+
+      **Task records**:
+      - `.knowledge/migrations/fact_tasks.csv`: Task records with status='completed'
+
+  - id: related-files
+    heading: Related Files
+    content: |
+      - `docs/processes/fact-migration.yml`: Fact-based migration workflow reference
+      - `scripts/knowledge/fact_migration.py`: Fact-migration CLI implementation module
+      - `docs/processes/information-migration.yml`: File-level migration workflow (legacy)
+      - `docs/development/domain-definitions.yml`: Domain taxonomy and multi-domain
+        tagging rules
+      - `docs/development/MODULE-DEFINITIONS.yml`: Pattern definitions and scope criteria
+      - `.claude/agents/knowledge-analyzer.md`: Sub-agent for fact classification
+
+  - id: notes
+    heading: Important Notes
+    content: |
+      - This task uses the NEW fact-based migration workflow, not the old file-level
+        workflow
+      - Fact extraction is iterative: one fact per iteration until entity is completely
+        removed from the sentence
+      - Semantic validation ensures no information loss (similarity >= 0.95)
+      - Multi-domain tagging is required: do not drop applicable domains
+      - Classification is manual via knowledge-analyzer sub-agent (not automated)
+      - Always pass empty string for sub-agent prompt:
+        `Task(subagent_type="knowledge-analyzer", prompt="")`
+      - The 10 pattern files are currently empty; facts will be populated through this
+        migration process
+      - GENERAL FastAPI facts establish reusable framework knowledge
+      - PROJECT FastAPI facts document this specific application's wiring
