@@ -159,7 +159,7 @@ Every file is either GENERAL (reusable knowledge) or PROJECT (project-specific k
 * FastAPI framework best practices
 * Python language conventions
 * Database patterns (SurrealDB, Elasticsearch)
-* All content described without `app/*` references
+* Content that does not reference `app/*` paths (necessary but not sufficient—see note below)
 
 **Excludes:**
 
@@ -167,6 +167,10 @@ Every file is either GENERAL (reusable knowledge) or PROJECT (project-specific k
 * Project-specific components (`AppError`, `create_app`, `RepositoryBase`)
 * Implementation wiring specific to this project
 * Project-specific naming conventions
+
+**Note:** The absence of these exclusions (e.g., no `app/*` references) is necessary for GENERAL scope
+but not sufficient. Content must also pass the test question: "Could this rule apply to a different
+project using the same stack?"
 
 **Test Question:** "Could this rule apply to a different project using the same stack?"
 
@@ -206,7 +210,10 @@ Every file is either GENERAL (reusable knowledge) or PROJECT (project-specific k
 * Generic framework documentation
 * Language tutorials
 
-**Test Question:** "Does this reference a specific file, function, or component in this project?"
+**Note:** PROJECT content should reference GENERAL principles where applicable rather than restating
+them. PROJECT explains where and how general rules are implemented in this codebase.
+
+**Test Question:** "Is this knowledge specific to this project's implementation (files, components, decisions, or conventions)?"
 
 **Examples - PROJECT:**
 
@@ -226,6 +233,13 @@ Every file is either GENERAL (reusable knowledge) or PROJECT (project-specific k
   content: "All repositories inherit from RepositoryBase in app/repositories/base.py"
   # References project-specific base class
 ```
+
+**Important:** While `app/*` references are a strong indicator of PROJECT scope, they are not the
+only way content can be project-specific. Project-specific decisions, conventions, or rules that
+don't happen to mention file paths are still PROJECT scope if they cannot reasonably apply to
+another project using the same stack. The flowchart below captures this logic: `app/*` references
+immediately classify content as PROJECT, but absence of such references triggers further questions
+to determine if the content is project-specific in other ways.
 
 ### Scope Decision Flowchart
 

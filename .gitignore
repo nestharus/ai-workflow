@@ -38,6 +38,8 @@ htmlcov/
 .coverage.*
 .cache/
 nosetests.xml
+coverage.json
+coverage_llm.json
 
 # Static analysis
 .mypy_cache/

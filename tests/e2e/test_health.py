@@ -6,6 +6,7 @@ from httpx import AsyncClient
 pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
 
 
+@pytest.mark.usecase("UC-HEALTH-001")
 async def test_health_check_e2e(api_client: AsyncClient) -> None:
     """
     Tests the health check endpoint on the live server.

@@ -2,11 +2,16 @@ doc_id: project-elasticsearch-connection-pooling-patterns
 title: Elasticsearch Connection Pooling Patterns
 version_hint: 2024-2025
 kind: elasticsearch_pooling_standards
-description: Elasticsearch-specific patterns for client wrapper implementation, HTTP connection pooling, configuration, and
-  index initialization using ElasticsearchWrapper.
-scope: Covers ElasticsearchWrapper design, internal HTTP connection pool management, async wrapper patterns with anyio.to_thread,
-  configuration (connections_per_node, timeouts, retries), index initialization, and Elasticsearch-specific testing. Generic
-  pooling concepts are in python/connection-pooling-patterns.toon.
+description: >-
+  Elasticsearch-specific patterns for client wrapper implementation, HTTP
+  connection pooling, configuration, and index initialization using
+  ElasticsearchWrapper.
+scope: >-
+  Covers ElasticsearchWrapper design, internal HTTP connection pool management,
+  async wrapper patterns with anyio.to_thread, configuration
+  (connections_per_node, timeouts, retries), index initialization, and
+  Elasticsearch-specific testing. Generic pooling concepts are in
+  python/connection-pooling-patterns.toon.
 out_of_scope:
   - Generic pooling fundamentals (see python/connection-pooling-patterns.toon).
   - FastAPI lifespan integration (see fastapi/connection-pooling-patterns.toon).

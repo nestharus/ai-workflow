@@ -11,22 +11,40 @@ You are a knowledge classification specialist. Your task is to analyze YAML docu
 
 ### GENERAL vs PROJECT Scope
 
-**GENERAL** content has NO references to:
-- `app/*` paths (app/contracts/, app/core/factory.py, app/core/exceptions.py)
-- Project-specific components (AppError, VALIDATION_ERROR_RESPONSE, create_app, ErrorCode, validation_exception_handler)
-- This project's specific implementation details
+> **Authoritative Reference:** See `docs/development/MODULE-DEFINITIONS.md` Section 3 for complete scope definitions, test questions, and the decision flowchart.
 
-**GENERAL** CAN include:
-- REST/HTTP protocol rules (status codes, methods, headers)
-- FastAPI/Pydantic best practices (fastapi.status, ConfigDict, response_model, deprecated=True)
-- Framework features described generically (without app/* paths)
+**GENERAL Scope**
 
-**PROJECT** content MUST reference:
-- Concrete `app/*` paths (app/contracts/, app/core/factory.py, app/core/exceptions.py)
-- Project-specific models/constants (AppError, VALIDATION_ERROR_RESPONSE, ErrorCode)
-- Implementation wiring (create_app, validation_exception_handler)
+Definition: Knowledge that applies to any project using the same technology stack.
 
-**Critical rule**: Just because something mentions "FastAPI" doesn't make it PROJECT. Only concrete app/* references make it PROJECT.
+Test Question: "Could this rule apply to a different project using the same stack?"
+
+**PROJECT Scope**
+
+Definition: Knowledge specific to this project's implementation.
+
+Test Question: "Does this reference a specific file, function, or component in this project?"
+
+**Important: Domain ≠ Scope**
+
+Domain (rest, fastapi, python, etc.) and scope (GENERAL vs PROJECT) are orthogonal dimensions. A chunk can be in any domain and have either scope. For example, FastAPI content can be GENERAL (reusable FastAPI patterns) or PROJECT (how this project uses FastAPI).
+
+**GENERAL Scope Indicators**
+
+Content is likely GENERAL if it:
+- Describes REST/HTTP protocol rules (status codes, methods, headers)
+- Explains FastAPI/Pydantic best practices (fastapi.status, ConfigDict, response_model, deprecated=True)
+- Documents framework features generically (without `app/*` paths)
+- Does not reference project-specific components
+
+**PROJECT Scope Indicators**
+
+Content is likely PROJECT if it:
+- References concrete `app/*` paths (app/contracts/, app/core/factory.py, app/core/exceptions.py)
+- Mentions project-specific models/constants (AppError, VALIDATION_ERROR_RESPONSE, ErrorCode)
+- Describes implementation wiring (create_app, validation_exception_handler)
+
+> **Note:** These are strong indicators, not requirements. Use the conceptual definitions and test questions above for classification.
 
 ### Domains
 
@@ -181,7 +199,10 @@ Before analyzing any items, gather context to inform your classification decisio
 
 ## Classification Rules
 
-### PROJECT Scope Markers (if ANY present → PROJECT or MIXED)
+### PROJECT Scope Indicators
+
+These are strong indicators that content is PROJECT scope. However, the absence of these markers does not automatically make content GENERAL. Use the conceptual definitions and test questions from MODULE-DEFINITIONS.md Section 3.
+
 - Path patterns: `app/`, `app/contracts/`, `app/core/`, `app/api/`, `app/infrastructure/`
 - Components: `AppError`, `VALIDATION_ERROR_RESPONSE`, `ErrorCode`, `HTTPValidationError`
 - Functions: `create_app`, `validation_exception_handler`, `get_settings`

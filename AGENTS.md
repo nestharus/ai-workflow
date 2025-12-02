@@ -31,29 +31,72 @@ for detailed guidance on specific tasks.
 
 ## Code Coverage
 
-Test coverage is enforced via `pytest-cov` with configuration in `pyproject.toml`.
+Test coverage is enforced separately for each test tier using `uv run test-coverage`.
 
-* **Threshold**: Minimum 80% coverage required (`fail_under = 80`)
-* **Tracked Sources**: `app/`, `scripts/`, `tools/`
-* **Omitted Paths**: Tests, caches, site-packages, and virtual environments
-* **Excluded Lines**: Standard non-executable patterns plus `if TYPE_CHECKING:`,
-  `class .*Protocol\):`, and abstract methods
+### Test Tiers
 
-**Validation Commands**:
+| Tier | Test Path | Coverage Type | Target |
+|------|-----------|---------------|--------|
+| **unit** | `tests/unit/` | 80% line/branch per function | All `app/` functions |
+| **component** | `tests/unit/` | 80% line/branch per function | `app/services/` only |
+| **integration** | `tests/integration/` | 100% use-case | Use cases from YAML |
+| **e2e** | `tests/e2e/` | 100% use-case | Use cases from YAML |
+| **scripts** | `scripts/tests/` | 80% line/branch per function | `scripts/`, `tools/` |
+
+### Coverage Rules
+
+* **Per-function**: Each function must individually meet the 80% threshold (not averaged)
+* **Class fields excluded**: Pydantic model type annotations are excluded from coverage
+* **Service layer**: Component tests only validate functions within `app/services/`
+* **Use-case coverage**: Integration/e2e require 100% coverage of non-future use cases
+* **Private functions**: Unit tests validate all functions; component/scripts skip private
+
+### Validation Commands
 
 ```bash
 # Set required DB creds for settings validation
 export SURREALDB_USER=root SURREALDB_PASS=root
 
-# Check coverage in terminal
+# Run all test tiers
+uv run test-coverage
+
+# Run specific tier
+uv run test-coverage --tier unit
+uv run test-coverage --tier integration
+
+# Custom thresholds
+uv run test-coverage --min-line 90 --min-branch 85
+
+# Report only (no validation)
+uv run test-coverage --no-validate
+
+# Generate JSON report
+uv run test-coverage --json-report coverage_report.json
+
+# Legacy pytest-cov commands still work
 uv run pytest --cov
-
-# Generate HTML report
 uv run pytest --cov --cov-report=html
-
-# Show missing lines
-uv run pytest --cov --cov-report=term-missing
 ```
+
+## LLM Coverage Report
+
+Generates an LLM-friendly JSON report combining code coverage gaps and use-case coverage
+gaps for AI-assisted test generation.
+
+* **Usage**: `uv run llm-coverage-report`
+* **Prerequisites**:
+  * `coverage.json`: Generate with `pytest --cov --cov-report=json`
+  * `tests/use_cases.yaml`: The canonical use-case registry
+* **Output**: `coverage_llm.json` containing:
+  * Code coverage gaps (missing lines/branches with context)
+  * Use-case coverage gaps (uncovered use-cases)
+  * Prompting notes for LLM consumption
+* **Common Options**:
+  * `--coverage-json PATH`: Specify coverage JSON path (default: `coverage.json`)
+  * `--output PATH`: Specify output path (default: `coverage_llm.json`)
+  * `--context-radius N`: Number of surrounding lines (default: 2)
+  * `--use-cases PATH`: Path to use-case registry (default: `tests/use_cases.yaml`)
+* **Integration**: Used by the test-fixer sub-agent to identify coverage gaps
 
 ## Linting
 
@@ -148,49 +191,29 @@ Generates the OpenAPI 3.1 schema JSON file from the FastAPI application code.
 This project includes specialized Claude sub-agents for automated task delegation.
 Sub-agents are defined in `.claude/agents/` and can be invoked via the Task tool.
 
-### Available Sub-agents
-
-| Sub-agent | Model | Purpose |
-|-----------|-------|---------|
-| `lint-fixer` | haiku | Resolves all lint errors iteratively |
-| `test-fixer` | opus | Runs tests, debugs failures, meets coverage |
-| `knowledge-analyzer` | opus | Analyzes YAML items, classifies content, suggests SPLIT/KEEP/REMOVE |
+**Important**: All sub-agents contain their own instructions. Always pass an empty string
+(`""`) for the prompt parameter to avoid overriding their built-in workflows.
 
 ### lint-fixer
 
-Resolves and fixes lint errors until all issues pass.
+Resolves and fixes lint errors iteratively until all issues pass.
 
-* **Workflow**:
-  1. Runs `uv run gen_openapi` first (required before lint)
-  2. Runs `uv run lint`
-  3. Fixes errors iteratively until all checks pass
-* **Prompt**: Pass an empty string (`""`). The agent has its own instructions.
-* **Tools**: Read, Edit, Bash, Grep, Glob, TodoWrite
+* **Invocation**: `Task(subagent_type="lint-fixer", prompt="")`
+* **Prompt**: `""` (empty string required)
 
 ### test-fixer
 
 Runs all tests, debugs failures, and ensures coverage requirements are met.
 
-* **Workflow**:
-  1. Sets required environment variables (`SURREALDB_USER`, `SURREALDB_PASS`)
-  2. Runs `uv run pytest --cov`
-  3. Debugs and fixes test failures
-  4. Ensures 80% coverage threshold is met
-* **Prompt**: Pass an empty string (`""`). The agent has its own instructions.
-* **Tools**: Read, Edit, Bash, Grep, Glob, TodoWrite, WebFetch, WebSearch
+* **Invocation**: `Task(subagent_type="test-fixer", prompt="")`
+* **Prompt**: `""` (empty string required)
 
 ### knowledge-analyzer
 
 Analyzes YAML documentation items with chunking and multi-dimensional classification.
 
-* **Workflow**:
-  1. Extracts text from YAML items
-  2. Chunks text into atomic information units
-  3. Classifies each chunk by domain, scope, and pattern
-  4. Detects MIXED content (general + project)
-  5. Suggests SPLIT/KEEP/REMOVE actions
-* **Prompt**: Pass an empty string (`""`). The agent has its own instructions.
-* **Tools**: Read, Grep, Glob, Bash, TodoWrite
+* **Invocation**: `Task(subagent_type="knowledge-analyzer", prompt="")`
+* **Prompt**: `""` (empty string required)
 
 ### Creating New Sub-agents
 

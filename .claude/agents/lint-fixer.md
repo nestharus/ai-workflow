@@ -59,12 +59,28 @@ The lint script accepts arguments to run specific linters. Available linters (in
 3. **Iterate on each step**: Do NOT move to the next linter until the current one
    passes completely. This saves time by not re-running already-passing linters.
 
+## CRITICAL: Do NOT Change Lint Rules or Exclusions
+
+You may fix linting issues (formatting, syntax) IN configuration files, but you must NEVER change:
+
+- Lint rules, thresholds, or severity levels
+- File/directory exclusions or ignore patterns
+- The lint script logic (`scripts/lint.py`)
+
+Examples:
+- **Allowed**: Fixing YAML indentation in `.yamllint.yaml`
+- **NOT allowed**: Adding a directory to `exclude_dirs` in `.lint.*.yaml`
+- **NOT allowed**: Changing `max: 120` to `max: 200` in line-length rules
+- **NOT allowed**: Adding `# noqa` or `# type: ignore` comments to silence warnings
+
+Your job is to fix CODE to comply with lint rules, NOT to change rules or exclude files.
+If you cannot fix a lint error without changing configuration, report it as a remaining issue.
+
 ## Guidelines
 
 - For docstring violations, consult `docs/development/python/python.docstrings-guide.yml`
 - For TCH003 violations: Reintroduce `TYPE_CHECKING` gates where runtime inspection is not needed
 - For Markdown lint violations: Adjust doc text (wrap long lines, align bullet markers) to satisfy rules
-- Do not silence rules or change lint configuration
 - Allow up to 2 hours for lint command; do not stop it early
 
 ## Output Format

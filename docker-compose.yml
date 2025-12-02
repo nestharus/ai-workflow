@@ -13,7 +13,9 @@ services:
     environment:
       - DEBUG=true
       - PYTHONUNBUFFERED=1
-      # Development credentials only; production secrets must come from .env or docker-compose.override.yml, deploy-time env vars, or Docker secrets via Vault/AWS Secrets Manager (never checked into source).
+      # Development credentials only; production secrets must come from .env or
+      # docker-compose.override.yml, deploy-time env vars, or Docker secrets via
+      # Vault/AWS Secrets Manager (never checked into source).
       - SURREALDB_URL=ws://surrealdb:8000/rpc
       - SURREALDB_NAMESPACE=knowledge
       - SURREALDB_DATABASE=facts
@@ -32,10 +34,21 @@ services:
     # Using -dev image which includes shell utilities needed for healthcheck
     image: surrealdb/surrealdb:v2.3.10-dev
     container_name: ai-workflow-surrealdb
-    # Run as root inside the container to avoid permission issues with Docker volumes
+    # Run as root inside the container to avoid permission issues with Docker
+    # volumes
     user: root
-    # SurrealDB listens on 8000 inside its container and is reachable by other services via surrealdb:8000; only api publishes 8000 to the host, so there's no host port conflict.
-    command: ["start", "--log", "trace", "--user", "DevRootUser1!", "--pass", "DevRootPass1!", "surrealkv:/data/database.db"]
+    # SurrealDB listens on 8000 inside its container and is reachable by other
+    # services via surrealdb:8000; only api publishes 8000 to the host, so
+    # there's no host port conflict.
+    command:
+      - start
+      - --log
+      - trace
+      - --user
+      - DevRootUser1!
+      - --pass
+      - DevRootPass1!
+      - surrealkv:/data/database.db
     volumes:
       - surrealdb_data:/data
     healthcheck:

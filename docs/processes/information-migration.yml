@@ -7,7 +7,7 @@ overview:
   purpose: |
     The information migration system ensures that no content is lost or inadvertently
     altered during documentation restructuring. It uses hash-based resolution tracking
-    and CSV storage for complete auditability. The system provides four CLI commands
+    and CSV storage for complete auditability. The system provides ten CLI commands
     for managing the migration lifecycle: start-migration, compare-yml-docs,
     query-comparisons, mark-resolved, and validate-migration.
 
@@ -23,10 +23,26 @@ overview:
       path: ".claude/agents/knowledge-analyzer.md"
       purpose: |
         AI agent for analyzing YAML documentation items. Chunks text into atomic
-        information units and classifies each across domain (rest, fastapi, python),
-        scope (GENERAL vs PROJECT), and pattern dimensions. Detects MIXED content,
-        verifies coverage in target files, and suggests actions (KEEP_GENERAL,
-        KEEP_PROJECT, REMOVE_COVERED, SPLIT).
+        information units and classifies each across domain (rest, fastapi, python,
+        surrealdb, elasticsearch), scope (GENERAL vs PROJECT), and pattern dimensions.
+        Detects MIXED content, verifies coverage in target files, and suggests actions
+        (KEEP_GENERAL, KEEP_PROJECT, REMOVE_COVERED, SPLIT).
+      definitions:
+        scope:
+          GENERAL: |
+            Reusable knowledge that applies to any project using the same
+            technologies (REST, FastAPI, Python, SurrealDB, Elasticsearch).
+            Content is independent of this repository's structure, types, or
+            project-specific decisions.
+          PROJECT: |
+            Knowledge specific to this codebase's implementation. Describes how
+            this particular project is built, wired, or configured. Often (but
+            not always) references app/* paths or project-specific components.
+        domain: |
+          Technology or topic label (rest, fastapi, python, surrealdb,
+          elasticsearch) that identifies what the content is about. Domains are
+          orthogonal to scope—content can be GENERAL or PROJECT and belong to
+          one or more domains. New domains can be added as needed.
       usage: |
         Invoke via Claude Code Task tool with subagent_type='knowledge-analyzer'.
         Provide --id and --source-file arguments for single item analysis, or
@@ -321,7 +337,10 @@ workflow_steps:
 
   step_5b_record_movements:
     title: "Record Information Movements"
-    command: "uv run record-movement --id <element_id> --source-file <path> --target-file <path> --reason <text> --coverage <text> --before-text <text> --after-text-source <text> --target-before <text> --target-after <text>"
+    command: >-
+      uv run record-movement --id <element_id> --source-file <path>
+      --target-file <path> --reason <text> --coverage <text> --before-text <text>
+      --after-text-source <text> --target-before <text> --target-after <text>
     description: |
       Records detailed information about content movements between files,
       capturing before/after sentence context for validation. This enables

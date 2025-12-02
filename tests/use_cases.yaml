@@ -1,0 +1,233 @@
+# Use-Case Registry for API Testing
+#
+# This file defines all testable use-cases for the FastAPI endpoints.
+# Each use-case represents an atomic, testable scenario that can be traced
+# to specific tests using pytest markers.
+#
+# Structure:
+#   - id: Unique identifier following UC-{FEATURE}-{NUMBER} pattern
+#   - endpoint: Full API path
+#   - method: HTTP method (GET, POST, etc.)
+#   - description: Human-readable scenario description
+#   - expected_behavior: Detailed expected outcome including status codes
+#   - test_tier: integration or e2e
+#
+# Coverage is calculated dynamically from @pytest.mark.usecase markers.
+# Reference: docs/testing/testing-patterns.md for usage guidelines
+
+---
+version: "1.0"
+last_updated: "2025-12-01"
+
+features:
+  health:
+    name: Health Checks
+    description: Liveness and readiness probes for monitoring and orchestration
+    use_cases:
+      - id: UC-HEALTH-001
+        endpoint: /health
+        method: GET
+        description: Root liveness check returns 200 OK
+        expected_behavior: |
+          Returns HTTP 200 with JSON body {"status": "ok"}.
+          This is the root-level liveness probe for container orchestration.
+        test_tier: e2e
+
+      - id: UC-HEALTH-002
+        endpoint: /api/v1/health
+        method: GET
+        description: Readiness check returns "ok" when all dependencies available
+        expected_behavior: |
+          Returns HTTP 200 with JSON body {"status": "ok"} when both
+          SurrealDB pool and Elasticsearch client are available in app state.
+        test_tier: integration
+
+      - id: UC-HEALTH-003
+        endpoint: /api/v1/health
+        method: GET
+        description: Readiness check returns "unhealthy" when SurrealDB pool missing
+        expected_behavior: |
+          Returns HTTP 200 with JSON body {"status": "unhealthy"} when
+          surrealdb_pool is None in app.state.
+        test_tier: integration
+
+      - id: UC-HEALTH-004
+        endpoint: /api/v1/health
+        method: GET
+        description: Readiness check returns "unhealthy" when Elasticsearch client missing
+        expected_behavior: |
+          Returns HTTP 200 with JSON body {"status": "unhealthy"} when
+          elasticsearch_client is None in app.state.
+        test_tier: integration
+
+      - id: UC-HEALTH-005
+        endpoint: /api/v1/health
+        method: GET
+        description: "[FUTURE] Readiness check returns \"degraded\" on transient failures"
+        expected_behavior: |
+          NOT YET IMPLEMENTED: The "degraded" status is defined in the HealthResponse
+          schema but is not currently returned by the endpoint implementation.
+
+          Future behavior: Returns HTTP 200 with JSON body {"status": "degraded"} when
+          dependencies are available but experiencing transient issues. This requires
+          implementing transient failure detection logic in the health check endpoint.
+
+          Current behavior: The endpoint only returns "ok" (all dependencies available)
+          or "unhealthy" (one or more dependencies missing).
+        test_tier: integration
+
+  examples:
+    name: Example Demo Endpoints
+    description: Demo endpoints demonstrating service wiring and request/response patterns
+    constants:
+      MAX_MESSAGE_LENGTH: 500
+      MIN_MESSAGE_LENGTH: 1
+      MAX_PAGE_SIZE: 1000
+    use_cases:
+      # Sample endpoint
+      - id: UC-EXAMPLE-001
+        endpoint: /api/v1/examples/sample
+        method: GET
+        description: Sample endpoint returns hardcoded demo response
+        expected_behavior: |
+          Returns HTTP 200 with ExampleResponse containing:
+          - result: "[DEMO] Sample Result"
+          - processed_at: current timestamp
+          - original_length: 13 (length of "Sample Result")
+        test_tier: integration
+
+      # Process endpoint - success cases
+      - id: UC-EXAMPLE-002
+        endpoint: /api/v1/examples/process
+        method: POST
+        description: Process endpoint succeeds with valid message
+        expected_behavior: |
+          Given a valid ExampleRequest with message between 1-500 chars,
+          returns HTTP 200 with ExampleResponse containing processed result.
+        test_tier: integration
+
+      # Process endpoint - validation failures
+      - id: UC-EXAMPLE-003
+        endpoint: /api/v1/examples/process
+        method: POST
+        description: Process endpoint fails with validation error for empty/whitespace message
+        expected_behavior: |
+          Given an ExampleRequest with empty string or whitespace-only message,
+          returns HTTP 422 with HTTPValidationError containing
+          "ExampleRequest.message must not be empty or whitespace only".
+        test_tier: integration
+
+      - id: UC-EXAMPLE-004
+        endpoint: /api/v1/examples/process
+        method: POST
+        description: Process endpoint fails for message exceeding MAX_MESSAGE_LENGTH (500 chars)
+        expected_behavior: |
+          Given an ExampleRequest with message longer than 500 characters,
+          returns HTTP 422 with HTTPValidationError indicating max_length violation.
+        test_tier: integration
+
+      - id: UC-EXAMPLE-005
+        endpoint: /api/v1/examples/process
+        method: POST
+        description: Process endpoint fails for message below MIN_MESSAGE_LENGTH (1 char)
+        expected_behavior: |
+          Given an ExampleRequest with empty message (0 chars),
+          returns HTTP 422 with HTTPValidationError indicating min_length violation.
+        test_tier: integration
+
+      - id: UC-EXAMPLE-006
+        endpoint: /api/v1/examples/process
+        method: POST
+        description: Process endpoint fails for invalid message type
+        expected_behavior: |
+          Given an ExampleRequest with type not in ["info", "warning", "error"],
+          returns HTTP 422 with HTTPValidationError indicating invalid literal.
+        test_tier: integration
+
+      # Processed messages list endpoint
+      - id: UC-EXAMPLE-007
+        endpoint: /api/v1/examples/processed-messages
+        method: GET
+        description: List processed messages with default pagination (page=1, page_size=10)
+        expected_behavior: |
+          Returns HTTP 200 with Paginated[ProcessedMessageResponse] containing:
+          - items: list of up to 10 ProcessedMessageResponse objects
+          - total: total count of messages
+          - page: 1
+          - page_size: 10
+        test_tier: integration
+
+      - id: UC-EXAMPLE-008
+        endpoint: /api/v1/examples/processed-messages
+        method: GET
+        description: List processed messages supports custom pagination parameters
+        expected_behavior: |
+          Given query params ?page=2&page_size=5,
+          returns HTTP 200 with Paginated response showing page=2, page_size=5.
+        test_tier: integration
+
+      - id: UC-EXAMPLE-009
+        endpoint: /api/v1/examples/processed-messages
+        method: GET
+        description: List processed messages returns page 2 correctly
+        expected_behavior: |
+          Given ?page=2 with sufficient data,
+          returns HTTP 200 with items from the second page,
+          offset correctly from page 1.
+        test_tier: integration
+
+      - id: UC-EXAMPLE-010
+        endpoint: /api/v1/examples/processed-messages
+        method: GET
+        description: List fails with validation error for page < 1
+        expected_behavior: |
+          Given ?page=0 or ?page=-1,
+          returns HTTP 422 with HTTPValidationError indicating ge=1 constraint.
+        test_tier: integration
+
+      - id: UC-EXAMPLE-011
+        endpoint: /api/v1/examples/processed-messages
+        method: GET
+        description: List fails with validation error for page_size < 1
+        expected_behavior: |
+          Given ?page_size=0 or ?page_size=-1,
+          returns HTTP 422 with HTTPValidationError indicating ge=1 constraint.
+        test_tier: integration
+
+      - id: UC-EXAMPLE-012
+        endpoint: /api/v1/examples/processed-messages
+        method: GET
+        description: List fails with validation error for page_size > MAX_PAGE_SIZE (1000)
+        expected_behavior: |
+          Given ?page_size=1001,
+          returns HTTP 422 with HTTPValidationError indicating le=1000 constraint.
+        test_tier: integration
+
+      # Get processed message by ID endpoint
+      - id: UC-EXAMPLE-013
+        endpoint: /api/v1/examples/processed-messages/{id}
+        method: GET
+        description: Get processed message succeeds for existing message ID
+        expected_behavior: |
+          Given a valid message_id that exists in the data store,
+          returns HTTP 200 with ProcessedMessageResponse containing
+          id, content, type, and processed_at fields.
+        test_tier: integration
+
+      - id: UC-EXAMPLE-014
+        endpoint: /api/v1/examples/processed-messages/{id}
+        method: GET
+        description: Get processed message returns 404 for non-existent ID
+        expected_behavior: |
+          Given a message_id that does not exist,
+          returns HTTP 404 with AppError indicating "Message not found".
+        test_tier: integration
+
+      - id: UC-EXAMPLE-015
+        endpoint: /api/v1/examples/processed-messages/{id}
+        method: GET
+        description: Get processed message handles different message types
+        expected_behavior: |
+          ProcessedMessageResponse.type field correctly returns
+          "info", "warning", or "error" based on stored message type.
+        test_tier: integration

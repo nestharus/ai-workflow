@@ -58,6 +58,7 @@ coderabbit-review = "scripts.coderabbit_review:main"
 compare-yml-docs = "scripts.compare_yaml_docs:main"
 sonar-review = "scripts.sonar_review:main"
 latest-review = "scripts.latest_review:main"
+llm-coverage-report = "scripts.llm_coverage_report:main"
 mark-resolved = "scripts.resolution_tracker:main"
 query-comparisons = "scripts.query_comparisons:main"
 record-movement = "scripts.movement_tracker:main"
@@ -67,6 +68,7 @@ validate-addition = "scripts.track_additions:main_validate"
 start-migration = "scripts.migration_manager:main_start"
 validate-migration = "scripts.migration_manager:main_validate"
 grep-yml-ids = "scripts.grep_yml_ids:main"
+test-coverage = "scripts.test_coverage:main"
 
 [tool.uv]
 link-mode = "copy"
@@ -133,11 +135,15 @@ python_functions = ["test_*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
-    "e2e: marks tests as end-to-end (requires running server)"
+    "e2e: marks tests as end-to-end (requires running server)",
+    "usecase: links test to a specific use-case ID from the registry (tests/use_cases.yaml)"
 ]
+usecase_coverage_threshold_e2e = 100  # Minimum e2e use-case coverage percentage (0-100)
+usecase_coverage_threshold_integration = 100  # Minimum integration use-case coverage percentage (0-100)
 
 [tool.coverage.run]
 source = ["app", "scripts", "tools"]
+branch = true  # Enable branch coverage
 omit = [
     "tests/*",
     "scripts/tests/*",
@@ -148,6 +154,7 @@ omit = [
 
 [tool.coverage.report]
 fail_under = 80
+show_missing = true
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",
@@ -161,3 +168,22 @@ exclude_lines = [
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod"
 ]
+
+# Per-suite coverage thresholds (enforced by scripts/test_coverage.py)
+# Use `uv run test-coverage` for separate coverage with per-function validation
+[tool.coverage.paths]
+# Map source paths for combining coverage from different test runs
+source = [
+    "app/",
+    "scripts/",
+    "tools/",
+]
+
+# Custom coverage settings used by test_coverage.py
+[tool.test_coverage]
+# Overall thresholds
+min_line_coverage = 80.0
+min_branch_coverage = 70.0
+# Per-function thresholds
+min_function_line_coverage = 60.0
+min_function_branch_coverage = 50.0
