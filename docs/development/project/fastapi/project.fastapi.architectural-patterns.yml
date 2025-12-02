@@ -1,217 +1,114 @@
 doc_id: project-fastapi-architectural-patterns
-title: FastAPI Layered Architecture Integration
+title: FastAPI Layered Architecture Integration (Project Wiring)
 version_hint: 2024-2025
 kind: fastapi_architecture_integration
-description: FastAPI-specific patterns for wiring layered architecture with APIRouter, Depends(), middleware, lifespan management,
+description: Project-specific FastAPI wiring for layered architecture with APIRouter, Depends(), middleware, lifespan management,
   and application factory.
-scope: Covers FastAPI-specific layer wiring, router registration, dependency injection with Depends(), middleware integration,
-  lifespan management, and cross-cutting concerns. Core architectural concepts are in docs/development/python/architectural-patterns.toon.
+scope: Project-specific implementation wiring. For general FastAPI patterns, see general.fastapi.architectural-patterns.yml.
 primary_runtime_references:
-- path: app/core/factory.py
-  role: Application factory wiring middleware, routers, and lifespan.
-- path: app/api/v1/router.py
-  role: Router registration and versioning.
-- path: app/api/v1/endpoints/
-  role: Router layer implementation examples.
-- path: app/api/v1/dependencies.py
-  role: Dependency provider functions.
+  - path: app/core/factory.py
+    role: Application factory wiring middleware, routers, and lifespan.
+  - path: app/api/v1/router.py
+    role: Router registration and versioning.
+  - path: app/api/v1/endpoints/
+    role: Router layer implementation examples.
+  - path: app/api/v1/dependencies.py
+    role: Dependency provider functions.
 related_pattern_docs:
-- python/architectural-patterns.toon
-- fastapi/router-patterns.toon
-- fastapi/service-patterns.toon
-- fastapi/factory-patterns.toon
-- fastapi/middleware-patterns.toon
-- fastapi/exception-patterns.toon
-- fastapi/dependency-patterns.toon
+  - general/fastapi/general.fastapi.architectural-patterns.yml
+  - project/python/project.python.architectural-patterns.yml
+  - project/fastapi/project.fastapi.router-patterns.yml
+  - project/fastapi/project.fastapi.service-patterns.yml
+  - project/fastapi/project.fastapi.factory-patterns.yml
+  - project/fastapi/project.fastapi.middleware-patterns.yml
+  - project/fastapi/project.fastapi.exception-patterns.yml
+  - project/fastapi/project.fastapi.dependency-patterns.yml
 sections:
-- id: fastapi-request-lifecycle
-  index: 1
-  title: FastAPI request lifecycle
-  category: architecture
-  summary: Describes the detailed flow of an HTTP request through FastAPI layers including middleware processing.
-  items:
-  - id: fastapi.lifecycle.step1
-    type: note
-    text: 1. Request arrives at FastAPI; middleware stack processes it first (logging, security headers, error handling).
-  - id: fastapi.lifecycle.step2
-    type: note
-    text: 2. FastAPI matches the route and invokes validation on path/query/body parameters.
-  - id: fastapi.lifecycle.step3
-    type: note
-    text: 3. Router handler executes with Depends() resolving service instances (constructed with injected repositories).
-  - id: fastapi.lifecycle.step4
-    type: note
-    text: 4. Router calls service method(s), passing validated contract DTOs.
-  - id: fastapi.lifecycle.step5
-    type: note
-    text: 5. Service orchestrates business logic, calling one or more repositories for data access.
-  - id: fastapi.lifecycle.step6
-    type: note
-    text: 6. Repositories execute queries against SurrealDB, Elasticsearch, or other stores and return domain models.
-  - id: fastapi.lifecycle.step7
-    type: note
-    text: 8. FastAPI serializes response; middleware processes outgoing response (compression, headers).
-- id: router-integration
-  index: 2
-  title: Router layer integration
-  category: layer_integration
-  summary: APIRouter instances connect HTTP endpoints to services via FastAPI's dependency injection.
-  items:
-  - id: router.registration
-    type: rule
-    text: APIRouter instances are registered in app/core/factory.py; never attach routes directly to the app object.
-  - id: router.depends
-    type: rule
-    text: Use Depends() with Annotated type aliases for service injection; routers should not construct services directly.
-  - id: router.no-business-logic
-    type: rule
-    text: No business logic in routers; delegate all processing to the service layer.
-  - id: router.response-model
-    type: rule
-    text: Use Pydantic response_model for automatic serialization and OpenAPI documentation generation.
-  - id: router.error-propagation
-    type: rule
-    text: Let domain exceptions propagate to global handlers; do not catch and re-raise as HTTPException in routers.
-  - id: router.reference
-    type: reference
-    text: See fastapi/router-patterns.toon for comprehensive router implementation patterns.
-- id: service-integration
-  index: 3
-  title: Service layer integration
-  category: layer_integration
-  summary: Services are wired into FastAPI via factory dependencies while remaining HTTP-agnostic.
-  items:
-  - id: service.factory-depends
-    type: rule
-    text: Define service factory functions that use Depends() to obtain repositories and return constructed service instances.
-  - id: service.constructor-injection
-    type: rule
-    text: Services receive dependencies via constructor injection from factory functions, not via globals or app.state directly.
-  - id: service.http-agnostic
-    type: rule
-    text: Services must not import FastAPI types (Request, Response, HTTPException); they remain transport-agnostic.
-  - id: service.fastapi-reference
-    type: reference
-    text: See fastapi/service-patterns.toon for FastAPI-specific service factory patterns.
-  - id: service.python-reference
-    type: reference
-    text: See python/service-patterns.toon for core service layer concepts and responsibilities.
-- id: repository-integration
-  index: 4
-  title: Repository layer integration
-  category: layer_integration
-  summary: Repositories access infrastructure resources from app.state via dependency providers.
-  items:
-  - id: repository.state-access
-    type: rule
-    text: Repository factory functions access infrastructure from request.app.state (e.g., surrealdb_pool, elasticsearch_client).
-  - id: repository.constructor-injection
-    type: rule
-    text: Repositories receive pools/clients via constructor parameters; they do not access app.state directly.
-  - id: repository.http-agnostic
-    type: rule
-    text: Repositories must not import FastAPI types; they are framework-agnostic and testable in isolation.
-  - id: repository.db-reference
-    type: reference
-    text: See surrealdb/repository-patterns.toon and elasticsearch/repository-patterns.toon for database-specific patterns.
-  - id: repository.python-reference
-    type: reference
-    text: See python/repository-patterns.toon for core repository concepts and Protocol definitions.
-- id: factory-wiring
-  index: 5
-  title: Application factory and wiring
-  category: architecture
-  summary: The create_app() function in app/core/factory.py wires all layers together.
-  items:
-  - id: factory.create-app
-    type: rule
-    text: The create_app() function constructs the FastAPI application, registers middleware, routers, and exception handlers.
-  - id: factory.lifespan
-    type: rule
-    text: Lifespan context manager initializes infrastructure (pools, clients) on startup and cleans up on shutdown.
-  - id: factory.middleware
-    type: rule
-    text: Middleware is registered in the factory with explicit ordering (security headers, logging, compression).
-  - id: factory.exception-handlers
-    type: rule
-    text: Global exception handlers translate domain errors to HTTP responses; registered via app.add_exception_handler().
-  - id: factory.router-registration
-    type: rule
-    text: Routers are registered with versioned prefixes (e.g., /api/v1) via app.include_router().
-  - id: factory.settings
-    type: rule
-    text: Settings instance is created at startup and made available via get_settings dependency or app.state.settings.
-  - id: factory.reference
-    type: reference
-    text: See fastapi/factory-patterns.toon for detailed factory implementation patterns.
-- id: dependency-injection
-  index: 6
-  title: Dependency injection patterns
-  category: architecture
-  summary: FastAPI's Depends() system wires services, repositories, and infrastructure together.
-  sample_code:
-    description: Annotated type alias pattern for clean dependency signatures.
-    code: "from typing import Annotated\nfrom fastapi import Depends\n\ndef get_user_repository(request: Request) -> UserRepository:\n\
-      \    return UserRepository(pool=request.app.state.surrealdb_pool)\n\ndef get_user_service(\n    user_repo: Annotated[UserRepository,\
-      \ Depends(get_user_repository)],\n) -> UserService:\n    return UserService(user_repository=user_repo)\n\nUserServiceDep\
-      \ = Annotated[UserService, Depends(get_user_service)]"
-  items:
-  - id: di.annotated-aliases
-    type: rule
-    text: Use Annotated type aliases (e.g., UserServiceDep = Annotated[UserService, Depends(get_user_service)]) for clean
-      handler signatures.
-  - id: di.service-factories
-    type: rule
-    text: Service factory functions depend on repository factory functions, composing the dependency graph.
-  - id: di.repository-factories
-    type: rule
-    text: Repository factory functions access app.state resources via request.app.state.
-  - id: di.settings-injection
-    type: rule
-    text: Inject Settings via get_settings dependency rather than importing a global settings instance.
-  - id: di.reference
-    type: reference
-    text: See fastapi/dependency-patterns.toon for comprehensive DI patterns and testing with overrides.
-- id: testing-integration
-  index: 7
-  title: Testing integration
-  category: testing
-  summary: FastAPI applications are tested using AsyncClient with dependency overrides for isolation.
-  items:
-  - id: testing.test-app
-    type: rule
-    text: Create test app with create_app(test_settings) to use test-specific configuration.
-  - id: testing.overrides
-    type: rule
-    text: Use app.dependency_overrides to replace dependencies with mocks or test implementations.
-  - id: testing.async-client
-    type: rule
-    text: Use httpx.AsyncClient with ASGITransport for integration tests against the ASGI application.
-  - id: testing.mock-services
-    type: rule
-    text: Mock services at the dependency level to test routers in isolation from business logic.
-  - id: testing.conftest
-    type: reference
-    text: See tests/conftest.py for fixture patterns and dependency override examples.
-- id: fastapi-architectural-anti-patterns
-  index: 8
-  title: Anti-patterns
-  category: anti_patterns
-  summary: FastAPI-specific pitfalls that undermine layered architecture integration.
-  items:
-  - id: anti.fastapi-in-services
-    type: anti_pattern
-    text: Services or repositories importing FastAPI types (Request, Response, HTTPException) couples them to the framework.
-  - id: anti.direct-state-access
-    type: anti_pattern
-    text: Services accessing app.state directly bypasses dependency injection and makes testing harder.
-  - id: anti.handler-construction
-    type: anti_pattern
-    text: Constructing services in route handlers instead of using Depends() prevents proper lifecycle management and testing.
-  - id: anti.inline-exception-handling
-    type: anti_pattern
-    text: Bypassing global exception handlers with inline try/except to convert domain errors to HTTP responses duplicates
-      mapping logic.
-  - id: anti.missing-overrides
-    type: anti_pattern
-    text: Tests that do not use dependency_overrides may hit real infrastructure, causing flaky or slow tests.
+  - id: router-integration
+    index: 1
+    title: Router layer integration
+    category: layer_integration
+    summary: Project-specific router wiring.
+    items:
+      - id: router.registration-wiring
+        type: rule
+        text: See project.fastapi.factory-patterns.yml for router registration in app/core/factory.py.
+      - id: router.reference
+        type: reference
+        text: See project.fastapi.router-patterns.yml for comprehensive router implementation patterns.
+  - id: service-integration
+    index: 2
+    title: Service layer integration
+    category: layer_integration
+    summary: Project-specific service wiring.
+    items:
+      - id: service.constructor-injection-wiring
+        type: rule
+        text: See project.fastapi.service-patterns.yml for app.state restrictions.
+      - id: service.fastapi-reference
+        type: reference
+        text: See project.fastapi.service-patterns.yml for FastAPI-specific service factory patterns.
+      - id: service.python-reference
+        type: reference
+        text: See project.python.service-patterns.yml for core service layer concepts and responsibilities.
+  - id: repository-integration
+    index: 3
+    title: Repository layer integration
+    category: layer_integration
+    summary: Project-specific repository wiring.
+    items:
+      - id: repository.state-access-wiring
+        type: rule
+        text: See project.fastapi.dependency-patterns.yml for request.app.state wiring with surrealdb_pool and elasticsearch_client.
+      - id: repository.constructor-injection-wiring
+        type: rule
+        text: Repositories do not access app.state directly; see project.fastapi.dependency-patterns.yml.
+      - id: repository.db-reference
+        type: reference
+        text: See project.surrealdb.repository-patterns.yml and project.elasticsearch.repository-patterns.yml for database-specific
+          patterns.
+      - id: repository.python-reference
+        type: reference
+        text: See project.python.repository-patterns.yml for core repository concepts and Protocol definitions.
+  - id: factory-wiring
+    index: 4
+    title: Application factory and wiring
+    category: architecture
+    summary: Project-specific factory wiring.
+    items:
+      - id: factory.settings-wiring
+        type: rule
+        text: See project.fastapi.settings-patterns.yml for get_settings dependency and app.state.settings wiring.
+      - id: factory.reference
+        type: reference
+        text: See project.fastapi.factory-patterns.yml for detailed factory implementation patterns in app/core/factory.py.
+  - id: dependency-injection
+    index: 5
+    title: Dependency injection patterns
+    category: architecture
+    summary: Project-specific DI wiring.
+    items:
+      - id: di.settings-injection-wiring
+        type: rule
+        text: See project.fastapi.dependency-patterns.yml for get_settings dependency usage.
+      - id: di.reference
+        type: reference
+        text: See project.fastapi.dependency-patterns.yml for comprehensive DI patterns and testing with overrides.
+  - id: testing-integration
+    index: 6
+    title: Testing integration
+    category: testing
+    summary: Project-specific testing wiring.
+    items:
+      - id: testing.conftest
+        type: reference
+        text: See tests/conftest.py for fixture patterns and dependency override examples.
+  - id: fastapi-architectural-anti-patterns
+    index: 7
+    title: Anti-patterns
+    category: anti_patterns
+    summary: Project-specific anti-pattern reference.
+    items:
+      - id: anti.direct-state-access-wiring
+        type: anti_pattern
+        text: See project.fastapi.service-patterns.yml for app.state access restrictions.

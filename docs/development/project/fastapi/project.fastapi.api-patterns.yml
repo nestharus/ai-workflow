@@ -1,216 +1,94 @@
 doc_id: project-fastapi-api-patterns
-title: FastAPI API Patterns
+title: FastAPI API Patterns (Project Wiring)
 version_hint: 2024-2025
 kind: fastapi_api_standards
-description: FastAPI-specific patterns for API construction, OpenAPI documentation, validation handling, and router registration.
-scope: Covers FastAPI application factory integration, OpenAPI documentation standards, validation error handling with RequestValidationError,
-  response_model usage, router registration, and FastAPI-specific anti-patterns. Generic REST principles are in docs/development/python/api-patterns.toon.
+description: Project-specific FastAPI wiring for API construction, validation handling, and router registration.
+scope: Project-specific implementation wiring. For general FastAPI patterns, see general.fastapi.api-patterns.yml.
 primary_runtime_references:
-- path: app/core/factory.py
-  role: FastAPI application construction, default response class, and custom OpenAPI schema.
-- path: app/core/exceptions.py
-  role: Global request validation handler.
-- path: app/api/v1/router.py
-  role: Versioned API router registration.
-- path: app/contracts/errors.py
-  role: HTTP validation error contracts and VALIDATION_ERROR_RESPONSE.
+  - path: app/core/factory.py
+    role: FastAPI application construction, default response class, and custom OpenAPI schema.
+  - path: app/core/exceptions.py
+    role: Global request validation handler.
+  - path: app/api/v1/router.py
+    role: Versioned API router registration.
+  - path: app/contracts/errors.py
+    role: HTTP validation error contracts and VALIDATION_ERROR_RESPONSE.
 related_pattern_docs:
-- python/api-patterns.toon
-- fastapi/router-patterns.toon
-- fastapi/factory-patterns.toon
-- fastapi/exception-patterns.toon
-- fastapi/service-patterns.toon
+  - general/fastapi/general.fastapi.api-patterns.yml
+  - project/fastapi/project.fastapi.router-patterns.yml
+  - project/fastapi/project.fastapi.factory-patterns.yml
+  - project/fastapi/project.fastapi.exception-patterns.yml
 sections:
-- id: fastapi-application-construction
-  index: 1
-  title: FastAPI application construction
-  category: standard
-  summary: Integration with create_app and default response class configuration.
-  items:
-  - id: construction.factory-reference
-    type: rule
-    text: Use create_app in app/core/factory.py to construct FastAPI instances with consistent configuration. See fastapi/factory-patterns.toon
-      for detailed factory patterns.
-  - id: construction.response-class
-    type: rule
-    text: Configure ORJSONResponse as the default_response_class in create_app for consistent JSON serialization across all
-      endpoints.
-  - id: construction.version-prefix
-    type: rule
-    text: Mount all versioned endpoints under /api/{version} (for example /api/v1) using create_app in app/core/factory.py.
-  - id: construction.health-endpoints
-    type: pattern
-    text: Register GET /health as an unversioned liveness probe excluded from OpenAPI, and GET /api/{version}/health as the
-      versioned readiness endpoint included in OpenAPI.
-- id: validation-error-handling
-  index: 2
-  title: Validation error handling
-  category: standard
-  summary: FastAPI-specific validation handling returning 400 instead of 422.
-  items:
-  - id: validation.handler-registration
-    type: rule
-    text: create_app registers validation_exception_handler from app/core/exceptions.py as the global handler for RequestValidationError.
-  - id: validation.use-400
-    type: rule
-    text: Surface all request validation failures as HTTP 400 Bad Request instead of the FastAPI default 422 for RequestValidationError.
-  - id: validation.app-error-envelope
-    type: rule
-    text: The validation exception handler returns a 400 response with an AppError envelope containing the HTTPValidationError
-      payload in the details field.
-  - id: validation.route-responses
-    type: rule
-    text: Route decorators must reuse VALIDATION_ERROR_RESPONSE from app/contracts/errors.py in the responses mapping for
-      400 entries. This constant references AppError for OpenAPI documentation consistency.
-  - id: validation.consistent-structure
-    type: note
-    text: This ensures all error responses share the same top-level structure (code, message, statusCode, details) while preserving
-      field-level validation details.
-- id: response-model-configuration
-  index: 3
-  title: Response model configuration
-  category: standard
-  summary: FastAPI response_model decorator usage and status code configuration.
-  sample_code:
-    description: FastAPI route example showing response_model and VALIDATION_ERROR_RESPONSE usage.
-    imports:
-    - datetime.datetime
-    - typing.Annotated
-    - fastapi.APIRouter
-    - pydantic.BaseModel
-    models:
-    - name: ResourceCreate
-      config: ConfigDict(extra="forbid")
-      fields:
-      - 'name: Annotated[str, Field(min_length=1)]'
-    - name: ResourceResponse
-      config: ConfigDict(extra="forbid")
-      fields:
-      - 'id: int,name: str,created_at: datetime'
-    route:
-      method: POST
-      path: /resources
-      response_model: ResourceResponse
-      status_code: status.HTTP_201_CREATED
-      summary: Create resource
-      description: Creates a resource and returns its representation.
-      responses: '400: VALIDATION_ERROR_RESPONSE, 409: {"description": "Conflict"}'
-  items:
-  - id: response.model-required
-    type: rule
-    text: Every endpoint must set response_model so that outbound schemas are enforced, extra fields from services are filtered
-      out, and OpenAPI schemas are derived from the contracts.
-  - id: response.status-code
-    type: rule
-    text: Use fastapi.status named constants such as status.HTTP_201_CREATED instead of hard-coded integer literals.
-  - id: response.validation-response
-    type: rule
-    text: Include VALIDATION_ERROR_RESPONSE in the responses parameter for 400 entries to document validation error shape
-      in OpenAPI.
-  - id: response.no-content
-    type: rule
-    text: For 204 No Content responses, use response_model=None and status_code=204.
-- id: openapi-documentation
-  index: 4
-  title: OpenAPI documentation standards
-  category: standard
-  summary: The generated OpenAPI schema is the external contract; every route must be documented consistently.
-  items:
-  - id: openapi.summary-one-line
-    type: rule
-    text: Provide a short, action-oriented summary string for every route.
-  - id: openapi.description-details
-    type: rule
-    text: Use description to document complex behavior, side effects, and edge cases; Markdown is allowed.
-  - id: openapi.tags-domain
-    type: rule
-    text: Group endpoints into domain-specific tags such as Users or Health (for example tags=["Users"]).
-  - id: openapi.errors.document-non-success
-    type: rule
-    text: Declare all non-success HTTP responses explicitly using the responses parameter on the route decorator.
-  - id: openapi.errors.validation-contract
-    type: rule
-    text: For request validation errors, use VALIDATION_ERROR_RESPONSE to document a 400 response using the AppError envelope
-      as the top-level error schema. The HTTPValidationError payload containing field-level validation details is nested inside
-      AppError.details.
-  - id: openapi.errors.do-not-duplicate-schemas
-    type: rule
-    text: Rely on create_app to register both the AppError schema (used for all error responses) and the HTTPValidationError
-      schema (for the nested validation structure) in the OpenAPI schema; do not duplicate these schema definitions manually.
-  - id: openapi.consistency.router-level
-    type: rule
-    text: Keep router-specific shared documentation such as common responses at the router level, while ensuring they still
-      satisfy these API-wide OpenAPI expectations.
-- id: router-registration
-  index: 5
-  title: Router registration
-  category: standard
-  summary: FastAPI-specific router registration patterns with versioned prefixes.
-  items:
-  - id: registration.versioned-mount
-    type: rule
-    text: Mount versioned endpoints under /api/{version} using app.include_router(api_router, prefix=settings.api_prefix)
-      in create_app.
-  - id: registration.health-unversioned
-    type: pattern
-    text: Register the unversioned /health liveness probe directly on the app and exclude it from OpenAPI (include_in_schema=False).
-  - id: registration.health-versioned
-    type: pattern
-    text: Register the versioned /api/v1/health readiness endpoint in the versioned API router and include it in OpenAPI.
-  - id: registration.router-inclusion
-    type: rule
-    text: Include domain routers in app/api/v1/router.py and register the combined API router in create_app for centralized
-      wiring.
-- id: response-serialization
-  index: 6
-  title: Response serialization
-  category: standard
-  summary: ORJSONResponse configuration and per-route overrides.
-  items:
-  - id: serialization.orjson-default
-    type: rule
-    text: Configure ORJSONResponse as the default_response_class in create_app for consistent, high-performance JSON serialization.
-  - id: serialization.per-route-override
-    type: note
-    text: Override the response class per-route only when a different content type or serialization behavior is required.
-  - id: serialization.compression
-    type: note
-    text: 'Support Accept-Encoding: gzip via middleware configured in create_app; ensure compressed responses remain valid
-      JSON.'
-- id: deprecation-metadata
-  index: 7
-  title: Deprecation metadata
-  category: standard
-  summary: FastAPI deprecated parameter usage for OpenAPI documentation.
-  items:
-  - id: deprecation.decorator-flag
-    type: rule
-    text: When deprecating an endpoint, set deprecated=True in the route decorator so OpenAPI and interactive docs show deprecation
-      state.
-  - id: deprecation.headers
-    type: rule
-    text: For deprecated endpoints, include Deprecation and Sunset response headers as specified in python/api-patterns.toon.
-  - id: deprecation.documentation
-    type: note
-    text: Update the API changelog and OpenAPI description to document deprecated endpoints and migration paths.
-- id: fastapi-anti-patterns
-  index: 8
-  title: Anti-patterns to avoid
-  category: anti_patterns
-  summary: FastAPI-specific pitfalls that violate these standards.
-  items:
-  - id: fastapi.anti-patterns.missing-response-model
-    type: anti_pattern
-    text: Omitting response_model from route decorators, leaving success schemas implicit and undocumented.
-  - id: fastapi.anti-patterns.incomplete-openapi
-    type: anti_pattern
-    text: Leaving OpenAPI documentation incomplete by omitting summary, description, tags, or documented error responses.
-  - id: fastapi.anti-patterns.bypass-global-handling
-    type: anti_pattern
-    text: Catching exceptions in routes and returning ad hoc error responses that bypass centralized exception handling.
-  - id: fastapi.anti-patterns.hardcoded-status-codes
-    type: anti_pattern
-    text: Using hard-coded integer literals for status codes instead of fastapi.status named constants.
-  - id: fastapi.anti-patterns.manual-json-response
-    type: anti_pattern
-    text: Returning dictionaries or JSONResponse manually instead of using response_model for type safety and schema generation.
+  - id: fastapi-application-construction
+    index: 1
+    title: FastAPI application construction
+    category: standard
+    summary: Project-specific wiring for create_app.
+    items:
+      - id: construction.response-class-wiring
+        type: rule
+        text: See project.fastapi.factory-patterns.yml for create_app configuration of ORJSONResponse as default_response_class.
+      - id: construction.version-prefix-wiring
+        type: rule
+        text: See project.fastapi.factory-patterns.yml for /api/{version} mounting in create_app.
+  - id: validation-error-handling
+    index: 2
+    title: Validation error handling
+    category: standard
+    summary: Project-specific validation handler wiring.
+    items:
+      - id: validation.handler-wiring
+        type: rule
+        text: See project.fastapi.exception-patterns.yml for validation_exception_handler registration and AppError envelope
+          configuration in app/core/exceptions.py.
+  - id: response-model-configuration
+    index: 3
+    title: Response model configuration
+    category: standard
+    summary: Project-specific validation response constant.
+    items:
+      - id: response.validation-response-wiring
+        type: rule
+        text: See project.fastapi.exception-patterns.yml for VALIDATION_ERROR_RESPONSE usage from app/contracts/errors.py.
+  - id: openapi-documentation
+    index: 4
+    title: OpenAPI documentation standards
+    category: standard
+    summary: Project-specific error schema registration.
+    items:
+      - id: openapi.errors.schema-registration-wiring
+        type: rule
+        text: See project.fastapi.factory-patterns.yml for AppError and HTTPValidationError schema registration in create_app.
+  - id: router-registration
+    index: 5
+    title: Router registration
+    category: standard
+    summary: Project-specific router wiring.
+    items:
+      - id: registration.versioned-mount-wiring
+        type: rule
+        text: See project.fastapi.factory-patterns.yml for app.include_router(api_router, prefix=settings.api_prefix) in create_app.
+      - id: registration.router-inclusion-wiring
+        type: rule
+        text: See project.fastapi.router-patterns.yml for domain router inclusion in app/api/v1/router.py.
+  - id: response-serialization
+    index: 6
+    title: Response serialization
+    category: standard
+    summary: Project-specific serialization wiring.
+    items:
+      - id: serialization.orjson-wiring
+        type: rule
+        text: See project.fastapi.factory-patterns.yml for ORJSONResponse configuration in create_app.
+      - id: serialization.compression-wiring
+        type: rule
+        text: See project.fastapi.middleware-patterns.yml for gzip middleware configuration in create_app.
+  - id: deprecation-metadata
+    index: 7
+    title: Deprecation metadata
+    category: standard
+    summary: Project-specific deprecation header implementation.
+    items:
+      - id: deprecation.headers-wiring
+        type: rule
+        text: See project.python.api-patterns.yml for Deprecation and Sunset header implementation.

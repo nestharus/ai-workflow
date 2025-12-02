@@ -6,188 +6,192 @@ description: Elasticsearch-specific repository patterns using ElasticsearchWrapp
 scope: Covers Elasticsearch search queries, indexing operations, bulk operations, index initialization, and result mapping.
   Generic repository patterns are in docs/development/python/repository-patterns.toon.
 primary_runtime_references:
-- path: app/infrastructure/elasticsearch/client.py
-  role: Elasticsearch wrapper implementation.
+  - path: app/infrastructure/elasticsearch/client.py
+    role: Elasticsearch wrapper implementation.
 related_pattern_docs:
-- python/repository-patterns.toon
-- elasticsearch/connection-pooling-patterns.toon
-- python/dependency-patterns.toon
+  - python/repository-patterns.toon
+  - elasticsearch/connection-pooling-patterns.toon
+  - python/dependency-patterns.toon
 sections:
-- id: elasticsearch-pattern
-  index: 1
-  title: Elasticsearch repository pattern
-  category: standard
-  summary: Search-oriented repositories depend on ElasticsearchWrapper for async-friendly methods and index initialization.
-  sample_code:
-    description: Elasticsearch search repository pattern.
-    imports:
-    - app.infrastructure.elasticsearch.client.ElasticsearchWrapper
-    components:
-    - type: class
-      name: FactsSearchRepository
-      constructor: "def __init__(self, es: ElasticsearchWrapper) -> None:\n    self._es = es"
-      methods:
-      - name: search_by_text
-        signature: 'async def search_by_text(self, text: str) -> list[Fact]'
-        body: 'query = {"match": {"text": text}}
+  - id: elasticsearch-pattern
+    index: 1
+    title: Elasticsearch repository pattern
+    category: standard
+    summary: Search-oriented repositories depend on ElasticsearchWrapper for async-friendly methods and index initialization.
+    sample_code:
+      description: Elasticsearch search repository pattern.
+      imports:
+        - app.infrastructure.elasticsearch.client.ElasticsearchWrapper
+      components:
+        - type: class
+          name: FactsSearchRepository
+          constructor: "def __init__(self, es: ElasticsearchWrapper) -> None:\n    self._es = es"
+          methods:
+            - name: search_by_text
+              signature: 'async def search_by_text(self, text: str) -> list[Fact]'
+              body: 'query = {"match": {"text": text}}
 
-          raw = await self._es.search(index="facts_index", query=query)
+                raw = await self._es.search(index="facts_index", query=query)
 
-          # Map hits to Fact models
+                # Map hits to Fact models
 
-          ...'
-  items:
-  - id: es.wrapper-methods
-    type: rule
-    text: Use search, index, bulk, and create_index on ElasticsearchWrapper rather than calling the Elasticsearch client directly.
-  - id: es.async-threads
-    type: note
-    text: The wrapper executes blocking client calls via anyio.to_thread.run_sync, allowing repository methods to remain async.
-  - id: es.index-init
-    type: rule
-    text: Indices like facts_index and entity_aliases_index are created during application startup via initialize_indices().
-      Repositories may assume these indices exist.
-  - id: es.search-vs-write
-    type: note
-    text: Some repositories only perform searches (read-only reporting) while others support indexing and bulk operations.
-  - id: es.index-names
-    type: rule
-    text: Centralize index names and query shapes in repositories so they remain discoverable and consistent.
-  - id: es.alternative-example
-    type: note
-    text: Similarly, an ElasticsearchUserSearchRepository could depend on an ElasticsearchWrapper to provide search capabilities
-      over user indices.
-- id: elasticsearch-connection-management
-  index: 2
-  title: Elasticsearch connection management
-  category: standard
-  summary: Patterns for using ElasticsearchWrapper in repository implementations.
-  sample_code:
-    description: Repository constructor with wrapper injection.
-    imports:
-    - app.infrastructure.elasticsearch.client.ElasticsearchWrapper
-    - app.contracts.facts.Fact
-    code: "from app.infrastructure.elasticsearch.client import ElasticsearchWrapper\nfrom app.contracts.facts import Fact\n\
-      class ElasticsearchFactsRepository:\n    \"\"\"Repository for fact search operations.\"\"\"\n    def __init__(self,\
-      \ es: ElasticsearchWrapper) -> None:\n        \"\"\"Create repository with Elasticsearch wrapper.\"\"\"\n        self._es\
-      \ = es\n    async def search(self, query_text: str) -> list[Fact]:\n        \"\"\"Search for facts matching the query.\"\
-      \"\"\n        raw = await self._es.search(\n            index=\"facts_index\",\n            query={\"match\": {\"content\"\
-      : query_text}}\n        )\n        # Map hits to domain models\n        ..."
-  items:
-  - id: elasticsearch.conn.constructor
-    type: rule
-    text: Accept ElasticsearchWrapper in the repository constructor via dependency injection; do not create wrappers inside
-      repositories.
-  - id: conn.wrapper-methods
-    type: pattern
-    text: Use wrapper methods (search, index, bulk, create_index) which handle async-to-thread execution internally.
-  - id: conn.async-execution
-    type: note
-    text: The wrapper uses anyio.to_thread.run_sync to execute blocking Elasticsearch client calls without blocking the event
-      loop.
-  - id: elasticsearch.conn.ref-pool-patterns
-    type: note
-    text: See app/infrastructure/elasticsearch/client.py and elasticsearch/connection-pooling-patterns.toon for wrapper configuration
-      and lifecycle details.
-- id: elasticsearch-search-patterns
-  index: 3
-  title: Elasticsearch search patterns
-  category: standard
-  summary: Patterns for building and executing Elasticsearch search queries.
-  sample_code:
-    description: Search query with multiple query types and pagination.
-    code: "async def search_with_filters(\n    self,\n    query_text: str,\n    category: str | None = None,\n    page: int\
-      \ = 1,\n    size: int = 20,\n) -> list[Document]:\n    must_clauses = [{\"match\": {\"content\": query_text}}]\n   \
-      \ if category:\n        must_clauses.append({\"term\": {\"category\": category}})\n    query = {\"bool\": {\"must\"\
-      : must_clauses}}\n    from_offset = (page - 1) * size\n    raw = await self._es.search(\n        index=\"documents_index\"\
-      ,\n        query=query,\n        from_=from_offset,\n        size=size,\n    )\n    hits = raw.get(\"hits\", {}).get(\"\
-      hits\", [])\n    return [Document(**hit[\"_source\"]) for hit in hits]"
-  items:
-  - id: search.query-dsl
-    type: rule
-    text: Build Elasticsearch query DSL as Python dictionaries; use match for full-text, term for exact, and bool for compound
-      queries.
-  - id: search.result-extraction
-    type: pattern
-    text: Extract hits from raw["hits"]["hits"] and access document data via hit["_source"]; handle empty results gracefully.
-  - id: search.model-mapping
-    type: rule
-    text: Map Elasticsearch documents to Pydantic domain models in the repository; services should never see raw Elasticsearch
-      response structures.
-  - id: search.pagination
-    type: pattern
-    text: Use from_ and size parameters for pagination; calculate from_ as (page - 1) * size for page-based APIs.
-  - id: search.scoring
-    type: note
-    text: Elasticsearch returns relevance scores in hit["_score"]; include these in response models if ranking information
-      is needed by consumers.
-- id: elasticsearch-indexing-patterns
-  index: 4
-  title: Elasticsearch indexing patterns
-  category: standard
-  summary: Patterns for indexing documents into Elasticsearch.
-  sample_code:
-    description: Single document and bulk indexing patterns.
-    code: "async def index_document(self, doc: Document) -> None:\n    await self._es.index(\n        index=\"documents_index\"\
-      ,\n        id=doc.id,\n        document=doc.model_dump(),\n    )\nasync def bulk_index(self, docs: list[Document]) ->\
-      \ None:\n    actions = []\n    for doc in docs:\n        actions.append({\"index\": {\"_index\": \"documents_index\"\
-      , \"_id\": doc.id}})\n        actions.append(doc.model_dump())\n    await self._es.bulk(body=actions)"
-  items:
-  - id: indexing.single
-    type: pattern
-    text: Use wrapper.index(index, id, document) for single document indexing; provide explicit document IDs for idempotent
-      updates.
-  - id: indexing.bulk
-    type: pattern
-    text: Use wrapper.bulk(body) for multiple documents; alternate action metadata and document source in the body list.
-  - id: indexing.id-management
-    type: rule
-    text: Use stable, domain-derived IDs for Elasticsearch documents to enable idempotent upserts and direct lookups.
-  - id: indexing.error-handling
-    type: note
-    text: Bulk operations may partially succeed; check response for errors and handle failed items appropriately.
-- id: elasticsearch-index-management
-  index: 5
-  title: Elasticsearch index management
-  category: standard
-  summary: Index lifecycle and initialization patterns.
-  items:
-  - id: index.creation
-    type: rule
-    text: Index creation is handled by ElasticsearchWrapper.create_index() called via initialize_indices() during application
-      startup.
-  - id: index.mappings
-    type: note
-    text: Define index mappings and settings (analyzers, shards, replicas) in the wrapper initialization code, not in repositories.
-  - id: index.assume-exists
-    type: rule
-    text: Repositories assume indices exist; they do not create indices on demand. Index creation failure should prevent application
-      startup.
-  - id: index.examples
-    type: note
-    text: Common indices include facts_index for knowledge graph facts and entity_aliases_index for entity name variations.
-  - id: index.ref-connection-pooling
-    type: note
-    text: See elasticsearch/connection-pooling-patterns.toon for index initialization lifecycle and configuration details.
-- id: elasticsearch-testing
-  index: 6
-  title: Testing Elasticsearch repositories
-  category: testing
-  summary: Strategies for testing repositories that use Elasticsearch.
-  items:
-  - id: elasticsearch.testing.unit-mocks
-    type: rule
-    text: For unit tests, mock ElasticsearchWrapper and configure mock.search() to return canned response structures.
-  - id: elasticsearch.testing.integration-indices
-    type: pattern
-    text: For integration tests, use test-specific index names (e.g., test_facts_index) to isolate test data from development
-      indices.
-  - id: elasticsearch.testing.cleanup
-    type: rule
-    text: Clean up test indices between test runs by deleting indices or clearing documents; avoid side effects between tests.
-  - id: elasticsearch.testing.docker-setup
-    type: note
-    text: Integration tests can use docker-compose to spin up an Elasticsearch instance for the test suite.
-  - id: elasticsearch.testing.ref-conftest
-    type: note
-    text: See tests/conftest.py for fixtures that set up ElasticsearchWrapper for integration testing.
+                ...'
+    items:
+      - id: es.wrapper-methods
+        type: rule
+        text: Use search, index, bulk, and create_index on ElasticsearchWrapper rather than calling the Elasticsearch client
+          directly.
+      - id: es.async-threads
+        type: note
+        text: The wrapper executes blocking client calls via anyio.to_thread.run_sync, allowing repository methods to remain
+          async.
+      - id: es.index-init
+        type: rule
+        text: Indices like facts_index and entity_aliases_index are created during application startup via initialize_indices().
+          Repositories may assume these indices exist.
+      - id: es.search-vs-write
+        type: note
+        text: Some repositories only perform searches (read-only reporting) while others support indexing and bulk operations.
+      - id: es.index-names
+        type: rule
+        text: Centralize index names and query shapes in repositories so they remain discoverable and consistent.
+      - id: es.alternative-example
+        type: note
+        text: Similarly, an ElasticsearchUserSearchRepository could depend on an ElasticsearchWrapper to provide search capabilities
+          over user indices.
+  - id: elasticsearch-connection-management
+    index: 2
+    title: Elasticsearch connection management
+    category: standard
+    summary: Patterns for using ElasticsearchWrapper in repository implementations.
+    sample_code:
+      description: Repository constructor with wrapper injection.
+      imports:
+        - app.infrastructure.elasticsearch.client.ElasticsearchWrapper
+        - app.contracts.facts.Fact
+      code: "from app.infrastructure.elasticsearch.client import ElasticsearchWrapper\nfrom app.contracts.facts import Fact\n\
+        class ElasticsearchFactsRepository:\n    \"\"\"Repository for fact search operations.\"\"\"\n    def __init__(self,\
+        \ es: ElasticsearchWrapper) -> None:\n        \"\"\"Create repository with Elasticsearch wrapper.\"\"\"\n        self._es\
+        \ = es\n    async def search(self, query_text: str) -> list[Fact]:\n        \"\"\"Search for facts matching the query.\"\
+        \"\"\n        raw = await self._es.search(\n            index=\"facts_index\",\n            query={\"match\": {\"\
+        content\": query_text}}\n        )\n        # Map hits to domain models\n        ..."
+    items:
+      - id: elasticsearch.conn.constructor
+        type: rule
+        text: Accept ElasticsearchWrapper in the repository constructor via dependency injection; do not create wrappers inside
+          repositories.
+      - id: conn.wrapper-methods
+        type: pattern
+        text: Use wrapper methods (search, index, bulk, create_index) which handle async-to-thread execution internally.
+      - id: conn.async-execution
+        type: note
+        text: The wrapper uses anyio.to_thread.run_sync to execute blocking Elasticsearch client calls without blocking the
+          event loop.
+      - id: elasticsearch.conn.ref-pool-patterns
+        type: note
+        text: See app/infrastructure/elasticsearch/client.py and elasticsearch/connection-pooling-patterns.toon for wrapper
+          configuration and lifecycle details.
+  - id: elasticsearch-search-patterns
+    index: 3
+    title: Elasticsearch search patterns
+    category: standard
+    summary: Patterns for building and executing Elasticsearch search queries.
+    sample_code:
+      description: Search query with multiple query types and pagination.
+      code: "async def search_with_filters(\n    self,\n    query_text: str,\n    category: str | None = None,\n    page:\
+        \ int = 1,\n    size: int = 20,\n) -> list[Document]:\n    must_clauses = [{\"match\": {\"content\": query_text}}]\n\
+        \    if category:\n        must_clauses.append({\"term\": {\"category\": category}})\n    query = {\"bool\": {\"must\"\
+        : must_clauses}}\n    from_offset = (page - 1) * size\n    raw = await self._es.search(\n        index=\"documents_index\"\
+        ,\n        query=query,\n        from_=from_offset,\n        size=size,\n    )\n    hits = raw.get(\"hits\", {}).get(\"\
+        hits\", [])\n    return [Document(**hit[\"_source\"]) for hit in hits]"
+    items:
+      - id: search.query-dsl
+        type: rule
+        text: Build Elasticsearch query DSL as Python dictionaries; use match for full-text, term for exact, and bool for
+          compound queries.
+      - id: search.result-extraction
+        type: pattern
+        text: Extract hits from raw["hits"]["hits"] and access document data via hit["_source"]; handle empty results gracefully.
+      - id: search.model-mapping
+        type: rule
+        text: Map Elasticsearch documents to Pydantic domain models in the repository; services should never see raw Elasticsearch
+          response structures.
+      - id: search.pagination
+        type: pattern
+        text: Use from_ and size parameters for pagination; calculate from_ as (page - 1) * size for page-based APIs.
+      - id: search.scoring
+        type: note
+        text: Elasticsearch returns relevance scores in hit["_score"]; include these in response models if ranking information
+          is needed by consumers.
+  - id: elasticsearch-indexing-patterns
+    index: 4
+    title: Elasticsearch indexing patterns
+    category: standard
+    summary: Patterns for indexing documents into Elasticsearch.
+    sample_code:
+      description: Single document and bulk indexing patterns.
+      code: "async def index_document(self, doc: Document) -> None:\n    await self._es.index(\n        index=\"documents_index\"\
+        ,\n        id=doc.id,\n        document=doc.model_dump(),\n    )\nasync def bulk_index(self, docs: list[Document])\
+        \ -> None:\n    actions = []\n    for doc in docs:\n        actions.append({\"index\": {\"_index\": \"documents_index\"\
+        , \"_id\": doc.id}})\n        actions.append(doc.model_dump())\n    await self._es.bulk(body=actions)"
+    items:
+      - id: indexing.single
+        type: pattern
+        text: Use wrapper.index(index, id, document) for single document indexing; provide explicit document IDs for idempotent
+          updates.
+      - id: indexing.bulk
+        type: pattern
+        text: Use wrapper.bulk(body) for multiple documents; alternate action metadata and document source in the body list.
+      - id: indexing.id-management
+        type: rule
+        text: Use stable, domain-derived IDs for Elasticsearch documents to enable idempotent upserts and direct lookups.
+      - id: indexing.error-handling
+        type: note
+        text: Bulk operations may partially succeed; check response for errors and handle failed items appropriately.
+  - id: elasticsearch-index-management
+    index: 5
+    title: Elasticsearch index management
+    category: standard
+    summary: Index lifecycle and initialization patterns.
+    items:
+      - id: index.creation
+        type: rule
+        text: Index creation is handled by ElasticsearchWrapper.create_index() called via initialize_indices() during application
+          startup.
+      - id: index.mappings
+        type: note
+        text: Define index mappings and settings (analyzers, shards, replicas) in the wrapper initialization code, not in
+          repositories.
+      - id: index.assume-exists
+        type: rule
+        text: Repositories assume indices exist; they do not create indices on demand. Index creation failure should prevent
+          application startup.
+      - id: index.examples
+        type: note
+        text: Common indices include facts_index for knowledge graph facts and entity_aliases_index for entity name variations.
+      - id: index.ref-connection-pooling
+        type: note
+        text: See elasticsearch/connection-pooling-patterns.toon for index initialization lifecycle and configuration details.
+  - id: elasticsearch-testing
+    index: 6
+    title: Testing Elasticsearch repositories
+    category: testing
+    summary: Strategies for testing repositories that use Elasticsearch.
+    items:
+      - id: elasticsearch.testing.unit-mocks
+        type: rule
+        text: For unit tests, mock ElasticsearchWrapper and configure mock.search() to return canned response structures.
+      - id: elasticsearch.testing.integration-indices
+        type: pattern
+        text: For integration tests, use test-specific index names (e.g., test_facts_index) to isolate test data from development
+          indices.
+      - id: elasticsearch.testing.cleanup
+        type: rule
+        text: Clean up test indices between test runs by deleting indices or clearing documents; avoid side effects between
+          tests.
+      - id: elasticsearch.testing.docker-setup
+        type: note
+        text: Integration tests can use docker-compose to spin up an Elasticsearch instance for the test suite.
+      - id: elasticsearch.testing.ref-conftest
+        type: note
+        text: See tests/conftest.py for fixtures that set up ElasticsearchWrapper for integration testing.
