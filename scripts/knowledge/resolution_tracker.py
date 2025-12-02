@@ -11,7 +11,8 @@ a unique UUID for each resolution record. Duplicate detection is based on
 (id, source_file, split_file) to support path-level uniqueness.
 
 Usage:
-    uv run knowledge.mark-resolved --id <element_id> --source-file <path> --split-file <path> [<path> ...]
+    uv run knowledge.mark-resolved --id <element_id> --source-file <path> \
+      --split-file <path> [<path> ...]
 
 Args:
     --id: Element identifier to mark as resolved.

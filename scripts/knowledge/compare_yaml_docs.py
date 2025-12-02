@@ -19,7 +19,8 @@ Args:
             falls back to the default glob pattern.
 
 Example:
-    uv run knowledge.compare-yml-docs --original-files .knowledge/originals/20251201T134735Z-api-patterns.yml
+    uv run knowledge.compare-yml-docs \
+      --original-files .knowledge/originals/20251201T134735Z-api-patterns.yml
 """
 
 import argparse

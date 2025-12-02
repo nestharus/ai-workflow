@@ -8,7 +8,7 @@ from scripts.knowledge.candidate_extraction import CSV_COLUMNS
 from scripts.knowledge.qwen_scoring import (
     get_unscored_candidates,
     parse_args,
-    update_candidate_score,
+    update_candidate_scores_batch,
 )
 
 
@@ -143,20 +143,28 @@ class TestGetUnscoredCandidates:
         assert result == []
 
 
-class TestUpdateCandidateScore:
-    """Tests for update_candidate_score function."""
+class TestUpdateCandidateScoresBatch:
+    """Tests for update_candidate_scores_batch function."""
 
     def test_returns_false_for_missing_csv(self, tmp_path: Path) -> None:
         """Should return False when CSV doesn't exist."""
         csv_path = tmp_path / "candidates.csv"
-        result = update_candidate_score(csv_path, "cand-1", 0.95)
+        result = update_candidate_scores_batch(csv_path, {"cand-1": 0.95})
         assert result is False
 
-    def test_updates_qwen_score(self, tmp_path: Path) -> None:
-        """Should update candidate qwen_score in CSV."""
+    def test_returns_false_for_empty_scores(self, tmp_path: Path) -> None:
+        """Should return False when scores dict is empty."""
         csv_path = tmp_path / "candidates.csv"
         header = ",".join(CSV_COLUMNS)
-        row = _make_csv_row(
+        csv_path.write_text(f"{header}\n")
+        result = update_candidate_scores_batch(csv_path, {})
+        assert result is False
+
+    def test_updates_qwen_scores_batch(self, tmp_path: Path) -> None:
+        """Should update multiple candidate qwen_scores in CSV."""
+        csv_path = tmp_path / "candidates.csv"
+        header = ",".join(CSV_COLUMNS)
+        row1 = _make_csv_row(
             "cand-1",
             "docs/test.yml",
             "elem1",
@@ -171,13 +179,29 @@ class TestUpdateCandidateScore:
             "",
             "",
         )
-        csv_path.write_text(f"{header}\n{row}\n")
+        row2 = _make_csv_row(
+            "cand-2",
+            "docs/test.yml",
+            "elem2",
+            "sent2",
+            "Pydantic",
+            "0",
+            "8",
+            "2024-01-01",
+            "",
+            "",
+            "",
+            "",
+            "",
+        )
+        csv_path.write_text(f"{header}\n{row1}\n{row2}\n")
 
-        result = update_candidate_score(csv_path, "cand-1", 0.95)
+        result = update_candidate_scores_batch(csv_path, {"cand-1": 0.95, "cand-2": 0.87})
         assert result is True
 
         content = csv_path.read_text()
         assert "0.95" in content
+        assert "0.87" in content
 
 
 class TestParseArgs:
@@ -186,20 +210,14 @@ class TestParseArgs:
     def test_default_values(self) -> None:
         """Should set default values for optional args."""
         args = parse_args([])
-        assert args.ids is None
-        assert args.model == "Qwen/Qwen3-Embedding-0.6B"
+        assert args.model == "Qwen/Qwen3-Reranker-8B"
         assert args.batch_size == 32
         assert args.knowledge_path == Path(".knowledge")
 
-    def test_custom_ids(self) -> None:
-        """Should parse --ids argument with multiple values."""
-        args = parse_args(["--ids", "cand-1", "cand-2"])
-        assert args.ids == ["cand-1", "cand-2"]
-
     def test_custom_model(self) -> None:
         """Should parse --model argument."""
-        args = parse_args(["--model", "custom/model"])
-        assert args.model == "custom/model"
+        args = parse_args(["--model", "Qwen/Qwen3-Reranker-4B"])
+        assert args.model == "Qwen/Qwen3-Reranker-4B"
 
     def test_custom_batch_size(self) -> None:
         """Should parse --batch-size argument."""

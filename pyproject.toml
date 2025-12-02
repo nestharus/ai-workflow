@@ -63,23 +63,23 @@ knowledge = [
 ]
 
 [project.scripts]
-# Runtime scripts (included in Docker via scripts/app/)
+# Runtime scripts
 "app.start" = "scripts.app.start_server:main"
 "app.api.generate" = "scripts.app.gen_openapi:main"
-# Development scripts (NOT included in Docker)
+# Development scripts
 setup = "scripts.dev.setup:main"
 lint = "scripts.dev.lint:main"
-# Review scripts (scripts/dev/review/)
+# Review scripts
 "review.coderabbit" = "scripts.dev.review.coderabbit_review:main"
 "review.sonar" = "scripts.dev.review.sonar_review:main"
 "review.latest" = "scripts.dev.review.latest_review:main"
-# Test runner scripts (scripts/dev/test_runner/)
+# Test runner scripts
 llm-coverage-report = "scripts.dev.test_runner.llm_coverage_report:main"
 test-coverage = "scripts.dev.test_runner.test_coverage:main"
-# Knowledge scripts (scripts/knowledge/)
+# Knowledge scripts
 "knowledge.compare-yml-docs" = "scripts.knowledge.compare_yaml_docs:main"
 "knowledge.grep-yml-ids" = "scripts.knowledge.grep_yml_ids:main"
-# Knowledge management scripts (NOT included in Docker)
+# Knowledge management scripts
 "knowledge.mark-resolved" = "scripts.knowledge.resolution_tracker:main"
 "knowledge.query-comparisons" = "scripts.knowledge.query_comparisons:main"
 "knowledge.record-movement" = "scripts.knowledge.movement_tracker:main"
@@ -210,7 +210,7 @@ source = [
 [tool.test_coverage]
 # Overall thresholds
 min_line_coverage = 80.0
-min_branch_coverage = 70.0
+min_branch_coverage = 80.0
 # Per-function thresholds
-min_function_line_coverage = 60.0
-min_function_branch_coverage = 50.0
+min_function_line_coverage = 80.0
+min_function_branch_coverage = 80.0

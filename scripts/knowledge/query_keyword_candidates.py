@@ -1,13 +1,17 @@
 """Query and filter keyword candidates from the candidates CSV.
 
 This module provides utilities for querying the extracted keyword candidates,
-filtering by various criteria, and displaying results for review.
+filtering by various criteria, and outputting results for sub-agent processing.
+Sub-agents call this script instead of reading CSV files directly.
 
 Usage:
-    # List all candidates
-    uv run knowledge.query-keyword-candidates
+    # Query unclassified candidates as JSON (for sub-agents)
+    uv run knowledge.query-keyword-candidates --unclassified --format json
 
-    # Filter by keep status
+    # Query unclassified candidates as JSON lines
+    uv run knowledge.query-keyword-candidates --unclassified --format jsonl --limit 50
+
+    # Filter by keep status (human-readable output)
     uv run knowledge.query-keyword-candidates --keep true
 
     # Filter by source file
@@ -26,12 +30,14 @@ Args:
     --min-qwen-score: Minimum Qwen score (0.0-1.0).
     --unclassified: Show only unclassified candidates (empty keep field).
     --limit: Maximum number of results to display.
+    --format: Output format - 'text' (default), 'json' (array), or 'jsonl' (JSON lines).
     --knowledge-path: Base knowledge directory (default: .knowledge).
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -167,7 +173,35 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         dest="knowledge_path",
         help="Base knowledge directory (default: .knowledge).",
     )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json", "jsonl"],
+        default="text",
+        dest="output_format",
+        help="Output format - 'text' (default), 'json' (array), or 'jsonl' (JSON lines).",
+    )
     return parser.parse_args(argv)
+
+
+def format_candidate_for_json(candidate: dict[str, str]) -> dict[str, str]:
+    """Format a candidate record for JSON output.
+
+    Extracts only the fields needed by sub-agents for classification.
+
+    Args:
+        candidate: Full candidate record from CSV.
+
+    Returns:
+        Simplified record with sub-agent required fields.
+    """
+    return {
+        "candidate_id": candidate.get("candidate_id", ""),
+        "source_file": candidate.get("source_file", ""),
+        "element_id": candidate.get("element_id", ""),
+        "sentence": candidate.get("sentence", ""),
+        "candidate_text": candidate.get("candidate_text", ""),
+        "qwen_score": candidate.get("qwen_score", ""),
+    }
 
 
 def query_candidates_main(args: argparse.Namespace) -> int:
@@ -200,6 +234,18 @@ def query_candidates_main(args: argparse.Namespace) -> int:
         limit=args.limit,
     )
 
+    # Handle JSON output formats for sub-agent consumption
+    if args.output_format == "json":
+        json_candidates = [format_candidate_for_json(c) for c in candidates]
+        print(json.dumps(json_candidates, indent=2))
+        return 0
+
+    if args.output_format == "jsonl":
+        for candidate in candidates:
+            print(json.dumps(format_candidate_for_json(candidate)))
+        return 0
+
+    # Default text output
     if not candidates:
         print("No candidates found matching criteria.")
         return 0

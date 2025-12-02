@@ -1,26 +1,29 @@
-"""Classify keyword candidates and promote them to the keywords table.
+r"""Classify keyword candidates by updating the candidates CSV.
 
-This module provides functionality to classify extracted keyword candidates,
-assign them to categories, and promote validated candidates to the canonical
-keywords table.
+This module provides CLI functionality for sub-agents to persist classification
+decisions for keyword candidates. Sub-agents call this script instead of
+modifying CSV files directly, ensuring consistent data access patterns.
 
 Usage:
-    # Classify a candidate by ID
-    uv run classify-keyword --id <candidate_id> --category domain --subcategory fastapi
+    # Classify a candidate as keep (true keyword)
+    uv run knowledge.classify-keyword \
+      --id <candidate_id> \
+      --keep true \
+      --confidence 0.94 \
+      --reason "Central concept (connection management layer)."
 
-    # Classify with rejection
-    uv run classify-keyword --id <candidate_id> --reject --reason "too generic"
-
-    # Batch classify from file
-    uv run classify-keyword --batch classifications.json
+    # Classify a candidate as noise (not a keyword)
+    uv run knowledge.classify-keyword \
+      --id <candidate_id> \
+      --keep false \
+      --confidence 0.87 \
+      --reason "Too generic, common English word."
 
 Args:
-    --id: Candidate ID to classify.
-    --category: Primary category (domain, pattern, concept, entity).
-    --subcategory: Subcategory within the primary category.
-    --reject: Mark candidate as rejected.
-    --reason: Reason for rejection or classification notes.
-    --batch: JSON file with batch classifications.
+    --id: Candidate UUID to classify (required).
+    --keep: Classification decision - 'true' to keep, 'false' to discard (required).
+    --confidence: Confidence score between 0.0 and 1.0 (required).
+    --reason: Short explanation for the classification decision (required).
     --knowledge-path: Base knowledge directory (default: .knowledge).
 """
 
@@ -30,138 +33,101 @@ import argparse
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TypedDict
 
 import duckdb
 
-from scripts.dev.utils import REPO_ROOT
-
-KEYWORD_COLUMNS = [
-    "keyword_id",
-    "term",
-    "category",
-    "subcategory",
-    "source_candidate_id",
-    "source_file",
-    "classified_at",
-    "classification_notes",
-]
+from scripts.dev.utils import REPO_ROOT, utc_timestamp
 
 
-class KeywordRecord(TypedDict):
-    """A classified keyword record.
+def update_candidate_classification(
+    csv_path: Path,
+    candidate_id: str,
+    keep: str,
+    confidence: str,
+    reason: str,
+) -> bool:
+    """Update classification fields for a candidate in the CSV.
 
-    Attributes:
-        keyword_id: Unique identifier for this keyword.
-        term: The canonical keyword term.
-        category: Primary category (domain, pattern, concept, entity).
-        subcategory: Subcategory within primary category.
-        source_candidate_id: Original candidate ID this was promoted from.
-        source_file: Original source file where term was found.
-        classified_at: ISO 8601 timestamp when classified.
-        classification_notes: Optional notes about classification.
-    """
-
-    keyword_id: str
-    term: str
-    category: str
-    subcategory: str
-    source_candidate_id: str
-    source_file: str
-    classified_at: str
-    classification_notes: str
-
-
-def ensure_keywords_csv_exists(csv_path: Path) -> None:
-    """Create keywords CSV file with header if it doesn't exist.
+    Uses DuckDB to read the CSV, update the record, and write back.
 
     Args:
-        csv_path: Path to the keywords CSV file.
-    """
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    needs_header = not csv_path.exists() or csv_path.stat().st_size == 0
-    if needs_header:
-        cols_select = ", ".join(f"'' AS {col}" for col in KEYWORD_COLUMNS)
-        query = f"COPY (SELECT * FROM (SELECT {cols_select}) WHERE 1=0) "
-        query += f"TO '{csv_path}' (HEADER, DELIMITER ',')"
-        duckdb.execute(query)
-
-
-def get_candidate_by_id(candidates_csv: Path, candidate_id: str) -> dict[str, str] | None:
-    """Retrieve a candidate record by ID.
-
-    Args:
-        candidates_csv: Path to the candidates CSV file.
-        candidate_id: ID of the candidate to retrieve.
+        csv_path: Path to the candidates.csv file.
+        candidate_id: UUID of the candidate to update.
+        keep: Classification decision ('true' or 'false').
+        confidence: Confidence score as string (e.g., '0.94').
+        reason: Short explanation for the classification.
 
     Returns:
-        Candidate record as dictionary, or None if not found.
+        True if update succeeded, False otherwise.
     """
-    if not candidates_csv.exists():
+    if not csv_path.exists():
+        return False
+
+    classified_at = utc_timestamp()
+
+    try:
+        conn = duckdb.connect()
+        conn.execute(f"""
+            CREATE TABLE candidates AS
+            SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
+        """)
+
+        # Check if candidate exists
+        result = conn.execute(
+            "SELECT candidate_id FROM candidates WHERE candidate_id = ?",
+            [candidate_id],
+        ).fetchone()
+
+        if result is None:
+            conn.close()
+            return False
+
+        # Update the classification fields
+        conn.execute(
+            """
+            UPDATE candidates
+            SET keep = ?,
+                confidence = ?,
+                reason = ?,
+                classified_at = ?
+            WHERE candidate_id = ?
+            """,
+            [keep, confidence, reason, classified_at, candidate_id],
+        )
+
+        conn.execute(f"COPY candidates TO '{csv_path}' (HEADER, DELIMITER ',')")
+        conn.close()
+    except duckdb.Error:
+        return False
+    else:
+        return True
+
+
+def get_candidate_text(csv_path: Path, candidate_id: str) -> str | None:
+    """Get the candidate text for display purposes.
+
+    Args:
+        csv_path: Path to the candidates.csv file.
+        candidate_id: UUID of the candidate.
+
+    Returns:
+        Candidate text if found, None otherwise.
+    """
+    if not csv_path.exists():
         return None
 
     query = """
-        SELECT *
+        SELECT candidate_text
         FROM read_csv_auto(?, ALL_VARCHAR=TRUE)
         WHERE candidate_id = ?
     """
     try:
-        conn = duckdb.connect()
-        result = conn.execute(query, [str(candidates_csv), candidate_id])
-        columns = [desc[0] for desc in result.description]
-        row = result.fetchone()
-        conn.close()
-        if row:
-            return dict(zip(columns, row, strict=False))
+        result = duckdb.execute(query, [str(csv_path), candidate_id]).fetchone()
+        if result:
+            return str(result[0])
     except duckdb.Error:
         pass
     return None
-
-
-def append_keyword(csv_path: Path, record: KeywordRecord) -> None:
-    """Append a keyword record to the keywords CSV.
-
-    Args:
-        csv_path: Path to the keywords CSV file.
-        record: Keyword record to append.
-    """
-    conn = duckdb.connect()
-    try:
-        conn.execute(f"""
-            CREATE TABLE keywords AS
-            SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
-        """)
-        placeholders = ", ".join("?" for _ in KEYWORD_COLUMNS)
-        values = [record[col] for col in KEYWORD_COLUMNS]  # type: ignore[literal-required]
-        conn.execute(f"INSERT INTO keywords VALUES ({placeholders})", values)
-        conn.execute(f"COPY keywords TO '{csv_path}' (HEADER, DELIMITER ',')")
-    finally:
-        conn.close()
-
-
-def is_keyword_exists(csv_path: Path, term: str) -> bool:
-    """Check if a keyword already exists.
-
-    Args:
-        csv_path: Path to the keywords CSV file.
-        term: Term to check.
-
-    Returns:
-        True if keyword exists, False otherwise.
-    """
-    if not csv_path.exists() or csv_path.stat().st_size == 0:
-        return False
-
-    query = """
-        SELECT COUNT(*) as cnt
-        FROM read_csv_auto(?)
-        WHERE term = ?
-    """
-    try:
-        result = duckdb.execute(query, [str(csv_path), term]).fetchone()
-        return result is not None and result[0] > 0
-    except duckdb.Error:
-        return False
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -174,35 +140,30 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         Parsed argument namespace.
     """
     parser = argparse.ArgumentParser(
-        description="Classify keyword candidates and promote to keywords table.",
+        description="Classify keyword candidates by updating the candidates CSV.",
     )
     parser.add_argument(
         "--id",
+        required=True,
         dest="candidate_id",
-        help="Candidate ID to classify.",
+        help="Candidate UUID to classify.",
     )
     parser.add_argument(
-        "--category",
-        choices=["domain", "pattern", "concept", "entity"],
-        help="Primary category for the keyword.",
+        "--keep",
+        required=True,
+        choices=["true", "false"],
+        help="Classification decision - 'true' to keep, 'false' to discard.",
     )
     parser.add_argument(
-        "--subcategory",
-        help="Subcategory within the primary category.",
-    )
-    parser.add_argument(
-        "--reject",
-        action="store_true",
-        help="Mark candidate as rejected.",
+        "--confidence",
+        required=True,
+        type=float,
+        help="Confidence score between 0.0 and 1.0.",
     )
     parser.add_argument(
         "--reason",
-        help="Reason for rejection or classification notes.",
-    )
-    parser.add_argument(
-        "--batch",
-        type=Path,
-        help="JSON file with batch classifications.",
+        required=True,
+        help="Short explanation for the classification decision.",
     )
     parser.add_argument(
         "--knowledge-path",
@@ -215,7 +176,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def classify_keyword_main(args: argparse.Namespace) -> int:
-    """Run keyword classification.
+    """Run keyword classification and update the CSV.
 
     Args:
         args: Parsed command-line arguments.
@@ -228,20 +189,42 @@ def classify_keyword_main(args: argparse.Namespace) -> int:
     else:
         knowledge_path = (REPO_ROOT / args.knowledge_path).resolve()
 
-    keywords_dir = knowledge_path / "keywords"
+    csv_path = knowledge_path / "keywords" / "candidates.csv"
 
-    if not args.candidate_id and not args.batch:
-        print("Error: Must specify --id or --batch", file=sys.stderr)
+    if not csv_path.exists():
+        print(f"Error: Candidates CSV not found: {csv_path}", file=sys.stderr)
         return 1
 
-    if args.candidate_id and not args.reject and not args.category:
-        print("Error: Must specify --category or --reject", file=sys.stderr)
+    # Validate confidence range
+    if not 0.0 <= args.confidence <= 1.0:
+        print("Error: Confidence must be between 0.0 and 1.0", file=sys.stderr)
         return 1
 
-    # Placeholder for actual classification logic (Phase 2)
-    print(f"Knowledge path: {knowledge_path}")
-    print(f"Keywords dir: {keywords_dir}")
-    print("Keyword classification not yet implemented (Phase 2).")
+    # Get candidate text for display
+    candidate_text = get_candidate_text(csv_path, args.candidate_id)
+    if candidate_text is None:
+        print(f"Error: Candidate '{args.candidate_id}' not found", file=sys.stderr)
+        return 1
+
+    # Update the classification
+    success = update_candidate_classification(
+        csv_path=csv_path,
+        candidate_id=args.candidate_id,
+        keep=args.keep,
+        confidence=str(args.confidence),
+        reason=args.reason,
+    )
+
+    if not success:
+        print(f"Error: Failed to update candidate '{args.candidate_id}'", file=sys.stderr)
+        return 1
+
+    # Output confirmation
+    print(f"Classified candidate: {args.candidate_id}")
+    print(f"  Text: {candidate_text}")
+    print(f"  Keep: {args.keep}")
+    print(f"  Confidence: {args.confidence}")
+    print(f"  Reason: {args.reason}")
 
     return 0
 

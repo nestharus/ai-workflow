@@ -5,13 +5,13 @@ marking them as confirmed variants or rejecting false positives.
 
 Usage:
     # Validate a variant
-    uv run validate-variant --id <variant_id> --accept
+    uv run knowledge.validate-variant --id <variant_id> --accept
 
     # Reject a variant
-    uv run validate-variant --id <variant_id> --reject
+    uv run knowledge.validate-variant --id <variant_id> --reject
 
     # Mark as canonical form
-    uv run validate-variant --id <variant_id> --accept --canonical
+    uv run knowledge.validate-variant --id <variant_id> --accept --canonical
 
 Args:
     --id: Variant ID to validate.
@@ -101,9 +101,10 @@ def update_variant_validation(
         )
         conn.execute(f"COPY variants TO '{csv_path}' (HEADER, DELIMITER ',')")
         conn.close()
-        return True
     except duckdb.Error:
         return False
+    else:
+        return True
 
 
 def delete_variant(csv_path: Path, variant_id: str) -> bool:
@@ -128,9 +129,10 @@ def delete_variant(csv_path: Path, variant_id: str) -> bool:
         conn.execute("DELETE FROM variants WHERE variant_id = ?", [variant_id])
         conn.execute(f"COPY variants TO '{csv_path}' (HEADER, DELIMITER ',')")
         conn.close()
-        return True
     except duckdb.Error:
         return False
+    else:
+        return True
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -228,7 +230,7 @@ def validate_variant_main(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    """Entry point for validate-variant command.
+    """Entry point for knowledge.validate-variant command.
 
     Returns:
         Exit code (0 on success, 1 on error).

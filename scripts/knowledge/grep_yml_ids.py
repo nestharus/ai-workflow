@@ -5,7 +5,8 @@ documentation files, returning the file paths, IDs, and associated text content.
 Useful for verifying coverage and finding where information is documented.
 
 Usage:
-    uv run knowledge.grep-yml-ids --id <element-id> [--path <directory>] [--exact] [--output json|table]
+    uv run knowledge.grep-yml-ids --id <element-id> [--path <directory>] \
+      [--exact] [--output json|table]
 
 Args:
     --id: The element ID to search for (required). Supports partial matching by default.

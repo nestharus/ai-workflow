@@ -1,22 +1,25 @@
-"""Score keyword candidates using Qwen embedding models.
+"""Score keyword candidates using Qwen3-Reranker model.
 
-This module provides optional scoring functionality using Qwen embedding and
-reranker models from HuggingFace. It can score candidates based on semantic
-relevance and contextual fit.
+This module provides optional scoring functionality using Qwen3-Reranker-8B
+from HuggingFace. It scores candidates based on semantic relevance between
+the candidate text and its surrounding sentence context.
+
+The Qwen3-Reranker model evaluates how well the candidate keyword fits
+within its sentence context, producing a relevance score from 0.0 to 1.0.
+Higher scores indicate the candidate is more likely a meaningful keyword.
 
 Usage:
     # Score all unscored candidates
     uv run knowledge.score-candidates-with-qwen
 
-    # Score specific candidates
-    uv run knowledge.score-candidates-with-qwen --ids <id1> <id2>
+    # Score with custom batch size
+    uv run knowledge.score-candidates-with-qwen --batch-size 16
 
-    # Use specific model
-    uv run knowledge.score-candidates-with-qwen --model Qwen/Qwen3-Embedding-0.6B
+    # Use alternative model
+    uv run knowledge.score-candidates-with-qwen --model Qwen/Qwen3-Reranker-4B
 
 Args:
-    --ids: Specific candidate IDs to score.
-    --model: HuggingFace model to use for scoring.
+    --model: HuggingFace model to use for scoring (default: Qwen/Qwen3-Reranker-8B).
     --batch-size: Batch size for inference (default: 32).
     --knowledge-path: Base knowledge directory (default: .knowledge).
 """
@@ -27,10 +30,15 @@ import argparse
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import duckdb
 
 from scripts.dev.utils import REPO_ROOT
+
+if TYPE_CHECKING:
+    import torch
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 
 def get_unscored_candidates(csv_path: Path) -> list[dict[str, str]]:
@@ -61,18 +69,20 @@ def get_unscored_candidates(csv_path: Path) -> list[dict[str, str]]:
         return []
 
 
-def update_candidate_score(csv_path: Path, candidate_id: str, score: float) -> bool:
-    """Update the Qwen score for a candidate.
+def update_candidate_scores_batch(
+    csv_path: Path,
+    scores: dict[str, float],
+) -> bool:
+    """Update Qwen scores for multiple candidates at once.
 
     Args:
         csv_path: Path to the candidates CSV file.
-        candidate_id: ID of the candidate to update.
-        score: New Qwen score (0.0-1.0).
+        scores: Dictionary mapping candidate_id to score.
 
     Returns:
         True if update succeeded, False otherwise.
     """
-    if not csv_path.exists():
+    if not csv_path.exists() or not scores:
         return False
 
     try:
@@ -81,15 +91,109 @@ def update_candidate_score(csv_path: Path, candidate_id: str, score: float) -> b
             CREATE TABLE candidates AS
             SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
         """)
-        conn.execute(
-            "UPDATE candidates SET qwen_score = ? WHERE candidate_id = ?",
-            [str(score), candidate_id],
-        )
+
+        for candidate_id, score in scores.items():
+            conn.execute(
+                "UPDATE candidates SET qwen_score = ? WHERE candidate_id = ?",
+                [str(score), candidate_id],
+            )
+
         conn.execute(f"COPY candidates TO '{csv_path}' (HEADER, DELIMITER ',')")
         conn.close()
-        return True
     except duckdb.Error:
         return False
+    else:
+        return True
+
+
+def load_reranker_model(
+    model_name: str,
+) -> tuple[AutoModelForSequenceClassification, AutoTokenizer, torch.device]:
+    """Load the Qwen3-Reranker model and tokenizer.
+
+    Args:
+        model_name: HuggingFace model identifier.
+
+    Returns:
+        Tuple of (model, tokenizer, device).
+
+    Raises:
+        ImportError: If transformers or torch are not installed.
+    """
+    try:
+        import torch
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    except ImportError as exc:
+        msg = "transformers and torch are required for Qwen scoring"
+        raise ImportError(msg) from exc
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    model = AutoModelForSequenceClassification.from_pretrained(
+        model_name,
+        trust_remote_code=True,
+        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+    )
+    model.to(device)
+    model.eval()
+
+    return model, tokenizer, device
+
+
+def score_batch(
+    model: AutoModelForSequenceClassification,
+    tokenizer: AutoTokenizer,
+    device: torch.device,
+    pairs: list[tuple[str, str]],
+) -> list[float]:
+    """Score a batch of (query, document) pairs using the reranker.
+
+    For keyword extraction, the query is the candidate keyword and the
+    document is the sentence context.
+
+    Args:
+        model: The reranker model.
+        tokenizer: The tokenizer.
+        device: The device to use.
+        pairs: List of (candidate_text, sentence) pairs.
+
+    Returns:
+        List of relevance scores (0.0 to 1.0).
+    """
+    import torch
+
+    if not pairs:
+        return []
+
+    # Format pairs for reranker - using sentence as query, candidate as doc
+    # This measures how relevant the candidate is to the sentence context
+    inputs = tokenizer(
+        [p[1] for p in pairs],  # sentences as queries
+        [p[0] for p in pairs],  # candidates as documents
+        padding=True,
+        truncation=True,
+        max_length=512,
+        return_tensors="pt",
+    )
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+
+    with torch.no_grad():
+        outputs = model(**inputs)
+        # Get relevance scores (logits or scores depending on model)
+        if hasattr(outputs, "logits"):
+            scores = torch.sigmoid(outputs.logits.squeeze(-1))
+        else:
+            scores = outputs[0].squeeze(-1)
+
+        # Normalize to 0-1 range if needed
+        scores = scores.cpu().numpy().tolist()
+
+        # Handle single score case
+        if isinstance(scores, float):
+            scores = [scores]
+
+    return scores
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -102,17 +206,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         Parsed argument namespace.
     """
     parser = argparse.ArgumentParser(
-        description="Score keyword candidates using Qwen embedding models.",
-    )
-    parser.add_argument(
-        "--ids",
-        nargs="+",
-        help="Specific candidate IDs to score.",
+        description="Score keyword candidates using Qwen3-Reranker model.",
     )
     parser.add_argument(
         "--model",
-        default="Qwen/Qwen3-Embedding-0.6B",
-        help="HuggingFace model to use for scoring.",
+        default="Qwen/Qwen3-Reranker-8B",
+        help="HuggingFace model to use for scoring (default: Qwen/Qwen3-Reranker-8B).",
     )
     parser.add_argument(
         "--batch-size",
@@ -151,12 +250,57 @@ def score_candidates_main(args: argparse.Namespace) -> int:
         print(f"Error: Candidates CSV not found: {candidates_csv}", file=sys.stderr)
         return 1
 
-    print(f"Model: {args.model}")
-    print(f"Batch size: {args.batch_size}")
-    print(f"Candidates: {candidates_csv}")
+    # Get unscored candidates
+    candidates = get_unscored_candidates(candidates_csv)
+    if not candidates:
+        print("No unscored candidates found.")
+        return 0
 
-    # Placeholder for actual scoring logic (Phase 2)
-    print("Qwen scoring not yet implemented (Phase 2).")
+    print(f"Found {len(candidates)} unscored candidates")
+    print(f"Loading model: {args.model}")
+
+    try:
+        model, tokenizer, device = load_reranker_model(args.model)
+        print(f"Model loaded on device: {device}")
+    except ImportError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Error loading model: {exc}", file=sys.stderr)
+        return 1
+
+    # Process in batches
+    batch_size = args.batch_size
+    total_scored = 0
+    all_scores: dict[str, float] = {}
+
+    for i in range(0, len(candidates), batch_size):
+        batch = candidates[i : i + batch_size]
+
+        # Prepare (candidate_text, sentence) pairs
+        pairs = [(c.get("candidate_text", ""), c.get("sentence", "")) for c in batch]
+
+        # Score the batch
+        scores = score_batch(model, tokenizer, device, pairs)
+
+        # Map scores back to candidate IDs
+        for candidate, score in zip(batch, scores, strict=False):
+            candidate_id = candidate.get("candidate_id", "")
+            if candidate_id:
+                all_scores[candidate_id] = score
+                total_scored += 1
+
+        print(f"Scored batch {i // batch_size + 1}: {len(batch)} candidates")
+
+    # Update all scores at once
+    if all_scores:
+        success = update_candidate_scores_batch(candidates_csv, all_scores)
+        if not success:
+            print("Error: Failed to update scores in CSV", file=sys.stderr)
+            return 1
+
+    print(f"\nTotal scored: {total_scored} candidates")
+    print(f"Output: {candidates_csv}")
 
     return 0
 

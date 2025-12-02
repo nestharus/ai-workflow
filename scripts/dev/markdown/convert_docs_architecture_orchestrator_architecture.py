@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Converter script for orchestrator-architecture.md.
 
-Converts docs/architecture/orchestrator-architecture.md to docs/architecture/orchestrator-architecture.yml.
+Converts docs/architecture/orchestrator-architecture.md
+to docs/architecture/orchestrator-architecture.yml.
 """
 
 from pathlib import Path

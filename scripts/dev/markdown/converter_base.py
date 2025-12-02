@@ -310,7 +310,7 @@ class MarkdownConverter:
         parts = self.source_path.parts
         try:
             docs_idx = parts.index("docs")
-            relevant_parts = parts[docs_idx + 1 :]
+            relevant_parts = list(parts[docs_idx + 1 :])
         except ValueError:
             relevant_parts = [self.source_path.stem]
 
@@ -357,7 +357,7 @@ class MarkdownConverter:
             sections=sections,
         )
 
-    def to_yaml_dict(self, doc: Document) -> dict:
+    def to_yaml_dict(self, doc: Document) -> dict[str, object]:
         """Convert a Document to a dictionary suitable for YAML output.
 
         Args:
