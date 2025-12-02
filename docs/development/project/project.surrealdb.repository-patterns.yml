@@ -29,12 +29,23 @@ sections:
       acquisition.
     sample_code:
       description: SurrealDB query pattern inside a repository method.
-      code: "from app.infrastructure.surrealdb.pool import SurrealDBPool\nfrom app.contracts.users import User\nclass SurrealUserRepository:\n\
-        \    \"\"\"Repository for user persistence in SurrealDB.\"\"\"\n    def __init__(self, pool: SurrealDBPool) -> None:\n\
-        \        \"\"\"Create repository with SurrealDB pool.\"\"\"\n        self._pool = pool\n    async def get_by_id(self,\
-        \ user_id: str) -> User | None:\n        \"\"\"Retrieve user by ID from SurrealDB.\"\"\"\n        async with self._pool.acquire()\
-        \ as conn:\n            result = await conn.query(\n                \"SELECT * FROM users WHERE id = $id LIMIT 1;\"\
-        ,\n                {\"id\": user_id}\n            )\n        # Process result and return domain model\n        ..."
+      code: |
+        from app.infrastructure.surrealdb.pool import SurrealDBPool
+        from app.contracts.users import User
+        class SurrealUserRepository:
+            """Repository for user persistence in SurrealDB."""
+            def __init__(self, pool: SurrealDBPool) -> None:
+                """Create repository with SurrealDB pool."""
+                self._pool = pool
+            async def get_by_id(self, user_id: str) -> User | None:
+                """Retrieve user by ID from SurrealDB."""
+                async with self._pool.acquire() as conn:
+                    result = await conn.query(
+                        "SELECT * FROM users WHERE id = $id LIMIT 1;",
+                        {"id": user_id}
+                    )
+                # Process result and return domain model
+                ...
     items:
       - id: surrealdb.connection
         type: rule

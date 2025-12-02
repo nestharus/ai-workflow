@@ -15,8 +15,10 @@ sections:
     text: 'The orchestrator executes agents using subprocess calls:'
   - id: internal-invocation-command-code-2
     type: code
-    text: "# INTERNAL USE ONLY: Orchestrator invoking an agent\ndroid exec --skip-permissions-unsafe --model\
-      \ custom:gemini-3-pro-preview-low \\\n  --f \"/tmp/agent_context_123.json\""
+    text: |
+      # INTERNAL USE ONLY: Orchestrator invoking an agent
+      droid exec --skip-permissions-unsafe --model custom:gemini-3-pro-preview-low \
+        --f "/tmp/agent_context_123.json"
 - id: command-components
   index: 2
   title: Command Components

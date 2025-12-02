@@ -17,15 +17,24 @@ sections:
       routing.
   - id: 41-configure-quality-reviewer-r4-coderabbitmacroscope-code-2
     type: code
-    text: "cat << EOF > .coderabbit.yaml\nreviews:\n  profile: \"assertive\"\n  request_changes_workflow:\
-      \ true\n  auto_review:\n    enabled: true\n  # Intelligent Routing Labels for Automated Orchestrator\n\
-      \  # The orchestrator parses these labels from GitHub webhook events and routes feedback to the\
-      \ appropriate agent automatically.\n  labeling_instructions:\n    - label: \"feedback:r1_strategy\"\
-      \n      instructions: \"Apply if comments question fundamental strategy, architecture, or high-level\
-      \ phasing. (Route to Strategy Planner).\"\n    - label: \"feedback:r2_planning\"\n      instructions:\
-      \ \"Apply if the implementation does not match the defined tasks or the plan was incomplete. (Route\
-      \ to Planner).\"\n    - label: \"feedback:r3_implementation\"\n      instructions: \"Apply for code\
-      \ style, bugs, performance issues, or security vulnerabilities. (Route to Editor).\"\nEOF"
+    text: |
+      cat << EOF > .coderabbit.yaml
+      reviews:
+        profile: "assertive"
+        request_changes_workflow: true
+        auto_review:
+          enabled: true
+        # Intelligent Routing Labels for Automated Orchestrator
+        # The orchestrator parses these labels from GitHub webhook events and routes feedback to the
+        # appropriate agent automatically.
+        labeling_instructions:
+          - label: "feedback:r1_strategy"
+            instructions: "Apply if comments question fundamental strategy, architecture, or high-level phasing. (Route to Strategy Planner)."
+          - label: "feedback:r2_planning"
+            instructions: "Apply if the implementation does not match the defined tasks or the plan was incomplete. (Route to Planner)."
+          - label: "feedback:r3_implementation"
+            instructions: "Apply for code style, bugs, performance issues, or security vulnerabilities. (Route to Editor)."
+      EOF
 - id: 42-implement-automated-feedback-routing
   index: 2
   title: 4.2. Implement Automated Feedback Routing

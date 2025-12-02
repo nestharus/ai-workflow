@@ -53,10 +53,19 @@ sections:
   items:
   - id: 21-registry-structure-code-1
     type: code
-    text: "features:\n  health:\n    name: Health Checks\n    description: Liveness and readiness probes\
-      \ for monitoring\n    use_cases:\n      - id: UC-HEALTH-001\n        endpoint: /health\n       \
-      \ method: GET\n        description: Root liveness check returns 200 OK\n        expected_behavior:\
-      \ |\n          Returns HTTP 200 with JSON body {\"status\": \"ok\"}.\n        test_tier: e2e"
+    text: |
+      features:
+        health:
+          name: Health Checks
+          description: Liveness and readiness probes for monitoring
+          use_cases:
+            - id: UC-HEALTH-001
+              endpoint: /health
+              method: GET
+              description: Root liveness check returns 200 OK
+              expected_behavior: |
+                Returns HTTP 200 with JSON body {"status": "ok"}.
+              test_tier: e2e
 - id: 22-field-definitions
   index: 4
   title: 2.2 Field Definitions
@@ -145,10 +154,15 @@ sections:
   items:
   - id: 31-basic-usage-code-1
     type: code
-    text: "import pytest\n\n@pytest.mark.usecase(\"UC-HEALTH-001\")\nasync def test_root_health_check_returns_ok(api_client):\n\
-      \    \"\"\"Verify root liveness probe returns healthy status.\"\"\"\n    response = await api_client.get(\"\
-      /health\")\n    assert response.status_code == 200\n    assert response.json() == {\"status\": \"\
-      ok\"}"
+    text: |
+      import pytest
+
+      @pytest.mark.usecase("UC-HEALTH-001")
+      async def test_root_health_check_returns_ok(api_client):
+          """Verify root liveness probe returns healthy status."""
+          response = await api_client.get("/health")
+          assert response.status_code == 200
+          assert response.json() == {"status": "ok"}
 - id: 32-multiple-use-cases-per-test
   index: 9
   title: 3.2 Multiple Use-Cases per Test
@@ -160,11 +174,18 @@ sections:
     text: 'When a single test validates multiple related scenarios, apply multiple markers:'
   - id: 32-multiple-use-cases-per-test-code-2
     type: code
-    text: "@pytest.mark.usecase(\"UC-EXAMPLE-010\")\n@pytest.mark.usecase(\"UC-EXAMPLE-011\")\nasync def\
-      \ test_pagination_validation_errors(async_client):\n    \"\"\"Verify pagination parameters are validated.\"\
-      \"\"\n    # Test page < 1\n    response = await async_client.get(\"/api/v1/examples/processed-messages?page=0\"\
-      )\n    assert response.status_code == 422\n\n    # Test page_size < 1\n    response = await async_client.get(\"\
-      /api/v1/examples/processed-messages?page_size=0\")\n    assert response.status_code == 422"
+    text: |
+      @pytest.mark.usecase("UC-EXAMPLE-010")
+      @pytest.mark.usecase("UC-EXAMPLE-011")
+      async def test_pagination_validation_errors(async_client):
+          """Verify pagination parameters are validated."""
+          # Test page < 1
+          response = await async_client.get("/api/v1/examples/processed-messages?page=0")
+          assert response.status_code == 422
+
+          # Test page_size < 1
+          response = await async_client.get("/api/v1/examples/processed-messages?page_size=0")
+          assert response.status_code == 422
 - id: 33-marker-registration
   index: 10
   title: 3.3 Marker Registration
@@ -176,8 +197,12 @@ sections:
     text: 'The `usecase` marker must be registered in `pyproject.toml` under `[tool.pytest.ini_options]`:'
   - id: 33-marker-registration-code-2
     type: code
-    text: "[tool.pytest.ini_options]\nmarkers = [\n    \"e2e: marks tests as end-to-end (requires running\
-      \ server)\",\n    \"usecase(id): links test to a use-case ID from tests/use_cases.yaml\"\n]"
+    text: |
+      [tool.pytest.ini_options]
+      markers = [
+          "e2e: marks tests as end-to-end (requires running server)",
+          "usecase(id): links test to a use-case ID from tests/use_cases.yaml"
+      ]
 - id: 34-best-practice-one-test-per-use-case
   index: 11
   title: '3.4 Best Practice: One Test Per Use-Case'
@@ -219,12 +244,19 @@ sections:
     text: 'After test runs, a summary will display:'
   - id: 41-report-format-code-2
     type: code
-    text: "========== Use-Case Coverage Report ==========\nTotal use-cases: 20\nCovered: 15 (75%)\nUncovered:\
-      \ 5\n\nUncovered use-cases:\n  - UC-HEALTH-003: Readiness check returns \"unhealthy\" when SurrealDB\
-      \ pool missing\n  - UC-HEALTH-004: Readiness check returns \"unhealthy\" when Elasticsearch client\
-      \ missing\n  - UC-EXAMPLE-008: List processed messages supports custom pagination parameters\n \
-      \ - UC-EXAMPLE-009: List processed messages returns page 2 correctly\n  - UC-EXAMPLE-015: Get processed\
-      \ message handles different message types\n=============================================="
+    text: |
+      ========== Use-Case Coverage Report ==========
+      Total use-cases: 20
+      Covered: 15 (75%)
+      Uncovered: 5
+
+      Uncovered use-cases:
+        - UC-HEALTH-003: Readiness check returns "unhealthy" when SurrealDB pool missing
+        - UC-HEALTH-004: Readiness check returns "unhealthy" when Elasticsearch client missing
+        - UC-EXAMPLE-008: List processed messages supports custom pagination parameters
+        - UC-EXAMPLE-009: List processed messages returns page 2 correctly
+        - UC-EXAMPLE-015: Get processed message handles different message types
+      ==============================================
 - id: 42-ci-integration
   index: 14
   title: 4.2 CI Integration
@@ -267,11 +299,20 @@ sections:
   items:
   - id: 51-stub-pattern-code-1
     type: code
-    text: "import pytest\n\n@pytest.mark.skip(reason=\"Not implemented yet\")\n@pytest.mark.usecase(\"\
-      UC-HEALTH-003\")\nasync def test_health_unhealthy_when_surrealdb_missing(async_client):\n    \"\"\
-      \"Readiness check returns unhealthy when SurrealDB pool is missing.\n\n    TODO: Implement by:\n\
-      \    1. Override app.state to set surrealdb_pool = None\n    2. Call /api/v1/health\n    3. Assert\
-      \ status is \"unhealthy\"\n    \"\"\"\n    pass"
+    text: |
+      import pytest
+
+      @pytest.mark.skip(reason="Not implemented yet")
+      @pytest.mark.usecase("UC-HEALTH-003")
+      async def test_health_unhealthy_when_surrealdb_missing(async_client):
+          """Readiness check returns unhealthy when SurrealDB pool is missing.
+
+          TODO: Implement by:
+          1. Override app.state to set surrealdb_pool = None
+          2. Call /api/v1/health
+          3. Assert status is "unhealthy"
+          """
+          pass
 - id: 52-benefits-of-stub-tests
   index: 18
   title: 5.2 Benefits of Stub Tests
@@ -518,22 +559,39 @@ sections:
     text: '**Use-case definition in `tests/use_cases.yaml`:**'
   - id: 81-complete-example-use-case-to-test-code-2
     type: code
-    text: "- id: UC-EXAMPLE-002\n  endpoint: /api/v1/examples/process\n  method: POST\n  description:\
-      \ Process endpoint succeeds with valid message\n  expected_behavior: |\n    Given a valid ExampleRequest\
-      \ with message between 1-500 chars,\n    returns HTTP 200 with ExampleResponse containing processed\
-      \ result.\n  test_tier: integration"
+    text: |
+      - id: UC-EXAMPLE-002
+        endpoint: /api/v1/examples/process
+        method: POST
+        description: Process endpoint succeeds with valid message
+        expected_behavior: |
+          Given a valid ExampleRequest with message between 1-500 chars,
+          returns HTTP 200 with ExampleResponse containing processed result.
+        test_tier: integration
   - id: 81-complete-example-use-case-to-test-corresponding-test-in-tests
     type: text
     text: '**Corresponding test in `tests/integration/test_example_process.py`:**'
   - id: 81-complete-example-use-case-to-test-code-4
     type: code
-    text: "import pytest\nfrom datetime import datetime, UTC\n\n@pytest.mark.usecase(\"UC-EXAMPLE-002\"\
-      )\nasync def test_process_valid_message_succeeds(async_client):\n    \"\"\"Process endpoint returns\
-      \ ExampleResponse for valid input.\n\n    Use-case: UC-EXAMPLE-002\n    \"\"\"\n    payload = {\"\
-      message\": \"Hello World\", \"type\": \"info\"}\n\n    response = await async_client.post(\"/api/v1/examples/process\"\
-      , json=payload)\n\n    assert response.status_code == 200\n    data = response.json()\n    assert\
-      \ \"[PROCESSED]\" in data[\"result\"]\n    assert data[\"original_length\"] == len(\"Hello World\"\
-      )\n    assert \"processed_at\" in data"
+    text: |
+      import pytest
+      from datetime import datetime, UTC
+
+      @pytest.mark.usecase("UC-EXAMPLE-002")
+      async def test_process_valid_message_succeeds(async_client):
+          """Process endpoint returns ExampleResponse for valid input.
+
+          Use-case: UC-EXAMPLE-002
+          """
+          payload = {"message": "Hello World", "type": "info"}
+
+          response = await async_client.post("/api/v1/examples/process", json=payload)
+
+          assert response.status_code == 200
+          data = response.json()
+          assert "[PROCESSED]" in data["result"]
+          assert data["original_length"] == len("Hello World")
+          assert "processed_at" in data
 - id: 82-stub-test-example
   index: 34
   title: 8.2 Stub Test Example
@@ -542,12 +600,22 @@ sections:
   items:
   - id: 82-stub-test-example-code-1
     type: code
-    text: "import pytest\n\n@pytest.mark.skip(reason=\"Not implemented yet\")\n@pytest.mark.usecase(\"\
-      UC-EXAMPLE-014\")\nasync def test_get_message_returns_404_for_nonexistent_id(async_client):\n  \
-      \  \"\"\"Get processed message returns 404 for non-existent ID.\n\n    Use-case: UC-EXAMPLE-014\n\
-      \n    TODO: Implement by:\n    1. Request /api/v1/examples/processed-messages/nonexistent-id\n \
-      \   2. Assert HTTP 404\n    3. Assert response body contains AppError with appropriate message\n\
-      \    \"\"\"\n    pass"
+    text: |
+      import pytest
+
+      @pytest.mark.skip(reason="Not implemented yet")
+      @pytest.mark.usecase("UC-EXAMPLE-014")
+      async def test_get_message_returns_404_for_nonexistent_id(async_client):
+          """Get processed message returns 404 for non-existent ID.
+
+          Use-case: UC-EXAMPLE-014
+
+          TODO: Implement by:
+          1. Request /api/v1/examples/processed-messages/nonexistent-id
+          2. Assert HTTP 404
+          3. Assert response body contains AppError with appropriate message
+          """
+          pass
 - id: 83-test-covering-multiple-use-cases
   index: 35
   title: 8.3 Test Covering Multiple Use-Cases
@@ -556,14 +624,32 @@ sections:
   items:
   - id: 83-test-covering-multiple-use-cases-code-1
     type: code
-    text: "import pytest\n\n@pytest.mark.usecase(\"UC-EXAMPLE-004\")\n@pytest.mark.usecase(\"UC-EXAMPLE-005\"\
-      )\nasync def test_process_message_length_validation(async_client):\n    \"\"\"Process endpoint validates\
-      \ message length constraints.\n\n    Use-cases:\n    - UC-EXAMPLE-004: Message exceeding 500 chars\
-      \ fails\n    - UC-EXAMPLE-005: Empty message fails\n    \"\"\"\n    # Too long\n    long_message\
-      \ = \"x\" * 501\n    response = await async_client.post(\n        \"/api/v1/examples/process\",\n\
-      \        json={\"message\": long_message}\n    )\n    assert response.status_code == 422\n\n   \
-      \ # Too short (empty after validation)\n    response = await async_client.post(\n        \"/api/v1/examples/process\"\
-      ,\n        json={\"message\": \"\"}\n    )\n    assert response.status_code == 422"
+    text: |
+      import pytest
+
+      @pytest.mark.usecase("UC-EXAMPLE-004")
+      @pytest.mark.usecase("UC-EXAMPLE-005")
+      async def test_process_message_length_validation(async_client):
+          """Process endpoint validates message length constraints.
+
+          Use-cases:
+          - UC-EXAMPLE-004: Message exceeding 500 chars fails
+          - UC-EXAMPLE-005: Empty message fails
+          """
+          # Too long
+          long_message = "x" * 501
+          response = await async_client.post(
+              "/api/v1/examples/process",
+              json={"message": long_message}
+          )
+          assert response.status_code == 422
+
+          # Too short (empty after validation)
+          response = await async_client.post(
+              "/api/v1/examples/process",
+              json={"message": ""}
+          )
+          assert response.status_code == 422
 - id: related-documentation
   index: 36
   title: Related Documentation

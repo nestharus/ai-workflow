@@ -114,11 +114,21 @@ sections:
     text: '**Examples - GENERAL:**'
   - id: general-scope-code-16
     type: code
-    text: "# general.rest.api-patterns.yml\n- id: url-versioning\n  content: \"Use /api/{version} prefix\
-      \ for API versioning\"\n  # Applies to any REST API project\n\n# general.fastapi.router-patterns.yml\n\
-      - id: router-prefix\n  content: \"Use prefix parameter in APIRouter for route grouping\"\n  # Applies\
-      \ to any FastAPI project\n\n# general.python.docstrings-guide.yml\n- id: google-style\n  content:\
-      \ \"Use Google-style docstrings for functions\"\n  # Applies to any Python project"
+    text: |
+      # general.rest.api-patterns.yml
+      - id: url-versioning
+        content: "Use /api/{version} prefix for API versioning"
+        # Applies to any REST API project
+
+      # general.fastapi.router-patterns.yml
+      - id: router-prefix
+        content: "Use prefix parameter in APIRouter for route grouping"
+        # Applies to any FastAPI project
+
+      # general.python.docstrings-guide.yml
+      - id: google-style
+        content: "Use Google-style docstrings for functions"
+        # Applies to any Python project
 - id: project-scope
   index: 6
   title: PROJECT Scope
@@ -168,13 +178,21 @@ sections:
     text: '**Examples - PROJECT:**'
   - id: project-scope-code-14
     type: code
-    text: "# project.fastapi.factory-patterns.yml\n- id: create-app-function\n  content: \"The create_app\
-      \ function in app/core/factory.py constructs the FastAPI application\"\n  # References specific\
-      \ file path\n\n# project.python.exception-patterns.yml\n- id: app-error-usage\n  content: \"Use\
-      \ AppError from app/core/errors.py for all application errors\"\n  # References project-specific\
-      \ component\n\n# project.surrealdb.repository-patterns.yml\n- id: repository-base\n  content: \"\
-      All repositories inherit from RepositoryBase in app/repositories/base.py\"\n  # References project-specific\
-      \ base class"
+    text: |
+      # project.fastapi.factory-patterns.yml
+      - id: create-app-function
+        content: "The create_app function in app/core/factory.py constructs the FastAPI application"
+        # References specific file path
+
+      # project.python.exception-patterns.yml
+      - id: app-error-usage
+        content: "Use AppError from app/core/errors.py for all application errors"
+        # References project-specific component
+
+      # project.surrealdb.repository-patterns.yml
+      - id: repository-base
+        content: "All repositories inherit from RepositoryBase in app/repositories/base.py"
+        # References project-specific base class
   - id: project-scope-15
     type: rule
     text: '**Important:** While `app/*` references are a strong indicator of PROJECT scope, they are not
@@ -789,16 +807,20 @@ sections:
     text: '**Bad:**'
   - id: rule-1-explain-the-implementation-code-3
     type: code
-    text: "- id: response-serialization\n  content: \"See project.fastapi.factory-patterns.yml for ORJSONResponse\
-      \ configuration.\""
+    text: |
+      - id: response-serialization
+        content: "See project.fastapi.factory-patterns.yml for ORJSONResponse configuration."
   - id: rule-1-explain-the-implementation-good
     type: text
     text: '**Good:**'
   - id: rule-1-explain-the-implementation-code-5
     type: code
-    text: "- id: response-serialization\n  content: |\n    ORJSONResponse is configured as default_response_class\
-      \ in the create_app\n    function (app/core/factory.py) via FastAPI(default_response_class=ORJSONResponse).\n\
-      \    This enables automatic orjson serialization for all endpoints without per-route configuration."
+    text: |
+      - id: response-serialization
+        content: |
+          ORJSONResponse is configured as default_response_class in the create_app
+          function (app/core/factory.py) via FastAPI(default_response_class=ORJSONResponse).
+          This enables automatic orjson serialization for all endpoints without per-route configuration.
 - id: rule-2-include-the-file-path
   index: 23
   title: 'Rule 2: Include the File Path'
@@ -813,13 +835,17 @@ sections:
     text: '**Bad:**'
   - id: rule-2-include-the-file-path-code-3
     type: code
-    text: "- id: error-handling\n  content: \"Errors are handled centrally.\""
+    text: |
+      - id: error-handling
+        content: "Errors are handled centrally."
   - id: rule-2-include-the-file-path-good
     type: text
     text: '**Good:**'
   - id: rule-2-include-the-file-path-code-5
     type: code
-    text: "- id: error-handling\n  content: \"Errors are handled centrally in app/core/errors.py.\""
+    text: |
+      - id: error-handling
+        content: "Errors are handled centrally in app/core/errors.py."
 - id: rule-3-include-function-class-or-field-name
   index: 24
   title: 'Rule 3: Include Function, Class, or Field Name'
@@ -834,14 +860,17 @@ sections:
     text: '**Bad:**'
   - id: rule-3-include-function-class-or-field-name-code-3
     type: code
-    text: "- id: app-factory\n  content: \"See app/core/factory.py for application setup.\""
+    text: |
+      - id: app-factory
+        content: "See app/core/factory.py for application setup."
   - id: rule-3-include-function-class-or-field-name-good
     type: text
     text: '**Good:**'
   - id: rule-3-include-function-class-or-field-name-code-5
     type: code
-    text: "- id: app-factory\n  content: \"The create_app function in app/core/factory.py sets up the\
-      \ application.\""
+    text: |
+      - id: app-factory
+        content: "The create_app function in app/core/factory.py sets up the application."
 - id: rule-4-describe-what-it-does
   index: 25
   title: 'Rule 4: Describe What It Does'
@@ -856,15 +885,21 @@ sections:
     text: '**Bad:**'
   - id: rule-4-describe-what-it-does-code-3
     type: code
-    text: "- id: middleware-setup\n  content: \"Middleware is configured in app/core/factory.py.\""
+    text: |
+      - id: middleware-setup
+        content: "Middleware is configured in app/core/factory.py."
   - id: rule-4-describe-what-it-does-good
     type: text
     text: '**Good:**'
   - id: rule-4-describe-what-it-does-code-5
     type: code
-    text: "- id: middleware-setup\n  content: |\n    Middleware is registered in the create_app function\
-      \ (app/core/factory.py):\n    - CORSMiddleware for cross-origin requests\n    - RequestLoggingMiddleware\
-      \ for request/response logging\n    - ErrorHandlingMiddleware for exception translation"
+    text: |
+      - id: middleware-setup
+        content: |
+          Middleware is registered in the create_app function (app/core/factory.py):
+          - CORSMiddleware for cross-origin requests
+          - RequestLoggingMiddleware for request/response logging
+          - ErrorHandlingMiddleware for exception translation
 - id: rule-5-explain-why-its-relevant
   index: 26
   title: 'Rule 5: Explain Why It''s Relevant'
@@ -879,15 +914,20 @@ sections:
     text: '**Bad:**'
   - id: rule-5-explain-why-its-relevant-code-3
     type: code
-    text: "- id: router-mounting\n  content: \"Routers are mounted in create_app.\""
+    text: |
+      - id: router-mounting
+        content: "Routers are mounted in create_app."
   - id: rule-5-explain-why-its-relevant-good
     type: text
     text: '**Good:**'
   - id: rule-5-explain-why-its-relevant-code-5
     type: code
-    text: "- id: router-mounting\n  content: |\n    Routers are mounted in the create_app function (app/core/factory.py)\
-      \ using\n    app.include_router(). This centralizes route registration and ensures\n    consistent\
-      \ prefix application (/api/v1)."
+    text: |
+      - id: router-mounting
+        content: |
+          Routers are mounted in the create_app function (app/core/factory.py) using
+          app.include_router(). This centralizes route registration and ensures
+          consistent prefix application (/api/v1).
   - id: rule-5-explain-why-its-relevant-6
     type: text
     text: '---'
