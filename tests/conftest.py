@@ -275,7 +275,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Load and parse the use-case registry from YAML for coverage tracking."""
-    registry_path = Path(__file__).parent / "use_cases.yaml"
+    registry_path = Path(__file__).parent / "docs" / "use_cases.yaml"
 
     usecase_registry: dict = {
         "all_ids": [],

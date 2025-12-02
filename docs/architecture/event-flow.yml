@@ -38,25 +38,33 @@ sections:
   items:
   - id: flow-stages-webhook-reception-github
     type: text
-    text: 'Webhook Reception: GitHub sends a webhook to the Webhook Receiver service'
+    title: Webhook Reception
+    text: GitHub sends a webhook to the Webhook Receiver service
   - id: flow-stages-signature-verification-th
     type: text
-    text: 'Signature Verification: The receiver verifies the HMAC SHA256 signature'
+    title: Signature Verification
+    text: The receiver verifies the HMAC SHA256 signature
   - id: flow-stages-event-forwarding-validate
     type: text
-    text: 'Event Forwarding: Validated events are forwarded to the Orchestrator'
+    title: Event Forwarding
+    text: Validated events are forwarded to the Orchestrator
   - id: flow-stages-workflow-routing-the-orch
     type: rule
-    text: 'Workflow Routing: The orchestrator determines which workflow should handle the event'
+    title: Workflow Routing
+    text: The orchestrator determines which workflow should handle the event
   - id: flow-stages-agent-invocation-the-orch
     type: text
-    text: 'Agent Invocation: The orchestrator spawns an agent via `droid exec` subprocess'
+    title: Agent Invocation
+    text: The orchestrator spawns an agent via `droid exec` subprocess
   - id: flow-stages-github-mcp-access-the-age
     type: text
-    text: 'GitHub MCP Access: The agent fetches additional details from GitHub using MCP'
+    title: GitHub MCP Access
+    text: The agent fetches additional details from GitHub using MCP
   - id: flow-stages-result-submission-the-age
     type: text
-    text: 'Result Submission: The agent submits its result back to the orchestrator'
+    title: Result Submission
+    text: The agent submits its result back to the orchestrator
   - id: flow-stages-result-processing-the-orc
     type: text
-    text: 'Result Processing: The orchestrator processes the result and continues the workflow'
+    title: Result Processing
+    text: The orchestrator processes the result and continues the workflow

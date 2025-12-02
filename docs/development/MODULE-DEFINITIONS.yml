@@ -69,38 +69,38 @@ sections:
     type: definition
     text: 'Definition: Knowledge that applies to any project using the same technology stack.'
   - id: general-scope-includes
-    type: text
-    text: 'Includes:'
-  - id: general-scope-resthttp-protocol-rules
-    type: text
-    text: REST/HTTP protocol rules
-  - id: general-scope-fastapi-framework-best-practic
-    type: text
-    text: FastAPI framework best practices
-  - id: general-scope-python-language-conventions
-    type: text
-    text: Python language conventions
-  - id: general-scope-database-patterns-surrealdb
-    type: text
-    text: Database patterns (SurrealDB, Elasticsearch)
-  - id: general-scope-content-that-does-not-referenc
-    type: text
-    text: Content that does not reference `app/*` paths (necessary but not sufficient—see note below)
+    title: Includes
+    items:
+    - id: general-scope-resthttp-protocol-rules
+      type: text
+      text: REST/HTTP protocol rules
+    - id: general-scope-fastapi-framework-best-practic
+      type: text
+      text: FastAPI framework best practices
+    - id: general-scope-python-language-conventions
+      type: text
+      text: Python language conventions
+    - id: general-scope-database-patterns-surrealdb
+      type: text
+      text: Database patterns (SurrealDB, Elasticsearch)
+    - id: general-scope-content-that-does-not-referenc
+      type: text
+      text: Content that does not reference `app/*` paths (necessary but not sufficient—see note below)
   - id: general-scope-excludes
-    type: text
-    text: 'Excludes:'
-  - id: general-scope-references-to-app-paths
-    type: text
-    text: References to `app/*` paths
-  - id: general-scope-project-specific-components
-    type: step
-    text: Project-specific components (`AppError`, `create_app`, `RepositoryBase`)
-  - id: general-scope-implementation-wiring-specific
-    type: text
-    text: Implementation wiring specific to this project
-  - id: general-scope-project-specific-naming-conven
-    type: text
-    text: Project-specific naming conventions
+    title: Excludes
+    items:
+    - id: general-scope-references-to-app-paths
+      type: text
+      text: References to `app/*` paths
+    - id: general-scope-project-specific-components
+      type: step
+      text: Project-specific components (`AppError`, `create_app`, `RepositoryBase`)
+    - id: general-scope-implementation-wiring-specific
+      type: text
+      text: Implementation wiring specific to this project
+    - id: general-scope-project-specific-naming-conven
+      type: text
+      text: Project-specific naming conventions
   - id: general-scope-13
     type: rule
     text: |
@@ -141,32 +141,32 @@ sections:
     text: |
       Definition: Knowledge specific to this project's implementation.
   - id: project-scope-includes
-    type: text
-    text: 'Includes:'
-  - id: project-scope-concrete-app-paths-eg
-    type: example
-    text: Concrete `app/*` paths (e.g., `app/core/factory.py`)
-  - id: project-scope-project-specific-components
-    type: step
-    text: Project-specific components (`AppError`, `create_app`, `RepositoryBase`)
-  - id: project-scope-implementation-wiring-how-com
-    type: text
-    text: Implementation wiring (how components are connected)
-  - id: project-scope-project-specific-conventions-a
-    type: text
-    text: Project-specific conventions and decisions
+    title: Includes
+    items:
+    - id: project-scope-concrete-app-paths-eg
+      type: example
+      text: Concrete `app/*` paths (e.g., `app/core/factory.py`)
+    - id: project-scope-project-specific-components
+      type: step
+      text: Project-specific components (`AppError`, `create_app`, `RepositoryBase`)
+    - id: project-scope-implementation-wiring-how-com
+      type: text
+      text: Implementation wiring (how components are connected)
+    - id: project-scope-project-specific-conventions-a
+      type: text
+      text: Project-specific conventions and decisions
   - id: project-scope-excludes
-    type: text
-    text: 'Excludes:'
-  - id: project-scope-restating-general-principles
-    type: text
-    text: Restating GENERAL principles
-  - id: project-scope-generic-framework-documentatio
-    type: text
-    text: Generic framework documentation
-  - id: project-scope-language-tutorials
-    type: text
-    text: Language tutorials
+    title: Excludes
+    items:
+    - id: project-scope-restating-general-principles
+      type: text
+      text: Restating GENERAL principles
+    - id: project-scope-generic-framework-documentatio
+      type: text
+      text: Generic framework documentation
+    - id: project-scope-language-tutorials
+      type: text
+      text: Language tutorials
   - id: project-scope-11
     type: rule
     text: |
@@ -243,40 +243,41 @@ sections:
   items:
   - id: api-patterns-purpose-rules-for-creat
     type: text
-    text: 'Purpose: Rules for creating and designing APIs (not documenting existing APIs).'
+    title: Purpose
+    text: Rules for creating and designing APIs (not documenting existing APIs).
   - id: api-patterns-includes
-    type: text
-    text: 'Includes:'
-  - id: api-patterns-url-structure-and-versioning
-    type: text
-    text: URL structure and versioning
-  - id: api-patterns-requestresponse-modeling
-    type: text
-    text: Request/response modeling
-  - id: api-patterns-openapi-documentation-standard
-    type: text
-    text: OpenAPI documentation standards
-  - id: api-patterns-deprecation-metadata
-    type: text
-    text: Deprecation metadata
-  - id: api-patterns-query-parameter-conventions
-    type: text
-    text: Query parameter conventions
-  - id: api-patterns-path-parameter-conventions
-    type: text
-    text: Path parameter conventions
+    title: Includes
+    items:
+    - id: api-patterns-url-structure-and-versioning
+      type: text
+      text: URL structure and versioning
+    - id: api-patterns-requestresponse-modeling
+      type: text
+      text: Request/response modeling
+    - id: api-patterns-openapi-documentation-standard
+      type: text
+      text: OpenAPI documentation standards
+    - id: api-patterns-deprecation-metadata
+      type: text
+      text: Deprecation metadata
+    - id: api-patterns-query-parameter-conventions
+      type: text
+      text: Query parameter conventions
+    - id: api-patterns-path-parameter-conventions
+      type: text
+      text: Path parameter conventions
   - id: api-patterns-excludes
-    type: text
-    text: 'Excludes:'
-  - id: api-patterns-documentation-of-existing-apis
-    type: text
-    text: Documentation of existing APIs → `architecture`
-  - id: api-patterns-implementation-wiring-facto
-    type: text
-    text: Implementation wiring → `factory-patterns`
-  - id: api-patterns-error-response-design-excep
-    type: text
-    text: Error response design → `exception-patterns`
+    title: Excludes
+    items:
+    - id: api-patterns-documentation-of-existing-apis
+      type: text
+      text: Documentation of existing APIs → `architecture`
+    - id: api-patterns-implementation-wiring-facto
+      type: text
+      text: Implementation wiring → `factory-patterns`
+    - id: api-patterns-error-response-design-excep
+      type: text
+      text: Error response design → `exception-patterns`
   - id: api-patterns-test-question-is-this-a
     type: step
     text: |
@@ -313,40 +314,41 @@ sections:
   items:
   - id: architecture-or-architectural-patterns-purpose-documentation-of
     type: text
-    text: 'Purpose: Documentation of how the system is structured and what components exist.'
+    title: Purpose
+    text: Documentation of how the system is structured and what components exist.
   - id: architecture-or-architectural-patterns-includes
-    type: text
-    text: 'Includes:'
-  - id: architecture-or-architectural-patterns-layer-integration-how-service
-    type: text
-    text: Layer integration (how services, repositories, and routers interact)
-  - id: architecture-or-architectural-patterns-dependency-flow-what-depends
-    type: text
-    text: Dependency flow (what depends on what)
-  - id: architecture-or-architectural-patterns-existing-apis-what-endpoints
-    type: text
-    text: Existing APIs (what endpoints exist and what they do)
-  - id: architecture-or-architectural-patterns-readiness-checks-what-depende
-    type: text
-    text: Readiness checks (what dependencies are checked)
-  - id: architecture-or-architectural-patterns-component-inventory
-    type: text
-    text: Component inventory
-  - id: architecture-or-architectural-patterns-system-boundaries
-    type: text
-    text: System boundaries
+    title: Includes
+    items:
+    - id: architecture-or-architectural-patterns-layer-integration-how-service
+      type: text
+      text: Layer integration (how services, repositories, and routers interact)
+    - id: architecture-or-architectural-patterns-dependency-flow-what-depends
+      type: text
+      text: Dependency flow (what depends on what)
+    - id: architecture-or-architectural-patterns-existing-apis-what-endpoints
+      type: text
+      text: Existing APIs (what endpoints exist and what they do)
+    - id: architecture-or-architectural-patterns-readiness-checks-what-depende
+      type: text
+      text: Readiness checks (what dependencies are checked)
+    - id: architecture-or-architectural-patterns-component-inventory
+      type: text
+      text: Component inventory
+    - id: architecture-or-architectural-patterns-system-boundaries
+      type: text
+      text: System boundaries
   - id: architecture-or-architectural-patterns-excludes
-    type: text
-    text: 'Excludes:'
-  - id: architecture-or-architectural-patterns-rules-for-creating-apis-api
-    type: text
-    text: Rules for creating APIs → `api-patterns`
-  - id: architecture-or-architectural-patterns-implementation-wiring-facto
-    type: text
-    text: Implementation wiring → `factory-patterns`
-  - id: architecture-or-architectural-patterns-how-to-implement-services-s
-    type: text
-    text: How to implement services → `service-patterns`
+    title: Excludes
+    items:
+    - id: architecture-or-architectural-patterns-rules-for-creating-apis-api
+      type: text
+      text: Rules for creating APIs → `api-patterns`
+    - id: architecture-or-architectural-patterns-implementation-wiring-facto
+      type: text
+      text: Implementation wiring → `factory-patterns`
+    - id: architecture-or-architectural-patterns-how-to-implement-services-s
+      type: text
+      text: How to implement services → `service-patterns`
   - id: architecture-or-architectural-patterns-test-question-is-this-de
     type: text
     text: |
@@ -376,40 +378,41 @@ sections:
   items:
   - id: factory-patterns-purpose-rules-for-const
     type: text
-    text: 'Purpose: Rules for constructing and configuring the application.'
+    title: Purpose
+    text: Rules for constructing and configuring the application.
   - id: factory-patterns-includes
-    type: text
-    text: 'Includes:'
-  - id: factory-patterns-application-construction-cre
-    type: step
-    text: Application construction (`create_app`)
-  - id: factory-patterns-middleware-registration
-    type: text
-    text: Middleware registration
-  - id: factory-patterns-router-mounting
-    type: text
-    text: Router mounting
-  - id: factory-patterns-default-response-class-configu
-    type: text
-    text: Default response class configuration
-  - id: factory-patterns-lifespan-management
-    type: text
-    text: Lifespan management
-  - id: factory-patterns-startupshutdown-hooks
-    type: text
-    text: Startup/shutdown hooks
+    title: Includes
+    items:
+    - id: factory-patterns-application-construction-cre
+      type: step
+      text: Application construction (`create_app`)
+    - id: factory-patterns-middleware-registration
+      type: text
+      text: Middleware registration
+    - id: factory-patterns-router-mounting
+      type: text
+      text: Router mounting
+    - id: factory-patterns-default-response-class-configu
+      type: text
+      text: Default response class configuration
+    - id: factory-patterns-lifespan-management
+      type: text
+      text: Lifespan management
+    - id: factory-patterns-startupshutdown-hooks
+      type: text
+      text: Startup/shutdown hooks
   - id: factory-patterns-excludes
-    type: text
-    text: 'Excludes:'
-  - id: factory-patterns-api-design-rules-api-patter
-    type: text
-    text: API design rules → `api-patterns`
-  - id: factory-patterns-system-architecture-archite
-    type: text
-    text: System architecture → `architecture`
-  - id: factory-patterns-middleware-behavior-middlew
-    type: text
-    text: Middleware behavior → `middleware-patterns`
+    title: Excludes
+    items:
+    - id: factory-patterns-api-design-rules-api-patter
+      type: text
+      text: API design rules → `api-patterns`
+    - id: factory-patterns-system-architecture-archite
+      type: text
+      text: System architecture → `architecture`
+    - id: factory-patterns-middleware-behavior-middlew
+      type: text
+      text: Middleware behavior → `middleware-patterns`
   - id: factory-patterns-test-question-is-this-ab
     type: text
     text: 'Test Question: "Is this about how to wire up the application at startup?"'
@@ -441,37 +444,38 @@ sections:
   items:
   - id: exception-patterns-purpose-rules-for-handl
     type: text
-    text: 'Purpose: Rules for handling errors and exceptions.'
+    title: Purpose
+    text: Rules for handling errors and exceptions.
   - id: exception-patterns-includes
-    type: text
-    text: 'Includes:'
-  - id: exception-patterns-error-handling-strategies
-    type: text
-    text: Error handling strategies
-  - id: exception-patterns-apperror-usage-project-scope
-    type: text
-    text: AppError usage (PROJECT scope)
-  - id: exception-patterns-validation-error-handling
-    type: text
-    text: Validation error handling
-  - id: exception-patterns-exception-handlers-registratio
-    type: text
-    text: Exception handlers registration
-  - id: exception-patterns-error-response-formatting
-    type: text
-    text: Error response formatting
+    title: Includes
+    items:
+    - id: exception-patterns-error-handling-strategies
+      type: text
+      text: Error handling strategies
+    - id: exception-patterns-apperror-usage-project-scope
+      type: text
+      text: AppError usage (PROJECT scope)
+    - id: exception-patterns-validation-error-handling
+      type: text
+      text: Validation error handling
+    - id: exception-patterns-exception-handlers-registratio
+      type: text
+      text: Exception handlers registration
+    - id: exception-patterns-error-response-formatting
+      type: text
+      text: Error response formatting
   - id: exception-patterns-excludes
-    type: text
-    text: 'Excludes:'
-  - id: exception-patterns-api-error-response-design-a
-    type: text
-    text: API error response design → `api-patterns`
-  - id: exception-patterns-error-handling-architecture
-    type: text
-    text: Error handling architecture → `architecture`
-  - id: exception-patterns-http-status-code-conventions
-    type: text
-    text: HTTP status code conventions → `rest`
+    title: Excludes
+    items:
+    - id: exception-patterns-api-error-response-design-a
+      type: text
+      text: API error response design → `api-patterns`
+    - id: exception-patterns-error-handling-architecture
+      type: text
+      text: Error handling architecture → `architecture`
+    - id: exception-patterns-http-status-code-conventions
+      type: text
+      text: HTTP status code conventions → `rest`
   - id: exception-patterns-test-question-is-this-ab
     type: text
     text: 'Test Question: "Is this about how to handle exceptions?"'
@@ -483,37 +487,38 @@ sections:
   items:
   - id: router-patterns-purpose-rules-for-organ
     type: text
-    text: 'Purpose: Rules for organizing and registering routers.'
+    title: Purpose
+    text: Rules for organizing and registering routers.
   - id: router-patterns-includes
-    type: text
-    text: 'Includes:'
-  - id: router-patterns-apirouter-usage-and-configurat
-    type: text
-    text: APIRouter usage and configuration
-  - id: router-patterns-route-decorators-routerget
-    type: text
-    text: Route decorators (`@router.get`, `@router.post`)
-  - id: router-patterns-endpoint-wiring-connecting-ha
-    type: text
-    text: Endpoint wiring (connecting handlers to routes)
-  - id: router-patterns-router-registration-patterns
-    type: text
-    text: Router registration patterns
-  - id: router-patterns-route-grouping
-    type: text
-    text: Route grouping
+    title: Includes
+    items:
+    - id: router-patterns-apirouter-usage-and-configurat
+      type: text
+      text: APIRouter usage and configuration
+    - id: router-patterns-route-decorators-routerget
+      type: text
+      text: Route decorators (`@router.get`, `@router.post`)
+    - id: router-patterns-endpoint-wiring-connecting-ha
+      type: text
+      text: Endpoint wiring (connecting handlers to routes)
+    - id: router-patterns-router-registration-patterns
+      type: text
+      text: Router registration patterns
+    - id: router-patterns-route-grouping
+      type: text
+      text: Route grouping
   - id: router-patterns-excludes
-    type: text
-    text: 'Excludes:'
-  - id: router-patterns-api-design-api-patterns
-    type: text
-    text: API design → `api-patterns`
-  - id: router-patterns-factory-wiring-mounting-route
-    type: text
-    text: Factory wiring (mounting routers) → `factory-patterns`
-  - id: router-patterns-dependency-injection-depend
-    type: text
-    text: Dependency injection → `dependency-patterns`
+    title: Excludes
+    items:
+    - id: router-patterns-api-design-api-patterns
+      type: text
+      text: API design → `api-patterns`
+    - id: router-patterns-factory-wiring-mounting-route
+      type: text
+      text: Factory wiring (mounting routers) → `factory-patterns`
+    - id: router-patterns-dependency-injection-depend
+      type: text
+      text: Dependency injection → `dependency-patterns`
   - id: router-patterns-test-question-is-this-ab
     type: text
     text: 'Test Question: "Is this about how to organize routers?"'
@@ -525,37 +530,38 @@ sections:
   items:
   - id: service-patterns-purpose-rules-for-imple
     type: text
-    text: 'Purpose: Rules for implementing the service layer.'
+    title: Purpose
+    text: Rules for implementing the service layer.
   - id: service-patterns-includes
-    type: text
-    text: 'Includes:'
-  - id: service-patterns-service-layer-patterns
-    type: text
-    text: Service layer patterns
-  - id: service-patterns-business-logic-delegation
-    type: text
-    text: Business logic delegation
-  - id: service-patterns-service-construction
-    type: text
-    text: Service construction
-  - id: service-patterns-service-dependencies
-    type: text
-    text: Service dependencies
-  - id: service-patterns-transaction-boundaries
-    type: text
-    text: Transaction boundaries
+    title: Includes
+    items:
+    - id: service-patterns-service-layer-patterns
+      type: text
+      text: Service layer patterns
+    - id: service-patterns-business-logic-delegation
+      type: text
+      text: Business logic delegation
+    - id: service-patterns-service-construction
+      type: text
+      text: Service construction
+    - id: service-patterns-service-dependencies
+      type: text
+      text: Service dependencies
+    - id: service-patterns-transaction-boundaries
+      type: text
+      text: Transaction boundaries
   - id: service-patterns-excludes
-    type: text
-    text: 'Excludes:'
-  - id: service-patterns-api-layer-router-patterns
-    type: text
-    text: API layer → `router-patterns`
-  - id: service-patterns-data-access-repository-patt
-    type: text
-    text: Data access → `repository-patterns`
-  - id: service-patterns-dependency-injection-depend
-    type: text
-    text: Dependency injection → `dependency-patterns`
+    title: Excludes
+    items:
+    - id: service-patterns-api-layer-router-patterns
+      type: text
+      text: API layer → `router-patterns`
+    - id: service-patterns-data-access-repository-patt
+      type: text
+      text: Data access → `repository-patterns`
+    - id: service-patterns-dependency-injection-depend
+      type: text
+      text: Dependency injection → `dependency-patterns`
   - id: service-patterns-test-question-is-this-ab
     type: text
     text: 'Test Question: "Is this about how to implement services?"'
@@ -567,37 +573,38 @@ sections:
   items:
   - id: repository-patterns-purpose-rules-for-imple
     type: text
-    text: 'Purpose: Rules for implementing data access.'
+    title: Purpose
+    text: Rules for implementing data access.
   - id: repository-patterns-includes
-    type: text
-    text: 'Includes:'
-  - id: repository-patterns-data-access-patterns
-    type: text
-    text: Data access patterns
-  - id: repository-patterns-query-patterns
-    type: text
-    text: Query patterns
-  - id: repository-patterns-repository-construction
-    type: text
-    text: Repository construction
-  - id: repository-patterns-crud-operations
-    type: text
-    text: CRUD operations
-  - id: repository-patterns-query-builders
-    type: text
-    text: Query builders
+    title: Includes
+    items:
+    - id: repository-patterns-data-access-patterns
+      type: text
+      text: Data access patterns
+    - id: repository-patterns-query-patterns
+      type: text
+      text: Query patterns
+    - id: repository-patterns-repository-construction
+      type: text
+      text: Repository construction
+    - id: repository-patterns-crud-operations
+      type: text
+      text: CRUD operations
+    - id: repository-patterns-query-builders
+      type: text
+      text: Query builders
   - id: repository-patterns-excludes
-    type: text
-    text: 'Excludes:'
-  - id: repository-patterns-service-layer-service-patte
-    type: text
-    text: Service layer → `service-patterns`
-  - id: repository-patterns-database-pooling-connection
-    type: text
-    text: Database pooling → `connection-pooling-patterns`
-  - id: repository-patterns-database-specific-syntax-belo
-    type: text
-    text: Database-specific syntax (belongs in database module)
+    title: Excludes
+    items:
+    - id: repository-patterns-service-layer-service-patte
+      type: text
+      text: Service layer → `service-patterns`
+    - id: repository-patterns-database-pooling-connection
+      type: text
+      text: Database pooling → `connection-pooling-patterns`
+    - id: repository-patterns-database-specific-syntax-belo
+      type: text
+      text: Database-specific syntax (belongs in database module)
   - id: repository-patterns-test-question-is-this-ab
     type: text
     text: 'Test Question: "Is this about how to access data?"'
@@ -621,31 +628,32 @@ sections:
   items:
   - id: middleware-patterns-purpose-rules-for-confi
     type: text
-    text: 'Purpose: Rules for configuring middleware.'
+    title: Purpose
+    text: Rules for configuring middleware.
   - id: middleware-patterns-includes
-    type: text
-    text: 'Includes:'
-  - id: middleware-patterns-middleware-stack-configuration
-    type: text
-    text: Middleware stack configuration
-  - id: middleware-patterns-middleware-ordering
-    type: text
-    text: Middleware ordering
-  - id: middleware-patterns-middleware-options
-    type: text
-    text: Middleware options
-  - id: middleware-patterns-requestresponse-middleware
-    type: text
-    text: Request/response middleware
+    title: Includes
+    items:
+    - id: middleware-patterns-middleware-stack-configuration
+      type: text
+      text: Middleware stack configuration
+    - id: middleware-patterns-middleware-ordering
+      type: text
+      text: Middleware ordering
+    - id: middleware-patterns-middleware-options
+      type: text
+      text: Middleware options
+    - id: middleware-patterns-requestresponse-middleware
+      type: text
+      text: Request/response middleware
   - id: middleware-patterns-excludes
-    type: text
-    text: 'Excludes:'
-  - id: middleware-patterns-factory-wiring-registering-mi
-    type: text
-    text: Factory wiring (registering middleware) → `factory-patterns`
-  - id: middleware-patterns-architecture-middleware-role
-    type: text
-    text: Architecture (middleware role) → `architecture`
+    title: Excludes
+    items:
+    - id: middleware-patterns-factory-wiring-registering-mi
+      type: text
+      text: Factory wiring (registering middleware) → `factory-patterns`
+    - id: middleware-patterns-architecture-middleware-role
+      type: text
+      text: Architecture (middleware role) → `architecture`
   - id: middleware-patterns-test-question-is-this-ab
     type: text
     text: 'Test Question: "Is this about how to configure middleware?"'
@@ -657,31 +665,32 @@ sections:
   items:
   - id: settings-patterns-purpose-rules-for-manag
     type: text
-    text: 'Purpose: Rules for managing configuration.'
+    title: Purpose
+    text: Rules for managing configuration.
   - id: settings-patterns-includes
-    type: text
-    text: 'Includes:'
-  - id: settings-patterns-settings-model-design
-    type: text
-    text: Settings model design
-  - id: settings-patterns-environment-variable-binding
-    type: text
-    text: Environment variable binding
-  - id: settings-patterns-configuration-validation
-    type: text
-    text: Configuration validation
-  - id: settings-patterns-settings-access-patterns
-    type: text
-    text: Settings access patterns
+    title: Includes
+    items:
+    - id: settings-patterns-settings-model-design
+      type: text
+      text: Settings model design
+    - id: settings-patterns-environment-variable-binding
+      type: text
+      text: Environment variable binding
+    - id: settings-patterns-configuration-validation
+      type: text
+      text: Configuration validation
+    - id: settings-patterns-settings-access-patterns
+      type: text
+      text: Settings access patterns
   - id: settings-patterns-excludes
-    type: text
-    text: 'Excludes:'
-  - id: settings-patterns-factory-wiring-loading-settin
-    type: text
-    text: Factory wiring (loading settings) → `factory-patterns`
-  - id: settings-patterns-architecture-settings-role
-    type: text
-    text: Architecture (settings role) → `architecture`
+    title: Excludes
+    items:
+    - id: settings-patterns-factory-wiring-loading-settin
+      type: text
+      text: Factory wiring (loading settings) → `factory-patterns`
+    - id: settings-patterns-architecture-settings-role
+      type: text
+      text: Architecture (settings role) → `architecture`
   - id: settings-patterns-test-question-is-this-ab
     type: text
     text: 'Test Question: "Is this about how to manage configuration?"'
@@ -693,31 +702,32 @@ sections:
   items:
   - id: connection-pooling-patterns-purpose-rules-for-manag
     type: text
-    text: 'Purpose: Rules for managing database connections.'
+    title: Purpose
+    text: Rules for managing database connections.
   - id: connection-pooling-patterns-includes
-    type: text
-    text: 'Includes:'
-  - id: connection-pooling-patterns-connection-pool-configuration
-    type: text
-    text: Connection pool configuration
-  - id: connection-pooling-patterns-client-management
-    type: text
-    text: Client management
-  - id: connection-pooling-patterns-connection-cleanup
-    type: text
-    text: Connection cleanup
-  - id: connection-pooling-patterns-pool-sizing
-    type: text
-    text: Pool sizing
+    title: Includes
+    items:
+    - id: connection-pooling-patterns-connection-pool-configuration
+      type: text
+      text: Connection pool configuration
+    - id: connection-pooling-patterns-client-management
+      type: text
+      text: Client management
+    - id: connection-pooling-patterns-connection-cleanup
+      type: text
+      text: Connection cleanup
+    - id: connection-pooling-patterns-pool-sizing
+      type: text
+      text: Pool sizing
   - id: connection-pooling-patterns-excludes
-    type: text
-    text: 'Excludes:'
-  - id: connection-pooling-patterns-repository-patterns-reposit
-    type: text
-    text: Repository patterns → `repository-patterns`
-  - id: connection-pooling-patterns-factory-wiring-factory-patt
-    type: text
-    text: Factory wiring → `factory-patterns`
+    title: Excludes
+    items:
+    - id: connection-pooling-patterns-repository-patterns-reposit
+      type: text
+      text: Repository patterns → `repository-patterns`
+    - id: connection-pooling-patterns-factory-wiring-factory-patt
+      type: text
+      text: Factory wiring → `factory-patterns`
   - id: connection-pooling-patterns-test-question-is-this-ab
     type: text
     text: 'Test Question: "Is this about how to manage connections?"'
@@ -729,31 +739,32 @@ sections:
   items:
   - id: dependency-patterns-purpose-rules-for-depen
     type: text
-    text: 'Purpose: Rules for dependency injection.'
+    title: Purpose
+    text: Rules for dependency injection.
   - id: dependency-patterns-includes
-    type: text
-    text: 'Includes:'
-  - id: dependency-patterns-depends-usage
-    type: text
-    text: '`Depends()` usage'
-  - id: dependency-patterns-factory-functions-for-dependen
-    type: text
-    text: Factory functions for dependencies
-  - id: dependency-patterns-injection-patterns
-    type: text
-    text: Injection patterns
-  - id: dependency-patterns-dependency-lifecycle
-    type: text
-    text: Dependency lifecycle
+    title: Includes
+    items:
+    - id: dependency-patterns-depends-usage
+      type: text
+      text: '`Depends()` usage'
+    - id: dependency-patterns-factory-functions-for-dependen
+      type: text
+      text: Factory functions for dependencies
+    - id: dependency-patterns-injection-patterns
+      type: text
+      text: Injection patterns
+    - id: dependency-patterns-dependency-lifecycle
+      type: text
+      text: Dependency lifecycle
   - id: dependency-patterns-excludes
-    type: text
-    text: 'Excludes:'
-  - id: dependency-patterns-factory-wiring-factory-patt
-    type: text
-    text: Factory wiring → `factory-patterns`
-  - id: dependency-patterns-architecture-architecture
-    type: text
-    text: Architecture → `architecture`
+    title: Excludes
+    items:
+    - id: dependency-patterns-factory-wiring-factory-patt
+      type: text
+      text: Factory wiring → `factory-patterns`
+    - id: dependency-patterns-architecture-architecture
+      type: text
+      text: Architecture → `architecture`
   - id: dependency-patterns-test-question-is-this-ab
     type: text
     text: 'Test Question: "Is this about how to inject dependencies?"'
@@ -765,31 +776,32 @@ sections:
   items:
   - id: docstrings-guide-purpose-documentation-sta
     type: text
-    text: 'Purpose: Documentation standards (not a pattern, but a guide).'
+    title: Purpose
+    text: Documentation standards (not a pattern, but a guide).
   - id: docstrings-guide-includes
-    type: text
-    text: 'Includes:'
-  - id: docstrings-guide-docstring-conventions
-    type: text
-    text: Docstring conventions
-  - id: docstrings-guide-formatting-rules
-    type: text
-    text: Formatting rules
-  - id: docstrings-guide-documentation-structure
-    type: text
-    text: Documentation structure
-  - id: docstrings-guide-example-formats
-    type: text
-    text: Example formats
+    title: Includes
+    items:
+    - id: docstrings-guide-docstring-conventions
+      type: text
+      text: Docstring conventions
+    - id: docstrings-guide-formatting-rules
+      type: text
+      text: Formatting rules
+    - id: docstrings-guide-documentation-structure
+      type: text
+      text: Documentation structure
+    - id: docstrings-guide-example-formats
+      type: text
+      text: Example formats
   - id: docstrings-guide-excludes
-    type: text
-    text: 'Excludes:'
-  - id: docstrings-guide-code-patterns
-    type: text
-    text: Code patterns
-  - id: docstrings-guide-implementation-guidelines
-    type: text
-    text: Implementation guidelines
+    title: Excludes
+    items:
+    - id: docstrings-guide-code-patterns
+      type: text
+      text: Code patterns
+    - id: docstrings-guide-implementation-guidelines
+      type: text
+      text: Implementation guidelines
   - id: docstrings-guide-test-question-is-this-ab
     type: text
     text: 'Test Question: "Is this about how to write documentation?"'
@@ -815,24 +827,24 @@ sections:
     type: rule
     text: Don't just point to a file; explain what it does.
   - id: rule-1-explain-the-implementation-bad
-    type: text
-    text: 'Bad:'
-  - id: rule-1-explain-the-implementation-code-3
-    type: code
-    text: |
-      - id: response-serialization
-        content: "See project.fastapi.factory-patterns.yml for ORJSONResponse configuration."
+    title: Bad
+    items:
+    - id: rule-1-explain-the-implementation-code-3
+      type: code
+      text: |
+        - id: response-serialization
+          content: "See project.fastapi.factory-patterns.yml for ORJSONResponse configuration."
   - id: rule-1-explain-the-implementation-good
-    type: text
-    text: 'Good:'
-  - id: rule-1-explain-the-implementation-code-5
-    type: code
-    text: |
-      - id: response-serialization
-        content: |
-          ORJSONResponse is configured as default_response_class in the create_app
-          function (app/core/factory.py) via FastAPI(default_response_class=ORJSONResponse).
-          This enables automatic orjson serialization for all endpoints without per-route configuration.
+    title: Good
+    items:
+    - id: rule-1-explain-the-implementation-code-5
+      type: code
+      text: |
+        - id: response-serialization
+          content: |
+            ORJSONResponse is configured as default_response_class in the create_app
+            function (app/core/factory.py) via FastAPI(default_response_class=ORJSONResponse).
+            This enables automatic orjson serialization for all endpoints without per-route configuration.
 - id: rule-2-include-the-file-path
   index: 23
   title: 'Rule 2: Include the File Path'
@@ -843,21 +855,21 @@ sections:
     type: rule
     text: Always include the concrete file path.
   - id: rule-2-include-the-file-path-bad
-    type: text
-    text: 'Bad:'
-  - id: rule-2-include-the-file-path-code-3
-    type: code
-    text: |
-      - id: error-handling
-        content: "Errors are handled centrally."
+    title: Bad
+    items:
+    - id: rule-2-include-the-file-path-code-3
+      type: code
+      text: |
+        - id: error-handling
+          content: "Errors are handled centrally."
   - id: rule-2-include-the-file-path-good
-    type: text
-    text: 'Good:'
-  - id: rule-2-include-the-file-path-code-5
-    type: code
-    text: |
-      - id: error-handling
-        content: "Errors are handled centrally in app/core/errors.py."
+    title: Good
+    items:
+    - id: rule-2-include-the-file-path-code-5
+      type: code
+      text: |
+        - id: error-handling
+          content: "Errors are handled centrally in app/core/errors.py."
 - id: rule-3-include-function-class-or-field-name
   index: 24
   title: 'Rule 3: Include Function, Class, or Field Name'
@@ -868,21 +880,21 @@ sections:
     type: text
     text: Help readers find the exact location.
   - id: rule-3-include-function-class-or-field-name-bad
-    type: text
-    text: 'Bad:'
-  - id: rule-3-include-function-class-or-field-name-code-3
-    type: code
-    text: |
-      - id: app-factory
-        content: "See app/core/factory.py for application setup."
+    title: Bad
+    items:
+    - id: rule-3-include-function-class-or-field-name-code-3
+      type: code
+      text: |
+        - id: app-factory
+          content: "See app/core/factory.py for application setup."
   - id: rule-3-include-function-class-or-field-name-good
-    type: text
-    text: 'Good:'
-  - id: rule-3-include-function-class-or-field-name-code-5
-    type: code
-    text: |
-      - id: app-factory
-        content: "The create_app function in app/core/factory.py sets up the application."
+    title: Good
+    items:
+    - id: rule-3-include-function-class-or-field-name-code-5
+      type: code
+      text: |
+        - id: app-factory
+          content: "The create_app function in app/core/factory.py sets up the application."
 - id: rule-4-describe-what-it-does
   index: 25
   title: 'Rule 4: Describe What It Does'
@@ -893,25 +905,25 @@ sections:
     type: text
     text: Explain the purpose, not just the location.
   - id: rule-4-describe-what-it-does-bad
-    type: text
-    text: 'Bad:'
-  - id: rule-4-describe-what-it-does-code-3
-    type: code
-    text: |
-      - id: middleware-setup
-        content: "Middleware is configured in app/core/factory.py."
+    title: Bad
+    items:
+    - id: rule-4-describe-what-it-does-code-3
+      type: code
+      text: |
+        - id: middleware-setup
+          content: "Middleware is configured in app/core/factory.py."
   - id: rule-4-describe-what-it-does-good
-    type: text
-    text: 'Good:'
-  - id: rule-4-describe-what-it-does-code-5
-    type: code
-    text: |
-      - id: middleware-setup
-        content: |
-          Middleware is registered in the create_app function (app/core/factory.py):
-          - CORSMiddleware for cross-origin requests
-          - RequestLoggingMiddleware for request/response logging
-          - ErrorHandlingMiddleware for exception translation
+    title: Good
+    items:
+    - id: rule-4-describe-what-it-does-code-5
+      type: code
+      text: |
+        - id: middleware-setup
+          content: |
+            Middleware is registered in the create_app function (app/core/factory.py):
+            - CORSMiddleware for cross-origin requests
+            - RequestLoggingMiddleware for request/response logging
+            - ErrorHandlingMiddleware for exception translation
 - id: rule-5-explain-why-its-relevant
   index: 26
   title: 'Rule 5: Explain Why It''s Relevant'
@@ -922,24 +934,24 @@ sections:
     type: text
     text: Connect the reference to the current pattern.
   - id: rule-5-explain-why-its-relevant-bad
-    type: text
-    text: 'Bad:'
-  - id: rule-5-explain-why-its-relevant-code-3
-    type: code
-    text: |
-      - id: router-mounting
-        content: "Routers are mounted in create_app."
+    title: Bad
+    items:
+    - id: rule-5-explain-why-its-relevant-code-3
+      type: code
+      text: |
+        - id: router-mounting
+          content: "Routers are mounted in create_app."
   - id: rule-5-explain-why-its-relevant-good
-    type: text
-    text: 'Good:'
-  - id: rule-5-explain-why-its-relevant-code-5
-    type: code
-    text: |
-      - id: router-mounting
-        content: |
-          Routers are mounted in the create_app function (app/core/factory.py) using
-          app.include_router(). This centralizes route registration and ensures
-          consistent prefix application (/api/v1).
+    title: Good
+    items:
+    - id: rule-5-explain-why-its-relevant-code-5
+      type: code
+      text: |
+        - id: router-mounting
+          content: |
+            Routers are mounted in the create_app function (app/core/factory.py) using
+            app.include_router(). This centralizes route registration and ensures
+            consistent prefix application (/api/v1).
   - id: rule-5-explain-why-its-relevant-6
     type: text
     text: '---'
@@ -1024,29 +1036,29 @@ sections:
       Content: "The `/api/v1` prefix is used for all API routes. Routers are mounted in `create_app` using
       `app.include_router(router, prefix='/api/v1')`."
   - id: example-classification-analysis
-    type: text
-    text: 'Analysis:'
-  - id: example-classification-domains-rest-fastapi
-    type: text
-    text: |
-      Domains: `['rest', 'fastapi']` — URL structure relates to REST, router mounting relates to FastAPI
-  - id: example-classification-scope-references-create_app
-    type: step
-    text: 'Scope: References `create_app` → PROJECT for the mounting part; URL convention → GENERAL'
-  - id: example-classification-pattern-url-structure-api
-    type: text
-    text: 'Pattern: URL structure → `api-patterns`; mounting → `factory-patterns`'
-  - id: example-classification-decision-split-by-scope
-    type: text
-    text: 'Decision: Split by scope (not by domain):'
-  - id: example-classification-generalrestapi-patternsyml
-    type: text
-    text: |
-      `general.rest.api-patterns.yml`: URL versioning convention (domains: `['rest']`)
-  - id: example-classification-projectfastapifactory-patte
-    type: text
-    text: |
-      `project.fastapi.factory-patterns.yml`: Router mounting implementation (domains: `['fastapi']`)
+    title: Analysis
+    items:
+    - id: example-classification-domains-rest-fastapi
+      type: text
+      text: |
+        Domains: `['rest', 'fastapi']` — URL structure relates to REST, router mounting relates to FastAPI
+    - id: example-classification-scope-references-create_app
+      type: step
+      text: 'Scope: References `create_app` → PROJECT for the mounting part; URL convention → GENERAL'
+    - id: example-classification-pattern-url-structure-api
+      type: text
+      text: 'Pattern: URL structure → `api-patterns`; mounting → `factory-patterns`'
+    - id: example-classification-decision-split-by-scope
+      type: text
+      text: 'Decision: Split by scope (not by domain):'
+    - id: example-classification-generalrestapi-patternsyml
+      type: text
+      text: |
+        `general.rest.api-patterns.yml`: URL versioning convention (domains: `['rest']`)
+    - id: example-classification-projectfastapifactory-patte
+      type: text
+      text: |
+        `project.fastapi.factory-patterns.yml`: Router mounting implementation (domains: `['fastapi']`)
   - id: example-classification-9
     type: note
     text: |

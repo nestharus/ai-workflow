@@ -43,7 +43,7 @@ sections:
   items:
   - id: 2-use-case-registry-1
     type: text
-    text: The canonical use-case registry lives at `tests/use_cases.yaml`. This file catalogs all testable
+    text: The canonical use-case registry lives at `tests/docs/use_cases.yaml`. This file catalogs all testable
       scenarios for the API, organized by feature area.
 - id: 21-registry-structure
   index: 3
@@ -202,7 +202,7 @@ sections:
       [tool.pytest.ini_options]
       markers = [
           "e2e: marks tests as end-to-end (requires running server)",
-          "usecase(id): links test to a use-case ID from tests/use_cases.yaml"
+          "usecase(id): links test to a use-case ID from tests/docs/use_cases.yaml"
       ]
 - id: 34-best-practice-one-test-per-use-case
   index: 11
@@ -366,7 +366,7 @@ sections:
   items:
   - id: 61-registry-maintenance-update-testsuse_casesyaml
     type: text
-    text: Update `tests/use_cases.yaml` when adding new endpoints or discovering new scenarios
+    text: Update `tests/docs/use_cases.yaml` when adding new endpoints or discovering new scenarios
   - id: 61-registry-maintenance-add-pytestmarkusecaseuc
     type: text
     text: Add `@pytest.mark.usecase("UC-XXX-NNN")` markers to tests for automatic coverage detection
@@ -556,7 +556,7 @@ sections:
   items:
   - id: 81-complete-example-use-case-to-test-use-case-definition-in-test
     type: text
-    text: 'Use-case definition in `tests/use_cases.yaml`:'
+    text: 'Use-case definition in `tests/docs/use_cases.yaml`:'
   - id: 81-complete-example-use-case-to-test-code-2
     type: code
     text: |
@@ -664,4 +664,4 @@ sections:
     text: '[Testing Workflow](testing-workflow.md) - Test execution commands and tier descriptions'
   - id: related-documentation-1-use-cases
     type: text
-    text: '[tests/use_cases.yaml](../../tests/use_cases.yaml) - The canonical use-case registry'
+    text: '[tests/docs/use_cases.yaml](../../tests/docs/use_cases.yaml) - The canonical use-case registry'

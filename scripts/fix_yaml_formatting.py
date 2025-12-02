@@ -472,15 +472,30 @@ def main() -> int:
         print(f"Error: project root not found at {project_root}", file=sys.stderr)
         return 1
 
-    # Collect all YAML files from docs/, tests/, scripts/, and root
+    # Collect all YAML files from docs/, scripts/docs/, tests/, and root
+    # Excludes to_adapt/ directories
     yml_files: list[Path] = []
     yml_files.extend(project_root.glob("*.yml"))
     yml_files.extend(project_root.glob("*.yaml"))
-    for subdir in ["docs", "tests", "scripts"]:
+    for subdir in ["docs", "tests"]:
         subdir_path = project_root / subdir
         if subdir_path.exists():
-            yml_files.extend(subdir_path.rglob("*.yml"))
-            yml_files.extend(subdir_path.rglob("*.yaml"))
+            for f in subdir_path.rglob("*.yml"):
+                if "to_adapt" not in str(f):
+                    yml_files.append(f)
+            for f in subdir_path.rglob("*.yaml"):
+                if "to_adapt" not in str(f):
+                    yml_files.append(f)
+    # Also include scripts/docs/ and tests/docs/ if they exist
+    for extra_docs in ["scripts/docs", "tests/docs"]:
+        extra_path = project_root / extra_docs
+        if extra_path.exists():
+            for f in extra_path.rglob("*.yml"):
+                if "to_adapt" not in str(f):
+                    yml_files.append(f)
+            for f in extra_path.rglob("*.yaml"):
+                if "to_adapt" not in str(f):
+                    yml_files.append(f)
 
     fixed_count = 0
 

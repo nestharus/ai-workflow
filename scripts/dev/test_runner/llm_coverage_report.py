@@ -819,7 +819,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "-u",
         type=Path,
         default=None,
-        help="Path to use_cases.yaml (defaults to tests/use_cases.yaml).",
+        help="Path to use_cases.yaml (defaults to tests/docs/use_cases.yaml).",
     )
     parser.add_argument(
         "--repo-root",
@@ -930,7 +930,7 @@ def _generate_llm_coverage(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
 
     repo_root = _guess_repo_root(args.repo_root)
-    usecase_yaml_path = args.use_cases or (repo_root / "tests" / "use_cases.yaml")
+    usecase_yaml_path = args.use_cases or (repo_root / "tests" / "docs" / "use_cases.yaml")
 
     if args.tests_root:
         tests_roots = list(args.tests_root)

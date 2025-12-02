@@ -164,7 +164,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
     "e2e: marks tests as end-to-end (requires running server)",
-    "usecase: links test to a specific use-case ID from the registry (tests/use_cases.yaml)"
+    "usecase: links test to a specific use-case ID from the registry (tests/docs/use_cases.yaml)"
 ]
 usecase_coverage_threshold_e2e = 100  # Minimum e2e use-case coverage percentage (0-100)
 usecase_coverage_threshold_integration = 100  # Minimum integration use-case coverage percentage (0-100)

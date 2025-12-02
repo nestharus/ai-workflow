@@ -83,6 +83,11 @@ If you cannot fix a lint error without changing configuration, report it as a re
 - For Markdown lint violations: Adjust doc text (wrap long lines, align bullet markers) to satisfy rules
 - Allow up to 2 hours for lint command; do not stop it early
 
+## YAML Schema Guidelines
+
+See `docs/development/general/general.yaml.schema-guidelines.yml` for the YAML schema standard.
+The only required field is `id` - every object must have one. Structure is otherwise flexible.
+
 ## YAML Formatting Rules
 
 When fixing yamllint errors, you MUST follow these rules:

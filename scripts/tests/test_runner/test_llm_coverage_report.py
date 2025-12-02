@@ -695,7 +695,7 @@ features:
       - id: UC-AUTH-002
         description: User logout
 """
-        fs.create_file("/repo/tests/use_cases.yaml", contents=registry_content)
+        fs.create_file("/repo/tests/docs/use_cases.yaml", contents=registry_content)
 
         # Test that only covers UC-AUTH-001
         test_code = """
@@ -707,7 +707,7 @@ def test_login():
 """
         fs.create_file("/repo/tests/test_auth.py", contents=test_code)
 
-        result = _collect_usecase_gaps(Path("/repo"), Path("/repo/tests/use_cases.yaml"), ["tests"])
+        result = _collect_usecase_gaps(Path("/repo"), Path("/repo/tests/docs/use_cases.yaml"), ["tests"])
 
         assert result["totals"]["total_use_cases"] == 2
         assert result["totals"]["covered_use_cases"] == 1
@@ -869,7 +869,7 @@ class TestMain:
         fs.create_dir("/repo")
         fs.create_dir("/repo/tests")
         fs.create_file("/repo/coverage.json", contents=json.dumps(coverage_data))
-        fs.create_file("/repo/tests/use_cases.yaml", contents="features: {}")
+        fs.create_file("/repo/tests/docs/use_cases.yaml", contents="features: {}")
 
         # Mock _guess_repo_root to return our fake repo
         with patch.object(llm_coverage_report, "_guess_repo_root", return_value=Path("/repo")):
@@ -880,7 +880,7 @@ class TestMain:
                     "-o",
                     "/repo/output.json",
                     "-u",
-                    "/repo/tests/use_cases.yaml",
+                    "/repo/tests/docs/use_cases.yaml",
                 ]
             )
 
@@ -892,7 +892,7 @@ class TestMain:
         fs.create_dir("/repo")
         fs.create_dir("/repo/tests")
         fs.create_file("/repo/coverage.json", contents=json.dumps(coverage_data))
-        fs.create_file("/repo/tests/use_cases.yaml", contents="features: {}")
+        fs.create_file("/repo/tests/docs/use_cases.yaml", contents="features: {}")
 
         with patch.object(llm_coverage_report, "_guess_repo_root", return_value=Path("/repo")):
             main(
@@ -902,7 +902,7 @@ class TestMain:
                     "-o",
                     "/repo/output/nested/result.json",
                     "-u",
-                    "/repo/tests/use_cases.yaml",
+                    "/repo/tests/docs/use_cases.yaml",
                 ]
             )
 
@@ -914,7 +914,7 @@ class TestMain:
         fs.create_dir("/repo")
         fs.create_dir("/repo/tests")
         fs.create_file("/repo/coverage.json", contents=json.dumps(coverage_data))
-        fs.create_file("/repo/tests/use_cases.yaml", contents="features: {}")
+        fs.create_file("/repo/tests/docs/use_cases.yaml", contents="features: {}")
 
         with patch.object(llm_coverage_report, "_guess_repo_root", return_value=Path("/repo")):
             main(
@@ -924,7 +924,7 @@ class TestMain:
                     "-o",
                     "/repo/output.json",
                     "-u",
-                    "/repo/tests/use_cases.yaml",
+                    "/repo/tests/docs/use_cases.yaml",
                 ]
             )
 
@@ -978,7 +978,7 @@ class TestScriptModuleWrapper:
         fs.create_dir("/repo")
         fs.create_dir("/repo/tests")
         fs.create_file("/repo/coverage.json", contents=json.dumps(coverage_data))
-        fs.create_file("/repo/tests/use_cases.yaml", contents="features: {}")
+        fs.create_file("/repo/tests/docs/use_cases.yaml", contents="features: {}")
 
         with (
             patch.object(llm_coverage_report, "_guess_repo_root", return_value=Path("/repo")),
@@ -991,7 +991,7 @@ class TestScriptModuleWrapper:
                     "-o",
                     "/repo/output.json",
                     "-u",
-                    "/repo/tests/use_cases.yaml",
+                    "/repo/tests/docs/use_cases.yaml",
                 ],
             ),
         ):

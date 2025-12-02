@@ -100,18 +100,21 @@ sections:
     items:
       - id: additional.modules
         type: rule
-        text: 'Modules: Provide a brief description when the module exposes public APIs or significant setup logic.'
+        title: Modules
+        text: Provide a brief description when the module exposes public APIs or significant setup logic.
       - id: additional.properties
         type: rule
-        text: >
-          'Properties: Document behavior in the getter; setters rarely need separate docstrings unless they perform
-          non-trivial
-          work.'
+        title: Properties
+        text: |
+          Document behavior in the getter; setters rarely need separate docstrings unless they
+          perform non-trivial work.
       - id: additional.async
         type: rule
-        text: 'Async functions: Document awaited side effects and cancellation behavior if relevant.'
+        title: Async functions
+        text: Document awaited side effects and cancellation behavior if relevant.
       - id: additional.examples
         type: rule
-        text: >
-          'Examples: Use fenced code blocks with the language set (```python) and keep them minimal and runnable when
-          possible.'
+        title: Examples
+        text: |
+          Use fenced code blocks with the language set (```python) and keep them minimal and
+          runnable when possible.

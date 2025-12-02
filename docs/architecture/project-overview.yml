@@ -23,30 +23,21 @@ sections:
   title: Core Components
   category: standard
   summary: ''
-  items: []
-- id: fastapi-orchestrator-service
-  index: 3
-  title: FastAPI Orchestrator Service
-  category: reference
-  summary: ''
   items:
-  - id: fastapi-orchestrator-service-1
+  - id: core-components-orchestrator
     type: text
-    text: The central orchestrator service routes messages to workflows and coordinates agent execution.
-      It receives messages from agents, manages workflow state, and invokes other agents via `droid exec`
-      subprocesses.
-- id: webhook-receiver-service
-  index: 4
-  title: Webhook Receiver Service
-  category: standard
-  summary: ''
-  items:
-  - id: webhook-receiver-service-1
+    text: |
+      FastAPI Orchestrator Service: The central orchestrator service routes messages to workflows and
+      coordinates agent execution. It receives messages from agents, manages workflow state, and invokes
+      other agents via `droid exec` subprocesses.
+  - id: core-components-webhook-receiver
     type: text
-    text: A standalone service handles GitHub integration by receiving webhooks, verifying signatures,
-      and forwarding validated events to the orchestrator for routing to appropriate workflows.
+    text: |
+      Webhook Receiver Service: A standalone service handles GitHub integration by receiving webhooks,
+      verifying signatures, and forwarding validated events to the orchestrator for routing to
+      appropriate workflows.
 - id: agent-interaction-model
-  index: 5
+  index: 3
   title: Agent Interaction Model
   category: standard
   summary: ''
@@ -68,7 +59,7 @@ sections:
     type: text
     text: Handles ticket claiming and PR comment routing
 - id: primary-goal
-  index: 6
+  index: 4
   title: Primary Goal
   category: standard
   summary: ''

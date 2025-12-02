@@ -45,7 +45,7 @@ dependency overrides, async client configuration, and test organization for comp
 **File:** `testing-patterns.md`
 
 Defines the use-case-based test coverage approach. Explains how to link tests to use-cases using pytest
-markers, manage the use-case registry in `tests/use_cases.yaml`, and track coverage at the scenario level.
+markers, manage the use-case registry in `tests/docs/use_cases.yaml`, and track coverage at the scenario level.
 
 **Apply when:**
 

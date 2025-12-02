@@ -23,7 +23,7 @@ actionable.
 
 ## 2. Use-Case Registry
 
-The canonical use-case registry lives at `tests/use_cases.yaml`. This file catalogs all testable
+The canonical use-case registry lives at `tests/docs/use_cases.yaml`. This file catalogs all testable
 scenarios for the API, organized by feature area.
 
 ### 2.1 Registry Structure
@@ -123,7 +123,7 @@ The `usecase` marker must be registered in `pyproject.toml` under `[tool.pytest.
 [tool.pytest.ini_options]
 markers = [
     "e2e: marks tests as end-to-end (requires running server)",
-    "usecase(id): links test to a use-case ID from tests/use_cases.yaml"
+    "usecase(id): links test to a use-case ID from tests/docs/use_cases.yaml"
 ]
 ```
 
@@ -217,7 +217,7 @@ Include implementation guidance in stub docstrings:
 
 ### 6.1 Registry Maintenance
 
-* Update `tests/use_cases.yaml` when adding new endpoints or discovering new scenarios
+* Update `tests/docs/use_cases.yaml` when adding new endpoints or discovering new scenarios
 * Add `@pytest.mark.usecase("UC-XXX-NNN")` markers to tests for automatic coverage detection
 * Review the registry during sprint planning to identify coverage gaps
 * Archive deprecated use-cases rather than deleting them (add `deprecated: true` field)
@@ -312,7 +312,7 @@ Reference the test tier when creating new tests to ensure consistent organizatio
 
 ### 8.1 Complete Example: Use-Case to Test
 
-**Use-case definition in `tests/use_cases.yaml`:**
+**Use-case definition in `tests/docs/use_cases.yaml`:**
 
 ```yaml
 - id: UC-EXAMPLE-002
@@ -403,4 +403,4 @@ async def test_process_message_length_validation(async_client):
 * [API Testing Patterns](api-testing-patterns.md) - Fixture composition, dependency overrides,
   assertion patterns
 * [Testing Workflow](testing-workflow.md) - Test execution commands and tier descriptions
-* [tests/use_cases.yaml](../../tests/use_cases.yaml) - The canonical use-case registry
+* [tests/docs/use_cases.yaml](../../tests/docs/use_cases.yaml) - The canonical use-case registry

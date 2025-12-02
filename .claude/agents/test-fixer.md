@@ -49,7 +49,7 @@ You are a test-fixing specialist. Your task is to run all tests, debug failures,
    - Add tests for uncovered lines/branches
 
 5. **For use-case coverage gaps** (integration/e2e tiers):
-   - Check `tests/use_cases.yaml` for use case definitions
+   - Check `tests/docs/use_cases.yaml` for use case definitions
    - Add tests with `@pytest.mark.usecase("UC-XXX-NNN")` markers
    - Coverage is detected automatically from markers (no YAML updates needed)
 
@@ -80,7 +80,7 @@ You may fix bugs in scripts, but you must NEVER change intent:
 
 - Coverage thresholds or validation logic
 - Test configuration values in `pyproject.toml`
-- Use-case registry structure or schema (`tests/use_cases.yaml`)
+- Use-case registry structure or schema (`tests/docs/use_cases.yaml`)
 - Path exclusions or skip patterns
 
 Examples:
@@ -101,7 +101,7 @@ If you cannot meet coverage without changing configuration, report it as a remai
 - Keep test code clean and maintainable
 - For unit tests, ensure ALL functions (including private) have coverage
 - For component tests, focus only on service layer public functions
-- For integration/e2e tests, link to use-cases in `tests/use_cases.yaml`
+- For integration/e2e tests, link to use-cases in `tests/docs/use_cases.yaml`
 
 ## Output Format
 

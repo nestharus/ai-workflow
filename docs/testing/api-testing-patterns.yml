@@ -225,12 +225,12 @@ sections:
     type: rule
     text: 'When appropriate, deserialize responses into Pydantic models (for example, response contracts or `HTTPValidationError`) rather than asserting on raw dictionaries.'
   - id: 9-assertion-patterns-3
-    type: example
-    text: 'Example:'
-  - id: 9-assertion-patterns-code-4
-    type: code
-    text: |
-      check.equal(response.status_code, 200) check.equal(response.json().get("status"), "ok")
+    title: Example
+    items:
+    - id: 9-assertion-patterns-code-4
+      type: code
+      text: |
+        check.equal(response.status_code, 200) check.equal(response.json().get("status"), "ok")
 - id: 10-testing-validation-errors-and-error-responses
   index: 10
   title: 10. Testing validation errors and error responses
@@ -281,36 +281,36 @@ sections:
     type: text
     text: Tests are organized by scope and speed.
   - id: 12-test-organization-and-execution-directories
-    type: text
-    text: 'Directories:'
-  - id: 12-test-organization-and-execution-testsunit-classic-unit-te
-    type: text
-    text: '`tests/unit/`: Classic unit tests and lightweight in-process API tests.'
-  - id: 12-test-organization-and-execution-testsintegration-in-depth
-    type: text
-    text: |
-      `tests/integration/`: In-depth integration tests that may involve multiple components or a test database.
-  - id: 12-test-organization-and-execution-testse2e-full-stack-docke
-    type: text
-    text: '`tests/e2e/`: Full-stack Dockerized tests using `api_client`.'
+    title: Directories
+    items:
+    - id: 12-test-organization-and-execution-testsunit-classic-unit-te
+      type: text
+      text: '`tests/unit/`: Classic unit tests and lightweight in-process API tests.'
+    - id: 12-test-organization-and-execution-testsintegration-in-depth
+      type: text
+      text: |
+        `tests/integration/`: In-depth integration tests that may involve multiple components or a test database.
+    - id: 12-test-organization-and-execution-testse2e-full-stack-docke
+      type: text
+      text: '`tests/e2e/`: Full-stack Dockerized tests using `api_client`.'
   - id: 12-test-organization-and-execution-markers
-    type: text
-    text: 'Markers:'
-  - id: 12-test-organization-and-execution-use-pytestmarke2e-for-all
-    type: text
-    text: Use `@pytest.mark.e2e` for all E2E tests.
-  - id: 12-test-organization-and-execution-use-pytestmarkasyncio-for
-    type: text
-    text: Use `@pytest.mark.asyncio` for async tests that await `AsyncClient` methods.
+    title: Markers
+    items:
+    - id: 12-test-organization-and-execution-use-pytestmarke2e-for-all
+      type: text
+      text: Use `@pytest.mark.e2e` for all E2E tests.
+    - id: 12-test-organization-and-execution-use-pytestmarkasyncio-for
+      type: text
+      text: Use `@pytest.mark.asyncio` for async tests that await `AsyncClient` methods.
   - id: 12-test-organization-and-execution-typical-commands
-    type: text
-    text: 'Typical commands:'
-  - id: 12-test-organization-and-execution-fast-local-iteration-pytest
-    type: text
-    text: 'Fast local iteration: `pytest -m "not e2e"`.'
-  - id: 12-test-organization-and-execution-run-all-tests-in-ci-pytest
-    type: step
-    text: 'Run all tests in CI: `pytest`.'
+    title: Typical commands
+    items:
+    - id: 12-test-organization-and-execution-fast-local-iteration-pytest
+      type: text
+      text: 'Fast local iteration: `pytest -m "not e2e"`.'
+    - id: 12-test-organization-and-execution-run-all-tests-in-ci-pytest
+      type: step
+      text: 'Run all tests in CI: `pytest`.'
 - id: 13-parallel-execution-considerations
   index: 13
   title: 13. Parallel execution considerations

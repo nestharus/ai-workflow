@@ -86,7 +86,7 @@ gaps for AI-assisted test generation.
 * **Usage**: `uv run llm-coverage-report`
 * **Prerequisites**:
   * `coverage.json`: Generate with `pytest --cov --cov-report=json`
-  * `tests/use_cases.yaml`: The canonical use-case registry
+  * `tests/docs/use_cases.yaml`: The canonical use-case registry
 * **Output**: `coverage_llm.json` containing:
   * Code coverage gaps (missing lines/branches with context)
   * Use-case coverage gaps (uncovered use-cases)
@@ -95,7 +95,7 @@ gaps for AI-assisted test generation.
   * `--coverage-json PATH`: Specify coverage JSON path (default: `coverage.json`)
   * `--output PATH`: Specify output path (default: `coverage_llm.json`)
   * `--context-radius N`: Number of surrounding lines (default: 2)
-  * `--use-cases PATH`: Path to use-case registry (default: `tests/use_cases.yaml`)
+  * `--use-cases PATH`: Path to use-case registry (default: `tests/docs/use_cases.yaml`)
 * **Integration**: Used by the test-fixer sub-agent to identify coverage gaps
 
 ## Linting
