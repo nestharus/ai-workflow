@@ -1,0 +1,1018 @@
+doc_id: original-development-module-definitions
+title: Module Definitions
+description: This document serves as the authoritative reference for domain definitions, scope definitions,
+  and pattern definitions. It is the foundation for semantic classification by the knowledge-analyzer
+  agent and validation tooling.
+domain: []
+scope: project
+sections:
+- id: section-1-domain-descriptions
+  index: 1
+  title: 'Section 1: Domain Descriptions'
+  category: standard
+  summary: ''
+  items:
+  - id: section-1-domain-descriptions-1
+    type: text
+    text: Domains are independent tags for classification and searching. Content can have multiple domains.
+- id: domain-registry
+  index: 2
+  title: Domain Registry
+  category: standard
+  summary: ''
+  items:
+  - id: domain-registry-1
+    type: text
+    text: '| Domain | Description | |--------|-------------| | `rest` | HTTP/REST protocol rules, URL
+      structure, status codes, HTTP methods | | `fastapi` | FastAPI framework patterns, decorators, dependencies
+      | | `python` | Python language conventions, async/await, type hints | | `surrealdb` | SurrealDB
+      database patterns, SurrealQL, client usage | | `elasticsearch` | Elasticsearch patterns, queries,
+      client usage |'
+  - id: domain-registry-2
+    type: text
+    text: '> **Canonical Reference:** See `docs/development/domain-definitions.yml` for the authoritative
+      > domain registry with full descriptions.'
+  - id: domain-registry-3
+    type: text
+    text: '---'
+- id: section-2-multi-domain-tagging
+  index: 3
+  title: 'Section 2: Multi-Domain Tagging'
+  category: standard
+  summary: ''
+  items:
+  - id: section-2-multi-domain-tagging-1
+    type: example
+    text: 'Domains are independent tags. Content mentioning multiple domains (REST URL + FastAPI mounting)
+      gets all relevant tags (`[''rest'', ''fastapi'']`). No precedence or single-domain rule. Classifier
+      outputs represent applied domain tags as a `domains` field containing a list (e.g., `"domains":
+      ["rest", "fastapi"]`).'
+  - id: section-2-multi-domain-tagging-2
+    type: text
+    text: '---'
+- id: section-3-scope-definitions
+  index: 4
+  title: 'Section 3: Scope Definitions'
+  category: standard
+  summary: ''
+  items:
+  - id: section-3-scope-definitions-1
+    type: text
+    text: Every file is either GENERAL (reusable knowledge) or PROJECT (project-specific knowledge).
+- id: general-scope
+  index: 5
+  title: GENERAL Scope
+  category: standard
+  summary: ''
+  items:
+  - id: general-scope-definition-knowledge-that
+    type: definition
+    text: '**Definition:** Knowledge that applies to any project using the same technology stack.'
+  - id: general-scope-includes
+    type: text
+    text: '**Includes:**'
+  - id: general-scope-resthttp-protocol-rules
+    type: text
+    text: REST/HTTP protocol rules
+  - id: general-scope-fastapi-framework-best-practic
+    type: text
+    text: FastAPI framework best practices
+  - id: general-scope-python-language-conventions
+    type: text
+    text: Python language conventions
+  - id: general-scope-database-patterns-surrealdb
+    type: text
+    text: Database patterns (SurrealDB, Elasticsearch)
+  - id: general-scope-content-that-does-not-referenc
+    type: text
+    text: Content that does not reference `app/*` paths (necessary but not sufficient—see note below)
+  - id: general-scope-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: general-scope-references-to-app-paths
+    type: text
+    text: References to `app/*` paths
+  - id: general-scope-project-specific-components
+    type: step
+    text: Project-specific components (`AppError`, `create_app`, `RepositoryBase`)
+  - id: general-scope-implementation-wiring-specific
+    type: text
+    text: Implementation wiring specific to this project
+  - id: general-scope-project-specific-naming-conven
+    type: text
+    text: Project-specific naming conventions
+  - id: general-scope-13
+    type: rule
+    text: '**Note:** The absence of these exclusions (e.g., no `app/*` references) is necessary for GENERAL
+      scope but not sufficient. Content must also pass the test question: "Could this rule apply to a
+      different project using the same stack?"'
+  - id: general-scope-test-question-could-this
+    type: text
+    text: '**Test Question:** "Could this rule apply to a different project using the same stack?"'
+  - id: general-scope-examples-general
+    type: text
+    text: '**Examples - GENERAL:**'
+  - id: general-scope-code-16
+    type: code
+    text: "# general.rest.api-patterns.yml\n- id: url-versioning\n  content: \"Use /api/{version} prefix\
+      \ for API versioning\"\n  # Applies to any REST API project\n\n# general.fastapi.router-patterns.yml\n\
+      - id: router-prefix\n  content: \"Use prefix parameter in APIRouter for route grouping\"\n  # Applies\
+      \ to any FastAPI project\n\n# general.python.docstrings-guide.yml\n- id: google-style\n  content:\
+      \ \"Use Google-style docstrings for functions\"\n  # Applies to any Python project"
+- id: project-scope
+  index: 6
+  title: PROJECT Scope
+  category: standard
+  summary: ''
+  items:
+  - id: project-scope-definition-knowledge-spec
+    type: definition
+    text: '**Definition:** Knowledge specific to this project''s implementation.'
+  - id: project-scope-includes
+    type: text
+    text: '**Includes:**'
+  - id: project-scope-concrete-app-paths-eg
+    type: example
+    text: Concrete `app/*` paths (e.g., `app/core/factory.py`)
+  - id: project-scope-project-specific-components
+    type: step
+    text: Project-specific components (`AppError`, `create_app`, `RepositoryBase`)
+  - id: project-scope-implementation-wiring-how-com
+    type: text
+    text: Implementation wiring (how components are connected)
+  - id: project-scope-project-specific-conventions-a
+    type: text
+    text: Project-specific conventions and decisions
+  - id: project-scope-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: project-scope-restating-general-principles
+    type: text
+    text: Restating GENERAL principles
+  - id: project-scope-generic-framework-documentatio
+    type: text
+    text: Generic framework documentation
+  - id: project-scope-language-tutorials
+    type: text
+    text: Language tutorials
+  - id: project-scope-11
+    type: rule
+    text: '**Note:** PROJECT content should reference GENERAL principles where applicable rather than
+      restating them. PROJECT explains where and how general rules are implemented in this codebase.'
+  - id: project-scope-test-question-is-this-kn
+    type: text
+    text: '**Test Question:** "Is this knowledge specific to this project''s implementation (files, components,
+      decisions, or conventions)?"'
+  - id: project-scope-examples-project
+    type: text
+    text: '**Examples - PROJECT:**'
+  - id: project-scope-code-14
+    type: code
+    text: "# project.fastapi.factory-patterns.yml\n- id: create-app-function\n  content: \"The create_app\
+      \ function in app/core/factory.py constructs the FastAPI application\"\n  # References specific\
+      \ file path\n\n# project.python.exception-patterns.yml\n- id: app-error-usage\n  content: \"Use\
+      \ AppError from app/core/errors.py for all application errors\"\n  # References project-specific\
+      \ component\n\n# project.surrealdb.repository-patterns.yml\n- id: repository-base\n  content: \"\
+      All repositories inherit from RepositoryBase in app/repositories/base.py\"\n  # References project-specific\
+      \ base class"
+  - id: project-scope-15
+    type: rule
+    text: '**Important:** While `app/*` references are a strong indicator of PROJECT scope, they are not
+      the only way content can be project-specific. Project-specific decisions, conventions, or rules
+      that don''t happen to mention file paths are still PROJECT scope if they cannot reasonably apply
+      to another project using the same stack. The flowchart below captures this logic: `app/*` references
+      immediately classify content as PROJECT, but absence of such references triggers further questions
+      to determine if the content is project-specific in other ways.'
+- id: scope-decision-flowchart
+  index: 7
+  title: Scope Decision Flowchart
+  category: workflow
+  summary: ''
+  items:
+  - id: scope-decision-flowchart-code-1
+    type: code
+    text: "Is there a reference to app/* paths?\n├── Yes → PROJECT\n└── No\n    └── Does it reference\
+      \ a project-specific component?\n        ├── Yes → PROJECT\n        └── No\n            └── Could\
+      \ this apply to another project?\n                ├── Yes → GENERAL\n                └── No → PROJECT"
+  - id: scope-decision-flowchart-2
+    type: text
+    text: '---'
+- id: section-4-pattern-definitions
+  index: 8
+  title: 'Section 4: Pattern Definitions'
+  category: standard
+  summary: ''
+  items:
+  - id: section-4-pattern-definitions-1
+    type: text
+    text: Each pattern type has a specific purpose, inclusions, exclusions, and a test question.
+- id: api-patterns
+  index: 9
+  title: api-patterns
+  category: reference
+  summary: ''
+  items:
+  - id: api-patterns-purpose-rules-for-creat
+    type: text
+    text: '**Purpose:** Rules for **creating and designing APIs** (not documenting existing APIs).'
+  - id: api-patterns-includes
+    type: text
+    text: '**Includes:**'
+  - id: api-patterns-url-structure-and-versioning
+    type: text
+    text: URL structure and versioning
+  - id: api-patterns-requestresponse-modeling
+    type: text
+    text: Request/response modeling
+  - id: api-patterns-openapi-documentation-standard
+    type: text
+    text: OpenAPI documentation standards
+  - id: api-patterns-deprecation-metadata
+    type: text
+    text: Deprecation metadata
+  - id: api-patterns-query-parameter-conventions
+    type: text
+    text: Query parameter conventions
+  - id: api-patterns-path-parameter-conventions
+    type: text
+    text: Path parameter conventions
+  - id: api-patterns-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: api-patterns-documentation-of-existing-apis
+    type: text
+    text: Documentation of existing APIs → `architecture`
+  - id: api-patterns-implementation-wiring-facto
+    type: text
+    text: Implementation wiring → `factory-patterns`
+  - id: api-patterns-error-response-design-excep
+    type: text
+    text: Error response design → `exception-patterns`
+  - id: api-patterns-test-question-is-this-a
+    type: step
+    text: '**Test Question:** "Is this a rule for how to create an API, or documentation of an existing
+      API?"'
+  - id: api-patterns-general-examples
+    type: text
+    text: '**GENERAL Examples:**'
+  - id: api-patterns-url-structure-apiversion
+    type: text
+    text: URL structure `/api/{version}` (in `rest` module, not `fastapi`)
+  - id: api-patterns-request-body-validation-rules
+    type: text
+    text: Request body validation rules
+  - id: api-patterns-response-model-conventions
+    type: text
+    text: Response model conventions
+  - id: api-patterns-openapi-schema-generation
+    type: text
+    text: OpenAPI schema generation
+  - id: api-patterns-project-examples
+    type: text
+    text: '**PROJECT Examples:**'
+  - id: api-patterns-specific-endpoint-documentatio
+    type: text
+    text: Specific endpoint documentation → `architecture` (not api-patterns)
+  - id: api-patterns-how-endpoints-are-mounted-f
+    type: text
+    text: How endpoints are mounted → `factory-patterns`
+- id: architecture-or-architectural-patterns
+  index: 10
+  title: architecture (or architectural-patterns)
+  category: standard
+  summary: ''
+  items:
+  - id: architecture-or-architectural-patterns-purpose-documentation-of
+    type: text
+    text: '**Purpose:** Documentation of **how the system is structured** and **what components exist**.'
+  - id: architecture-or-architectural-patterns-includes
+    type: text
+    text: '**Includes:**'
+  - id: architecture-or-architectural-patterns-layer-integration-how-service
+    type: text
+    text: Layer integration (how services, repositories, and routers interact)
+  - id: architecture-or-architectural-patterns-dependency-flow-what-depends
+    type: text
+    text: Dependency flow (what depends on what)
+  - id: architecture-or-architectural-patterns-existing-apis-what-endpoints
+    type: text
+    text: Existing APIs (what endpoints exist and what they do)
+  - id: architecture-or-architectural-patterns-readiness-checks-what-depende
+    type: text
+    text: Readiness checks (what dependencies are checked)
+  - id: architecture-or-architectural-patterns-component-inventory
+    type: text
+    text: Component inventory
+  - id: architecture-or-architectural-patterns-system-boundaries
+    type: text
+    text: System boundaries
+  - id: architecture-or-architectural-patterns-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: architecture-or-architectural-patterns-rules-for-creating-apis-api
+    type: text
+    text: Rules for creating APIs → `api-patterns`
+  - id: architecture-or-architectural-patterns-implementation-wiring-facto
+    type: text
+    text: Implementation wiring → `factory-patterns`
+  - id: architecture-or-architectural-patterns-how-to-implement-services-s
+    type: text
+    text: How to implement services → `service-patterns`
+  - id: architecture-or-architectural-patterns-test-question-is-this-de
+    type: text
+    text: '**Test Question:** "Is this describing the system''s structure, or prescribing how to build
+      it?"'
+  - id: architecture-or-architectural-patterns-project-examples
+    type: text
+    text: '**PROJECT Examples:**'
+  - id: architecture-or-architectural-patterns-the-health-endpoint-checks
+    type: text
+    text: '"The `/health` endpoint checks database and cache readiness"'
+  - id: architecture-or-architectural-patterns-the-service-layer-delegates-t
+    type: text
+    text: '"The service layer delegates to repositories for data access"'
+  - id: architecture-or-architectural-patterns-routers-depend-on-services-vi
+    type: text
+    text: '"Routers depend on services via Depends()"'
+  - id: architecture-or-architectural-patterns-18
+    type: note
+    text: '**Note:** The `/health` endpoint discussion about readiness checks belongs in `architecture`,
+      not `api-patterns`, because it documents existing system behavior rather than prescribing API design
+      rules.'
+- id: factory-patterns
+  index: 11
+  title: factory-patterns
+  category: standard
+  summary: ''
+  items:
+  - id: factory-patterns-purpose-rules-for-const
+    type: text
+    text: '**Purpose:** Rules for **constructing and configuring** the application.'
+  - id: factory-patterns-includes
+    type: text
+    text: '**Includes:**'
+  - id: factory-patterns-application-construction-cre
+    type: step
+    text: Application construction (`create_app`)
+  - id: factory-patterns-middleware-registration
+    type: text
+    text: Middleware registration
+  - id: factory-patterns-router-mounting
+    type: text
+    text: Router mounting
+  - id: factory-patterns-default-response-class-configu
+    type: text
+    text: Default response class configuration
+  - id: factory-patterns-lifespan-management
+    type: text
+    text: Lifespan management
+  - id: factory-patterns-startupshutdown-hooks
+    type: text
+    text: Startup/shutdown hooks
+  - id: factory-patterns-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: factory-patterns-api-design-rules-api-patter
+    type: text
+    text: API design rules → `api-patterns`
+  - id: factory-patterns-system-architecture-archite
+    type: text
+    text: System architecture → `architecture`
+  - id: factory-patterns-middleware-behavior-middlew
+    type: text
+    text: Middleware behavior → `middleware-patterns`
+  - id: factory-patterns-test-question-is-this-ab
+    type: text
+    text: '**Test Question:** "Is this about how to wire up the application at startup?"'
+  - id: factory-patterns-project-examples
+    type: text
+    text: '**PROJECT Examples:**'
+  - id: factory-patterns-create_app-function-implemen
+    type: step
+    text: '`create_app` function implementation'
+  - id: factory-patterns-router-mounting-to-apivers
+    type: text
+    text: Router mounting to `/api/{version}` (the **implementation**, not the REST convention)
+  - id: factory-patterns-orjsonresponse-configuration-a
+    type: text
+    text: ORJSONResponse configuration as `default_response_class`
+  - id: factory-patterns-lifespan-context-manager-setup
+    type: text
+    text: Lifespan context manager setup
+  - id: factory-patterns-19
+    type: text
+    text: '**Clarification:** The `/api/{version}` URL structure is a REST convention (→ `general.rest.api-patterns.yml`),
+      but the code that mounts routers to that path is factory wiring (→ `project.fastapi.factory-patterns.yml`).'
+- id: exception-patterns
+  index: 12
+  title: exception-patterns
+  category: standard
+  summary: ''
+  items:
+  - id: exception-patterns-purpose-rules-for-handl
+    type: text
+    text: '**Purpose:** Rules for **handling errors** and exceptions.'
+  - id: exception-patterns-includes
+    type: text
+    text: '**Includes:**'
+  - id: exception-patterns-error-handling-strategies
+    type: text
+    text: Error handling strategies
+  - id: exception-patterns-apperror-usage-project-scope
+    type: text
+    text: AppError usage (PROJECT scope)
+  - id: exception-patterns-validation-error-handling
+    type: text
+    text: Validation error handling
+  - id: exception-patterns-exception-handlers-registratio
+    type: text
+    text: Exception handlers registration
+  - id: exception-patterns-error-response-formatting
+    type: text
+    text: Error response formatting
+  - id: exception-patterns-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: exception-patterns-api-error-response-design-a
+    type: text
+    text: API error response design → `api-patterns`
+  - id: exception-patterns-error-handling-architecture
+    type: text
+    text: Error handling architecture → `architecture`
+  - id: exception-patterns-http-status-code-conventions
+    type: text
+    text: HTTP status code conventions → `rest`
+  - id: exception-patterns-test-question-is-this-ab
+    type: text
+    text: '**Test Question:** "Is this about how to handle exceptions?"'
+- id: router-patterns
+  index: 13
+  title: router-patterns
+  category: standard
+  summary: ''
+  items:
+  - id: router-patterns-purpose-rules-for-organ
+    type: text
+    text: '**Purpose:** Rules for **organizing and registering routers**.'
+  - id: router-patterns-includes
+    type: text
+    text: '**Includes:**'
+  - id: router-patterns-apirouter-usage-and-configurat
+    type: text
+    text: APIRouter usage and configuration
+  - id: router-patterns-route-decorators-routerget
+    type: text
+    text: Route decorators (`@router.get`, `@router.post`)
+  - id: router-patterns-endpoint-wiring-connecting-ha
+    type: text
+    text: Endpoint wiring (connecting handlers to routes)
+  - id: router-patterns-router-registration-patterns
+    type: text
+    text: Router registration patterns
+  - id: router-patterns-route-grouping
+    type: text
+    text: Route grouping
+  - id: router-patterns-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: router-patterns-api-design-api-patterns
+    type: text
+    text: API design → `api-patterns`
+  - id: router-patterns-factory-wiring-mounting-route
+    type: text
+    text: Factory wiring (mounting routers) → `factory-patterns`
+  - id: router-patterns-dependency-injection-depend
+    type: text
+    text: Dependency injection → `dependency-patterns`
+  - id: router-patterns-test-question-is-this-ab
+    type: text
+    text: '**Test Question:** "Is this about how to organize routers?"'
+- id: service-patterns
+  index: 14
+  title: service-patterns
+  category: standard
+  summary: ''
+  items:
+  - id: service-patterns-purpose-rules-for-imple
+    type: text
+    text: '**Purpose:** Rules for **implementing the service layer**.'
+  - id: service-patterns-includes
+    type: text
+    text: '**Includes:**'
+  - id: service-patterns-service-layer-patterns
+    type: text
+    text: Service layer patterns
+  - id: service-patterns-business-logic-delegation
+    type: text
+    text: Business logic delegation
+  - id: service-patterns-service-construction
+    type: text
+    text: Service construction
+  - id: service-patterns-service-dependencies
+    type: text
+    text: Service dependencies
+  - id: service-patterns-transaction-boundaries
+    type: text
+    text: Transaction boundaries
+  - id: service-patterns-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: service-patterns-api-layer-router-patterns
+    type: text
+    text: API layer → `router-patterns`
+  - id: service-patterns-data-access-repository-patt
+    type: text
+    text: Data access → `repository-patterns`
+  - id: service-patterns-dependency-injection-depend
+    type: text
+    text: Dependency injection → `dependency-patterns`
+  - id: service-patterns-test-question-is-this-ab
+    type: text
+    text: '**Test Question:** "Is this about how to implement services?"'
+- id: repository-patterns
+  index: 15
+  title: repository-patterns
+  category: standard
+  summary: ''
+  items:
+  - id: repository-patterns-purpose-rules-for-imple
+    type: text
+    text: '**Purpose:** Rules for **implementing data access**.'
+  - id: repository-patterns-includes
+    type: text
+    text: '**Includes:**'
+  - id: repository-patterns-data-access-patterns
+    type: text
+    text: Data access patterns
+  - id: repository-patterns-query-patterns
+    type: text
+    text: Query patterns
+  - id: repository-patterns-repository-construction
+    type: text
+    text: Repository construction
+  - id: repository-patterns-crud-operations
+    type: text
+    text: CRUD operations
+  - id: repository-patterns-query-builders
+    type: text
+    text: Query builders
+  - id: repository-patterns-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: repository-patterns-service-layer-service-patte
+    type: text
+    text: Service layer → `service-patterns`
+  - id: repository-patterns-database-pooling-connection
+    type: text
+    text: Database pooling → `connection-pooling-patterns`
+  - id: repository-patterns-database-specific-syntax-belo
+    type: text
+    text: Database-specific syntax (belongs in database module)
+  - id: repository-patterns-test-question-is-this-ab
+    type: text
+    text: '**Test Question:** "Is this about how to access data?"'
+  - id: repository-patterns-project-examples
+    type: text
+    text: '**PROJECT Examples:**'
+  - id: repository-patterns-repositorybase-usage
+    type: text
+    text: '`RepositoryBase` usage'
+  - id: repository-patterns-query-methods-find_by_id
+    type: text
+    text: Query methods (`find_by_id`, `find_all`)
+  - id: repository-patterns-surrealdb-specific-repository
+    type: text
+    text: SurrealDB-specific repository patterns
+- id: middleware-patterns
+  index: 16
+  title: middleware-patterns
+  category: standard
+  summary: ''
+  items:
+  - id: middleware-patterns-purpose-rules-for-confi
+    type: text
+    text: '**Purpose:** Rules for **configuring middleware**.'
+  - id: middleware-patterns-includes
+    type: text
+    text: '**Includes:**'
+  - id: middleware-patterns-middleware-stack-configuration
+    type: text
+    text: Middleware stack configuration
+  - id: middleware-patterns-middleware-ordering
+    type: text
+    text: Middleware ordering
+  - id: middleware-patterns-middleware-options
+    type: text
+    text: Middleware options
+  - id: middleware-patterns-requestresponse-middleware
+    type: text
+    text: Request/response middleware
+  - id: middleware-patterns-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: middleware-patterns-factory-wiring-registering-mi
+    type: text
+    text: Factory wiring (registering middleware) → `factory-patterns`
+  - id: middleware-patterns-architecture-middleware-role
+    type: text
+    text: Architecture (middleware role) → `architecture`
+  - id: middleware-patterns-test-question-is-this-ab
+    type: text
+    text: '**Test Question:** "Is this about how to configure middleware?"'
+- id: settings-patterns
+  index: 17
+  title: settings-patterns
+  category: standard
+  summary: ''
+  items:
+  - id: settings-patterns-purpose-rules-for-manag
+    type: text
+    text: '**Purpose:** Rules for **managing configuration**.'
+  - id: settings-patterns-includes
+    type: text
+    text: '**Includes:**'
+  - id: settings-patterns-settings-model-design
+    type: text
+    text: Settings model design
+  - id: settings-patterns-environment-variable-binding
+    type: text
+    text: Environment variable binding
+  - id: settings-patterns-configuration-validation
+    type: text
+    text: Configuration validation
+  - id: settings-patterns-settings-access-patterns
+    type: text
+    text: Settings access patterns
+  - id: settings-patterns-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: settings-patterns-factory-wiring-loading-settin
+    type: text
+    text: Factory wiring (loading settings) → `factory-patterns`
+  - id: settings-patterns-architecture-settings-role
+    type: text
+    text: Architecture (settings role) → `architecture`
+  - id: settings-patterns-test-question-is-this-ab
+    type: text
+    text: '**Test Question:** "Is this about how to manage configuration?"'
+- id: connection-pooling-patterns
+  index: 18
+  title: connection-pooling-patterns
+  category: standard
+  summary: ''
+  items:
+  - id: connection-pooling-patterns-purpose-rules-for-manag
+    type: text
+    text: '**Purpose:** Rules for **managing database connections**.'
+  - id: connection-pooling-patterns-includes
+    type: text
+    text: '**Includes:**'
+  - id: connection-pooling-patterns-connection-pool-configuration
+    type: text
+    text: Connection pool configuration
+  - id: connection-pooling-patterns-client-management
+    type: text
+    text: Client management
+  - id: connection-pooling-patterns-connection-cleanup
+    type: text
+    text: Connection cleanup
+  - id: connection-pooling-patterns-pool-sizing
+    type: text
+    text: Pool sizing
+  - id: connection-pooling-patterns-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: connection-pooling-patterns-repository-patterns-reposit
+    type: text
+    text: Repository patterns → `repository-patterns`
+  - id: connection-pooling-patterns-factory-wiring-factory-patt
+    type: text
+    text: Factory wiring → `factory-patterns`
+  - id: connection-pooling-patterns-test-question-is-this-ab
+    type: text
+    text: '**Test Question:** "Is this about how to manage connections?"'
+- id: dependency-patterns
+  index: 19
+  title: dependency-patterns
+  category: standard
+  summary: ''
+  items:
+  - id: dependency-patterns-purpose-rules-for-depen
+    type: text
+    text: '**Purpose:** Rules for **dependency injection**.'
+  - id: dependency-patterns-includes
+    type: text
+    text: '**Includes:**'
+  - id: dependency-patterns-depends-usage
+    type: text
+    text: '`Depends()` usage'
+  - id: dependency-patterns-factory-functions-for-dependen
+    type: text
+    text: Factory functions for dependencies
+  - id: dependency-patterns-injection-patterns
+    type: text
+    text: Injection patterns
+  - id: dependency-patterns-dependency-lifecycle
+    type: text
+    text: Dependency lifecycle
+  - id: dependency-patterns-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: dependency-patterns-factory-wiring-factory-patt
+    type: text
+    text: Factory wiring → `factory-patterns`
+  - id: dependency-patterns-architecture-architecture
+    type: text
+    text: Architecture → `architecture`
+  - id: dependency-patterns-test-question-is-this-ab
+    type: text
+    text: '**Test Question:** "Is this about how to inject dependencies?"'
+- id: docstrings-guide
+  index: 20
+  title: docstrings-guide
+  category: guide
+  summary: ''
+  items:
+  - id: docstrings-guide-purpose-documentation-sta
+    type: text
+    text: '**Purpose:** Documentation standards (not a pattern, but a guide).'
+  - id: docstrings-guide-includes
+    type: text
+    text: '**Includes:**'
+  - id: docstrings-guide-docstring-conventions
+    type: text
+    text: Docstring conventions
+  - id: docstrings-guide-formatting-rules
+    type: text
+    text: Formatting rules
+  - id: docstrings-guide-documentation-structure
+    type: text
+    text: Documentation structure
+  - id: docstrings-guide-example-formats
+    type: text
+    text: Example formats
+  - id: docstrings-guide-excludes
+    type: text
+    text: '**Excludes:**'
+  - id: docstrings-guide-code-patterns
+    type: text
+    text: Code patterns
+  - id: docstrings-guide-implementation-guidelines
+    type: text
+    text: Implementation guidelines
+  - id: docstrings-guide-test-question-is-this-ab
+    type: text
+    text: '**Test Question:** "Is this about how to write documentation?"'
+  - id: docstrings-guide-11
+    type: text
+    text: '---'
+- id: section-5-cross-reference-quality-rules
+  index: 21
+  title: 'Section 5: Cross-Reference Quality Rules'
+  category: reference
+  summary: ''
+  items:
+  - id: section-5-cross-reference-quality-rules-1
+    type: text
+    text: 'PROJECT files often reference other files or modules. Follow these rules for quality cross-references:'
+- id: rule-1-explain-the-implementation
+  index: 22
+  title: 'Rule 1: Explain the Implementation'
+  category: standard
+  summary: ''
+  items:
+  - id: rule-1-explain-the-implementation-1
+    type: rule
+    text: Don't just point to a file; explain what it does.
+  - id: rule-1-explain-the-implementation-bad
+    type: text
+    text: '**Bad:**'
+  - id: rule-1-explain-the-implementation-code-3
+    type: code
+    text: "- id: response-serialization\n  content: \"See project.fastapi.factory-patterns.yml for ORJSONResponse\
+      \ configuration.\""
+  - id: rule-1-explain-the-implementation-good
+    type: text
+    text: '**Good:**'
+  - id: rule-1-explain-the-implementation-code-5
+    type: code
+    text: "- id: response-serialization\n  content: |\n    ORJSONResponse is configured as default_response_class\
+      \ in the create_app\n    function (app/core/factory.py) via FastAPI(default_response_class=ORJSONResponse).\n\
+      \    This enables automatic orjson serialization for all endpoints without per-route configuration."
+- id: rule-2-include-the-file-path
+  index: 23
+  title: 'Rule 2: Include the File Path'
+  category: standard
+  summary: ''
+  items:
+  - id: rule-2-include-the-file-path-1
+    type: rule
+    text: Always include the concrete file path.
+  - id: rule-2-include-the-file-path-bad
+    type: text
+    text: '**Bad:**'
+  - id: rule-2-include-the-file-path-code-3
+    type: code
+    text: "- id: error-handling\n  content: \"Errors are handled centrally.\""
+  - id: rule-2-include-the-file-path-good
+    type: text
+    text: '**Good:**'
+  - id: rule-2-include-the-file-path-code-5
+    type: code
+    text: "- id: error-handling\n  content: \"Errors are handled centrally in app/core/errors.py.\""
+- id: rule-3-include-function-class-or-field-name
+  index: 24
+  title: 'Rule 3: Include Function, Class, or Field Name'
+  category: standard
+  summary: ''
+  items:
+  - id: rule-3-include-function-class-or-field-name-1
+    type: text
+    text: Help readers find the exact location.
+  - id: rule-3-include-function-class-or-field-name-bad
+    type: text
+    text: '**Bad:**'
+  - id: rule-3-include-function-class-or-field-name-code-3
+    type: code
+    text: "- id: app-factory\n  content: \"See app/core/factory.py for application setup.\""
+  - id: rule-3-include-function-class-or-field-name-good
+    type: text
+    text: '**Good:**'
+  - id: rule-3-include-function-class-or-field-name-code-5
+    type: code
+    text: "- id: app-factory\n  content: \"The create_app function in app/core/factory.py sets up the\
+      \ application.\""
+- id: rule-4-describe-what-it-does
+  index: 25
+  title: 'Rule 4: Describe What It Does'
+  category: standard
+  summary: ''
+  items:
+  - id: rule-4-describe-what-it-does-1
+    type: text
+    text: Explain the purpose, not just the location.
+  - id: rule-4-describe-what-it-does-bad
+    type: text
+    text: '**Bad:**'
+  - id: rule-4-describe-what-it-does-code-3
+    type: code
+    text: "- id: middleware-setup\n  content: \"Middleware is configured in app/core/factory.py.\""
+  - id: rule-4-describe-what-it-does-good
+    type: text
+    text: '**Good:**'
+  - id: rule-4-describe-what-it-does-code-5
+    type: code
+    text: "- id: middleware-setup\n  content: |\n    Middleware is registered in the create_app function\
+      \ (app/core/factory.py):\n    - CORSMiddleware for cross-origin requests\n    - RequestLoggingMiddleware\
+      \ for request/response logging\n    - ErrorHandlingMiddleware for exception translation"
+- id: rule-5-explain-why-its-relevant
+  index: 26
+  title: 'Rule 5: Explain Why It''s Relevant'
+  category: standard
+  summary: ''
+  items:
+  - id: rule-5-explain-why-its-relevant-1
+    type: text
+    text: Connect the reference to the current pattern.
+  - id: rule-5-explain-why-its-relevant-bad
+    type: text
+    text: '**Bad:**'
+  - id: rule-5-explain-why-its-relevant-code-3
+    type: code
+    text: "- id: router-mounting\n  content: \"Routers are mounted in create_app.\""
+  - id: rule-5-explain-why-its-relevant-good
+    type: text
+    text: '**Good:**'
+  - id: rule-5-explain-why-its-relevant-code-5
+    type: code
+    text: "- id: router-mounting\n  content: |\n    Routers are mounted in the create_app function (app/core/factory.py)\
+      \ using\n    app.include_router(). This centralizes route registration and ensures\n    consistent\
+      \ prefix application (/api/v1)."
+  - id: rule-5-explain-why-its-relevant-6
+    type: text
+    text: '---'
+- id: section-6-usage-guidelines
+  index: 27
+  title: 'Section 6: Usage Guidelines'
+  category: guide
+  summary: ''
+  items:
+  - id: section-6-usage-guidelines-1
+    type: text
+    text: Use this document for classification decisions.
+- id: classification-workflow
+  index: 28
+  title: Classification Workflow
+  category: workflow
+  summary: ''
+  items:
+  - id: classification-workflow-identify-all-relevant-domains
+    type: text
+    text: Identify All Relevant Domains
+  - id: classification-workflow-2
+    type: text
+    text: 'Determine which domain(s) the content relates to: `rest`, `fastapi`, `python`, `surrealdb`,
+      `elasticsearch`. Content can have multiple domains.'
+  - id: classification-workflow-apply-all-applicable-domain-ta
+    type: text
+    text: Apply All Applicable Domain Tags
+  - id: classification-workflow-if-content-relates-to-multiple
+    type: text
+    text: If content relates to multiple domains, tag it with ALL of them
+  - id: classification-workflow-do-not-reduce-to-a-single-doma
+    type: rule
+    text: Do not reduce to a single domain—use multi-domain tagging (see Section 2)
+  - id: classification-workflow-example-fastapi-route-with-ur
+    type: example
+    text: 'Example: FastAPI route with URL versioning → `[''rest'', ''fastapi'']`'
+  - id: classification-workflow-determine-scope
+    type: text
+    text: Determine Scope
+  - id: classification-workflow-8
+    type: text
+    text: 'Use Section 3 tests:'
+  - id: classification-workflow-general-could-this-apply-to
+    type: text
+    text: 'GENERAL: "Could this apply to a different project?"'
+  - id: classification-workflow-project-does-this-reference
+    type: text
+    text: 'PROJECT: "Does this reference a specific file or component?"'
+  - id: classification-workflow-determine-pattern
+    type: text
+    text: Determine Pattern
+  - id: classification-workflow-use-section-4-test-questions
+    type: text
+    text: Use Section 4 test questions
+  - id: classification-workflow-match-content-to-the-pattern-w
+    type: text
+    text: Match content to the pattern whose test question gets a "yes"
+  - id: classification-workflow-consider-splitting
+    type: text
+    text: Consider Splitting
+  - id: classification-workflow-if-content-spans-multiple-scop
+    type: text
+    text: If content spans multiple scopes or patterns, split into separate items
+  - id: classification-workflow-each-item-should-have-a-single
+    type: rule
+    text: Each item should have a single scope and pattern
+  - id: classification-workflow-multi-domain-items-do-not-need
+    type: rule
+    text: Multi-domain items do NOT need splitting—domains are independent tags
+- id: example-classification
+  index: 29
+  title: Example Classification
+  category: example
+  summary: ''
+  items:
+  - id: example-classification-1
+    type: step
+    text: '**Content:** "The `/api/v1` prefix is used for all API routes. Routers are mounted in `create_app`
+      using `app.include_router(router, prefix=''/api/v1'')`."'
+  - id: example-classification-analysis
+    type: text
+    text: '**Analysis:**'
+  - id: example-classification-domains-rest-fastapi
+    type: text
+    text: 'Domains: `[''rest'', ''fastapi'']` — URL structure relates to REST, router mounting relates
+      to FastAPI'
+  - id: example-classification-scope-references-create_app
+    type: step
+    text: 'Scope: References `create_app` → PROJECT for the mounting part; URL convention → GENERAL'
+  - id: example-classification-pattern-url-structure-api
+    type: text
+    text: 'Pattern: URL structure → `api-patterns`; mounting → `factory-patterns`'
+  - id: example-classification-decision-split-by-scope
+    type: text
+    text: '**Decision:** Split by scope (not by domain):'
+  - id: example-classification-generalrestapi-patternsyml
+    type: text
+    text: '`general.rest.api-patterns.yml`: URL versioning convention (domains: `[''rest'']`)'
+  - id: example-classification-projectfastapifactory-patte
+    type: text
+    text: '`project.fastapi.factory-patterns.yml`: Router mounting implementation (domains: `[''fastapi'']`)'
+  - id: example-classification-9
+    type: note
+    text: 'Note: The split is based on scope (GENERAL vs PROJECT), not domain. If both parts were GENERAL,
+      they could remain together with domains: `[''rest'', ''fastapi'']`.'
+- id: primary-consumer
+  index: 30
+  title: Primary Consumer
+  category: standard
+  summary: ''
+  items:
+  - id: primary-consumer-1
+    type: rule
+    text: 'The knowledge-analyzer agent (`.claude/agents/knowledge-analyzer.md`) is the primary consumer
+      of this document. The agent should:'
+  - id: primary-consumer-use-these-definitions-for-sema
+    type: text
+    text: Use these definitions for semantic classification instead of keyword matching
+  - id: primary-consumer-apply-all-relevant-domain-tags
+    type: text
+    text: Apply all relevant domain tags to content (no single-domain resolution)
+  - id: primary-consumer-use-test-questions-to-validate
+    type: text
+    text: Use test questions to validate scope and pattern classifications
+  - id: primary-consumer-reference-this-document-when-e
+    type: text
+    text: Reference this document when explaining classification decisions

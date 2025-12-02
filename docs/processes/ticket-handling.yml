@@ -1,0 +1,48 @@
+doc_id: original-processes-ticket-handling
+title: Ticket and PR URL Handling
+description: Users can initiate workflows by providing PR or ticket URLs to the orchestrator. The system
+  automates the process of fetching details and routing work to appropriate agents.
+domain: []
+scope: project
+sections:
+- id: workflow-steps
+  index: 1
+  title: Workflow Steps
+  category: workflow
+  summary: ''
+  items:
+  - id: workflow-steps-user-submission-user-post
+    type: text
+    text: '**User Submission**: User POSTs a URL to the orchestrator.'
+  - id: workflow-steps-2
+    type: text
+    text: '2. **GitHub Agent**: Orchestrator invokes the specialized GitHub Agent to fetch details using
+      MCP. This retrieves PR diffs, issue descriptions, labels, and other metadata.'
+  - id: workflow-steps-3
+    type: example
+    text: '3. **Automatic Routing**: Based on the content (e.g., labels, file paths), the orchestrator
+      routes the ticket to the appropriate domain and role. For example, UI-related changes route to UI
+      domain agents.'
+  - id: workflow-steps-4
+    type: step
+    text: '4. **Claiming**: For new tickets, the orchestrator broadcasts availability, and agents claim
+      tickets on a first-come-first-served basis via the ticket manager.'
+- id: claiming-mechanism
+  index: 2
+  title: Claiming Mechanism
+  category: standard
+  summary: ''
+  items:
+  - id: claiming-mechanism-1
+    type: step
+    text: 'The ticket manager (`app/services/ticket_manager.py`) implements first-come-first-served claiming.
+      When a ticket is available:'
+  - id: claiming-mechanism-the-orchestrator-broadcasts-th
+    type: text
+    text: The orchestrator broadcasts the ticket to eligible agents
+  - id: claiming-mechanism-the-first-agent-to-respond-cla
+    type: step
+    text: The first agent to respond claims the ticket
+  - id: claiming-mechanism-the-orchestrator-assigns-the-t
+    type: text
+    text: The orchestrator assigns the ticket and begins the workflow

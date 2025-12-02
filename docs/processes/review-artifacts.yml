@@ -1,0 +1,77 @@
+doc_id: original-processes-review-artifacts
+title: Review Artifact Handling
+description: Review tool outputs are stored in a standardized format for agent retrieval and audit purposes.
+domain: []
+scope: general
+sections:
+- id: storage-location
+  index: 1
+  title: Storage Location
+  category: standard
+  summary: ''
+  items:
+  - id: storage-location-1
+    type: text
+    text: All review tool outputs are stored under the `.review/` directory in the repository root.
+- id: naming-convention
+  index: 2
+  title: Naming Convention
+  category: standard
+  summary: ''
+  items:
+  - id: naming-convention-1
+    type: text
+    text: 'Files use UTC timestamps in the format `<YYYYMMDDTHHMMSSZ>`:'
+  - id: naming-convention-coderabbit-reviewtime
+    type: text
+    text: '**CodeRabbit**: `.review/<timestamp>.review.coderabbit`'
+  - id: naming-convention-sonarqube-reviewtimes
+    type: text
+    text: '**SonarQube**: `.review/<timestamp>.review.sonar`'
+- id: follow-up-questions
+  index: 3
+  title: Follow-up Questions
+  category: standard
+  summary: ''
+  items:
+  - id: follow-up-questions-1
+    type: step
+    text: Record any follow-up questions for humans in `.review/review-questions-<timestamp>.txt` directly
+      after running reviews. This ensures questions are captured alongside the review output.
+- id: exclusions
+  index: 4
+  title: Exclusions
+  category: standard
+  summary: ''
+  items:
+  - id: exclusions-1
+    type: text
+    text: 'Keep review artifacts excluded from:'
+  - id: exclusions-scans-configured-in-che
+    type: text
+    text: '**Scans**: Configured in `.checkov.yaml` and other scan configurations'
+  - id: exclusions-vcs-listed-in-gitignore
+    type: text
+    text: '**VCS**: Listed in `.gitignore` to prevent committing review outputs'
+- id: agent-retrieval
+  index: 5
+  title: Agent Retrieval
+  category: standard
+  summary: ''
+  items:
+  - id: agent-retrieval-1
+    type: text
+    text: 'Agents retrieve the latest review artifact using:'
+  - id: agent-retrieval-code-2
+    type: code
+    text: '# Get latest CodeRabbit review
+
+      uv run latest-review --type coderabbit
+
+
+      # Get latest SonarQube review
+
+      uv run latest-review --type sonar'
+  - id: agent-retrieval-3
+    type: text
+    text: These commands print the path to the newest review file of the specified type.

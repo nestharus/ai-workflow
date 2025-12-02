@@ -1,0 +1,58 @@
+doc_id: original-architecture-roles-skeleton
+title: The 5-Role Skeleton
+description: The system implements a 5-role skeleton that defines agent responsibilities and workflow
+  positions. All handoffs between roles are mediated by the orchestrator.
+domain: []
+scope: general
+sections:
+- id: r1-strategy-planner
+  index: 1
+  title: 'R1: Strategy Planner'
+  category: standard
+  summary: ''
+  items:
+  - id: r1-strategy-planner-1
+    type: text
+    text: Defines "big phases" using deep research. Reviews R2's detailed plan and performs final review
+      after R4 passes output. R1 agents are also responsible for updating the Knowledge Graph when corrections
+      are needed.
+- id: r2-planner
+  index: 2
+  title: 'R2: Planner'
+  category: standard
+  summary: ''
+  items:
+  - id: r2-planner-1
+    type: text
+    text: Breaks phases into discrete tasks. Reviews R3's implementation (diff) before it moves to R4.
+      Ensures task granularity is appropriate for single-task execution.
+- id: r3-implementoreditor
+  index: 3
+  title: 'R3: Implementor/Editor'
+  category: standard
+  summary: ''
+  items:
+  - id: r3-implementoreditor-1
+    type: step
+    text: Executes a single task at a time. Performs the actual code changes, documentation updates, and
+      other implementation work as directed by the plan from R2.
+- id: r4-quality-reviewer
+  index: 4
+  title: 'R4: Quality Reviewer'
+  category: standard
+  summary: ''
+  items:
+  - id: r4-quality-reviewer-1
+    type: example
+    text: Performs automated checks (cloud-based, e.g., CodeRabbit) that apply feedback labels. Feedback
+      is routed by the orchestrator back to appropriate roles for resolution.
+- id: r5-qa-maintenance
+  index: 5
+  title: 'R5: QA & Maintenance'
+  category: standard
+  summary: ''
+  items:
+  - id: r5-qa-maintenance-1
+    type: text
+    text: Monitors production metrics (cloud-based) and feeds issues back to R1 via the orchestrator.
+      Ensures system health and identifies patterns requiring process improvements.

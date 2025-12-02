@@ -1,0 +1,73 @@
+doc_id: original-processes-orchestrator-invocation
+title: Orchestrator Invocation Examples
+description: This document shows how the orchestrator internally invokes agents via `droid exec`.
+domain: []
+scope: general
+sections:
+- id: internal-invocation-command
+  index: 1
+  title: Internal Invocation Command
+  category: standard
+  summary: ''
+  items:
+  - id: internal-invocation-command-1
+    type: step
+    text: 'The orchestrator executes agents using subprocess calls:'
+  - id: internal-invocation-command-code-2
+    type: code
+    text: "# INTERNAL USE ONLY: Orchestrator invoking an agent\ndroid exec --skip-permissions-unsafe --model\
+      \ custom:gemini-3-pro-preview-low \\\n  --f \"/tmp/agent_context_123.json\""
+- id: command-components
+  index: 2
+  title: Command Components
+  category: standard
+  summary: ''
+  items:
+  - id: command-components-droid-exec-the-base-com
+    type: text
+    text: '**`droid exec`**: The base command for agent execution'
+  - id: command-components-skip-permissions-unsafe
+    type: text
+    text: '**`--skip-permissions-unsafe`**: Bypasses permission checks (orchestrator is trusted)'
+  - id: command-components-model-specifies-the-a
+    type: text
+    text: '**`--model`**: Specifies the AI model to use for the agent'
+  - id: command-components-f-path-to-a-json-file
+    type: text
+    text: '**`--f`**: Path to a JSON file containing the agent context'
+- id: agent-execution-context
+  index: 3
+  title: Agent Execution Context
+  category: standard
+  summary: ''
+  items:
+  - id: agent-execution-context-1
+    type: rule
+    text: 'Agents run within this execution environment but do not need to manage it. The orchestrator:'
+  - id: agent-execution-context-prepares-the-context-file-with
+    type: text
+    text: Prepares the context file with task details, workflow state, and permissions
+  - id: agent-execution-context-spawns-the-agent-process-with
+    type: text
+    text: Spawns the agent process with appropriate flags
+  - id: agent-execution-context-monitors-execution-and-capture
+    type: text
+    text: Monitors execution and captures output
+  - id: agent-execution-context-processes-results-and-continue
+    type: text
+    text: Processes results and continues the workflow
+- id: important-notes
+  index: 4
+  title: Important Notes
+  category: standard
+  summary: ''
+  items:
+  - id: important-notes-agents-should-be-aware-they-ru
+    type: rule
+    text: Agents should be aware they run in this context but not execute these commands
+  - id: important-notes-the-context-file-is-temporary
+    type: text
+    text: The context file is temporary and cleaned up after execution
+  - id: important-notes-multiple-agents-may-run-concur
+    type: step
+    text: Multiple agents may run concurrently in separate worktrees
