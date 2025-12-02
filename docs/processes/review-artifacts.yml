@@ -24,10 +24,10 @@ sections:
     text: 'Files use UTC timestamps in the format `<YYYYMMDDTHHMMSSZ>`:'
   - id: naming-convention-coderabbit-reviewtime
     type: text
-    text: '**CodeRabbit**: `.review/<timestamp>.review.coderabbit`'
+    text: 'CodeRabbit: `.review/<timestamp>.review.coderabbit`'
   - id: naming-convention-sonarqube-reviewtimes
     type: text
-    text: '**SonarQube**: `.review/<timestamp>.review.sonar`'
+    text: 'SonarQube: `.review/<timestamp>.review.sonar`'
 - id: follow-up-questions
   index: 3
   title: Follow-up Questions
@@ -49,10 +49,10 @@ sections:
     text: 'Keep review artifacts excluded from:'
   - id: exclusions-scans-configured-in-che
     type: text
-    text: '**Scans**: Configured in `.checkov.yaml` and other scan configurations'
+    text: 'Scans: Configured in `.checkov.yaml` and other scan configurations'
   - id: exclusions-vcs-listed-in-gitignore
     type: text
-    text: '**VCS**: Listed in `.gitignore` to prevent committing review outputs'
+    text: 'VCS: Listed in `.gitignore` to prevent committing review outputs'
 - id: agent-retrieval
   index: 5
   title: Agent Retrieval

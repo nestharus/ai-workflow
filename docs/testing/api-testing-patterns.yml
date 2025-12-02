@@ -15,12 +15,12 @@ sections:
   - id: 1-testing-architecture-1
     type: rule
     text: |
-      * **Three layers:** * **Unit tests:** Exercise a single function or class in isolation with minimal dependencies.
-      * **Integration tests:** Use an in-process ASGI client to exercise the full FastAPI app without a real network
-      (`async_client` from `tests/conftest.py`). * **E2E tests:** Talk to a live server running in Docker and validate
-      the full stack (`api_client` from `tests/conftest.py`). * **App factory:** All tests that need the HTTP layer
+      * Three layers: * Unit tests: Exercise a single function or class in isolation with minimal dependencies.
+      * Integration tests: Use an in-process ASGI client to exercise the full FastAPI app without a real network
+      (`async_client` from `tests/conftest.py`). * E2E tests: Talk to a live server running in Docker and validate
+      the full stack (`api_client` from `tests/conftest.py`). * App factory: All tests that need the HTTP layer
       should build the app via `create_app` from `app/core/factory.py`, passing a `Settings` instance from
-      `app/core/settings.py` or a test-specific variant. * **Contracts first:** When testing HTTP endpoints, treat the
+      `app/core/settings.py` or a test-specific variant. * Contracts first: When testing HTTP endpoints, treat the
       Pydantic contracts (including `HTTPValidationError` in `app/contracts/errors.py`) as the source of truth for
       request/response shapes.
 - id: 2-test-fixture-composition-root
@@ -32,20 +32,20 @@ sections:
   - id: 2-test-fixture-composition-root-1
     type: text
     text: |
-      `tests/conftest.py` is the **composition root** for the test suite. It owns how the application, settings, and
+      `tests/conftest.py` is the composition root for the test suite. It owns how the application, settings, and
       HTTP clients are composed for tests.
   - id: 2-test-fixture-composition-root-2
     type: rule
     text: |
-      * **Settings fixture:** * `test_settings` provides a `Settings` instance configured for testing. * Tests should
-      build on top of this fixture rather than constructing `Settings` directly. * **App fixture:** * `test_app` creates
+      * Settings fixture: * `test_settings` provides a `Settings` instance configured for testing. * Tests should
+      build on top of this fixture rather than constructing `Settings` directly. * App fixture: * `test_app` creates
       a `FastAPI` instance by calling `create_app(test_settings)`. * This is the canonical way to get an in-process app
-      in tests. * **Sync clients:** * `client` yields a `TestClient` for basic synchronous route testing. *
+      in tests. * Sync clients: * `client` yields a `TestClient` for basic synchronous route testing. *
       `client_include_error_body` enables `include_error_body=True` via a copied `Settings` instance and is dedicated to
-      validation/error-body tests. * **Async clients:** * `async_client` yields an `httpx.AsyncClient` configured with
+      validation/error-body tests. * Async clients: * `async_client` yields an `httpx.AsyncClient` configured with
       `httpx.ASGITransport(app=test_app)` and a `base_url` of `http://test`. It is the standard fixture for in-process
       integration tests. * `api_client` yields an `httpx.AsyncClient` that points at a live server URL and is used only
-      in E2E tests. * **Live server:** * `live_server` is a session-scoped fixture that builds and runs the Docker stack
+      in E2E tests. * Live server: * `live_server` is a session-scoped fixture that builds and runs the Docker stack
       (via `docker compose`) using `docker-compose.yml`, waits for the `/health` endpoint to become ready, and tears
       everything down after tests complete.
   - id: 2-test-fixture-composition-root-3
@@ -66,10 +66,10 @@ sections:
   - id: 3-dependency-overrides-pattern-2
     type: rule
     text: |
-      * **Core idea:** * For a dependency provider like `get_surrealdb_pool` or `get_search_client`, register a test
-      double in `app.dependency_overrides` before creating the client. * **Lifecycle:** * Set overrides **before**
-      constructing `TestClient` or `AsyncClient`. * Always clear overrides **after** the test to avoid cross-test
-      leakage. * **Canonical fixture pattern:**
+      * Core idea: * For a dependency provider like `get_surrealdb_pool` or `get_search_client`, register a test
+      double in `app.dependency_overrides` before creating the client. * Lifecycle: * Set overrides before
+      constructing `TestClient` or `AsyncClient`. * Always clear overrides after the test to avoid cross-test
+      leakage. * Canonical fixture pattern:
   - id: 3-dependency-overrides-pattern-code-3
     type: code
     text: |
@@ -85,7 +85,7 @@ sections:
   - id: 3-dependency-overrides-pattern-4
     type: rule
     text: |
-      * **Migration note:** Existing tests (such as those in `tests/unit/test_validation_errors.py`) may rely on
+      * Migration note: Existing tests (such as those in `tests/unit/test_validation_errors.py`) may rely on
       `monkeypatch` against factories like `create_surrealdb_pool`. New tests and refactors should move toward the
       `dependency_overrides` approach so that dependency wiring is centralized and easier to reason about.
 - id: 4-mocking-external-dependencies
@@ -96,16 +96,16 @@ sections:
   items:
   - id: 4-mocking-external-dependencies-1
     type: rule
-    text: External resources (databases, search, queues, third-party APIs) should be mocked at the **dependency
-      boundary**, not by patching internals.
+    text: External resources (databases, search, queues, third-party APIs) should be mocked at the dependency
+      boundary, not by patching internals.
   - id: 4-mocking-external-dependencies-2
     type: step
     text: |
-      * **DB pools:** * Provide a dependency like `get_surrealdb_pool` that returns a `SurrealDBPool` instance in
+      * DB pools: * Provide a dependency like `get_surrealdb_pool` that returns a `SurrealDBPool` instance in
       production. * In tests, override `get_surrealdb_pool` with a lightweight fake that implements the minimal methods
-      used by the code under test (for example, `query`, `close`). * **Search/Elasticsearch:** * Provide a
+      used by the code under test (for example, `query`, `close`). * Search/Elasticsearch: * Provide a
       `get_elasticsearch_client` dependency that returns an `ElasticsearchWrapper` in production. * In tests, override
-      it with a simple in-memory fake. * **External services:** * For authentication providers, payment gateways, or
+      it with a simple in-memory fake. * External services: * For authentication providers, payment gateways, or
       other external APIs, override the dependency that calls them and return deterministic fake responses.
   - id: 4-mocking-external-dependencies-3
     type: step
@@ -121,12 +121,12 @@ sections:
     type: rule
     text: |
       `Settings` in `app/core/settings.py` defines runtime configuration. Tests should treat `Settings` as the single
-      source of truth and create **immutable variants** using `model_copy`.
+      source of truth and create immutable variants using `model_copy`.
   - id: 5-settings-override-pattern-2
     type: step
     text: |
-      * **Base fixture:** Use the `test_settings` fixture from `tests/conftest.py` as the starting point. * **Per-test
-      variants:** For scenario-specific tweaks (for example, enabling `include_error_body` or turning on debug logs),
+      * Base fixture: Use the `test_settings` fixture from `tests/conftest.py` as the starting point. * Per-test
+      variants: For scenario-specific tweaks (for example, enabling `include_error_body` or turning on debug logs),
       create copies instead of mutating shared settings:
   - id: 5-settings-override-pattern-code-3
     type: code
@@ -135,7 +135,7 @@ sections:
   - id: 5-settings-override-pattern-4
     type: rule
     text: |
-      * **Validation-sensitive fields:** When constructing `Settings` directly (as in
+      * Validation-sensitive fields: When constructing `Settings` directly (as in
       `tests/unit/test_validation_errors.py`), always respect validation constraints for credentials and URLs so tests
       mirror production requirements.
 - id: 6-integration-test-patterns-in-process
@@ -150,10 +150,10 @@ sections:
   - id: 6-integration-test-patterns-in-process-2
     type: rule
     text: |
-      * **Client fixture:** Use `async_client` from `tests/conftest.py` for async endpoints and in-process tests. * **No
-      network:** Tests run entirely in-process using `httpx.ASGITransport`, giving full coverage of routing, dependency
-      injection, and exception handlers without network overhead. * **Dependency overrides:** Apply
-      `app.dependency_overrides` to replace DB pools or external clients when needed. * **Scope:** These tests should
+      * Client fixture: Use `async_client` from `tests/conftest.py` for async endpoints and in-process tests. * No
+      network: Tests run entirely in-process using `httpx.ASGITransport`, giving full coverage of routing, dependency
+      injection, and exception handlers without network overhead. * Dependency overrides: Apply
+      `app.dependency_overrides` to replace DB pools or external clients when needed. * Scope: These tests should
       cover most application behavior, including happy paths, validation, and error handling, while remaining fast
       enough for frequent local execution.
 - id: 7-e2e-test-patterns-dockerized-live-server
@@ -169,11 +169,11 @@ sections:
   - id: 7-e2e-test-patterns-dockerized-live-server-2
     type: step
     text: |
-      * **Fixtures and markers:** * Use the `live_server` and `api_client` fixtures from `tests/conftest.py`. * Mark
+      * Fixtures and markers: * Use the `live_server` and `api_client` fixtures from `tests/conftest.py`. * Mark
       tests with `@pytest.mark.e2e` and, for async tests, `@pytest.mark.asyncio` (as shown in
-      `tests/e2e/test_health.py`). * **Docker stack:** * `live_server` runs `docker compose -f docker-compose.yml up -d
+      `tests/e2e/test_health.py`). * Docker stack: * `live_server` runs `docker compose -f docker-compose.yml up -d
       --build api` and waits for `/health` to return status `200` with `{"status": "ok"}`. * On failure, it captures
-      `docker compose` logs and raises a `DockerStartupTimeoutError` to aid debugging. * **Port management:** *
+      `docker compose` logs and raises a `DockerStartupTimeoutError` to aid debugging. * Port management: *
       `_resolve_test_port` allocates an ephemeral port (or uses `TEST_PORT` when set) and stores it in `os.environ` so
       Docker and tests agree on the port.
   - id: 7-e2e-test-patterns-dockerized-live-server-3
@@ -192,9 +192,9 @@ sections:
   - id: 8-test-database-setup-2
     type: step
     text: |
-      * **Dedicated test DB:** Point `Settings.surrealdb_url` / `surrealdb_database` to a dedicated test instance or
-      schema. * **Schema initialization:** Ensure schema and seed data are created once per session (for example, in a
-      future `test_surrealdb_pool` fixture) before running DB-dependent tests. * **Isolation:** Use transactions,
+      * Dedicated test DB: Point `Settings.surrealdb_url` / `surrealdb_database` to a dedicated test instance or
+      schema. * Schema initialization: Ensure schema and seed data are created once per session (for example, in a
+      future `test_surrealdb_pool` fixture) before running DB-dependent tests. * Isolation: Use transactions,
       truncation, or per-test databases to keep tests independent.
   - id: 8-test-database-setup-3
     type: rule
@@ -216,10 +216,10 @@ sections:
   - id: 9-assertion-patterns-2
     type: rule
     text: |
-      * **Status-first:** Assert the HTTP status code before inspecting the body. * **Structured body:** Assert against
-      parsed JSON using explicit keys and values. * **Soft assertions:** Use `pytest-check` (as in
+      * Status-first: Assert the HTTP status code before inspecting the body. * Structured body: Assert against
+      parsed JSON using explicit keys and values. * Soft assertions: Use `pytest-check` (as in
       `tests/e2e/test_health.py`) when multiple related assertions should be evaluated within a single test. *
-      **Model-based validation:** When appropriate, deserialize responses into Pydantic models (for example, response
+      Model-based validation: When appropriate, deserialize responses into Pydantic models (for example, response
       contracts or `HTTPValidationError`) rather than asserting on raw dictionaries.
   - id: 9-assertion-patterns-3
     type: example
@@ -240,12 +240,12 @@ sections:
   - id: 10-testing-validation-errors-and-error-responses-2
     type: rule
     text: |
-      * **Validation contracts:** `HTTPValidationError` in `app/contracts/errors.py` defines the shape of validation
-      error responses exposed by the API. * **Settings-driven behavior:** The `include_error_body` flag in `Settings`
+      * Validation contracts: `HTTPValidationError` in `app/contracts/errors.py` defines the shape of validation
+      error responses exposed by the API. * Settings-driven behavior: The `include_error_body` flag in `Settings`
       controls whether the request body is echoed back in error responses. The `client_include_error_body` fixture and
-      tests in `tests/unit/test_validation_errors.py` demonstrate testing both enabled and disabled cases. * **Detail
-      structure:** Tests should assert that `detail` contains structured error items (such as `loc`, `msg`, and `type`),
-      not just free-form messages. * **OpenAPI alignment:** Validation error responses should remain compatible with the
+      tests in `tests/unit/test_validation_errors.py` demonstrate testing both enabled and disabled cases. * Detail
+      structure: Tests should assert that `detail` contains structured error items (such as `loc`, `msg`, and `type`),
+      not just free-form messages. * OpenAPI alignment: Validation error responses should remain compatible with the
       OpenAPI schema produced by `create_app`, which registers `HTTPValidationError` in the components section.
 - id: 11-docker-based-e2e-execution-details
   index: 11
@@ -260,10 +260,10 @@ sections:
   - id: 11-docker-based-e2e-execution-details-2
     type: rule
     text: |
-      * **Readiness checks:** Only begin assertions after the `/health` endpoint reports ready; the fixture already
-      polls with a bounded timeout. * **Failure visibility:** On startup failure, E2E fixtures log `docker compose`
+      * Readiness checks: Only begin assertions after the `/health` endpoint reports ready; the fixture already
+      polls with a bounded timeout. * Failure visibility: On startup failure, E2E fixtures log `docker compose`
       output; tests should treat these errors as indications of environment or configuration problems, not
-      application-level failures. * **Teardown:** E2E fixtures always call `docker compose down --remove-orphans
+      application-level failures. * Teardown: E2E fixtures always call `docker compose down --remove-orphans
       --volumes` to clean up containers, networks, and volumes.
 - id: 12-test-organization-and-execution
   index: 12
@@ -276,7 +276,7 @@ sections:
     text: Tests are organized by scope and speed.
   - id: 12-test-organization-and-execution-directories
     type: text
-    text: '**Directories:**'
+    text: 'Directories:'
   - id: 12-test-organization-and-execution-testsunit-classic-unit-te
     type: text
     text: '`tests/unit/`: Classic unit tests and lightweight in-process API tests.'
@@ -289,7 +289,7 @@ sections:
     text: '`tests/e2e/`: Full-stack Dockerized tests using `api_client`.'
   - id: 12-test-organization-and-execution-markers
     type: text
-    text: '**Markers:**'
+    text: 'Markers:'
   - id: 12-test-organization-and-execution-use-pytestmarke2e-for-all
     type: text
     text: Use `@pytest.mark.e2e` for all E2E tests.
@@ -298,7 +298,7 @@ sections:
     text: Use `@pytest.mark.asyncio` for async tests that await `AsyncClient` methods.
   - id: 12-test-organization-and-execution-typical-commands
     type: text
-    text: '**Typical commands:**'
+    text: 'Typical commands:'
   - id: 12-test-organization-and-execution-fast-local-iteration-pytest
     type: text
     text: 'Fast local iteration: `pytest -m "not e2e"`.'
@@ -313,15 +313,15 @@ sections:
   items:
   - id: 13-parallel-execution-considerations-1
     type: step
-    text: Currently the test suite is designed and expected to run **sequentially**; CI does not assume
+    text: Currently the test suite is designed and expected to run sequentially; CI does not assume
       parallel execution (for example, via `pytest-xdist`). This section documents how to evolve toward
       safe parallel execution and highlights patterns that rely on sequential runs.
   - id: 13-parallel-execution-considerations-2
     type: rule
     text: |
-      * **Sequential-only patterns:** * A single shared `TEST_PORT` and `live_server` container are used for all E2E
+      * Sequential-only patterns: * A single shared `TEST_PORT` and `live_server` container are used for all E2E
       tests in a session. * Any future real test database instances would be shared across tests unless isolated per
-      worker. * **Preparing for parallelism:** * Avoid introducing new shared mutable global state, ports, or databases
+      worker. * Preparing for parallelism: * Avoid introducing new shared mutable global state, ports, or databases
       without coordination. * `_resolve_test_port` already guards against conflicts for the main API port; additional
       services introduced in future tests must follow similar patterns. * If tests begin to run in parallel, consider
       per-worker schemas (for example, `knowledge_test_1`, `knowledge_test_2`, …) and isolate `Settings` per worker.
@@ -337,9 +337,9 @@ sections:
   - id: 14-api-schema-and-documentation-tests-2
     type: rule
     text: |
-      * **OpenAPI smoke tests:** Add tests that call `app.openapi()` on a `FastAPI` instance created via `create_app` to
-      ensure schema generation does not raise. * **Key endpoint presence:** Optionally assert that critical endpoints
-      and models (including `HTTPValidationError`) appear in the generated schema. * **Scope:** Keep schema tests
+      * OpenAPI smoke tests: Add tests that call `app.openapi()` on a `FastAPI` instance created via `create_app` to
+      ensure schema generation does not raise. * Key endpoint presence: Optionally assert that critical endpoints
+      and models (including `HTTPValidationError`) appear in the generated schema. * Scope: Keep schema tests
       focused and fast; they should complement, not replace, request/response tests.
 - id: 15-test-data-setup-patterns
   index: 15
@@ -353,9 +353,9 @@ sections:
   - id: 15-test-data-setup-patterns-2
     type: step
     text: |
-      * **Factories and seeds:** Centralize test data creation in fixtures or future factory utilities rather than
-      inlining complex objects across many tests. * **API-first for integration/E2E:** Prefer creating data via API
-      calls in integration and E2E tests so behavior matches real client interactions. * **Direct DB seeding:** Reserve
+      * Factories and seeds: Centralize test data creation in fixtures or future factory utilities rather than
+      inlining complex objects across many tests. * API-first for integration/E2E: Prefer creating data via API
+      calls in integration and E2E tests so behavior matches real client interactions. * Direct DB seeding: Reserve
       direct database writes for fixtures that clearly document their purpose and clean up after themselves.
 - id: 16-anti-patterns-to-avoid
   index: 16

@@ -339,7 +339,7 @@ sections:
   items:
   - id: 37-document-agent-message-submission-examples-1
     type: note
-    text: '**Note:** These examples are illustrative. For the exact API contract, refer to `docs/architecture/orchestrator_api.md`.'
+    text: 'Note: These examples are illustrative. For the exact API contract, refer to `docs/architecture/orchestrator_api.md`.'
   - id: 37-document-agent-message-submission-examples-code-2
     type: code
     text: |

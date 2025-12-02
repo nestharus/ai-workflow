@@ -12,8 +12,8 @@ sections:
   items:
   - id: 20-install-tools-1
     type: rule
-    text: Deep research capabilities are required by the **R1 Research Agent**. This tool is always invoked
-      **indirectly via the Orchestrator**, not by regular agents directly. R1 Strategy Planners request
+    text: Deep research capabilities are required by the R1 Research Agent. This tool is always invoked
+      indirectly via the Orchestrator, not by regular agents directly. R1 Strategy Planners request
       research by submitting messages to `/api/v1/orchestrator/submit` with `role` set to `R1 Research
       Agent`. The orchestrator is responsible for invoking the deep research tool within that specialized
       agent (see `docs/plans/phase3.md` for POML definition).
@@ -40,7 +40,7 @@ sections:
     text: We implement the core communication structures for the orchestrator.
   - id: 21-implement-orchestrator-router-and-contracts-2
     type: note
-    text: '**Note:** Ensure implementation matches the canonical specifications in `docs/architecture/orchestrator_api.md`.'
+    text: 'Note: Ensure implementation matches the canonical specifications in `docs/architecture/orchestrator_api.md`.'
   - id: 21-implement-orchestrator-router-and-contracts-code-3
     type: code
     text: |
@@ -103,7 +103,7 @@ sections:
       configuration to allow receiver → orchestrator communication
   - id: 24-implement-webhook-receiver-service-webhook-hardening-add-to-th
     type: text
-    text: '**Webhook hardening (add to the design/implementation above):**'
+    text: 'Webhook hardening (add to the design/implementation above):'
   - id: 24-implement-webhook-receiver-service-3
     type: example
     text: |
@@ -130,7 +130,7 @@ sections:
   - id: 25-configure-orchestrator-settings-2
     type: rule
     text: |
-      **Secret management requirements:** * Never commit `GITHUB_WEBHOOK_SECRET` or database credentials; store them in
+      Secret management requirements: * Never commit `GITHUB_WEBHOOK_SECRET` or database credentials; store them in
       environment variables or a secrets manager (Vault, AWS Secrets Manager, GCP Secret Manager, or CI secrets store).
       Git-ignore local `.env` files used for development and reference env vars in `app/core/settings.py` via
       `os.environ`. Enforce least-privilege access, encryption at rest, and regular rotation for all secrets. Configure
@@ -143,7 +143,7 @@ sections:
   items:
   - id: 26-document-agent-to-orchestrator-communication-protocol-note-see-docsarchitectu
     type: note
-    text: '**Note:** See `docs/architecture/orchestrator_api.md` for full API details.'
+    text: 'Note: See `docs/architecture/orchestrator_api.md` for full API details.'
   - id: 26-document-agent-to-orchestrator-communication-protocol-code-2
     type: code
     text: |

@@ -27,16 +27,16 @@ sections:
   items:
   - id: command-components-droid-exec-the-base-com
     type: text
-    text: '**`droid exec`**: The base command for agent execution'
+    text: '`droid exec`: The base command for agent execution'
   - id: command-components-skip-permissions-unsafe
     type: text
-    text: '**`--skip-permissions-unsafe`**: Bypasses permission checks (orchestrator is trusted)'
+    text: '`--skip-permissions-unsafe`: Bypasses permission checks (orchestrator is trusted)'
   - id: command-components-model-specifies-the-a
     type: text
-    text: '**`--model`**: Specifies the AI model to use for the agent'
+    text: '`--model`: Specifies the AI model to use for the agent'
   - id: command-components-f-path-to-a-json-file
     type: text
-    text: '**`--f`**: Path to a JSON file containing the agent context'
+    text: '`--f`: Path to a JSON file containing the agent context'
 - id: agent-execution-context
   index: 3
   title: Agent Execution Context

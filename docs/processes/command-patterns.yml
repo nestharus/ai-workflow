@@ -30,16 +30,16 @@ sections:
     text: 'The message payload includes:'
   - id: orchestrator-message-submission-role-the-target-role-to-h
     type: text
-    text: '**role**: The target role to handle the task'
+    text: 'role: The target role to handle the task'
   - id: orchestrator-message-submission-task-description-of-what
     type: text
-    text: '**task**: Description of what needs to be done'
+    text: 'task: Description of what needs to be done'
   - id: orchestrator-message-submission-context-additional-contex
     type: text
-    text: '**context**: Additional context data (file paths, metadata)'
+    text: 'context: Additional context data (file paths, metadata)'
   - id: orchestrator-message-submission-requesting_agent-the-agen
     type: text
-    text: '**requesting_agent**: The agent submitting the message'
+    text: 'requesting_agent: The agent submitting the message'
 - id: orchestrator-invokes-agents
   index: 2
   title: Orchestrator Invokes Agents

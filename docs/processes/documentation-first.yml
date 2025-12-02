@@ -25,16 +25,16 @@ sections:
   items:
   - id: benefits-system-learning-correctio
     type: text
-    text: '**System Learning**: Corrections persist and improve future agent behavior'
+    text: 'System Learning: Corrections persist and improve future agent behavior'
   - id: benefits-single-source-of-truth-al
     type: text
-    text: '**Single Source of Truth**: All agents reference the same authoritative documentation'
+    text: 'Single Source of Truth: All agents reference the same authoritative documentation'
   - id: benefits-consistency-updated-docum
     type: text
-    text: '**Consistency**: Updated documentation ensures consistent behavior across all agents'
+    text: 'Consistency: Updated documentation ensures consistent behavior across all agents'
   - id: benefits-traceability-changes-to-s
     type: text
-    text: '**Traceability**: Changes to standards are tracked in version control'
+    text: 'Traceability: Changes to standards are tracked in version control'
 - id: process
   index: 3
   title: Process

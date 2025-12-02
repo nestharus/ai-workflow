@@ -40,7 +40,10 @@ def fix_yaml_file(file_path: Path) -> bool:
     # Pattern 4: Wrap long lines in existing block scalars
     content = wrap_long_block_scalar_lines(content)
 
-    # Pattern 5: Strip trailing whitespace from all lines
+    # Pattern 5: Strip markdown bold formatting (**word** -> word)
+    content = strip_markdown_bold(content)
+
+    # Pattern 6: Strip trailing whitespace from all lines
     content = strip_trailing_whitespace(content)
 
     if content != original:
@@ -53,6 +56,101 @@ def strip_trailing_whitespace(content: str) -> str:
     """Remove trailing whitespace from all lines."""
     lines = content.split("\n")
     return "\n".join(line.rstrip() for line in lines)
+
+
+def strip_markdown_bold(content: str) -> str:
+    """Strip markdown bold formatting from text content.
+
+    Converts **word** or **phrase:** to just word or phrase:.
+    Only applies to text/description fields, not code blocks or heredocs.
+    Handles multi-line bold patterns in block scalars and plain scalars.
+    """
+    lines = content.split("\n")
+    result = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        # Check if this line declares a code-type item
+        if re.match(r"^\s*type:\s*code\s*$", line):
+            result.append(line)
+            i += 1
+            # Skip to end of this item (next item or end of section)
+            while i < len(lines):
+                if re.match(r"^\s*-\s+id:", lines[i]) or re.match(r"^-\s+id:", lines[i]):
+                    break
+                result.append(lines[i])
+                i += 1
+            continue
+
+        # Check for block scalar start (field: | or field: >)
+        block_start = re.match(r"^(\s*)(\w+):\s*([|>])(-?)(\d*)$", line)
+        if block_start:
+            indent = block_start.group(1)
+            block_indent = indent + "  "
+
+            result.append(line)
+            i += 1
+
+            # Collect block scalar content
+            block_lines = []
+            while i < len(lines):
+                block_line = lines[i]
+                # Check if still in block scalar
+                if block_line.startswith(block_indent) or block_line.strip() == "":
+                    block_lines.append(block_line)
+                    i += 1
+                else:
+                    break
+
+            # Check if this block contains heredoc markers
+            block_text = "\n".join(block_lines)
+            has_heredoc = "<<" in block_text and ("EOF" in block_text or "END" in block_text)
+
+            if not has_heredoc:
+                # Strip markdown bold from the block content
+                # Join lines, strip bold, then split back
+                block_text = re.sub(r"\*\*([^*]+)\*\*", r"\1", block_text)
+                block_lines = block_text.split("\n")
+
+            result.extend(block_lines)
+            continue
+
+        # Check for plain scalar that spans multiple lines (field: value\n  continuation)
+        plain_start = re.match(r"^(\s*)(\w+):\s+(.+)$", line)
+        if plain_start and not line.rstrip().endswith("|") and not line.rstrip().endswith(">"):
+            indent = plain_start.group(1)
+            field_name = plain_start.group(2)
+            first_value = plain_start.group(3)
+            cont_indent = indent + "  "
+
+            # Check if this field continues on next lines
+            full_lines = [line]
+            j = i + 1
+            while j < len(lines):
+                next_line = lines[j]
+                # Continuation line: more indented than field, not a new field
+                if next_line.startswith(cont_indent) and not re.match(r"^\s*\w+:", next_line):
+                    full_lines.append(next_line)
+                    j += 1
+                else:
+                    break
+
+            if len(full_lines) > 1:
+                # Multi-line plain scalar - join and strip bold
+                full_text = "\n".join(full_lines)
+                full_text = re.sub(r"\*\*([^*]+)\*\*", r"\1", full_text)
+                result.extend(full_text.split("\n"))
+                i = j
+                continue
+
+        # For non-block-scalar lines, strip markdown bold
+        line = re.sub(r"\*\*([^*]+)\*\*", r"\1", line)
+        result.append(line)
+        i += 1
+
+    return "\n".join(result)
 
 
 def wrap_long_block_scalar_lines(content: str) -> str:

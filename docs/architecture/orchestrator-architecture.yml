@@ -1,6 +1,6 @@
 doc_id: original-architecture-orchestrator-architecture
 title: Orchestrator Architecture
-description: The system is built around a central **FastAPI Orchestrator Service** that manages the lifecycle
+description: The system is built around a central FastAPI Orchestrator Service that manages the lifecycle
   of all workflows.
 domain: []
 scope: project

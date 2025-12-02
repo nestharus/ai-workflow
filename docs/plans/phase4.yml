@@ -13,7 +13,7 @@ sections:
   items:
   - id: 41-configure-quality-reviewer-r4-coderabbitmacroscope-1
     type: text
-    text: We configure CodeRabbit (R4) to apply labels that the **Orchestrator Service** uses for automatic
+    text: We configure CodeRabbit (R4) to apply labels that the Orchestrator Service uses for automatic
       routing.
   - id: 41-configure-quality-reviewer-r4-coderabbitmacroscope-code-2
     type: code
@@ -142,7 +142,7 @@ sections:
   - id: 45-document-ticket-claiming-and-pr-comment-subscription-1
     type: note
     text: |
-      **Note:** Refer to `docs/architecture/orchestrator_api.md` for the canonical API definition for ticket claiming.
+      Note: Refer to `docs/architecture/orchestrator_api.md` for the canonical API definition for ticket claiming.
   - id: 45-document-ticket-claiming-and-pr-comment-subscription-code-2
     type: code
     text: |

@@ -1,6 +1,6 @@
 doc_id: original-architecture-project-overview
 title: Project Overview
-description: Welcome to the **Developing With AI 2.0** system. This repository implements an automated,
+description: Welcome to the Developing With AI 2.0 system. This repository implements an automated,
   orchestrator-based AI workflow system where a central orchestrator service manages workflows and agent
   invocations. AI agents act as specialized roles within a larger workflow coordinated by this service.
 domain: []

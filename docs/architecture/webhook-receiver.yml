@@ -1,6 +1,6 @@
 doc_id: original-architecture-webhook-receiver
 title: Webhook Receiver Service
-description: A standalone **Webhook Receiver Service** (`webhook_receiver/`) handles all incoming events
+description: A standalone Webhook Receiver Service (`webhook_receiver/`) handles all incoming events
   from GitHub. This service is separate from the orchestrator to maintain security boundaries and separation
   of concerns.
 domain: []

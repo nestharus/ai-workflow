@@ -18,14 +18,14 @@ sections:
       addresses this gap by tracking which user-facing scenarios have corresponding tests.
   - id: 1-introduction-key-distinctions
     type: text
-    text: '**Key distinctions:**'
+    text: 'Key distinctions:'
   - id: 1-introduction-code-coverage-measures-wh
     type: step
     text: |
-      **Code coverage**: Measures what percentage of source lines or branches are executed during tests.
+      Code coverage: Measures what percentage of source lines or branches are executed during tests.
   - id: 1-introduction-use-case-coverage-measure
     type: text
-    text: '**Use-case coverage**: Measures how many defined user scenarios have tests that validate them.'
+    text: 'Use-case coverage: Measures how many defined user scenarios have tests that validate them.'
   - id: 1-introduction-5
     type: text
     text: A codebase can have 100% line coverage but still miss critical user scenarios if tests only
@@ -86,7 +86,7 @@ sections:
   - id: 22-field-definitions-2
     type: note
     text: |
-      **Note:** Coverage status is calculated dynamically from `@pytest.mark.usecase` markers in tests, not stored in
+      Note: Coverage status is calculated dynamically from `@pytest.mark.usecase` markers in tests, not stored in
       the registry. Uncovered use cases will appear in coverage reports.
 - id: 23-naming-convention
   index: 5
@@ -136,7 +136,7 @@ sections:
     text: Breaking down complex behaviors into atomic testable scenarios
   - id: 24-when-to-add-use-cases-7
     type: rule
-    text: Each use-case should represent an **atomic, testable scenario** with a single clear expected
+    text: Each use-case should represent an atomic, testable scenario with a single clear expected
       outcome.
 - id: 3-tagging-tests-with-use-case-markers
   index: 7
@@ -321,16 +321,16 @@ sections:
   items:
   - id: 52-benefits-of-stub-tests-visibility-missing-covera
     type: text
-    text: '**Visibility**: Missing coverage is explicit in test reports, not silently absent'
+    text: 'Visibility: Missing coverage is explicit in test reports, not silently absent'
   - id: 52-benefits-of-stub-tests-documentation-stubs-descr
     type: text
-    text: '**Documentation**: Stubs describe what needs to be tested and how'
+    text: 'Documentation: Stubs describe what needs to be tested and how'
   - id: 52-benefits-of-stub-tests-planning-easy-to-see-tota
     type: text
-    text: '**Planning**: Easy to see total test work remaining'
+    text: 'Planning: Easy to see total test work remaining'
   - id: 52-benefits-of-stub-tests-ci-integration-skipped-te
     type: text
-    text: '**CI integration**: Skipped tests appear in reports with clear reasons'
+    text: 'CI integration: Skipped tests appear in reports with clear reasons'
 - id: 53-todo-comments
   index: 19
   title: 5.3 TODO Comments
@@ -539,8 +539,8 @@ sections:
   - id: 75-per-function-vs-use-case-coverage-1
     type: rule
     text: |
-      * **Unit/Component/Scripts tiers**: Each function must individually meet the configured line and branch coverage
-      threshold. This is not an average—every single function is validated separately. * **Integration/E2E tiers**:
+      * Unit/Component/Scripts tiers: Each function must individually meet the configured line and branch coverage
+      threshold. This is not an average—every single function is validated separately. * Integration/E2E tiers:
       Use-cases must have corresponding tests with `@pytest.mark.usecase` markers (threshold configured in settings).
 - id: 8-examples
   index: 32
@@ -556,7 +556,7 @@ sections:
   items:
   - id: 81-complete-example-use-case-to-test-use-case-definition-in-test
     type: text
-    text: '**Use-case definition in `tests/use_cases.yaml`:**'
+    text: 'Use-case definition in `tests/use_cases.yaml`:'
   - id: 81-complete-example-use-case-to-test-code-2
     type: code
     text: |
@@ -570,7 +570,7 @@ sections:
         test_tier: integration
   - id: 81-complete-example-use-case-to-test-corresponding-test-in-tests
     type: text
-    text: '**Corresponding test in `tests/integration/test_example_process.py`:**'
+    text: 'Corresponding test in `tests/integration/test_example_process.py`:'
   - id: 81-complete-example-use-case-to-test-code-4
     type: code
     text: |

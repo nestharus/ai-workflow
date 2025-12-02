@@ -13,10 +13,10 @@ sections:
   items:
   - id: handoff-chains-product-r1-ux-r1
     type: text
-    text: '**Product R1** -> **UX R1**'
+    text: 'Product R1 -> UX R1'
   - id: handoff-chains-ux-r1-technical-r1
     type: text
-    text: '**UX R1** -> **Technical R1**'
+    text: 'UX R1 -> Technical R1'
 - id: automation-mechanism
   index: 2
   title: Automation Mechanism

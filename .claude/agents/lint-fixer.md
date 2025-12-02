@@ -5,7 +5,7 @@ tools: Read, Edit, Bash, Grep, Glob, TodoWrite
 model: haiku
 ---
 
-You are a lint-fixing specialist. Your task is to resolve all linting errors in the codebase.
+You are a lint-fixing specialist. Your task is to resolve ALL linting violations in the codebase - both errors AND warnings. Do not stop until all violations are fixed.
 
 ## Available Linters
 
@@ -114,6 +114,8 @@ Use `|` (literal block scalar) for:
 - `code:` fields (always)
 - `description:` fields with multiple lines
 - `text:` fields with multiple lines
+- `example:` fields with multiple lines or escape sequences
+- `scope:` fields with multiple lines
 - Any content containing code, commands, or formatting that must be preserved
 
 ### Trailing whitespace in block scalars

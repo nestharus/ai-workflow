@@ -143,7 +143,7 @@ sections:
   - id: 17-document-orchestrator-api-endpoints-1
     type: note
     text: |
-      **Note:** The file `docs/architecture/orchestrator_api.md` is the single canonical source of truth for all
+      Note: The file `docs/architecture/orchestrator_api.md` is the single canonical source of truth for all
       orchestrator endpoints and payload schemas (including `submit`, `claim-ticket`, `route-comment`, and
       `workflow/{id}/status`). Refer to it for the most up-to-date details.
   - id: 17-document-orchestrator-api-endpoints-code-2
