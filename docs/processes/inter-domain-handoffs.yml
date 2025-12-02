@@ -1,47 +1,49 @@
 doc_id: original-processes-inter-domain-handoffs
 title: Inter-Domain Handoffs
-description: Handoffs between domains are automated via orchestrator message routing based on workflow
-  definitions. Agents do not need to manage handoffs manually.
+description: Handoffs between domains are automated via orchestrator message routing
+  based on workflow definitions. Agents do not need to manage handoffs manually.
 domain: []
 scope: general
 sections:
-- id: handoff-chains
-  index: 1
-  title: Handoff Chains
-  category: standard
-  summary: ''
-  items:
-  - id: handoff-chains-product-r1-ux-r1
-    type: text
-    text: '**Product R1** -> **UX R1**'
-  - id: handoff-chains-ux-r1-technical-r1
-    type: text
-    text: '**UX R1** -> **Technical R1**'
-- id: automation-mechanism
-  index: 2
-  title: Automation Mechanism
-  category: standard
-  summary: ''
-  items:
-  - id: automation-mechanism-1
-    type: text
-    text: 'The orchestrator routes messages based on workflow definitions that specify:'
-  - id: automation-mechanism-which-domain-should-receive-wo
-    type: rule
-    text: Which domain should receive work after another domain completes
-  - id: automation-mechanism-what-context-and-artifacts-sho
-    type: rule
-    text: What context and artifacts should be passed along
-  - id: automation-mechanism-when-a-handoff-should-occur-ba
-    type: rule
-    text: When a handoff should occur based on workflow state
-- id: agent-responsibilities
-  index: 3
-  title: Agent Responsibilities
-  category: standard
-  summary: ''
-  items:
-  - id: agent-responsibilities-1
-    type: step
-    text: Agents focus on completing their assigned tasks within their domain. When their work is complete,
-      they submit a result message to the orchestrator, which handles routing to the next domain automatically.
+  - id: handoff-chains
+    index: 1
+    title: Handoff Chains
+    category: standard
+    summary: ''
+    items:
+      - id: handoff-chains-product-r1-ux-r1
+        type: text
+        text: '**Product R1** -> **UX R1**'
+      - id: handoff-chains-ux-r1-technical-r1
+        type: text
+        text: '**UX R1** -> **Technical R1**'
+  - id: automation-mechanism
+    index: 2
+    title: Automation Mechanism
+    category: standard
+    summary: ''
+    items:
+      - id: automation-mechanism-1
+        type: text
+        text: 'The orchestrator routes messages based on workflow definitions that
+          specify:'
+      - id: automation-mechanism-which-domain-should-receive-wo
+        type: rule
+        text: Which domain should receive work after another domain completes
+      - id: automation-mechanism-what-context-and-artifacts-sho
+        type: rule
+        text: What context and artifacts should be passed along
+      - id: automation-mechanism-when-a-handoff-should-occur-ba
+        type: rule
+        text: When a handoff should occur based on workflow state
+  - id: agent-responsibilities
+    index: 3
+    title: Agent Responsibilities
+    category: standard
+    summary: ''
+    items:
+      - id: agent-responsibilities-1
+        type: step
+        text: Agents focus on completing their assigned tasks within their domain.
+          When their work is complete, they submit a result message to the orchestrator,
+          which handles routing to the next domain automatically.

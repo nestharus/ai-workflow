@@ -1,75 +1,45 @@
-# Manifest of markdown files to convert to YAML
-# Generated: 2025-12-02
-# Excludes: README.md files
-
 sources:
-  # Architecture documentation
   - path: docs/architecture/event-flow.md
     target_stub: docs/architecture/event-flow.yml
-
   - path: docs/architecture/orchestrator-architecture.md
     target_stub: docs/architecture/orchestrator-architecture.yml
-
   - path: docs/architecture/project-overview.md
     target_stub: docs/architecture/project-overview.yml
-
   - path: docs/architecture/repository-structure.md
     target_stub: docs/architecture/repository-structure.yml
-
   - path: docs/architecture/roles-skeleton.md
     target_stub: docs/architecture/roles-skeleton.yml
-
   - path: docs/architecture/webhook-receiver.md
     target_stub: docs/architecture/webhook-receiver.yml
-
-  # Processes documentation
   - path: docs/processes/command-patterns.md
     target_stub: docs/processes/command-patterns.yml
-
   - path: docs/processes/documentation-first.md
     target_stub: docs/processes/documentation-first.yml
-
   - path: docs/processes/inter-domain-handoffs.md
     target_stub: docs/processes/inter-domain-handoffs.yml
-
   - path: docs/processes/operational-protocols.md
     target_stub: docs/processes/operational-protocols.yml
-
   - path: docs/processes/orchestrator-invocation.md
     target_stub: docs/processes/orchestrator-invocation.yml
-
   - path: docs/processes/review-artifacts.md
     target_stub: docs/processes/review-artifacts.yml
-
   - path: docs/processes/ticket-handling.md
     target_stub: docs/processes/ticket-handling.yml
-
-  # Testing documentation
   - path: docs/testing/api-testing-patterns.md
     target_stub: docs/testing/api-testing-patterns.yml
-
   - path: docs/testing/testing-patterns.md
     target_stub: docs/testing/testing-patterns.yml
-
   - path: docs/testing/testing-workflow.md
     target_stub: docs/testing/testing-workflow.yml
-
-  # Development documentation
   - path: docs/development/MODULE-DEFINITIONS.md
     target_stub: docs/development/MODULE-DEFINITIONS.yml
-
-  # Plans documentation
   - path: docs/plans/plan.md
     target_stub: docs/plans/plan.yml
-
   - path: docs/plans/phase1.md
     target_stub: docs/plans/phase1.yml
-
   - path: docs/plans/phase2.md
     target_stub: docs/plans/phase2.yml
-
   - path: docs/plans/phase3.md
     target_stub: docs/plans/phase3.yml
-
   - path: docs/plans/phase4.md
     target_stub: docs/plans/phase4.yml

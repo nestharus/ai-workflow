@@ -2,12 +2,13 @@ doc_id: project-python-factory-patterns
 title: Python Factory Patterns
 version_hint: 2024-2025
 kind: python_factory_standards
-description: >
-  Framework-agnostic Python factory patterns covering factory functions, resource initialization, composition,
-  and testing strategies for building testable and modular applications.
-scope: >
-  Covers factory function design, resource initialization patterns, dependency composition and wiring, factory testing
-  strategies, and anti-patterns. FastAPI-specific application construction is in docs/development/fastapi/factory-patterns.toon.
+description: |
+  Framework-agnostic Python factory patterns covering factory functions, resource initialization, composition, and testing strategies for building testable and modular applications.
+scope: 'Covers factory function design, resource initialization patterns, dependency
+  composition and wiring, factory testing strategies, and anti-patterns. FastAPI-specific
+  application construction is in docs/development/fastapi/factory-patterns.toon.
+
+  '
 domain:
   - python
 primary_runtime_references:
@@ -27,87 +28,115 @@ sections:
     index: 1
     title: Factory Function Pattern
     category: standard
-    summary: Using factory functions to construct and configure objects with injected dependencies.
+    summary: Using factory functions to construct and configure objects with injected
+      dependencies.
     sample_code:
       description: Factory function that constructs a service with its dependencies.
       language: python
-      code: "from app.core.settings import Settings\nfrom app.repositories.user_repository import UserRepository\nfrom app.services.user_service\
-        \ import UserService\ndef build_user_service(\n    user_repo: UserRepository,\n    settings: Settings,\n) -> UserService:\n\
-        \    \"\"\"Create a UserService with its dependencies.\"\"\"\n    return UserService(user_repo=user_repo, settings=settings)"
+      code: |
+        from app.core.settings import Settings
+        from app.repositories.user_repository import UserRepository
+        from app.services.user_service import UserService
+        def build_user_service(
+            user_repo: UserRepository,
+            settings: Settings,
+        ) -> UserService:
+            """Create a UserService with its dependencies."""
+            return UserService(user_repo=user_repo, settings=settings)
     items:
       - id: factory.purpose
         type: note
-        text: >
-          Factory functions encapsulate object construction logic, isolating wiring code from business logic and making
-          dependency graphs explicit.
+        text: 'Factory functions encapsulate object construction logic, isolating
+          wiring code from business logic and making dependency graphs explicit.
+
+          '
       - id: factory.explicit-params
         type: rule
-        text: >
-          Factory functions accept explicit parameters for all dependencies they need to wire, making the dependency
-          graph
-          visible and testable.
+        text: 'Factory functions accept explicit parameters for all dependencies they
+          need to wire, making the dependency graph visible and testable.
+
+          '
       - id: factory.vs-constructors
         type: note
-        text: >
-          Use factory functions when construction involves complex wiring, conditional logic, or multiple steps; use
-          constructors
-          directly when dependencies are simple and explicit.
+        text: 'Use factory functions when construction involves complex wiring, conditional
+          logic, or multiple steps; use constructors directly when dependencies are
+          simple and explicit.
+
+          '
       - id: factory.composition-root
         type: pattern
-        text: >
-          Centralize factory functions at the composition root (application startup or test setup) rather than
-          scattering
-          construction logic throughout the codebase.
+        text: 'Centralize factory functions at the composition root (application startup
+          or test setup) rather than scattering construction logic throughout the
+          codebase.
+
+          '
       - id: factory.return-types
         type: rule
-        text: Factory functions should have explicit return type annotations matching the constructed object type.
+        text: Factory functions should have explicit return type annotations matching
+          the constructed object type.
       - id: factory.no-hidden-deps
         type: rule
-        text: >
-          Factory functions should not import or create dependencies internally; all dependencies must be passed as
-          parameters
-          to maintain testability.
+        text: 'Factory functions should not import or create dependencies internally;
+          all dependencies must be passed as parameters to maintain testability.
+
+          '
   - id: resource-initialization-patterns
     index: 2
     title: Resource Initialization Patterns
     category: standard
-    summary: Using dedicated factory functions to initialize external resources with proper error handling and cleanup.
+    summary: Using dedicated factory functions to initialize external resources with
+      proper error handling and cleanup.
     sample_code:
-      description: Factory function that initializes a resource with error handling and cleanup on failure.
+      description: Factory function that initializes a resource with error handling
+        and cleanup on failure.
       language: python
-      code: "from app.core.settings import Settings\nasync def create_database_pool(settings: Settings) -> DatabasePool:\n\
-        \    \"\"\"Factory that builds and initializes a database pool from settings.\"\"\"\n    pool = DatabasePool(\n  \
-        \      dsn=settings.database_url,\n        pool_size=settings.pool_size,\n    )\n    await pool.init()\n    try:\n\
-        \        await pool.initialize_schema()\n    except Exception:\n        await pool.close()\n        raise\n    return\
-        \ pool"
+      code: |
+        from app.core.settings import Settings
+        async def create_database_pool(settings: Settings) -> DatabasePool:
+            """Factory that builds and initializes a database pool from settings."""
+            pool = DatabasePool(
+                dsn=settings.database_url,
+                pool_size=settings.pool_size,
+            )
+            await pool.init()
+            try:
+                await pool.initialize_schema()
+            except Exception:
+                await pool.close()
+                raise
+            return pool
     items:
       - id: resources.factory-functions-generic
         type: rule
-        text: >
-          Use dedicated factory functions to initialize external resources (database pools, clients, caches) instead of
-          building them inline at the call site.
+        text: 'Use dedicated factory functions to initialize external resources (database
+          pools, clients, caches) instead of building them inline at the call site.
+
+          '
       - id: resources.init-then-setup
         type: pattern
-        text: >
-          Structure resource initialization as connection/init followed by setup (schema, indices, validation), with
-          cleanup
-          on setup failure.
+        text: 'Structure resource initialization as connection/init followed by setup
+          (schema, indices, validation), with cleanup on setup failure.
+
+          '
       - id: resources.error-handling-generic
         type: rule
-        text: >
-          If resource initialization or setup fails, close any partially created resources and raise an error so the
-          application
-          does not run in a degraded state.
+        text: 'If resource initialization or setup fails, close any partially created
+          resources and raise an error so the application does not run in a degraded
+          state.
+
+          '
       - id: resources.try-except-cleanup
         type: pattern
-        text: >
-          Use try/except blocks around setup operations, calling cleanup methods in the except block before re-raising
-          to prevent resource leaks.
+        text: 'Use try/except blocks around setup operations, calling cleanup methods
+          in the except block before re-raising to prevent resource leaks.
+
+          '
       - id: resources.settings-driven
         type: rule
-        text: >
-          Resource factory functions should accept Settings or specific configuration values as parameters rather than
-          reading from environment or globals directly.
+        text: 'Resource factory functions should accept Settings or specific configuration
+          values as parameters rather than reading from environment or globals directly.
+
+          '
   - id: composition-and-wiring
     index: 3
     title: Composition and Wiring
@@ -116,110 +145,148 @@ sections:
     sample_code:
       description: Composing multiple factory functions to build a dependency graph.
       language: python
-      code: "from app.core.settings import Settings\nasync def build_application_context(settings: Settings) -> ApplicationContext:\n\
-        \    \"\"\"Compose the full application dependency graph.\"\"\"\n    db_pool = await create_database_pool(settings)\n\
-        \    search_client = await create_search_client(settings)\n    user_repo = UserRepository(db_pool)\n    user_service\
-        \ = build_user_service(user_repo, settings)\n    order_repo = OrderRepository(db_pool)\n    order_service = build_order_service(order_repo,\
-        \ user_service, search_client)\n    return ApplicationContext(\n        db_pool=db_pool,\n        search_client=search_client,\n\
-        \        user_service=user_service,\n        order_service=order_service,\n    )"
+      code: |
+        from app.core.settings import Settings
+        async def build_application_context(settings: Settings) -> ApplicationContext:
+            """Compose the full application dependency graph."""
+            db_pool = await create_database_pool(settings)
+            search_client = await create_search_client(settings)
+            user_repo = UserRepository(db_pool)
+            user_service = build_user_service(user_repo, settings)
+            order_repo = OrderRepository(db_pool)
+            order_service = build_order_service(order_repo, user_service, search_client)
+            return ApplicationContext(
+                db_pool=db_pool,
+                search_client=search_client,
+                user_service=user_service,
+                order_service=order_service,
+            )
     items:
       - id: composition.centralized
         type: rule
-        text: >
-          Centralize composition logic in dedicated factory functions or modules rather than distributing it across the
-          codebase.
+        text: 'Centralize composition logic in dedicated factory functions or modules
+          rather than distributing it across the codebase.
+
+          '
       - id: composition.dependency-order
         type: pattern
-        text: >
-          Build dependencies in order from lowest-level (pools, clients) to highest-level (services, orchestrators),
-          ensuring
-          each component has its dependencies available.
+        text: 'Build dependencies in order from lowest-level (pools, clients) to highest-level
+          (services, orchestrators), ensuring each component has its dependencies
+          available.
+
+          '
       - id: composition.avoid-cycles
         type: rule
-        text: >
-          Avoid circular dependencies between modules or classes; refactor shared logic into lower-level utilities when
-          cycles appear.
+        text: 'Avoid circular dependencies between modules or classes; refactor shared
+          logic into lower-level utilities when cycles appear.
+
+          '
       - id: composition.dag-structure
         type: note
-        text: >
-          The dependency graph should be a directed acyclic graph (DAG); cycles indicate architectural issues that
-          should
-          be resolved by extracting shared components.
+        text: 'The dependency graph should be a directed acyclic graph (DAG); cycles
+          indicate architectural issues that should be resolved by extracting shared
+          components.
+
+          '
       - id: composition.testability
         type: note
-        text: >
-          Composition functions make testing easier by providing clear injection points; tests can call factories with
-          test doubles at any level of the graph.
+        text: 'Composition functions make testing easier by providing clear injection
+          points; tests can call factories with test doubles at any level of the graph.
+
+          '
   - id: factory-testing-patterns
     index: 4
     title: Factory Testing Patterns
     category: testing
-    summary: How factory functions enable test isolation, configuration injection, and avoiding global state.
+    summary: How factory functions enable test isolation, configuration injection,
+      and avoiding global state.
     sample_code:
       description: Test fixtures using factory functions for isolation.
       language: python
-      code: "import pytest\nfrom app.core.settings import Settings\nfrom app.services.user_service import UserService\n@pytest.fixture\n\
-        def test_settings() -> Settings:\n    \"\"\"Create Settings instance for tests.\"\"\"\n    return Settings()\n@pytest.fixture\n\
-        def mock_user_repo():\n    \"\"\"Create a mock user repository.\"\"\"\n    return MockUserRepository()\n@pytest.fixture\n\
-        def user_service(mock_user_repo, test_settings) -> UserService:\n    \"\"\"Create a UserService with test dependencies.\"\
-        \"\"\n    return build_user_service(mock_user_repo, test_settings)"
+      code: |
+        import pytest
+        from app.core.settings import Settings
+        from app.services.user_service import UserService
+        @pytest.fixture
+        def test_settings() -> Settings:
+            """Create Settings instance for tests."""
+            return Settings()
+        @pytest.fixture
+        def mock_user_repo():
+            """Create a mock user repository."""
+            return MockUserRepository()
+        @pytest.fixture
+        def user_service(mock_user_repo, test_settings) -> UserService:
+            """Create a UserService with test dependencies."""
+            return build_user_service(mock_user_repo, test_settings)
     items:
       - id: testing.fixture-composition
         type: pattern
-        text: >
-          Use pytest fixtures that call factory functions with test-specific dependencies to create isolated instances
-          for each test.
+        text: 'Use pytest fixtures that call factory functions with test-specific
+          dependencies to create isolated instances for each test.
+
+          '
       - id: testing.config-injection
         type: rule
-        text: >
-          Tests inject configuration through Settings instances passed to factories, avoiding environment variable
-          manipulation
-          or global state mutation.
+        text: 'Tests inject configuration through Settings instances passed to factories,
+          avoiding environment variable manipulation or global state mutation.
+
+          '
       - id: testing.mock-at-boundaries
         type: pattern
-        text: >
-          Mock dependencies at the factory boundary by passing test doubles as parameters rather than patching imports
-          inside the system under test.
+        text: 'Mock dependencies at the factory boundary by passing test doubles as
+          parameters rather than patching imports inside the system under test.
+
+          '
       - id: testing.no-global-state
         type: rule
-        text: >
-          Factory functions should not rely on or modify global state; each call should produce an independent instance
-          based solely on its parameters.
+        text: 'Factory functions should not rely on or modify global state; each call
+          should produce an independent instance based solely on its parameters.
+
+          '
       - id: testing.factory-benefits-generic
         type: note
-        text: >
-          Relying on factory functions allows tests to run with different configurations without altering global state
-          or production code paths.
+        text: 'Relying on factory functions allows tests to run with different configurations
+          without altering global state or production code paths.
+
+          '
   - id: factory-anti-patterns
     index: 5
     title: Anti-Patterns to Avoid
     category: warning
-    summary: Factory-level mistakes that harm testability, resource safety, or configuration hygiene.
+    summary: Factory-level mistakes that harm testability, resource safety, or configuration
+      hygiene.
     items:
       - id: anti.global-instances
         type: anti_pattern
-        text: >
-          Creating global instances at module load time (for example db_pool = DatabasePool()) instead of using factory
-          functions called during application initialization.
+        text: 'Creating global instances at module load time (for example db_pool
+          = DatabasePool()) instead of using factory functions called during application
+          initialization.
+
+          '
       - id: anti.init-without-cleanup
         type: anti_pattern
-        text: >
-          Initializing resources without providing corresponding cleanup mechanisms, leading to resource leaks during
-          failures or test teardown.
+        text: 'Initializing resources without providing corresponding cleanup mechanisms,
+          leading to resource leaks during failures or test teardown.
+
+          '
       - id: anti.hardcoded-config-generic
         type: anti_pattern
-        text: >
-          Hardcoding configuration values such as URLs, pool sizes, or timeouts directly in factory functions instead
-          of accepting them as parameters.
+        text: 'Hardcoding configuration values such as URLs, pool sizes, or timeouts
+          directly in factory functions instead of accepting them as parameters.
+
+          '
       - id: anti.business-logic-in-factories
         type: anti_pattern
-        text: >
-          Embedding complex business logic or workflows directly inside factory functions; factories should focus on
-          wiring
-          and delegate behavior to dedicated modules and services.
+        text: 'Embedding complex business logic or workflows directly inside factory
+          functions; factories should focus on wiring and delegate behavior to dedicated
+          modules and services.
+
+          '
       - id: anti.hidden-dependencies
         type: anti_pattern
-        text: >
-          Factory functions that import and create dependencies internally rather than accepting them as parameters,
-          hiding
-          the true dependency graph and making testing difficult.
+        text: 'Factory functions that import and create dependencies internally rather
+          than accepting them as parameters, hiding the true dependency graph and
+          making testing difficult.
+
+          '

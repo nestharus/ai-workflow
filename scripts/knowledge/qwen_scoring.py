@@ -30,7 +30,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import duckdb
 
@@ -59,12 +59,11 @@ def get_unscored_candidates(csv_path: Path) -> list[dict[str, str]]:
         WHERE qwen_score = '' OR qwen_score IS NULL
     """
     try:
-        conn = duckdb.connect()
-        result = conn.execute(query, [str(csv_path)])
-        columns = [desc[0] for desc in result.description]
-        rows = result.fetchall()
-        conn.close()
-        return [dict(zip(columns, row, strict=False)) for row in rows]
+        with duckdb.connect() as conn:
+            result = conn.execute(query, [str(csv_path)])
+            columns = [desc[0] for desc in result.description]
+            rows = result.fetchall()
+            return [dict(zip(columns, row, strict=False)) for row in rows]
     except duckdb.Error:
         return []
 
@@ -86,20 +85,19 @@ def update_candidate_scores_batch(
         return False
 
     try:
-        conn = duckdb.connect()
-        conn.execute(f"""
-            CREATE TABLE candidates AS
-            SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
-        """)
+        with duckdb.connect() as conn:
+            conn.execute(f"""
+                CREATE TABLE candidates AS
+                SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
+            """)
 
-        for candidate_id, score in scores.items():
-            conn.execute(
-                "UPDATE candidates SET qwen_score = ? WHERE candidate_id = ?",
-                [str(score), candidate_id],
-            )
+            for candidate_id, score in scores.items():
+                conn.execute(
+                    "UPDATE candidates SET qwen_score = ? WHERE candidate_id = ?",
+                    [str(score), candidate_id],
+                )
 
-        conn.execute(f"COPY candidates TO '{csv_path}' (HEADER, DELIMITER ',')")
-        conn.close()
+            conn.execute(f"COPY candidates TO '{csv_path}' (HEADER, DELIMITER ',')")
     except duckdb.Error:
         return False
     else:
@@ -108,7 +106,7 @@ def update_candidate_scores_batch(
 
 def load_reranker_model(
     model_name: str,
-) -> tuple[AutoModelForSequenceClassification, AutoTokenizer, torch.device]:
+) -> tuple[Any, Any, Any]:
     """Load the Qwen3-Reranker model and tokenizer.
 
     Args:
@@ -129,7 +127,9 @@ def load_reranker_model(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
+        model_name, trust_remote_code=True
+    )
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name,
         trust_remote_code=True,
@@ -168,7 +168,7 @@ def score_batch(
 
     # Format pairs for reranker - using sentence as query, candidate as doc
     # This measures how relevant the candidate is to the sentence context
-    inputs = tokenizer(
+    inputs = tokenizer(  # type: ignore[operator]
         [p[1] for p in pairs],  # sentences as queries
         [p[0] for p in pairs],  # candidates as documents
         padding=True,
@@ -179,7 +179,7 @@ def score_batch(
     inputs = {k: v.to(device) for k, v in inputs.items()}
 
     with torch.no_grad():
-        outputs = model(**inputs)
+        outputs = model(**inputs)  # type: ignore[operator]
         # Get relevance scores (logits or scores depending on model)
         if hasattr(outputs, "logits"):
             scores = torch.sigmoid(outputs.logits.squeeze(-1))
@@ -187,13 +187,16 @@ def score_batch(
             scores = outputs[0].squeeze(-1)
 
         # Normalize to 0-1 range if needed
-        scores = scores.cpu().numpy().tolist()
+        scores_result: Any = scores.cpu().numpy().tolist()
 
         # Handle single score case
-        if isinstance(scores, float):
-            scores = [scores]
+        if isinstance(scores_result, float):
+            return [scores_result]
+        if isinstance(scores_result, list):
+            return scores_result
 
-    return scores
+    msg = "Unexpected scores_result type"
+    raise TypeError(msg)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

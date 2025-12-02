@@ -37,6 +37,9 @@ from pathlib import Path
 import duckdb
 
 from scripts.dev.utils import REPO_ROOT, utc_timestamp
+from scripts.knowledge.keyword_schema import KEYWORD_COLUMNS
+
+__all__ = ["KEYWORD_COLUMNS"]  # Re-export for backwards compatibility
 
 
 def update_candidate_classification(
@@ -66,37 +69,35 @@ def update_candidate_classification(
     classified_at = utc_timestamp()
 
     try:
-        conn = duckdb.connect()
-        conn.execute(f"""
-            CREATE TABLE candidates AS
-            SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
-        """)
+        with duckdb.connect() as conn:
+            conn.execute(f"""
+                CREATE TABLE candidates AS
+                SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
+            """)
 
-        # Check if candidate exists
-        result = conn.execute(
-            "SELECT candidate_id FROM candidates WHERE candidate_id = ?",
-            [candidate_id],
-        ).fetchone()
+            # Check if candidate exists
+            result = conn.execute(
+                "SELECT candidate_id FROM candidates WHERE candidate_id = ?",
+                [candidate_id],
+            ).fetchone()
 
-        if result is None:
-            conn.close()
-            return False
+            if result is None:
+                return False
 
-        # Update the classification fields
-        conn.execute(
-            """
-            UPDATE candidates
-            SET keep = ?,
-                confidence = ?,
-                reason = ?,
-                classified_at = ?
-            WHERE candidate_id = ?
-            """,
-            [keep, confidence, reason, classified_at, candidate_id],
-        )
+            # Update the classification fields
+            conn.execute(
+                """
+                UPDATE candidates
+                SET keep = ?,
+                    confidence = ?,
+                    reason = ?,
+                    classified_at = ?
+                WHERE candidate_id = ?
+                """,
+                [keep, confidence, reason, classified_at, candidate_id],
+            )
 
-        conn.execute(f"COPY candidates TO '{csv_path}' (HEADER, DELIMITER ',')")
-        conn.close()
+            conn.execute(f"COPY candidates TO '{csv_path}' (HEADER, DELIMITER ',')")
     except duckdb.Error:
         return False
     else:

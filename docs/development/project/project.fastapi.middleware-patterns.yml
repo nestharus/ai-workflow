@@ -2,13 +2,13 @@ doc_id: project-fastapi-middleware-patterns
 title: FastAPI Middleware Patterns
 version_hint: 2024-2025
 kind: fastapi_middleware_standards
-description: >
-  FastAPI and Starlette-specific middleware implementation and configuration covering specific middleware classes,
-  ordering, Settings-driven configuration, and factory integration.
-scope: >
-  Covers FastAPI middleware registration, recommended middleware stack, security headers, GZip compression, trusted
-  host,
-  CORS, proxy/HTTPS, observability and rate limiting, Settings-driven configuration, error handling, testing, and anti-patterns.
+description: |
+  FastAPI and Starlette-specific middleware implementation and configuration covering specific middleware classes, ordering, Settings-driven configuration, and factory integration.
+scope: 'Covers FastAPI middleware registration, recommended middleware stack, security
+  headers, GZip compression, trusted host, CORS, proxy/HTTPS, observability and rate
+  limiting, Settings-driven configuration, error handling, testing, and anti-patterns.
+
+  '
 domain:
   - fastapi
 primary_runtime_references:
@@ -17,7 +17,8 @@ primary_runtime_references:
   - path: app/core/settings.py
     role: Settings model used to configure middleware behavior.
   - path: app/core/middleware.py
-    role: Custom middleware implementations (security headers, request IDs, logging, metrics, rate limiting).
+    role: Custom middleware implementations (security headers, request IDs, logging,
+      metrics, rate limiting).
 related_pattern_docs:
   - python/middleware-patterns.toon
   - fastapi/factory-patterns.toon
@@ -28,39 +29,48 @@ sections:
     index: 1
     title: Middleware Fundamentals and Ordering
     category: standard
-    summary: >
-      Explains ASGI middleware semantics, stack behavior, and why middleware is the correct place for cross-cutting
-      concerns.
-    asgi_context: FastAPI is built on Starlette and the ASGI specification, so any ASGI-compatible middleware can be used.
+    summary: 'Explains ASGI middleware semantics, stack behavior, and why middleware
+      is the correct place for cross-cutting concerns.
+
+      '
+    asgi_context: FastAPI is built on Starlette and the ASGI specification, so any
+      ASGI-compatible middleware can be used.
     items:
       - id: mw.role-cross-cutting
         type: rule
-        text: >
-          Use HTTP middleware only for cross-cutting concerns that must run on every request and response (security
-          headers,
-          compression, logging, metrics, request IDs, rate limiting); do not implement business logic in middleware.
+        text: 'Use HTTP middleware only for cross-cutting concerns that must run on
+          every request and response (security headers, compression, logging, metrics,
+          request IDs, rate limiting); do not implement business logic in middleware.
+
+          '
       - id: mw.stack-behavior
         type: rule
-        text: >
-          Middleware is applied as a stack via app.add_middleware; the last-added middleware becomes the outermost
-          wrapper,
-          so it runs first on the request path and last on the response path.
+        text: 'Middleware is applied as a stack via app.add_middleware; the last-added
+          middleware becomes the outermost wrapper, so it runs first on the request
+          path and last on the response path.
+
+          '
       - id: mw.flow-example
         type: note
-        text: >
-          If MiddlewareA is added first and MiddlewareB second, the request flow is MiddlewareB → MiddlewareA → route
-          handler, and the response flow is route handler → MiddlewareA → MiddlewareB.
+        text: 'If MiddlewareA is added first and MiddlewareB second, the request flow
+          is MiddlewareB → MiddlewareA → route handler, and the response flow is route
+          handler → MiddlewareA → MiddlewareB.
+
+          '
       - id: mw.registration-location
         type: rule
-        text: >
-          Register all HTTP middleware from create_app in app/core/factory.py using app.add_middleware; do not wrap the
-          ASGI app manually or add middleware from scattered modules.
+        text: 'Register all HTTP middleware from create_app in app/core/factory.py
+          using app.add_middleware; do not wrap the ASGI app manually or add middleware
+          from scattered modules.
+
+          '
       - id: mw.ordering-critical
         type: rule
-        text: >
-          Decide the desired request-path execution order first, then register inner middleware earlier and outer
-          middleware
-          later so critical concerns like security and host validation always run.
+        text: 'Decide the desired request-path execution order first, then register
+          inner middleware earlier and outer middleware later so critical concerns
+          like security and host validation always run.
+
+          '
   - id: fastapi-middleware-registration
     index: 1
     title: FastAPI Middleware Registration
@@ -69,108 +79,126 @@ sections:
     items:
       - id: registration.centralized
         type: rule
-        text: >
-          Register all HTTP middleware from create_app in app/core/factory.py using app.add_middleware; do not wrap the
-          ASGI app manually or add middleware from scattered modules.
+        text: 'Register all HTTP middleware from create_app in app/core/factory.py
+          using app.add_middleware; do not wrap the ASGI app manually or add middleware
+          from scattered modules.
+
+          '
       - id: registration.stack-behavior
         type: rule
-        text: >
-          Middleware is applied as a stack via app.add_middleware; the last-added middleware becomes the outermost
-          wrapper,
-          so it runs first on the request path and last on the response path.
+        text: 'Middleware is applied as a stack via app.add_middleware; the last-added
+          middleware becomes the outermost wrapper, so it runs first on the request
+          path and last on the response path.
+
+          '
       - id: registration.ordering-critical
         type: rule
-        text: >
-          Decide the desired request-path execution order first, then register inner middleware earlier and outer
-          middleware
-          later so critical concerns like security and host validation always run.
+        text: 'Decide the desired request-path execution order first, then register
+          inner middleware earlier and outer middleware later so critical concerns
+          like security and host validation always run.
+
+          '
       - id: registration.no-decorator-pattern
         type: rule
-        text: >
-          Register all middleware via app.add_middleware in create_app rather than using the @app.middleware("http")
-          decorator
-          so the stack is centralized.
+        text: 'Register all middleware via app.add_middleware in create_app rather
+          than using the @app.middleware("http") decorator so the stack is centralized.
+
+          '
   - id: middleware-recommended-stack
     index: 2
     title: Recommended Middleware Stack
     category: standard
-    summary: Canonical middleware ordering for security, CORS, compression, logging, metrics, and proxy support.
+    summary: Canonical middleware ordering for security, CORS, compression, logging,
+      metrics, and proxy support.
     items:
       - id: stack.request-path-order
         type: rule
-        text: >
-          'In production, target this request-path order from outermost to innermost: TrustedHostMiddleware →
-          CORSMiddleware
-          (when enabled) → SecurityHeadersMiddleware → GZipMiddleware → request/response logging and metrics middleware.'
+        text: |
+          'In production, target this request-path order from outermost to innermost: TrustedHostMiddleware → CORSMiddleware (when enabled) → SecurityHeadersMiddleware → GZipMiddleware → request/response logging and metrics middleware.
+
+          '
       - id: stack.reverse-registration
         type: rule
-        text: >
-          Because the last-added middleware runs first on the request path, register middleware in reverse of the
-          desired
-          execution order (logging/metrics → GZip → SecurityHeaders → CORS → TrustedHost).
+        text: 'Because the last-added middleware runs first on the request path, register
+          middleware in reverse of the desired execution order (logging/metrics →
+          GZip → SecurityHeaders → CORS → TrustedHost).
+
+          '
       - id: stack.proxy-outermost
         type: rule
-        text: >
-          When the app runs behind a reverse proxy or load balancer, add ProxyHeadersMiddleware last so it is outermost
-          and normalizes X-Forwarded-For and X-Forwarded-Proto before host validation and HTTPS enforcement.
+        text: 'When the app runs behind a reverse proxy or load balancer, add ProxyHeadersMiddleware
+          last so it is outermost and normalizes X-Forwarded-For and X-Forwarded-Proto
+          before host validation and HTTPS enforcement.
+
+          '
       - id: stack.security-core
         type: note
-        text: >
-          TrustedHostMiddleware and SecurityHeadersMiddleware form the core HTTP security layer, with CORS, compression,
-          logging, metrics, and rate limiting layered on top.
+        text: 'TrustedHostMiddleware and SecurityHeadersMiddleware form the core HTTP
+          security layer, with CORS, compression, logging, metrics, and rate limiting
+          layered on top.
+
+          '
       - id: stack.inserting-new-middleware
         type: pattern
-        text: >
-          When introducing new middleware (such as rate limiting or vendor APM), place it relative to the canonical
-          stack
-          so it does not break CORS preflights or bypass security headers.
+        text: 'When introducing new middleware (such as rate limiting or vendor APM),
+          place it relative to the canonical stack so it does not break CORS preflights
+          or bypass security headers.
+
+          '
       - id: stack.global-coverage
         type: rule
-        text: >
-          Always register cross-cutting middleware at the application level so it applies uniformly to all routes,
-          including
-          error handlers and future routers.
+        text: 'Always register cross-cutting middleware at the application level so
+          it applies uniformly to all routes, including error handlers and future
+          routers.
+
+          '
   - id: security-headers-middleware
     index: 3
     title: Security Headers Middleware
     category: standard
-    summary: Custom middleware that applies consistent security-related HTTP headers and integrates with Settings.
+    summary: Custom middleware that applies consistent security-related HTTP headers
+      and integrates with Settings.
     items:
       - id: security.headers-required
         type: rule
-        text: >
-          SecurityHeadersMiddleware must attach X-Content-Type-Options=nosniff, X-Frame-Options=DENY,
-          Referrer-Policy=strict-origin-when-cross-origin,
-          and Strict-Transport-Security=max-age=31536000; includeSubDomains when HTTPS is enforced.
+        text: 'SecurityHeadersMiddleware must attach X-Content-Type-Options=nosniff,
+          X-Frame-Options=DENY, Referrer-Policy=strict-origin-when-cross-origin, and
+          Strict-Transport-Security=max-age=31536000; includeSubDomains when HTTPS
+          is enforced.
+
+          '
       - id: security.settings-fields
         type: rule
-        text: >
-          'Configure SecurityHeadersMiddleware via Settings fields such as enforce_https: bool and allowed_hosts:
-          list[str],
-          sharing host configuration with TrustedHostMiddleware so headers align with real deployment domains.'
+        text: |
+          'Configure SecurityHeadersMiddleware via Settings fields such as enforce_https: bool and allowed_hosts: list[str], sharing host configuration with TrustedHostMiddleware so headers align with real deployment domains.
+
+          '
       - id: security.production-hsts
         type: rule
-        text: >
-          In production, SecurityHeadersMiddleware must be enabled and HSTS configured with a long max-age and
-          includeSubDomains
-          to enforce HTTPS for the primary domain and subdomains.
+        text: 'In production, SecurityHeadersMiddleware must be enabled and HSTS configured
+          with a long max-age and includeSubDomains to enforce HTTPS for the primary
+          domain and subdomains.
+
+          '
       - id: security.local-testing
         type: note
-        text: >
-          In local and test environments you may disable HSTS or use shorter lifetimes to avoid long-lived browser
-          caching
-          while still applying other headers.
+        text: 'In local and test environments you may disable HSTS or use shorter
+          lifetimes to avoid long-lived browser caching while still applying other
+          headers.
+
+          '
       - id: security.registration
         type: pattern
-        text: >
-          Register SecurityHeadersMiddleware in create_app so it wraps all API routes and error responses rather than
-          only specific routers.
+        text: 'Register SecurityHeadersMiddleware in create_app so it wraps all API
+          routes and error responses rather than only specific routers.
+
+          '
       - id: security.extensibility
         type: note
-        text: >
-          Extend SecurityHeadersMiddleware if additional headers are needed, but keep behavior centralized so all
-          responses
-          remain consistent.
+        text: 'Extend SecurityHeadersMiddleware if additional headers are needed,
+          but keep behavior centralized so all responses remain consistent.
+
+          '
   - id: gzip-middleware
     index: 4
     title: GZip Compression Middleware
@@ -179,206 +207,243 @@ sections:
     items:
       - id: gzip.usage
         type: rule
-        text: >
-          'Use FastAPI’s built-in GZipMiddleware to compress responses only for clients that send Accept-Encoding: gzip;
-          do not implement compression in routes.'
+        text: |
+          'Use FastAPI’s built-in GZipMiddleware to compress responses only for clients that send Accept-Encoding: gzip; do not implement compression in routes.
+
+          '
       - id: gzip.minimum-size-default
         type: rule
-        text: >
-          Configure GZipMiddleware with minimum_size=1024 bytes so small responses are not compressed, overriding the
-          framework default of 500 bytes for this project.
+        text: 'Configure GZipMiddleware with minimum_size=1024 bytes so small responses
+          are not compressed, overriding the framework default of 500 bytes for this
+          project.
+
+          '
       - id: gzip.compresslevel-default
         type: rule
-        text: >
-          Use compresslevel=5 (on the 1–9 scale) as the project baseline to balance CPU usage and bandwidth; treat any
-          change as an explicit tuning decision.
+        text: 'Use compresslevel=5 (on the 1–9 scale) as the project baseline to balance
+          CPU usage and bandwidth; treat any change as an explicit tuning decision.
+
+          '
       - id: gzip.tuning-cpu
         type: note
-        text: >
-          If CPU is the bottleneck and bandwidth is cheap, lower compresslevel toward 3 to reduce CPU cost at the
-          expense
-          of slightly larger responses.
+        text: 'If CPU is the bottleneck and bandwidth is cheap, lower compresslevel
+          toward 3 to reduce CPU cost at the expense of slightly larger responses.
+
+          '
       - id: gzip.tuning-bandwidth
         type: note
-        text: >
-          If outbound bandwidth is constrained and CPU headroom exists, you may experiment with higher compresslevel
-          values
-          (for example 7) after validating performance under realistic load; avoid 9 unless strongly justified.
+        text: 'If outbound bandwidth is constrained and CPU headroom exists, you may
+          experiment with higher compresslevel values (for example 7) after validating
+          performance under realistic load; avoid 9 unless strongly justified.
+
+          '
       - id: gzip.settings-integration
         type: rule
-        text: >
-          'Control compression via Settings.enable_gzip: bool (default True) and add GZipMiddleware in create_app only
-          when this flag is enabled so compression can be disabled when handled upstream.'
+        text: |
+          'Control compression via Settings.enable_gzip: bool (default True) and add GZipMiddleware in create_app only when this flag is enabled so compression can be disabled when handled upstream.
+
+          '
       - id: gzip.change-validation
         type: rule
-        text: >
-          Do not adjust minimum_size or compresslevel based on intuition; validate changes with load tests and document
-          tuned values in deployment runbooks.
+        text: 'Do not adjust minimum_size or compresslevel based on intuition; validate
+          changes with load tests and document tuned values in deployment runbooks.
+
+          '
   - id: trusted-host-middleware
     index: 5
     title: Trusted Host Middleware
     category: standard
-    summary: Host header validation using TrustedHostMiddleware and Settings-driven configuration.
+    summary: Host header validation using TrustedHostMiddleware and Settings-driven
+      configuration.
     items:
       - id: trusted-host.purpose
         type: rule
-        text: >
-          Use TrustedHostMiddleware to enforce that incoming requests use allowed Host headers and to mitigate HTTP Host
-          header attacks.
+        text: 'Use TrustedHostMiddleware to enforce that incoming requests use allowed
+          Host headers and to mitigate HTTP Host header attacks.
+
+          '
       - id: trusted-host.settings
         type: rule
-        text: >
-          'Configure allowed_hosts: list[str] via Settings; use ["*"] only in development and require explicit domains
-          such as "example.com" and "*.example.com" in production.'
+        text: |
+          'Configure allowed_hosts: list[str] via Settings; use ["*"] only in development and require explicit domains such as "example.com" and "*.example.com" in production.
+
+          '
       - id: trusted-host.behavior
         type: note
-        text: >
-          When TrustedHostMiddleware rejects a request because the Host is not allowed, it returns an HTTP 400 response
-          rather than passing the request to routers.
+        text: 'When TrustedHostMiddleware rejects a request because the Host is not
+          allowed, it returns an HTTP 400 response rather than passing the request
+          to routers.
+
+          '
       - id: trusted-host.registration
         type: pattern
-        text: >
-          Register TrustedHostMiddleware from create_app so host validation applies uniformly to all routes, including
-          health checks and error handlers.
+        text: 'Register TrustedHostMiddleware from create_app so host validation applies
+          uniformly to all routes, including health checks and error handlers.
+
+          '
   - id: cors-middleware
     index: 6
     title: CORS Middleware
     category: standard
-    summary: Guidance for when and how to enable CORSMiddleware and how to configure it via Settings.
+    summary: Guidance for when and how to enable CORSMiddleware and how to configure
+      it via Settings.
     items:
       - id: cors.enable-criteria
         type: rule
-        text: >
-          Enable CORSMiddleware only when cross-origin browser clients are expected; for purely server-to-server APIs,
-          leave CORS disabled.
+        text: 'Enable CORSMiddleware only when cross-origin browser clients are expected;
+          for purely server-to-server APIs, leave CORS disabled.
+
+          '
       - id: cors.production-origins
         type: rule
-        text: >
-          In production, configure a narrow list of allowed origins instead of "*", preferring explicit frontend URLs
-          for security.
+        text: 'In production, configure a narrow list of allowed origins instead of
+          "*", preferring explicit frontend URLs for security.
+
+          '
       - id: cors.ordering
         type: rule
-        text: >
-          Ensure CORSMiddleware executes immediately after TrustedHostMiddleware and before SecurityHeadersMiddleware
-          and GZipMiddleware so it can handle preflight OPTIONS requests and attach CORS headers before other transformations.
+        text: 'Ensure CORSMiddleware executes immediately after TrustedHostMiddleware
+          and before SecurityHeadersMiddleware and GZipMiddleware so it can handle
+          preflight OPTIONS requests and attach CORS headers before other transformations.
+
+          '
       - id: cors.registration-order
         type: note
-        text: >
-          'Achieve the desired execution order by registering middleware in reverse: logging/metrics → GZip →
-          SecurityHeaders
-          → CORS → TrustedHost, optionally followed by ProxyHeadersMiddleware as the outermost layer.'
+        text: |
+          'Achieve the desired execution order by registering middleware in reverse: logging/metrics → GZip → SecurityHeaders → CORS → TrustedHost, optionally followed by ProxyHeadersMiddleware as the outermost layer.
+
+          '
       - id: cors.settings-fields
         type: rule
-        text: >
-          'Configure CORS via Settings fields with the following defaults: cors_enabled: bool = False,
-          cors_allow_origins:
-          list[str] = [], cors_allow_methods: list[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], cors_allow_headers:
-          list[str] = ["Authorization", "Content-Type"].'
+        text: |
+          'Configure CORS via Settings fields with the following defaults: cors_enabled: bool = False, cors_allow_origins: list[str] = [], cors_allow_methods: list[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], cors_allow_headers: list[str] = ["Authorization", "Content-Type"].
+
+          '
       - id: cors.conditional-registration
         type: pattern
-        text: Register CORSMiddleware in create_app only when settings.cors_enabled is True.
+        text: Register CORSMiddleware in create_app only when settings.cors_enabled
+          is True.
   - id: proxy-https-middleware
     index: 7
     title: Proxy and HTTPS Enforcement Middleware
     category: standard
-    summary: >
-      Patterns for ProxyHeadersMiddleware and HTTPSRedirectMiddleware and how they interact with other middleware.
+    summary: 'Patterns for ProxyHeadersMiddleware and HTTPSRedirectMiddleware and
+      how they interact with other middleware.
+
+      '
     items:
       - id: proxy.headers-middleware
         type: rule
-        text: >
-          Use Starlette’s ProxyHeadersMiddleware when the app runs behind a trusted reverse proxy so downstream
-          components
-          see client IP and scheme derived from X-Forwarded-For and X-Forwarded-Proto.
+        text: 'Use Starlette’s ProxyHeadersMiddleware when the app runs behind a trusted
+          reverse proxy so downstream components see client IP and scheme derived
+          from X-Forwarded-For and X-Forwarded-Proto.
+
+          '
       - id: proxy.headers-ordering
         type: rule
-        text: >
-          Add ProxyHeadersMiddleware as the final app.add_middleware call so it becomes outermost on the request path
-          and runs before host validation, HTTPS redirects, and CORS.
+        text: 'Add ProxyHeadersMiddleware as the final app.add_middleware call so
+          it becomes outermost on the request path and runs before host validation,
+          HTTPS redirects, and CORS.
+
+          '
       - id: https.redirect-middleware
         type: rule
-        text: >
-          Enable FastAPI’s HTTPSRedirectMiddleware when Settings.enforce_https is True to redirect HTTP requests (and
-          ws) to HTTPS (and wss) at the application layer.
+        text: 'Enable FastAPI’s HTTPSRedirectMiddleware when Settings.enforce_https
+          is True to redirect HTTP requests (and ws) to HTTPS (and wss) at the application
+          layer.
+
+          '
       - id: https.ordering
         type: rule
-        text: >
-          Place HTTPSRedirectMiddleware on the request path immediately after TrustedHostMiddleware and before
-          CORSMiddleware
-          so host headers are validated before computing redirect targets.
+        text: 'Place HTTPSRedirectMiddleware on the request path immediately after
+          TrustedHostMiddleware and before CORSMiddleware so host headers are validated
+          before computing redirect targets.
+
+          '
       - id: https.example-stack
         type: note
-        text: >
-          'With HTTPS enforcement and a proxy, register middleware in this order (first-added to last-added):
-          logging/metrics
-          → GZipMiddleware → SecurityHeadersMiddleware → CORSMiddleware → HTTPSRedirectMiddleware → TrustedHostMiddleware
-          → ProxyHeadersMiddleware.'
+        text: |
+          'With HTTPS enforcement and a proxy, register middleware in this order (first-added to last-added): logging/metrics → GZipMiddleware → SecurityHeadersMiddleware → CORSMiddleware → HTTPSRedirectMiddleware → TrustedHostMiddleware → ProxyHeadersMiddleware.
+
+          '
       - id: https.hsts-combination
         type: rule
-        text: >
-          Combine HTTPSRedirectMiddleware with strong HSTS headers from SecurityHeadersMiddleware to provide a robust
-          HTTPS posture.
+        text: 'Combine HTTPSRedirectMiddleware with strong HSTS headers from SecurityHeadersMiddleware
+          to provide a robust HTTPS posture.
+
+          '
   - id: observability-requestid-rate-limiting
     index: 8
     title: Observability, Request IDs, and Rate Limiting
     category: standard
-    summary: Centralized patterns for logging, request IDs, metrics, and fixed-window rate limiting.
+    summary: Centralized patterns for logging, request IDs, metrics, and fixed-window
+      rate limiting.
     items:
       - id: obs.logging-middleware
         type: pattern
-        text: >
-          Use RequestLoggingMiddleware in app/core/middleware.py to log method, path, status code, and latency per
-          request
-          using structured key–value logging instead of ad hoc logging in routers or services. Exceptions are logged with
-          traceback and re-raised.
+        text: 'Use RequestLoggingMiddleware in app/core/middleware.py to log method,
+          path, status code, and latency per request using structured key–value logging
+          instead of ad hoc logging in routers or services. Exceptions are logged
+          with traceback and re-raised.
+
+          '
       - id: obs.avoid-body-logging
         type: rule
-        text: >
-          Avoid logging full request or response bodies by default to prevent leaking sensitive data; log only
-          high-level
-          metadata and sanitized attributes.
+        text: 'Avoid logging full request or response bodies by default to prevent
+          leaking sensitive data; log only high-level metadata and sanitized attributes.
+
+          '
       - id: obs.request-id-generation
         type: pattern
-        text: >
-          Use RequestIDMiddleware to generate or propagate a unique request ID per request, attaching it to the ASGI
-          scope,
-          logging context, and a response header such as X-Request-ID.
+        text: 'Use RequestIDMiddleware to generate or propagate a unique request ID
+          per request, attaching it to the ASGI scope, logging context, and a response
+          header such as X-Request-ID.
+
+          '
       - id: obs.request-id-propagation
         type: note
-        text: >
-          When an upstream system already provides an X-Request-ID, propagate that value rather than generating a new
-          one to maintain trace continuity across services.
+        text: 'When an upstream system already provides an X-Request-ID, propagate
+          that value rather than generating a new one to maintain trace continuity
+          across services.
+
+          '
       - id: obs.metrics-middleware
         type: pattern
-        text: >
-          Use MetricsMiddleware to collect in-memory per-route metrics such as request counts, duration totals, and
-          status
-          code distributions, exposing them through a helper like get_metrics(). For production observability, integrate with
-          Prometheus or OpenTelemetry via provider-specific middleware wrappers.
+        text: 'Use MetricsMiddleware to collect in-memory per-route metrics such as
+          request counts, duration totals, and status code distributions, exposing
+          them through a helper like get_metrics(). For production observability,
+          integrate with Prometheus or OpenTelemetry via provider-specific middleware
+          wrappers.
+
+          '
       - id: obs.rate-limiting-middleware
         type: pattern
-        text: >
-          Implement RateLimitingMiddleware as the centralized enforcement point for per-IP fixed-window rate limiting,
-          returning HTTP 429 with a Retry-After header when limits are exceeded.
+        text: 'Implement RateLimitingMiddleware as the centralized enforcement point
+          for per-IP fixed-window rate limiting, returning HTTP 429 with a Retry-After
+          header when limits are exceeded.
+
+          '
       - id: obs.settings-toggles
         type: rule
-        text: >
-          Control observability middleware via Settings toggles such as enable_request_id (default True),
-          enable_request_logging
-          (default True), enable_metrics (default False), enable_rate_limiting (default False), rate_limit_requests (default
+        text: 'Control observability middleware via Settings toggles such as enable_request_id
+          (default True), enable_request_logging (default True), enable_metrics (default
+          False), enable_rate_limiting (default False), rate_limit_requests (default
           100), and rate_limit_window_seconds (default 60), wired from create_app.
+
+          '
       - id: obs.metrics-distinct-errors
         type: note
-        text: >
-          Ensure metrics distinguish middleware-induced failures such as host rejections or rate limits from
-          application-level
-          errors so operators can diagnose issues quickly.
+        text: 'Ensure metrics distinguish middleware-induced failures such as host
+          rejections or rate limits from application-level errors so operators can
+          diagnose issues quickly.
+
+          '
       - id: obs.centralization
         type: rule
-        text: >
-          Keep observability and rate-limiting logic centralized in middleware and infrastructure; do not duplicate
-          behavior
-          in individual routers.
+        text: 'Keep observability and rate-limiting logic centralized in middleware
+          and infrastructure; do not duplicate behavior in individual routers.
+
+          '
   - id: middleware-implementation-patterns
     index: 9
     title: Middleware Implementation Patterns
@@ -387,24 +452,27 @@ sections:
     items:
       - id: impl.asgi-class
         type: rule
-        text: >
-          Implement custom HTTP middleware as ASGI-compatible classes with __init__(self, app, **config) storing the
-          inner
-          ASGI app and async __call__(self, scope, receive, send) wrapping the lifecycle.
+        text: 'Implement custom HTTP middleware as ASGI-compatible classes with __init__(self,
+          app, **config) storing the inner ASGI app and async __call__(self, scope,
+          receive, send) wrapping the lifecycle.
+
+          '
       - id: impl.registration-api
         type: rule
-        text: >
-          Register all middleware via app.add_middleware in create_app rather than using the @app.middleware("http")
-          decorator
-          so the stack is centralized.
+        text: 'Register all middleware via app.add_middleware in create_app rather
+          than using the @app.middleware("http") decorator so the stack is centralized.
+
+          '
       - id: impl.module-location
         type: note
-        text: >
-          Define middleware classes in app/core/middleware.py (or nearby modules) so they remain discoverable and
-          reusable.
+        text: 'Define middleware classes in app/core/middleware.py (or nearby modules)
+          so they remain discoverable and reusable.
+
+          '
       - id: impl.cross-cutting-only
         type: rule
-        text: Limit middleware to cross-cutting concerns; move any domain-specific logic into services or routers.
+        text: Limit middleware to cross-cutting concerns; move any domain-specific
+          logic into services or routers.
   - id: middleware-config-settings-factory
     index: 9
     title: Middleware Configuration via Settings and Factory
@@ -413,32 +481,36 @@ sections:
     items:
       - id: config.settings-fields
         type: rule
-        text: >
-          'Represent middleware configuration as explicit Settings fields instead of hardcoding constants. Key defaults
-          include enable_gzip: bool = True, enforce_https: bool = False (set to True in production), and allowed_hosts: list[str]
-          = ["*"] (use explicit domains in production).'
+        text: |
+          'Represent middleware configuration as explicit Settings fields instead of hardcoding constants. Key defaults include enable_gzip: bool = True, enforce_https: bool = False (set to True in production), and allowed_hosts: list[str] = ["*"] (use explicit domains in production).
+
+          '
       - id: config.factory-wiring
         type: pattern
-        text: >
-          Pass a Settings instance into create_app, store it on app.state.settings, and wire middleware registration
-          exclusively
-          in this function.
+        text: 'Pass a Settings instance into create_app, store it on app.state.settings,
+          and wire middleware registration exclusively in this function.
+
+          '
       - id: config.conditional-add
         type: rule
-        text: >
-          Guard each app.add_middleware call with conditions derived from Settings so environments can enable or disable
-          middleware behavior without code changes.
+        text: 'Guard each app.add_middleware call with conditions derived from Settings
+          so environments can enable or disable middleware behavior without code changes.
+
+          '
       - id: config.order-based-on-settings
         type: note
-        text: >
-          Preserve relative middleware ordering even when some features are disabled; for example, omit GZipMiddleware
-          entirely when enable_gzip is False but keep host and security header ordering unchanged.
+        text: 'Preserve relative middleware ordering even when some features are disabled;
+          for example, omit GZipMiddleware entirely when enable_gzip is False but
+          keep host and security header ordering unchanged.
+
+          '
       - id: config.testability
         type: note
-        text: >
-          Use Settings-driven configuration so tests can construct apps with alternate middleware stacks simply by
-          providing
-          different Settings instances to create_app.
+        text: 'Use Settings-driven configuration so tests can construct apps with
+          alternate middleware stacks simply by providing different Settings instances
+          to create_app.
+
+          '
   - id: middleware-error-handling-fastapi
     index: 10
     title: Error Handling in FastAPI Middleware
@@ -447,24 +519,29 @@ sections:
     items:
       - id: errors.no-swallowing
         type: rule
-        text: >
-          Middleware must not swallow exceptions raised by downstream handlers; allow FastAPI’s exception handlers
-          registered
-          in app/core/factory.py to translate them into HTTP responses.
+        text: 'Middleware must not swallow exceptions raised by downstream handlers;
+          allow FastAPI’s exception handlers registered in app/core/factory.py to
+          translate them into HTTP responses.
+
+          '
       - id: errors.try-finally
         type: pattern
-        text: >
-          Use try/finally blocks in middleware to ensure cleanup (timers, metrics observations, resource releases) while
-          re-raising exceptions.
+        text: 'Use try/finally blocks in middleware to ensure cleanup (timers, metrics
+          observations, resource releases) while re-raising exceptions.
+
+          '
       - id: errors.logging
         type: note
-        text: >
-          Middleware may log errors at appropriate levels and then re-raise them rather than returning ad hoc responses.
+        text: 'Middleware may log errors at appropriate levels and then re-raise them
+          rather than returning ad hoc responses.
+
+          '
       - id: errors.contracts
         type: rule
-        text: >
-          Ensure middleware behavior remains compatible with the error contracts defined in api-patterns.toon and
-          exception-patterns.toon.
+        text: 'Ensure middleware behavior remains compatible with the error contracts
+          defined in api-patterns.toon and exception-patterns.toon.
+
+          '
   - id: middleware-testing
     index: 11
     title: Testing Middleware
@@ -473,32 +550,37 @@ sections:
     items:
       - id: test.integration-focus
         type: pattern
-        text: >
-          Test middleware via integration tests that exercise the real FastAPI application constructed by create_app
-          instead
-          of unit-testing middleware classes in isolation.
+        text: 'Test middleware via integration tests that exercise the real FastAPI
+          application constructed by create_app instead of unit-testing middleware
+          classes in isolation.
+
+          '
       - id: test.settings-variants
         type: rule
-        text: >
-          Build apps in tests with Settings configured to enable or disable middleware features (GZip, CORS, proxy
-          headers,
-          rate limiting) to validate the resulting stack.
+        text: 'Build apps in tests with Settings configured to enable or disable middleware
+          features (GZip, CORS, proxy headers, rate limiting) to validate the resulting
+          stack.
+
+          '
       - id: test.behavior-assertions
         type: rule
-        text: >
-          Use TestClient or an async HTTP client to assert on security headers, compression behavior, host validation
-          responses, and CORS preflight handling.
+        text: 'Use TestClient or an async HTTP client to assert on security headers,
+          compression behavior, host validation responses, and CORS preflight handling.
+
+          '
       - id: test.request-id-logging
         type: note
-        text: >
-          Verify RequestIDMiddleware behavior via X-Request-ID response headers and, when practical, via log-capture
-          fixtures
-          that assert IDs appear in structured logs.
+        text: 'Verify RequestIDMiddleware behavior via X-Request-ID response headers
+          and, when practical, via log-capture fixtures that assert IDs appear in
+          structured logs.
+
+          '
       - id: test.prod-parity
         type: note
-        text: >
-          Reuse the same create_app wiring and fixtures as production so middleware tests remain representative of real
-          deployments.
+        text: 'Reuse the same create_app wiring and fixtures as production so middleware
+          tests remain representative of real deployments.
+
+          '
   - id: middleware-anti-patterns-fastapi
     index: 12
     title: Anti-Patterns to Avoid
@@ -507,31 +589,35 @@ sections:
     items:
       - id: anti.order-arbitrary
         type: anti_pattern
-        text: >
-          Adding middleware in an arbitrary order, leading to broken CORS behavior, missing security headers, or
-          confusing
-          logging and metrics.
+        text: 'Adding middleware in an arbitrary order, leading to broken CORS behavior,
+          missing security headers, or confusing logging and metrics.
+
+          '
       - id: anti.hardcoded-config
         type: anti_pattern
-        text: Hardcoding middleware configuration inside the factory or middleware classes instead of using Settings.
+        text: Hardcoding middleware configuration inside the factory or middleware
+          classes instead of using Settings.
       - id: anti.body-modification
         type: anti_pattern
-        text: >
-          Modifying request or response bodies in middleware without preserving streaming semantics, content-type, and
-          content-length.
+        text: 'Modifying request or response bodies in middleware without preserving
+          streaming semantics, content-type, and content-length.
+
+          '
       - id: anti.heavy-work
         type: anti_pattern
-        text: >
-          Performing CPU-bound or blocking I/O operations directly in middleware instead of offloading to background
-          tasks
-          or worker pools.
+        text: 'Performing CPU-bound or blocking I/O operations directly in middleware
+          instead of offloading to background tasks or worker pools.
+
+          '
       - id: anti.swallowed-exceptions
         type: anti_pattern
-        text: >
-          Catching exceptions in middleware and returning ad hoc error responses that bypass centralized exception
-          handling.
+        text: 'Catching exceptions in middleware and returning ad hoc error responses
+          that bypass centralized exception handling.
+
+          '
       - id: anti.crosscutting-in-routers
         type: anti_pattern
-        text: >
-          Implementing rate limiting, logging, or metrics directly in routers or services instead of centralized
-          middleware.
+        text: 'Implementing rate limiting, logging, or metrics directly in routers
+          or services instead of centralized middleware.
+
+          '

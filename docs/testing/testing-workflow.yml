@@ -1,311 +1,328 @@
 doc_id: original-testing-testing-workflow
 title: Testing Workflow
-description: Testing is divided into four tiers to balance feedback speed, comprehensive verification,
-  and appropriate coverage metrics for each testing level.
+description: Testing is divided into four tiers to balance feedback speed, comprehensive
+  verification, and appropriate coverage metrics for each testing level.
 domain: []
 scope: project
 sections:
-- id: test-tiers-overview
-  index: 1
-  title: Test Tiers Overview
-  category: standard
-  summary: ''
-  items:
-  - id: test-tiers-overview-1
-    type: text
-    text: '| Tier | Test Path | Coverage Type | Target | Speed | |------|-----------|---------------|--------|-------|
-      | **Unit** | `tests/unit/` | Line/branch per function | All `app/` functions | Fast | | **Component**
-      | `tests/unit/` | Line/branch per function | `app/services/` only | Fast | | **Integration** | `tests/integration/`
-      | Use-case | Use cases from YAML | Fast | | **E2E** | `tests/e2e/` | Use-case | Use cases from YAML
-      | Slow | | **Scripts** | `scripts/tests/` | Line/branch per function | `scripts/` | Fast
-      |'
-- id: unit-tests
-  index: 2
-  title: Unit Tests
-  category: standard
-  summary: ''
-  items:
-  - id: unit-tests-location-testsunit
-    type: text
-    text: '**Location**: `tests/unit/`'
-  - id: unit-tests-coverage-line-and-branch
-    type: text
-    text: '**Coverage**: Line and branch coverage per function (threshold configured in settings)'
-  - id: unit-tests-target-all-functions-in
-    type: text
-    text: '**Target**: All functions in `app/` including private functions'
-  - id: unit-tests-fixture-uses-mocks-and-fa
-    type: text
-    text: '**Fixture**: Uses mocks and fakes for isolation'
-  - id: unit-tests-command-uv-run-test-cove
-    type: step
-    text: '**Command**: `uv run test-coverage --tier unit`'
-  - id: unit-tests-6
-    type: rule
-    text: Unit tests validate individual functions and methods in isolation. Coverage is measured per-function,
-      meaning each function must individually meet the configured threshold.
-- id: component-tests
-  index: 3
-  title: Component Tests
-  category: standard
-  summary: ''
-  items:
-  - id: component-tests-location-testsunit-s
-    type: text
-    text: '**Location**: `tests/unit/` (service-focused tests)'
-  - id: component-tests-coverage-line-and-branch
-    type: text
-    text: '**Coverage**: Line and branch coverage per function (threshold configured in settings)'
-  - id: component-tests-target-only-functions-wit
-    type: text
-    text: '**Target**: Only functions within `app/services/` (service layer)'
-  - id: component-tests-scope-tests-service-layer
-    type: text
-    text: '**Scope**: Tests service layer public API; private functions are skipped'
-  - id: component-tests-command-uv-run-test-cove
-    type: step
-    text: '**Command**: `uv run test-coverage --tier component`'
-  - id: component-tests-6
-    type: text
-    text: Component tests target the service layer, treating it as the public API of the application.
-      Private functions within services are implementation details and are excluded from coverage validation.
-- id: integration-tests
-  index: 4
-  title: Integration Tests
-  category: standard
-  summary: ''
-  items:
-  - id: integration-tests-location-testsintegrati
-    type: text
-    text: '**Location**: `tests/integration/`'
-  - id: integration-tests-coverage-use-case-coverag
-    type: text
-    text: '**Coverage**: Use-case coverage (threshold configured in settings)'
-  - id: integration-tests-target-use-cases-defined
-    type: text
-    text: '**Target**: Use cases defined in `tests/use_cases.yaml`'
-  - id: integration-tests-fixture-async_client-u
-    type: text
-    text: '**Fixture**: `async_client` (uses `httpx.ASGITransport`)'
-  - id: integration-tests-scope-tests-application-l
-    type: text
-    text: '**Scope**: Tests application logic with mocked external dependencies; no network overhead'
-  - id: integration-tests-command-uv-run-test-cove
-    type: step
-    text: '**Command**: `uv run test-coverage --tier integration`'
-  - id: integration-tests-7
-    type: rule
-    text: Integration tests validate user-facing scenarios defined in the use-case registry. Each test
-      must be linked to a use-case with `@pytest.mark.usecase("UC-XXX-NNN")`.
-- id: e2e-tests
-  index: 5
-  title: E2E Tests
-  category: standard
-  summary: ''
-  items:
-  - id: e2e-tests-location-testse2e
-    type: text
-    text: '**Location**: `tests/e2e/`'
-  - id: e2e-tests-coverage-use-case-coverag
-    type: text
-    text: '**Coverage**: Use-case coverage (threshold configured in settings)'
-  - id: e2e-tests-target-use-cases-defined
-    type: text
-    text: '**Target**: Use cases defined in `tests/use_cases.yaml`'
-  - id: e2e-tests-fixture-api_client-bui
-    type: step
-    text: '**Fixture**: `api_client` (builds and runs a Docker container on port 8008)'
-  - id: e2e-tests-marker-pytestmarke2e
-    type: text
-    text: '**Marker**: `@pytest.mark.e2e`'
-  - id: e2e-tests-scope-validates-full-stac
-    type: text
-    text: '**Scope**: Validates full stack, startup scripts, health checks, and network handling'
-  - id: e2e-tests-command-uv-run-test-cove
-    type: step
-    text: '**Command**: `uv run test-coverage --tier e2e`'
-  - id: e2e-tests-8
-    type: step
-    text: E2E tests require the full application stack running in Docker containers.
-- id: coverage-rules
-  index: 6
-  title: Coverage Rules
-  category: standard
-  summary: ''
-  items:
-  - id: coverage-rules-per-function-each-functio
-    type: rule
-    text: '**Per-function**: Each function must individually meet the configured threshold (not averaged
-      across file)'
-  - id: coverage-rules-class-fields-excluded-pyd
-    type: text
-    text: '**Class fields excluded**: Pydantic model type annotations are excluded from coverage'
-  - id: coverage-rules-service-layer-component-t
-    type: text
-    text: '**Service layer**: Component tests only validate functions within `app/services/`'
-  - id: coverage-rules-use-case-coverage-integra
-    type: text
-    text: '**Use-case coverage**: Integration/e2e require coverage of non-future use cases (threshold
-      in settings)'
-  - id: coverage-rules-private-functions-unit-te
-    type: text
-    text: '**Private functions**: Unit tests validate ALL functions; component/scripts skip private'
-- id: common-test-commands
-  index: 7
-  title: Common Test Commands
-  category: standard
-  summary: ''
-  items:
-  - id: common-test-commands-1
-    type: example
-    text: '> **Note**: `pytest-check` is available for multiple soft assertions in a single test. > Example:
-      `check.equal(result, expected)`.'
-  - id: common-test-commands-code-2
-    type: code
-    text: '# Run all test tiers with validation
+  - id: test-tiers-overview
+    index: 1
+    title: Test Tiers Overview
+    category: standard
+    summary: ''
+    items:
+      - id: test-tiers-overview-1
+        type: text
+        text: '| Tier | Test Path | Coverage Type | Target | Speed | |------|-----------|---------------|--------|-------|
+          | **Unit** | `tests/unit/` | Line/branch per function | All `app/` functions
+          | Fast | | **Component** | `tests/unit/` | Line/branch per function | `app/services/`
+          only | Fast | | **Integration** | `tests/integration/` | Use-case | Use
+          cases from YAML | Fast | | **E2E** | `tests/e2e/` | Use-case | Use cases
+          from YAML | Slow | | **Scripts** | `scripts/tests/` | Line/branch per function
+          | `scripts/` | Fast |'
+  - id: unit-tests
+    index: 2
+    title: Unit Tests
+    category: standard
+    summary: ''
+    items:
+      - id: unit-tests-location-testsunit
+        type: text
+        text: '**Location**: `tests/unit/`'
+      - id: unit-tests-coverage-line-and-branch
+        type: text
+        text: '**Coverage**: Line and branch coverage per function (threshold configured
+          in settings)'
+      - id: unit-tests-target-all-functions-in
+        type: text
+        text: '**Target**: All functions in `app/` including private functions'
+      - id: unit-tests-fixture-uses-mocks-and-fa
+        type: text
+        text: '**Fixture**: Uses mocks and fakes for isolation'
+      - id: unit-tests-command-uv-run-test-cove
+        type: step
+        text: '**Command**: `uv run test-coverage --tier unit`'
+      - id: unit-tests-6
+        type: rule
+        text: Unit tests validate individual functions and methods in isolation. Coverage
+          is measured per-function, meaning each function must individually meet the
+          configured threshold.
+  - id: component-tests
+    index: 3
+    title: Component Tests
+    category: standard
+    summary: ''
+    items:
+      - id: component-tests-location-testsunit-s
+        type: text
+        text: '**Location**: `tests/unit/` (service-focused tests)'
+      - id: component-tests-coverage-line-and-branch
+        type: text
+        text: '**Coverage**: Line and branch coverage per function (threshold configured
+          in settings)'
+      - id: component-tests-target-only-functions-wit
+        type: text
+        text: '**Target**: Only functions within `app/services/` (service layer)'
+      - id: component-tests-scope-tests-service-layer
+        type: text
+        text: '**Scope**: Tests service layer public API; private functions are skipped'
+      - id: component-tests-command-uv-run-test-cove
+        type: step
+        text: '**Command**: `uv run test-coverage --tier component`'
+      - id: component-tests-6
+        type: text
+        text: Component tests target the service layer, treating it as the public
+          API of the application. Private functions within services are implementation
+          details and are excluded from coverage validation.
+  - id: integration-tests
+    index: 4
+    title: Integration Tests
+    category: standard
+    summary: ''
+    items:
+      - id: integration-tests-location-testsintegrati
+        type: text
+        text: '**Location**: `tests/integration/`'
+      - id: integration-tests-coverage-use-case-coverag
+        type: text
+        text: '**Coverage**: Use-case coverage (threshold configured in settings)'
+      - id: integration-tests-target-use-cases-defined
+        type: text
+        text: '**Target**: Use cases defined in `tests/use_cases.yaml`'
+      - id: integration-tests-fixture-async_client-u
+        type: text
+        text: '**Fixture**: `async_client` (uses `httpx.ASGITransport`)'
+      - id: integration-tests-scope-tests-application-l
+        type: text
+        text: '**Scope**: Tests application logic with mocked external dependencies;
+          no network overhead'
+      - id: integration-tests-command-uv-run-test-cove
+        type: step
+        text: '**Command**: `uv run test-coverage --tier integration`'
+      - id: integration-tests-7
+        type: rule
+        text: Integration tests validate user-facing scenarios defined in the use-case
+          registry. Each test must be linked to a use-case with `@pytest.mark.usecase("UC-XXX-NNN")`.
+  - id: e2e-tests
+    index: 5
+    title: E2E Tests
+    category: standard
+    summary: ''
+    items:
+      - id: e2e-tests-location-testse2e
+        type: text
+        text: '**Location**: `tests/e2e/`'
+      - id: e2e-tests-coverage-use-case-coverag
+        type: text
+        text: '**Coverage**: Use-case coverage (threshold configured in settings)'
+      - id: e2e-tests-target-use-cases-defined
+        type: text
+        text: '**Target**: Use cases defined in `tests/use_cases.yaml`'
+      - id: e2e-tests-fixture-api_client-bui
+        type: step
+        text: '**Fixture**: `api_client` (builds and runs a Docker container on port
+          8008)'
+      - id: e2e-tests-marker-pytestmarke2e
+        type: text
+        text: '**Marker**: `@pytest.mark.e2e`'
+      - id: e2e-tests-scope-validates-full-stac
+        type: text
+        text: '**Scope**: Validates full stack, startup scripts, health checks, and
+          network handling'
+      - id: e2e-tests-command-uv-run-test-cove
+        type: step
+        text: '**Command**: `uv run test-coverage --tier e2e`'
+      - id: e2e-tests-8
+        type: step
+        text: E2E tests require the full application stack running in Docker containers.
+  - id: coverage-rules
+    index: 6
+    title: Coverage Rules
+    category: standard
+    summary: ''
+    items:
+      - id: coverage-rules-per-function-each-functio
+        type: rule
+        text: '**Per-function**: Each function must individually meet the configured
+          threshold (not averaged across file)'
+      - id: coverage-rules-class-fields-excluded-pyd
+        type: text
+        text: '**Class fields excluded**: Pydantic model type annotations are excluded
+          from coverage'
+      - id: coverage-rules-service-layer-component-t
+        type: text
+        text: '**Service layer**: Component tests only validate functions within `app/services/`'
+      - id: coverage-rules-use-case-coverage-integra
+        type: text
+        text: '**Use-case coverage**: Integration/e2e require coverage of non-future
+          use cases (threshold in settings)'
+      - id: coverage-rules-private-functions-unit-te
+        type: text
+        text: '**Private functions**: Unit tests validate ALL functions; component/scripts
+          skip private'
+  - id: common-test-commands
+    index: 7
+    title: Common Test Commands
+    category: standard
+    summary: ''
+    items:
+      - id: common-test-commands-1
+        type: example
+        text: '> **Note**: `pytest-check` is available for multiple soft assertions
+          in a single test. > Example: `check.equal(result, expected)`.'
+      - id: common-test-commands-code-2
+        type: code
+        text: '# Run all test tiers with validation
 
-      uv run test-coverage
-
-
-      # Run specific tier
-
-      uv run test-coverage --tier unit
-
-      uv run test-coverage --tier integration
-
-
-      # Report only (no validation failures)
-
-      uv run test-coverage --no-validate
+          uv run test-coverage
 
 
-      # Generate JSON report
+          # Run specific tier
 
-      uv run test-coverage --json-report coverage_report.json
+          uv run test-coverage --tier unit
 
-
-      # Legacy pytest commands
-
-      uv run pytest                       # Run all tests
-
-      uv run pytest -m "not e2e"          # Skip E2E tests
-
-      uv run pytest -m e2e                # Only E2E tests
-
-      uv run pytest -v                    # Verbose output'
-- id: llm-coverage-report
-  index: 8
-  title: LLM Coverage Report
-  category: standard
-  summary: ''
-  items:
-  - id: llm-coverage-report-1
-    type: text
-    text: Generates an LLM-friendly JSON report combining per-function coverage gaps, line/branch coverage
-      gaps with source context, and use-case coverage gaps for integration/e2e tests.
-- id: prerequisites
-  index: 9
-  title: Prerequisites
-  category: standard
-  summary: ''
-  items:
-  - id: prerequisites-coveragejson-generated-by
-    type: text
-    text: '`coverage.json`: Generated by `pytest --cov --cov-report=json`'
-  - id: prerequisites-testsuse_casesyaml-the-ca
-    type: text
-    text: '`tests/use_cases.yaml`: The canonical use-case registry'
-  - id: prerequisites-optional-tier-specific-covera
-    type: text
-    text: 'Optional: Tier-specific coverage files (`coverage_unit.json`, `coverage_component.json`, etc.)'
-- id: usage
-  index: 10
-  title: Usage
-  category: standard
-  summary: ''
-  items:
-  - id: usage-code-1
-    type: code
-    text: '# Generate coverage report (requires coverage.json to exist)
-
-      uv run llm-coverage-report
+          uv run test-coverage --tier integration
 
 
-      # Specify custom paths
+          # Report only (no validation failures)
 
-      uv run llm-coverage-report --coverage-json coverage.json --output coverage_llm.json
+          uv run test-coverage --no-validate
 
 
-      # Increase context radius for more surrounding lines
+          # Generate JSON report
 
-      uv run llm-coverage-report --context-radius 5'
-  - id: usage-2
-    type: text
-    text: Coverage thresholds are configured in project settings.
-- id: output
-  index: 11
-  title: Output
-  category: standard
-  summary: ''
-  items:
-  - id: output-1
-    type: text
-    text: 'The generated `coverage_llm.json` contains:'
-  - id: output-function_coverage-per-funct
-    type: text
-    text: '`function_coverage`: Per-function coverage gaps with functions below threshold'
-  - id: output-tier_summaries-coverage-sum
-    type: text
-    text: '`tier_summaries`: Coverage summary per tier (unit, component, scripts)'
-  - id: output-functions_below_threshold-l
-    type: text
-    text: '`functions_below_threshold`: List of functions not meeting the configured threshold'
-  - id: output-code_coverage-missing-lines
-    type: text
-    text: '`code_coverage`: Missing lines and branches with source context'
-  - id: output-use_case_coverage-uncovered
-    type: text
-    text: '`use_case_coverage`: Uncovered use-cases and coverage statistics per tier'
-  - id: output-prompting_notes-guidance-fo
-    type: text
-    text: '`prompting_notes`: Guidance for LLM-assisted test generation'
-- id: auto-discovery
-  index: 12
-  title: Auto-Discovery
-  category: standard
-  summary: ''
-  items:
-  - id: auto-discovery-1
-    type: text
-    text: 'The tool automatically discovers tier-specific coverage files if present:'
-  - id: auto-discovery-coverage_unitjson-unit-te
-    type: text
-    text: '`coverage_unit.json` - Unit test coverage'
-  - id: auto-discovery-coverage_componentjson-co
-    type: text
-    text: '`coverage_component.json` - Component test coverage'
-  - id: auto-discovery-coverage_scriptsjson-scri
-    type: text
-    text: '`coverage_scripts.json` - Scripts test coverage'
-  - id: auto-discovery-5
-    type: text
-    text: 'When tier files are found, per-function analysis applies the correct rules:'
-  - id: auto-discovery-unit-tier-all-functions-v
-    type: text
-    text: '**Unit tier**: All functions validated (including private)'
-  - id: auto-discovery-component-tier-only-app
-    type: text
-    text: '**Component tier**: Only `app/services/` public functions validated'
-  - id: auto-discovery-scripts-tier-public-funct
-    type: text
-    text: '**Scripts tier**: Public functions only validated'
-- id: workflow-integration
-  index: 13
-  title: Workflow Integration
-  category: workflow
-  summary: ''
-  items:
-  - id: workflow-integration-1
-    type: text
-    text: Use this tool before writing tests to identify gaps, or during code review to assess coverage
-      quality. See `testing-patterns.md` for use-case coverage approach.
+          uv run test-coverage --json-report coverage_report.json
+
+
+          # Legacy pytest commands
+
+          uv run pytest                       # Run all tests
+
+          uv run pytest -m "not e2e"          # Skip E2E tests
+
+          uv run pytest -m e2e                # Only E2E tests
+
+          uv run pytest -v                    # Verbose output'
+  - id: llm-coverage-report
+    index: 8
+    title: LLM Coverage Report
+    category: standard
+    summary: ''
+    items:
+      - id: llm-coverage-report-1
+        type: text
+        text: Generates an LLM-friendly JSON report combining per-function coverage
+          gaps, line/branch coverage gaps with source context, and use-case coverage
+          gaps for integration/e2e tests.
+  - id: prerequisites
+    index: 9
+    title: Prerequisites
+    category: standard
+    summary: ''
+    items:
+      - id: prerequisites-coveragejson-generated-by
+        type: text
+        text: '`coverage.json`: Generated by `pytest --cov --cov-report=json`'
+      - id: prerequisites-testsuse_casesyaml-the-ca
+        type: text
+        text: '`tests/use_cases.yaml`: The canonical use-case registry'
+      - id: prerequisites-optional-tier-specific-covera
+        type: text
+        text: 'Optional: Tier-specific coverage files (`coverage_unit.json`, `coverage_component.json`,
+          etc.)'
+  - id: usage
+    index: 10
+    title: Usage
+    category: standard
+    summary: ''
+    items:
+      - id: usage-code-1
+        type: code
+        text: '# Generate coverage report (requires coverage.json to exist)
+
+          uv run llm-coverage-report
+
+
+          # Specify custom paths
+
+          uv run llm-coverage-report --coverage-json coverage.json --output coverage_llm.json
+
+
+          # Increase context radius for more surrounding lines
+
+          uv run llm-coverage-report --context-radius 5'
+      - id: usage-2
+        type: text
+        text: Coverage thresholds are configured in project settings.
+  - id: output
+    index: 11
+    title: Output
+    category: standard
+    summary: ''
+    items:
+      - id: output-1
+        type: text
+        text: 'The generated `coverage_llm.json` contains:'
+      - id: output-function_coverage-per-funct
+        type: text
+        text: '`function_coverage`: Per-function coverage gaps with functions below
+          threshold'
+      - id: output-tier_summaries-coverage-sum
+        type: text
+        text: '`tier_summaries`: Coverage summary per tier (unit, component, scripts)'
+      - id: output-functions_below_threshold-l
+        type: text
+        text: '`functions_below_threshold`: List of functions not meeting the configured
+          threshold'
+      - id: output-code_coverage-missing-lines
+        type: text
+        text: '`code_coverage`: Missing lines and branches with source context'
+      - id: output-use_case_coverage-uncovered
+        type: text
+        text: '`use_case_coverage`: Uncovered use-cases and coverage statistics per
+          tier'
+      - id: output-prompting_notes-guidance-fo
+        type: text
+        text: '`prompting_notes`: Guidance for LLM-assisted test generation'
+  - id: auto-discovery
+    index: 12
+    title: Auto-Discovery
+    category: standard
+    summary: ''
+    items:
+      - id: auto-discovery-1
+        type: text
+        text: 'The tool automatically discovers tier-specific coverage files if present:'
+      - id: auto-discovery-coverage_unitjson-unit-te
+        type: text
+        text: '`coverage_unit.json` - Unit test coverage'
+      - id: auto-discovery-coverage_componentjson-co
+        type: text
+        text: '`coverage_component.json` - Component test coverage'
+      - id: auto-discovery-coverage_scriptsjson-scri
+        type: text
+        text: '`coverage_scripts.json` - Scripts test coverage'
+      - id: auto-discovery-5
+        type: text
+        text: 'When tier files are found, per-function analysis applies the correct
+          rules:'
+      - id: auto-discovery-unit-tier-all-functions-v
+        type: text
+        text: '**Unit tier**: All functions validated (including private)'
+      - id: auto-discovery-component-tier-only-app
+        type: text
+        text: '**Component tier**: Only `app/services/` public functions validated'
+      - id: auto-discovery-scripts-tier-public-funct
+        type: text
+        text: '**Scripts tier**: Public functions only validated'
+  - id: workflow-integration
+    index: 13
+    title: Workflow Integration
+    category: workflow
+    summary: ''
+    items:
+      - id: workflow-integration-1
+        type: text
+        text: Use this tool before writing tests to identify gaps, or during code
+          review to assess coverage quality. See `testing-patterns.md` for use-case
+          coverage approach.

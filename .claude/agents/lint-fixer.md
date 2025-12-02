@@ -83,6 +83,50 @@ If you cannot fix a lint error without changing configuration, report it as a re
 - For Markdown lint violations: Adjust doc text (wrap long lines, align bullet markers) to satisfy rules
 - Allow up to 2 hours for lint command; do not stop it early
 
+## YAML Formatting Rules
+
+When fixing yamllint errors, you MUST follow these rules:
+
+### NEVER convert block scalars to quoted strings
+
+Block scalars (`|` or `>`) are the correct format for multi-line content. NEVER replace them
+with quoted strings containing `\n` escapes.
+
+**WRONG** (never do this):
+```yaml
+code: "def foo():\n    return bar"
+description: 'This is a long\n  multi-line description'
+```
+
+**CORRECT** (preserve or use block scalars):
+```yaml
+code: |
+  def foo():
+      return bar
+description: |
+  This is a long
+  multi-line description
+```
+
+### When to use block scalars
+
+Use `|` (literal block scalar) for:
+- `code:` fields (always)
+- `description:` fields with multiple lines
+- `text:` fields with multiple lines
+- Any content containing code, commands, or formatting that must be preserved
+
+### Trailing whitespace in block scalars
+
+If yamllint reports trailing whitespace inside a block scalar, remove the trailing spaces
+from those lines. Do NOT convert the block scalar to a quoted string.
+
+### Escaping in YAML
+
+- Avoid using `''` to escape apostrophes - use `|` block scalar instead
+- Avoid using `\"` or `\n` escapes - use `|` block scalar instead
+- Single-line values with colons can use quotes: `text: 'Note: this works'`
+
 ## Output Format
 
 Summary: <one-line status>

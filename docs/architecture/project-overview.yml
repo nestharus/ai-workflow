@@ -1,79 +1,83 @@
 doc_id: original-architecture-project-overview
 title: Project Overview
-description: Welcome to the **Developing With AI 2.0** system. This repository implements an automated,
-  orchestrator-based AI workflow system where a central orchestrator service manages workflows and agent
-  invocations. AI agents act as specialized roles within a larger workflow coordinated by this service.
+description: Welcome to the **Developing With AI 2.0** system. This repository implements
+  an automated, orchestrator-based AI workflow system where a central orchestrator
+  service manages workflows and agent invocations. AI agents act as specialized roles
+  within a larger workflow coordinated by this service.
 domain: []
 scope: general
 sections:
-- id: system-description
-  index: 1
-  title: System Description
-  category: standard
-  summary: ''
-  items:
-  - id: system-description-1
-    type: text
-    text: 'This project implements an automated AI workflow system using a 5-role skeleton across four
-      domains: Product, UX, UI, and Technical. The architecture separates concerns between workflow orchestration
-      and external event handling through two core services.'
-- id: core-components
-  index: 2
-  title: Core Components
-  category: standard
-  summary: ''
-  items: []
-- id: fastapi-orchestrator-service
-  index: 3
-  title: FastAPI Orchestrator Service
-  category: reference
-  summary: ''
-  items:
-  - id: fastapi-orchestrator-service-1
-    type: text
-    text: The central orchestrator service routes messages to workflows and coordinates agent execution.
-      It receives messages from agents, manages workflow state, and invokes other agents via `droid exec`
-      subprocesses.
-- id: webhook-receiver-service
-  index: 4
-  title: Webhook Receiver Service
-  category: standard
-  summary: ''
-  items:
-  - id: webhook-receiver-service-1
-    type: text
-    text: A standalone service handles GitHub integration by receiving webhooks, verifying signatures,
-      and forwarding validated events to the orchestrator for routing to appropriate workflows.
-- id: agent-interaction-model
-  index: 5
-  title: Agent Interaction Model
-  category: standard
-  summary: ''
-  items:
-  - id: agent-interaction-model-1
-    type: step
-    text: 'Agents submit messages to the orchestrator rather than calling other agents directly. The orchestrator
-      then:'
-  - id: agent-interaction-model-routes-messages-to-the-appropr
-    type: text
-    text: Routes messages to the appropriate workflow instance
-  - id: agent-interaction-model-manages-workflow-state-and-coo
-    type: text
-    text: Manages workflow state and coordinates handoffs between roles
-  - id: agent-interaction-model-spawns-droid-exec-subprocess
-    type: text
-    text: Spawns `droid exec` subprocesses for agent execution
-  - id: agent-interaction-model-handles-ticket-claiming-and-pr
-    type: text
-    text: Handles ticket claiming and PR comment routing
-- id: primary-goal
-  index: 6
-  title: Primary Goal
-  category: standard
-  summary: ''
-  items:
-  - id: primary-goal-1
-    type: text
-    text: The system facilitates high-quality software development through structured, automated collaboration.
-      By enforcing role-based workflows and centralized orchestration, agents work together efficiently
-      while maintaining clear separation of responsibilities.
+  - id: system-description
+    index: 1
+    title: System Description
+    category: standard
+    summary: ''
+    items:
+      - id: system-description-1
+        type: text
+        text: 'This project implements an automated AI workflow system using a 5-role
+          skeleton across four domains: Product, UX, UI, and Technical. The architecture
+          separates concerns between workflow orchestration and external event handling
+          through two core services.'
+  - id: core-components
+    index: 2
+    title: Core Components
+    category: standard
+    summary: ''
+    items: []
+  - id: fastapi-orchestrator-service
+    index: 3
+    title: FastAPI Orchestrator Service
+    category: reference
+    summary: ''
+    items:
+      - id: fastapi-orchestrator-service-1
+        type: text
+        text: The central orchestrator service routes messages to workflows and coordinates
+          agent execution. It receives messages from agents, manages workflow state,
+          and invokes other agents via `droid exec` subprocesses.
+  - id: webhook-receiver-service
+    index: 4
+    title: Webhook Receiver Service
+    category: standard
+    summary: ''
+    items:
+      - id: webhook-receiver-service-1
+        type: text
+        text: A standalone service handles GitHub integration by receiving webhooks,
+          verifying signatures, and forwarding validated events to the orchestrator
+          for routing to appropriate workflows.
+  - id: agent-interaction-model
+    index: 5
+    title: Agent Interaction Model
+    category: standard
+    summary: ''
+    items:
+      - id: agent-interaction-model-1
+        type: step
+        text: 'Agents submit messages to the orchestrator rather than calling other
+          agents directly. The orchestrator then:'
+      - id: agent-interaction-model-routes-messages-to-the-appropr
+        type: text
+        text: Routes messages to the appropriate workflow instance
+      - id: agent-interaction-model-manages-workflow-state-and-coo
+        type: text
+        text: Manages workflow state and coordinates handoffs between roles
+      - id: agent-interaction-model-spawns-droid-exec-subprocess
+        type: text
+        text: Spawns `droid exec` subprocesses for agent execution
+      - id: agent-interaction-model-handles-ticket-claiming-and-pr
+        type: text
+        text: Handles ticket claiming and PR comment routing
+  - id: primary-goal
+    index: 6
+    title: Primary Goal
+    category: standard
+    summary: ''
+    items:
+      - id: primary-goal-1
+        type: text
+        text: The system facilitates high-quality software development through structured,
+          automated collaboration. By enforcing role-based workflows and centralized
+          orchestration, agents work together efficiently while maintaining clear
+          separation of responsibilities.

@@ -2,16 +2,12 @@ doc_id: project-elasticsearch-connection-pooling-patterns
 title: Elasticsearch Connection Pooling Patterns
 version_hint: 2024-2025
 kind: elasticsearch_pooling_standards
-description: >-
-  Elasticsearch-specific patterns for client wrapper implementation, HTTP
-  connection pooling, configuration, and index initialization using
-  ElasticsearchWrapper.
-scope: >-
-  Covers ElasticsearchWrapper design, internal HTTP connection pool management,
-  async wrapper patterns with anyio.to_thread, configuration
-  (connections_per_node, timeouts, retries), index initialization, and
-  Elasticsearch-specific testing. Generic pooling concepts are in
-  python/connection-pooling-patterns.toon.
+description: Elasticsearch-specific patterns for client wrapper implementation, HTTP
+  connection pooling, configuration, and index initialization using ElasticsearchWrapper.
+scope: Covers ElasticsearchWrapper design, internal HTTP connection pool management,
+  async wrapper patterns with anyio.to_thread, configuration (connections_per_node,
+  timeouts, retries), index initialization, and Elasticsearch-specific testing. Generic
+  pooling concepts are in python/connection-pooling-patterns.toon.
 out_of_scope:
   - Generic pooling fundamentals (see python/connection-pooling-patterns.toon).
   - FastAPI lifespan integration (see fastapi/connection-pooling-patterns.toon).
@@ -22,7 +18,8 @@ primary_runtime_references:
   - path: app/infrastructure/elasticsearch/client.py
     role: ElasticsearchWrapper implementation with async-to-sync bridging.
   - path: app/core/settings.py
-    role: Elasticsearch configuration fields (connections_per_node, request_timeout, shards, replicas).
+    role: Elasticsearch configuration fields (connections_per_node, request_timeout,
+      shards, replicas).
 related_pattern_docs:
   - python/connection-pooling-patterns.toon
   - fastapi/connection-pooling-patterns.toon
@@ -34,46 +31,66 @@ sections:
     index: 1
     title: Elasticsearch connection pool
     category: standard
-    summary: Patterns for using ElasticsearchWrapper and the underlying HTTP connection pool.
+    summary: Patterns for using ElasticsearchWrapper and the underlying HTTP connection
+      pool.
     sample_code:
       description: ElasticsearchWrapper usage pattern for search and index operations.
       imports:
         - app.infrastructure.elasticsearch.client.ElasticsearchWrapper
         - typing.Any
-      code: "from typing import Any\nfrom app.infrastructure.elasticsearch.client import ElasticsearchWrapper\nasync def search_documents(\n\
-        \    wrapper: ElasticsearchWrapper,\n    index: str,\n    query: dict[str, Any],\n) -> list[dict[str, Any]]:\n   \
-        \ \"\"\"Search for documents using the Elasticsearch wrapper.\"\"\"\n    result = await wrapper.search(index=index,\
-        \ query=query)\n    hits = result.get(\"hits\", {}).get(\"hits\", [])\n    return [hit[\"_source\"] for hit in hits]\n\
-        async def index_document(\n    wrapper: ElasticsearchWrapper,\n    index: str,\n    doc_id: str,\n    document: dict[str,\
-        \ Any],\n) -> None:\n    \"\"\"Index a document using the Elasticsearch wrapper.\"\"\"\n    await wrapper.index(index=index,\
-        \ id=doc_id, document=document)"
+      code: |
+        from typing import Any
+        from app.infrastructure.elasticsearch.client import ElasticsearchWrapper
+        async def search_documents(
+            wrapper: ElasticsearchWrapper,
+            index: str,
+            query: dict[str, Any],
+        ) -> list[dict[str, Any]]:
+            """Search for documents using the Elasticsearch wrapper."""
+            result = await wrapper.search(index=index, query=query)
+            hits = result.get("hits", {}).get("hits", [])
+            return [hit["_source"] for hit in hits]
+        async def index_document(
+            wrapper: ElasticsearchWrapper,
+            index: str,
+            doc_id: str,
+            document: dict[str, Any],
+        ) -> None:
+            """Index a document using the Elasticsearch wrapper."""
+            await wrapper.index(index=index, id=doc_id, document=document)
     items:
       - id: es.wrapper-role
         type: pattern
-        text: >
-          Use ElasticsearchWrapper in app/infrastructure/db_connections.py to adapt the synchronous elasticsearch client
-          for async use and centralize connection management.
+        text: 'Use ElasticsearchWrapper in app/infrastructure/db_connections.py to
+          adapt the synchronous elasticsearch client for async use and centralize
+          connection management.
+
+          '
       - id: es.client-managed-pool
         type: rule
-        text: >
-          Rely on the Elasticsearch client’s internal HTTP connection pool, configured via
-          Settings.elasticsearch_connections_per_node.
+        text: 'Rely on the Elasticsearch client’s internal HTTP connection pool, configured
+          via Settings.elasticsearch_connections_per_node.
+
+          '
       - id: es.async-wrapper
         type: note
-        text: >
-          Execute potentially blocking operations (ping, search, index, bulk, indices.create) via
-          anyio.to_thread.run_sync()
-          so they do not block the event loop.
+        text: 'Execute potentially blocking operations (ping, search, index, bulk,
+          indices.create) via anyio.to_thread.run_sync() so they do not block the
+          event loop.
+
+          '
       - id: es.init-handshake
         type: rule
-        text: >
-          Have ElasticsearchWrapper.init() ping the cluster at startup to verify connectivity before marking the client
-          ready.
+        text: 'Have ElasticsearchWrapper.init() ping the cluster at startup to verify
+          connectivity before marking the client ready.
+
+          '
       - id: es.initialized-check
         type: pattern
-        text: >
-          Use _ensure_initialized() guard in wrapper methods to raise ElasticsearchNotInitializedError if called before
-          init() completes.
+        text: 'Use _ensure_initialized() guard in wrapper methods to raise ElasticsearchNotInitializedError
+          if called before init() completes.
+
+          '
   - id: elasticsearch-configuration
     index: 2
     title: Elasticsearch configuration
@@ -82,26 +99,29 @@ sections:
     items:
       - id: es.config.connections-per-node
         type: rule
-        text: >
-          Configure elasticsearch_connections_per_node with a moderate default (for example 25) and increase only when
-          metrics show underutilized nodes and connection pool exhaustion.
+        text: 'Configure elasticsearch_connections_per_node with a moderate default
+          (for example 25) and increase only when metrics show underutilized nodes
+          and connection pool exhaustion.
+
+          '
       - id: es.config.request-timeout
         type: rule
-        text: >
-          Set elasticsearch_request_timeout to a bounded value that reflects expected query latency; avoid unbounded
-          waits
-          that tie up worker threads.
+        text: 'Set elasticsearch_request_timeout to a bounded value that reflects
+          expected query latency; avoid unbounded waits that tie up worker threads.
+
+          '
       - id: es.config.retry-on-timeout
         type: note
-        text: >
-          Enable retry_on_timeout only when it is acceptable to retry operations on transient issues; do not use it to
-          hide persistent performance problems.
+        text: 'Enable retry_on_timeout only when it is acceptable to retry operations
+          on transient issues; do not use it to hide persistent performance problems.
+
+          '
       - id: es.config.hosts
         type: note
-        text: >
-          Point elasticsearch_url at a load balancer or list of node URLs; the client will maintain a pool of HTTP
-          connections
-          across these nodes.
+        text: 'Point elasticsearch_url at a load balancer or list of node URLs; the
+          client will maintain a pool of HTTP connections across these nodes.
+
+          '
   - id: index-initialization
     index: 3
     title: Index initialization
@@ -110,83 +130,123 @@ sections:
     sample_code:
       description: Index creation with mappings and settings.
       language: python
-      code: "async def initialize_indices(self) -> None:\n    \"\"\"Initialize Knowledge Graph indices for facts and entity\
-        \ aliases.\"\"\"\n    self._ensure_initialized()\n    base_settings = {\n        \"number_of_shards\": self._number_of_shards,\n\
-        \        \"number_of_replicas\": self._number_of_replicas,\n    }\n    facts_mappings = {\n        \"properties\"\
-        : {\n            \"text\": {\"type\": \"text\"},\n            \"standardized_text\": {\"type\": \"text\"},\n     \
-        \       \"source_file\": {\"type\": \"keyword\"},\n            \"entity_ids\": {\"type\": \"keyword\"},\n        \
-        \    \"topic_ids\": {\"type\": \"keyword\"},\n        }\n    }\n    await self.create_index(\n        index=\"facts_index\"\
-        ,\n        mappings=facts_mappings,\n        settings=base_settings,\n    )"
+      code: |
+        async def initialize_indices(self) -> None:
+            """Initialize Knowledge Graph indices for facts and entity aliases."""
+            self._ensure_initialized()
+            base_settings = {
+                "number_of_shards": self._number_of_shards,
+                "number_of_replicas": self._number_of_replicas,
+            }
+            facts_mappings = {
+                "properties": {
+                    "text": {"type": "text"},
+                    "standardized_text": {"type": "text"},
+                    "source_file": {"type": "keyword"},
+                    "entity_ids": {"type": "keyword"},
+                    "topic_ids": {"type": "keyword"},
+                }
+            }
+            await self.create_index(
+                index="facts_index",
+                mappings=facts_mappings,
+                settings=base_settings,
+            )
     items:
       - id: es.index-initialization
         type: pattern
-        text: >
-          Use initialize_indices() on the wrapper to create required indices with configured shard and replica counts,
-          handling already-existing indices gracefully.
+        text: 'Use initialize_indices() on the wrapper to create required indices
+          with configured shard and replica counts, handling already-existing indices
+          gracefully.
+
+          '
       - id: es.index-init.initialize-method
         type: pattern
-        text: >
-          Use initialize_indices() on the wrapper to create required indices with configured shard and replica counts
-          during startup.
+        text: 'Use initialize_indices() on the wrapper to create required indices
+          with configured shard and replica counts during startup.
+
+          '
       - id: es.index-init.already-exists
         type: rule
-        text: >
-          Handle resource_already_exists_exception gracefully in create_index() by logging and continuing; do not fail
-          startup for existing indices.
+        text: 'Handle resource_already_exists_exception gracefully in create_index()
+          by logging and continuing; do not fail startup for existing indices.
+
+          '
       - id: es.index-init.mappings
         type: note
-        text: >
-          Define index mappings with appropriate field types (text for full-text search, keyword for exact match) in the
-          initialization code.
+        text: 'Define index mappings with appropriate field types (text for full-text
+          search, keyword for exact match) in the initialization code.
+
+          '
       - id: es.index-init.shards-replicas
         type: note
-        text: >
-          Configure number_of_shards and number_of_replicas via Settings fields; use appropriate values for environment
-          (fewer replicas for dev, more for production).
+        text: 'Configure number_of_shards and number_of_replicas via Settings fields;
+          use appropriate values for environment (fewer replicas for dev, more for
+          production).
+
+          '
       - id: es.index-init.factory-integration
         type: rule
-        text: >
-          Ensure create_elasticsearch_wrapper() calls initialize_indices() and closes the wrapper if initialization
-          fails.
+        text: 'Ensure create_elasticsearch_wrapper() calls initialize_indices() and
+          closes the wrapper if initialization fails.
+
+          '
   - id: elasticsearch-lifecycle
     index: 4
     title: Elasticsearch client lifecycle
     category: standard
     summary: Startup and shutdown patterns for ElasticsearchWrapper.
     sample_code:
-      description: Factory function that creates and initializes an Elasticsearch wrapper.
+      description: Factory function that creates and initializes an Elasticsearch
+        wrapper.
       imports:
         - app.core.settings.Settings
         - app.infrastructure.elasticsearch.client.ElasticsearchWrapper
-      code: "from app.core.settings import Settings\nfrom app.infrastructure.elasticsearch.client import ElasticsearchWrapper\n\
-        async def create_elasticsearch_wrapper(settings: Settings) -> ElasticsearchWrapper:\n    \"\"\"Factory that builds\
-        \ and initializes an Elasticsearch wrapper from settings.\"\"\"\n    wrapper = ElasticsearchWrapper(\n        hosts=settings.elasticsearch_url,\n\
-        \        connections_per_node=settings.elasticsearch_connections_per_node,\n        request_timeout=settings.elasticsearch_request_timeout,\n\
-        \        number_of_shards=settings.elasticsearch_shards,\n        number_of_replicas=settings.elasticsearch_replicas,\n\
-        \    )\n    await wrapper.init()\n    try:\n        await wrapper.initialize_indices()\n    except Exception:\n  \
-        \      await wrapper.close()\n        raise\n    return wrapper"
+      code: |
+        from app.core.settings import Settings
+        from app.infrastructure.elasticsearch.client import ElasticsearchWrapper
+        async def create_elasticsearch_wrapper(settings: Settings) -> ElasticsearchWrapper:
+            """Factory that builds and initializes an Elasticsearch wrapper from settings."""
+            wrapper = ElasticsearchWrapper(
+                hosts=settings.elasticsearch_url,
+                connections_per_node=settings.elasticsearch_connections_per_node,
+                request_timeout=settings.elasticsearch_request_timeout,
+                number_of_shards=settings.elasticsearch_shards,
+                number_of_replicas=settings.elasticsearch_replicas,
+            )
+            await wrapper.init()
+            try:
+                await wrapper.initialize_indices()
+            except Exception:
+                await wrapper.close()
+                raise
+            return wrapper
     items:
       - id: es.lifecycle.startup
         type: pattern
-        text: >
-          Call create_elasticsearch_wrapper(settings) during startup to build the wrapper, verify connectivity, and
-          initialize
-          indices.
+        text: 'Call create_elasticsearch_wrapper(settings) during startup to build
+          the wrapper, verify connectivity, and initialize indices.
+
+          '
       - id: es.lifecycle.init-ping
         type: rule
-        text: >
-          The init() method pings the cluster to verify connectivity; if ping fails, the client should not be marked as
-          initialized.
+        text: 'The init() method pings the cluster to verify connectivity; if ping
+          fails, the client should not be marked as initialized.
+
+          '
       - id: es.lifecycle.fail-fast
         type: rule
-        text: >
-          If index initialization fails, close the wrapper and propagate the error so the application fails fast instead
-          of running without required indices.
+        text: 'If index initialization fails, close the wrapper and propagate the
+          error so the application fails fast instead of running without required
+          indices.
+
+          '
       - id: es.lifecycle.shutdown
         type: rule
-        text: >
-          During shutdown, call wrapper.close() to release HTTP connections; log any failures without preventing process
-          termination.
+        text: 'During shutdown, call wrapper.close() to release HTTP connections;
+          log any failures without preventing process termination.
+
+          '
   - id: elasticsearch-testing
     index: 5
     title: Testing Elasticsearch clients
@@ -195,39 +255,58 @@ sections:
     sample_code:
       description: Monkeypatching create_elasticsearch_wrapper for tests.
       language: python
-      code: "import pytest\nfrom unittest.mock import AsyncMock, MagicMock\n@pytest.fixture\ndef mock_elasticsearch_wrapper():\n\
-        \    \"\"\"Create a mock ElasticsearchWrapper for unit tests.\"\"\"\n    wrapper = MagicMock()\n    wrapper.search\
-        \ = AsyncMock(return_value={\"hits\": {\"hits\": []}})\n    wrapper.index = AsyncMock()\n    wrapper.bulk = AsyncMock()\n\
-        \    wrapper.close = AsyncMock()\n    wrapper.init = AsyncMock()\n    wrapper.initialize_indices = AsyncMock()\n \
-        \   return wrapper\n@pytest.fixture\ndef patch_create_elasticsearch_wrapper(monkeypatch, mock_elasticsearch_wrapper):\n\
-        \    \"\"\"Patch create_elasticsearch_wrapper to return a mock wrapper.\"\"\"\n    async def mock_factory(settings):\n\
-        \        return mock_elasticsearch_wrapper\n    monkeypatch.setattr(\n        \"app.infrastructure.elasticsearch.client.create_elasticsearch_wrapper\"\
-        ,\n        mock_factory,\n    )\n    return mock_elasticsearch_wrapper"
+      code: |
+        import pytest
+        from unittest.mock import AsyncMock, MagicMock
+        @pytest.fixture
+        def mock_elasticsearch_wrapper():
+            """Create a mock ElasticsearchWrapper for unit tests."""
+            wrapper = MagicMock()
+            wrapper.search = AsyncMock(return_value={"hits": {"hits": []}})
+            wrapper.index = AsyncMock()
+            wrapper.bulk = AsyncMock()
+            wrapper.close = AsyncMock()
+            wrapper.init = AsyncMock()
+            wrapper.initialize_indices = AsyncMock()
+            return wrapper
+        @pytest.fixture
+        def patch_create_elasticsearch_wrapper(monkeypatch, mock_elasticsearch_wrapper):
+            """Patch create_elasticsearch_wrapper to return a mock wrapper."""
+            async def mock_factory(settings):
+                return mock_elasticsearch_wrapper
+            monkeypatch.setattr(
+                "app.infrastructure.elasticsearch.client.create_elasticsearch_wrapper",
+                mock_factory,
+            )
+            return mock_elasticsearch_wrapper
     items:
       - id: elasticsearch.test.monkeypatch-factory
         type: pattern
-        text: >
-          Monkeypatch create_elasticsearch_wrapper() to return mock wrappers in tests that only care about validation
-          or error behavior.
+        text: 'Monkeypatch create_elasticsearch_wrapper() to return mock wrappers
+          in tests that only care about validation or error behavior.
+
+          '
       - id: test.mock-search
         type: rule
-        text: >
-          Configure mock wrappers with mock.search() returning canned response structures that match Elasticsearch
-          result
-          format.
+        text: 'Configure mock wrappers with mock.search() returning canned response
+          structures that match Elasticsearch result format.
+
+          '
       - id: test.integration-indices
         type: pattern
-        text: >
-          For integration tests, use test-specific index names (for example test_facts_index) to isolate test data from
-          development indices.
+        text: 'For integration tests, use test-specific index names (for example test_facts_index)
+          to isolate test data from development indices.
+
+          '
       - id: elasticsearch.test.cleanup
         type: rule
-        text: >
-          Clean up test indices between test runs by deleting indices or clearing documents; avoid side effects between
-          tests.
+        text: 'Clean up test indices between test runs by deleting indices or clearing
+          documents; avoid side effects between tests.
+
+          '
       - id: elasticsearch.test.docker-compose
         type: note
-        text: >
-          Integration tests can use docker-compose to spin up an Elasticsearch instance for the test suite; see
-          tests/conftest.py
-          for fixture examples.
+        text: 'Integration tests can use docker-compose to spin up an Elasticsearch
+          instance for the test suite; see tests/conftest.py for fixture examples.
+
+          '
