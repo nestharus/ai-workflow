@@ -8,10 +8,23 @@ context for validation purposes.
 Movement records link to resolution records via `element_id` to track the complete
 lifecycle of information changes during migrations.
 
+Additionally, this module supports iterative sentence-level fact movements during
+fact extraction, tracking per-iteration sentence changes with semantic similarity
+validation using Qwen embeddings.
+
 Usage:
+    # File-level movement tracking
     uv run knowledge.record-movement --id <element_id> --source-file <path> --target-file <path> \
         --reason "..." --coverage "..." --before-text "..." --after-text-source "..." \
         --target-before "..." --target-after "..."
+
+    # Iterative sentence-level movement tracking
+    uv run knowledge.record-iterative-movement --fact-id <uuid> --before "..." --fact "..." \
+        --after "..."
+
+    # Query iterative movements
+    uv run knowledge.query-iterative-movements --entity "create_app"
+    uv run knowledge.query-iterative-movements --fact-id <uuid>
 
 Args:
     --id: Element identifier being moved (links to comparisons/resolutions).
@@ -33,11 +46,19 @@ import sys
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import duckdb
 
 from scripts.dev.utils import REPO_ROOT, utc_timestamp
+from scripts.knowledge.variant_resolver import (
+    compute_cosine_similarity,
+    embed_keywords,
+    load_qwen_embedding_model,
+)
+
+if TYPE_CHECKING:
+    from transformers import PreTrainedModel, PreTrainedTokenizer
 
 CSV_COLUMNS = [
     "movement_id",
@@ -50,6 +71,17 @@ CSV_COLUMNS = [
     "after_sentence_source",
     "target_before_sentence",
     "target_after_sentence",
+    "moved_at",
+]
+
+ITERATIVE_CSV_COLUMNS = [
+    "iteration_id",
+    "fact_id",
+    "source_sentence",
+    "isolated_fact",
+    "residual_sentence",
+    "similarity_score",
+    "reason",
     "moved_at",
 ]
 
@@ -81,6 +113,34 @@ class MovementRecord(TypedDict):
     after_sentence_source: str
     target_before_sentence: str
     target_after_sentence: str
+    moved_at: str
+
+
+class IterativeMovementRecord(TypedDict):
+    """A record for tracking iterative sentence-level fact movements.
+
+    Tracks per-iteration sentence changes during fact extraction, linking to
+    fact records via fact_id for traceability. Includes semantic similarity
+    validation score computed using Qwen embeddings.
+
+    Attributes:
+        iteration_id: Unique UUID for this iteration record.
+        fact_id: Links to fact record in facts/extractions.csv.
+        source_sentence: Sentence before this fact extraction.
+        isolated_fact: The atomic fact extracted in this iteration.
+        residual_sentence: Sentence after this fact was removed.
+        similarity_score: Cosine similarity between source and (fact + residual), 0.0-1.0.
+        reason: Explanation for this movement (typically "Fact extraction").
+        moved_at: ISO 8601 basic format timestamp (YYYYMMDDTHHMMSSZ, UTC).
+    """
+
+    iteration_id: str
+    fact_id: str
+    source_sentence: str
+    isolated_fact: str
+    residual_sentence: str
+    similarity_score: str
+    reason: str
     moved_at: str
 
 
@@ -123,6 +183,148 @@ def append_movement(csv_path: Path, record: MovementRecord) -> None:
         conn.execute(f"COPY movements TO '{csv_path}' (HEADER, DELIMITER ',')")
     finally:
         conn.close()
+
+
+def ensure_iterative_csv_exists(csv_path: Path) -> None:
+    """Create iterative movements CSV file with header row if it doesn't exist.
+
+    Uses DuckDB to create an empty CSV with proper headers for iterative
+    sentence-level movement tracking.
+
+    Args:
+        csv_path: Path to the iterative movements CSV file.
+    """
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    needs_header = not csv_path.exists() or csv_path.stat().st_size == 0
+    if needs_header:
+        cols_select = ", ".join(f"'' AS {col}" for col in ITERATIVE_CSV_COLUMNS)
+        query = f"COPY (SELECT * FROM (SELECT {cols_select}) WHERE 1=0) "
+        query += f"TO '{csv_path}' (HEADER, DELIMITER ',')"
+        duckdb.execute(query)
+
+
+def compute_similarity_score(
+    before: str,
+    fact: str,
+    after: str,
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizer,
+) -> float:
+    """Compute semantic similarity between original sentence and reconstructed.
+
+    Validates that the original sentence can be reconstructed from the extracted
+    fact and residual sentence by computing cosine similarity of their embeddings.
+
+    Args:
+        before: Original sentence before fact extraction.
+        fact: The atomic fact extracted from the sentence.
+        after: Residual sentence after fact was removed.
+        model: Loaded Qwen model for embeddings.
+        tokenizer: Loaded Qwen tokenizer.
+
+    Returns:
+        Cosine similarity score between 0.0 and 1.0.
+    """
+    # Reconstruct sentence from fact and residual
+    reconstructed = f"{fact} {after}".strip() if after.strip() else fact
+
+    # Compute embeddings using shared utility
+    embeddings = embed_keywords([before, reconstructed], model, tokenizer, batch_size=2)
+
+    # Compute pairwise similarity matrix
+    similarity_matrix = compute_cosine_similarity(embeddings)
+
+    # Return off-diagonal element (similarity between the two texts)
+    return float(similarity_matrix[0, 1])
+
+
+def append_iterative_movement(csv_path: Path, record: IterativeMovementRecord) -> None:
+    """Append an iterative movement record to the CSV file.
+
+    Uses DuckDB to read existing data, add the new record, and write back.
+
+    Args:
+        csv_path: Path to the iterative movements CSV file.
+        record: Iterative movement record to append.
+    """
+    conn = duckdb.connect()
+    try:
+        conn.execute(f"""
+            CREATE TABLE iterative_movements AS
+            SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
+        """)
+        placeholders = ", ".join("?" for _ in ITERATIVE_CSV_COLUMNS)
+        values = [record[col] for col in ITERATIVE_CSV_COLUMNS]  # type: ignore[literal-required]
+        conn.execute(f"INSERT INTO iterative_movements VALUES ({placeholders})", values)
+        conn.execute(f"COPY iterative_movements TO '{csv_path}' (HEADER, DELIMITER ',')")
+    finally:
+        conn.close()
+
+
+def query_iterative_movements(
+    csv_path: Path,
+    entity: str | None = None,
+    fact_id: str | None = None,
+) -> list[dict[str, str]]:
+    """Query iterative movements by entity or fact_id.
+
+    Returns all movements if no filters provided. DuckDB errors are logged to
+    stderr and an empty list is returned to allow graceful degradation.
+
+    Args:
+        csv_path: Path to the iterative movements CSV file.
+        entity: Optional entity to search for in source_sentence (case-insensitive).
+        fact_id: Optional fact_id to filter by exact match.
+
+    Returns:
+        List of matching movement records as dictionaries. Returns empty list
+        if file is empty, doesn't exist, or if a DuckDB error occurs (with error
+        logged to stderr).
+    """
+    if not csv_path.exists() or csv_path.stat().st_size == 0:
+        return []
+
+    try:
+        if fact_id:
+            query = """
+                SELECT * FROM read_csv_auto(?, ALL_VARCHAR=TRUE)
+                WHERE fact_id = ?
+                ORDER BY moved_at
+            """
+            result = duckdb.execute(query, [str(csv_path), fact_id]).fetchall()
+        elif entity:
+            query = """
+                SELECT * FROM read_csv_auto(?, ALL_VARCHAR=TRUE)
+                WHERE LOWER(source_sentence) LIKE LOWER('%' || ? || '%')
+                ORDER BY moved_at
+            """
+            result = duckdb.execute(query, [str(csv_path), entity]).fetchall()
+        else:
+            query = """
+                SELECT * FROM read_csv_auto(?, ALL_VARCHAR=TRUE)
+                ORDER BY moved_at
+            """
+            result = duckdb.execute(query, [str(csv_path)]).fetchall()
+
+        return [
+            {
+                "iteration_id": row[0],
+                "fact_id": row[1],
+                "source_sentence": row[2],
+                "isolated_fact": row[3],
+                "residual_sentence": row[4],
+                "similarity_score": row[5],
+                "reason": row[6],
+                "moved_at": row[7],
+            }
+            for row in result
+        ]
+    except duckdb.Error as e:
+        print(
+            f"Error querying iterative movements from {csv_path}: {e}",
+            file=sys.stderr,
+        )
+        return []
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -251,6 +453,272 @@ def main() -> int:
 
     print(f"Movement recorded with ID: {movement_id}")
     return 0
+
+
+def parse_record_iterative_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for recording iterative movements.
+
+    Args:
+        argv: Command line arguments (defaults to sys.argv).
+
+    Returns:
+        Parsed argument namespace.
+    """
+    parser = argparse.ArgumentParser(
+        description="Record an iterative sentence-level fact movement with validation.",
+    )
+    parser.add_argument(
+        "--fact-id",
+        required=True,
+        dest="fact_id",
+        help="UUID linking to fact record in facts/extractions.csv.",
+    )
+    parser.add_argument(
+        "--before",
+        required=True,
+        help="Original sentence before fact extraction.",
+    )
+    parser.add_argument(
+        "--fact",
+        required=True,
+        help="The atomic fact extracted from the sentence.",
+    )
+    parser.add_argument(
+        "--after",
+        required=True,
+        help="Residual sentence after fact was removed.",
+    )
+    parser.add_argument(
+        "--reason",
+        default="Fact extraction",
+        help="Explanation for this movement (default: 'Fact extraction').",
+    )
+    parser.add_argument(
+        "--knowledge-path",
+        type=Path,
+        default=Path(".knowledge"),
+        dest="knowledge_path",
+        help="Base knowledge directory (default: .knowledge).",
+    )
+    parser.add_argument(
+        "--model",
+        default="Qwen/Qwen3-Embedding-0.6B",
+        help="HuggingFace model for embeddings (default: Qwen/Qwen3-Embedding-0.6B).",
+    )
+    return parser.parse_args(argv)
+
+
+def record_iterative_movement_main(args: argparse.Namespace) -> int:
+    """Record an iterative sentence-level fact movement with validation.
+
+    Loads Qwen model to compute similarity score, validates semantic similarity,
+    and records the movement to the iterative movements CSV. The record is always
+    persisted for debugging purposes, but a non-zero exit code indicates validation
+    failure when similarity is below the required threshold.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        0 on success (similarity >= 0.95).
+        1 on error (model loading failure, file I/O error).
+        2 on validation failure (similarity < 0.95, record still persisted).
+    """
+    # Resolve knowledge path
+    if args.knowledge_path.is_absolute():
+        knowledge_path = args.knowledge_path.resolve()
+    else:
+        knowledge_path = (REPO_ROOT / args.knowledge_path).resolve()
+
+    csv_path = knowledge_path / "movements" / "iterative_movements.csv"
+
+    # Load Qwen model for similarity validation
+    print(f"Loading embedding model {args.model}...")
+    try:
+        model, tokenizer = load_qwen_embedding_model(args.model)
+    except Exception as e:
+        print(f"Error loading model: {e}", file=sys.stderr)
+        return 1
+
+    # Compute similarity score
+    similarity = compute_similarity_score(args.before, args.fact, args.after, model, tokenizer)
+
+    # Create record
+    iteration_id = str(uuid.uuid4())
+    moved_at = utc_timestamp()
+
+    record = IterativeMovementRecord(
+        iteration_id=iteration_id,
+        fact_id=args.fact_id,
+        source_sentence=args.before,
+        isolated_fact=args.fact,
+        residual_sentence=args.after,
+        similarity_score=f"{similarity:.4f}",
+        reason=args.reason,
+        moved_at=moved_at,
+    )
+
+    # Ensure CSV exists and append record (always persist for debugging)
+    ensure_iterative_csv_exists(csv_path)
+    append_iterative_movement(csv_path, record)
+
+    print(f"Iterative movement recorded with ID: {iteration_id}")
+    print(f"Similarity score: {similarity:.4f}")
+
+    # Validate similarity threshold - return non-zero if validation fails
+    if similarity < 0.95:
+        print(
+            f"VALIDATION FAILED: Low similarity score ({similarity:.4f} < 0.95). "
+            "Some information may have been lost.",
+            file=sys.stderr,
+        )
+        return 2
+
+    return 0
+
+
+def parse_query_iterative_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for querying iterative movements.
+
+    Args:
+        argv: Command line arguments (defaults to sys.argv).
+
+    Returns:
+        Parsed argument namespace.
+    """
+    parser = argparse.ArgumentParser(
+        description="Query iterative sentence-level fact movements.",
+    )
+    parser.add_argument(
+        "--entity",
+        help="Entity to search for in source_sentence (case-insensitive).",
+    )
+    parser.add_argument(
+        "--fact-id",
+        dest="fact_id",
+        help="Fact ID to filter by exact match.",
+    )
+    parser.add_argument(
+        "--knowledge-path",
+        type=Path,
+        default=Path(".knowledge"),
+        dest="knowledge_path",
+        help="Base knowledge directory (default: .knowledge).",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show full extraction chain details (source, fact, residual sentences).",
+    )
+    return parser.parse_args(argv)
+
+
+def _truncate(text: str, max_length: int = 50) -> str:
+    """Truncate text to max_length, adding ellipsis if truncated.
+
+    Args:
+        text: Text to truncate.
+        max_length: Maximum length including ellipsis.
+
+    Returns:
+        Truncated text with ellipsis if longer than max_length.
+    """
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3] + "..."
+
+
+def query_iterative_movements_main(args: argparse.Namespace) -> int:
+    """Query iterative movements and display results in tabular format.
+
+    In default mode, shows a compact view with truncated sentences. Use --verbose
+    to see full extraction chain details including complete source, fact, and
+    residual sentences.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        0 on success, 1 on error.
+    """
+    # Validate at least one filter
+    if not args.entity and not args.fact_id:
+        print("Error: At least one of --entity or --fact-id is required.", file=sys.stderr)
+        return 1
+
+    # Resolve knowledge path
+    if args.knowledge_path.is_absolute():
+        knowledge_path = args.knowledge_path.resolve()
+    else:
+        knowledge_path = (REPO_ROOT / args.knowledge_path).resolve()
+
+    csv_path = knowledge_path / "movements" / "iterative_movements.csv"
+
+    if not csv_path.exists():
+        print(f"Error: Iterative movements CSV not found: {csv_path}", file=sys.stderr)
+        return 1
+
+    # Query movements
+    results = query_iterative_movements(csv_path, entity=args.entity, fact_id=args.fact_id)
+
+    if not results:
+        print("No matching iterative movements found.")
+        return 0
+
+    verbose = getattr(args, "verbose", False)
+
+    if verbose:
+        # Verbose mode: show full extraction chain details
+        for i, record in enumerate(results):
+            if i > 0:
+                print()
+            print(f"--- Record {i + 1} ---")
+            print(f"iteration_id:      {record['iteration_id']}")
+            print(f"fact_id:           {record['fact_id']}")
+            print(f"similarity_score:  {record['similarity_score']}")
+            print(f"reason:            {record['reason']}")
+            print(f"moved_at:          {record['moved_at']}")
+            print(f"source_sentence:   {record['source_sentence']}")
+            print(f"isolated_fact:     {record['isolated_fact']}")
+            print(f"residual_sentence: {record['residual_sentence']}")
+    else:
+        # Compact mode: truncated table with key fields
+        print(
+            f"{'iteration_id':<40} {'similarity':<12} "
+            f"{'source_sentence':<52} {'isolated_fact':<52}"
+        )
+        print("-" * 160)
+        for record in results:
+            print(
+                f"{record['iteration_id']:<40} "
+                f"{record['similarity_score']:<12} "
+                f"{_truncate(record['source_sentence']):<52} "
+                f"{_truncate(record['isolated_fact']):<52}"
+            )
+
+    print(f"\nTotal: {len(results)} record(s)")
+    return 0
+
+
+def main_record_iterative() -> int:
+    """Entry point for knowledge.record-iterative-movement command.
+
+    Returns:
+        Exit code (0 on success, 1 on error).
+    """
+    args = parse_record_iterative_args()
+    return record_iterative_movement_main(args)
+
+
+def main_query_iterative() -> int:
+    """Entry point for knowledge.query-iterative-movements command.
+
+    Returns:
+        Exit code (0 on success, 1 on error).
+    """
+    args = parse_query_iterative_args()
+    return query_iterative_movements_main(args)
 
 
 if __name__ == "__main__":

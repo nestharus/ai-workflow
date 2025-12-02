@@ -82,6 +82,8 @@ test-coverage = "scripts.dev.test_runner.test_coverage:main"
 # Knowledge management scripts
 "knowledge.mark-resolved" = "scripts.knowledge.resolution_tracker:main"
 "knowledge.query-comparisons" = "scripts.knowledge.query_comparisons:main"
+"knowledge.query-iterative-movements" = "scripts.knowledge.movement_tracker:main_query_iterative"
+"knowledge.record-iterative-movement" = "scripts.knowledge.movement_tracker:main_record_iterative"
 "knowledge.record-movement" = "scripts.knowledge.movement_tracker:main"
 "knowledge.generate-migration-report" = "scripts.knowledge.generate_migration_report:main"
 "knowledge.track-additions" = "scripts.knowledge.track_additions:main_track"

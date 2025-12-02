@@ -13,6 +13,8 @@ for documentation migrations.
 ├── comparisons/    # Flattened CSV comparison results (replacing JSON .compare files)
 ├── resolutions/    # Hash-based resolution tracking (resolved.csv)
 ├── movements/      # Information movement tracking (records where content moved from/to)
+│   ├── movements.csv           # File-level movements during migrations
+│   └── iterative_movements.csv # Iterative sentence-level fact movements
 ├── additions/      # Addition tracking (new IDs in target files not in originals)
 ├── reports/        # Generated YML review reports for non-identical text comparisons
 ├── keywords/       # Keyword extraction pipeline data (candidates, keywords, variants)
@@ -102,6 +104,23 @@ Tracks information movements between files during migrations, recording source/t
 | moved_at | string | ISO 8601 basic format timestamp (YYYYMMDDTHHMMSSZ, UTC) |
 
 **Note**: Movement records link to resolution records via `element_id` to track the complete lifecycle of information changes.
+
+### movements/iterative_movements.csv
+
+Tracks iterative sentence-level fact movements during fact extraction. Each record represents one iteration of fact isolation, linking to the originating fact record via fact_id.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| iteration_id | string | Unique identifier for this iteration record (UUID) |
+| fact_id | string | Links to fact record in facts/extractions.csv |
+| source_sentence | string | Sentence before this fact extraction |
+| isolated_fact | string | The atomic fact extracted in this iteration |
+| residual_sentence | string | Sentence after this fact was removed |
+| similarity_score | string | Cosine similarity between source and (fact + residual), 0.0-1.0 |
+| reason | string | Explanation for this movement (typically "Fact extraction") |
+| moved_at | string | ISO 8601 basic format timestamp (YYYYMMDDTHHMMSSZ, UTC) |
+
+**Note**: Similarity scores are computed using Qwen embeddings. Scores >= 0.95 indicate successful information preservation.
 
 ### additions/additions.csv
 
@@ -365,6 +384,47 @@ FROM read_csv_auto('.knowledge/facts/extractions.csv', ALL_VARCHAR=TRUE)
 GROUP BY entity
 HAVING COUNT(*) > 1
 ORDER BY fact_count DESC;
+
+-- Query all iterative movements
+SELECT * FROM read_csv_auto('.knowledge/movements/iterative_movements.csv', ALL_VARCHAR=TRUE)
+ORDER BY moved_at DESC;
+
+-- Get all movements for a specific entity
+SELECT iteration_id, fact_id, isolated_fact, similarity_score
+FROM read_csv_auto('.knowledge/movements/iterative_movements.csv', ALL_VARCHAR=TRUE)
+WHERE source_sentence LIKE '%create_app%'
+ORDER BY moved_at;
+
+-- Get movements for a specific fact
+SELECT * FROM read_csv_auto('.knowledge/movements/iterative_movements.csv', ALL_VARCHAR=TRUE)
+WHERE fact_id = '<fact-uuid>';
+
+-- Find movements with low similarity (potential information loss)
+SELECT iteration_id, fact_id, isolated_fact, similarity_score
+FROM read_csv_auto('.knowledge/movements/iterative_movements.csv', ALL_VARCHAR=TRUE)
+WHERE CAST(similarity_score AS DOUBLE) < 0.95;
+
+-- Join iterative movements with fact extractions
+SELECT
+  m.iteration_id,
+  m.isolated_fact,
+  m.similarity_score,
+  f.entity,
+  f.confidence,
+  f.extracted_at
+FROM read_csv_auto('.knowledge/movements/iterative_movements.csv', ALL_VARCHAR=TRUE) m
+LEFT JOIN read_csv_auto('.knowledge/facts/extractions.csv', ALL_VARCHAR=TRUE) f
+  ON m.fact_id = f.fact_id
+ORDER BY f.extracted_at, CAST(f.iteration AS INTEGER);
+
+-- Validate logic puzzle: original = facts + residual
+SELECT
+  source_sentence,
+  STRING_AGG(isolated_fact, ' ') AS all_facts,
+  MAX(residual_sentence) AS final_residual,
+  AVG(CAST(similarity_score AS DOUBLE)) AS avg_similarity
+FROM read_csv_auto('.knowledge/movements/iterative_movements.csv', ALL_VARCHAR=TRUE)
+GROUP BY source_sentence;
 ```
 
 ## Addition Tracking Workflow
@@ -669,6 +729,65 @@ to be considered successful. This ensures no semantic content is lost during ext
 - `1`: Error - CLI or validation failure
 - `2`: Partial success - facts extracted but entity still present in residual
 
+## Iterative Movement Tracking Workflow
+
+The iterative movement tracking system records sentence-level changes during fact extraction, validating semantic similarity at each step.
+
+### Recording Iterative Movements
+
+```bash
+# Record an iterative movement with validation
+uv run knowledge.record-iterative-movement \
+  --fact-id <uuid> \
+  --before "Original sentence" \
+  --fact "Extracted fact" \
+  --after "Residual sentence"
+
+# Specify custom reason
+uv run knowledge.record-iterative-movement \
+  --fact-id <uuid> \
+  --before "..." \
+  --fact "..." \
+  --after "..." \
+  --reason "Custom reason"
+
+# Use heavier model for higher precision
+uv run knowledge.record-iterative-movement \
+  --fact-id <uuid> \
+  --before "..." \
+  --fact "..." \
+  --after "..." \
+  --model Qwen/Qwen3-Embedding-8B
+```
+
+**Exit Codes for `record-iterative-movement`:**
+
+- `0`: Success - similarity >= 0.95, validation passed
+- `1`: Error - model loading failure or file I/O error
+- `2`: Validation failure - similarity < 0.95 (record still persisted for debugging)
+
+### Querying Iterative Movements
+
+```bash
+# Query by entity (searches source_sentence) - compact view
+uv run knowledge.query-iterative-movements --entity "create_app"
+
+# Query by fact ID - compact view
+uv run knowledge.query-iterative-movements --fact-id <uuid>
+
+# Verbose mode - show full extraction chain details
+uv run knowledge.query-iterative-movements --entity "create_app" --verbose
+uv run knowledge.query-iterative-movements --fact-id <uuid> -v
+```
+
+The compact view shows truncated sentences for readability. Use `--verbose` or `-v` to see the complete source sentence, isolated fact, and residual sentence for each record.
+
+### Validation Logic
+
+Each iterative movement is validated using Qwen embeddings to ensure semantic similarity >= 0.95 between the original sentence and the reconstructed sentence (fact + residual). This implements the logic puzzle constraint: `original_sentence = fact1 + fact2 + ... + residual_sentence`.
+
+Records with similarity < 0.95 are still persisted for debugging purposes, but the CLI returns exit code `2` to indicate validation failure. Callers should treat this as a non-successful validation outcome.
+
 ## Comparison Workflow with Timestamped Originals
 
 The `compare-yml-docs` command accepts an optional `--original-files` parameter to compare
@@ -722,3 +841,4 @@ existing workflows.
 - Generated data files (`*.csv`, `*.yml`, `*.yaml`) are ignored via `.gitignore`
 - DuckDB database file (`knowledge.duckdb`) is ignored
 - Movement, addition, keyword, and fact CSV files, and generated review reports (YML) are also ignored as environment-specific artifacts that track content validation during migrations
+- Iterative movement CSV files (`movements/iterative_movements.csv`) are also ignored
