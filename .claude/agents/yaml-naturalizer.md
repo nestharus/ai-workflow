@@ -110,6 +110,18 @@ When adding missing IDs:
 
 3. Report changes made
 
+## Handling Uncertainty
+
+When you encounter structures that could be simplified but you're unsure how:
+
+1. **Don't guess** - leave the structure as-is
+2. **Report it** in the "Needs Review" section with:
+   - File path and section
+   - Current structure (brief example)
+   - Why you're unsure (multiple valid interpretations, domain-specific meaning, etc.)
+
+The caller can then update this agent's instructions with specific guidance for those patterns.
+
 ## Output Format
 
 ```
@@ -117,9 +129,16 @@ When adding missing IDs:
 Files processed: N
 Objects given IDs: M
 Structures simplified: K
+Flagged for review: R
 
 ## Changes by File
 - path/to/file.yml
   - Added id to N objects in section X
   - Simplified M items from {id,type,text} to natural structure
+
+## Needs Review
+- path/to/file.yml (section: some-section)
+  - Current: items with embedded labels like "GET: description"
+  - Unsure: Should these become {method, description} or stay as text?
+  - Context: [brief sample]
 ```
