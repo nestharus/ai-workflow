@@ -961,3 +961,67 @@ existing workflows.
 - DuckDB database file (`knowledge.duckdb`) is ignored
 - Movement, addition, keyword, and fact CSV files, and generated review reports (YML) are also ignored as environment-specific artifacts that track content validation during migrations
 - Iterative movement CSV files (`movements/iterative_movements.csv`) are also ignored
+
+## Fact-Based Migration System
+
+The fact-based migration system extends the file-level migration workflow with atomic fact extraction, classification, and movement tracking. It enables fine-grained migration of YAML documentation elements by extracting facts about entities, classifying them across domain/scope/pattern dimensions, and moving them to appropriate target files.
+
+### Directory Structure
+
+- `.knowledge/facts/`: Root directory for fact storage
+  - `extractions.csv`: Raw fact extraction records (fact_id, source_sentence, entity, fact_text, rewritten_sentence, iteration, confidence, extracted_at)
+  - `isolation_records.csv`: Fact isolation records (fact_id, iteration, entity, before_sentence, isolated_fact, after_sentence)
+  - `<domain>.<pattern>.facts.yml`: Organized fact storage by domain/pattern (e.g., fastapi.factory-patterns.facts.yml)
+- `.knowledge/movements/iterative_movements.csv`: Sentence-level movement tracking (iteration_id, fact_id, source_sentence, isolated_fact, residual_sentence, similarity_score, reason, moved_at)
+- `.knowledge/migrations/fact_tasks.csv`: Fact migration task tracking (extends tasks.csv with element_id, entity_count, fact_count)
+
+### Workflow Commands
+
+1. **start-fact-migration**: Create migration task, extract facts from YAML element
+   ```bash
+   uv run knowledge.start-fact-migration \
+     --yaml-file docs/development/project/fastapi/project.fastapi.factory-patterns.yml \
+     --element-id factory.create_app
+   ```
+
+2. **classify-facts**: Classify extracted facts using knowledge-analyzer sub-agent
+   ```bash
+   uv run knowledge.classify-facts --task-id <uuid>
+   # Follow printed instructions to invoke knowledge-analyzer sub-agent
+   ```
+
+3. **move-facts**: Move classified facts to target domain/pattern files
+   ```bash
+   uv run knowledge.move-facts --task-id <uuid> --classification-file classification.json
+   ```
+
+4. **validate-fact-migration**: Validate migration completeness
+   ```bash
+   uv run knowledge.validate-fact-migration --task-id <uuid>
+   ```
+
+### Integration with File-Level Migration
+
+Fact-based migration extends the existing file-level migration system (migration_manager.py) with:
+- Atomic fact extraction from YAML element text
+- Iterative fact isolation with semantic validation
+- Multi-domain classification via knowledge-analyzer sub-agent
+- Sentence-level movement tracking with similarity scores
+- Fact storage in domain/pattern YAML files
+
+### When to Use Fact-Based Migration
+
+**Use fact-based migration when:**
+- Need atomic fact extraction from YAML elements
+- Want multi-domain classification (rest, fastapi, python, surrealdb, elasticsearch)
+- Require fine-grained movement tracking at sentence level
+- Need to organize facts by domain/pattern for reuse
+- Want semantic validation of extraction completeness
+
+**Use file-level migration when:**
+- Migrating entire files without fact-level granularity
+- Simple restructuring or splitting of documentation
+- No need for entity-specific fact extraction
+- File-level comparison and resolution is sufficient
+
+See `docs/processes/fact-migration.yml` for complete workflow documentation

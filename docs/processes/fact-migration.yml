@@ -1,0 +1,695 @@
+# Fact-Based Migration Workflow
+#
+# This document defines the structured workflow for migrating YAML documentation
+# elements by extracting atomic facts, classifying them via knowledge-analyzer,
+# and moving them to appropriate domain/pattern files.
+
+overview:
+  purpose: |
+    The fact-based migration system extends the file-level migration workflow with
+    atomic fact extraction, semantic validation, and fine-grained movement tracking.
+    It enables migration of YAML documentation elements by extracting facts about
+    entities, classifying them across domain/scope/pattern dimensions, and storing
+    them in organized domain/pattern YAML files.
+
+  key_features:
+    - Iterative fact extraction from YAML element text
+    - Semantic validation using Qwen embeddings (similarity >= 0.95)
+    - Multi-domain classification via knowledge-analyzer sub-agent
+    - Sentence-level movement tracking with similarity scores
+    - Fact storage in domain/pattern YAML files
+    - Integration with existing migration system (migration_manager.py)
+
+  integration:
+    migration_manager: |
+      Extends migration_manager.py task tracking with fact-specific metadata
+      (element_id, entity_count, fact_count). Tasks stored in fact_tasks.csv.
+    fact_extraction: |
+      Uses fact_extraction.py to extract atomic facts about entities from
+      element text. Facts stored in extractions.csv.
+    fact_isolation: |
+      Uses fact_isolation.py to validate extraction completeness with
+      semantic similarity checking.
+    knowledge_analyzer: |
+      Uses knowledge-analyzer sub-agent for multi-dimensional classification
+      (domain, scope, pattern) of extracted facts.
+    movement_tracker: |
+      Uses movement_tracker.py for iterative sentence-level movement tracking
+      with semantic similarity validation.
+    fact_store: |
+      Uses fact_store.py for storing facts in domain/pattern YAML files
+      (e.g., fastapi.factory-patterns.facts.yml).
+
+directory_structure:
+  root: ".knowledge/"
+  description: |
+    The fact-based migration system extends the .knowledge/ directory structure
+    with fact-specific subdirectories and CSV files.
+
+  subdirectories:
+    facts:
+      path: ".knowledge/facts/"
+      purpose: |
+        Root directory for fact storage. Contains extractions CSV, isolation
+        records, and domain/pattern YAML files.
+      contents:
+        - "extractions.csv: Raw fact extraction records"
+        - "isolation_records.csv: Fact isolation validation records"
+        - "<domain>.<pattern>.facts.yml: Organized fact storage by domain/pattern"
+
+    movements:
+      path: ".knowledge/movements/"
+      purpose: |
+        Extended with iterative_movements.csv for sentence-level fact tracking.
+      contents:
+        - "movements.csv: File-level movements (existing)"
+        - "iterative_movements.csv: Iterative sentence-level fact movements"
+
+    migrations:
+      path: ".knowledge/migrations/"
+      purpose: |
+        Extended with fact_tasks.csv for fact migration task tracking.
+      contents:
+        - "tasks.csv: File-level migration tasks (existing)"
+        - "fact_tasks.csv: Fact migration tasks with element metadata"
+
+csv_schemas:
+  fact_migration_tasks:
+    file: "migrations/fact_tasks.csv"
+    description: |
+      Extends migration tasks with fact-specific metadata for tracking
+      element-level migrations.
+    columns:
+      task_id:
+        type: "UUID"
+        description: "Unique identifier for the fact migration task"
+      original_file_ref:
+        type: "path"
+        description: "Path to the source YAML file"
+      pattern_name:
+        type: "string"
+        description: "Pattern derived from element ID"
+      status:
+        type: "enum"
+        description: "Current state of the migration"
+        values:
+          pending: "Migration started but not yet validated"
+          in_progress: "Classification or movement in progress"
+          completed: "Migration validated successfully"
+          failed: "Validation found issues"
+      created_at:
+        type: "ISO 8601 basic format timestamp"
+        description: "When the task was created (YYYYMMDDTHHMMSSZ, UTC)"
+      validated_at:
+        type: "ISO 8601 basic format timestamp"
+        description: "When validation was run (empty if never validated)"
+      element_id:
+        type: "string"
+        description: "YAML element ID being migrated"
+      entity_count:
+        type: "string"
+        description: "Number of entities extracted from element"
+      fact_count:
+        type: "string"
+        description: "Number of facts extracted from element"
+
+  fact_extractions:
+    file: "facts/extractions.csv"
+    description: |
+      Raw fact extraction records from fact_extraction.py. Each record represents
+      one atomic fact extracted in one iteration.
+    columns:
+      fact_id:
+        type: "UUID"
+        description: "Unique identifier for this fact extraction record"
+      source_sentence:
+        type: "string"
+        description: "Original sentence before any extraction"
+      entity:
+        type: "string"
+        description: "Entity/keyword being extracted"
+      fact_text:
+        type: "string"
+        description: "Extracted atomic fact about the entity"
+      rewritten_sentence:
+        type: "string"
+        description: "Sentence after this fact was removed"
+      iteration:
+        type: "string"
+        description: "Iteration number (1-indexed)"
+      confidence:
+        type: "string"
+        description: "Confidence score (0.0-1.0)"
+      extracted_at:
+        type: "ISO 8601 basic format timestamp"
+        description: "When the fact was extracted"
+
+  isolation_records:
+    file: "facts/isolation_records.csv"
+    description: |
+      Fact isolation records from fact_isolation.py. Tracks before/after
+      sentence state per iteration with fact linkage.
+    columns:
+      fact_id:
+        type: "UUID"
+        description: "Links to fact record in extractions.csv"
+      iteration:
+        type: "string"
+        description: "Iteration number (1-indexed)"
+      entity:
+        type: "string"
+        description: "Entity being extracted"
+      before_sentence:
+        type: "string"
+        description: "Sentence before this fact extraction"
+      isolated_fact:
+        type: "string"
+        description: "The atomic fact extracted in this iteration"
+      after_sentence:
+        type: "string"
+        description: "Sentence after this fact was removed"
+
+  iterative_movements:
+    file: "movements/iterative_movements.csv"
+    description: |
+      Iterative sentence-level fact movements from movement_tracker.py.
+      Includes semantic similarity validation scores.
+    columns:
+      iteration_id:
+        type: "UUID"
+        description: "Unique identifier for this iteration record"
+      fact_id:
+        type: "UUID"
+        description: "Links to fact record in extractions.csv"
+      source_sentence:
+        type: "string"
+        description: "Sentence before this fact extraction"
+      isolated_fact:
+        type: "string"
+        description: "The atomic fact extracted"
+      residual_sentence:
+        type: "string"
+        description: "Sentence after fact was removed"
+      similarity_score:
+        type: "string"
+        description: "Cosine similarity (0.0-1.0), >= 0.95 is valid"
+      reason:
+        type: "string"
+        description: "Reason for movement (typically 'Fact migration')"
+      moved_at:
+        type: "ISO 8601 basic format timestamp"
+        description: "When the movement was recorded"
+
+  fact_store_records:
+    file: "facts/<domain>.<pattern>.facts.yml"
+    description: |
+      YAML storage for organized facts by domain and pattern.
+    structure:
+      facts:
+        type: "array"
+        items:
+          fact_id: "UUID for this fact"
+          entity: "Entity/keyword the fact is about"
+          fact_text: "Extracted atomic fact"
+          source_file: "Source YAML path"
+          source_element_id: "Source element ID"
+          confidence: "Confidence score (0.0-1.0)"
+          extracted_at: "Extraction timestamp"
+          domain: "Domain tag"
+          pattern: "Pattern name"
+
+workflow_steps:
+  step_1_start_migration:
+    title: "Start Fact Migration"
+    command: "uv run knowledge.start-fact-migration --yaml-file <path> --element-id <id>"
+    description: |
+      Initiates a new fact migration task by reading the YAML element, extracting
+      entities from the text, and running fact extraction for each entity.
+    workflow:
+      - "Read YAML element text by ID"
+      - "Extract potential entities (snake_case, CamelCase identifiers)"
+      - "Create fact migration task in fact_tasks.csv"
+      - "For each entity, run fact_extraction.extract_facts_main()"
+      - "Store extraction results to extractions.csv"
+      - "Print task ID and extraction summary"
+    example: |
+      uv run knowledge.start-fact-migration \
+        --yaml-file docs/development/project/fastapi/project.fastapi.factory-patterns.yml \
+        --element-id factory.create_app
+    outputs:
+      - "Task record in .knowledge/migrations/fact_tasks.csv"
+      - "Fact records in .knowledge/facts/extractions.csv"
+      - "Task ID printed to stdout"
+
+  step_2_classify_facts:
+    title: "Classify Facts"
+    command: "uv run knowledge.classify-facts --task-id <uuid>"
+    description: |
+      Prints instructions for invoking the knowledge-analyzer sub-agent to
+      classify extracted facts across domain, scope, and pattern dimensions.
+    workflow:
+      - "Query task from fact_tasks.csv"
+      - "Read facts from extractions.csv for task"
+      - "Display facts with entity and confidence"
+      - "Print knowledge-analyzer sub-agent invocation instructions"
+      - "Describe expected classification JSON format"
+    example: |
+      uv run knowledge.classify-facts --task-id 550e8400-e29b-41d4-a716-446655440000
+    sub_agent_invocation: |
+      Task(subagent_type="knowledge-analyzer", prompt="")
+    classification_format: |
+      {
+        "classifications": [
+          {
+            "fact_id": "<uuid>",
+            "domain": "fastapi",
+            "scope": "PROJECT",
+            "pattern": "factory-patterns",
+            "target_file": "docs/development/project/fastapi/..."
+          }
+        ]
+      }
+    classification_schema:
+      description: |
+        The classification JSON is validated by normalize_classifications() which
+        ensures each classification item contains the required fields.
+      required_fields:
+        fact_id:
+          type: "string"
+          description: "UUID of the fact being classified (must be non-empty)"
+        domain:
+          type: "string"
+          description: "Domain classification (must be non-empty, e.g., fastapi, python, rest)"
+        pattern:
+          type: "string"
+          description: "Pattern classification (must be non-empty, e.g., factory-patterns)"
+      optional_fields:
+        scope:
+          type: "string"
+          description: "Scope classification (e.g., GENERAL, PROJECT)"
+        target_file:
+          type: "string"
+          description: "Suggested target file path"
+      validation_errors: |
+        The normalize_classifications() function raises ValueError with detailed
+        messages for:
+        - Missing 'classifications' or 'facts' key
+        - Classifications is not a list
+        - Empty classifications list
+        - Classification item is not an object
+        - Missing required fields (fact_id, domain, pattern)
+        - Empty required field values
+    note: |
+      This is a manual step. The user must invoke the knowledge-analyzer
+      sub-agent and save its output to a JSON file for the next step.
+
+  step_3_move_facts:
+    title: "Move Facts"
+    command: "uv run knowledge.move-facts --task-id <uuid> --classification-file <path>"
+    description: |
+      Moves classified facts to their target domain/pattern YAML files and
+      records movements in iterative_movements.csv.
+    workflow:
+      - "Query task from fact_tasks.csv"
+      - "Parse classification JSON file"
+      - "For each classified fact:"
+      - "  - Determine target YAML file (domain.pattern.facts.yml)"
+      - "  - Store fact using fact_store.store_fact_to_yaml()"
+      - "  - Record movement in iterative_movements.csv"
+      - "Update task status"
+    example: |
+      uv run knowledge.move-facts \
+        --task-id 550e8400-e29b-41d4-a716-446655440000 \
+        --classification-file classification.json
+    arguments:
+      --task-id:
+        required: true
+        description: "UUID of the fact migration task"
+      --classification-file:
+        required: true
+        description: "Path to the classification JSON file"
+      --dry-run:
+        required: false
+        description: "Show changes without modifying files"
+    outputs:
+      - "Facts stored in .knowledge/facts/<domain>.<pattern>.facts.yml"
+      - "Movements in .knowledge/movements/iterative_movements.csv"
+
+  step_4_validate_migration:
+    title: "Validate Fact Migration"
+    command: "uv run knowledge.validate-fact-migration --task-id <uuid>"
+    description: |
+      Validates that all facts are stored, all movements are tracked, and all
+      movements satisfy the invariant `original = isolated_fact + residual_sentence`
+      (validated via semantic similarity >= 0.95). Updates task status to
+      'completed' or 'failed'.
+    workflow:
+      - "Query task from fact_tasks.csv"
+      - "Update status to 'in_progress'"
+      - "Query facts from extractions.csv for task"
+      - "Count stored facts in domain/pattern YAML files"
+      - "Count tracked movements in iterative_movements.csv"
+      - "Count invariant failures (similarity_score < 0.95)"
+      - "Validate all criteria pass"
+      - "Update status to 'completed' or 'failed'"
+    example: |
+      uv run knowledge.validate-fact-migration --task-id 550e8400-e29b-41d4-a716-446655440000
+    validation_criteria:
+      - "All facts from extractions.csv are stored in YAML files"
+      - "All facts have corresponding movement records"
+      - "Task fact_count matches actual count"
+      - "All movements satisfy invariant: original = isolated_fact + residual_sentence (similarity >= 0.95)"
+    invariant_validation:
+      description: |
+        The invariant `original = isolated_fact + residual_sentence` ensures that
+        no information is lost during fact extraction. This is validated using
+        semantic similarity computed via Qwen embeddings. Movements with
+        similarity_score < 0.95 indicate potential information loss and are
+        counted as invariant failures.
+      threshold: 0.95
+      failure_action: |
+        Any movement with similarity_score < threshold is counted as an invariant
+        failure. If any invariant failures exist, the migration task is marked as
+        'failed' and the validation report shows the number of failures.
+    outcomes:
+      success: "Task status updated to 'completed', validated_at timestamp set"
+      failure: "Task status updated to 'failed', issue count shown including invariant violations"
+
+command_reference:
+  start_fact_migration:
+    command: "uv run knowledge.start-fact-migration"
+    description: "Start a fact migration task for a YAML element"
+    arguments:
+      --yaml-file:
+        required: true
+        description: "Path to the YAML file containing the element"
+      --element-id:
+        required: true
+        description: "Element ID within the YAML file"
+      --knowledge-path:
+        required: false
+        default: ".knowledge"
+        description: "Path to the knowledge directory"
+    exit_codes:
+      0: "Success - all facts extracted"
+      1: "Error - file not found, element not found, or extraction failure"
+      2: "Partial success - some entities have incomplete extraction"
+
+  classify_facts:
+    command: "uv run knowledge.classify-facts"
+    description: "Print instructions for classifying facts with knowledge-analyzer"
+    arguments:
+      --task-id:
+        required: true
+        description: "UUID of the fact migration task"
+      --knowledge-path:
+        required: false
+        default: ".knowledge"
+        description: "Path to the knowledge directory"
+    exit_codes:
+      0: "Success - instructions printed"
+      1: "Error - task not found or no facts"
+
+  move_facts:
+    command: "uv run knowledge.move-facts"
+    description: "Move classified facts to target domain/pattern files"
+    arguments:
+      --task-id:
+        required: true
+        description: "UUID of the fact migration task"
+      --classification-file:
+        required: true
+        description: "Path to the classification JSON file"
+      --knowledge-path:
+        required: false
+        default: ".knowledge"
+        description: "Path to the knowledge directory"
+      --dry-run:
+        required: false
+        description: "Show changes without modifying files"
+    exit_codes:
+      0: "Success - facts stored and movements tracked"
+      1: "Error - task not found, file not found, or invalid JSON"
+
+  validate_fact_migration:
+    command: "uv run knowledge.validate-fact-migration"
+    description: "Validate a fact migration task for completion"
+    arguments:
+      --task-id:
+        required: true
+        description: "UUID of the fact migration task"
+      --knowledge-path:
+        required: false
+        default: ".knowledge"
+        description: "Path to the knowledge directory"
+    exit_codes:
+      0: "Success - validation passed, task completed"
+      1: "Error - validation failed or task not found"
+
+duckdb_query_patterns:
+  description: |
+    DuckDB query patterns for analyzing fact migrations. These queries can be
+    used for debugging, reporting, or custom analysis.
+
+  examples:
+    query_facts_for_task:
+      description: "Query all facts extracted for a task's element"
+      query: |
+        SELECT fact_id, entity, fact_text, confidence
+        FROM read_csv_auto('.knowledge/facts/extractions.csv', ALL_VARCHAR=TRUE)
+        WHERE source_sentence LIKE '%<element_text>%'
+        ORDER BY entity, CAST(iteration AS INTEGER)
+
+    query_task_status:
+      description: "Check fact migration task status"
+      query: |
+        SELECT task_id, element_id, status, fact_count, validated_at
+        FROM read_csv_auto('.knowledge/migrations/fact_tasks.csv', ALL_VARCHAR=TRUE)
+        WHERE task_id = '<uuid>'
+
+    count_facts_by_domain:
+      description: "Count facts stored by domain/pattern (requires Python)"
+      note: |
+        Fact YAML files require Python yaml library for access. Use:
+        import yaml
+        for fact_file in Path('.knowledge/facts').glob('*.facts.yml'):
+            with open(fact_file) as f:
+                data = yaml.safe_load(f)
+                print(f"{fact_file.name}: {len(data.get('facts', []))} facts")
+
+    query_iterative_movements:
+      description: "Query iterative movements for a fact"
+      query: |
+        SELECT iteration_id, fact_id, isolated_fact, similarity_score
+        FROM read_csv_auto('.knowledge/movements/iterative_movements.csv', ALL_VARCHAR=TRUE)
+        WHERE fact_id = '<uuid>'
+
+    join_facts_with_movements:
+      description: "Join facts with their movement records"
+      query: |
+        SELECT
+          f.fact_id,
+          f.entity,
+          f.fact_text,
+          m.similarity_score,
+          m.moved_at
+        FROM read_csv_auto('.knowledge/facts/extractions.csv', ALL_VARCHAR=TRUE) f
+        LEFT JOIN read_csv_auto('.knowledge/movements/iterative_movements.csv', ALL_VARCHAR=TRUE) m
+          ON f.fact_id = m.fact_id
+        ORDER BY f.entity, f.extracted_at
+
+    find_low_similarity_movements:
+      description: "Find movements with low semantic similarity"
+      query: |
+        SELECT fact_id, isolated_fact, similarity_score, reason
+        FROM read_csv_auto('.knowledge/movements/iterative_movements.csv', ALL_VARCHAR=TRUE)
+        WHERE CAST(similarity_score AS DOUBLE) < 0.95
+
+    list_pending_fact_migrations:
+      description: "List all pending or failed fact migrations"
+      query: |
+        SELECT task_id, element_id, status, fact_count, created_at
+        FROM read_csv_auto('.knowledge/migrations/fact_tasks.csv', ALL_VARCHAR=TRUE)
+        WHERE status IN ('pending', 'failed')
+        ORDER BY created_at DESC
+
+practical_examples:
+  example_1_complete_migration:
+    title: "Complete Fact Migration of a YAML Element"
+    steps:
+      - step: "Start the fact migration"
+        command: |
+          uv run knowledge.start-fact-migration \
+            --yaml-file docs/development/project/fastapi/project.fastapi.factory-patterns.yml \
+            --element-id factory.create_app
+        output: |
+          Starting fact migration for element: factory.create_app
+          Source file: docs/development/project/fastapi/project.fastapi.factory-patterns.yml
+          Found 2 potential entity/entities: ['create_app', 'FastAPI']
+
+          Created task: 550e8400-e29b-41d4-a716-446655440000
+          Entities: 2
+          Facts extracted: 5
+
+      - step: "Classify facts with knowledge-analyzer"
+        command: |
+          uv run knowledge.classify-facts --task-id 550e8400-e29b-41d4-a716-446655440000
+        action: |
+          Invoke knowledge-analyzer sub-agent:
+            Task(subagent_type="knowledge-analyzer", prompt="")
+
+          Save classification output to classification.json
+
+      - step: "Move classified facts"
+        command: |
+          uv run knowledge.move-facts \
+            --task-id 550e8400-e29b-41d4-a716-446655440000 \
+            --classification-file classification.json
+        output: |
+          Task: 550e8400-e29b-41d4-a716-446655440000
+          Classifications: 5
+
+          Processing: create_app - Factory function creates FastAPI app...
+            Stored to: fastapi.factory-patterns.facts.yml
+            Movement tracked: a1b2c3d4...
+
+          Facts stored: 5
+          Movements tracked: 5
+
+      - step: "Validate migration"
+        command: |
+          uv run knowledge.validate-fact-migration --task-id 550e8400-e29b-41d4-a716-446655440000
+        output: |
+          Validating task: 550e8400-e29b-41d4-a716-446655440000
+
+          Expected facts: 5
+          Found facts: 5
+          Stored facts: 5
+          Tracked movements: 5
+
+          Validation Results:
+            [+] Facts in extractions.csv: 5
+            [+] All facts stored: 5/5
+            [+] All movements tracked: 5/5
+
+          Migration validated successfully for task 550e8400-e29b-41d4-a716-446655440000
+
+  example_2_classify_with_subagent:
+    title: "Classifying Facts with Knowledge-Analyzer Sub-Agent"
+    steps:
+      - step: "Query facts for classification"
+        command: |
+          uv run knowledge.classify-facts --task-id 550e8400-e29b-41d4-a716-446655440000
+        description: |
+          This prints the extracted facts and sub-agent invocation instructions.
+
+      - step: "Invoke knowledge-analyzer"
+        action: |
+          In Claude Code, invoke:
+            Task(subagent_type="knowledge-analyzer", prompt="")
+
+          The sub-agent will analyze each fact and produce classification output.
+
+      - step: "Save classification to JSON"
+        action: |
+          Copy the sub-agent output and save to classification.json:
+          {
+            "classifications": [
+              {
+                "fact_id": "a1b2c3d4-...",
+                "domain": "fastapi",
+                "scope": "PROJECT",
+                "pattern": "factory-patterns"
+              }
+            ]
+          }
+
+  example_3_query_migration_status:
+    title: "Querying Fact Migration Status"
+    steps:
+      - step: "Check task status via DuckDB"
+        query: |
+          SELECT task_id, element_id, status, fact_count, validated_at
+          FROM read_csv_auto('.knowledge/migrations/fact_tasks.csv', ALL_VARCHAR=TRUE)
+          WHERE status = 'pending'
+        output: |
+          task_id                              | element_id       | status  | fact_count | validated_at
+          550e8400-e29b-41d4-a716-446655440000 | factory.create_app | pending | 5          |
+
+      - step: "Check extracted facts"
+        query: |
+          SELECT entity, COUNT(*) as fact_count
+          FROM read_csv_auto('.knowledge/facts/extractions.csv', ALL_VARCHAR=TRUE)
+          GROUP BY entity
+          ORDER BY fact_count DESC
+        output: |
+          entity    | fact_count
+          create_app | 3
+          FastAPI    | 2
+
+integration_points:
+  migration_manager:
+    description: |
+      Fact migration extends migration_manager.py patterns for task lifecycle.
+      Uses separate CSV (fact_tasks.csv) to avoid schema conflicts with
+      file-level migrations.
+    shared_patterns:
+      - "DuckDB for CSV operations"
+      - "Task status management (pending, in_progress, completed, failed)"
+      - "UTC timestamps in ISO 8601 basic format"
+      - "UUID-based task identification"
+
+  fact_extraction:
+    description: |
+      Uses fact_extraction.py for atomic fact extraction from element text.
+      Invokes extract_facts_main() directly for each entity.
+    integration: |
+      from scripts.knowledge import fact_extraction
+      args = _create_args_namespace(sentence=text, entity=entity, ...)
+      fact_extraction.extract_facts_main(args)
+
+  fact_isolation:
+    description: |
+      Uses fact_isolation.py for validation of extraction completeness.
+      Validates entity absence and semantic similarity.
+    integration: |
+      from scripts.knowledge import fact_isolation
+      args = _create_args_namespace(sentence=text, entity=entity, ...)
+      fact_isolation.isolate_entity_facts_main(args)
+
+  knowledge_analyzer:
+    description: |
+      Prints instructions for invoking knowledge-analyzer sub-agent.
+      Does not invoke directly; follows extraction_pipeline pattern.
+    invocation: |
+      Task(subagent_type="knowledge-analyzer", prompt="")
+
+  movement_tracker:
+    description: |
+      Uses movement_tracker.py for iterative sentence-level tracking.
+      Records each fact movement with semantic similarity score.
+    integration: |
+      from scripts.knowledge import movement_tracker
+      movement_tracker.append_iterative_movement(csv_path, record)
+
+  fact_store:
+    description: |
+      Uses fact_store.py for storing facts in domain/pattern YAML files.
+      Creates <domain>.<pattern>.facts.yml files.
+    integration: |
+      from scripts.knowledge import fact_store
+      fact_store.store_fact_to_yaml(yaml_path, fact_record)
+
+apply_when:
+  use_fact_migration:
+    - "Need atomic fact extraction from YAML elements"
+    - "Want multi-domain classification (rest, fastapi, python, surrealdb, elasticsearch)"
+    - "Require fine-grained movement tracking at sentence level"
+    - "Need to organize facts by domain/pattern for reuse"
+    - "Want semantic validation of extraction completeness"
+
+  use_file_migration:
+    - "Migrating entire files without fact-level granularity"
+    - "Simple restructuring or splitting of documentation"
+    - "No need for entity-specific fact extraction"
+    - "File-level comparison and resolution is sufficient"
