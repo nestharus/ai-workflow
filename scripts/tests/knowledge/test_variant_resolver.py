@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from scripts.knowledge.variant_resolver import (
     VARIANT_COLUMNS,
     VariantRecord,

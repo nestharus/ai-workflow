@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for MODULE-DEFINITIONS.md.
 
 Converts docs/development/MODULE-DEFINITIONS.md to docs/development/MODULE-DEFINITIONS.yml.

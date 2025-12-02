@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for orchestrator-invocation.md.
 
 Converts docs/processes/orchestrator-invocation.md to docs/processes/orchestrator-invocation.yml.

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from scripts.knowledge.classify_keyword import KEYWORD_COLUMNS
 from scripts.knowledge.keyword_store import (
     get_all_keywords,
@@ -49,8 +47,7 @@ class TestGetKeywordsForFile:
         csv_path = tmp_path / "keywords.csv"
         header = ",".join(KEYWORD_COLUMNS)
         csv_path.write_text(
-            f"{header}\n"
-            "kw-1,FastAPI,domain,web,cand-1,docs/test.yml,2024-01-01,notes1\n"
+            f"{header}\nkw-1,FastAPI,domain,web,cand-1,docs/test.yml,2024-01-01,notes1\n"
         )
 
         result = get_keywords_for_file(csv_path, "docs/nonexistent.yml")

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for review-artifacts.md.
 
 Converts docs/processes/review-artifacts.md to docs/processes/review-artifacts.yml.

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for api-testing-patterns.md.
 
 Converts docs/testing/api-testing-patterns.md to docs/testing/api-testing-patterns.yml.

@@ -1009,7 +1009,9 @@ class TestScriptModuleWrapper:
 
     def test_main_handles_system_exit(self) -> None:
         """Should propagate SystemExit with correct code."""
-        with patch.object(llm_coverage_report, "_generate_llm_coverage", side_effect=SystemExit(42)):
+        with patch.object(
+            llm_coverage_report, "_generate_llm_coverage", side_effect=SystemExit(42)
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 llm_coverage_report.main()
             assert exc_info.value.code == 42
@@ -1028,7 +1030,9 @@ class TestScriptModuleWrapper:
         with (
             patch.dict("os.environ", {"DEBUG": "1"}),
             patch.object(
-                llm_coverage_report, "_generate_llm_coverage", side_effect=RuntimeError("Test error")
+                llm_coverage_report,
+                "_generate_llm_coverage",
+                side_effect=RuntimeError("Test error"),
             ),
         ):
             result = llm_coverage_report.main()
@@ -1043,7 +1047,9 @@ class TestScriptModuleWrapper:
         with (
             patch.dict("os.environ", {}, clear=True),
             patch.object(
-                llm_coverage_report, "_generate_llm_coverage", side_effect=RuntimeError("Test error")
+                llm_coverage_report,
+                "_generate_llm_coverage",
+                side_effect=RuntimeError("Test error"),
             ),
         ):
             result = llm_coverage_report.main()

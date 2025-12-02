@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for inter-domain-handoffs.md.
 
 Converts docs/processes/inter-domain-handoffs.md to docs/processes/inter-domain-handoffs.yml.

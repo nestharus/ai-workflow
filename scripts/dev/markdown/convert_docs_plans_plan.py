@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for plan.md.
 
 Converts docs/plans/plan.md to docs/plans/plan.yml.

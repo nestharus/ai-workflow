@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for webhook-receiver.md.
 
 Converts docs/architecture/webhook-receiver.md to docs/architecture/webhook-receiver.yml.

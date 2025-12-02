@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from scripts.knowledge.variant_resolver import VARIANT_COLUMNS
 from scripts.knowledge.validate_variant import (
     delete_variant,
     get_variant_by_id,
     parse_args,
     update_variant_validation,
 )
+from scripts.knowledge.variant_resolver import VARIANT_COLUMNS
 
 
 class TestGetVariantById:

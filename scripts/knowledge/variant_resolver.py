@@ -32,7 +32,7 @@ from typing import TypedDict
 
 import duckdb
 
-from scripts.dev.utils import REPO_ROOT, utc_timestamp
+from scripts.dev.utils import REPO_ROOT
 
 VARIANT_COLUMNS = [
     "variant_id",

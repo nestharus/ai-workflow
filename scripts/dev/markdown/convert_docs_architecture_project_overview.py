@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for project-overview.md.
 
 Converts docs/architecture/project-overview.md to docs/architecture/project-overview.yml.

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for event-flow.md.
 
 Converts docs/architecture/event-flow.md to docs/architecture/event-flow.yml.

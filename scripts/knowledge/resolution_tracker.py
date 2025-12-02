@@ -33,8 +33,8 @@ from typing import TypedDict
 
 import duckdb
 
-from scripts.knowledge.compare_yaml_docs import extract_ids_and_text, parse_yaml_file
 from scripts.dev.utils import REPO_ROOT, utc_timestamp
+from scripts.knowledge.compare_yaml_docs import extract_ids_and_text, parse_yaml_file
 
 CSV_COLUMNS = [
     "resolution_id",

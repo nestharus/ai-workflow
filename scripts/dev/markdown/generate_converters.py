@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Generate individual converter scripts from the manifest.
 
 Reads docs/plans/md-to-yml-manifest.yml and creates a converter script

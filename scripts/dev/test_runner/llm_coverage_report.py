@@ -31,6 +31,7 @@ def _debug_enabled() -> bool:
     debug_value = os.getenv("DEBUG") or os.getenv("VERBOSE")
     return bool(debug_value and debug_value.lower() in {"1", "true", "yes", "on"})
 
+
 # Default coverage thresholds (same as test_coverage.py)
 DEFAULT_MIN_LINE_COVERAGE = 80.0
 DEFAULT_MIN_BRANCH_COVERAGE = 80.0

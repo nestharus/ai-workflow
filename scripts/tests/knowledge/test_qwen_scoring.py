@@ -4,14 +4,47 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from scripts.knowledge.candidate_extraction import CSV_COLUMNS
 from scripts.knowledge.qwen_scoring import (
     get_unscored_candidates,
     parse_args,
     update_candidate_score,
 )
+
+
+def _make_csv_row(
+    candidate_id: str,
+    source_file: str,
+    element_id: str,
+    sentence: str,
+    candidate_text: str,
+    start_char: str,
+    end_char: str,
+    detected_at: str,
+    keep: str = "",
+    confidence: str = "",
+    reason: str = "",
+    classified_at: str = "",
+    qwen_score: str = "",
+) -> str:
+    """Helper to create a CSV row matching the new schema."""
+    return ",".join(
+        [
+            candidate_id,
+            source_file,
+            element_id,
+            sentence,
+            candidate_text,
+            start_char,
+            end_char,
+            detected_at,
+            keep,
+            confidence,
+            reason,
+            classified_at,
+            qwen_score,
+        ]
+    )
 
 
 class TestGetUnscoredCandidates:
@@ -31,28 +64,80 @@ class TestGetUnscoredCandidates:
         assert result == []
 
     def test_returns_unscored_candidates(self, tmp_path: Path) -> None:
-        """Should return candidates with empty confidence score."""
+        """Should return candidates with empty qwen_score."""
         csv_path = tmp_path / "candidates.csv"
         header = ",".join(CSV_COLUMNS)
-        csv_path.write_text(
-            f"{header}\n"
-            "cand-1,FastAPI,docs/test.yml,elem1,noun_phrase,NN,,2024-01-01\n"
-            "cand-2,Pydantic,docs/test.yml,elem2,named_entity,NNP,0.9,2024-01-01\n"
+        row1 = _make_csv_row(
+            "cand-1",
+            "docs/test.yml",
+            "elem1",
+            "sent1",
+            "FastAPI",
+            "0",
+            "7",
+            "2024-01-01",
+            "",
+            "",
+            "",
+            "",
+            "",
         )
+        row2 = _make_csv_row(
+            "cand-2",
+            "docs/test.yml",
+            "elem2",
+            "sent2",
+            "Pydantic",
+            "0",
+            "8",
+            "2024-01-01",
+            "",
+            "",
+            "",
+            "",
+            "0.9",
+        )
+        csv_path.write_text(f"{header}\n{row1}\n{row2}\n")
 
         result = get_unscored_candidates(csv_path)
         assert len(result) == 1
-        assert result[0]["term"] == "FastAPI"
+        assert result[0]["candidate_text"] == "FastAPI"
 
     def test_returns_empty_when_all_scored(self, tmp_path: Path) -> None:
-        """Should return empty list when all candidates are scored."""
+        """Should return empty list when all candidates have qwen_score."""
         csv_path = tmp_path / "candidates.csv"
         header = ",".join(CSV_COLUMNS)
-        csv_path.write_text(
-            f"{header}\n"
-            "cand-1,FastAPI,docs/test.yml,elem1,noun_phrase,NN,0.95,2024-01-01\n"
-            "cand-2,Pydantic,docs/test.yml,elem2,named_entity,NNP,0.9,2024-01-01\n"
+        row1 = _make_csv_row(
+            "cand-1",
+            "docs/test.yml",
+            "elem1",
+            "sent1",
+            "FastAPI",
+            "0",
+            "7",
+            "2024-01-01",
+            "",
+            "",
+            "",
+            "",
+            "0.95",
         )
+        row2 = _make_csv_row(
+            "cand-2",
+            "docs/test.yml",
+            "elem2",
+            "sent2",
+            "Pydantic",
+            "0",
+            "8",
+            "2024-01-01",
+            "",
+            "",
+            "",
+            "",
+            "0.9",
+        )
+        csv_path.write_text(f"{header}\n{row1}\n{row2}\n")
 
         result = get_unscored_candidates(csv_path)
         assert result == []
@@ -67,14 +152,26 @@ class TestUpdateCandidateScore:
         result = update_candidate_score(csv_path, "cand-1", 0.95)
         assert result is False
 
-    def test_updates_score(self, tmp_path: Path) -> None:
-        """Should update candidate score in CSV."""
+    def test_updates_qwen_score(self, tmp_path: Path) -> None:
+        """Should update candidate qwen_score in CSV."""
         csv_path = tmp_path / "candidates.csv"
         header = ",".join(CSV_COLUMNS)
-        csv_path.write_text(
-            f"{header}\n"
-            "cand-1,FastAPI,docs/test.yml,elem1,noun_phrase,NN,,2024-01-01\n"
+        row = _make_csv_row(
+            "cand-1",
+            "docs/test.yml",
+            "elem1",
+            "sent1",
+            "FastAPI",
+            "0",
+            "7",
+            "2024-01-01",
+            "",
+            "",
+            "",
+            "",
+            "",
         )
+        csv_path.write_text(f"{header}\n{row}\n")
 
         result = update_candidate_score(csv_path, "cand-1", 0.95)
         assert result is True

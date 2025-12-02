@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Base module for converting Markdown files to YAML documentation format.
 
 This module provides the core parsing and conversion logic used by individual

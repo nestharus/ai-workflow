@@ -23,6 +23,7 @@ from scripts.dev.lint import (
     _run_mypy,
     _run_pymarkdown,
     _run_ruff,
+    _run_scripts,
     _run_yamllint,
     _uv,
     main,
@@ -123,12 +124,245 @@ class TestLoadYamlConfig:
         assert result == {}
 
 
+class TestRunScripts:
+    """Tests for _run_scripts function."""
+
+    def test_returns_one_when_no_prefix_rules(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when no prefix_rules defined in config."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/.lint.scripts.yaml", contents="# empty config")
+        fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
+        ):
+            result = _run_scripts()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "No prefix_rules defined" in captured.err
+
+    def test_returns_one_when_pyproject_missing(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when pyproject.toml is missing."""
+        fs.create_dir("/fake/repo")
+        fs.create_file(
+            "/fake/repo/.lint.scripts.yaml",
+            contents="prefix_rules:\n  scripts.knowledge.: knowledge.",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
+        ):
+            result = _run_scripts()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "pyproject.toml not found" in captured.err
+
+    def test_returns_zero_when_all_scripts_valid(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 0 when all scripts follow naming conventions."""
+        fs.create_dir("/fake/repo")
+        fs.create_file(
+            "/fake/repo/.lint.scripts.yaml",
+            contents="prefix_rules:\n  scripts.knowledge.: knowledge.\n  scripts.app.: app.",
+        )
+        fs.create_file(
+            "/fake/repo/pyproject.toml",
+            contents="""[project.scripts]
+"knowledge.extract" = "scripts.knowledge.extract:main"
+"app.start" = "scripts.app.start:main"
+""",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
+        ):
+            result = _run_scripts()
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "All script entry points follow naming conventions" in captured.out
+
+    def test_returns_one_when_script_violates_convention(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when a script violates naming convention."""
+        fs.create_dir("/fake/repo")
+        fs.create_file(
+            "/fake/repo/.lint.scripts.yaml",
+            contents="prefix_rules:\n  scripts.knowledge.: knowledge.",
+        )
+        fs.create_file(
+            "/fake/repo/pyproject.toml",
+            contents="""[project.scripts]
+"bad-name" = "scripts.knowledge.module:main"
+""",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
+        ):
+            result = _run_scripts()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "Script naming convention violations" in captured.err
+        assert "bad-name" in captured.err
+        assert "knowledge." in captured.err
+
+    def test_detects_multiple_violations(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should detect multiple naming violations."""
+        fs.create_dir("/fake/repo")
+        fs.create_file(
+            "/fake/repo/.lint.scripts.yaml",
+            contents="prefix_rules:\n  scripts.knowledge.: knowledge.\n  scripts.app.: app.",
+        )
+        fs.create_file(
+            "/fake/repo/pyproject.toml",
+            contents="""[project.scripts]
+"wrong-knowledge" = "scripts.knowledge.module:main"
+"wrong-app" = "scripts.app.module:main"
+"knowledge.correct" = "scripts.knowledge.other:main"
+""",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
+        ):
+            result = _run_scripts()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "wrong-knowledge" in captured.err
+        assert "wrong-app" in captured.err
+        assert "knowledge.correct" not in captured.err
+
+    def test_ignores_scripts_without_matching_rules(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should ignore scripts that don't match any prefix rules."""
+        fs.create_dir("/fake/repo")
+        fs.create_file(
+            "/fake/repo/.lint.scripts.yaml",
+            contents="prefix_rules:\n  scripts.knowledge.: knowledge.",
+        )
+        fs.create_file(
+            "/fake/repo/pyproject.toml",
+            contents="""[project.scripts]
+"arbitrary-name" = "some.other.module:main"
+"knowledge.valid" = "scripts.knowledge.module:main"
+""",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
+        ):
+            result = _run_scripts()
+
+        assert result == 0
+
+    def test_skips_comments_and_empty_lines(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should skip comments and empty lines in pyproject.toml."""
+        fs.create_dir("/fake/repo")
+        fs.create_file(
+            "/fake/repo/.lint.scripts.yaml",
+            contents="prefix_rules:\n  scripts.knowledge.: knowledge.",
+        )
+        fs.create_file(
+            "/fake/repo/pyproject.toml",
+            contents="""[project.scripts]
+# This is a comment
+"knowledge.valid" = "scripts.knowledge.module:main"
+
+# Another comment
+""",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
+        ):
+            result = _run_scripts()
+
+        assert result == 0
+
+    def test_handles_unquoted_script_names(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should handle unquoted script names in pyproject.toml."""
+        fs.create_dir("/fake/repo")
+        fs.create_file(
+            "/fake/repo/.lint.scripts.yaml",
+            contents="prefix_rules:\n  scripts.dev.: dev.",
+        )
+        fs.create_file(
+            "/fake/repo/pyproject.toml",
+            contents="""[project.scripts]
+setup = "scripts.dev.setup:main"
+""",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
+        ):
+            result = _run_scripts()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "setup" in captured.err
+        assert "dev." in captured.err
+
+    def test_stops_at_next_section(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should stop parsing at next TOML section."""
+        fs.create_dir("/fake/repo")
+        fs.create_file(
+            "/fake/repo/.lint.scripts.yaml",
+            contents="prefix_rules:\n  scripts.knowledge.: knowledge.",
+        )
+        fs.create_file(
+            "/fake/repo/pyproject.toml",
+            contents="""[project.scripts]
+"knowledge.valid" = "scripts.knowledge.module:main"
+
+[tool.other]
+bad-entry = "scripts.knowledge.other:main"
+""",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
+        ):
+            result = _run_scripts()
+
+        assert result == 0
+
+
 class TestLinterConstants:
     """Tests for linter constants."""
 
     def test_linter_names_defined(self) -> None:
         """Should have all expected linter names."""
-        expected = ["ruff", "mypy", "hadolint", "pymarkdown", "yamllint", "checkov"]
+        expected = ["scripts", "ruff", "mypy", "hadolint", "pymarkdown", "yamllint", "checkov"]
         assert expected == LINTER_NAMES
 
     def test_linter_runners_has_all_linters(self) -> None:
@@ -407,14 +641,20 @@ class TestMain:
         """Should return 1 when OpenAPI schema is missing."""
         # Create minimal repo structure
         fs.create_dir("/fake/repo/openapi")
+        fs.create_file(
+            "/fake/repo/.lint.scripts.yaml",
+            contents="prefix_rules:\n  scripts.knowledge.: knowledge.",
+        )
         fs.create_file("/fake/repo/.lint.hadolint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/.lint.pymarkdown.yaml", contents="targets: []\nexcludes: []")
         fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs: []")
+        fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
             patch("sys.argv", ["lint"]),
             patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
             patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
+            patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
             patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
@@ -448,9 +688,14 @@ class TestMain:
         fs.create_file("/fake/repo/.hadolint.yaml", contents="")
         fs.create_file("/fake/repo/.pymarkdown.json", contents="{}")
         fs.create_file("/fake/repo/.yamllint.yaml", contents="")
+        fs.create_file(
+            "/fake/repo/.lint.scripts.yaml",
+            contents="prefix_rules:\n  scripts.knowledge.: knowledge.",
+        )
         fs.create_file("/fake/repo/.lint.hadolint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/.lint.pymarkdown.yaml", contents="targets: []\nexcludes: []")
         fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs: []")
+        fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
             patch("sys.argv", ["lint"]),
@@ -458,6 +703,7 @@ class TestMain:
             patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
             patch.object(lint, "CHECKOV_CONFIG", Path("/fake/repo/.checkov.yaml")),
             patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")),
+            patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
             patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
@@ -478,9 +724,14 @@ class TestMain:
         fs.create_file("/fake/repo/.hadolint.yaml", contents="")
         fs.create_file("/fake/repo/.pymarkdown.json", contents="{}")
         fs.create_file("/fake/repo/.yamllint.yaml", contents="")
+        fs.create_file(
+            "/fake/repo/.lint.scripts.yaml",
+            contents="prefix_rules:\n  scripts.knowledge.: knowledge.",
+        )
         fs.create_file("/fake/repo/.lint.hadolint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/.lint.pymarkdown.yaml", contents="targets: []\nexcludes: []")
         fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs: []")
+        fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
             patch("sys.argv", ["lint"]),
@@ -488,6 +739,7 @@ class TestMain:
             patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
             patch.object(lint, "CHECKOV_CONFIG", Path("/fake/repo/.checkov.yaml")),
             patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")),
+            patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
             patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),

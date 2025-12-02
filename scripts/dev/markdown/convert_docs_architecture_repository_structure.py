@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for repository-structure.md.
 
 Converts docs/architecture/repository-structure.md to docs/architecture/repository-structure.yml.

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for roles-skeleton.md.
 
 Converts docs/architecture/roles-skeleton.md to docs/architecture/roles-skeleton.yml.

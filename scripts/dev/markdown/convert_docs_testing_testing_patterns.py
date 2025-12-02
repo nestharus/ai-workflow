@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for testing-patterns.md.
 
 Converts docs/testing/testing-patterns.md to docs/testing/testing-patterns.yml.

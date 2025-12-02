@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for phase3.md.
 
 Converts docs/plans/phase3.md to docs/plans/phase3.yml.

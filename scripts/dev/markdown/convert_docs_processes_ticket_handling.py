@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for ticket-handling.md.
 
 Converts docs/processes/ticket-handling.md to docs/processes/ticket-handling.yml.

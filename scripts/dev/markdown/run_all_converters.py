@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Run all converter scripts to generate YAML files.
 
 Executes all convert_*.py scripts in the scripts/markdown directory.

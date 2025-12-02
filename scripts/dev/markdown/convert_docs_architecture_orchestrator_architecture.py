@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for orchestrator-architecture.md.
 
 Converts docs/architecture/orchestrator-architecture.md to docs/architecture/orchestrator-architecture.yml.

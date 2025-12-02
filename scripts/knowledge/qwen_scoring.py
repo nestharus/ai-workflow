@@ -6,13 +6,13 @@ relevance and contextual fit.
 
 Usage:
     # Score all unscored candidates
-    uv run score-candidates-with-qwen
+    uv run knowledge.score-candidates-with-qwen
 
     # Score specific candidates
-    uv run score-candidates-with-qwen --ids <id1> <id2>
+    uv run knowledge.score-candidates-with-qwen --ids <id1> <id2>
 
     # Use specific model
-    uv run score-candidates-with-qwen --model Qwen/Qwen3-Embedding-0.6B
+    uv run knowledge.score-candidates-with-qwen --model Qwen/Qwen3-Embedding-0.6B
 
 Args:
     --ids: Specific candidate IDs to score.
@@ -34,7 +34,7 @@ from scripts.dev.utils import REPO_ROOT
 
 
 def get_unscored_candidates(csv_path: Path) -> list[dict[str, str]]:
-    """Get candidates that haven't been scored yet.
+    """Get candidates that haven't been scored with Qwen yet.
 
     Args:
         csv_path: Path to the candidates CSV file.
@@ -48,7 +48,7 @@ def get_unscored_candidates(csv_path: Path) -> list[dict[str, str]]:
     query = """
         SELECT *
         FROM read_csv_auto(?, ALL_VARCHAR=TRUE)
-        WHERE confidence_score = '' OR confidence_score IS NULL
+        WHERE qwen_score = '' OR qwen_score IS NULL
     """
     try:
         conn = duckdb.connect()
@@ -62,12 +62,12 @@ def get_unscored_candidates(csv_path: Path) -> list[dict[str, str]]:
 
 
 def update_candidate_score(csv_path: Path, candidate_id: str, score: float) -> bool:
-    """Update the confidence score for a candidate.
+    """Update the Qwen score for a candidate.
 
     Args:
         csv_path: Path to the candidates CSV file.
         candidate_id: ID of the candidate to update.
-        score: New confidence score (0.0-1.0).
+        score: New Qwen score (0.0-1.0).
 
     Returns:
         True if update succeeded, False otherwise.
@@ -82,7 +82,7 @@ def update_candidate_score(csv_path: Path, candidate_id: str, score: float) -> b
             SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
         """)
         conn.execute(
-            "UPDATE candidates SET confidence_score = ? WHERE candidate_id = ?",
+            "UPDATE candidates SET qwen_score = ? WHERE candidate_id = ?",
             [str(score), candidate_id],
         )
         conn.execute(f"COPY candidates TO '{csv_path}' (HEADER, DELIMITER ',')")
@@ -162,7 +162,7 @@ def score_candidates_main(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    """Entry point for score-candidates-with-qwen command.
+    """Entry point for knowledge.score-candidates-with-qwen command.
 
     Returns:
         Exit code (0 on success, 1 on error).

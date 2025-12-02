@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-from scripts.knowledge.variant_resolver import VARIANT_COLUMNS
 from scripts.knowledge.query_variants import (
     parse_args,
     query_variants,
 )
+from scripts.knowledge.variant_resolver import VARIANT_COLUMNS
 
 
 class TestQueryVariants:

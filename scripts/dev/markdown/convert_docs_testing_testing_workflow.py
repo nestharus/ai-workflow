@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for testing-workflow.md.
 
 Converts docs/testing/testing-workflow.md to docs/testing/testing-workflow.yml.

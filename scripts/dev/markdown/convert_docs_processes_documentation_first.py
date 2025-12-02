@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for documentation-first.md.
 
 Converts docs/processes/documentation-first.md to docs/processes/documentation-first.yml.

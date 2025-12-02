@@ -34,7 +34,7 @@ from typing import TypedDict
 
 import duckdb
 
-from scripts.dev.utils import REPO_ROOT, utc_timestamp
+from scripts.dev.utils import REPO_ROOT
 
 KEYWORD_COLUMNS = [
     "keyword_id",

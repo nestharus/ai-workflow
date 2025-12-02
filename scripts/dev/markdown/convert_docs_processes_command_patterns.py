@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for command-patterns.md.
 
 Converts docs/processes/command-patterns.md to docs/processes/command-patterns.yml.

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# noqa: D100
 """Converter script for operational-protocols.md.
 
 Converts docs/processes/operational-protocols.md to docs/processes/operational-protocols.yml.
