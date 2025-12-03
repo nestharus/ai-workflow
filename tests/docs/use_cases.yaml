@@ -63,17 +63,10 @@ features:
       - id: UC-HEALTH-005
         endpoint: /api/v1/health
         method: GET
-        description: "[FUTURE] Readiness check returns \"degraded\" on transient failures"
+        description: Readiness check returns "degraded" on transient failures
         expected_behavior: |
-          NOT YET IMPLEMENTED: The "degraded" status is defined in the HealthResponse
-          schema but is not currently returned by the endpoint implementation.
-
-          Future behavior: Returns HTTP 200 with JSON body {"status": "degraded"} when
-          dependencies are available but experiencing transient issues. This requires
-          implementing transient failure detection logic in the health check endpoint.
-
-          Current behavior: The endpoint only returns "ok" (all dependencies available)
-          or "unhealthy" (one or more dependencies missing).
+          Returns HTTP 200 with JSON body {"status": "degraded"} when
+          dependencies are available but experiencing transient issues.
         test_tier: integration
 
   examples:

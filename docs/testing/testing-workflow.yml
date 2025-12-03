@@ -147,7 +147,7 @@ sections:
   - id: coverage-rules-use-case-coverage-integra
     type: text
     text: |
-      Use-case coverage: Integration/e2e require coverage of non-future use cases (threshold in settings)
+      Use-case coverage: Integration/e2e require coverage of use cases (threshold in settings)
   - id: coverage-rules-private-functions-unit-te
     type: text
     text: 'Private functions: Unit tests validate ALL functions; component/scripts skip private'

@@ -22,7 +22,7 @@ You are a test-fixing specialist. Your task is to run all tests, debug failures,
 * **Per-function**: Each function must individually meet the configured threshold (not averaged)
 * **Class fields excluded**: Pydantic model type annotations are excluded
 * **Service layer**: Component tests only validate functions within `app/services/`
-* **Use-case coverage**: Integration/e2e require coverage of non-future use cases (threshold in settings)
+* **Use-case coverage**: Integration/e2e require coverage of use cases (threshold in settings)
 * **Private functions**: Unit tests validate all; component/scripts skip private
 
 ## Workflow

@@ -64,7 +64,7 @@ E2E tests require the full application stack running in Docker containers.
 * **Per-function**: Each function must individually meet the configured threshold (not averaged across file)
 * **Class fields excluded**: Pydantic model type annotations are excluded from coverage
 * **Service layer**: Component tests only validate functions within `app/services/`
-* **Use-case coverage**: Integration/e2e require coverage of non-future use cases (threshold in settings)
+* **Use-case coverage**: Integration/e2e require coverage of use cases (threshold in settings)
 * **Private functions**: Unit tests validate ALL functions; component/scripts skip private
 
 ## Common Test Commands

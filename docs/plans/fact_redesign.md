@@ -569,6 +569,51 @@ ordering:
 
 ---
 
+## Model Specifications
+
+| Role | Model | Invocation | HF ID/CLI |
+|------|-------|------------|-----------|
+| Hunter (Search) | Ministral 3 8B Instruct 2512 | HF Transformers | `mistralai/Ministral-3-8B-Instruct-2512` |
+| Surgeon Sub-agents (Organizer, Planner, Rewriter, Reviewer) | Claude Haiku 4.5 | `claude --agent fact-surgeon-[role] --model haiku --print --prompt ...` | CLI |
+| Auditor (Residue) | Claude Opus 4.5 | `claude --agent fact-auditor --model opus --print --prompt ...` | CLI |
+| Embedder/Validator | Qwen3 Embedding 8B | HF Transformers | `Qwen/Qwen3-Embedding-8B` (reuse `variant_resolver.py`) |
+| Reranker | Qwen3 Reranker 8B | HF Transformers | `Qwen/Qwen3-Reranker-8B` (reuse `qwen_scoring.py`) |
+
+**Sub-agent Files:** `.claude/agents/fact-surgeon-organizer.md`, `fact-surgeon-planner.md`, `fact-surgeon-rewriter.md`, `fact-surgeon-reviewer.md` (Haiku), `fact-auditor.md` (Opus).
+
+---
+
+## Risks and Mitigations
+
+### 2.1 Reliability and Complexity of the "Surgeon" Role
+
+**Risk:** The Surgeon role requires high precision; errors can lose anchor facts or fail to properly remove target information. This is the most error-prone component of the extraction pipeline.
+
+**Mitigations:**
+
+1. **Sub-agent decomposition**: Split Surgeon into specialized sub-agents (Organizer, Planner, Rewriter, Reviewer) to isolate concerns and enable targeted debugging.
+
+2. **Qwen3 embedding validation**: Use embedding similarity score drop check to verify targets were actually removed:
+   - `score_drop = cosine_sim(fact_emb, orig_emb) - cosine_sim(fact_emb, new_emb)`
+   - Require `score_drop >= 0.2` (configurable threshold)
+   - Reuse `load_qwen_embedding_model()` from `scripts/knowledge/variant_resolver.py`
+
+3. **Explicit contracts**: Each sub-agent prompt explicitly lists `anchors_to_keep` and enforces self-check before output.
+
+4. **Monotonic safety**: Failing to remove a target is acceptable (passes to next Hunter iteration with deduplication). Over-removal (losing anchors) triggers immediate rejection.
+
+5. **Edge-case testing**: Rigorous test coverage for:
+   - Coreference chains ("Alice... she... her...")
+   - Dense overlapping facts in single spans
+   - Nested entity references
+   - Multi-entity spans requiring joint rewrites
+
+**Fallback strategy:**
+- If validation fails after retry, retain original span unchanged.
+- Log failure for manual review without blocking pipeline progress.
+
+---
+
 ## Artifact Extraction and Rendering
 
 This section defines how to extract atomic facts from rich artifacts (prose/code/structured blocks) and re-render deterministically.
@@ -643,17 +688,66 @@ The Iterative Sanitization loop is implemented by three distinct LLM roles with 
 }
 ```
 
-#### Surgeon
+#### Surgeon (Haiku 4.5, Multi-Sub-Agent)
+
+**Summary:** Localized rewrite to obscure targets while preserving anchors. Implemented as a pipeline of specialized sub-agents.
 
 **Responsibilities:**
-- Given an original span and a list of target facts for one entity, rewrite the span so those facts are impossible to infer while preserving all non-target (“Anchor”) information.
+- Given an original span and a list of target facts for one entity, rewrite the span so those facts are impossible to infer while preserving all non-target ("Anchor") information.
 - Rewrite must be localized to the span(s) provided by the Hunter unless cross-span dependencies require grouping.
 - If the span contains only target facts (no Anchors), output `[DELETE]`.
+
+**Pipeline:**
+
+1. **Organizer** (`claude --agent fact-surgeon-organizer --model haiku`):
+   - Group spans by overlaps/related facts into N minimal rewrite ops.
+   - Input: candidate spans with targets/anchors.
+   - Output: N groups with `anchors_to_keep` list (never summarize/remove anchors).
+
+2. **Planner** (per group) (`claude --agent fact-surgeon-planner --model haiku`):
+   - Plan rewrite with explicit `anchors_to_keep`, coref safety, no-summary rule.
+   - Output: rewrite plan specifying what to preserve verbatim and what to mutate.
+
+3. **Rewriter** (per plan) (`claude --agent fact-surgeon-rewriter --model haiku`):
+   - Apply rewrite preserving anchors verbatim if possible; mutate only targets.
+   - Output: replacement text with targets removed.
+
+4. **Validator** (Qwen3 Embedding):
+   - Embed `target_fact`, `orig_span`, `new_span`.
+   - Require: `sim(fact, new) < sim(fact, orig) - threshold` (e.g., 0.2 drop).
+   - Reuse `load_qwen_embedding_model()` from `scripts/knowledge/variant_resolver.py`.
+   - If validation fails, reject and retry with feedback.
+
+5. **Reviewer** (optional, if low score) (`claude --agent fact-surgeon-reviewer --model haiku`):
+   - Review with scores, plan, before/after context.
+   - Approve/reject/iterate as needed.
 
 **Required behaviors:**
 - **Anchor listing**: Explicitly enumerate `anchors_to_keep` (non-target facts to preserve) before producing the final rewrite.
 - **Self-check**: Before outputting, verify `target_inferable == false`; if inferable, rewrite again.
 - **Coreference safety**: If removing the target facts would strand pronouns or references elsewhere, inject the explicit referent (or mark spans for joint rewrite) before deletion.
+
+**Invariants:**
+- **Fail-to-remove**: Passes to next Hunter iteration (dedup handled).
+- **Remove-too-much**: Reject immediately (anchors lost).
+
+**High-Fidelity Implementation Tasks:**
+
+1. **Task 1**: Create `.claude/agents/*.md` files with contracts (prompts enforce anchors, no-summary).
+   - `fact-surgeon-organizer.md`
+   - `fact-surgeon-planner.md`
+   - `fact-surgeon-rewriter.md`
+   - `fact-surgeon-reviewer.md`
+
+2. **Task 2**: Create `scripts/knowledge/surgeon_orchestrator.py`:
+   - Orchestrate sub-agents via `subprocess.run(['claude', '--agent', ..., '--model', 'haiku', '--print', '--prompt', ...])`.
+   - Parse JSON outputs and chain pipeline stages.
+
+3. **Task 3**: Integrate Qwen3 validator:
+   - Implement `embed_and_score_drop(fact, orig, new) > threshold` using `variant_resolver.py` helpers.
+
+4. **Task 4**: Fallback handling:
+   - If any stage fails, retain original span (monotonic safety guarantee).
 
 **Output contract (JSON):**
 ```json
@@ -662,7 +756,8 @@ The Iterative Sanitization loop is implemented by three distinct LLM roles with 
   "replacement_text": "Bob is 25.",
   "anchors_to_keep": ["Bob is 25 years old"],
   "targets_removed": ["Alice is 25 years old"],
-  "self_check": {"target_inferable": false, "notes": null}
+  "self_check": {"target_inferable": false, "notes": null},
+  "validation": {"score_drop": 0.35, "passed": true}
 }
 ```
 
@@ -1229,6 +1324,74 @@ Deduplication guidance:
 - current dedup key (source_file, element_id, candidate_text) may over-dedup across different fields
 - with new columns, dedup should include source_field_path (and optionally role)
 
+---
+
+## Hunter/Surgeon/Auditor Contracts (Sub-agent Architecture)
+
+### Surgeon Orchestrator Contract
+
+The Surgeon is now implemented via an orchestrator (`scripts/knowledge/surgeon_orchestrator.py`) that calls specialized sub-agents sequentially.
+
+**Invocation pattern:**
+```bash
+claude --agent fact-surgeon-organizer --model haiku --print --prompt "<JSON input>"
+claude --agent fact-surgeon-planner --model haiku --print --prompt "<JSON input>"
+claude --agent fact-surgeon-rewriter --model haiku --print --prompt "<JSON input>"
+claude --agent fact-surgeon-reviewer --model haiku --print --prompt "<JSON input>"
+```
+
+**Orchestrator responsibilities:**
+- Parse JSON output from each sub-agent
+- Chain outputs: Organizer → Planner → Rewriter → Validator → (optional) Reviewer
+- Handle validation failures with retry or fallback
+- Persist pass records on success
+
+**Sub-agent file locations:**
+- `.claude/agents/fact-surgeon-organizer.md`
+- `.claude/agents/fact-surgeon-planner.md`
+- `.claude/agents/fact-surgeon-rewriter.md`
+- `.claude/agents/fact-surgeon-reviewer.md`
+- `.claude/agents/fact-auditor.md`
+
+### Qwen3 Validator Contract
+
+The validator uses Qwen3 embeddings to verify that target facts were successfully removed from rewritten spans.
+
+**Contract:**
+```python
+def validate_removal(fact_text: str, orig_span: str, new_span: str) -> ValidationResult:
+    """
+    Verify target fact is no longer inferable from rewritten span.
+
+    Uses: load_qwen_embedding_model() from scripts/knowledge/variant_resolver.py
+
+    Returns:
+        ValidationResult with score_drop and passed status
+    """
+    fact_emb = embed(fact_text)
+    orig_emb = embed(orig_span)
+    new_emb = embed(new_span)
+
+    orig_sim = cosine_sim(fact_emb, orig_emb)
+    new_sim = cosine_sim(fact_emb, new_emb)
+    score_drop = orig_sim - new_sim
+
+    return ValidationResult(
+        score_drop=score_drop,
+        passed=(score_drop >= 0.2),  # configurable threshold
+        orig_sim=orig_sim,
+        new_sim=new_sim
+    )
+```
+
+**Threshold guidance:**
+- Default: `score_drop >= 0.2`
+- Lower threshold (0.1): More permissive, faster convergence, higher risk of residual inferability
+- Higher threshold (0.3): More strict, may cause more retries, better guarantee of removal
+
+**Referred implementations:**
+- `scripts/knowledge/variant_resolver.py`: `load_qwen_embedding_model()`
+- `scripts/knowledge/qwen_scoring.py`: Reranker patterns
 
 ---
 
@@ -1495,10 +1658,14 @@ This plan intentionally only supports **fully-extractable textual artifacts** an
 - Adapter for entity discovery and fact extraction
 - JSON output parsing and validation
 
-7) Implement Surgeon prompt and self-check + coreference rules
-- Rewrite logic with anchor preservation
-- Self-check for target inferability
-- Coreference safety handling
+7) Implement Surgeon as multi-sub-agent pipeline (see "Surgeon (Haiku 4.5, Multi-Sub-Agent)" section)
+- Create four Claude CLI sub-agents: `fact-surgeon-organizer`, `fact-surgeon-planner`, `fact-surgeon-rewriter`, `fact-surgeon-reviewer`
+- Each invoked via `claude --agent fact-surgeon-<role> --model haiku --print --prompt ...`
+- Implement anchor listing and `anchors_to_keep` enforcement in Organizer/Planner
+- Self-check for target inferability in Rewriter output
+- Coreference safety handling (inject explicit referents or mark for joint rewrite)
+- Integrate Qwen3 validation (`score_drop >= 0.2`) between Rewriter and Reviewer
+- Optional Reviewer stage for low-confidence rewrites
 
 8) Add pass-level persistence + schema evolution
 - `.knowledge/facts/passes.csv` for commit tracking
