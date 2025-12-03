@@ -1131,6 +1131,106 @@ New artifact kinds can be added by:
 
 See `docs/plans/fact_redesign.md` lines 341-479 for complete specification.
 
+## Artifact Manifests
+
+Artifact manifests define the identity, provenance, contributors, and validation status
+of detected artifacts. Manifests are stored as YAML files in `.knowledge/artifacts/`.
+
+### Manifest Schema
+
+Per `docs/plans/fact_redesign.md` lines 481-521, artifact manifests contain:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| artifact_id | string | Stable SHA-256 hash of `source_file:element_id:field_path:artifact_kind` |
+| artifact_kind | string | Registry kind identifier (e.g., diagram/mermaid.sequence) |
+| artifact_format | string | MIME type (e.g., text/markdown, text/x-mermaid) |
+| source | object | Provenance: source_file, source_element_id, field_path, source_locator, source_uri |
+| render_plan_id | string | Identifier for the deterministic render procedure |
+| projection_version | string | Ties to FieldFact projection version (e.g., fieldfacts.v2) |
+| modality | enum | Reserved schema hook: text, image, audio, video, other (V1 uses text) |
+| extraction_mode | enum | Reserved schema hook: full, incremental, query_only (V1 uses full) |
+| contributors | object | Structural FieldFacts (list) + semantic facts (list) |
+| entities | list | Resolved entity references |
+| rendered | object | Path to rendered artifact + validation results |
+
+### V1 Participation Rule
+
+Per `docs/plans/fact_redesign.md` lines 36-42, only artifacts matching these criteria
+participate in current extraction/rendering pipelines:
+
+- `modality == "text"`
+- `extraction_mode == "full"`
+
+Other combinations are representable in manifests but bypassed by the V1 pipeline.
+
+### Artifact Lifecycle
+
+Per `docs/plans/fact_redesign.md` lines 561-569:
+
+1. **Detect artifact roots**: Assign artifact_kind, artifact_format, render_engine, render_plan_id
+2. **Create/update manifests**: Store in `.knowledge/artifacts/<artifact_id>.yml`
+3. **Extract semantic facts**: From source artifact blob (deferred to subsequent phase)
+4. **Render from facts**: Using render plan into `.knowledge/artifacts/rendered/`
+5. **Validate**: Compare rendered artifact back to original source
+6. **Persist validation**: Store results and mismatches for auditability
+
+### Example Manifest
+
+```yaml
+artifact_id: abc123def456...
+artifact_kind: diagram/mermaid.sequence
+artifact_format: text/x-mermaid
+source:
+  source_file: docs/architecture/event-flow.yml
+  source_element_id: sequence-diagram-code-1
+  field_path: text
+  source_locator: inline
+  source_uri: null
+render_plan_id: diagram.mermaid.sequence.v1
+projection_version: fieldfacts.v2
+modality: text
+extraction_mode: full
+contributors:
+  structural:
+    - element_id: sequence-diagram-code-1
+      field_path: text
+    - element_id: sequence-diagram-code-1
+      field_path: type
+  semantic: []
+entities: []
+rendered:
+  path: .knowledge/artifacts/rendered/abc123def456....mmd
+  validation:
+    last_validated_at: ""
+    similarity: ""
+    passed: ""
+    notes: ""
+```
+
+### CLI Commands
+
+**Detect artifacts** from YAML files:
+
+```bash
+uv run knowledge.detect-artifacts --source-files 'docs/development/**/*.yml'
+uv run knowledge.detect-artifacts --source-files docs/architecture/event-flow.yml --output-format json
+```
+
+**Query artifacts** manifests:
+
+```bash
+uv run knowledge.query-artifacts --artifact-kind 'diagram/*'
+uv run knowledge.query-artifacts --source-file docs/architecture/event-flow.yml --show-validation
+uv run knowledge.query-artifacts --stats
+```
+
+### Storage Locations
+
+- **Manifests**: `.knowledge/artifacts/<artifact_id>.yml`
+- **Rendered artifacts**: `.knowledge/artifacts/rendered/<artifact_id>.<ext>` (extension determined by artifact_format)
+- **Registry**: `.knowledge/artifacts/kinds.yml`
+
 ## Field-Level Fact Extraction
 
 The FieldFact extraction system provides a structured, field-aware representation of YAML elements that supports artifact detection, entity resolution, and semantic fact extraction.

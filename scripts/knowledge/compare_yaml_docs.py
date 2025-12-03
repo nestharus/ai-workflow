@@ -33,6 +33,14 @@ FieldFact Extraction:
     group_key/group_id, and deterministic text projection. FieldFacts are the
     foundation for artifact detection (subsequent phase) and entity resolution.
     See docs/plans/fact_redesign.md lines 143-279 for specification.
+
+Artifact Layer:
+    The Artifact dataclass bridges structural FieldFacts and semantic fact extraction.
+    Artifacts are irreducible, user-facing views rendered from facts—not edited directly.
+    Editing occurs by changing underlying facts and re-rendering. The artifact layer
+    enables extract→render→compare validation loops for dense integrated documentation
+    (paragraphs, code blocks, tables). See docs/plans/fact_redesign.md lines 282-569
+    for specification.
 """
 
 import argparse
@@ -476,6 +484,279 @@ class RoleAssignment:
     role: FieldRole
     artifact_kind: str | None = None
     artifact_format: str | None = None
+
+
+# Type aliases for Artifact fields per fact_redesign.md lines 296-323
+SourceLocator = Literal["inline", "reference"]
+RenderEngine = Literal["text_llm", "none"]
+Modality = Literal["text", "image", "audio", "video", "other"]
+ExtractionMode = Literal["full", "incremental", "query_only"]
+
+
+def _compute_artifact_id(
+    source_file: str,
+    element_id: str,
+    field_path: str,
+    artifact_kind: str,
+) -> str:
+    """Compute a stable artifact ID as SHA-256 hash.
+
+    Per fact_redesign.md lines 297-298, artifact_id is computed as:
+    sha256(f"{source_file}:{element_id}:{field_path}:{artifact_kind}")
+
+    Args:
+        source_file: Relative path to the source YAML file.
+        element_id: The ID of the source element.
+        field_path: The artifact root field path within the element.
+        artifact_kind: The artifact kind identifier.
+
+    Returns:
+        SHA-256 hash of the concatenated string.
+    """
+    concat = f"{source_file}:{element_id}:{field_path}:{artifact_kind}"
+    return hashlib.sha256(concat.encode("utf-8")).hexdigest()
+
+
+@dataclass
+class Artifact:
+    """Represents an artifact bridging structural FieldFacts and semantic extraction.
+
+    Per fact_redesign.md lines 282-323, an Artifact is an irreducible, user-facing
+    view rendered from a collection of facts. Artifacts are not edited directly—
+    editing occurs by changing underlying facts and re-rendering.
+
+    Artifacts exist because:
+    - Documentation fields (paragraphs, code blocks, tables) are dense integrated facts
+    - Users consume integrated views, not atomized facts
+    - Validation requires a closed loop: extract facts → re-render → compare
+
+    Attributes:
+        artifact_id: Stable identifier (sha256 of source_file:element_id:field_path:kind).
+        artifact_kind: Registry kind identifier (e.g., prose/paragraph, diagram/mermaid.sequence).
+        artifact_format: MIME type for textual artifacts (e.g., text/markdown, text/x-mermaid).
+        source_file: Relative path to the source YAML file.
+        source_element_id: The ID of the source element.
+        field_path: The artifact root field path within the element.
+        source_locator: How artifact content is located (inline/reference).
+        source_uri: URI when source_locator == reference (optional).
+        render_engine: Renderer to use (text_llm/none).
+        render_plan_id: Identifier for the deterministic render procedure.
+        projection_version: Ties to the FieldFact projection version.
+        modality: Reserved schema hook (text/image/audio/video/other), defaults to text.
+        extraction_mode: Reserved schema hook (full/incremental/query_only), defaults to full.
+    """
+
+    artifact_id: str
+    artifact_kind: str
+    artifact_format: str
+    source_file: str
+    source_element_id: str
+    field_path: str
+    source_locator: SourceLocator
+    source_uri: str | None
+    render_engine: RenderEngine
+    render_plan_id: str
+    projection_version: str
+    modality: Modality = "text"
+    extraction_mode: ExtractionMode = "full"
+
+
+def _get_render_engine_for_kind(artifact_kind: str) -> RenderEngine:
+    """Determine the render engine based on artifact kind.
+
+    Per fact_redesign.md lines 311-312, render_engine determines how artifacts
+    are rendered. Default is 'text_llm' for prose/code/diagram kinds, 'none'
+    for schema/data kinds that are tracked but not re-rendered.
+
+    Args:
+        artifact_kind: The artifact kind identifier.
+
+    Returns:
+        The appropriate render engine.
+    """
+    # Schema and data kinds are tracked but not re-rendered
+    if artifact_kind.startswith("schema/") or artifact_kind.startswith("data/"):
+        return "none"
+    # Default to text_llm for prose, code, diagram, table kinds
+    return "text_llm"
+
+
+def _get_render_plan_id_from_registry(
+    artifact_kind: str,
+    registry_cache: list[dict[str, Any]] | None = None,
+) -> str:
+    """Get the render_plan_id from the artifact registry for a given kind.
+
+    Args:
+        artifact_kind: The artifact kind identifier.
+        registry_cache: Optional registry cache for testing.
+
+    Returns:
+        The render_plan_id from the registry, or a default placeholder.
+    """
+    registry = registry_cache if registry_cache is not None else _load_artifact_registry()
+
+    for kind in registry:
+        if not isinstance(kind, dict):
+            continue
+        if kind.get("kind_id") == artifact_kind:
+            rendering = kind.get("rendering_contract", {})
+            if isinstance(rendering, dict):
+                plan_id = rendering.get("render_plan_id")
+                if plan_id:
+                    return str(plan_id)
+            break
+
+    # Default render_plan_id based on artifact_kind pattern
+    # Convert kind_id to render_plan format: diagram/mermaid.sequence -> diagram.mermaid.sequence.v1
+    safe_kind = artifact_kind.replace("/", ".").replace("-", "_")
+    return f"{safe_kind}.v1"
+
+
+def _get_modality_and_extraction_mode_from_registry(
+    artifact_kind: str,
+    registry_cache: list[dict[str, Any]] | None = None,
+) -> tuple[Modality, ExtractionMode]:
+    """Get modality and extraction_mode from the artifact registry for a given kind.
+
+    Per fact_redesign.md lines 367-368, these are optional metadata fields in the
+    registry with defaults: modality='text', extraction_mode='full'.
+
+    Args:
+        artifact_kind: The artifact kind identifier.
+        registry_cache: Optional registry cache for testing.
+
+    Returns:
+        Tuple of (modality, extraction_mode) from the registry, or defaults.
+    """
+    registry = registry_cache if registry_cache is not None else _load_artifact_registry()
+
+    for kind in registry:
+        if not isinstance(kind, dict):
+            continue
+        if kind.get("kind_id") == artifact_kind:
+            # Get modality with default to 'text'
+            raw_modality = kind.get("modality", "text")
+            if raw_modality in ("text", "image", "audio", "video", "other"):
+                modality: Modality = raw_modality  # type: ignore[assignment]
+            else:
+                modality = "text"
+
+            # Get extraction_mode with default to 'full'
+            raw_mode = kind.get("extraction_mode", "full")
+            if raw_mode in ("full", "incremental", "query_only"):
+                extraction_mode: ExtractionMode = raw_mode  # type: ignore[assignment]
+            else:
+                extraction_mode = "full"
+
+            return modality, extraction_mode
+
+    # Defaults when kind not found in registry
+    return "text", "full"
+
+
+def detect_artifacts_from_field_facts(
+    field_facts: dict[str, list[FieldFact]],
+    source_file: str,
+    registry_cache: list[dict[str, Any]] | None = None,
+    v1_only: bool = True,
+) -> list[Artifact]:
+    """Detect artifacts from FieldFacts with role='artifact_root'.
+
+    Per fact_redesign.md lines 561-569, this implements artifact lifecycle step 1:
+    detect artifact roots and assign artifact_kind, artifact_format, render_engine,
+    and render_plan_id.
+
+    V1 participation rule (lines 36-42): Only artifacts with modality='text' AND
+    extraction_mode='full' participate in current extraction/rendering pipelines.
+
+    Args:
+        field_facts: Dictionary mapping element_id to list of FieldFacts.
+        source_file: Relative path to the source YAML file.
+        registry_cache: Optional registry cache for testing.
+        v1_only: If True, skip artifacts that don't match V1 participation rule.
+
+    Returns:
+        List of Artifact objects detected from artifact root FieldFacts.
+    """
+    artifacts: list[Artifact] = []
+
+    for element_id, facts in field_facts.items():
+        for fact in facts:
+            if fact.role != "artifact_root":
+                continue
+
+            if not fact.artifact_kind:
+                _logger.warning(
+                    "FieldFact with role=artifact_root missing artifact_kind: "
+                    "element_id=%s, field_path=%s",
+                    element_id,
+                    fact.field_path,
+                )
+                continue
+
+            # Determine artifact properties
+            artifact_kind = fact.artifact_kind
+            artifact_format = fact.artifact_format or "text/plain"
+
+            # Get source_locator from FieldFact
+            source_locator: SourceLocator = fact.artifact_locator or "inline"
+            source_uri = fact.artifact_uri
+
+            # Validate source_uri requirement
+            if source_locator == "reference" and not source_uri:
+                _logger.warning(
+                    "Artifact with source_locator=reference missing source_uri: "
+                    "element_id=%s, field_path=%s",
+                    element_id,
+                    fact.field_path,
+                )
+                continue
+
+            # Get render properties
+            render_engine = _get_render_engine_for_kind(artifact_kind)
+            render_plan_id = _get_render_plan_id_from_registry(artifact_kind, registry_cache)
+
+            # Compute stable artifact_id
+            artifact_id = _compute_artifact_id(
+                source_file, element_id, fact.field_path, artifact_kind
+            )
+
+            # Get modality and extraction_mode from registry (defaults to text/full)
+            modality, extraction_mode = _get_modality_and_extraction_mode_from_registry(
+                artifact_kind, registry_cache
+            )
+
+            # Apply V1 participation rule
+            if v1_only and (modality != "text" or extraction_mode != "full"):
+                _logger.debug(
+                    "Skipping non-V1 artifact: element_id=%s, field_path=%s, "
+                    "modality=%s, extraction_mode=%s",
+                    element_id,
+                    fact.field_path,
+                    modality,
+                    extraction_mode,
+                )
+                continue
+
+            artifact = Artifact(
+                artifact_id=artifact_id,
+                artifact_kind=artifact_kind,
+                artifact_format=artifact_format,
+                source_file=source_file,
+                source_element_id=element_id,
+                field_path=fact.field_path,
+                source_locator=source_locator,
+                source_uri=source_uri,
+                render_engine=render_engine,
+                render_plan_id=render_plan_id,
+                projection_version="fieldfacts.v2",
+                modality=modality,
+                extraction_mode=extraction_mode,
+            )
+            artifacts.append(artifact)
+
+    return artifacts
 
 
 def _assign_role(

@@ -410,3 +410,91 @@ Default grouping uses scope_path. Known patterns use discriminators:
 `extract_ids_and_text()` continues to work for existing callers (resolution_tracker.py, candidate_extraction.py) while the FieldFact infrastructure provides structured access for new workflows.
 
 See `docs/plans/fact_redesign.md` lines 143-279 for the complete specification.
+
+## Artifact Detection and Management
+
+The artifact detection system bridges structural FieldFacts and semantic fact extraction
+per `docs/plans/fact_redesign.md` lines 282-569.
+
+### Modules
+
+**artifact_manager.py** - CRUD operations for artifact manifests:
+
+- `create_artifact_manifest(artifact, output_dir)`: Create manifest YAML file
+- `load_artifact_manifest(artifact_id, artifacts_dir)`: Load manifest from file
+- `update_artifact_manifest(artifact_id, updates, artifacts_dir)`: Merge updates
+- `list_artifact_manifests(artifacts_dir, filter_v1_only)`: List all manifests
+- `delete_artifact_manifest(artifact_id, artifacts_dir)`: Remove manifest file
+- `get_manifests_by_source_file(source_file, artifacts_dir)`: Filter by source
+- `get_manifests_by_kind(artifact_kind_pattern, artifacts_dir)`: Filter by kind pattern
+- `set_validation_result(artifact_id, artifacts_dir, ...)`: Update validation status
+
+### CLI Commands
+
+**detect_artifacts.py** - Detect artifacts from YAML files:
+
+```bash
+# Scan directory for artifacts (creates manifests by default)
+uv run knowledge.detect-artifacts --source-files 'docs/development/**/*.yml'
+
+# Detection only (no manifest creation)
+uv run knowledge.detect-artifacts --source-files docs/**/*.yml --no-create-manifests
+
+# Include non-V1 artifacts (modality != text or extraction_mode != full)
+uv run knowledge.detect-artifacts --source-files docs/*.yml --no-v1-only
+
+# Output detected artifacts as JSON
+uv run knowledge.detect-artifacts --source-files docs/*.yml --output-format json
+```
+
+**query_artifacts.py** - Query artifact manifests:
+
+```bash
+# List all artifacts (table format)
+uv run knowledge.query-artifacts
+
+# Filter by artifact_kind pattern
+uv run knowledge.query-artifacts --artifact-kind 'diagram/*'
+
+# Filter by source file
+uv run knowledge.query-artifacts --source-file docs/architecture/event-flow.yml
+
+# Show validation status
+uv run knowledge.query-artifacts --show-validation
+
+# Show aggregate statistics
+uv run knowledge.query-artifacts --stats
+
+# Output as JSON/YAML/CSV
+uv run knowledge.query-artifacts --output-format json
+```
+
+### Artifact Lifecycle
+
+Per `docs/plans/fact_redesign.md` lines 561-569, the current implementation covers:
+
+1. **Detect artifact roots** (implemented): `detect_artifacts_from_field_facts()`
+2. **Create/update manifests** (implemented): `artifact_manager.create_artifact_manifest()`
+3. **Extract semantic facts** (deferred): Phase 2
+4. **Render from facts** (deferred): Phase 2
+5. **Validate rendered vs source** (deferred): Phase 2
+6. **Persist validation results** (implemented): `artifact_manager.set_validation_result()`
+
+### V1 Participation Rule
+
+Per `docs/plans/fact_redesign.md` lines 36-42, only artifacts with:
+
+- `modality == "text"`
+- `extraction_mode == "full"`
+
+...participate in current extraction/rendering pipelines. Other combinations are
+representable but bypassed. Use `--no-v1-only` in CLI commands to include all artifacts.
+
+### Related Files
+
+- Artifact Kind Registry: `.knowledge/artifacts/kinds.yml`
+- Artifact manifests: `.knowledge/artifacts/<artifact_id>.yml`
+- Rendered artifacts: `.knowledge/artifacts/rendered/<artifact_id>.<ext>`
+- Registry validation: `uv run knowledge.validate-artifact-kinds`
+
+See `.knowledge/README.md` "Artifact Manifests" section for schema details.

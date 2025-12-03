@@ -13,6 +13,7 @@ from scripts.knowledge import compare_yaml_docs
 from scripts.knowledge.compare_yaml_docs import (
     CONTAINMENT_EDGE_COLUMNS,
     CSV_COLUMNS,
+    Artifact,
     ArtifactMatch,
     ComparisonEntry,
     ContainmentEdge,
@@ -24,9 +25,13 @@ from scripts.knowledge.compare_yaml_docs import (
     _check_content_sniff,
     _check_sibling_constraints,
     _clear_artifact_registry_cache,
+    _compute_artifact_id,
     _compute_group_key,
     _determine_value_kind,
     _flatten_entry_to_rows,
+    _get_modality_and_extraction_mode_from_registry,
+    _get_render_engine_for_kind,
+    _get_render_plan_id_from_registry,
     _is_artifact_root,
     _is_element,
     _iter_field_facts,
@@ -37,6 +42,7 @@ from scripts.knowledge.compare_yaml_docs import (
     _validate_yaml_result,
     aggregate_split_objects,
     compare_original_to_splits,
+    detect_artifacts_from_field_facts,
     extract_field_facts,
     extract_ids_and_objects,
     extract_ids_and_text,
@@ -1609,3 +1615,455 @@ kinds:
         assert result.role == "artifact_root"
         assert result.artifact_kind == "prose/code-block"
         assert result.artifact_format == "text/markdown"
+
+
+class TestComputeArtifactId:
+    """Tests for _compute_artifact_id function."""
+
+    def test_produces_sha256_hash(self) -> None:
+        """Should produce a 64-character SHA-256 hash."""
+        result = _compute_artifact_id(
+            source_file="docs/test.yml",
+            element_id="test-element",
+            field_path="text",
+            artifact_kind="diagram/mermaid.sequence",
+        )
+        assert len(result) == 64
+        assert all(c in "0123456789abcdef" for c in result)
+
+    def test_stable_for_same_inputs(self) -> None:
+        """Should produce same hash for same inputs."""
+        inputs = {
+            "source_file": "docs/test.yml",
+            "element_id": "test-element",
+            "field_path": "text",
+            "artifact_kind": "diagram/mermaid.sequence",
+        }
+        result1 = _compute_artifact_id(**inputs)
+        result2 = _compute_artifact_id(**inputs)
+        assert result1 == result2
+
+    def test_different_for_different_inputs(self) -> None:
+        """Should produce different hash for different inputs."""
+        result1 = _compute_artifact_id(
+            source_file="docs/test.yml",
+            element_id="element-1",
+            field_path="text",
+            artifact_kind="diagram/mermaid.sequence",
+        )
+        result2 = _compute_artifact_id(
+            source_file="docs/test.yml",
+            element_id="element-2",
+            field_path="text",
+            artifact_kind="diagram/mermaid.sequence",
+        )
+        assert result1 != result2
+
+
+class TestGetRenderEngineForKind:
+    """Tests for _get_render_engine_for_kind function."""
+
+    def test_text_llm_for_prose(self) -> None:
+        """Should return text_llm for prose kinds."""
+        assert _get_render_engine_for_kind("prose/paragraph") == "text_llm"
+        assert _get_render_engine_for_kind("prose/code-block") == "text_llm"
+
+    def test_text_llm_for_diagram(self) -> None:
+        """Should return text_llm for diagram kinds."""
+        assert _get_render_engine_for_kind("diagram/mermaid.sequence") == "text_llm"
+        assert _get_render_engine_for_kind("diagram/mermaid.flowchart") == "text_llm"
+
+    def test_text_llm_for_table(self) -> None:
+        """Should return text_llm for table kinds."""
+        assert _get_render_engine_for_kind("table/discriminator-grouped") == "text_llm"
+
+    def test_none_for_schema(self) -> None:
+        """Should return none for schema kinds."""
+        assert _get_render_engine_for_kind("schema/nested-hierarchy") == "none"
+        assert _get_render_engine_for_kind("schema/json_schema") == "none"
+
+    def test_none_for_data(self) -> None:
+        """Should return none for data kinds."""
+        assert _get_render_engine_for_kind("data/config") == "none"
+
+
+class TestGetRenderPlanIdFromRegistry:
+    """Tests for _get_render_plan_id_from_registry function."""
+
+    def test_returns_render_plan_from_registry(self) -> None:
+        """Should return render_plan_id from matching registry entry."""
+        registry = [
+            {
+                "kind_id": "diagram/mermaid.sequence",
+                "rendering_contract": {
+                    "render_plan_id": "diagram.mermaid.sequence.v1",
+                },
+            }
+        ]
+        result = _get_render_plan_id_from_registry(
+            "diagram/mermaid.sequence",
+            registry_cache=registry,
+        )
+        assert result == "diagram.mermaid.sequence.v1"
+
+    def test_returns_default_for_missing_kind(self) -> None:
+        """Should return default render_plan_id for unknown kind."""
+        registry = []
+        result = _get_render_plan_id_from_registry(
+            "unknown/kind",
+            registry_cache=registry,
+        )
+        assert result == "unknown.kind.v1"
+
+    def test_converts_kind_format_in_default(self) -> None:
+        """Should convert kind_id format for default render_plan_id."""
+        registry = []
+        result = _get_render_plan_id_from_registry(
+            "diagram/mermaid-sequence",
+            registry_cache=registry,
+        )
+        # / -> . and - -> _
+        assert result == "diagram.mermaid_sequence.v1"
+
+
+class TestGetModalityAndExtractionModeFromRegistry:
+    """Tests for _get_modality_and_extraction_mode_from_registry function."""
+
+    def test_returns_values_from_registry(self) -> None:
+        """Should return modality and extraction_mode from registry."""
+        registry = [
+            {
+                "kind_id": "image/png",
+                "modality": "image",
+                "extraction_mode": "query_only",
+            }
+        ]
+        modality, extraction_mode = _get_modality_and_extraction_mode_from_registry(
+            "image/png",
+            registry_cache=registry,
+        )
+        assert modality == "image"
+        assert extraction_mode == "query_only"
+
+    def test_returns_defaults_for_missing_kind(self) -> None:
+        """Should return defaults when kind not found."""
+        registry = []
+        modality, extraction_mode = _get_modality_and_extraction_mode_from_registry(
+            "unknown/kind",
+            registry_cache=registry,
+        )
+        assert modality == "text"
+        assert extraction_mode == "full"
+
+    def test_returns_defaults_for_missing_fields(self) -> None:
+        """Should return defaults when registry entry lacks modality/extraction_mode."""
+        registry = [
+            {
+                "kind_id": "prose/paragraph",
+                # modality and extraction_mode not specified
+            }
+        ]
+        modality, extraction_mode = _get_modality_and_extraction_mode_from_registry(
+            "prose/paragraph",
+            registry_cache=registry,
+        )
+        assert modality == "text"
+        assert extraction_mode == "full"
+
+    def test_handles_invalid_modality_value(self) -> None:
+        """Should default to text for invalid modality value."""
+        registry = [
+            {
+                "kind_id": "test/kind",
+                "modality": "invalid_value",
+            }
+        ]
+        modality, extraction_mode = _get_modality_and_extraction_mode_from_registry(
+            "test/kind",
+            registry_cache=registry,
+        )
+        assert modality == "text"
+
+    def test_handles_invalid_extraction_mode_value(self) -> None:
+        """Should default to full for invalid extraction_mode value."""
+        registry = [
+            {
+                "kind_id": "test/kind",
+                "extraction_mode": "invalid_value",
+            }
+        ]
+        modality, extraction_mode = _get_modality_and_extraction_mode_from_registry(
+            "test/kind",
+            registry_cache=registry,
+        )
+        assert extraction_mode == "full"
+
+
+class TestArtifactDataclass:
+    """Tests for Artifact dataclass."""
+
+    def test_creates_artifact_with_all_fields(self) -> None:
+        """Should create Artifact with all required fields."""
+        artifact = Artifact(
+            artifact_id="abc123",
+            artifact_kind="diagram/mermaid.sequence",
+            artifact_format="text/x-mermaid",
+            source_file="docs/test.yml",
+            source_element_id="element-1",
+            field_path="text",
+            source_locator="inline",
+            source_uri=None,
+            render_engine="text_llm",
+            render_plan_id="diagram.mermaid.sequence.v1",
+            projection_version="fieldfacts.v2",
+        )
+        assert artifact.artifact_id == "abc123"
+        assert artifact.artifact_kind == "diagram/mermaid.sequence"
+        assert artifact.modality == "text"  # Default
+        assert artifact.extraction_mode == "full"  # Default
+
+    def test_default_modality_and_extraction_mode(self) -> None:
+        """Should have default values for modality and extraction_mode."""
+        artifact = Artifact(
+            artifact_id="abc123",
+            artifact_kind="prose/paragraph",
+            artifact_format="text/markdown",
+            source_file="docs/test.yml",
+            source_element_id="element-1",
+            field_path="text",
+            source_locator="inline",
+            source_uri=None,
+            render_engine="text_llm",
+            render_plan_id="prose.paragraph.v1",
+            projection_version="fieldfacts.v2",
+        )
+        assert artifact.modality == "text"
+        assert artifact.extraction_mode == "full"
+
+
+class TestDetectArtifactsFromFieldFacts:
+    """Tests for detect_artifacts_from_field_facts function."""
+
+    def test_detects_artifact_root_field_facts(self) -> None:
+        """Should detect artifacts from FieldFacts with role=artifact_root."""
+        field_facts = {
+            "element-1": [
+                FieldFact(
+                    element_id="element-1",
+                    field_path="text",
+                    key="text",
+                    scope_path="",
+                    value="sequenceDiagram\n  A->>B: Hello",
+                    value_kind="scalar-str",
+                    ancestors=[],
+                    source_file="docs/test.yml",
+                    role="artifact_root",
+                    artifact_kind="diagram/mermaid.sequence",
+                    artifact_format="text/x-mermaid",
+                    artifact_locator="inline",
+                    artifact_uri=None,
+                    group_key="<root>",
+                    group_id="abc123",
+                ),
+                FieldFact(
+                    element_id="element-1",
+                    field_path="type",
+                    key="type",
+                    scope_path="",
+                    value="code",
+                    value_kind="scalar-str",
+                    role="constraint",  # Not an artifact root
+                ),
+            ]
+        }
+        registry = [
+            {
+                "kind_id": "diagram/mermaid.sequence",
+                "rendering_contract": {
+                    "render_plan_id": "diagram.mermaid.sequence.v1",
+                },
+            }
+        ]
+
+        artifacts = detect_artifacts_from_field_facts(
+            field_facts,
+            source_file="docs/test.yml",
+            registry_cache=registry,
+        )
+
+        assert len(artifacts) == 1
+        artifact = artifacts[0]
+        assert artifact.artifact_kind == "diagram/mermaid.sequence"
+        assert artifact.artifact_format == "text/x-mermaid"
+        assert artifact.source_element_id == "element-1"
+        assert artifact.field_path == "text"
+        assert artifact.render_plan_id == "diagram.mermaid.sequence.v1"
+
+    def test_ignores_non_artifact_root_facts(self) -> None:
+        """Should ignore FieldFacts without role=artifact_root."""
+        field_facts = {
+            "element-1": [
+                FieldFact(
+                    element_id="element-1",
+                    field_path="text",
+                    key="text",
+                    scope_path="",
+                    value="Plain text",
+                    value_kind="scalar-str",
+                    role="constraint",  # Not artifact root
+                ),
+                FieldFact(
+                    element_id="element-1",
+                    field_path="ref",
+                    key="ref",
+                    scope_path="",
+                    value={"$ref": "other"},
+                    value_kind="ref",
+                    role="entity_ref",  # Not artifact root
+                ),
+            ]
+        }
+
+        artifacts = detect_artifacts_from_field_facts(
+            field_facts,
+            source_file="docs/test.yml",
+        )
+
+        assert len(artifacts) == 0
+
+    def test_skips_artifact_root_without_artifact_kind(self) -> None:
+        """Should skip artifact roots missing artifact_kind."""
+        field_facts = {
+            "element-1": [
+                FieldFact(
+                    element_id="element-1",
+                    field_path="text",
+                    key="text",
+                    scope_path="",
+                    value="Some text",
+                    value_kind="scalar-str",
+                    role="artifact_root",
+                    artifact_kind=None,  # Missing
+                ),
+            ]
+        }
+
+        artifacts = detect_artifacts_from_field_facts(
+            field_facts,
+            source_file="docs/test.yml",
+        )
+
+        assert len(artifacts) == 0
+
+    def test_computes_stable_artifact_id(self) -> None:
+        """Should compute stable artifact_id from source info."""
+        import hashlib
+
+        field_facts = {
+            "element-1": [
+                FieldFact(
+                    element_id="element-1",
+                    field_path="text",
+                    key="text",
+                    scope_path="",
+                    value="Content",
+                    value_kind="scalar-str",
+                    role="artifact_root",
+                    artifact_kind="prose/paragraph",
+                    artifact_format="text/markdown",
+                    artifact_locator="inline",
+                ),
+            ]
+        }
+
+        artifacts = detect_artifacts_from_field_facts(
+            field_facts,
+            source_file="docs/test.yml",
+        )
+
+        expected_concat = "docs/test.yml:element-1:text:prose/paragraph"
+        expected_id = hashlib.sha256(expected_concat.encode("utf-8")).hexdigest()
+        assert artifacts[0].artifact_id == expected_id
+
+    def test_v1_only_filtering_includes_v1_artifacts(self) -> None:
+        """Should include V1 artifacts when v1_only=True."""
+        field_facts = {
+            "element-1": [
+                FieldFact(
+                    element_id="element-1",
+                    field_path="text",
+                    key="text",
+                    scope_path="",
+                    value="Content",
+                    value_kind="scalar-str",
+                    role="artifact_root",
+                    artifact_kind="prose/paragraph",
+                    artifact_format="text/markdown",
+                    artifact_locator="inline",
+                ),
+            ]
+        }
+        # Registry with V1 values (text modality, full extraction)
+        registry = [
+            {
+                "kind_id": "prose/paragraph",
+                "modality": "text",
+                "extraction_mode": "full",
+            }
+        ]
+
+        artifacts = detect_artifacts_from_field_facts(
+            field_facts,
+            source_file="docs/test.yml",
+            registry_cache=registry,
+            v1_only=True,
+        )
+        assert len(artifacts) == 1
+
+    def test_v1_only_filtering_excludes_non_v1_artifacts(self) -> None:
+        """Should exclude non-V1 artifacts when v1_only=True."""
+        field_facts = {
+            "element-1": [
+                FieldFact(
+                    element_id="element-1",
+                    field_path="image",
+                    key="image",
+                    scope_path="",
+                    value="image_ref",
+                    value_kind="scalar-str",
+                    role="artifact_root",
+                    artifact_kind="image/png",
+                    artifact_format="image/png",
+                    artifact_locator="reference",
+                    artifact_uri="assets/image.png",
+                ),
+            ]
+        }
+        # Registry with non-V1 values (image modality)
+        registry = [
+            {
+                "kind_id": "image/png",
+                "modality": "image",
+                "extraction_mode": "query_only",
+            }
+        ]
+
+        # With v1_only=True, should filter out non-V1 artifact
+        artifacts_v1 = detect_artifacts_from_field_facts(
+            field_facts,
+            source_file="docs/test.yml",
+            registry_cache=registry,
+            v1_only=True,
+        )
+        assert len(artifacts_v1) == 0
+
+        # With v1_only=False, should include non-V1 artifact
+        artifacts_all = detect_artifacts_from_field_facts(
+            field_facts,
+            source_file="docs/test.yml",
+            registry_cache=registry,
+            v1_only=False,
+        )
+        assert len(artifacts_all) == 1
+        assert artifacts_all[0].modality == "image"
+        assert artifacts_all[0].extraction_mode == "query_only"

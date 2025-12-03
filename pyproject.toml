@@ -111,6 +111,9 @@ test-coverage = "scripts.dev.test_runner.test_coverage:main"
 "knowledge.apply-variant-decisions" = "scripts.knowledge.variant_resolver:main_apply"
 "knowledge.extract-keywords" = "scripts.knowledge.extraction_pipeline:main"
 "knowledge.validate-artifact-kinds" = "scripts.knowledge.validate_artifact_kinds:main"
+# Artifact lifecycle management (per docs/plans/fact_redesign.md lines 561-569)
+"knowledge.detect-artifacts" = "scripts.knowledge.detect_artifacts:main"
+"knowledge.query-artifacts" = "scripts.knowledge.query_artifacts:main"
 
 [tool.uv]
 link-mode = "copy"
