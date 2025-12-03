@@ -13,18 +13,25 @@ from scripts.knowledge import compare_yaml_docs
 from scripts.knowledge.compare_yaml_docs import (
     CONTAINMENT_EDGE_COLUMNS,
     CSV_COLUMNS,
+    ArtifactMatch,
     ComparisonEntry,
     ContainmentEdge,
     FieldFact,
+    RoleAssignment,
     SplitEntry,
     _assign_role,
     _build_ancestors_map,
+    _check_content_sniff,
+    _check_sibling_constraints,
+    _clear_artifact_registry_cache,
     _compute_group_key,
     _determine_value_kind,
     _flatten_entry_to_rows,
     _is_artifact_root,
     _is_element,
     _iter_field_facts,
+    _load_artifact_registry,
+    _match_root_path,
     _slice_element,
     _strip_timestamp_prefix,
     _validate_yaml_result,
@@ -900,38 +907,35 @@ class TestAssignRole:
 
     def test_ref_value_kind_returns_entity_ref(self) -> None:
         """Should return 'entity_ref' when value_kind is 'ref'."""
-        from scripts.knowledge.compare_yaml_docs import _assign_role
-
         result = _assign_role("child", "ref", "items[0].child", None)
-        assert result == "entity_ref"
+        assert isinstance(result, RoleAssignment)
+        assert result.role == "entity_ref"
+        assert result.artifact_kind is None
 
     def test_metadata_keys_return_metadata(self) -> None:
         """Should return 'metadata' for known metadata keys."""
-        from scripts.knowledge.compare_yaml_docs import _assign_role
-
-        assert _assign_role("id", "scalar-str", "id", None) == "metadata"
-        assert _assign_role("doc_id", "scalar-str", "doc_id", None) == "metadata"
-        assert _assign_role("version_hint", "scalar-str", "version_hint", None) == "metadata"
-        assert _assign_role("kind", "scalar-str", "kind", None) == "metadata"
-        assert _assign_role("index", "scalar-num", "index", None) == "metadata"
-        assert _assign_role("category", "scalar-str", "category", None) == "metadata"
-        assert _assign_role("domain", "scalar-str", "domain", None) == "metadata"
+        assert _assign_role("id", "scalar-str", "id", None).role == "metadata"
+        assert _assign_role("doc_id", "scalar-str", "doc_id", None).role == "metadata"
+        assert _assign_role("version_hint", "scalar-str", "version_hint", None).role == "metadata"
+        assert _assign_role("kind", "scalar-str", "kind", None).role == "metadata"
+        assert _assign_role("index", "scalar-num", "index", None).role == "metadata"
+        assert _assign_role("category", "scalar-str", "category", None).role == "metadata"
+        assert _assign_role("domain", "scalar-str", "domain", None).role == "metadata"
 
     def test_default_returns_constraint(self) -> None:
         """Should return 'constraint' for non-metadata, non-ref keys."""
-        from scripts.knowledge.compare_yaml_docs import _assign_role
+        assert _assign_role("text", "scalar-str", "text", None).role == "constraint"
+        assert _assign_role("status_code", "scalar-num", "raises[0].status_code", None).role == "constraint"
+        assert _assign_role("method", "scalar-str", "http_method_defaults[0].method", None).role == "constraint"
 
-        assert _assign_role("text", "scalar-str", "text", None) == "constraint"
-        assert _assign_role("status_code", "scalar-num", "raises[0].status_code", None) == "constraint"
-        assert _assign_role("method", "scalar-str", "http_method_defaults[0].method", None) == "constraint"
-
-    def test_artifact_root_placeholder_returns_false(self) -> None:
-        """Should verify artifact root detection returns False for now (placeholder)."""
-        from scripts.knowledge.compare_yaml_docs import _is_artifact_root
-
-        # TODO: Artifact root detection is a placeholder until Artifact Kind Registry
-        result = _is_artifact_root("text", "scalar-str", "items[0].text", None)
-        assert result is False
+    def test_artifact_root_returns_none_without_registry(self) -> None:
+        """Should return None when no registry is available."""
+        # Clear cache and provide empty registry
+        _clear_artifact_registry_cache()
+        result = _is_artifact_root(
+            "text", "scalar-str", "items[0].text", None, None, registry_cache=[]
+        )
+        assert result is None
 
 
 class TestComputeGroupKey:
@@ -1427,3 +1431,181 @@ class TestExtractIdsAndTextWithFieldFacts:
         text_fact = next((f for f in facts if f.key == "text"), None)
         assert text_fact is not None
         assert text_fact.value == "Hello"
+
+
+class TestArtifactRootDetection:
+    """Tests for artifact root detection with registry."""
+
+    def setup_method(self) -> None:
+        """Clear registry cache before each test."""
+        _clear_artifact_registry_cache()
+
+    def test_load_artifact_registry_missing_file(self, fs: FakeFilesystem) -> None:
+        """Should return empty list when registry file doesn't exist."""
+        fs.create_dir("/fake/.knowledge/artifacts")
+        with patch.object(compare_yaml_docs, "REPO_ROOT", Path("/fake")):
+            result = _load_artifact_registry(Path("/fake/.knowledge"))
+        assert result == []
+
+    def test_load_artifact_registry_valid_file(self, fs: FakeFilesystem) -> None:
+        """Should load valid registry."""
+        fs.create_dir("/fake/.knowledge/artifacts")
+        registry_content = """
+kinds:
+  - kind_id: test/kind
+    content_form: text
+"""
+        fs.create_file(
+            "/fake/.knowledge/artifacts/kinds.yml",
+            contents=registry_content,
+        )
+        with patch.object(compare_yaml_docs, "REPO_ROOT", Path("/fake")):
+            result = _load_artifact_registry(Path("/fake/.knowledge"))
+        assert len(result) == 1
+        assert result[0]["kind_id"] == "test/kind"
+
+    def test_match_root_path_exact(self) -> None:
+        """Should match exact path patterns."""
+        assert _match_root_path("sections[0].text", "sections[*].text")
+        assert _match_root_path("sections[10].text", "sections[*].text")
+        assert not _match_root_path("sections[0].items", "sections[*].text")
+
+    def test_match_root_path_nested(self) -> None:
+        """Should match nested path patterns."""
+        assert _match_root_path("sections[0].items[1].text", "sections[*].items[*].text")
+        assert not _match_root_path("sections[0].text", "sections[*].items[*].text")
+
+    def test_match_root_path_container_level(self) -> None:
+        """Should match container-level patterns with prefix matching.
+
+        Container-level roots like sections[*].http_method_defaults should match
+        any field within that container, enabling artifact root detection at
+        the container level.
+        """
+        # Container-level match - pattern points to container, field is within
+        assert _match_root_path(
+            "sections[0].http_method_defaults",
+            "sections[*].http_method_defaults",
+        )
+        assert _match_root_path(
+            "sections[0].http_method_defaults[0]",
+            "sections[*].http_method_defaults",
+        )
+        assert _match_root_path(
+            "sections[0].http_method_defaults[0].method",
+            "sections[*].http_method_defaults",
+        )
+        # Should not match unrelated paths
+        assert not _match_root_path(
+            "sections[0].other_field",
+            "sections[*].http_method_defaults",
+        )
+        # Should not match partial key overlaps
+        assert not _match_root_path(
+            "sections[0].http_method_defaults_extra",
+            "sections[*].http_method_defaults",
+        )
+
+    def test_check_sibling_constraints_equals(self) -> None:
+        """Should check equals constraint."""
+        constraints = [{"key": "type", "equals": "code"}]
+        parent = {"type": "code", "text": "content"}
+        assert _check_sibling_constraints(parent, constraints)
+        assert not _check_sibling_constraints({"type": "prose"}, constraints)
+
+    def test_check_sibling_constraints_matches(self) -> None:
+        """Should check regex matches constraint."""
+        constraints = [{"key": "type", "matches": r"^code.*"}]
+        assert _check_sibling_constraints({"type": "code_block"}, constraints)
+        assert not _check_sibling_constraints({"type": "prose"}, constraints)
+
+    def test_check_sibling_constraints_starts_with(self) -> None:
+        """Should check starts_with constraint."""
+        constraints = [{"key": "type", "starts_with": "mermaid"}]
+        assert _check_sibling_constraints({"type": "mermaid_diagram"}, constraints)
+        assert not _check_sibling_constraints({"type": "code"}, constraints)
+
+    def test_check_content_sniff_starts_with_any(self) -> None:
+        """Should check starts_with_any content sniff."""
+        sniff = {"starts_with_any": ["sequenceDiagram", "graph "]}
+        assert _check_content_sniff("sequenceDiagram\n  A->>B", sniff)
+        assert _check_content_sniff("graph LR\n  A-->B", sniff)
+        assert not _check_content_sniff("flowchart LR", sniff)
+
+    def test_check_content_sniff_matches(self) -> None:
+        """Should check regex matches content sniff."""
+        sniff = {"matches": r"^```python"}
+        assert _check_content_sniff("```python\nprint('hello')", sniff)
+        assert not _check_content_sniff("```javascript", sniff)
+
+    def test_is_artifact_root_with_registry(self) -> None:
+        """Should detect artifact root using registry patterns."""
+        registry = [
+            {
+                "kind_id": "diagram/mermaid.sequence",
+                "structure_pattern": {
+                    "root_path": "sections[*].items[*].text",
+                    "sibling_constraints": [{"key": "type", "equals": "code"}],
+                    "content_sniff": {"starts_with_any": ["sequenceDiagram"]},
+                },
+                "rendering_contract": {"output_mime": "text/x-mermaid"},
+            }
+        ]
+        # Should match
+        result = _is_artifact_root(
+            key="text",
+            value_kind="scalar-str",
+            field_path="sections[0].items[2].text",
+            parent_data={"type": "code", "text": "sequenceDiagram\n  A->>B"},
+            value="sequenceDiagram\n  A->>B: Message",
+            registry_cache=registry,
+        )
+        assert result is not None
+        assert isinstance(result, ArtifactMatch)
+        assert result.kind_id == "diagram/mermaid.sequence"
+        assert result.artifact_format == "text/x-mermaid"
+
+    def test_is_artifact_root_no_match(self) -> None:
+        """Should return None when no pattern matches."""
+        registry = [
+            {
+                "kind_id": "diagram/mermaid.sequence",
+                "structure_pattern": {
+                    "root_path": "sections[*].items[*].text",
+                    "content_sniff": {"starts_with_any": ["sequenceDiagram"]},
+                },
+            }
+        ]
+        # Different content - should not match
+        result = _is_artifact_root(
+            key="text",
+            value_kind="scalar-str",
+            field_path="sections[0].items[0].text",
+            parent_data=None,
+            value="Just regular text",
+            registry_cache=registry,
+        )
+        assert result is None
+
+    def test_assign_role_artifact_root(self) -> None:
+        """Should return artifact_root role with metadata."""
+        registry = [
+            {
+                "kind_id": "prose/code-block",
+                "structure_pattern": {
+                    "root_path": "sample_code.code",
+                },
+                "rendering_contract": {"output_mime": "text/markdown"},
+            }
+        ]
+        result = _assign_role(
+            key="code",
+            value_kind="scalar-str",
+            field_path="sample_code.code",
+            parent_data=None,
+            value="def foo(): pass",
+            registry_cache=registry,
+        )
+        assert result.role == "artifact_root"
+        assert result.artifact_kind == "prose/code-block"
+        assert result.artifact_format == "text/markdown"

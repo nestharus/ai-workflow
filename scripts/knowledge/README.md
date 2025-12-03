@@ -303,6 +303,50 @@ Subsequent phases will add:
 
 See the subsequent phases documentation for details on these components.
 
+## Artifact Kind Validation
+
+**Command:** `uv run knowledge.validate-artifact-kinds`
+
+**Purpose:** Validate the Artifact Kind Registry (`.knowledge/artifacts/kinds.yml`) to ensure
+schema compliance, deterministic structure patterns, and prevent duplicate/overlapping artifact kinds.
+
+**Arguments:**
+
+- `--knowledge-path <path>`: Base knowledge directory (default: `.knowledge`)
+- `--strict`: Upgrade warnings to blocking errors
+- `--json-report <path>`: Output JSON validation report
+
+**Validation Checks:**
+
+1. **Schema checks (blocking)**: Required fields present, kind_id uniqueness, alias targets exist, render plan references validated
+2. **Sample execution (blocking when samples present)**: Loads sample YAML files, extracts FieldFacts using `extract_field_facts`, verifies required fields from structure_pattern exist in element, validates contributor paths from extraction_contract
+3. **Determinism checks (blocking)**: root_path syntax validation, sibling_constraint operators, content_sniff regex patterns
+4. **Duplicate detection**: Identical patterns (blocking error), near-duplicates using Jaccard similarity (warning at threshold >= 0.8, blocking with `--strict`)
+
+**Exit Codes:**
+
+- 0: Success (or warnings only)
+- 1: Blocking errors
+
+**Example Usage:**
+
+```bash
+# Validate registry with default settings
+uv run knowledge.validate-artifact-kinds
+
+# Strict mode (warnings become errors)
+uv run knowledge.validate-artifact-kinds --strict
+
+# Generate JSON report
+uv run knowledge.validate-artifact-kinds --json-report validation_report.json
+```
+
+**Related Files:**
+
+- Registry: `.knowledge/artifacts/kinds.yml`
+- Validation script: `scripts/knowledge/validate_artifact_kinds.py`
+- Specification: `docs/plans/fact_redesign.md` lines 341-479
+
 ## compare_yaml_docs.py
 
 Compares YAML documents by extracting IDs and their associated object data, enabling dict-to-dict comparison across versions.
@@ -351,7 +395,7 @@ Each FieldFact captures:
 
 1. **entity_ref**: $ref values (value_kind == "ref")
 2. **metadata**: Known keys (doc_id, id, version_hint, kind, index, category, domain)
-3. **artifact_root**: Placeholder (not yet implemented)
+3. **artifact_root**: Detected via Artifact Kind Registry using root_path matching, sibling_constraints, and content_sniff patterns
 4. **constraint**: Default for other fields
 
 ### Constraint Grouping

@@ -38,6 +38,7 @@ FieldFact Extraction:
 import argparse
 import hashlib
 import json
+import logging
 import re
 import sys
 from collections.abc import Sequence
@@ -49,6 +50,12 @@ import duckdb
 import yaml
 
 from scripts.dev.utils import REPO_ROOT
+
+# Module-level logger
+_logger = logging.getLogger(__name__)
+
+# Module-level cache for artifact kind registry
+_artifact_registry_cache: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -191,17 +198,215 @@ def _determine_value_kind(value: Any) -> ValueKind:  # noqa: ANN401
     return "scalar-str"
 
 
+def _load_artifact_registry(
+    knowledge_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Load the artifact kind registry from YAML.
+
+    Caches the registry in a module-level variable to avoid repeated file reads.
+    Returns an empty list if the registry file doesn't exist (graceful degradation).
+
+    Args:
+        knowledge_path: Base knowledge directory path. If None, uses REPO_ROOT/.knowledge.
+
+    Returns:
+        List of artifact kind entries, or empty list if registry unavailable.
+    """
+    global _artifact_registry_cache  # noqa: PLW0603
+
+    if _artifact_registry_cache is not None:
+        return _artifact_registry_cache
+
+    if knowledge_path is None:
+        knowledge_path = REPO_ROOT / KNOWLEDGE_DIR_NAME
+
+    registry_path = knowledge_path / "artifacts" / "kinds.yml"
+    if not registry_path.exists():
+        _artifact_registry_cache = []
+        return _artifact_registry_cache
+
+    try:
+        content = registry_path.read_text(encoding="utf-8")
+        data = yaml.safe_load(content)
+    except (yaml.YAMLError, OSError) as exc:
+        _logger.warning("Failed to load artifact registry: %s", exc)
+        _artifact_registry_cache = []
+        return _artifact_registry_cache
+
+    if not isinstance(data, dict):
+        _logger.warning("Artifact registry must be a YAML mapping with 'kinds' key")
+        _artifact_registry_cache = []
+        return _artifact_registry_cache
+
+    kinds = data.get("kinds", [])
+    if not isinstance(kinds, list):
+        _logger.warning("'kinds' in artifact registry must be a list")
+        _artifact_registry_cache = []
+        return _artifact_registry_cache
+
+    _artifact_registry_cache = kinds
+    return _artifact_registry_cache
+
+
+def _clear_artifact_registry_cache() -> None:
+    """Clear the artifact registry cache for testing purposes."""
+    global _artifact_registry_cache  # noqa: PLW0603
+    _artifact_registry_cache = None
+
+
+def _match_root_path(field_path: str, root_path_pattern: str) -> bool:
+    """Check if a field path matches a root_path pattern.
+
+    Supports two matching modes:
+    1. Exact match: sections[*].items[*].text matches sections[0].items[2].text
+    2. Container match: sections[*].http_method_defaults matches any field under that path
+       (e.g., sections[0].http_method_defaults, sections[0].http_method_defaults[0].method)
+
+    Container matching is triggered when the pattern points to a container field
+    (list or dict), allowing artifact roots to be defined at the container level
+    while detection still works for leaf fields within that container.
+
+    Args:
+        field_path: The actual field path (e.g., "sections[0].http_method_defaults[0].method").
+        root_path_pattern: The pattern to match (e.g., "sections[*].http_method_defaults").
+
+    Returns:
+        True if the field path matches the pattern (exact or prefix match).
+    """
+    # Convert pattern to regex
+    # Replace [*] with [\d+] for matching any index
+    # Escape dots for regex
+    regex_pattern = root_path_pattern.replace("[*]", r"\[\d+\]")
+    regex_pattern = regex_pattern.replace(".", r"\.")
+
+    # First try exact match
+    exact_regex = f"^{regex_pattern}$"
+    if re.match(exact_regex, field_path):
+        return True
+
+    # Then try prefix match (for container-level roots)
+    # Allow the field_path to extend beyond the pattern with . or [
+    prefix_regex = f"^{regex_pattern}(?:[.\\[]|$)"
+    return bool(re.match(prefix_regex, field_path))
+
+
+def _check_sibling_constraints(
+    parent_data: dict[str, Any] | None,
+    sibling_constraints: list[dict[str, Any]],
+) -> bool:
+    """Check if parent data satisfies sibling constraints.
+
+    Args:
+        parent_data: The parent dict containing sibling fields.
+        sibling_constraints: List of constraint definitions with key and operator.
+
+    Returns:
+        True if all constraints are satisfied.
+    """
+    if not parent_data or not sibling_constraints:
+        return True
+
+    for constraint in sibling_constraints:
+        if not isinstance(constraint, dict):
+            continue
+
+        key = constraint.get("key")
+        if not key or key not in parent_data:
+            return False
+
+        sibling_value = parent_data.get(key)
+
+        # Check equals operator
+        if "equals" in constraint:
+            if sibling_value != constraint["equals"]:
+                return False
+
+        # Check matches operator (regex)
+        if "matches" in constraint:
+            try:
+                if not re.match(constraint["matches"], str(sibling_value)):
+                    return False
+            except re.error:
+                return False
+
+        # Check starts_with operator
+        if "starts_with" in constraint:
+            if not str(sibling_value).startswith(constraint["starts_with"]):
+                return False
+
+        # Check ends_with operator
+        if "ends_with" in constraint:
+            if not str(sibling_value).endswith(constraint["ends_with"]):
+                return False
+
+    return True
+
+
+def _check_content_sniff(
+    value: Any,  # noqa: ANN401
+    content_sniff: dict[str, Any],
+) -> bool:
+    """Check if value content matches sniffing rules.
+
+    Args:
+        value: The field value to check.
+        content_sniff: Content sniffing rules (starts_with_any, matches, etc.).
+
+    Returns:
+        True if content matches sniffing rules.
+    """
+    if not content_sniff or not isinstance(value, str):
+        return True if not content_sniff else False
+
+    # Check starts_with_any
+    starts_with_any = content_sniff.get("starts_with_any", [])
+    if starts_with_any:
+        if not any(value.startswith(prefix) for prefix in starts_with_any):
+            return False
+
+    # Check ends_with_any
+    ends_with_any = content_sniff.get("ends_with_any", [])
+    if ends_with_any:
+        if not any(value.endswith(suffix) for suffix in ends_with_any):
+            return False
+
+    # Check matches (regex)
+    matches = content_sniff.get("matches")
+    if matches:
+        try:
+            if not re.search(matches, value):
+                return False
+        except re.error:
+            return False
+
+    return True
+
+
+@dataclass
+class ArtifactMatch:
+    """Result of matching a field against artifact kind registry.
+
+    Attributes:
+        kind_id: The matched artifact kind ID.
+        artifact_format: MIME type for the artifact.
+    """
+
+    kind_id: str
+    artifact_format: str | None
+
+
 def _is_artifact_root(
     key: str,
     value_kind: ValueKind,
     field_path: str,
     parent_data: dict[str, Any] | None = None,
-) -> bool:
-    """Determine if a field is an artifact root.
+    value: Any = None,  # noqa: ANN401
+    registry_cache: list[dict[str, Any]] | None = None,
+) -> ArtifactMatch | None:
+    """Determine if a field is an artifact root using the Artifact Kind Registry.
 
-    TODO: This is a placeholder that always returns False until the Artifact Kind
-    Registry is implemented in a subsequent phase. Per fact_redesign.md lines 221-229,
-    artifact roots are discovered by deterministic rules based on:
+    Per fact_redesign.md lines 221-229, artifact roots are discovered by deterministic
+    rules based on:
     - field_path / key name (e.g., text/description/summary)
     - sibling + parent structure (e.g., objects with type: code)
     - content sniffing (e.g., Mermaid preambles like sequenceDiagram)
@@ -211,13 +416,66 @@ def _is_artifact_root(
         value_kind: The classified value kind.
         field_path: Full path from element root.
         parent_data: Parent dict for sibling inspection (optional).
+        value: The actual field value for content sniffing (optional).
+        registry_cache: Optional registry cache for testing.
 
     Returns:
-        True if the field is an artifact root, False otherwise.
+        ArtifactMatch if the field is an artifact root, None otherwise.
     """
-    # Placeholder: artifact root detection not yet implemented
-    # Will be implemented when Artifact Kind Registry is added
-    return False
+    registry = registry_cache if registry_cache is not None else _load_artifact_registry()
+
+    if not registry:
+        return None
+
+    for kind in registry:
+        if not isinstance(kind, dict):
+            continue
+
+        kind_id = kind.get("kind_id")
+        if not kind_id:
+            continue
+
+        pattern = kind.get("structure_pattern", {})
+        if not isinstance(pattern, dict):
+            continue
+
+        # Check root_path match
+        root_path = pattern.get("root_path")
+        if root_path and not _match_root_path(field_path, root_path):
+            continue
+
+        # Check sibling constraints
+        sibling_constraints = pattern.get("sibling_constraints", [])
+        if sibling_constraints and not _check_sibling_constraints(parent_data, sibling_constraints):
+            continue
+
+        # Check content sniff
+        content_sniff = pattern.get("content_sniff", {})
+        if content_sniff and not _check_content_sniff(value, content_sniff):
+            continue
+
+        # If we get here, all checks passed - this is an artifact root
+        rendering = kind.get("rendering_contract", {})
+        artifact_format = rendering.get("output_mime") if isinstance(rendering, dict) else None
+
+        return ArtifactMatch(kind_id=kind_id, artifact_format=artifact_format)
+
+    return None
+
+
+@dataclass
+class RoleAssignment:
+    """Result of role assignment including artifact metadata.
+
+    Attributes:
+        role: The assigned FieldRole.
+        artifact_kind: Artifact kind ID if role == artifact_root.
+        artifact_format: MIME type if role == artifact_root.
+    """
+
+    role: FieldRole
+    artifact_kind: str | None = None
+    artifact_format: str | None = None
 
 
 def _assign_role(
@@ -225,13 +483,15 @@ def _assign_role(
     value_kind: ValueKind,
     field_path: str,
     parent_data: dict[str, Any] | None = None,
-) -> FieldRole:
+    value: Any = None,  # noqa: ANN401
+    registry_cache: list[dict[str, Any]] | None = None,
+) -> RoleAssignment:
     """Assign a semantic role to a field based on deterministic rules.
 
     Role assignment follows the rules in fact_redesign.md lines 210-235:
     1. If value_kind == "ref" -> role = entity_ref
     2. If key in metadata keys -> role = metadata
-    3. If field is artifact root -> role = artifact_root (placeholder)
+    3. If field is artifact root -> role = artifact_root
     4. Otherwise -> role = constraint
 
     Args:
@@ -239,24 +499,33 @@ def _assign_role(
         value_kind: The classified value kind.
         field_path: Full path from element root.
         parent_data: Parent dict for context (optional).
+        value: The actual field value for content sniffing (optional).
+        registry_cache: Optional registry cache for testing.
 
     Returns:
-        The assigned FieldRole.
+        RoleAssignment with role and optional artifact metadata.
     """
     # Rule 1: $ref values are entity references
     if value_kind == "ref":
-        return "entity_ref"
+        return RoleAssignment(role="entity_ref")
 
     # Rule 2: Known metadata keys
     if key in METADATA_KEYS:
-        return "metadata"
+        return RoleAssignment(role="metadata")
 
-    # Rule 3: Artifact root detection (placeholder)
-    if _is_artifact_root(key, value_kind, field_path, parent_data):
-        return "artifact_root"
+    # Rule 3: Artifact root detection using registry
+    artifact_match = _is_artifact_root(
+        key, value_kind, field_path, parent_data, value, registry_cache
+    )
+    if artifact_match:
+        return RoleAssignment(
+            role="artifact_root",
+            artifact_kind=artifact_match.kind_id,
+            artifact_format=artifact_match.artifact_format,
+        )
 
     # Rule 4: Default to constraint
-    return "constraint"
+    return RoleAssignment(role="constraint")
 
 
 # Regex pattern for list index in field path (e.g., [0], [1], [123])
@@ -386,9 +655,14 @@ def _iter_field_facts(
                     # so _compute_group_key can access discriminator fields
                     scope_path, _, _ = child_path.rpartition(".")
                     value_kind = _determine_value_kind(value)
-                    role = _assign_role(key, value_kind, child_path, node)
+                    role_assignment = _assign_role(key, value_kind, child_path, node, value)
                     group_key = _compute_group_key(scope_path, child_path, node)
                     group_id = _compute_group_id(group_key)
+
+                    # Populate artifact metadata for artifact roots
+                    artifact_locator: ArtifactLocator | None = None
+                    if role_assignment.role == "artifact_root":
+                        artifact_locator = "inline"
 
                     facts.append(
                         FieldFact(
@@ -400,10 +674,10 @@ def _iter_field_facts(
                             value_kind=value_kind,
                             ancestors=list(ancestors),
                             source_file=source_file,
-                            role=role,
-                            artifact_kind=None,
-                            artifact_format=None,
-                            artifact_locator=None,
+                            role=role_assignment.role,
+                            artifact_kind=role_assignment.artifact_kind,
+                            artifact_format=role_assignment.artifact_format,
+                            artifact_locator=artifact_locator,
                             artifact_uri=None,
                             group_key=group_key,
                             group_id=group_id,
@@ -415,7 +689,7 @@ def _iter_field_facts(
                         # Emit entity_ref FieldFact for $ref
                         scope_path, _, _ = child_path.rpartition(".")
                         value_kind: ValueKind = "ref"
-                        role = _assign_role(key, value_kind, child_path, node)
+                        role_assignment = _assign_role(key, value_kind, child_path, node, value)
                         group_key = _compute_group_key(scope_path, child_path, node)
                         group_id = _compute_group_id(group_key)
 
@@ -429,7 +703,7 @@ def _iter_field_facts(
                                 value_kind=value_kind,
                                 ancestors=list(ancestors),
                                 source_file=source_file,
-                                role=role,
+                                role=role_assignment.role,
                                 artifact_kind=None,
                                 artifact_format=None,
                                 artifact_locator=None,
@@ -450,9 +724,16 @@ def _iter_field_facts(
                             # Emit scalar list item FieldFact
                             # For scalars in a list, use node as container
                             value_kind = _determine_value_kind(item)
-                            role = _assign_role(str(idx), value_kind, item_path, node)
+                            role_assignment = _assign_role(
+                                str(idx), value_kind, item_path, node, item
+                            )
                             group_key = _compute_group_key(child_path, item_path, node)
                             group_id = _compute_group_id(group_key)
+
+                            # Populate artifact metadata for artifact roots
+                            item_artifact_locator: ArtifactLocator | None = None
+                            if role_assignment.role == "artifact_root":
+                                item_artifact_locator = "inline"
 
                             facts.append(
                                 FieldFact(
@@ -464,10 +745,10 @@ def _iter_field_facts(
                                     value_kind=value_kind,
                                     ancestors=list(ancestors),
                                     source_file=source_file,
-                                    role=role,
-                                    artifact_kind=None,
-                                    artifact_format=None,
-                                    artifact_locator=None,
+                                    role=role_assignment.role,
+                                    artifact_kind=role_assignment.artifact_kind,
+                                    artifact_format=role_assignment.artifact_format,
+                                    artifact_locator=item_artifact_locator,
                                     artifact_uri=None,
                                     group_key=group_key,
                                     group_id=group_id,
@@ -477,7 +758,9 @@ def _iter_field_facts(
                             # Check if it's a $ref - emit as entity_ref, don't recurse
                             if "$ref" in item and isinstance(item["$ref"], str):
                                 value_kind = _determine_value_kind(item)
-                                role = _assign_role(str(idx), value_kind, item_path, node)
+                                role_assignment = _assign_role(
+                                    str(idx), value_kind, item_path, node, item
+                                )
                                 group_key = _compute_group_key(
                                     child_path, item_path, node
                                 )
@@ -493,7 +776,7 @@ def _iter_field_facts(
                                         value_kind=value_kind,
                                         ancestors=list(ancestors),
                                         source_file=source_file,
-                                        role=role,
+                                        role=role_assignment.role,
                                         artifact_kind=None,
                                         artifact_format=None,
                                         artifact_locator=None,
@@ -518,9 +801,16 @@ def _iter_field_facts(
                 item_path = f"{path}[{idx}]" if path else f"[{idx}]"
                 if _is_scalar(item):
                     value_kind = _determine_value_kind(item)
-                    role = _assign_role(str(idx), value_kind, item_path, container_dict)
+                    role_assignment = _assign_role(
+                        str(idx), value_kind, item_path, container_dict, item
+                    )
                     group_key = _compute_group_key(path, item_path, container_dict)
                     group_id = _compute_group_id(group_key)
+
+                    # Populate artifact metadata for artifact roots
+                    top_artifact_locator: ArtifactLocator | None = None
+                    if role_assignment.role == "artifact_root":
+                        top_artifact_locator = "inline"
 
                     facts.append(
                         FieldFact(
@@ -532,10 +822,10 @@ def _iter_field_facts(
                             value_kind=value_kind,
                             ancestors=list(ancestors),
                             source_file=source_file,
-                            role=role,
-                            artifact_kind=None,
-                            artifact_format=None,
-                            artifact_locator=None,
+                            role=role_assignment.role,
+                            artifact_kind=role_assignment.artifact_kind,
+                            artifact_format=role_assignment.artifact_format,
+                            artifact_locator=top_artifact_locator,
                             artifact_uri=None,
                             group_key=group_key,
                             group_id=group_id,

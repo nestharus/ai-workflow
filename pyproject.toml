@@ -110,6 +110,7 @@ test-coverage = "scripts.dev.test_runner.test_coverage:main"
 "knowledge.validate-variant" = "scripts.knowledge.validate_variant:main"
 "knowledge.apply-variant-decisions" = "scripts.knowledge.variant_resolver:main_apply"
 "knowledge.extract-keywords" = "scripts.knowledge.extraction_pipeline:main"
+"knowledge.validate-artifact-kinds" = "scripts.knowledge.validate_artifact_kinds:main"
 
 [tool.uv]
 link-mode = "copy"

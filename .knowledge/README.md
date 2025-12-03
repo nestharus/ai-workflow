@@ -7,6 +7,8 @@ for documentation migrations.
 
 ```text
 .knowledge/
+├── artifacts/      # Artifact Kind Registry, render plans, and rendered artifacts
+│   └── kinds.yml             # Registry of artifact kinds with detection rules
 ├── originals/      # Timestamped copies of original files referenced by comparison
 │                   # and validation commands (referenced in tasks.csv via original_file_ref)
 ├── migrations/     # Migration task metadata (tasks.csv)
@@ -1082,9 +1084,52 @@ Fact-based migration extends the existing file-level migration system (migration
 
 See `docs/processes/fact-migration.yml` for complete workflow documentation
 
+## Artifact Kind Registry
+
+The Artifact Kind Registry (`.knowledge/artifacts/kinds.yml`) is a data-driven, schema-stable
+system for classifying and validating artifact types in YAML documentation. Artifacts are
+irreducible user-facing views (prose, code blocks, diagrams, tables) that are rendered from facts.
+
+### Registry Schema
+
+Each registry entry defines:
+
+- **kind_id**: Stable identifier (e.g., `diagram/mermaid.sequence`)
+- **content_form**: Textual payload shape description
+- **structure_pattern**: Deterministic matching rules (root_path, sibling_constraints, content_sniff)
+- **extraction_contract**: How to extract contributor FieldFacts and semantic facts
+- **rendering_contract**: How to render and validate the artifact (render_plan_id, output_mime, validation comparator)
+- **Optional metadata**: default_format, aliases, examples, modality (text/image/audio/video), extraction_mode (full/incremental/query_only)
+
+### Initial Artifact Kinds
+
+1. **table/discriminator-grouped**: Discriminator-grouped tables (e.g., HTTP method defaults)
+2. **prose/code-block**: Prose-plus-code blocks with description/language/code fields
+3. **schema/nested-hierarchy**: Nested YAML hierarchies with containment edges
+4. **diagram/mermaid.sequence**: Mermaid sequence diagrams stored as text blobs
+
+### Validation
+
+Run `uv run knowledge.validate-artifact-kinds` to validate the registry:
+
+- **Schema checks (blocking)**: Required fields present, kind_id uniqueness, alias targets exist, render plan references validated
+- **Sample execution (blocking when samples present)**: Loads sample YAML files, extracts FieldFacts using `extract_field_facts`, verifies required fields from structure_pattern exist in element, validates contributor paths from extraction_contract
+- **Determinism checks (blocking)**: root_path syntax validation, sibling_constraint operators, content_sniff regex patterns
+- **Duplicate detection**: Identical patterns (blocking error), near-duplicates using Jaccard similarity (warning at threshold >= 0.8)
+
+Use `--strict` flag to upgrade warnings to blocking errors.
+Use `--json-report <path>` to output JSON validation report.
+
 ### Artifact Kind Governance
 
-For governance rules on how LLM-defined artifact kinds are validated and managed (including schema validation, sample execution checks, and duplicate detection), see the "Governance loop for new LLM-defined artifact kinds" subsection in `docs/plans/fact_redesign.md`.
+New artifact kinds can be added by:
+
+1. Adding a new entry to `kinds.yml` following the schema
+2. Including at least one example artifact root for validation
+3. Running validation to ensure no schema violations or duplicates
+4. Committing the updated registry (validation runs in CI)
+
+See `docs/plans/fact_redesign.md` lines 341-479 for complete specification.
 
 ## Field-Level Fact Extraction
 
@@ -1144,4 +1189,14 @@ for element_id, facts in facts_by_element.items():
         print(f"  {fact.field_path}: {fact.value} (role={fact.role})")
 ```
 
-**Note**: Artifact root detection is a placeholder until the Artifact Kind Registry is implemented in a subsequent phase. See `docs/plans/fact_redesign.md` lines 143-279 for the complete specification.
+### Artifact Root Detection
+
+Artifact roots are detected using the Artifact Kind Registry via `_is_artifact_root()` in `compare_yaml_docs.py`. Detection uses:
+
+1. **root_path matching**: Supports both exact and container-level matching (e.g., `sections[*].http_method_defaults` matches fields within that container)
+2. **sibling_constraints**: Checks parent dict for required sibling field values (equals, matches, starts_with, ends_with operators)
+3. **content_sniff**: Regex or prefix/suffix matching on field value content
+
+When a FieldFact matches an artifact kind, the role is set to `artifact_root` and `artifact_kind`/`artifact_format` fields are populated from the registry.
+
+See `docs/plans/fact_redesign.md` lines 143-279 for the complete specification.
