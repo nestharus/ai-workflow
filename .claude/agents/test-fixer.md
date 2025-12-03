@@ -54,17 +54,25 @@ You are a test-fixing specialist. Your task is to run all tests, debug failures,
    - Add tests with `@pytest.mark.usecase("UC-XXX-NNN")` markers
    - Coverage is detected automatically from markers (no YAML updates needed)
 
-6. **Generate LLM coverage report** (optional, for detailed analysis):
+6. **For redundant tests** (test cleanup):
+   - The test-coverage command automatically detects redundant tests
+   - Redundant tests are listed in the "REDUNDANT TEST ANALYSIS" section
+   - A test is redundant if ALL lines/branches it covers are also covered by other tests
+   - **DELETE redundant tests** to reduce maintenance burden
+   - Before deletion, briefly review to ensure no functional value beyond coverage
+
+7. **Generate LLM coverage report** (optional, for detailed analysis):
    ```bash
-   uv run pytest --cov --cov-report=json
+   uv run pytest --cov --cov-report=json --cov-context=test
    uv run llm-coverage-report
    ```
    Review `coverage_llm.json` for:
    - `function_coverage.functions_below_threshold`: Functions below configured threshold
    - `use_case_coverage.uncovered_use_cases`: Use-cases without tests
    - `code_coverage.missing_lines`: Specific lines needing coverage
+   - `redundant_tests.redundant_tests`: Tests that can be deleted
 
-7. **Iterate**: Re-run `uv run test-coverage` until all tiers pass.
+8. **Iterate**: Re-run `uv run test-coverage` until all tiers pass.
 
 ## Useful Commands
 
@@ -103,6 +111,9 @@ If you cannot meet coverage without changing configuration, report it as a remai
 - For unit tests, ensure ALL functions (including private) have coverage
 - For component tests, focus only on service layer public functions
 - For integration/e2e tests, link to use-cases in `tests/docs/use_cases.yaml`
+- **DELETE redundant tests**: If a test adds no unique coverage (all its coverage is
+  duplicated by other tests), delete it to reduce maintenance burden
+- When deleting redundant tests, ensure no functional assertions beyond coverage are lost
 
 ## Output Format
 

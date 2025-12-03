@@ -32,6 +32,12 @@ from typing import Any
 
 import yaml
 
+from scripts.dev.test_runner.redundant_test_detector import (
+    RedundantTestResult,
+    detect_redundant_tests,
+    format_redundant_test_report,
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 # Coverage configuration defaults
@@ -466,6 +472,7 @@ def run_test_suite(config: TestTierConfig) -> CoverageResult | None:
         config.test_path,
         f"--cov={source_args}",
         "--cov-branch",
+        "--cov-context=test",  # Enable per-test coverage tracking for redundant test detection
         f"--cov-report=json:{config.coverage_file}",
         "--cov-report=term-missing",
         "--cov-fail-under=0",  # Disable fail-under (we do our own validation)
@@ -693,6 +700,7 @@ def validate_usecase_coverage(
 def print_summary(
     line_branch_results: list[tuple[TestTierConfig, CoverageResult]],
     usecase_results: list[tuple[TestTierConfig, UseCaseCoverageResult]],
+    redundant_result: RedundantTestResult | None = None,
 ) -> None:
     """Print coverage summary for all test tiers."""
     print("\n" + "=" * 70)
@@ -745,6 +753,27 @@ def print_summary(
             if len(uc_result.uncovered_cases) > 10:
                 print(f"    ... and {len(uc_result.uncovered_cases) - 10} more")
 
+    # Redundant test results
+    if redundant_result is not None:
+        print("\n" + "=" * 70)
+        print("REDUNDANT TEST ANALYSIS")
+        print("=" * 70)
+
+        if "error" in redundant_result.summary:
+            print(f"\n  Note: {redundant_result.summary['error']}")
+        else:
+            print(f"\n  Total tests analyzed:       {redundant_result.total_tests:>6}")
+            print(f"  Tests with unique coverage: {redundant_result.tests_with_unique_coverage:>6}")
+            print(f"  Redundant tests:            {len(redundant_result.redundant_tests):>6}")
+
+            if redundant_result.redundant_tests:
+                print("\n  Tests that add no unique coverage (candidates for removal):")
+                for test in redundant_result.redundant_tests[:15]:
+                    print(f"    - {test['test_name']}")
+                if len(redundant_result.redundant_tests) > 15:
+                    remaining = len(redundant_result.redundant_tests) - 15
+                    print(f"    ... and {remaining} more")
+
     print("\n" + "=" * 70)
 
 
@@ -787,6 +816,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--json-report",
         type=Path,
         help="Write combined coverage report to JSON file",
+    )
+    parser.add_argument(
+        "--skip-redundant-detection",
+        action="store_true",
+        help="Skip redundant test detection (faster but less analysis)",
+    )
+    parser.add_argument(
+        "--include-partial-redundant",
+        action="store_true",
+        help="Include tests with <5%% unique coverage in redundant report",
     )
     return parser.parse_args(argv)
 
@@ -845,8 +884,21 @@ def main() -> int:
         print("ERROR: No coverage results collected")
         return 1
 
+    # Run redundant test detection
+    redundant_result: RedundantTestResult | None = None
+    if not args.skip_redundant_detection:
+        coverage_db_path = REPO_ROOT / ".coverage"
+        if coverage_db_path.exists():
+            print("\n" + "=" * 70)
+            print("Analyzing test coverage for redundant tests...")
+            print("=" * 70)
+            redundant_result = detect_redundant_tests(
+                coverage_db_path,
+                include_partial=args.include_partial_redundant,
+            )
+
     # Print summary
-    print_summary(line_branch_results, usecase_results)
+    print_summary(line_branch_results, usecase_results, redundant_result)
 
     # Report validation results
     if not args.no_validate:
@@ -890,6 +942,15 @@ def main() -> int:
                 "covered_cases": uc_result.covered_cases,
                 "uncovered_cases": uc_result.uncovered_cases,
                 "coverage_pct": uc_result.coverage_pct,
+            }
+
+        # Add redundant test data to report
+        if redundant_result is not None:
+            report["redundant_tests"] = {
+                "summary": redundant_result.summary,
+                "tests": redundant_result.redundant_tests,
+                "total_tests_analyzed": redundant_result.total_tests,
+                "tests_with_unique_coverage": redundant_result.tests_with_unique_coverage,
             }
 
         args.json_report.write_text(json.dumps(report, indent=2))

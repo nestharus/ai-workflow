@@ -25,6 +25,11 @@ from typing import Any
 
 import yaml  # Requires PyYAML; already in your dependencies.
 
+from scripts.dev.test_runner.redundant_test_detector import (
+    RedundantTestResult,
+    detect_redundant_tests,
+)
+
 
 def _debug_enabled() -> bool:
     """Check if debug output is enabled via environment variables."""
@@ -717,6 +722,7 @@ def build_llm_coverage_document(
     min_line: float = DEFAULT_MIN_LINE_COVERAGE,
     min_branch: float = DEFAULT_MIN_BRANCH_COVERAGE,
     tier_coverage_files: dict[str, Path] | None = None,
+    coverage_db_path: Path | None = None,
 ) -> dict[str, Any]:
     """Build a JSON document combining code coverage gaps and use-case gaps.
 
@@ -729,6 +735,7 @@ def build_llm_coverage_document(
         min_line: Minimum line coverage threshold
         min_branch: Minimum branch coverage threshold
         tier_coverage_files: Optional dict mapping tier names to coverage files
+        coverage_db_path: Optional path to .coverage SQLite database for redundant test detection
     """
     coverage_data = _load_coverage_json(coverage_json_path)
     code_gaps = _collect_code_gaps(coverage_data, repo_root, context_radius)
@@ -749,6 +756,24 @@ def build_llm_coverage_document(
             min_branch,
         )
 
+    # Detect redundant tests if coverage database is available
+    redundant_tests_data: dict[str, Any] = {}
+    if coverage_db_path and coverage_db_path.exists():
+        result = detect_redundant_tests(coverage_db_path)
+        redundant_tests_data = {
+            "summary": result.summary,
+            "redundant_tests": result.redundant_tests,
+            "total_tests_analyzed": result.total_tests,
+            "tests_with_unique_coverage": result.tests_with_unique_coverage,
+        }
+    else:
+        redundant_tests_data = {
+            "summary": {
+                "note": "Redundant test detection requires running tests with --cov-context=test"
+            },
+            "redundant_tests": [],
+        }
+
     return {
         "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "repo_root": str(repo_root),
@@ -763,9 +788,10 @@ def build_llm_coverage_document(
         "code_coverage": code_gaps,
         "function_coverage": function_gaps,
         "use_case_coverage": usecase_gaps,
+        "redundant_tests": redundant_tests_data,
         "prompting_notes": textwrap.dedent(
             """
-            This document is designed for LLM-assisted test generation.
+            This document is designed for LLM-assisted test generation and maintenance.
 
             ## Test Tier Coverage Requirements
             - Unit tests: 80% line/branch per function for ALL functions in app/
@@ -789,8 +815,19 @@ def build_llm_coverage_document(
                - Shows exact lines needing coverage with context
                - Use context_before/context_after to understand code flow
 
+            4. **Redundant Tests** (`redundant_tests.redundant_tests`):
+               - Lists tests that add NO unique coverage
+               - All lines/branches these tests cover are also covered by other tests
+               - These tests can be DELETED without reducing overall coverage
+               - Review before deletion to ensure no functional value beyond coverage
+
             Coverage is calculated PER FUNCTION, not per file. Each function must
             individually meet the threshold.
+
+            ## Test Cleanup Guidelines
+            When `redundant_tests` contains entries, consider deleting those tests to
+            reduce test suite maintenance burden. A test is redundant if every line
+            and branch it covers is also covered by at least one other test.
             """
         ).strip(),
     }
@@ -860,6 +897,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=float,
         default=DEFAULT_MIN_BRANCH_COVERAGE,
         help=f"Minimum branch coverage threshold (default: {DEFAULT_MIN_BRANCH_COVERAGE}%%).",
+    )
+    parser.add_argument(
+        "--coverage-db",
+        type=Path,
+        default=None,
+        help="Path to .coverage SQLite database for redundant test detection (default: .coverage).",
     )
     return parser.parse_args(argv)
 
@@ -943,6 +986,9 @@ def _generate_llm_coverage(argv: Sequence[str] | None = None) -> None:
     # Discover tier coverage files
     tier_coverage_files = _discover_tier_coverage_files(repo_root)
 
+    # Determine coverage database path for redundant test detection
+    coverage_db_path = args.coverage_db or (repo_root / ".coverage")
+
     doc = build_llm_coverage_document(
         repo_root=repo_root,
         coverage_json_path=args.coverage_json,
@@ -952,6 +998,7 @@ def _generate_llm_coverage(argv: Sequence[str] | None = None) -> None:
         min_line=args.min_line,
         min_branch=args.min_branch,
         tier_coverage_files=tier_coverage_files if tier_coverage_files else None,
+        coverage_db_path=coverage_db_path,
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -971,6 +1018,12 @@ def _generate_llm_coverage(argv: Sequence[str] | None = None) -> None:
     uncovered_ucs = len(uc_gaps.get("uncovered_use_cases", []))
     if uncovered_ucs > 0:
         print(f"Uncovered use-cases: {uncovered_ucs}")
+
+    # Print redundant test summary
+    redundant_data = doc.get("redundant_tests", {})
+    redundant_tests = redundant_data.get("redundant_tests", [])
+    if redundant_tests:
+        print(f"Redundant tests (can be deleted): {len(redundant_tests)}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
