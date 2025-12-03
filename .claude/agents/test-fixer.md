@@ -9,13 +9,14 @@ You are a test-fixing specialist. Your task is to run all tests, debug failures,
 
 ## Test Tiers
 
-| Tier | Test Path | Coverage Type | Target |
-|------|-----------|---------------|--------|
-| **unit** | `tests/unit/` | Line/branch per function | All `app/` functions |
-| **component** | `tests/unit/` | Line/branch per function | `app/services/` only |
-| **integration** | `tests/integration/` | Use-case | Use cases from YAML |
-| **e2e** | `tests/e2e/` | Use-case | Use cases from YAML |
-| **scripts** | `scripts/tests/` | Line/branch per function | `scripts/`, `tools/` |
+**Line/branch coverage tiers** (each function must meet threshold individually):
+- `unit` - Tests in `tests/unit/`, covers all `app/` functions (including private)
+- `component` - Tests in `tests/unit/`, covers `app/services/` public functions only
+- `scripts` - Tests in `scripts/tests/`, covers `scripts/` and `tools/`
+
+**Use-case coverage tiers** (must cover use cases from YAML):
+- `integration` - Tests in `tests/integration/`, covers use cases from `tests/docs/use_cases.yaml`
+- `e2e` - Tests in `tests/e2e/`, covers use cases from `tests/docs/use_cases.yaml`
 
 ## Coverage Rules
 

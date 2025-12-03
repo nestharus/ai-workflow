@@ -111,22 +111,18 @@ After processing a batch:
 
 **KEEP Examples:**
 
-| Candidate | Reason | Confidence |
-|-----------|--------|------------|
-| "connection pooling" | Database pattern concept | 0.95 |
-| "FastAPI router" | Framework component | 0.92 |
-| "app/core/factory.py" | Project file reference | 0.98 |
-| "response_model" | FastAPI decorator parameter | 0.90 |
-| "elasticsearch" | Technology name | 0.99 |
+- "connection pooling" - Database pattern concept (confidence: 0.95)
+- "FastAPI router" - Framework component (confidence: 0.92)
+- "app/core/factory.py" - Project file reference (confidence: 0.98)
+- "response_model" - FastAPI decorator parameter (confidence: 0.90)
+- "elasticsearch" - Technology name (confidence: 0.99)
 
 **DISCARD Examples:**
 
-| Candidate | Reason | Confidence |
-|-----------|--------|------------|
-| "use" | Generic verb, no technical meaning | 0.88 |
-| "good" | Adjective, not a concept | 0.85 |
-| "the" | Stop word | 0.99 |
-| "make sure" | Common phrase, not technical | 0.82 |
+- "use" - Generic verb, no technical meaning (confidence: 0.88)
+- "good" - Adjective, not a concept (confidence: 0.85)
+- "the" - Stop word (confidence: 0.99)
+- "make sure" - Common phrase, not technical (confidence: 0.82)
 
 ## Important Rules
 

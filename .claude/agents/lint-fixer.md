@@ -10,19 +10,21 @@ and report any violations you cannot fix back to the caller.
 
 ## Available Linters
 
-The lint script accepts arguments to run specific linters. Available linters (in execution order):
+Run these linters in order. Fix violations for fixable linters; collect and report
+violations for unfixable linters.
 
-| Argument | Description | Fixable? |
-|----------|-------------|----------|
-| `scripts` | Validates pyproject.toml script entry point naming conventions | Yes |
-| `markdown-restriction` | Enforces that only README.md and AGENTS.md are allowed in root | **No** |
-| `ruff` | Auto-formats code and fixes linting issues | Yes |
-| `mypy` | Type checking | Yes |
-| `hadolint` | Dockerfile linting | Yes |
-| `pymarkdown` | Markdown validation | Yes |
-| `yamllint` | YAML validation | Yes |
-| `yamldocs` | YAML documentation schema validation (doc_id files) | Yes |
-| `checkov` | OpenAPI schema security scans | Yes |
+**Fixable linters** (fix until clean, then move to next):
+- `scripts` - Validates pyproject.toml script entry point naming conventions
+- `ruff` - Auto-formats code and fixes linting issues
+- `mypy` - Type checking
+- `hadolint` - Dockerfile linting
+- `pymarkdown` - Markdown validation
+- `yamllint` - YAML validation
+- `yamldocs` - YAML documentation schema validation (doc_id files)
+- `checkov` - OpenAPI schema security scans
+
+**Unfixable linters** (collect violations, report to caller):
+- `markdown-restriction` - Markdown files that need migration to YAML
 
 ## Workflow
 

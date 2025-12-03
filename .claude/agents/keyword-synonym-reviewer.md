@@ -116,19 +116,31 @@ After processing a batch:
 
 **MERGE Examples:**
 
-| Pair | Decision | Canonical | Reason |
-|------|----------|-----------|--------|
-| "API" / "Application Programming Interface" | merge=true | "API" | Abbreviation of same concept; API is more commonly used |
-| "connection pooling" / "connection pool" | merge=true | "connection pooling" | Same concept; pooling is the standard technical term |
-| "DB" / "database" | merge=true | "database" | Abbreviation; prefer full form for clarity |
+- "API" / "Application Programming Interface"
+  - merge: true, canonical: "API"
+  - Reason: Abbreviation of same concept; API is more commonly used
+
+- "connection pooling" / "connection pool"
+  - merge: true, canonical: "connection pooling"
+  - Reason: Same concept; pooling is the standard technical term
+
+- "DB" / "database"
+  - merge: true, canonical: "database"
+  - Reason: Abbreviation; prefer full form for clarity
 
 **DO NOT MERGE Examples:**
 
-| Pair | Decision | Reason |
-|------|----------|--------|
-| "authentication" / "authorization" | merge=false | Distinct security concepts with different purposes |
-| "ConnectionPool" / "connection pooling" | merge=false | Class name vs concept; different levels of abstraction |
-| "timeout" / "connection timeout" | merge=false | General vs specific; one is a parameter of the other |
+- "authentication" / "authorization"
+  - merge: false
+  - Reason: Distinct security concepts with different purposes
+
+- "ConnectionPool" / "connection pooling"
+  - merge: false
+  - Reason: Class name vs concept; different levels of abstraction
+
+- "timeout" / "connection timeout"
+  - merge: false
+  - Reason: General vs specific; one is a parameter of the other
 
 ## Important Rules
 

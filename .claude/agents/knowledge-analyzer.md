@@ -436,11 +436,11 @@ When processing multiple items:
 ```
 
 **Why the project_text follows cross-reference quality rules**:
-- ✅ Rule 1: Explains implementation (not just "see factory-patterns")
-- ✅ Rule 2: Includes file path (app/core/factory.py)
-- ✅ Rule 3: Includes function name (create_app function)
-- ✅ Rule 4: Describes what it does (centralizes route registration)
-- ✅ Rule 5: Explains why it's relevant (ensures consistent prefix application)
+- Rule 1: Explains implementation (not just "see factory-patterns")
+- Rule 2: Includes file path (app/core/factory.py)
+- Rule 3: Includes function name (create_app function)
+- Rule 4: Describes what it does (centralizes route registration)
+- Rule 5: Explains why it's relevant (ensures consistent prefix application)
 
 ## Output Format
 
