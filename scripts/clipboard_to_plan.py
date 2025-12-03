@@ -110,7 +110,11 @@ SECTION_HEADERS = {
 
 
 def parse_plan_sections(content: str) -> dict[str, str]:
-    """Extract known sections from the plan content."""
+    """Extract known sections from the plan content.
+
+    Captures the intro text (everything before the first header) in
+    sections["intro"].
+    """
     sections: dict[str, str] = {}
     # Split into lines for scanning
     lines = content.splitlines()
@@ -122,6 +126,13 @@ def parse_plan_sections(content: str) -> dict[str, str]:
                 header_indices[idx] = key
     if not header_indices:
         return sections
+
+    # Extract intro text (everything before the first header)
+    first_header_idx = min(header_indices.keys())
+    if first_header_idx > 0:
+        intro_text = "\n".join(lines[:first_header_idx]).strip()
+        if intro_text:
+            sections["intro"] = intro_text
 
     sorted_indices = sorted(header_indices.items())
     for (start_idx, key), next_item in zip(sorted_indices, sorted_indices[1:] + [(len(lines), "")]):
@@ -171,6 +182,9 @@ def extract_file_changes(file_changes_body: str) -> list[dict[str, str]]:
 def generate_outline(sections: dict[str, str], file_changes: list[dict[str, str]]) -> str:
     """Create outline content for outline.md."""
     lines: list[str] = []
+    if intro := sections.get("intro"):
+        lines.append(intro)
+        lines.append("")
     if observations := sections.get("observations"):
         lines.append("### Observations")
         lines.append(observations.strip())
@@ -198,15 +212,26 @@ def generate_outline(sections: dict[str, str], file_changes: list[dict[str, str]
     return "\n".join(lines).rstrip() + "\n"
 
 
-def write_task_files(output_dir: Path, file_changes: list[dict[str, str]]) -> None:
-    """Write individual task files named task_XXX.md with file-specific content."""
+def write_task_files(
+    output_dir: Path, file_changes: list[dict[str, str]], intro: str = ""
+) -> None:
+    """Write individual task files named task_XXX.md with file-specific content.
+
+    Args:
+        output_dir: Directory to write task files to.
+        file_changes: List of file change dicts with 'filepath' and 'content' keys.
+        intro: Optional intro text to include at the start of each task file.
+    """
     for idx, change in enumerate(file_changes, start=1):
         filename = output_dir / f"task_{idx:03d}.md"
-        parts: Iterable[str] = (
-            [f"# {change['filepath']}", "", change["content"].strip()]
-            if change["content"].strip()
-            else [f"# {change['filepath']}"]
-        )
+        parts: list[str] = []
+        if intro:
+            parts.append(intro)
+            parts.append("")
+        parts.append(f"# {change['filepath']}")
+        if change["content"].strip():
+            parts.append("")
+            parts.append(change["content"].strip())
         filename.write_text("\n".join(parts).rstrip() + "\n")
 
 
@@ -240,7 +265,8 @@ def main() -> None:
     (timestamp_dir / "outline.md").write_text(outline)
 
     if file_changes:
-        write_task_files(timestamp_dir, file_changes)
+        intro = sections.get("intro", "")
+        write_task_files(timestamp_dir, file_changes, intro)
     else:
         print("Warning: No file changes detected", file=sys.stderr)
 

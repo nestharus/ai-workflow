@@ -1,3 +1,4 @@
+---
 description: Reviews implementation against plan requirements
 mode: subagent
 model: factory/gpt-5.1-high
