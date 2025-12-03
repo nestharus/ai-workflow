@@ -622,3 +622,300 @@ extension is determined by artifact_format (.md, .yml, .json, .mmd, .txt).
 - Artifact manifests: `.knowledge/artifacts/<artifact_id>.yml`
 
 See `.knowledge/README.md` "Render Plans" and "Artifact Validation" sections for schema details.
+
+## Fact Store Module
+
+The `fact_store.py` module handles both structural FieldFacts and semantic facts with
+multi-domain tagging, JSONL export, and relationship edge tracking.
+
+### Two-Layer Fact Model
+
+Per `docs/plans/fact_redesign.md` lines 1565-1613:
+
+- **Structural facts**: Derived mechanically from YAML structure via FieldFacts. Form the base
+  provenance layer for hashing, candidate extraction, and artifact manifests.
+- **Semantic facts**: Derived from artifact blobs via fact_extraction.py. Additive layer that
+  does not replace structural facts.
+
+### Key Functions
+
+| Function | Description |
+|----------|-------------|
+| `store_structural_facts()` | Store FieldFacts to domain/pattern YAML |
+| `export_facts_to_jsonl()` | Export unified JSONL with domain arrays and edges |
+| `query_structural_facts()` | Query structural facts with filters |
+| `containment_edges_to_edge_records()` | Convert ContainmentEdge to EdgeRecord |
+| `entity_ref_fieldfacts_to_edge_records()` | Extract entity reference edges |
+| `determine_primary_domain()` | Get primary domain for filename |
+| `fieldfact_to_structural_record()` | Convert FieldFact to storage record |
+
+### TypedDicts
+
+- `StructuralFactRecord`: Storage format for structural facts
+- `EdgeRecord`: Relationship edge for JSONL export (containment/entity_ref)
+- `FactStoreRecord`: Updated with optional `domains` field for multi-domain tagging
+
+## Structural Fact Workflow
+
+### Step 1: Extract FieldFacts from YAML
+
+```python
+from scripts.knowledge.compare_yaml_docs import extract_field_facts, parse_yaml_file
+
+data = parse_yaml_file("docs/development/example.yml")
+facts_by_element = extract_field_facts(data, "docs/development/example.yml")
+```
+
+### Step 2: Determine Domains
+
+Determine appropriate domains based on content classification per
+`docs/development/domain-definitions.yml`:
+
+```python
+# Pure REST protocol
+domains = ["rest"]
+
+# FastAPI implementation of REST
+domains = ["rest", "fastapi"]
+
+# Python async patterns in FastAPI
+domains = ["python", "fastapi"]
+```
+
+### Step 3: Store Structural Facts
+
+```python
+from scripts.knowledge.fact_store import store_structural_facts
+
+# Flatten FieldFacts to list
+all_facts = []
+for element_facts in facts_by_element.values():
+    all_facts.extend(element_facts)
+
+# Store to domain/pattern YAML
+success, total = store_structural_facts(
+    all_facts,
+    domains=["rest", "fastapi"],
+    pattern="api",
+    knowledge_path=Path(".knowledge")
+)
+# Creates: .knowledge/facts/rest.api.facts.yml (uses first domain as primary)
+```
+
+### Step 4: Query Structural Facts
+
+```python
+from scripts.knowledge.fact_store import query_structural_facts
+
+# Query by domain/pattern
+facts = query_structural_facts(
+    facts_dir=Path(".knowledge/facts"),
+    domain="rest",
+    pattern="api"
+)
+
+# Query by element_id
+facts = query_structural_facts(facts_dir, element_id="elem-1")
+
+# Query by role
+facts = query_structural_facts(facts_dir, role="constraint")
+```
+
+## JSONL Export Workflow
+
+### Export Function
+
+```python
+from scripts.knowledge.fact_store import export_facts_to_jsonl
+
+# Export with edges
+output_path = export_facts_to_jsonl(
+    knowledge_path=Path(".knowledge"),
+    include_edges=True
+)
+# Creates: .knowledge/facts/facts.jsonl
+
+# Export without edges
+output_path = export_facts_to_jsonl(
+    knowledge_path=Path(".knowledge"),
+    include_edges=False
+)
+
+# Custom output path
+output_path = export_facts_to_jsonl(
+    knowledge_path=Path(".knowledge"),
+    output_path=Path("custom/facts.jsonl")
+)
+```
+
+### JSONL Record Fields
+
+**Fact records** (`record_type: "fact"`):
+- `fact_id`: UUID
+- `fact_type`: "semantic" or "structural"
+- `domains`: Array of domain tags (supports multi-domain)
+- `pattern`: Pattern name
+- `source_file`, `source_element_id`: Provenance
+- For semantic: `fact_text`, `entity`, `confidence`, `source_field_path`, `provenance`
+- For structural: `element_id`, `field_path`, `value`, `role`, etc.
+
+**Edge records** (`record_type: "edge"`):
+- `edge_id`: UUID
+- `edge_type`: "containment" or "entity_ref"
+- `source_id`, `target_id`: Element IDs
+- `metadata`: Additional context (field_path, key)
+
+### Parsing JSONL
+
+```python
+import json
+
+with open(".knowledge/facts/facts.jsonl") as f:
+    for line in f:
+        record = json.loads(line)
+        if record["record_type"] == "fact":
+            if record["fact_type"] == "structural":
+                print(f"Structural: {record['element_id']}.{record['field_path']}")
+            else:
+                print(f"Semantic: {record['entity']}: {record['fact_text']}")
+        elif record["record_type"] == "edge":
+            print(f"Edge: {record['source_id']} -> {record['target_id']}")
+```
+
+## CLI Commands
+
+### Store Structural Facts
+
+```bash
+# Store FieldFacts from YAML to structural facts
+uv run knowledge.store-structural-facts \
+  --yaml-file docs/development/general/general.rest.api-patterns.yml \
+  --domains rest fastapi \
+  --pattern api
+
+# With custom knowledge path
+uv run knowledge.store-structural-facts \
+  --yaml-file example.yml \
+  --domains python \
+  --pattern patterns \
+  --knowledge-path .knowledge
+```
+
+### Export Facts to JSONL
+
+```bash
+# Export all facts with edges
+uv run knowledge.export-facts-jsonl --include-edges
+
+# Export without edges
+uv run knowledge.export-facts-jsonl --no-edges
+
+# Custom output path
+uv run knowledge.export-facts-jsonl --output custom/output.jsonl
+
+# Custom knowledge path
+uv run knowledge.export-facts-jsonl --knowledge-path .knowledge
+```
+
+## Multi-Domain Tagging
+
+### Domain Selection Guidelines
+
+Per `docs/development/domain-definitions.yml`:
+
+| Content Type | Domains |
+|--------------|---------|
+| Pure REST protocol patterns | `["rest"]` |
+| FastAPI-specific patterns | `["fastapi"]` |
+| REST patterns in FastAPI | `["rest", "fastapi"]` |
+| Python async patterns | `["python"]` |
+| Python async in FastAPI | `["python", "fastapi"]` |
+| SurrealDB patterns | `["surrealdb"]` |
+| Elasticsearch patterns | `["elasticsearch"]` |
+
+### Primary Domain Rule
+
+- Primary domain = first domain in array
+- Used for filename: `<primary_domain>.<pattern>.facts.yml`
+- If len == 1: use that domain
+- If len > 1: use first domain (not "mixed" for storage)
+
+## Edge List Export
+
+### Edge Types
+
+1. **containment**: Parent→child relationships from `ContainmentEdge`
+   - Generated during YAML comparison (`compare_yaml_docs.py`)
+   - Stored in `.knowledge/graph/containment_edges.csv`
+   - Exported from CSV if exists
+
+2. **entity_ref**: Entity reference edges from FieldFacts
+   - Generated from structural facts with `role=="entity_ref"`
+   - Target extracted from `$ref` value
+
+### Edge Conversion Functions
+
+```python
+from scripts.knowledge.fact_store import (
+    containment_edges_to_edge_records,
+    entity_ref_fieldfacts_to_edge_records,
+)
+
+# Convert containment edges
+from scripts.knowledge.compare_yaml_docs import ContainmentEdge
+
+edges = [
+    ContainmentEdge(
+        parent_id="parent-1",
+        child_id="child-1",
+        field_path="items[0]",
+        source_file="test.yml"
+    )
+]
+edge_records = containment_edges_to_edge_records(edges)
+
+# Convert entity refs from FieldFacts
+field_facts = [...]  # FieldFacts with role=="entity_ref"
+edge_records = entity_ref_fieldfacts_to_edge_records(field_facts)
+```
+
+## Integration Points
+
+### compare_yaml_docs.py
+
+- `extract_field_facts()`: Extracts FieldFact instances from YAML
+- `ContainmentEdge`: Dataclass for parent-child relationships
+- `FieldFact`: Dataclass for structural field facts
+
+### artifact_manager.py
+
+- Uses structural facts for artifact manifest contributors
+- Links artifacts to source via `source_file`, `source_element_id`, `field_path`
+
+### artifact_fact_extractor.py
+
+- Extracts semantic facts from artifact blobs
+- Links back to structural layer via provenance fields
+
+### Data Flow
+
+```
+YAML → FieldFacts → structural facts → artifact detection → semantic extraction → unified JSONL
+                  ↓
+            ContainmentEdges → containment_edges.csv → edge list
+```
+
+## Testing
+
+Tests are in `scripts/tests/knowledge/test_fact_store.py`:
+
+- `TestDeterminePrimaryDomain`: Primary domain selection
+- `TestFieldfactToStructuralRecord`: FieldFact conversion
+- `TestStoreStructuralFacts`: Structural fact storage
+- `TestContainmentEdgesToEdgeRecords`: Containment edge conversion
+- `TestEntityRefFieldfactsToEdgeRecords`: Entity ref edge extraction
+- `TestQueryStructuralFacts`: Structural fact queries
+- `TestExportFactsToJsonl`: JSONL export
+- `TestIntegrationStructuralAndSemanticFacts`: End-to-end workflow
+
+Tests use `tmp_path` fixture for filesystem isolation.

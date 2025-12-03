@@ -3,30 +3,43 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 import yaml
 
+from scripts.knowledge.compare_yaml_docs import ContainmentEdge, FieldFact
 from scripts.knowledge.fact_store import (
+    EdgeRecord,
     FactStoreRecord,
+    StructuralFactRecord,
+    containment_edges_to_edge_records,
     decorate_yaml_main,
     decorate_yaml_with_entity_id,
     decorate_yaml_with_fact_ids,
+    determine_primary_domain,
     ensure_fact_yaml_exists,
+    entity_ref_fieldfacts_to_edge_records,
+    export_facts_to_jsonl,
+    fieldfact_to_structural_record,
     get_entity_id_from_variants,
     get_fact_by_id,
     list_fact_files,
     organize_facts_by_domain_pattern,
     parse_decorate_args,
+    parse_export_jsonl_args,
     parse_query_args,
     parse_store_args,
+    parse_store_structural_args,
     query_facts_from_yaml,
     query_facts_main,
+    query_structural_facts,
     read_facts_from_csv,
     store_fact_main,
     store_fact_to_yaml,
+    store_structural_facts,
 )
 
 
@@ -956,3 +969,663 @@ class TestDecorateYamlMain:
 
         assert result == 0
         assert yaml_path.read_text() == original
+
+
+# --- Tests for structural facts and JSONL export ---
+
+
+class TestDeterminePrimaryDomain:
+    """Tests for determine_primary_domain function."""
+
+    def test_single_domain_returns_domain(self) -> None:
+        """Single domain returns that domain."""
+        assert determine_primary_domain(["rest"]) == "rest"
+        assert determine_primary_domain(["fastapi"]) == "fastapi"
+
+    def test_multiple_domains_returns_first_domain(self) -> None:
+        """Multiple domains returns the first domain in the list."""
+        assert determine_primary_domain(["rest", "fastapi"]) == "rest"
+        assert determine_primary_domain(["fastapi", "rest", "python"]) == "fastapi"
+
+    def test_empty_list_returns_general(self) -> None:
+        """Empty list returns 'general' as fallback."""
+        assert determine_primary_domain([]) == "general"
+
+
+class TestFieldfactToStructuralRecord:
+    """Tests for fieldfact_to_structural_record function."""
+
+    def test_basic_conversion(self) -> None:
+        """Basic FieldFact to StructuralFactRecord conversion."""
+        field_fact = FieldFact(
+            element_id="elem-1",
+            field_path="http_method_defaults[0].method",
+            key="method",
+            scope_path="http_method_defaults[0]",
+            value="GET",
+            value_kind="scalar-str",
+            role="constraint",
+            group_key="http_method_defaults::method=GET",
+            group_id="abc123",
+            source_file="docs/test.yml",
+        )
+
+        record = fieldfact_to_structural_record(
+            field_fact,
+            domains=["rest", "fastapi"],
+            pattern="api",
+            fact_id="uuid-1",
+            extracted_at="2025-01-01T00:00:00Z",
+        )
+
+        assert record["fact_id"] == "uuid-1"
+        assert record["element_id"] == "elem-1"
+        assert record["field_path"] == "http_method_defaults[0].method"
+        assert record["key"] == "method"
+        assert record["scope_path"] == "http_method_defaults[0]"
+        assert record["value"] == "GET"
+        assert record["value_kind"] == "scalar-str"
+        assert record["role"] == "constraint"
+        assert record["domains"] == ["rest", "fastapi"]
+        assert record["pattern"] == "api"
+        assert record["confidence"] == 1.0
+        assert record["extracted_at"] == "2025-01-01T00:00:00Z"
+
+    def test_ref_value_serialization(self) -> None:
+        """$ref dict values are serialized correctly."""
+        field_fact = FieldFact(
+            element_id="elem-1",
+            field_path="refs[0].target",
+            key="target",
+            scope_path="refs[0]",
+            value={"$ref": "other-element"},
+            value_kind="ref",
+            role="entity_ref",
+            group_key="refs",
+            group_id="def456",
+            source_file="docs/test.yml",
+        )
+
+        record = fieldfact_to_structural_record(
+            field_fact,
+            domains=["rest"],
+            pattern="api",
+            fact_id="uuid-2",
+            extracted_at="2025-01-01T00:00:00Z",
+        )
+
+        assert record["value"] == "$ref:other-element"
+
+    def test_list_value_serialization(self) -> None:
+        """List values are JSON serialized."""
+        field_fact = FieldFact(
+            element_id="elem-1",
+            field_path="tags",
+            key="tags",
+            scope_path="",
+            value=["tag1", "tag2"],
+            value_kind="list-scalar",
+            role="metadata",
+            group_key="tags",
+            group_id="ghi789",
+            source_file="docs/test.yml",
+        )
+
+        record = fieldfact_to_structural_record(
+            field_fact,
+            domains=["rest"],
+            pattern="api",
+            fact_id="uuid-3",
+            extracted_at="2025-01-01T00:00:00Z",
+        )
+
+        assert record["value"] == '["tag1", "tag2"]'
+
+
+class TestStoreStructuralFacts:
+    """Tests for store_structural_facts function."""
+
+    def test_stores_fieldfacts_to_yaml(self, tmp_path: Path) -> None:
+        """Stores FieldFacts to structural_facts section in YAML."""
+        knowledge_path = tmp_path
+        facts_dir = knowledge_path / "facts"
+        facts_dir.mkdir(parents=True)
+
+        field_facts = [
+            FieldFact(
+                element_id="elem-1",
+                field_path="method",
+                key="method",
+                scope_path="",
+                value="GET",
+                value_kind="scalar-str",
+                role="constraint",
+                group_key="method",
+                group_id="abc123",
+                source_file="docs/test.yml",
+            ),
+        ]
+
+        success, total = store_structural_facts(
+            field_facts, ["rest"], "api", knowledge_path
+        )
+
+        assert success == 1
+        assert total == 1
+
+        yaml_path = facts_dir / "rest.api.facts.yml"
+        assert yaml_path.exists()
+
+        data = yaml.safe_load(yaml_path.read_text())
+        assert "structural_facts" in data
+        assert len(data["structural_facts"]) == 1
+        assert data["structural_facts"][0]["element_id"] == "elem-1"
+        assert data["structural_facts"][0]["value"] == "GET"
+
+    def test_multi_domain_creates_first_domain_filename(self, tmp_path: Path) -> None:
+        """Multi-domain facts use first domain in filename."""
+        knowledge_path = tmp_path
+        facts_dir = knowledge_path / "facts"
+        facts_dir.mkdir(parents=True)
+
+        field_facts = [
+            FieldFact(
+                element_id="elem-1",
+                field_path="method",
+                key="method",
+                scope_path="",
+                value="POST",
+                value_kind="scalar-str",
+                role="constraint",
+                group_key="method",
+                group_id="xyz789",
+                source_file="docs/test.yml",
+            ),
+        ]
+
+        # With multiple domains, uses first domain prefix
+        success, total = store_structural_facts(
+            field_facts, ["rest", "fastapi"], "api", knowledge_path
+        )
+
+        assert success == 1
+        yaml_path = facts_dir / "rest.api.facts.yml"
+        assert yaml_path.exists()
+
+    def test_skips_duplicates(self, tmp_path: Path) -> None:
+        """Duplicate element_id:field_path:value combinations are skipped."""
+        knowledge_path = tmp_path
+        facts_dir = knowledge_path / "facts"
+        facts_dir.mkdir(parents=True)
+
+        field_fact = FieldFact(
+            element_id="elem-1",
+            field_path="method",
+            key="method",
+            scope_path="",
+            value="GET",
+            value_kind="scalar-str",
+            role="constraint",
+            group_key="method",
+            group_id="abc123",
+            source_file="docs/test.yml",
+        )
+
+        # Store twice with same value
+        store_structural_facts([field_fact], ["rest"], "api", knowledge_path)
+        success, total = store_structural_facts(
+            [field_fact], ["rest"], "api", knowledge_path
+        )
+
+        assert success == 1  # Duplicate considered success
+        assert total == 1
+
+        # Only one fact stored
+        yaml_path = facts_dir / "rest.api.facts.yml"
+        data = yaml.safe_load(yaml_path.read_text())
+        assert len(data["structural_facts"]) == 1
+
+    def test_stores_different_values_same_path(self, tmp_path: Path) -> None:
+        """Different values for same element_id:field_path are stored as separate facts."""
+        knowledge_path = tmp_path
+        facts_dir = knowledge_path / "facts"
+        facts_dir.mkdir(parents=True)
+
+        field_fact_get = FieldFact(
+            element_id="elem-1",
+            field_path="method",
+            key="method",
+            scope_path="",
+            value="GET",
+            value_kind="scalar-str",
+            role="constraint",
+            group_key="method",
+            group_id="abc123",
+            source_file="docs/test.yml",
+        )
+
+        field_fact_post = FieldFact(
+            element_id="elem-1",
+            field_path="method",
+            key="method",
+            scope_path="",
+            value="POST",  # Different value
+            value_kind="scalar-str",
+            role="constraint",
+            group_key="method",
+            group_id="abc123",
+            source_file="docs/test.yml",
+        )
+
+        # Store first fact
+        store_structural_facts([field_fact_get], ["rest"], "api", knowledge_path)
+        # Store second fact with different value
+        success, total = store_structural_facts(
+            [field_fact_post], ["rest"], "api", knowledge_path
+        )
+
+        assert success == 1
+        assert total == 1
+
+        # Both facts should be stored
+        yaml_path = facts_dir / "rest.api.facts.yml"
+        data = yaml.safe_load(yaml_path.read_text())
+        assert len(data["structural_facts"]) == 2
+
+        values = {f["value"] for f in data["structural_facts"]}
+        assert values == {"GET", "POST"}
+
+    def test_empty_list_returns_zeros(self, tmp_path: Path) -> None:
+        """Empty FieldFacts list returns (0, 0)."""
+        success, total = store_structural_facts([], ["rest"], "api", tmp_path)
+        assert success == 0
+        assert total == 0
+
+
+class TestContainmentEdgesToEdgeRecords:
+    """Tests for containment_edges_to_edge_records function."""
+
+    def test_converts_containment_edges(self) -> None:
+        """Converts ContainmentEdge to EdgeRecord."""
+        edges = [
+            ContainmentEdge(
+                parent_id="parent-1",
+                child_id="child-1",
+                field_path="items[0]",
+                source_file="docs/test.yml",
+            ),
+        ]
+
+        records = containment_edges_to_edge_records(edges)
+
+        assert len(records) == 1
+        assert records[0]["edge_type"] == "containment"
+        assert records[0]["source_id"] == "parent-1"
+        assert records[0]["target_id"] == "child-1"
+        assert records[0]["source_file"] == "docs/test.yml"
+        assert records[0]["metadata"]["field_path"] == "items[0]"
+
+    def test_generates_unique_edge_ids(self) -> None:
+        """Each edge gets a unique edge_id."""
+        edges = [
+            ContainmentEdge("p1", "c1", "a[0]", "test.yml"),
+            ContainmentEdge("p2", "c2", "b[0]", "test.yml"),
+        ]
+
+        records = containment_edges_to_edge_records(edges)
+
+        assert len(records) == 2
+        assert records[0]["edge_id"] != records[1]["edge_id"]
+
+
+class TestEntityRefFieldfactsToEdgeRecords:
+    """Tests for entity_ref_fieldfacts_to_edge_records function."""
+
+    def test_extracts_entity_ref_edges(self) -> None:
+        """Extracts edges from FieldFacts with role=='entity_ref'."""
+        facts = [
+            FieldFact(
+                element_id="elem-1",
+                field_path="refs[0]",
+                key="target",
+                scope_path="refs",
+                value={"$ref": "target-elem"},
+                value_kind="ref",
+                role="entity_ref",
+                group_key="refs",
+                group_id="abc",
+                source_file="docs/test.yml",
+            ),
+            FieldFact(
+                element_id="elem-2",
+                field_path="method",
+                key="method",
+                scope_path="",
+                value="GET",
+                value_kind="scalar-str",
+                role="constraint",
+                group_key="method",
+                group_id="xyz",
+                source_file="docs/test.yml",
+            ),
+        ]
+
+        records = entity_ref_fieldfacts_to_edge_records(facts)
+
+        assert len(records) == 1  # Only entity_ref role
+        assert records[0]["edge_type"] == "entity_ref"
+        assert records[0]["source_id"] == "elem-1"
+        assert records[0]["target_id"] == "target-elem"
+        assert records[0]["metadata"]["field_path"] == "refs[0]"
+
+    def test_handles_string_ref_values(self) -> None:
+        """Handles string values (not $ref dicts) for entity references."""
+        facts = [
+            FieldFact(
+                element_id="elem-1",
+                field_path="refs[0]",
+                key="target",
+                scope_path="refs",
+                value="$ref:target-elem",  # Serialized format
+                value_kind="ref",
+                role="entity_ref",
+                group_key="refs",
+                group_id="abc",
+                source_file="docs/test.yml",
+            ),
+        ]
+
+        records = entity_ref_fieldfacts_to_edge_records(facts)
+
+        assert len(records) == 1
+        assert records[0]["target_id"] == "target-elem"
+
+
+class TestQueryStructuralFacts:
+    """Tests for query_structural_facts function."""
+
+    def test_queries_by_domain_pattern(self, tmp_path: Path) -> None:
+        """Queries structural facts by domain and pattern."""
+        facts_dir = tmp_path / "facts"
+        facts_dir.mkdir()
+
+        yaml_content = {
+            "facts": [],
+            "structural_facts": [
+                {
+                    "fact_id": "uuid-1",
+                    "element_id": "elem-1",
+                    "field_path": "method",
+                    "role": "constraint",
+                },
+            ],
+        }
+        (facts_dir / "rest.api.facts.yml").write_text(yaml.dump(yaml_content))
+
+        results = query_structural_facts(facts_dir, domain="rest", pattern="api")
+
+        assert len(results) == 1
+        assert results[0]["element_id"] == "elem-1"
+
+    def test_filters_by_element_id(self, tmp_path: Path) -> None:
+        """Filters structural facts by element_id."""
+        facts_dir = tmp_path / "facts"
+        facts_dir.mkdir()
+
+        yaml_content = {
+            "facts": [],
+            "structural_facts": [
+                {"fact_id": "uuid-1", "element_id": "elem-1", "role": "constraint"},
+                {"fact_id": "uuid-2", "element_id": "elem-2", "role": "constraint"},
+            ],
+        }
+        (facts_dir / "rest.api.facts.yml").write_text(yaml.dump(yaml_content))
+
+        results = query_structural_facts(facts_dir, element_id="elem-1")
+
+        assert len(results) == 1
+        assert results[0]["element_id"] == "elem-1"
+
+    def test_filters_by_role(self, tmp_path: Path) -> None:
+        """Filters structural facts by role."""
+        facts_dir = tmp_path / "facts"
+        facts_dir.mkdir()
+
+        yaml_content = {
+            "facts": [],
+            "structural_facts": [
+                {"fact_id": "uuid-1", "element_id": "elem-1", "role": "constraint"},
+                {"fact_id": "uuid-2", "element_id": "elem-2", "role": "entity_ref"},
+            ],
+        }
+        (facts_dir / "rest.api.facts.yml").write_text(yaml.dump(yaml_content))
+
+        results = query_structural_facts(facts_dir, role="entity_ref")
+
+        assert len(results) == 1
+        assert results[0]["role"] == "entity_ref"
+
+
+class TestExportFactsToJsonl:
+    """Tests for export_facts_to_jsonl function."""
+
+    def test_exports_semantic_facts(self, tmp_path: Path) -> None:
+        """Exports semantic facts to JSONL with source_field_path."""
+        knowledge_path = tmp_path
+        facts_dir = knowledge_path / "facts"
+        facts_dir.mkdir()
+
+        yaml_content = {
+            "facts": [
+                {
+                    "fact_id": "uuid-1",
+                    "entity": "create_app",
+                    "fact_text": "Test fact",
+                    "domain": "fastapi",
+                    "pattern": "factory",
+                    "confidence": 0.95,
+                    "source_file": "docs/test.yml",
+                    "source_element_id": "elem-1",
+                    "source_field_path": "description.text",
+                },
+            ],
+            "structural_facts": [],
+        }
+        (facts_dir / "fastapi.factory.facts.yml").write_text(yaml.dump(yaml_content))
+
+        output_path = export_facts_to_jsonl(
+            knowledge_path, include_edges=False
+        )
+
+        assert output_path.exists()
+        with open(output_path) as f:
+            records = [json.loads(line) for line in f]
+
+        assert len(records) == 1
+        assert records[0]["record_type"] == "fact"
+        assert records[0]["fact_type"] == "semantic"
+        assert records[0]["entity"] == "create_app"
+        assert records[0]["source_field_path"] == "description.text"
+
+    def test_exports_structural_facts(self, tmp_path: Path) -> None:
+        """Exports structural facts to JSONL."""
+        knowledge_path = tmp_path
+        facts_dir = knowledge_path / "facts"
+        facts_dir.mkdir()
+
+        yaml_content = {
+            "facts": [],
+            "structural_facts": [
+                {
+                    "fact_id": "uuid-1",
+                    "element_id": "elem-1",
+                    "field_path": "method",
+                    "role": "constraint",
+                    "domains": ["rest", "fastapi"],
+                },
+            ],
+        }
+        (facts_dir / "rest.api.facts.yml").write_text(yaml.dump(yaml_content))
+
+        output_path = export_facts_to_jsonl(
+            knowledge_path, include_edges=False
+        )
+
+        with open(output_path) as f:
+            records = [json.loads(line) for line in f]
+
+        assert len(records) == 1
+        assert records[0]["record_type"] == "fact"
+        assert records[0]["fact_type"] == "structural"
+        assert records[0]["element_id"] == "elem-1"
+        assert records[0]["domains"] == ["rest", "fastapi"]
+
+    def test_includes_entity_ref_edges(self, tmp_path: Path) -> None:
+        """Includes entity_ref edges when include_edges=True."""
+        knowledge_path = tmp_path
+        facts_dir = knowledge_path / "facts"
+        facts_dir.mkdir()
+
+        yaml_content = {
+            "facts": [],
+            "structural_facts": [
+                {
+                    "fact_id": "uuid-1",
+                    "element_id": "elem-1",
+                    "field_path": "refs[0]",
+                    "key": "ref_key",
+                    "value": "$ref:target-elem",
+                    "role": "entity_ref",
+                    "source_file": "test.yml",
+                },
+            ],
+        }
+        (facts_dir / "rest.api.facts.yml").write_text(yaml.dump(yaml_content))
+
+        output_path = export_facts_to_jsonl(
+            knowledge_path, include_edges=True
+        )
+
+        with open(output_path) as f:
+            records = [json.loads(line) for line in f]
+
+        # Should have both fact and edge
+        fact_records = [r for r in records if r["record_type"] == "fact"]
+        edge_records = [r for r in records if r["record_type"] == "edge"]
+
+        assert len(fact_records) == 1
+        assert len(edge_records) == 1
+
+        edge = edge_records[0]
+        assert edge["edge_type"] == "entity_ref"
+        assert edge["source_id"] == "elem-1"
+        assert edge["target_id"] == "target-elem"
+        assert edge["source_file"] == "test.yml"
+        assert edge["metadata"]["field_path"] == "refs[0]"
+        assert edge["metadata"]["key"] == "ref_key"
+
+    def test_custom_output_path(self, tmp_path: Path) -> None:
+        """Uses custom output path when provided."""
+        knowledge_path = tmp_path
+        facts_dir = knowledge_path / "facts"
+        facts_dir.mkdir()
+
+        yaml_content = {"facts": [], "structural_facts": []}
+        (facts_dir / "rest.api.facts.yml").write_text(yaml.dump(yaml_content))
+
+        custom_path = tmp_path / "custom" / "output.jsonl"
+        output_path = export_facts_to_jsonl(
+            knowledge_path, include_edges=False, output_path=custom_path
+        )
+
+        assert output_path == custom_path
+        assert custom_path.exists()
+
+
+class TestParseStoreStructuralArgs:
+    """Tests for parse_store_structural_args function."""
+
+    def test_parses_required_args(self) -> None:
+        """Parses required arguments."""
+        args = parse_store_structural_args([
+            "--yaml-file", "test.yml",
+            "--domains", "rest", "fastapi",
+            "--pattern", "api",
+        ])
+
+        assert args.yaml_file == Path("test.yml")
+        assert args.domains == ["rest", "fastapi"]
+        assert args.pattern == "api"
+        assert args.knowledge_path == Path(".knowledge")
+
+
+class TestParseExportJsonlArgs:
+    """Tests for parse_export_jsonl_args function."""
+
+    def test_parses_default_args(self) -> None:
+        """Parses with default values."""
+        args = parse_export_jsonl_args([])
+
+        assert args.knowledge_path == Path(".knowledge")
+        assert args.output is None
+        assert args.include_edges is True
+
+    def test_parses_no_edges_flag(self) -> None:
+        """Parses --no-edges flag."""
+        args = parse_export_jsonl_args(["--no-edges"])
+
+        assert args.include_edges is False
+
+
+class TestIntegrationStructuralAndSemanticFacts:
+    """Integration tests for structural and semantic facts workflow."""
+
+    def test_stores_and_exports_both_fact_types(self, tmp_path: Path) -> None:
+        """End-to-end: store structural facts, add semantic facts, export to JSONL."""
+        knowledge_path = tmp_path
+        facts_dir = knowledge_path / "facts"
+        facts_dir.mkdir()
+
+        # Store structural facts
+        field_facts = [
+            FieldFact(
+                element_id="elem-1",
+                field_path="method",
+                key="method",
+                scope_path="",
+                value="GET",
+                value_kind="scalar-str",
+                role="constraint",
+                group_key="method",
+                group_id="abc123",
+                source_file="docs/test.yml",
+            ),
+        ]
+        store_structural_facts(field_facts, ["rest"], "api", knowledge_path)
+
+        # Add semantic fact to same file
+        yaml_path = facts_dir / "rest.api.facts.yml"
+        data = yaml.safe_load(yaml_path.read_text())
+        data["facts"].append({
+            "fact_id": "sem-uuid-1",
+            "entity": "GET method",
+            "fact_text": "GET is used for read operations",
+            "domain": "rest",
+            "pattern": "api",
+            "confidence": 0.9,
+        })
+        yaml_path.write_text(yaml.dump(data))
+
+        # Export to JSONL
+        output_path = export_facts_to_jsonl(knowledge_path, include_edges=False)
+
+        with open(output_path) as f:
+            records = [json.loads(line) for line in f]
+
+        structural = [r for r in records if r["fact_type"] == "structural"]
+        semantic = [r for r in records if r["fact_type"] == "semantic"]
+
+        assert len(structural) == 1
+        assert len(semantic) == 1
+        assert structural[0]["element_id"] == "elem-1"
+        assert semantic[0]["entity"] == "GET method"

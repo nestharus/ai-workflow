@@ -1,10 +1,25 @@
-"""Fact store for organizing, querying, and decorating facts from extraction.
+"""Fact store for organizing, querying, exporting, and decorating facts from extraction.
 
 This module provides utilities for:
-1. Storing extracted facts from extractions.csv into domain/pattern YAML files
-2. Querying facts by domain, pattern, entity, or fact_id
-3. Decorating YAML documentation with fact_ids and entity_id fields
-4. Fact identity and deduplication using canonical fact_key (per fact_redesign.md)
+1. Storing extracted semantic facts from extractions.csv into domain/pattern YAML files
+2. Storing structural FieldFacts from YAML structure into domain/pattern YAML files
+3. Querying semantic and structural facts by domain, pattern, entity, or fact_id
+4. Exporting all facts to unified JSONL format with domain arrays and edge lists
+5. Decorating YAML documentation with fact_ids and entity_id fields
+6. Fact identity and deduplication using canonical fact_key (per fact_redesign.md)
+
+Two-Layer Fact Model (per docs/plans/fact_redesign.md lines 1565-1613):
+    - Structural facts: Derived mechanically from YAML structure via FieldFacts. Provide
+      field names, scope paths, grouping keys, containment edges, and entity references.
+      Form the base provenance layer for hashing, candidate extraction, and artifact manifests.
+    - Semantic facts: Derived from artifact blobs (prose/code/tables) via fact_extraction.py.
+      Stored in extractions.csv, must include provenance back to structural layer.
+    - FieldFacts are base provenance; semantic facts are additive (do not replace).
+
+Multi-Domain Tagging (per docs/development/domain-definitions.yml):
+    Facts can be tagged with multiple domains (e.g., ['rest', 'fastapi']) for content
+    that spans multiple knowledge areas. Primary domain for filename is first domain
+    in array, or 'mixed' if multiple domains have no clear primary.
 
 Fact Identity (per docs/plans/fact_redesign.md lines 893-908):
     Facts are deduplicated by canonical fact_key = sha256(normalize(fact_text) + '|' + entity_id + '|' + artifact_id)
@@ -12,13 +27,21 @@ Fact Identity (per docs/plans/fact_redesign.md lines 893-908):
     Multiple extractions of the same fact merge provenance in fact_provenance.csv.
 
 Usage:
-    # Store facts for an entity to domain/pattern YAML
+    # Store semantic facts for an entity to domain/pattern YAML
     uv run knowledge.store-fact --entity "create_app" --domain "fastapi" --pattern "factory"
 
-    # Query facts with filters
+    # Store structural FieldFacts from YAML to domain/pattern YAML
+    uv run knowledge.store-structural-facts \
+        --yaml-file docs/development/general/general.rest.api-patterns.yml \
+        --domains rest fastapi --pattern api
+
+    # Query semantic facts with filters
     uv run knowledge.query-facts --domain "fastapi" --pattern "factory"
     uv run knowledge.query-facts --entity "create_app"
     uv run knowledge.query-facts --fact-id <uuid>
+
+    # Export all facts to unified JSONL format
+    uv run knowledge.export-facts-jsonl --knowledge-path .knowledge --include-edges
 
     # Decorate YAML with fact IDs and entity ID
     uv run knowledge.decorate-yaml-with-fact-ids \
@@ -30,19 +53,24 @@ Usage:
 Args:
     --entity: Entity name to filter/lookup.
     --domain: Domain tag for fact organization.
+    --domains: Domain tags for multi-domain tagging (space-separated).
     --pattern: Pattern name for fact organization.
     --fact-id: Specific fact UUID to query.
-    --yaml-file: YAML file to decorate.
+    --yaml-file: YAML file to extract from or decorate.
     --element-id: Element ID within YAML to decorate.
     --fact-ids: List of fact UUIDs to add to element.
     --knowledge-path: Base knowledge directory (default: .knowledge).
+    --output: Custom output path for JSONL export.
+    --include-edges / --no-edges: Include/exclude relationship edges in JSONL export.
     --dry-run: Show changes without modifying files.
 
 Note:
     Running this module directly (python -m scripts.knowledge.fact_store) invokes
     the store-fact workflow. Use the [project.scripts] entrypoints for other commands:
     - uv run knowledge.store-fact
+    - uv run knowledge.store-structural-facts
     - uv run knowledge.query-facts
+    - uv run knowledge.export-facts-jsonl
     - uv run knowledge.decorate-yaml-with-fact-ids
 """
 
@@ -50,18 +78,25 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import sys
 import unicodedata
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 import duckdb
 import yaml
 
 from scripts.dev.utils import REPO_ROOT, utc_timestamp
-from scripts.knowledge.compare_yaml_docs import parse_yaml_file
+from scripts.knowledge.compare_yaml_docs import (
+    ContainmentEdge,
+    FieldFact,
+    extract_field_facts,
+    parse_yaml_file,
+)
 
 # --- Fact Identity and Deduplication (per fact_redesign.md lines 893-908) ---
 
@@ -304,7 +339,7 @@ def store_fact_with_deduplication(
     return fact_key, is_new
 
 
-class FactStoreRecord(TypedDict):
+class FactStoreRecord(TypedDict, total=False):
     """A fact record for the domain/pattern YAML files.
 
     Attributes:
@@ -313,11 +348,14 @@ class FactStoreRecord(TypedDict):
         fact_text: Extracted atomic fact about the entity.
         source_file: YAML path where fact was extracted from (relative to repo root).
         source_element_id: YAML element ID where fact was found.
+        source_field_path: Field path within the YAML element (for traceability).
         confidence: Confidence score as a float (0.0-1.0). Converted from string
             values read from CSV; invalid or empty values default to 0.0.
         extracted_at: ISO 8601 timestamp when extracted.
-        domain: Domain tag for organization.
+        domain: Domain tag for organization (primary domain for backward compat).
         pattern: Pattern name for organization.
+        domains: Optional list of domain tags for multi-domain tagging.
+            When present, supports multi-domain facts per fact_redesign.md.
     """
 
     fact_id: str
@@ -325,10 +363,82 @@ class FactStoreRecord(TypedDict):
     fact_text: str
     source_file: str
     source_element_id: str
+    source_field_path: str
     confidence: float
     extracted_at: str
     domain: str
     pattern: str
+    domains: list[str]
+
+
+class StructuralFactRecord(TypedDict):
+    """A structural fact record derived from FieldFacts.
+
+    Represents structural facts extracted from YAML structure via FieldFacts,
+    as opposed to semantic facts extracted from prose/artifact content.
+    Per fact_redesign.md lines 1565-1613, structural facts provide the base
+    provenance layer for artifact manifests and entity resolution.
+
+    Attributes:
+        fact_id: UUID for this structural fact.
+        element_id: ID of the element this fact belongs to.
+        field_path: Full path from element root (e.g., "raises[0].status_code").
+        key: Last segment of field_path (e.g., "status_code").
+        scope_path: Prefix of field_path (e.g., "raises[0]").
+        value: String representation of the value.
+        value_kind: Classification of the value type.
+        role: Semantic role (constraint/entity_ref/artifact_root/metadata).
+        group_key: Semantic grouping key for constraint grouping.
+        group_id: SHA-256 hash of group_key.
+        source_file: Relative path to the source YAML file.
+        source_element_id: Element ID within YAML (same as element_id).
+        domains: List of domain tags for multi-domain tagging.
+        pattern: Pattern name for organization.
+        confidence: Confidence score (1.0 for structural facts).
+        extracted_at: ISO 8601 timestamp when extracted.
+    """
+
+    fact_id: str
+    element_id: str
+    field_path: str
+    key: str
+    scope_path: str
+    value: str
+    value_kind: str
+    role: str
+    group_key: str
+    group_id: str
+    source_file: str
+    source_element_id: str
+    domains: list[str]
+    pattern: str
+    confidence: float
+    extracted_at: str
+
+
+class EdgeRecord(TypedDict):
+    """A relationship edge record for JSONL export.
+
+    Represents relationship edges between elements for knowledge graph construction.
+    Supports two edge types:
+    - containment: Parent→child relationships from ContainmentEdge (element nesting)
+    - entity_ref: Entity reference edges from FieldFacts with role==entity_ref
+
+    Attributes:
+        edge_id: UUID for this edge.
+        edge_type: Type of edge ('containment' or 'entity_ref').
+        source_id: ID of the source element.
+        target_id: ID of the target element.
+        source_file: Relative path to the source YAML file.
+        metadata: Additional context (field_path, key, etc.).
+    """
+
+    edge_id: str
+    edge_type: Literal["containment", "entity_ref"]
+    source_id: str
+    target_id: str
+    source_file: str
+    metadata: dict[str, Any]
 
 
 # --- Storage Functions ---
@@ -397,6 +507,182 @@ def store_fact_to_yaml(yaml_path: Path, fact_record: FactStoreRecord) -> int:
     return 1
 
 
+def ensure_structural_facts_yaml_exists(yaml_path: Path) -> None:
+    """Create structural facts YAML file with schema if it doesn't exist.
+
+    Args:
+        yaml_path: Path to the structural fact YAML file.
+    """
+    yaml_path.parent.mkdir(parents=True, exist_ok=True)
+    if not yaml_path.exists():
+        initial_content = {"facts": [], "structural_facts": []}
+        content = yaml.dump(
+            initial_content,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+        yaml_path.write_text(content, encoding="utf-8")
+
+
+def store_structural_facts(
+    field_facts: list[FieldFact],
+    domains: list[str],
+    pattern: str,
+    knowledge_path: Path,
+) -> tuple[int, int]:
+    """Store FieldFacts as structural facts in domain/pattern YAML files.
+
+    Per fact_redesign.md lines 1565-1613, structural facts provide the base
+    provenance layer for artifact manifests and entity resolution. They are
+    stored separately from semantic facts in a 'structural_facts' section.
+
+    Args:
+        field_facts: List of FieldFact instances to store.
+        domains: List of domain tags for multi-domain tagging.
+        pattern: Pattern name for organization.
+        knowledge_path: Base path to .knowledge directory.
+
+    Returns:
+        Tuple of (success_count, total_count).
+    """
+    if not field_facts:
+        return (0, 0)
+
+    primary_domain = determine_primary_domain(domains)
+    yaml_path = knowledge_path / "facts" / f"{primary_domain}.{pattern}.facts.yml"
+
+    ensure_structural_facts_yaml_exists(yaml_path)
+
+    try:
+        data = parse_yaml_file(yaml_path)
+    except (ValueError, TypeError, yaml.YAMLError, FileNotFoundError) as exc:
+        print(f"Warning: Failed to parse {yaml_path}: {exc}", file=sys.stderr)
+        return (0, len(field_facts))
+
+    if "structural_facts" not in data or not isinstance(data["structural_facts"], list):
+        data["structural_facts"] = []
+
+    existing_ids = {
+        fact.get("fact_id") for fact in data["structural_facts"] if isinstance(fact, dict)
+    }
+
+    success_count = 0
+    extracted_at = utc_timestamp()
+
+    for field_fact in field_facts:
+        fact_id = str(uuid.uuid4())
+
+        # Skip if duplicate based on element_id + field_path + value
+        serialized_value = _serialize_value(field_fact.value)
+        existing_key = f"{field_fact.element_id}:{field_fact.field_path}:{serialized_value}"
+        existing_keys = {
+            f"{f.get('element_id')}:{f.get('field_path')}:{f.get('value', '')}"
+            for f in data["structural_facts"]
+            if isinstance(f, dict)
+        }
+        if existing_key in existing_keys:
+            success_count += 1  # Consider duplicate as success
+            continue
+
+        record = fieldfact_to_structural_record(
+            field_fact, domains, pattern, fact_id, extracted_at
+        )
+        data["structural_facts"].append(dict(record))
+        success_count += 1
+
+    try:
+        content = yaml.dump(
+            data,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+            width=120,
+        )
+        yaml_path.write_text(content, encoding="utf-8")
+    except (OSError, yaml.YAMLError) as exc:
+        print(f"Warning: Failed to write {yaml_path}: {exc}", file=sys.stderr)
+        return (0, len(field_facts))
+
+    return (success_count, len(field_facts))
+
+
+def containment_edges_to_edge_records(
+    containment_edges: list[ContainmentEdge],
+) -> list[EdgeRecord]:
+    """Convert ContainmentEdge instances to EdgeRecord instances.
+
+    ContainmentEdges represent parent→child relationships from element nesting
+    in YAML documents.
+
+    Args:
+        containment_edges: List of ContainmentEdge dataclass instances.
+
+    Returns:
+        List of EdgeRecord dictionaries for JSONL export.
+    """
+    records: list[EdgeRecord] = []
+    for edge in containment_edges:
+        record = EdgeRecord(
+            edge_id=str(uuid.uuid4()),
+            edge_type="containment",
+            source_id=edge.parent_id,
+            target_id=edge.child_id,
+            source_file=edge.source_file,
+            metadata={"field_path": edge.field_path},
+        )
+        records.append(record)
+    return records
+
+
+def entity_ref_fieldfacts_to_edge_records(
+    field_facts: list[FieldFact],
+) -> list[EdgeRecord]:
+    """Extract entity reference edges from FieldFacts with role=='entity_ref'.
+
+    FieldFacts with role=='entity_ref' indicate references to other entities
+    via $ref values or similar patterns.
+
+    Args:
+        field_facts: List of FieldFact instances.
+
+    Returns:
+        List of EdgeRecord dictionaries for entity reference edges.
+    """
+    records: list[EdgeRecord] = []
+    for fact in field_facts:
+        if fact.role != "entity_ref":
+            continue
+
+        # Extract target_id from $ref value
+        target_id = ""
+        if isinstance(fact.value, dict) and "$ref" in fact.value:
+            target_id = fact.value["$ref"]
+        elif isinstance(fact.value, str):
+            # Handle $ref:target_id serialized format
+            if fact.value.startswith("$ref:"):
+                target_id = fact.value[5:]
+            else:
+                target_id = fact.value
+
+        if not target_id:
+            continue
+
+        record = EdgeRecord(
+            edge_id=str(uuid.uuid4()),
+            edge_type="entity_ref",
+            source_id=fact.element_id,
+            target_id=target_id,
+            source_file=fact.source_file,
+            metadata={
+                "field_path": fact.field_path,
+                "key": fact.key,
+            },
+        )
+        records.append(record)
+    return records
+
+
 def read_facts_from_csv(csv_path: Path, entity: str | None = None) -> list[dict[str, str]]:
     """Read extracted facts from extractions.csv.
 
@@ -462,6 +748,90 @@ def _parse_confidence(value: str) -> float:
         return float(value)
     except ValueError:
         return 0.0
+
+
+def determine_primary_domain(domains: list[str]) -> str:
+    """Determine primary domain for filename from domains list.
+
+    Per fact_redesign.md, the primary domain is used for the filename:
+    - If single domain, return that domain
+    - If multiple domains, return the first domain in the list
+    - If empty list, return 'general' as fallback
+
+    Args:
+        domains: List of domain tags.
+
+    Returns:
+        Primary domain string for filename construction.
+    """
+    if not domains:
+        return "general"
+    return domains[0]
+
+
+def _serialize_value(value: Any) -> str:
+    """Serialize a FieldFact value to string representation.
+
+    Handles various value types including $ref dicts, lists, and objects.
+
+    Args:
+        value: The value to serialize.
+
+    Returns:
+        String representation of the value.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        # Handle $ref dicts specially
+        if "$ref" in value:
+            return f"$ref:{value['$ref']}"
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def fieldfact_to_structural_record(
+    field_fact: FieldFact,
+    domains: list[str],
+    pattern: str,
+    fact_id: str,
+    extracted_at: str,
+) -> StructuralFactRecord:
+    """Convert a FieldFact to a StructuralFactRecord for storage.
+
+    FieldFacts are mechanically derived from YAML structure and have
+    confidence 1.0 since they are deterministically extracted.
+
+    Args:
+        field_fact: The FieldFact dataclass instance.
+        domains: List of domain tags for multi-domain tagging.
+        pattern: Pattern name for organization.
+        fact_id: UUID for this fact (generated by caller).
+        extracted_at: ISO 8601 timestamp (generated by caller).
+
+    Returns:
+        StructuralFactRecord ready for YAML storage.
+    """
+    return StructuralFactRecord(
+        fact_id=fact_id,
+        element_id=field_fact.element_id,
+        field_path=field_fact.field_path,
+        key=field_fact.key,
+        scope_path=field_fact.scope_path,
+        value=_serialize_value(field_fact.value),
+        value_kind=field_fact.value_kind,
+        role=field_fact.role,
+        group_key=field_fact.group_key,
+        group_id=field_fact.group_id,
+        source_file=field_fact.source_file,
+        source_element_id=field_fact.element_id,
+        domains=domains,
+        pattern=pattern,
+        confidence=1.0,  # Structural facts are deterministically extracted
+        extracted_at=extracted_at,
+    )
 
 
 def organize_facts_by_domain_pattern(
@@ -595,6 +965,246 @@ def get_fact_by_id(facts_dir: Path, fact_id: str) -> dict[str, Any] | None:
                 return fact
 
     return None
+
+
+def query_structural_facts(
+    facts_dir: Path,
+    domain: str | None = None,
+    pattern: str | None = None,
+    element_id: str | None = None,
+    role: str | None = None,
+) -> list[dict[str, Any]]:
+    """Query structural facts from YAML files with optional filters.
+
+    Queries the 'structural_facts' section of domain/pattern YAML files,
+    separate from semantic facts in the 'facts' section.
+
+    Args:
+        facts_dir: Path to the facts directory.
+        domain: Optional domain to filter by (from filename).
+        pattern: Optional pattern to filter by (from filename).
+        element_id: Optional element_id to filter by.
+        role: Optional role to filter by (constraint/entity_ref/artifact_root/metadata).
+
+    Returns:
+        List of matching structural fact dictionaries.
+    """
+    results: list[dict[str, Any]] = []
+
+    fact_files = list_fact_files(facts_dir)
+    for fact_file in fact_files:
+        # Parse filename: domain.pattern.facts.yml
+        filename = fact_file.stem  # e.g., "rest.api.facts"
+        parts = filename.rsplit(".facts", 1)[0].split(".", 1)
+        if len(parts) != 2:
+            continue
+        file_domain, file_pattern = parts
+
+        # Filter by domain/pattern from filename
+        if domain and file_domain != domain:
+            continue
+        if pattern and file_pattern != pattern:
+            continue
+
+        try:
+            data = parse_yaml_file(fact_file)
+        except (ValueError, TypeError, yaml.YAMLError, FileNotFoundError):
+            continue
+
+        structural_facts = data.get("structural_facts", [])
+        if not isinstance(structural_facts, list):
+            continue
+
+        for fact in structural_facts:
+            # Filter by element_id
+            if element_id and fact.get("element_id") != element_id:
+                continue
+            # Filter by role
+            if role and fact.get("role") != role:
+                continue
+            results.append(fact)
+
+    return results
+
+
+def export_facts_to_jsonl(
+    knowledge_path: Path,
+    include_edges: bool = True,
+    output_path: Path | None = None,
+) -> Path:
+    """Export all facts to unified JSONL format.
+
+    Exports both structural and semantic facts from domain/pattern YAML files
+    to a single JSONL file. Per fact_redesign.md lines 1428-1767, this provides
+    a unified export format with domain arrays and optional edge lists for
+    downstream KG/vector/BM25 systems.
+
+    Args:
+        knowledge_path: Base path to .knowledge directory.
+        include_edges: Whether to include relationship edges (containment/entity_ref).
+        output_path: Custom output path. Defaults to knowledge_path/facts/facts.jsonl.
+
+    Returns:
+        Path to the generated JSONL file.
+    """
+    if output_path is None:
+        output_path = knowledge_path / "facts" / "facts.jsonl"
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    facts_dir = knowledge_path / "facts"
+
+    records: list[dict[str, Any]] = []
+
+    # Load all facts from YAML files
+    fact_files = list_fact_files(facts_dir)
+    for fact_file in fact_files:
+        # Parse filename: domain.pattern.facts.yml
+        filename = fact_file.stem
+        parts = filename.rsplit(".facts", 1)[0].split(".", 1)
+        if len(parts) != 2:
+            continue
+        file_domain, file_pattern = parts
+
+        try:
+            data = parse_yaml_file(fact_file)
+        except (ValueError, TypeError, yaml.YAMLError, FileNotFoundError):
+            continue
+
+        # Process semantic facts
+        semantic_facts = data.get("facts", [])
+        if isinstance(semantic_facts, list):
+            for fact in semantic_facts:
+                if not isinstance(fact, dict):
+                    continue
+                # Build domains array (prefer explicit domains, fallback to single domain)
+                domains = fact.get("domains", [fact.get("domain", file_domain)])
+                if not domains:
+                    domains = [file_domain]
+
+                record = {
+                    "record_type": "fact",
+                    "fact_id": fact.get("fact_id", ""),
+                    "fact_type": "semantic",
+                    "fact_text": fact.get("fact_text", ""),
+                    "entity": fact.get("entity", ""),
+                    "domains": domains,
+                    "pattern": fact.get("pattern", file_pattern),
+                    "source_file": fact.get("source_file", ""),
+                    "source_element_id": fact.get("source_element_id", ""),
+                    "source_field_path": fact.get("source_field_path", ""),
+                    "confidence": fact.get("confidence", 0.0),
+                    "extracted_at": fact.get("extracted_at", ""),
+                    "provenance": {
+                        "artifact_id": fact.get("artifact_id", ""),
+                        "pass_id": fact.get("pass_id", ""),
+                        "span_id": fact.get("span_id", ""),
+                    },
+                }
+                records.append(record)
+
+        # Process structural facts
+        structural_facts = data.get("structural_facts", [])
+        if isinstance(structural_facts, list):
+            for fact in structural_facts:
+                if not isinstance(fact, dict):
+                    continue
+                domains = fact.get("domains", [file_domain])
+                if not domains:
+                    domains = [file_domain]
+
+                record = {
+                    "record_type": "fact",
+                    "fact_id": fact.get("fact_id", ""),
+                    "fact_type": "structural",
+                    "element_id": fact.get("element_id", ""),
+                    "field_path": fact.get("field_path", ""),
+                    "key": fact.get("key", ""),
+                    "scope_path": fact.get("scope_path", ""),
+                    "value": fact.get("value", ""),
+                    "value_kind": fact.get("value_kind", ""),
+                    "role": fact.get("role", ""),
+                    "group_key": fact.get("group_key", ""),
+                    "group_id": fact.get("group_id", ""),
+                    "domains": domains,
+                    "pattern": fact.get("pattern", file_pattern),
+                    "source_file": fact.get("source_file", ""),
+                    "source_element_id": fact.get("source_element_id", ""),
+                    "confidence": fact.get("confidence", 1.0),
+                    "extracted_at": fact.get("extracted_at", ""),
+                }
+                records.append(record)
+
+    # Add edges if requested
+    if include_edges:
+        # Load containment edges from CSV if exists
+        containment_csv = knowledge_path / "graph" / "containment_edges.csv"
+        if containment_csv.exists():
+            try:
+                query = """
+                    SELECT parent_id, child_id, field_path, source_file
+                    FROM read_csv_auto(?, ALL_VARCHAR=TRUE)
+                """
+                result = duckdb.execute(query, [str(containment_csv)]).fetchall()
+                for row in result:
+                    edge_record = {
+                        "record_type": "edge",
+                        "edge_id": str(uuid.uuid4()),
+                        "edge_type": "containment",
+                        "source_id": row[0],
+                        "target_id": row[1],
+                        "source_file": row[3],
+                        "metadata": {"field_path": row[2]},
+                    }
+                    records.append(edge_record)
+            except duckdb.Error:
+                pass  # Skip edges on error
+
+        # Extract entity_ref edges from structural facts
+        for fact_file in fact_files:
+            try:
+                data = parse_yaml_file(fact_file)
+            except (ValueError, TypeError, yaml.YAMLError, FileNotFoundError):
+                continue
+
+            structural_facts = data.get("structural_facts", [])
+            if isinstance(structural_facts, list):
+                for fact in structural_facts:
+                    if not isinstance(fact, dict):
+                        continue
+                    if fact.get("role") != "entity_ref":
+                        continue
+
+                    # Extract target_id from value
+                    value = fact.get("value", "")
+                    target_id = ""
+                    if isinstance(value, str) and value.startswith("$ref:"):
+                        target_id = value[5:]
+                    elif isinstance(value, str):
+                        target_id = value
+
+                    if not target_id:
+                        continue
+
+                    edge_record = {
+                        "record_type": "edge",
+                        "edge_id": str(uuid.uuid4()),
+                        "edge_type": "entity_ref",
+                        "source_id": fact.get("element_id", ""),
+                        "target_id": target_id,
+                        "source_file": fact.get("source_file", ""),
+                        "metadata": {
+                            "field_path": fact.get("field_path", ""),
+                            "key": fact.get("key", ""),
+                        },
+                    }
+                    records.append(edge_record)
+
+    # Write JSONL
+    with open(output_path, "w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    return output_path
 
 
 # --- Decoration Functions ---
@@ -1166,6 +1776,218 @@ def main_decorate() -> int:
     """
     args = parse_decorate_args()
     return decorate_yaml_main(args)
+
+
+def parse_store_structural_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for store-structural-facts command.
+
+    Stores FieldFacts extracted from YAML as structural facts in
+    domain/pattern YAML files.
+
+    Args:
+        argv: Command line arguments (defaults to sys.argv).
+
+    Returns:
+        Parsed argument namespace.
+    """
+    parser = argparse.ArgumentParser(
+        description="Store FieldFacts extracted from YAML as structural facts.",
+    )
+    parser.add_argument(
+        "--yaml-file",
+        type=Path,
+        required=True,
+        dest="yaml_file",
+        help="Source YAML file to extract FieldFacts from.",
+    )
+    parser.add_argument(
+        "--domains",
+        nargs="+",
+        required=True,
+        help="Domain tags for multi-domain tagging (space-separated).",
+    )
+    parser.add_argument(
+        "--pattern",
+        required=True,
+        help="Pattern name for organization.",
+    )
+    parser.add_argument(
+        "--knowledge-path",
+        type=Path,
+        default=Path(".knowledge"),
+        dest="knowledge_path",
+        help="Base knowledge directory (default: .knowledge).",
+    )
+    return parser.parse_args(argv)
+
+
+def store_structural_main(args: argparse.Namespace) -> int:
+    """Run store-structural-facts command.
+
+    Extracts FieldFacts from YAML file and stores as structural facts
+    in domain/pattern YAML file.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        0 on success, 1 on error.
+    """
+    if args.knowledge_path.is_absolute():
+        knowledge_path = args.knowledge_path.resolve()
+    else:
+        knowledge_path = (REPO_ROOT / args.knowledge_path).resolve()
+
+    # Resolve YAML file path
+    if args.yaml_file.is_absolute():
+        yaml_path = args.yaml_file.resolve()
+    else:
+        yaml_path = (REPO_ROOT / args.yaml_file).resolve()
+
+    if not yaml_path.exists():
+        print(f"Error: YAML file not found: {yaml_path}", file=sys.stderr)
+        return 1
+
+    print(f"Extracting FieldFacts from {yaml_path}...")
+
+    try:
+        data = parse_yaml_file(yaml_path)
+    except (ValueError, TypeError, yaml.YAMLError, FileNotFoundError) as exc:
+        print(f"Error: Failed to parse YAML: {exc}", file=sys.stderr)
+        return 1
+
+    # Compute relative path for source_file
+    try:
+        rel_path = str(yaml_path.relative_to(REPO_ROOT))
+    except ValueError:
+        rel_path = str(yaml_path)
+
+    # Extract FieldFacts
+    facts_by_element = extract_field_facts(data, rel_path)
+
+    # Flatten to list
+    all_facts: list[FieldFact] = []
+    for element_facts in facts_by_element.values():
+        all_facts.extend(element_facts)
+
+    if not all_facts:
+        print("No FieldFacts extracted from YAML.")
+        return 0
+
+    print(f"Extracted {len(all_facts)} FieldFact(s) from {len(facts_by_element)} element(s)")
+
+    # Store structural facts
+    success_count, total_count = store_structural_facts(
+        all_facts,
+        args.domains,
+        args.pattern,
+        knowledge_path,
+    )
+
+    primary_domain = determine_primary_domain(args.domains)
+    yaml_filename = f"{primary_domain}.{args.pattern}.facts.yml"
+
+    print(f"Stored {success_count}/{total_count} structural fact(s) to {yaml_filename}")
+    return 0
+
+
+def parse_export_jsonl_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for export-facts-jsonl command.
+
+    Exports all facts (structural and semantic) to unified JSONL format.
+
+    Args:
+        argv: Command line arguments (defaults to sys.argv).
+
+    Returns:
+        Parsed argument namespace.
+    """
+    parser = argparse.ArgumentParser(
+        description="Export all facts to unified JSONL format with domain arrays and edge lists.",
+    )
+    parser.add_argument(
+        "--knowledge-path",
+        type=Path,
+        default=Path(".knowledge"),
+        dest="knowledge_path",
+        help="Base knowledge directory (default: .knowledge).",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Output JSONL path (default: <knowledge-path>/facts/facts.jsonl).",
+    )
+    parser.add_argument(
+        "--include-edges",
+        action="store_true",
+        default=True,
+        dest="include_edges",
+        help="Include relationship edges (containment/entity_ref). Default: True.",
+    )
+    parser.add_argument(
+        "--no-edges",
+        action="store_false",
+        dest="include_edges",
+        help="Exclude relationship edges from export.",
+    )
+    return parser.parse_args(argv)
+
+
+def export_jsonl_main(args: argparse.Namespace) -> int:
+    """Run export-facts-jsonl command.
+
+    Exports all facts to unified JSONL format.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        0 on success, 1 on error.
+    """
+    if args.knowledge_path.is_absolute():
+        knowledge_path = args.knowledge_path.resolve()
+    else:
+        knowledge_path = (REPO_ROOT / args.knowledge_path).resolve()
+
+    output_path = args.output
+    if output_path and not output_path.is_absolute():
+        output_path = (REPO_ROOT / output_path).resolve()
+
+    print(f"Exporting facts from {knowledge_path}/facts/...")
+    print(f"Include edges: {args.include_edges}")
+
+    try:
+        result_path = export_facts_to_jsonl(
+            knowledge_path,
+            include_edges=args.include_edges,
+            output_path=output_path,
+        )
+        print(f"Exported facts to: {result_path}")
+        return 0
+    except (OSError, yaml.YAMLError) as exc:
+        print(f"Error: Failed to export facts: {exc}", file=sys.stderr)
+        return 1
+
+
+def main_store_structural() -> int:
+    """Entry point for knowledge.store-structural-facts command.
+
+    Returns:
+        Exit code (0 on success, 1 on error).
+    """
+    args = parse_store_structural_args()
+    return store_structural_main(args)
+
+
+def main_export_jsonl() -> int:
+    """Entry point for knowledge.export-facts-jsonl command.
+
+    Returns:
+        Exit code (0 on success, 1 on error).
+    """
+    args = parse_export_jsonl_args()
+    return export_jsonl_main(args)
 
 
 if __name__ == "__main__":

@@ -1432,3 +1432,229 @@ Artifact roots are detected using the Artifact Kind Registry via `_is_artifact_r
 When a FieldFact matches an artifact kind, the role is set to `artifact_root` and `artifact_kind`/`artifact_format` fields are populated from the registry.
 
 See `docs/plans/fact_redesign.md` lines 143-279 for the complete specification.
+
+## Two-Layer Fact Model
+
+Per `docs/plans/fact_redesign.md` lines 1565-1613, the knowledge system uses a two-layer fact model:
+
+### Structural Facts (Base Layer)
+
+Structural facts are derived mechanically from YAML structure via FieldFacts. They provide:
+
+- Field names, scope paths, and grouping keys
+- Containment edges (parent→child relationships)
+- Entity references (via $ref values)
+- Base provenance for hashing, candidate extraction, and artifact manifests
+
+Structural facts have confidence 1.0 since they are deterministically extracted from YAML structure.
+
+### Semantic Facts (Additive Layer)
+
+Semantic facts are derived from artifact blobs (prose, code, tables) via the fact_extraction.py pipeline. They:
+
+- Are stored in `facts/extractions.csv` with provenance back to structural layer
+- Include `source_file`, `source_element_id`, `source_field_path`, and `artifact_id`
+- Are additive - they do not replace structural facts
+
+**Design principle**: FieldFacts as base provenance, semantic facts as additive (do not replace).
+
+## Structural Fact Storage
+
+Structural facts are stored in `.knowledge/facts/<primary_domain>.<pattern>.facts.yml` with a
+separate `structural_facts` section from semantic facts.
+
+### Primary Domain Determination
+
+- Single domain: Uses that domain (e.g., `["rest"]` → `rest.api.facts.yml`)
+- Multiple domains: Uses first domain (e.g., `["rest", "fastapi"]` → `rest.api.facts.yml`)
+- Empty list: Uses `general` as fallback
+
+### YAML Structure
+
+```yaml
+# Domain/pattern fact file with both fact types
+facts:
+  # Semantic facts from fact_extraction.py
+  - fact_id: <uuid>
+    entity: <entity_name>
+    fact_text: <atomic_fact>
+    domain: <domain_tag>
+    pattern: <pattern_name>
+    # ... other fields
+
+structural_facts:
+  # Structural facts from FieldFacts
+  - fact_id: <uuid>
+    element_id: <element_id>
+    field_path: <path>
+    key: <key>
+    scope_path: <scope>
+    value: <serialized_value>
+    value_kind: <kind>
+    role: <constraint|entity_ref|artifact_root|metadata>
+    group_key: <grouping_key>
+    group_id: <sha256_hash>
+    domains:
+      - rest
+      - fastapi
+    pattern: api
+    confidence: 1.0
+    extracted_at: <timestamp>
+```
+
+### CLI Command
+
+```bash
+# Store structural FieldFacts from YAML
+uv run knowledge.store-structural-facts \
+  --yaml-file docs/development/general/general.rest.api-patterns.yml \
+  --domains rest fastapi \
+  --pattern api
+```
+
+## JSONL Export
+
+The JSONL export provides a unified format for both structural and semantic facts with
+domain arrays and optional edge lists for downstream KG/vector/BM25 systems.
+
+### Export Format
+
+Each line in `facts.jsonl` is a JSON object with:
+
+**Fact records** (`record_type: "fact"`):
+```json
+{
+  "record_type": "fact",
+  "fact_id": "<uuid>",
+  "fact_type": "semantic|structural",
+  "fact_text": "<text>",           // semantic facts
+  "entity": "<entity>",            // semantic facts
+  "element_id": "<id>",            // structural facts
+  "field_path": "<path>",          // structural facts
+  "domains": ["rest", "fastapi"],
+  "pattern": "<pattern>",
+  "source_file": "<path>",
+  "source_element_id": "<id>",
+  "source_field_path": "<path>",   // semantic facts - field path for traceability
+  "confidence": 0.95,
+  "extracted_at": "<timestamp>",
+  "provenance": {                  // semantic facts only
+    "artifact_id": "<uuid>",
+    "pass_id": "<uuid>",
+    "span_id": "<uuid>"
+  }
+}
+```
+
+**Edge records** (`record_type: "edge"`):
+```json
+{
+  "record_type": "edge",
+  "edge_id": "<uuid>",
+  "edge_type": "containment|entity_ref",
+  "source_id": "<parent_or_source_element>",
+  "target_id": "<child_or_target_element>",
+  "source_file": "<path>",
+  "metadata": {
+    "field_path": "<path>",
+    "key": "<key>"
+  }
+}
+```
+
+### Edge Types
+
+- **containment**: Parent→child relationships from ContainmentEdge (element nesting in YAML)
+- **entity_ref**: Entity reference edges from FieldFacts with `role==entity_ref` ($ref values)
+
+### CLI Command
+
+```bash
+# Export all facts to unified JSONL format
+uv run knowledge.export-facts-jsonl --knowledge-path .knowledge --include-edges
+
+# Export without edges
+uv run knowledge.export-facts-jsonl --no-edges
+
+# Custom output path
+uv run knowledge.export-facts-jsonl --output custom/path/facts.jsonl
+```
+
+### Output Location
+
+Default: `.knowledge/facts/facts.jsonl`
+
+## Multi-Domain Tagging
+
+Facts can be tagged with multiple domains per `docs/development/domain-definitions.yml`:
+
+### Examples
+
+- Pure REST protocol fact: `domains: ["rest"]`
+- FastAPI implementation of REST: `domains: ["rest", "fastapi"]`
+- Python async patterns in FastAPI: `domains: ["python", "fastapi"]`
+
+### Rules
+
+- No hierarchy between domains - apply all relevant tags
+- Primary domain for filename is first domain in array
+
+## Provenance Tracking
+
+### Structural Fact Provenance
+
+Structural facts include:
+- `source_file`: Relative path to source YAML file
+- `source_element_id`: Element ID within YAML
+- `field_path`: Full path from element root
+
+### Semantic Fact Provenance
+
+Semantic facts (from artifact extraction pipeline) include:
+- `artifact_id`: Artifact manifest ID
+- `pass_id`: Extraction pass identifier
+- `span_id`: Text span identifier
+- `source_file`, `source_element_id`, `source_field_path`: Link to structural layer
+
+### Provenance Merge
+
+Multiple extractions of the same fact merge provenance in `fact_provenance.csv`. The fact_key
+(SHA-256 of normalized text + entity_id + artifact_id) ensures deduplication per
+`docs/plans/fact_redesign.md` lines 893-908.
+
+## Additional CLI Commands
+
+### Store Structural Facts
+
+```bash
+uv run knowledge.store-structural-facts \
+  --yaml-file <path>       # Source YAML file
+  --domains <d1> <d2> ...  # Domain tags (space-separated)
+  --pattern <pattern>      # Pattern name
+  --knowledge-path <path>  # Base knowledge directory (default: .knowledge)
+```
+
+### Export Facts to JSONL
+
+```bash
+uv run knowledge.export-facts-jsonl \
+  --knowledge-path <path>  # Base knowledge directory (default: .knowledge)
+  --output <path>          # Custom output path (optional)
+  --include-edges          # Include relationship edges (default: true)
+  --no-edges               # Exclude relationship edges
+```
+
+## Integration with Artifact System
+
+Structural facts link to artifact manifests via `source_file`, `source_element_id`, and
+`field_path`. The artifact-level extraction workflow:
+
+1. **Detect artifacts** (`detect_artifacts.py`): Identify artifact roots using Artifact Kind Registry
+2. **Extract FieldFacts** (`compare_yaml_docs.extract_field_facts()`): Get structural facts from YAML
+3. **Store structural facts** (`fact_store.store_structural_facts()`): Persist to domain YAML files
+4. **Extract semantic facts** (`artifact_fact_extractor.py`): Extract from artifact blobs
+5. **Render artifacts** (`artifact_renderer.py`): Render from contributor facts
+6. **Validate** (`artifact_validator.py`): Compare rendered vs source
+
+The unified JSONL export provides the canonical input for downstream KG/vector/BM25 systems,
+combining both structural and semantic facts with full provenance and relationship edges.
