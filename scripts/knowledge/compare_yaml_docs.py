@@ -41,6 +41,28 @@ Artifact Layer:
     enables extract→render→compare validation loops for dense integrated documentation
     (paragraphs, code blocks, tables). See docs/plans/fact_redesign.md lines 282-569
     for specification.
+
+Projection Versioning:
+    The text projection contract is versioned as 'fieldfacts.v2'. This identifies:
+    - Element slicing: nested id-bearing dicts replaced with {"$ref": "<child_id>"}
+    - FieldFact extraction: including roles, grouping, and artifact root tagging
+    - Text projection format: "[ancestor > element_id] field_path = value"
+
+    Version bump triggers (per fact_redesign.md lines 1398-1426):
+    - Changes to slicing rules or $ref representation
+    - Changes to FieldFact structure (fields, role rules, grouping)
+    - Changes to text projection format or ordering
+
+    The projection_version MUST be recorded in:
+    - resolved.csv (resolution_tracker.py)
+    - candidates.csv (candidate_extraction.py)
+    - Artifact manifests and graph ingestion outputs
+
+Key Functions:
+    - extract_ids_and_text: Canonical fact-line projection for hashing/NLP
+    - compute_element_content_hash: Structural hash independent of text formatting
+    - _index_elements: Build element context map with ancestor tracking
+    - _fact_to_line: Format FieldFact as text line with ancestor chain
 """
 
 import argparse
@@ -85,6 +107,32 @@ class ContainmentEdge:
     child_id: str
     field_path: str
     source_file: str
+
+
+@dataclass
+class ElementContext:
+    """Context information for an element within YAML structure.
+
+    Captures the element's position in the document hierarchy including its
+    YAML path and ancestor chain. Used by _index_elements to build a mapping
+    for text projection with ancestor tracking.
+
+    Per fact_redesign.md lines 1082-1086, this enables:
+    - Ancestor chain construction for fact-line formatting
+    - YAML path recording for structural context
+    - Element lookup by ID for text projection
+
+    Attributes:
+        id: The element's unique identifier.
+        obj: The raw dict object from YAML.
+        path: YAML path to the element (e.g., "sections[0].items[2]").
+        ancestors: List of ancestor element IDs, outermost to nearest.
+    """
+
+    id: str
+    obj: dict[str, Any]
+    path: str
+    ancestors: list[str]
 
 
 # Type aliases for FieldFact value_kind and role
@@ -1168,6 +1216,60 @@ def _build_ancestors_map(
     return ancestors_map
 
 
+def _index_elements(
+    data: YamlValue,
+    path: str = "",
+    ancestor_ids: list[str] | None = None,
+) -> dict[str, ElementContext]:
+    """Recursively build id→ElementContext map with ancestor tracking.
+
+    Traverses dicts/lists, detects elements (dicts with string `id`), accumulates
+    ancestor IDs, and records YAML paths. This enables text projection with
+    ancestor chain formatting.
+
+    Per fact_redesign.md lines 1088-1120, this produces the mapping needed for:
+    - Ancestor chain construction in _fact_to_line
+    - Element lookup by ID for text projection
+    - YAML path context for structural tracing
+
+    Args:
+        data: The parsed YAML structure (dict, list, or primitive).
+        path: Current YAML path (e.g., "sections[0].items[2]").
+        ancestor_ids: List of ancestor element IDs accumulated so far.
+
+    Returns:
+        Dictionary mapping element_id to ElementContext.
+    """
+    if ancestor_ids is None:
+        ancestor_ids = []
+
+    result: dict[str, ElementContext] = {}
+
+    if isinstance(data, dict):
+        element_id = data.get("id")
+        if isinstance(element_id, str):
+            ctx = ElementContext(
+                id=element_id,
+                obj=data,
+                path=path or "$",
+                ancestors=list(ancestor_ids),
+            )
+            result[element_id] = ctx
+            # Update ancestor list for children
+            ancestor_ids = ancestor_ids + [element_id]
+
+        for key, value in data.items():
+            child_path = f"{path}.{key}" if path else key
+            result.update(_index_elements(value, child_path, ancestor_ids))
+
+    elif isinstance(data, list):
+        for idx, item in enumerate(data):
+            child_path = f"{path}[{idx}]" if path else f"[{idx}]"
+            result.update(_index_elements(item, child_path, ancestor_ids))
+
+    return result
+
+
 def extract_field_facts(
     data: Any,  # noqa: ANN401
     source_file: str = "",
@@ -1502,30 +1604,70 @@ def _format_value_for_text(value: Any) -> str:  # noqa: ANN401
     return str(value)
 
 
+def _fact_to_line(fact: FieldFact) -> str:
+    """Format a FieldFact as a text line with ancestor chain.
+
+    Constructs a canonical fact-line representation that includes:
+    - Ancestor chain and element_id in brackets
+    - Full field_path
+    - Normalized value (scalars as strings, refs as $ref:child_id)
+
+    Per fact_redesign.md lines 1224-1231, this format enables:
+    - Structural context in text (ancestor elements)
+    - Field names as part of the text (for NLP extraction)
+    - $ref tokens for nested element relationships
+
+    Args:
+        fact: The FieldFact to format.
+
+    Returns:
+        Formatted string: "[ancestor > element_id] field_path = value"
+    """
+    # Build ancestor chain: "ancestor1 > ancestor2 > element_id"
+    if fact.ancestors:
+        chain = " > ".join(fact.ancestors + [fact.element_id])
+    else:
+        chain = fact.element_id
+
+    # Format value: $ref:child_id for refs, otherwise str(value)
+    if isinstance(fact.value, dict) and "$ref" in fact.value:
+        value_str = f"$ref:{fact.value['$ref']}"
+    else:
+        value_str = _format_value_for_text(fact.value)
+
+    return f"[{chain}] {fact.field_path} = {value_str}"
+
+
 def extract_ids_and_text(
     data: YamlValue,
     source_file: str = "",
 ) -> dict[str, str]:
-    """Extract IDs and text projections from sliced elements using FieldFacts.
+    """Extract IDs and synthetic fact-line text projections from FieldFacts.
 
     Uses the FieldFact pipeline to produce a deterministic text projection for
-    each element. The text projection flattens the sliced dict into key=value
-    lines, where each line corresponds to a FieldFact.
+    each element. Each line encodes structural context:
+    - Ancestor chain and element_id in brackets
+    - Full field_path (field names as part of the text)
+    - Normalized value ($ref:child_id for nested elements)
 
     This function is used for hashing in resolution_tracker and for
-    candidate extraction context. Per the fact redesign (lines 131-133),
-    the text hash is computed from the sliced representation with child
-    content excluded.
+    candidate extraction context. Per the fact redesign (lines 1233-1258),
+    the text projection is derived from the sliced representation with child
+    content replaced by $ref tokens.
 
-    The FieldFact-based approach ensures structural and textual representations
-    are aligned, using the same traversal logic for both.
+    The FieldFact-based approach ensures:
+    - Field names are literally in the text (for NLP extraction)
+    - Ancestor elements provide structural context
+    - Nested entities appear only as $ref tokens, not inlined
+
+    Projection version: fieldfacts.v2
 
     Args:
         data: The parsed YAML structure (dict, list, or primitive).
         source_file: Relative path to the source file for containment edges.
 
     Returns:
-        Dictionary mapping element IDs to their text projection strings.
+        Dictionary mapping element IDs to their synthetic fact-line text.
     """
     sliced_objects, edges = extract_ids_and_objects(data, source_file=source_file)
     result: dict[str, str] = {}
@@ -1543,17 +1685,75 @@ def extract_ids_and_text(
             source_file=source_file,
         )
 
-        # Also include root-level keys that aren't captured by FieldFacts
-        # (like "id" which is skipped in _iter_field_facts)
-        # Build text projection from sliced dict for compatibility
-        lines: list[str] = []
-        for key in sorted(sliced_dict.keys()):
-            value = sliced_dict[key]
-            formatted = _format_value_for_text(value)
-            lines.append(f"{key}={formatted}")
+        # Format each fact as a fact-line with ancestor chain
+        lines = [_fact_to_line(f) for f in facts]
+        # Sort by field_path for deterministic ordering
+        lines.sort()
         result[element_id] = "\n".join(lines)
 
     return result
+
+
+def compute_element_content_hash(
+    data: YamlValue,
+    element_id: str,
+    source_file: str = "",
+) -> str:
+    """Compute SHA-256 hash of canonical FieldFact payload for an element.
+
+    Provides a structural hash independent of text formatting. The hash is
+    computed from a JSON serialization of FieldFact payloads (field_path,
+    value_kind, value), sorted by field_path for determinism.
+
+    Per fact_redesign.md lines 1446-1469, this enables:
+    - Stable content hashes that don't change with text projection formatting
+    - Hash changes when field values/names change
+    - Hash independence from nested element internals (due to $ref replacement)
+
+    Args:
+        data: The parsed YAML structure containing the element.
+        element_id: The ID of the element to hash.
+        source_file: Relative path to the source file for containment edges.
+
+    Returns:
+        SHA-256 hex digest of the canonical FieldFact payload.
+
+    Raises:
+        KeyError: If element_id is not found in the data.
+    """
+    sliced_objects, edges = extract_ids_and_objects(data, source_file=source_file)
+
+    if element_id not in sliced_objects:
+        msg = f"Element '{element_id}' not found in data"
+        raise KeyError(msg)
+
+    sliced_dict = sliced_objects[element_id]
+
+    # Build ancestor map from containment edges
+    ancestors_map = _build_ancestors_map(edges)
+    ancestors = ancestors_map.get(element_id, [])
+
+    # Extract FieldFacts
+    facts = _iter_field_facts(
+        element_id=element_id,
+        sliced_data=sliced_dict,
+        ancestors=ancestors,
+        source_file=source_file,
+    )
+
+    # Build canonical payload: sorted list of (field_path, value_kind, value)
+    payload = [
+        {
+            "field_path": f.field_path,
+            "value_kind": f.value_kind,
+            "value": f.value,
+        }
+        for f in sorted(facts, key=lambda f: f.field_path)
+    ]
+
+    # JSON serialize with sort_keys for determinism
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def find_originals(

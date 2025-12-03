@@ -17,6 +17,7 @@ from scripts.knowledge.compare_yaml_docs import (
     ArtifactMatch,
     ComparisonEntry,
     ContainmentEdge,
+    ElementContext,
     FieldFact,
     RoleAssignment,
     SplitEntry,
@@ -28,10 +29,12 @@ from scripts.knowledge.compare_yaml_docs import (
     _compute_artifact_id,
     _compute_group_key,
     _determine_value_kind,
+    _fact_to_line,
     _flatten_entry_to_rows,
     _get_modality_and_extraction_mode_from_registry,
     _get_render_engine_for_kind,
     _get_render_plan_id_from_registry,
+    _index_elements,
     _is_artifact_root,
     _is_element,
     _iter_field_facts,
@@ -42,6 +45,7 @@ from scripts.knowledge.compare_yaml_docs import (
     _validate_yaml_result,
     aggregate_split_objects,
     compare_original_to_splits,
+    compute_element_content_hash,
     detect_artifacts_from_field_facts,
     extract_field_facts,
     extract_ids_and_objects,
@@ -322,17 +326,27 @@ class TestExtractIdsAndObjects:
 
 
 class TestExtractIdsAndText:
-    """Tests for extract_ids_and_text function."""
+    """Tests for extract_ids_and_text function.
+
+    Note: Output format changed from simple key=value to fact-line format:
+    [ancestor > element_id] field_path = value
+
+    Per fact_redesign.md lines 1233-1258, this enables:
+    - Field names as part of the text (for NLP extraction)
+    - Ancestor elements provide structural context
+    - Nested entities appear only as $ref tokens
+    """
 
     def test_simple_element_text_projection(self) -> None:
-        """Should produce text projection for simple element."""
+        """Should produce fact-line text projection for simple element."""
         data = {"id": "test", "text": "Hello", "count": 5}
         result = extract_ids_and_text(data)  # type: ignore[arg-type]
         assert "test" in result
         text = result["test"]
-        assert "id=test" in text
-        assert "text=Hello" in text
-        assert "count=5" in text
+        # New format: [element_id] field_path = value
+        assert "[test]" in text
+        assert "text = Hello" in text
+        assert "count = 5" in text
 
     def test_element_with_ref_produces_ref_format(self) -> None:
         """Should produce $ref:child_id format for references."""
@@ -342,25 +356,28 @@ class TestExtractIdsAndText:
         }
         result = extract_ids_and_text(data)  # type: ignore[arg-type]
         text = result["parent"]
-        assert "child=$ref:child-1" in text
+        # New format: [element_id] field_path = $ref:child_id
+        assert "child = $ref:child-1" in text
 
     def test_element_with_lists(self) -> None:
-        """Should format lists correctly in text projection."""
+        """Should format list items as individual facts."""
         data = {"id": "test", "items": ["a", "b", "c"]}
         result = extract_ids_and_text(data)  # type: ignore[arg-type]
         text = result["test"]
-        assert "items=[a, b, c]" in text
+        # List items become individual fact-lines
+        assert "items[0] = a" in text
+        assert "items[1] = b" in text
+        assert "items[2] = c" in text
 
     def test_deterministic_ordering(self) -> None:
-        """Should produce deterministic output based on sorted keys."""
+        """Should produce deterministic output based on sorted field_path."""
         data = {"id": "test", "z_field": "last", "a_field": "first"}
         result = extract_ids_and_text(data)  # type: ignore[arg-type]
         text = result["test"]
         lines = text.split("\n")
-        # a_field should come before id which comes before z_field
-        assert lines[0].startswith("a_field=")
-        assert lines[1].startswith("id=")
-        assert lines[2].startswith("z_field=")
+        # Lines sorted by field_path: a_field before z_field
+        assert "a_field" in lines[0]
+        assert "z_field" in lines[1]
 
 
 class TestStripTimestampPrefix:
@@ -1403,19 +1420,19 @@ class TestExtractFieldFacts:
 
 
 class TestExtractIdsAndTextWithFieldFacts:
-    """Tests to verify backward compatibility of extract_ids_and_text."""
+    """Tests for extract_ids_and_text using FieldFact-based projection."""
 
-    def test_text_projection_unchanged(self) -> None:
-        """Should verify extract_ids_and_text still produces same text format."""
+    def test_text_projection_uses_fact_line_format(self) -> None:
+        """Should verify extract_ids_and_text uses fact-line format."""
         data = {"id": "test", "text": "Hello", "count": 5}
         result = extract_ids_and_text(data)  # type: ignore[arg-type]
 
         assert "test" in result
         text = result["test"]
-        # Should have key=value format
-        assert "count=5" in text
-        assert "id=test" in text
-        assert "text=Hello" in text
+        # Should have fact-line format: [element_id] field_path = value
+        assert "[test]" in text
+        assert "count = 5" in text
+        assert "text = Hello" in text
 
     def test_field_facts_used_for_structured_access(self) -> None:
         """Should verify FieldFacts can be used for structured access."""
@@ -2067,3 +2084,447 @@ class TestDetectArtifactsFromFieldFacts:
         assert len(artifacts_all) == 1
         assert artifacts_all[0].modality == "image"
         assert artifacts_all[0].extraction_mode == "query_only"
+
+
+# ==============================================================================
+# Text Projection Helper Tests (per fact_redesign.md lines 1068-1258)
+# ==============================================================================
+
+
+class TestElementContext:
+    """Tests for ElementContext dataclass."""
+
+    def test_instantiation(self) -> None:
+        """Should instantiate with all required fields."""
+        ctx = ElementContext(
+            id="element-1",
+            obj={"id": "element-1", "text": "content"},
+            path="sections[0]",
+            ancestors=["root", "parent"],
+        )
+        assert ctx.id == "element-1"
+        assert ctx.obj == {"id": "element-1", "text": "content"}
+        assert ctx.path == "sections[0]"
+        assert ctx.ancestors == ["root", "parent"]
+
+    def test_empty_ancestors(self) -> None:
+        """Should allow empty ancestors list."""
+        ctx = ElementContext(
+            id="root",
+            obj={"id": "root"},
+            path="$",
+            ancestors=[],
+        )
+        assert ctx.ancestors == []
+
+
+class TestIndexElements:
+    """Tests for _index_elements helper function."""
+
+    def test_indexes_single_element(self) -> None:
+        """Should index a single element with id."""
+        data = {"id": "test-1", "text": "content"}
+        result = _index_elements(data)
+
+        assert "test-1" in result
+        ctx = result["test-1"]
+        assert ctx.id == "test-1"
+        assert ctx.obj == data
+        assert ctx.path == "$"  # Root element
+        assert ctx.ancestors == []
+
+    def test_indexes_nested_elements(self) -> None:
+        """Should index nested elements with correct paths."""
+        data = {
+            "id": "parent",
+            "items": [
+                {"id": "child-1", "text": "Child 1"},
+                {"id": "child-2", "text": "Child 2"},
+            ],
+        }
+        result = _index_elements(data)
+
+        assert "parent" in result
+        assert "child-1" in result
+        assert "child-2" in result
+
+        # Check paths
+        assert result["child-1"].path == "items[0]"
+        assert result["child-2"].path == "items[1]"
+
+    def test_tracks_ancestors(self) -> None:
+        """Should track ancestor element IDs."""
+        data = {
+            "id": "grandparent",
+            "sections": [
+                {
+                    "id": "parent",
+                    "items": [
+                        {"id": "child", "text": "content"},
+                    ],
+                }
+            ],
+        }
+        result = _index_elements(data)
+
+        # Grandparent has no ancestors
+        assert result["grandparent"].ancestors == []
+
+        # Parent has grandparent as ancestor
+        assert result["parent"].ancestors == ["grandparent"]
+
+        # Child has grandparent, parent as ancestors (outermost first)
+        assert result["child"].ancestors == ["grandparent", "parent"]
+
+    def test_handles_non_element_dicts(self) -> None:
+        """Should skip dicts without string id field."""
+        data = {
+            "id": "root",
+            "metadata": {"key": "value"},  # No id - not an element
+            "items": [
+                {"id": 123},  # Non-string id - not an element
+            ],
+        }
+        result = _index_elements(data)
+
+        assert "root" in result
+        assert len(result) == 1
+
+    def test_handles_empty_data(self) -> None:
+        """Should return empty dict for primitive data."""
+        assert _index_elements(None) == {}
+        assert _index_elements("string") == {}
+        assert _index_elements(123) == {}
+
+    def test_deep_nesting_path(self) -> None:
+        """Should build correct paths for deeply nested structures.
+
+        Uses structure similar to MODULE-DEFINITIONS.yml lines 101-104.
+        """
+        data = {
+            "id": "root",
+            "sections": [
+                {
+                    "id": "section-1",
+                    "items": [
+                        {
+                            "id": "item-1",
+                            "subitems": [{"id": "subitem-1", "text": "deep"}],
+                        }
+                    ],
+                }
+            ],
+        }
+        result = _index_elements(data)
+
+        assert result["subitem-1"].path == "sections[0].items[0].subitems[0]"
+        assert result["subitem-1"].ancestors == ["root", "section-1", "item-1"]
+
+
+class TestFactToLine:
+    """Tests for _fact_to_line helper function."""
+
+    def test_formats_simple_fact(self) -> None:
+        """Should format fact with no ancestors."""
+        fact = FieldFact(
+            element_id="test-1",
+            field_path="text",
+            key="text",
+            scope_path="",
+            value="Hello World",
+            value_kind="scalar-str",
+            ancestors=[],
+            source_file="test.yml",
+            role="constraint",
+        )
+        line = _fact_to_line(fact)
+
+        assert line == "[test-1] text = Hello World"
+
+    def test_formats_fact_with_ancestors(self) -> None:
+        """Should format fact with ancestor chain."""
+        fact = FieldFact(
+            element_id="child",
+            field_path="text",
+            key="text",
+            scope_path="",
+            value="Content",
+            value_kind="scalar-str",
+            ancestors=["grandparent", "parent"],
+            source_file="test.yml",
+            role="constraint",
+        )
+        line = _fact_to_line(fact)
+
+        assert line == "[grandparent > parent > child] text = Content"
+
+    def test_formats_ref_value(self) -> None:
+        """Should format $ref values with $ref:child_id syntax."""
+        fact = FieldFact(
+            element_id="parent",
+            field_path="child",
+            key="child",
+            scope_path="",
+            value={"$ref": "child-1"},
+            value_kind="ref",
+            ancestors=[],
+            source_file="test.yml",
+            role="entity_ref",
+        )
+        line = _fact_to_line(fact)
+
+        assert line == "[parent] child = $ref:child-1"
+
+    def test_formats_numeric_value(self) -> None:
+        """Should format numeric values as strings."""
+        fact = FieldFact(
+            element_id="test",
+            field_path="count",
+            key="count",
+            scope_path="",
+            value=42,
+            value_kind="scalar-num",
+            ancestors=[],
+            source_file="test.yml",
+            role="constraint",
+        )
+        line = _fact_to_line(fact)
+
+        assert line == "[test] count = 42"
+
+    def test_formats_boolean_value(self) -> None:
+        """Should format boolean values as lowercase."""
+        fact_true = FieldFact(
+            element_id="test",
+            field_path="enabled",
+            key="enabled",
+            scope_path="",
+            value=True,
+            value_kind="scalar-bool",
+            ancestors=[],
+            source_file="test.yml",
+            role="constraint",
+        )
+        fact_false = FieldFact(
+            element_id="test",
+            field_path="disabled",
+            key="disabled",
+            scope_path="",
+            value=False,
+            value_kind="scalar-bool",
+            ancestors=[],
+            source_file="test.yml",
+            role="constraint",
+        )
+
+        assert _fact_to_line(fact_true) == "[test] enabled = true"
+        assert _fact_to_line(fact_false) == "[test] disabled = false"
+
+    def test_formats_null_value(self) -> None:
+        """Should format None as 'null'."""
+        fact = FieldFact(
+            element_id="test",
+            field_path="optional",
+            key="optional",
+            scope_path="",
+            value=None,
+            value_kind="scalar-null",
+            ancestors=[],
+            source_file="test.yml",
+            role="constraint",
+        )
+        line = _fact_to_line(fact)
+
+        assert line == "[test] optional = null"
+
+    def test_formats_list_value(self) -> None:
+        """Should format list values with bracket notation."""
+        fact = FieldFact(
+            element_id="test",
+            field_path="items",
+            key="items",
+            scope_path="",
+            value=["a", "b", "c"],
+            value_kind="list-scalar",
+            ancestors=[],
+            source_file="test.yml",
+            role="constraint",
+        )
+        line = _fact_to_line(fact)
+
+        assert line == "[test] items = [a, b, c]"
+
+
+class TestExtractIdsAndTextFieldFactProjection:
+    """Tests for extract_ids_and_text with FieldFact-based projection."""
+
+    def test_produces_fact_line_format(self) -> None:
+        """Should produce text with [element_id] field_path = value format."""
+        data = {"id": "test", "text": "Hello", "count": 5}
+        result = extract_ids_and_text(data)  # type: ignore[arg-type]
+
+        text = result["test"]
+        # Should contain ancestor chain format
+        assert "[test]" in text
+        # Should contain field_path = value format
+        assert "text = Hello" in text
+        assert "count = 5" in text
+
+    def test_deterministic_ordering_by_field_path(self) -> None:
+        """Should sort lines by field_path for deterministic output."""
+        data = {"id": "test", "z_field": "last", "a_field": "first", "m_field": "mid"}
+        result = extract_ids_and_text(data)  # type: ignore[arg-type]
+
+        text = result["test"]
+        lines = text.strip().split("\n")
+
+        # Lines should be sorted by field_path (a_field, m_field, z_field)
+        assert "a_field" in lines[0]
+        assert "m_field" in lines[1]
+        assert "z_field" in lines[2]
+
+    def test_nested_element_produces_ref_token(self) -> None:
+        """Should produce $ref:child_id for nested elements."""
+        data = {
+            "id": "parent",
+            "child": {"id": "child-1", "text": "child content"},
+        }
+        result = extract_ids_and_text(data)  # type: ignore[arg-type]
+
+        parent_text = result["parent"]
+        assert "$ref:child-1" in parent_text
+
+    def test_ancestor_chain_in_nested_elements(self) -> None:
+        """Should include ancestor chain in nested element text."""
+        data = {
+            "id": "grandparent",
+            "sections": [
+                {
+                    "id": "parent",
+                    "items": [
+                        {"id": "child", "text": "nested content"},
+                    ],
+                }
+            ],
+        }
+        result = extract_ids_and_text(data)  # type: ignore[arg-type]
+
+        child_text = result["child"]
+        # Should have ancestor chain in format
+        assert "[grandparent > parent > child]" in child_text
+        assert "text = nested content" in child_text
+
+    def test_real_world_api_patterns_structure(self) -> None:
+        """Should handle structure from general.rest.api-patterns.yml."""
+        data = {
+            "id": "http-methods-section",
+            "http_method_defaults": [
+                {"method": "GET", "success_status": 200},
+                {"method": "POST", "success_status": 201},
+            ],
+        }
+        result = extract_ids_and_text(data)  # type: ignore[arg-type]
+
+        text = result["http-methods-section"]
+        # Should have fact-line format
+        assert "[http-methods-section]" in text
+        # Should include nested dict fields
+        assert "http_method_defaults[0].method" in text
+        assert "http_method_defaults[0].success_status" in text
+
+
+class TestComputeElementContentHash:
+    """Tests for compute_element_content_hash function."""
+
+    def test_produces_sha256_hash(self) -> None:
+        """Should produce a 64-character hex string (SHA-256)."""
+        data = {"id": "test", "text": "Hello"}
+        result = compute_element_content_hash(data, "test")  # type: ignore[arg-type]
+
+        assert len(result) == 64
+        assert all(c in "0123456789abcdef" for c in result)
+
+    def test_hash_stability(self) -> None:
+        """Should produce same hash for equivalent structures."""
+        data = {"id": "test", "z_field": "last", "a_field": "first"}
+        hash1 = compute_element_content_hash(data, "test")  # type: ignore[arg-type]
+        hash2 = compute_element_content_hash(data, "test")  # type: ignore[arg-type]
+
+        assert hash1 == hash2
+
+    def test_hash_changes_with_value_change(self) -> None:
+        """Should produce different hash when field values change."""
+        data1 = {"id": "test", "text": "Hello"}
+        data2 = {"id": "test", "text": "World"}
+
+        hash1 = compute_element_content_hash(data1, "test")  # type: ignore[arg-type]
+        hash2 = compute_element_content_hash(data2, "test")  # type: ignore[arg-type]
+
+        assert hash1 != hash2
+
+    def test_hash_changes_with_field_name_change(self) -> None:
+        """Should produce different hash when field names change."""
+        data1 = {"id": "test", "text": "Hello"}
+        data2 = {"id": "test", "content": "Hello"}
+
+        hash1 = compute_element_content_hash(data1, "test")  # type: ignore[arg-type]
+        hash2 = compute_element_content_hash(data2, "test")  # type: ignore[arg-type]
+
+        assert hash1 != hash2
+
+    def test_hash_independent_of_nested_element_internals(self) -> None:
+        """Should not change when nested element internals change.
+
+        Due to $ref replacement, parent hash is independent of child content.
+        """
+        data1 = {
+            "id": "parent",
+            "child": {"id": "child-1", "text": "Version 1"},
+        }
+        data2 = {
+            "id": "parent",
+            "child": {"id": "child-1", "text": "Version 2"},
+        }
+
+        # Parent hash should be same (child is replaced with $ref)
+        parent_hash1 = compute_element_content_hash(data1, "parent")  # type: ignore[arg-type]
+        parent_hash2 = compute_element_content_hash(data2, "parent")  # type: ignore[arg-type]
+
+        assert parent_hash1 == parent_hash2
+
+        # Child hashes should differ
+        child_hash1 = compute_element_content_hash(data1, "child-1")  # type: ignore[arg-type]
+        child_hash2 = compute_element_content_hash(data2, "child-1")  # type: ignore[arg-type]
+
+        assert child_hash1 != child_hash2
+
+    def test_raises_for_missing_element(self) -> None:
+        """Should raise KeyError for non-existent element ID."""
+        data = {"id": "test", "text": "Hello"}
+
+        with pytest.raises(KeyError) as exc_info:
+            compute_element_content_hash(data, "nonexistent")  # type: ignore[arg-type]
+
+        assert "nonexistent" in str(exc_info.value)
+
+    def test_hash_includes_all_fields(self) -> None:
+        """Should include all FieldFact fields in hash computation."""
+        import hashlib
+        import json
+
+        data = {"id": "test", "text": "Hello", "count": 5}
+        result = compute_element_content_hash(data, "test")  # type: ignore[arg-type]
+
+        # Manual computation to verify
+        from scripts.knowledge.compare_yaml_docs import _iter_field_facts, extract_ids_and_objects
+
+        sliced_objects, edges = extract_ids_and_objects(data)
+        facts = _iter_field_facts("test", sliced_objects["test"], [], "")
+        payload = [
+            {"field_path": f.field_path, "value_kind": f.value_kind, "value": f.value}
+            for f in sorted(facts, key=lambda f: f.field_path)
+        ]
+        blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        expected = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+        assert result == expected

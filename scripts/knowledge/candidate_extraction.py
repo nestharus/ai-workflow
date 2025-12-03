@@ -11,6 +11,32 @@ generated through multiple strategies for maximum recall:
    - CamelCase identifiers (e.g., ElasticsearchWrapper)
    - snake_case identifiers (e.g., connection_manager)
 
+Field-Level Provenance (per fact_redesign.md lines 1308-1327):
+    The CSV schema includes field-level provenance columns for structural alignment:
+
+    - projection_version: Identifies slicing/FieldFact/text projection rules
+      (e.g., 'fieldfacts.v2'). The text processed for candidates is a synthetic
+      fact-line projection, not raw YAML text.
+
+    - source_field_path: FieldFact.field_path containing the candidate span,
+      enabling tracing candidates back to specific structural fields.
+
+    - source_scope_path: FieldFact.scope_path for grouping context (e.g., all
+      fields under a constraint group share the same scope).
+
+    - field_role: FieldFact.role (constraint/entity_ref/artifact_root/metadata),
+      indicating the semantic role of the source field.
+
+    - artifact_kind: FieldFact.artifact_kind when role==artifact_root, identifying
+      the artifact type (e.g., prose, code, mermaid).
+
+    Note: start_char/end_char refer to positions in the synthetic fact-line
+    projection (per lines 1311-1312), and sentence reflects fact-line context
+    with ancestor chains and field paths.
+
+    Schema evolution is append-only: existing CSV readers selecting original
+    columns remain unaffected.
+
 Usage:
     uv run knowledge.extract-keyword-candidates \
       --path docs/development \
@@ -34,12 +60,24 @@ from typing import TYPE_CHECKING, TypedDict
 import duckdb
 
 from scripts.dev.utils import REPO_ROOT, utc_timestamp
-from scripts.knowledge.compare_yaml_docs import extract_ids_and_text, parse_yaml_file
+from scripts.knowledge.compare_yaml_docs import (
+    extract_field_facts,
+    extract_ids_and_text,
+    parse_yaml_file,
+)
 
 if TYPE_CHECKING:
     from spacy.tokens import Doc
 
+# Current projection version for text projection contract
+# Per fact_redesign.md lines 1398-1426, this identifies:
+# - Element slicing rules (nested-id replacement with $ref)
+# - FieldFact extraction (roles, grouping, artifact root tagging)
+# - Text projection format ([ancestor > element_id] field_path = value)
+PROJECTION_VERSION = "fieldfacts.v2"
+
 # CSV columns matching specification
+# Per fact_redesign.md lines 1308-1327, includes field-level provenance columns
 CSV_COLUMNS = [
     "candidate_id",
     "source_file",
@@ -54,26 +92,46 @@ CSV_COLUMNS = [
     "reason",
     "classified_at",
     "qwen_score",
+    # New columns for field-level provenance (per fact_redesign.md lines 1316-1321)
+    # Append-only schema evolution: existing CSV readers selecting original columns
+    # remain unaffected
+    "projection_version",
+    "source_field_path",
+    "source_scope_path",
+    "field_role",
+    "artifact_kind",
 ]
 
 
 class CandidateRecord(TypedDict):
     """A keyword candidate record extracted from documentation.
 
+    Per fact_redesign.md lines 1308-1327, records include field-level provenance
+    for structural alignment back to FieldFacts.
+
+    Note: start_char/end_char now refer to positions in the synthetic fact-line
+    projection (not raw YAML), and sentence reflects fact-line context with
+    ancestor chains and field paths.
+
     Attributes:
         candidate_id: UUID (string) for this candidate.
         source_file: Relative path to the source YAML file.
         element_id: YAML element ID where term was found.
-        sentence: Source snippet containing the candidate.
+        sentence: Source snippet containing the candidate (from fact-line projection).
         candidate_text: Extracted term/phrase.
-        start_char: Character offset in element text (string for CSV).
-        end_char: Character offset end (string for CSV).
+        start_char: Character offset in fact-line projection (string for CSV).
+        end_char: Character offset end in fact-line projection (string for CSV).
         detected_at: ISO 8601 timestamp when detected.
         keep: "true"/"false"/"" (populated in Stage 2).
         confidence: Stringified float (e.g., "0.93").
         reason: Free-text explanation (populated in Stage 2).
         classified_at: Timestamp or "" (populated in Stage 2).
         qwen_score: Optional stringified float (Stage 2 assist).
+        projection_version: Version of text projection contract (e.g., 'fieldfacts.v2').
+        source_field_path: FieldFact.field_path containing candidate span (or empty).
+        source_scope_path: FieldFact.scope_path for grouping context (or empty).
+        field_role: FieldFact.role (constraint/entity_ref/artifact_root/metadata, or empty).
+        artifact_kind: FieldFact.artifact_kind when role==artifact_root (or empty).
     """
 
     candidate_id: str
@@ -89,6 +147,11 @@ class CandidateRecord(TypedDict):
     reason: str
     classified_at: str
     qwen_score: str
+    projection_version: str
+    source_field_path: str
+    source_scope_path: str
+    field_role: str
+    artifact_kind: str
 
 
 # Regex patterns for technical identifiers
@@ -379,6 +442,64 @@ def find_yaml_files(base_path: Path) -> list[Path]:
     return sorted(yaml_files)
 
 
+def _build_offset_to_fact_mapping(
+    text: str,
+    facts: list[object],
+) -> list[tuple[int, int, object]]:
+    """Build a mapping from character offset ranges to FieldFacts.
+
+    The text projection consists of sorted fact-lines, one per FieldFact.
+    This function reconstructs which character range corresponds to which fact.
+
+    Per fact_redesign.md lines 1478-1524, offsets in candidates.csv are relative
+    to the concatenated fact-lines, and this mapping enables tracing back to
+    the source FieldFact.
+
+    Args:
+        text: Full text projection (concatenated fact-lines).
+        facts: List of FieldFact objects for the element.
+
+    Returns:
+        List of (start_offset, end_offset, fact) tuples, sorted by start_offset.
+    """
+    from scripts.knowledge.compare_yaml_docs import FieldFact, _fact_to_line
+
+    # Sort facts by field_path to match how extract_ids_and_text produces text
+    sorted_facts = sorted(facts, key=lambda f: f.field_path)  # type: ignore[attr-defined]
+
+    # Build mapping by computing cumulative offsets
+    mapping: list[tuple[int, int, object]] = []
+    current_offset = 0
+
+    for fact in sorted_facts:
+        line = _fact_to_line(fact)  # type: ignore[arg-type]
+        line_len = len(line)
+        # Each line followed by newline (except possibly last)
+        mapping.append((current_offset, current_offset + line_len, fact))
+        current_offset += line_len + 1  # +1 for newline
+
+    return mapping
+
+
+def _find_fact_for_offset(
+    offset: int,
+    offset_mapping: list[tuple[int, int, object]],
+) -> object | None:
+    """Find the FieldFact containing a given character offset.
+
+    Args:
+        offset: Character offset in the text projection.
+        offset_mapping: Mapping from (start, end, fact) as built by _build_offset_to_fact_mapping.
+
+    Returns:
+        FieldFact if offset falls within a fact's range, None otherwise.
+    """
+    for start, end, fact in offset_mapping:
+        if start <= offset < end:
+            return fact
+    return None
+
+
 def process_yaml_file(
     file_path: Path,
     nlp: object,
@@ -416,9 +537,18 @@ def process_yaml_file(
     # only from the parent element's direct content.
     ids_text = extract_ids_and_text(data)
 
+    # Extract FieldFacts for field-level provenance tracking
+    # Per fact_redesign.md lines 1308-1327, candidates should include
+    # source_field_path, source_scope_path, field_role, artifact_kind
+    element_facts = extract_field_facts(data, source_file=source_file)
+
     for element_id, text in ids_text.items():
         if not text or not text.strip():
             continue
+
+        # Build offset-to-fact mapping for this element
+        facts = element_facts.get(element_id, [])
+        offset_mapping = _build_offset_to_fact_mapping(text, facts)  # type: ignore[arg-type]
 
         # Collect all candidates from different methods
         all_candidates: list[tuple[str, int, int, str]] = []
@@ -460,6 +590,23 @@ def process_yaml_file(
             if global_key in existing:
                 continue
 
+            # Find the FieldFact containing this candidate's offset
+            # Per fact_redesign.md lines 1478-1524, offsets are relative to
+            # concatenated fact-lines
+            matched_fact = _find_fact_for_offset(start_char, offset_mapping)
+
+            # Extract provenance from matched fact (or use empty strings)
+            if matched_fact is not None:
+                source_field_path = getattr(matched_fact, "field_path", "")
+                source_scope_path = getattr(matched_fact, "scope_path", "")
+                field_role = getattr(matched_fact, "role", "")
+                artifact_kind = getattr(matched_fact, "artifact_kind", "") or ""
+            else:
+                source_field_path = ""
+                source_scope_path = ""
+                field_role = ""
+                artifact_kind = ""
+
             record = CandidateRecord(
                 candidate_id=str(uuid.uuid4()),
                 source_file=source_file,
@@ -474,6 +621,12 @@ def process_yaml_file(
                 reason="",
                 classified_at="",
                 qwen_score="",
+                # New field-level provenance columns (per fact_redesign.md lines 1316-1321)
+                projection_version=PROJECTION_VERSION,
+                source_field_path=source_field_path,
+                source_scope_path=source_scope_path,
+                field_role=field_role,
+                artifact_kind=artifact_kind,
             )
             records.append(record)
             existing.add(global_key)  # Track to avoid duplicates within run

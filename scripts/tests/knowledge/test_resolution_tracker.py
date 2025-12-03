@@ -11,6 +11,7 @@ import pytest
 from scripts.knowledge import resolution_tracker
 from scripts.knowledge.resolution_tracker import (
     CSV_COLUMNS,
+    PROJECTION_VERSION,
     ResolutionRecord,
     append_resolution,
     compute_file_hash,
@@ -151,6 +152,9 @@ class TestAppendResolution:
             source_file_hash="ghi789",
             split_file_hash="jkl012",
             resolved_at="20240101T120000Z",
+            projection_version="fieldfacts.v2",
+            original_content_hash="content_hash_orig",
+            split_content_hash="content_hash_split",
         )
 
         append_resolution(csv_path, record)
@@ -697,3 +701,254 @@ class TestCsvColumns:
         assert "split_file" in CSV_COLUMNS
         assert "original_text_hash" in CSV_COLUMNS
         assert "split_text_hash" in CSV_COLUMNS
+
+    def test_has_projection_versioning_columns(self) -> None:
+        """Should have projection versioning columns.
+
+        Per fact_redesign.md lines 1289-1327, the CSV schema includes:
+        - projection_version: identifies slicing/FieldFact/text projection rules
+        - original_content_hash: SHA-256 of canonical FieldFact payload for original
+        - split_content_hash: SHA-256 of canonical FieldFact payload for split
+        """
+        assert "projection_version" in CSV_COLUMNS
+        assert "original_content_hash" in CSV_COLUMNS
+        assert "split_content_hash" in CSV_COLUMNS
+
+
+class TestProjectionVersion:
+    """Tests for projection versioning constant."""
+
+    def test_projection_version_format(self) -> None:
+        """Should follow fieldfacts.vN format."""
+        assert PROJECTION_VERSION.startswith("fieldfacts.v")
+        # Extract version number
+        version_part = PROJECTION_VERSION.split(".")[-1]
+        assert version_part.startswith("v")
+        assert version_part[1:].isdigit()
+
+    def test_projection_version_is_v2(self) -> None:
+        """Should be fieldfacts.v2 for current implementation."""
+        assert PROJECTION_VERSION == "fieldfacts.v2"
+
+
+class TestResolutionRecordWithProjectionVersion:
+    """Tests for ResolutionRecord with projection versioning fields."""
+
+    def test_resolution_record_includes_projection_fields(self) -> None:
+        """Should be able to create ResolutionRecord with all projection fields."""
+        record = ResolutionRecord(
+            resolution_id="res-1",
+            id="item-1",
+            source_file="source.yml",
+            split_file="split.yml",
+            original_text_hash="text_hash_orig",
+            split_text_hash="text_hash_split",
+            source_file_hash="file_hash_orig",
+            split_file_hash="file_hash_split",
+            resolved_at="20240101T120000Z",
+            projection_version="fieldfacts.v2",
+            original_content_hash="content_hash_orig",
+            split_content_hash="content_hash_split",
+        )
+
+        assert record["projection_version"] == "fieldfacts.v2"
+        assert record["original_content_hash"] == "content_hash_orig"
+        assert record["split_content_hash"] == "content_hash_split"
+
+
+class TestContentHashStability:
+    """Tests for content hash stability and behavior."""
+
+    def test_content_hash_remains_stable_when_text_format_changes(
+        self, tmp_path: Path
+    ) -> None:
+        """Should have stable content hash when only text formatting changes.
+
+        Content hash is computed from canonical FieldFact payloads, independent
+        of text projection formatting. Per fact_redesign.md lines 1446-1469.
+        """
+        from scripts.knowledge.compare_yaml_docs import compute_element_content_hash
+
+        # Same structure should produce same content hash
+        data = {"id": "test", "text": "Hello", "count": 5}
+        hash1 = compute_element_content_hash(data, "test")  # type: ignore[arg-type]
+        hash2 = compute_element_content_hash(data, "test")  # type: ignore[arg-type]
+
+        assert hash1 == hash2
+        assert len(hash1) == 64  # SHA-256
+
+    def test_content_hash_changes_when_field_values_change(self, tmp_path: Path) -> None:
+        """Should produce different content hash when field values change."""
+        from scripts.knowledge.compare_yaml_docs import compute_element_content_hash
+
+        data1 = {"id": "test", "text": "Hello"}
+        data2 = {"id": "test", "text": "World"}
+
+        hash1 = compute_element_content_hash(data1, "test")  # type: ignore[arg-type]
+        hash2 = compute_element_content_hash(data2, "test")  # type: ignore[arg-type]
+
+        assert hash1 != hash2
+
+
+class TestTextHashUsesSlicedRepresentation:
+    """Tests that text hashes reflect sliced representations."""
+
+    def test_text_hash_uses_ref_tokens(self, fs: FakeFilesystem) -> None:
+        """Should produce text hash from sliced representation with $ref tokens.
+
+        Per fact_redesign.md lines 131-133, text hashes now reflect sliced
+        representations with $ref tokens.
+        """
+        with patch.object(resolution_tracker, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake")
+            content = """
+id: parent
+title: Parent Title
+items:
+  - id: child-1
+    text: Child 1 content
+  - id: child-2
+    text: Child 2 content
+"""
+            fs.create_file("/fake/test.yml", contents=content)
+
+            parent_text = extract_text_for_id(Path("/fake/test.yml"), "parent")
+
+            # Text should contain $ref tokens, not child content
+            assert "$ref:child-1" in parent_text
+            assert "$ref:child-2" in parent_text
+            assert "Child 1 content" not in parent_text
+
+    def test_parent_hash_independent_of_child_changes(self, fs: FakeFilesystem) -> None:
+        """Should produce same parent hash when only child internals change.
+
+        Due to $ref replacement, parent hash is independent of child content.
+        """
+        with patch.object(resolution_tracker, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake")
+
+            # Version 1: child has "Original content"
+            content_v1 = """
+id: parent
+title: Parent Title
+items:
+  - id: child-1
+    text: Original content
+"""
+            fs.create_file("/fake/test_v1.yml", contents=content_v1)
+            parent_text_v1 = extract_text_for_id(Path("/fake/test_v1.yml"), "parent")
+            parent_hash_v1 = compute_text_hash(parent_text_v1)
+
+            # Version 2: child has "Modified content"
+            content_v2 = """
+id: parent
+title: Parent Title
+items:
+  - id: child-1
+    text: Modified content
+"""
+            fs.create_file("/fake/test_v2.yml", contents=content_v2)
+            parent_text_v2 = extract_text_for_id(Path("/fake/test_v2.yml"), "parent")
+            parent_hash_v2 = compute_text_hash(parent_text_v2)
+
+            # Parent hashes should be same (child content is replaced with $ref)
+            assert parent_hash_v1 == parent_hash_v2
+
+
+class TestMainWithProjectionVersioning:
+    """Tests for main function with projection versioning fields populated."""
+
+    def test_main_populates_projection_fields(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should populate projection versioning fields in CSV.
+
+        DuckDB requires real filesystem.
+        """
+        source_content = """
+items:
+  - id: item-1
+    text: Original text
+"""
+        split_content = """
+items:
+  - id: item-1
+    text: Split text
+"""
+        (tmp_path / "source.yml").write_text(source_content)
+        (tmp_path / "split.yml").write_text(split_content)
+
+        with (
+            patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+            patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "source.yml",
+                    "--split-file",
+                    "split.yml",
+                    "--knowledge-path",
+                    str(tmp_path / ".knowledge"),
+                ],
+            ),
+        ):
+            result = main()
+
+        assert result == 0
+
+        # Read the CSV and verify projection version is populated
+        import duckdb
+
+        csv_path = tmp_path / ".knowledge" / "resolutions" / "resolved.csv"
+        query = "SELECT projection_version, original_content_hash, split_content_hash FROM read_csv_auto(?)"
+        row = duckdb.execute(query, [str(csv_path)]).fetchone()
+
+        assert row is not None
+        projection_version, original_content_hash, split_content_hash = row
+
+        # Verify projection version
+        assert projection_version == "fieldfacts.v2"
+
+        # Verify content hashes are SHA-256 format (64 hex chars)
+        assert len(original_content_hash) == 64
+        assert len(split_content_hash) == 64
+        assert all(c in "0123456789abcdef" for c in original_content_hash)
+        assert all(c in "0123456789abcdef" for c in split_content_hash)
+
+
+class TestBackwardCompatibility:
+    """Tests for backward compatibility with existing CSV readers."""
+
+    def test_original_columns_still_present(self) -> None:
+        """Should have all original columns for backward compatibility.
+
+        Schema evolution is append-only: existing CSV readers selecting
+        original columns remain unaffected.
+        """
+        original_columns = [
+            "resolution_id",
+            "id",
+            "source_file",
+            "split_file",
+            "original_text_hash",
+            "split_text_hash",
+            "source_file_hash",
+            "split_file_hash",
+            "resolved_at",
+        ]
+        for col in original_columns:
+            assert col in CSV_COLUMNS
+
+    def test_new_columns_are_appended(self) -> None:
+        """Should have new columns appended after original columns.
+
+        Per append-only schema evolution, new columns come after original ones.
+        """
+        projection_idx = CSV_COLUMNS.index("projection_version")
+        resolved_at_idx = CSV_COLUMNS.index("resolved_at")
+
+        # New columns should come after resolved_at (last original column)
+        assert projection_idx > resolved_at_idx

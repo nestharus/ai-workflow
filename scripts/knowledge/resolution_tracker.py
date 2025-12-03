@@ -10,6 +10,24 @@ The `id` column stores the YAML element identifier, while `resolution_id` provid
 a unique UUID for each resolution record. Duplicate detection is based on
 (id, source_file, split_file) to support path-level uniqueness.
 
+Projection Versioning (per fact_redesign.md lines 1289-1327):
+    The CSV schema includes projection versioning fields for structural integrity:
+
+    - projection_version: Identifies slicing/FieldFact/text projection rules
+      (e.g., 'fieldfacts.v2'). Version bumps when slicing, FieldFact structure,
+      or text projection format changes.
+
+    - *_content_hash: SHA-256 of canonical FieldFact payload, providing
+      structural hashing independent of text formatting. Changes only when
+      field values/names change, not when text projection format changes.
+
+    - *_text_hash: SHA-256 of synthetic fact-line text projection. Now reflects
+      sliced representations with $ref tokens (per fact_redesign lines 131-133),
+      meaning parent hashes don't change when nested element internals change.
+
+    Schema evolution is append-only: existing CSV readers selecting original
+    columns remain unaffected.
+
 Usage:
     uv run knowledge.mark-resolved --id <element_id> --source-file <path> \
       --split-file <path> [<path> ...]
@@ -35,7 +53,18 @@ from typing import TypedDict
 import duckdb
 
 from scripts.dev.utils import REPO_ROOT, utc_timestamp
-from scripts.knowledge.compare_yaml_docs import extract_ids_and_text, parse_yaml_file
+from scripts.knowledge.compare_yaml_docs import (
+    compute_element_content_hash,
+    extract_ids_and_text,
+    parse_yaml_file,
+)
+
+# Current projection version for text projection contract
+# Per fact_redesign.md lines 1398-1426, this identifies:
+# - Element slicing rules (nested-id replacement with $ref)
+# - FieldFact extraction (roles, grouping, artifact root tagging)
+# - Text projection format ([ancestor > element_id] field_path = value)
+PROJECTION_VERSION = "fieldfacts.v2"
 
 CSV_COLUMNS = [
     "resolution_id",
@@ -47,22 +76,39 @@ CSV_COLUMNS = [
     "source_file_hash",
     "split_file_hash",
     "resolved_at",
+    # New columns for projection versioning (per fact_redesign.md lines 1289-1327)
+    # Append-only schema evolution: existing CSV readers selecting original columns
+    # remain unaffected
+    "projection_version",
+    "original_content_hash",
+    "split_content_hash",
 ]
 
 
 class ResolutionRecord(TypedDict):
     """A resolution record for tracking resolved documentation sections.
 
+    Per fact_redesign.md lines 1289-1327, records include projection versioning
+    and content hashes for structural integrity tracking.
+
+    projection_version identifies the slicing/FieldFact/text projection rules.
+    *_content_hash provides structural hashing independent of text formatting.
+    *_text_hash reflects sliced representations with $ref tokens (primary for
+    backward compatibility).
+
     Attributes:
         resolution_id: Unique UUID for this resolution record.
         id: YAML element identifier being resolved.
         source_file: Relative path to the source YAML file.
         split_file: Relative path to the split YAML file.
-        original_text_hash: SHA-256 hash of original text content.
-        split_text_hash: SHA-256 hash of split text content.
+        original_text_hash: SHA-256 hash of original fact-line text projection.
+        split_text_hash: SHA-256 hash of split fact-line text projection.
         source_file_hash: SHA-256 hash of source file at resolution time.
         split_file_hash: SHA-256 hash of split file at resolution time.
         resolved_at: ISO 8601 timestamp of resolution.
+        projection_version: Version of text projection contract (e.g., 'fieldfacts.v2').
+        original_content_hash: SHA-256 of canonical FieldFact payload for original.
+        split_content_hash: SHA-256 of canonical FieldFact payload for split.
     """
 
     resolution_id: str
@@ -74,6 +120,9 @@ class ResolutionRecord(TypedDict):
     source_file_hash: str
     split_file_hash: str
     resolved_at: str
+    projection_version: str
+    original_content_hash: str
+    split_content_hash: str
 
 
 def compute_text_hash(text: str) -> str:
@@ -334,8 +383,15 @@ def main() -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
+    # Parse source file once for content hash computation
+    source_data = parse_yaml_file(source_file)
+
     original_text_hash = compute_text_hash(original_text)
     source_file_hash = compute_file_hash(source_file)
+    # Compute structural content hash from canonical FieldFact payload
+    # Per fact_redesign.md lines 1446-1469, this provides hash stability
+    # independent of text formatting changes
+    original_content_hash = compute_element_content_hash(source_data, args.id)
 
     csv_path = knowledge_path / "resolutions" / "resolved.csv"
     records_created = 0
@@ -373,6 +429,9 @@ def main() -> int:
 
         split_text_hash = compute_text_hash(split_text)
         split_file_hash = compute_file_hash(split_file)
+        # Compute structural content hash for split file
+        split_data = parse_yaml_file(split_file)
+        split_content_hash = compute_element_content_hash(split_data, args.id)
 
         # Save source file only once per invocation
         if not source_file_saved:
@@ -395,6 +454,11 @@ def main() -> int:
             source_file_hash=source_file_hash,
             split_file_hash=split_file_hash,
             resolved_at=resolved_at,
+            # New projection versioning fields (per fact_redesign.md lines 1289-1327)
+            # Text hashes now reflect sliced representations with $ref tokens
+            projection_version=PROJECTION_VERSION,
+            original_content_hash=original_content_hash,
+            split_content_hash=split_content_hash,
         )
 
         ensure_csv_exists(csv_path)

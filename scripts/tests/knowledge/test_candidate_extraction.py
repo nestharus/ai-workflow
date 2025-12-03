@@ -12,6 +12,7 @@ from scripts.knowledge.candidate_extraction import (
     CHUNK_OVERLAP,
     CHUNK_THRESHOLD,
     CSV_COLUMNS,
+    PROJECTION_VERSION,
     CandidateRecord,
     append_candidates_batch,
     ensure_csv_exists,
@@ -48,9 +49,25 @@ class TestCsvColumns:
         assert "classified_at" in CSV_COLUMNS
         assert "qwen_score" in CSV_COLUMNS
 
+    def test_has_field_provenance_columns(self) -> None:
+        """Should have field-level provenance columns.
+
+        Per fact_redesign.md lines 1308-1327, the CSV schema includes:
+        - projection_version: identifies text projection rules
+        - source_field_path: FieldFact.field_path containing candidate
+        - source_scope_path: FieldFact.scope_path for grouping context
+        - field_role: FieldFact.role (constraint/entity_ref/artifact_root/metadata)
+        - artifact_kind: FieldFact.artifact_kind when role==artifact_root
+        """
+        assert "projection_version" in CSV_COLUMNS
+        assert "source_field_path" in CSV_COLUMNS
+        assert "source_scope_path" in CSV_COLUMNS
+        assert "field_role" in CSV_COLUMNS
+        assert "artifact_kind" in CSV_COLUMNS
+
     def test_column_count(self) -> None:
-        """Should have exactly 13 columns."""
-        assert len(CSV_COLUMNS) == 13
+        """Should have exactly 18 columns (13 original + 5 field provenance)."""
+        assert len(CSV_COLUMNS) == 18
 
 
 class TestEnsureCsvExists:
@@ -114,6 +131,11 @@ class TestAppendCandidatesBatch:
                 reason="",
                 classified_at="",
                 qwen_score="",
+                projection_version="fieldfacts.v2",
+                source_field_path="text",
+                source_scope_path="",
+                field_role="constraint",
+                artifact_kind="",
             ),
             CandidateRecord(
                 candidate_id="cand-2",
@@ -129,6 +151,11 @@ class TestAppendCandidatesBatch:
                 reason="",
                 classified_at="",
                 qwen_score="",
+                projection_version="fieldfacts.v2",
+                source_field_path="description",
+                source_scope_path="",
+                field_role="constraint",
+                artifact_kind="",
             ),
         ]
 
@@ -503,3 +530,259 @@ items:
                 all_child2_text = " ".join(child2_sentences)
                 # Child content should be in child's records
                 assert "REST" in all_child2_text or len(child2_records) > 0
+
+
+# ==============================================================================
+# Field-Level Provenance Tests (per fact_redesign.md lines 1308-1327)
+# ==============================================================================
+
+
+class TestProjectionVersionConstant:
+    """Tests for projection version constant."""
+
+    def test_projection_version_format(self) -> None:
+        """Should follow fieldfacts.vN format."""
+        assert PROJECTION_VERSION.startswith("fieldfacts.v")
+        version_part = PROJECTION_VERSION.split(".")[-1]
+        assert version_part.startswith("v")
+        assert version_part[1:].isdigit()
+
+    def test_projection_version_is_v2(self) -> None:
+        """Should be fieldfacts.v2 for current implementation."""
+        assert PROJECTION_VERSION == "fieldfacts.v2"
+
+
+class TestCandidateRecordWithFieldProvenance:
+    """Tests for CandidateRecord with field provenance fields."""
+
+    def test_candidate_record_includes_provenance_fields(self) -> None:
+        """Should be able to create CandidateRecord with all provenance fields."""
+        record = CandidateRecord(
+            candidate_id="cand-1",
+            source_file="docs/test.yml",
+            element_id="test.section",
+            sentence="[test.section] text = FastAPI is a framework.",
+            candidate_text="FastAPI",
+            start_char="25",
+            end_char="32",
+            detected_at="20240101T120000Z",
+            keep="",
+            confidence="",
+            reason="",
+            classified_at="",
+            qwen_score="",
+            projection_version="fieldfacts.v2",
+            source_field_path="text",
+            source_scope_path="",
+            field_role="constraint",
+            artifact_kind="",
+        )
+
+        assert record["projection_version"] == "fieldfacts.v2"
+        assert record["source_field_path"] == "text"
+        assert record["source_scope_path"] == ""
+        assert record["field_role"] == "constraint"
+        assert record["artifact_kind"] == ""
+
+    def test_candidate_record_with_artifact_role(self) -> None:
+        """Should allow artifact_root role with artifact_kind populated."""
+        record = CandidateRecord(
+            candidate_id="cand-1",
+            source_file="docs/test.yml",
+            element_id="test.section",
+            sentence="[test.section] prose = Some prose content",
+            candidate_text="prose content",
+            start_char="20",
+            end_char="33",
+            detected_at="20240101T120000Z",
+            keep="",
+            confidence="",
+            reason="",
+            classified_at="",
+            qwen_score="",
+            projection_version="fieldfacts.v2",
+            source_field_path="prose",
+            source_scope_path="",
+            field_role="artifact_root",
+            artifact_kind="prose",
+        )
+
+        assert record["field_role"] == "artifact_root"
+        assert record["artifact_kind"] == "prose"
+
+
+class TestCandidateOffsetInFactLineProjection:
+    """Tests for candidate offsets in fact-line projection text."""
+
+    def test_offsets_refer_to_fact_line_projection(self) -> None:
+        """Should have offsets relative to fact-line projection, not raw YAML.
+
+        Per fact_redesign.md lines 1311-1312, start_char/end_char refer to
+        positions in the synthetic fact-line projection.
+        """
+        # The sentence in a CandidateRecord should be from fact-line format
+        record = CandidateRecord(
+            candidate_id="cand-1",
+            source_file="docs/test.yml",
+            element_id="test.section",
+            sentence="[test.section] text = FastAPI is great",
+            candidate_text="FastAPI",
+            start_char="22",  # Position in fact-line text
+            end_char="29",
+            detected_at="20240101T120000Z",
+            keep="",
+            confidence="",
+            reason="",
+            classified_at="",
+            qwen_score="",
+            projection_version="fieldfacts.v2",
+            source_field_path="text",
+            source_scope_path="",
+            field_role="constraint",
+            artifact_kind="",
+        )
+
+        # Verify the sentence has fact-line format (brackets with element_id)
+        assert "[" in record["sentence"]
+        assert record["element_id"] in record["sentence"]
+        assert "=" in record["sentence"]
+
+    def test_sentence_includes_ancestor_chain(self) -> None:
+        """Should include ancestor chain context in sentence.
+
+        Per fact_redesign.md lines 1224-1231, fact-line format includes
+        ancestor chains in brackets.
+        """
+        record = CandidateRecord(
+            candidate_id="cand-1",
+            source_file="docs/test.yml",
+            element_id="child",
+            sentence="[grandparent > parent > child] text = Content",
+            candidate_text="Content",
+            start_char="38",
+            end_char="45",
+            detected_at="20240101T120000Z",
+            keep="",
+            confidence="",
+            reason="",
+            classified_at="",
+            qwen_score="",
+            projection_version="fieldfacts.v2",
+            source_field_path="text",
+            source_scope_path="",
+            field_role="constraint",
+            artifact_kind="",
+        )
+
+        # Sentence should show ancestor chain
+        assert "grandparent > parent > child" in record["sentence"]
+
+
+class TestProcessYamlFileWithFieldProvenance:
+    """Tests for process_yaml_file populating field provenance columns."""
+
+    def test_records_include_projection_version(self, fs: FakeFilesystem) -> None:
+        """Should populate projection_version in all records."""
+
+        class MockDoc:
+            def __init__(self) -> None:
+                self.ents: list[object] = []
+                self.noun_chunks: list[object] = []
+
+        class MockNlp:
+            def __call__(self, text: str) -> MockDoc:
+                return MockDoc()
+
+        mock_nlp = MockNlp()
+        existing: set[tuple[str, str, str]] = set()
+        timestamp = "20240101T120000Z"
+
+        with patch.object(candidate_extraction, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake")
+            content = """
+id: test-section
+text: FastAPI provides validation
+"""
+            fs.create_file("/fake/test.yml", contents=content)
+
+            records = process_yaml_file(
+                Path("/fake/test.yml"), mock_nlp, existing, timestamp
+            )
+
+            # All records should have projection_version populated
+            for record in records:
+                assert record["projection_version"] == "fieldfacts.v2"
+
+    def test_records_include_field_provenance_fields(self, fs: FakeFilesystem) -> None:
+        """Should populate source_field_path and other provenance fields."""
+
+        class MockDoc:
+            def __init__(self) -> None:
+                self.ents: list[object] = []
+                self.noun_chunks: list[object] = []
+
+        class MockNlp:
+            def __call__(self, text: str) -> MockDoc:
+                return MockDoc()
+
+        mock_nlp = MockNlp()
+        existing: set[tuple[str, str, str]] = set()
+        timestamp = "20240101T120000Z"
+
+        with patch.object(candidate_extraction, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake")
+            content = """
+id: test-section
+description: API endpoint for users
+"""
+            fs.create_file("/fake/test.yml", contents=content)
+
+            records = process_yaml_file(
+                Path("/fake/test.yml"), mock_nlp, existing, timestamp
+            )
+
+            # All records should have provenance fields (may be empty strings if unmatched)
+            for record in records:
+                assert "source_field_path" in record
+                assert "source_scope_path" in record
+                assert "field_role" in record
+                assert "artifact_kind" in record
+
+
+class TestBackwardCompatibilityCandidates:
+    """Tests for backward compatibility with existing CSV readers."""
+
+    def test_original_columns_still_present(self) -> None:
+        """Should have all original columns for backward compatibility.
+
+        Schema evolution is append-only: existing CSV readers selecting
+        original columns remain unaffected.
+        """
+        original_columns = [
+            "candidate_id",
+            "source_file",
+            "element_id",
+            "sentence",
+            "candidate_text",
+            "start_char",
+            "end_char",
+            "detected_at",
+            "keep",
+            "confidence",
+            "reason",
+            "classified_at",
+            "qwen_score",
+        ]
+        for col in original_columns:
+            assert col in CSV_COLUMNS
+
+    def test_new_columns_are_appended(self) -> None:
+        """Should have new columns appended after original columns.
+
+        Per append-only schema evolution, new columns come after original ones.
+        """
+        projection_idx = CSV_COLUMNS.index("projection_version")
+        qwen_score_idx = CSV_COLUMNS.index("qwen_score")
+
+        # New columns should come after qwen_score (last original column)
+        assert projection_idx > qwen_score_idx
