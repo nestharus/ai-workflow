@@ -227,18 +227,25 @@ def _get_display_path(file_path: Path) -> str:
 def extract_text_for_id(file_path: Path, element_id: str) -> str:
     """Extract text content for a specific ID from a YAML file.
 
+    The text hash is computed from the sliced representation per the fact
+    redesign (lines 131-133 of docs/plans/fact_redesign.md). Child content
+    is excluded and replaced with $ref tokens, ensuring that the hash
+    reflects only the parent element's direct content.
+
     Args:
         file_path: Path to the YAML file.
         element_id: Element identifier to extract.
 
     Returns:
-        Text content for the specified ID.
+        Text content for the specified ID (sliced representation).
 
     Raises:
         ValueError: If the ID is not found in the file.
         FileNotFoundError: If the file does not exist.
     """
     data = parse_yaml_file(file_path)
+    # extract_ids_and_text uses sliced representations with child content
+    # replaced by $ref tokens per the fact redesign specification
     ids_text = extract_ids_and_text(data)
 
     if element_id not in ids_text:

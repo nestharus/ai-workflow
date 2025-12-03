@@ -244,6 +244,36 @@ items:
 
             assert "not found" in str(exc_info.value)
 
+    def test_extracts_text_with_nested_ids_uses_sliced_representation(
+        self, fs: FakeFilesystem
+    ) -> None:
+        """Should use sliced representation with $ref for nested ID-bearing dicts.
+
+        Per the fact redesign (lines 131-133), the text hash is computed from
+        the sliced representation with child content excluded.
+        """
+        with patch.object(resolution_tracker, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake")
+            content = """
+id: parent-section
+title: Parent Title
+items:
+  - id: child-item-1
+    text: Child 1 internal content
+  - id: child-item-2
+    text: Child 2 internal content
+"""
+            fs.create_file("/fake/test.yml", contents=content)
+
+            result = extract_text_for_id(Path("/fake/test.yml"), "parent-section")
+
+            # The sliced representation should contain $ref tokens, not child content
+            assert "$ref:child-item-1" in result
+            assert "$ref:child-item-2" in result
+            # Child's internal content should NOT be in the parent's text
+            assert "Child 1 internal content" not in result
+            assert "Child 2 internal content" not in result
+
 
 class TestParseArgs:
     """Tests for parse_args function."""

@@ -33,6 +33,7 @@ import json
 import re
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
@@ -40,6 +41,100 @@ import duckdb
 import yaml
 
 from scripts.dev.utils import REPO_ROOT
+
+
+@dataclass
+class ContainmentEdge:
+    """Represents a parent-child containment relationship between elements.
+
+    When a parent element contains a nested dict with its own `id` field,
+    a ContainmentEdge is created to record this relationship. The nested
+    child is sliced out and replaced with a reference in the parent.
+
+    Attributes:
+        parent_id: The ID of the parent element.
+        child_id: The ID of the nested child element.
+        field_path: The path where the child appeared (e.g., "items[2]").
+        source_file: Relative path to the source YAML file.
+    """
+
+    parent_id: str
+    child_id: str
+    field_path: str
+    source_file: str
+
+
+def _is_element(obj: Any) -> bool:  # noqa: ANN401
+    """Check if a value is an element (dict with string id field).
+
+    Args:
+        obj: Value to check.
+
+    Returns:
+        True if obj is a dict with a string 'id' field, False otherwise.
+    """
+    return isinstance(obj, dict) and isinstance(obj.get("id"), str)
+
+
+def _slice_element(
+    data: Any,  # noqa: ANN401
+    parent_id: str,
+    field_path_prefix: str,
+    source_file: str,
+    containment_edges: list[ContainmentEdge],
+) -> Any:  # noqa: ANN401
+    """Recursively slice an element, replacing nested ID-bearing dicts with refs.
+
+    Traverses the data structure and replaces any nested dict that has its own
+    string `id` field with a reference `{"$ref": "child_id"}`. For each such
+    replacement, a ContainmentEdge is appended to the provided list.
+
+    Args:
+        data: The data structure to slice (part of the parent element).
+        parent_id: The ID of the parent element being sliced.
+        field_path_prefix: Current field path prefix (e.g., "items[0].routes").
+        source_file: Relative path to the source YAML file.
+        containment_edges: List to append ContainmentEdge records to.
+
+    Returns:
+        The sliced data structure with nested elements replaced by refs.
+    """
+    if isinstance(data, dict):
+        # If this dict has its own id (and is not the root), it's a child element
+        if _is_element(data) and field_path_prefix:
+            child_id = data["id"]
+            containment_edges.append(
+                ContainmentEdge(
+                    parent_id=parent_id,
+                    child_id=child_id,
+                    field_path=field_path_prefix,
+                    source_file=source_file,
+                )
+            )
+            return {"$ref": child_id}
+
+        # Recursively slice dict values
+        sliced: dict[str, Any] = {}
+        for key, value in data.items():
+            new_path = f"{field_path_prefix}.{key}" if field_path_prefix else key
+            sliced[key] = _slice_element(
+                value, parent_id, new_path, source_file, containment_edges
+            )
+        return sliced
+
+    if isinstance(data, list):
+        # Recursively slice list items
+        sliced_list: list[Any] = []
+        for index, item in enumerate(data):
+            new_path = f"{field_path_prefix}[{index}]"
+            sliced_list.append(
+                _slice_element(item, parent_id, new_path, source_file, containment_edges)
+            )
+        return sliced_list
+
+    # Primitives pass through unchanged
+    return data
+
 
 DEVELOPMENT_DIR = REPO_ROOT / "docs" / "development"
 SUBDIRS = ("python", "fastapi", "elasticsearch", "surrealdb")
@@ -172,11 +267,14 @@ def parse_yaml_file(file_path: Path) -> YamlStructure:
 def extract_ids_and_objects(
     data: YamlValue,
     parent_path: str = "",
-) -> dict[str, dict[str, Any]]:
-    """Recursively extract IDs and their associated objects from a YAML structure.
+    source_file: str = "",
+) -> tuple[dict[str, dict[str, Any]], list[ContainmentEdge]]:
+    """Recursively extract IDs and sliced objects from a YAML structure.
 
-    Traverses the parsed YAML structure to find all elements with an 'id' field
-    and returns the full dict for each, enabling dict-to-dict comparison.
+    Traverses the parsed YAML structure to find all elements with an 'id' field.
+    For each element, nested ID-bearing dicts are sliced out and replaced with
+    `{"$ref": "child_id"}` references. Containment edges are recorded for each
+    such replacement.
 
     Per the YAML schema guidelines, `id` is required for root elements of sections
     but optional for children. This function only tracks elements that have an `id`
@@ -185,28 +283,109 @@ def extract_ids_and_objects(
     Args:
         data: The parsed YAML structure (dict, list, or primitive).
         parent_path: Path string for debugging purposes (tracks traversal path).
+        source_file: Relative path to the source file for containment edges.
 
     Returns:
-        Dictionary mapping element IDs to their full object data.
+        Tuple of (sliced_objects, containment_edges) where:
+        - sliced_objects: Dict mapping element IDs to their sliced object data
+          (child content excluded, replaced with $ref).
+        - containment_edges: List of ContainmentEdge records for all nested
+          ID-bearing dicts found.
     """
     result: dict[str, dict[str, Any]] = {}
+    all_edges: list[ContainmentEdge] = []
 
     if isinstance(data, dict):
         if "id" in data:
             element_id = data["id"]
             if isinstance(element_id, str):
-                result[element_id] = dict(data)
+                # Slice this element: replace nested ID-bearing dicts with refs
+                element_edges: list[ContainmentEdge] = []
+                sliced_data = _slice_element(
+                    data, element_id, "", source_file, element_edges
+                )
+                result[element_id] = sliced_data
+                all_edges.extend(element_edges)
 
         for key, value in data.items():
             child_path = f"{parent_path}.{key}" if parent_path else key
-            child_results = extract_ids_and_objects(value, child_path)
+            child_results, child_edges = extract_ids_and_objects(
+                value, child_path, source_file
+            )
             result.update(child_results)
+            all_edges.extend(child_edges)
 
     elif isinstance(data, list):
         for index, item in enumerate(data):
             child_path = f"{parent_path}[{index}]"
-            child_results = extract_ids_and_objects(item, child_path)
+            child_results, child_edges = extract_ids_and_objects(
+                item, child_path, source_file
+            )
             result.update(child_results)
+            all_edges.extend(child_edges)
+
+    return result, all_edges
+
+
+def _format_value_for_text(value: Any) -> str:  # noqa: ANN401
+    """Format a value for text projection output.
+
+    Args:
+        value: The value to format.
+
+    Returns:
+        String representation of the value for text projection.
+    """
+    if isinstance(value, dict):
+        if "$ref" in value:
+            return f"$ref:{value['$ref']}"
+        # Nested dict without $ref - format as key=value pairs
+        parts = [f"{k}={_format_value_for_text(v)}" for k, v in sorted(value.items())]
+        return "{" + ", ".join(parts) + "}"
+    if isinstance(value, list):
+        formatted = [_format_value_for_text(item) for item in value]
+        return "[" + ", ".join(formatted) + "]"
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def extract_ids_and_text(
+    data: YamlValue,
+    source_file: str = "",
+) -> dict[str, str]:
+    """Extract IDs and text projections from sliced elements.
+
+    Calls extract_ids_and_objects to get sliced elements, then produces a
+    deterministic text projection for each element. The text projection
+    flattens the sliced dict into key=value lines for scalars, key=[...]
+    for lists, and key=$ref:child_id for references.
+
+    This function is used for hashing in resolution_tracker and for
+    candidate extraction context. Per the fact redesign (lines 131-133),
+    the text hash is computed from the sliced representation with child
+    content excluded.
+
+    Args:
+        data: The parsed YAML structure (dict, list, or primitive).
+        source_file: Relative path to the source file for containment edges.
+
+    Returns:
+        Dictionary mapping element IDs to their text projection strings.
+    """
+    sliced_objects, _ = extract_ids_and_objects(data, source_file=source_file)
+    result: dict[str, str] = {}
+
+    for element_id, sliced_dict in sliced_objects.items():
+        # Build deterministic text projection from sliced dict
+        lines: list[str] = []
+        for key in sorted(sliced_dict.keys()):
+            value = sliced_dict[key]
+            formatted = _format_value_for_text(value)
+            lines.append(f"{key}={formatted}")
+        result[element_id] = "\n".join(lines)
 
     return result
 
@@ -329,16 +508,26 @@ def find_mapped_splits(pattern: str, base_path: Path) -> dict[str, Path]:
 
 
 def get_ids_objects(file_path: Path) -> dict[str, dict[str, Any]]:
-    """Extract IDs and object data from a YAML file.
+    """Extract IDs and sliced object data from a YAML file.
+
+    This is a convenience wrapper that extracts only the sliced objects dict,
+    discarding containment edges. Use extract_ids_and_objects directly if
+    you need the containment edges.
 
     Args:
         file_path: Path to the YAML file.
 
     Returns:
-        Dictionary mapping IDs to their full object data.
+        Dictionary mapping IDs to their sliced object data (child content
+        excluded, replaced with $ref).
     """
     data = parse_yaml_file(file_path)
-    return extract_ids_and_objects(data)
+    try:
+        relative_path = file_path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        relative_path = file_path.as_posix()
+    sliced_objects, _ = extract_ids_and_objects(data, source_file=relative_path)
+    return sliced_objects
 
 
 def aggregate_split_objects(
@@ -652,6 +841,71 @@ def write_compare_files(results: dict[str, CompareResult]) -> int:
     return files_written
 
 
+CONTAINMENT_EDGE_COLUMNS = ["parent_id", "child_id", "field_path", "source_file"]
+
+
+def write_containment_edges(
+    edges: list[ContainmentEdge],
+    knowledge_path: Path | None = None,
+) -> int:
+    """Write containment edges to CSV file in .knowledge/graph/.
+
+    Creates or replaces the containment_edges.csv file with the provided edges.
+    Deduplicates edges by (source_file, parent_id, child_id, field_path) before
+    writing.
+
+    Args:
+        edges: List of ContainmentEdge records to write.
+        knowledge_path: Base knowledge directory path. If None, uses REPO_ROOT.
+
+    Returns:
+        Number of edges written.
+
+    Raises:
+        RuntimeError: If writing to DuckDB or filesystem fails.
+    """
+    if knowledge_path is None:
+        knowledge_path = REPO_ROOT / KNOWLEDGE_DIR_NAME
+
+    graph_dir = knowledge_path / "graph"
+    output_path = graph_dir / "containment_edges.csv"
+
+    # Deduplicate edges by (source_file, parent_id, child_id, field_path)
+    seen: set[tuple[str, str, str, str]] = set()
+    unique_edges: list[ContainmentEdge] = []
+    for edge in edges:
+        key = (edge.source_file, edge.parent_id, edge.child_id, edge.field_path)
+        if key not in seen:
+            seen.add(key)
+            unique_edges.append(edge)
+
+    try:
+        graph_dir.mkdir(parents=True, exist_ok=True)
+        conn = duckdb.connect()
+        try:
+            columns_def = ", ".join(f"{col} VARCHAR" for col in CONTAINMENT_EDGE_COLUMNS)
+            conn.execute(f"CREATE TABLE containment_edges ({columns_def})")
+            if unique_edges:
+                placeholders = ", ".join("?" for _ in CONTAINMENT_EDGE_COLUMNS)
+                insert_sql = f"INSERT INTO containment_edges VALUES ({placeholders})"
+                for edge in unique_edges:
+                    values = [
+                        edge.parent_id,
+                        edge.child_id,
+                        edge.field_path,
+                        edge.source_file,
+                    ]
+                    conn.execute(insert_sql, values)
+            copy_sql = f"COPY containment_edges TO '{output_path}' (HEADER, DELIMITER ',')"
+            conn.execute(copy_sql)
+        finally:
+            conn.close()
+        return len(unique_edges)
+    except (OSError, duckdb.Error) as exc:
+        msg = f"Failed to write containment edges to {output_path}: {exc}"
+        raise RuntimeError(msg) from exc
+
+
 def _get_logical_pattern_from_csv(csv_path: Path) -> str:
     """Extract the logical pattern name from a comparison CSV filename.
 
@@ -709,6 +963,31 @@ def _delete_stale_comparison_csvs(
     return deleted
 
 
+def _collect_containment_edges_from_files(file_paths: list[Path]) -> list[ContainmentEdge]:
+    """Collect containment edges from a list of YAML files.
+
+    Args:
+        file_paths: List of YAML file paths to process.
+
+    Returns:
+        List of all containment edges from all files.
+    """
+    all_edges: list[ContainmentEdge] = []
+    for file_path in file_paths:
+        try:
+            relative_path = file_path.relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            relative_path = file_path.as_posix()
+        try:
+            data = parse_yaml_file(file_path)
+            _, edges = extract_ids_and_objects(data, source_file=relative_path)
+            all_edges.extend(edges)
+        except Exception:
+            # Silently skip files that can't be parsed
+            continue
+    return all_edges
+
+
 def main() -> int:
     """Run comparison and write results to CSV files.
 
@@ -716,6 +995,9 @@ def main() -> int:
     ensuring validation does not fail due to outdated data. Supports the
     --original-files parameter to specify timestamped originals from
     .knowledge/originals/ instead of globbing for original.*.yml files.
+
+    Also collects and writes containment edges from all processed YAML files
+    to .knowledge/graph/containment_edges.csv.
 
     Returns:
         0 if no differences found, 1 if differences exist.
@@ -738,6 +1020,23 @@ def main() -> int:
         ]
 
     results, processed_patterns = compare_all(base_path, original_files)
+
+    # Collect containment edges from all YAML files
+    all_yml_files: list[Path] = []
+    originals = find_originals(base_path, original_files)
+    all_yml_files.extend(originals)
+    all_yml_files.extend(find_all_yml(base_path))
+    containment_edges = _collect_containment_edges_from_files(all_yml_files)
+
+    # Write containment edges
+    if containment_edges:
+        try:
+            edge_count = write_containment_edges(containment_edges)
+            if edge_count > 0:
+                print(f"Wrote {edge_count} containment edge(s) to {KNOWLEDGE_DIR_NAME}/graph/")
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
 
     patterns_with_differences: set[str] = set()
     for source_path in results:

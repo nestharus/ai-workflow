@@ -410,7 +410,10 @@ def process_yaml_file(
     except ValueError:
         source_file = file_path.as_posix()
 
-    # Extract ID -> text mappings
+    # Extract ID -> text mappings using sliced representations per the fact
+    # redesign (lines 131-133 of docs/plans/fact_redesign.md). Child content
+    # is excluded and replaced with $ref tokens, so candidates are extracted
+    # only from the parent element's direct content.
     ids_text = extract_ids_and_text(data)
 
     for element_id, text in ids_text.items():

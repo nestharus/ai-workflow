@@ -23,6 +23,8 @@ for documentation migrations.
 │   └── variant_candidates.csv # Keyword variant tracking via embeddings
 ├── facts/          # Fact extraction data
 │   └── extractions.csv        # Extracted atomic facts about entities/keywords
+├── graph/          # Element containment graph data
+│   └── containment_edges.csv  # Parent-child relationships between ID-bearing elements
 └── README.md       # This file
 ```
 
@@ -227,6 +229,26 @@ Stores extracted atomic facts about entities/keywords from sentences. Facts are 
 
 **Note**: Facts are extracted using the logic puzzle approach where `original_sentence = fact1 + fact2 + ... + residual_sentence`. Semantic similarity validation ensures no information is lost during extraction.
 
+### graph/containment_edges.csv
+
+Tracks parent-child containment relationships between ID-bearing elements in YAML documentation. When a YAML element contains nested dicts with their own `id` fields, these are recorded as containment edges. The nested content is "sliced out" of the parent and replaced with `{"$ref": "child_id"}` references.
+
+This enables:
+- Tracking hierarchical structure of documentation elements
+- Computing hashes and text projections from "sliced" representations (child content excluded)
+- Preserving parent-child relationships for graph-based queries
+
+| Column | Type | Description |
+|--------|------|-------------|
+| parent_id | string | ID of the parent element containing the child |
+| child_id | string | ID of the nested child element |
+| field_path | string | Path where the child appeared (e.g., "items[0]", "sections.subsection") |
+| source_file | string | Relative path to the source YAML file |
+
+**Note**: Containment edges are generated during YAML comparison (`uv run knowledge.compare-yml-docs`). For each file processed, nested ID-bearing dicts are detected and sliced out, with edges recording the parent-child relationships.
+
+**Design rationale**: See lines 67-134 of `docs/plans/fact_redesign.md` for the element slicing and containment edge design.
+
 ## Hash Algorithm
 
 All hash fields use **SHA-256** for content hashing.
@@ -310,6 +332,39 @@ SELECT * FROM glob('.knowledge/reports/*-review.yml');
 --     for item in report['items']:
 --         if item['text_similarity_score'] < 0.8:
 --             print(f"Low similarity: {item['element_id']}")
+
+-- Query containment edges for a parent element
+SELECT child_id, field_path, source_file
+FROM read_csv_auto('.knowledge/graph/containment_edges.csv')
+WHERE parent_id = 'parent-section-id'
+ORDER BY field_path;
+
+-- Find all children of a given parent (recursive containment)
+WITH RECURSIVE children AS (
+  -- Base case: direct children
+  SELECT child_id, parent_id, field_path, 1 AS depth
+  FROM read_csv_auto('.knowledge/graph/containment_edges.csv')
+  WHERE parent_id = 'root-element-id'
+
+  UNION ALL
+
+  -- Recursive case: children of children
+  SELECT e.child_id, e.parent_id, e.field_path, c.depth + 1
+  FROM read_csv_auto('.knowledge/graph/containment_edges.csv') e
+  JOIN children c ON e.parent_id = c.child_id
+)
+SELECT * FROM children ORDER BY depth, field_path;
+
+-- Find parent of a given child element
+SELECT parent_id, field_path, source_file
+FROM read_csv_auto('.knowledge/graph/containment_edges.csv')
+WHERE child_id = 'child-element-id';
+
+-- Count children per parent
+SELECT parent_id, COUNT(*) AS child_count
+FROM read_csv_auto('.knowledge/graph/containment_edges.csv')
+GROUP BY parent_id
+ORDER BY child_count DESC;
 
 -- Query all keyword candidates
 SELECT * FROM read_csv_auto('.knowledge/keywords/candidates.csv')
@@ -956,6 +1011,7 @@ existing workflows.
   - `.knowledge/reports/.gitkeep`
   - `.knowledge/keywords/.gitkeep`
   - `.knowledge/facts/.gitkeep`
+  - `.knowledge/graph/.gitkeep`
 - `README.md` is tracked
 - Generated data files (`*.csv`, `*.yml`, `*.yaml`) are ignored via `.gitignore`
 - DuckDB database file (`knowledge.duckdb`) is ignored
