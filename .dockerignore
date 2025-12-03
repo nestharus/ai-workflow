@@ -34,6 +34,7 @@ ENV/
 .code/
 .factory/
 .review/
+.tasks/
 .pre-commit-config.yaml
 
 # Logs and runtime files

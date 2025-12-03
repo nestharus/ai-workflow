@@ -2,8 +2,9 @@
 # Directories to exclude when searching for Dockerfiles
 
 exclude_dirs:
-  - to_adapt
-  - docs/plans
-  - docs/references
+  - .tasks
   - .venv
   - .venv2
+  - docs/plans
+  - docs/references
+  - to_adapt

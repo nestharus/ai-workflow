@@ -48,6 +48,7 @@ coverage_llm.json
 .ruff_cache/
 .sonar/
 .review/
+.tasks/
 openapi/
 
 # IDEs and editors

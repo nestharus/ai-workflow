@@ -9,7 +9,8 @@ targets:
 
 # Directories to exclude from linting
 exclude_dirs:
-  - to_adapt
-  - node_modules
+  - .tasks
   - .venv
   - __pycache__
+  - node_modules
+  - to_adapt

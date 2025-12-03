@@ -28,6 +28,7 @@ exclude_dirs:
   - .factory
   - .knowledge
   - .serena
+  - .tasks
   - to_adapt
   - build
   - dist
