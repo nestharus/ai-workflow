@@ -93,10 +93,9 @@ sections:
     title: Section Schema
     category: standard
     summary: Structure of section elements within the sections list.
-    items:
+    rules:
       - id: section-id-requirement
-        type: rule
-        text: |
+        rule: |
           Root elements of the `sections` list MUST have an `id` field. This enables
           change tracking and comparison between document versions.
 
@@ -138,10 +137,9 @@ sections:
     title: Child Element IDs
     category: standard
     summary: ID requirements for nested content.
-    items:
+    rules:
       - id: child-id-optional
-        type: rule
-        text: |
+        rule: |
           Children of section root elements MAY have `id` fields but they are NOT
           required. This allows flexibility in structuring nested content.
 
@@ -190,10 +188,9 @@ sections:
     title: Documentation File Detection
     category: standard
     summary: How to identify and validate documentation YAML files.
-    items:
+    rules:
       - id: detection-rule
-        type: rule
-        text: |
+        rule: |
           A YAML file is a documentation file if and only if it has a `doc_id` field
           at the root level. Linters and tools use this to distinguish documentation
           from configuration or data YAML files.
@@ -212,10 +209,9 @@ sections:
     title: Comparison Semantics
     category: standard
     summary: How document comparison works.
-    items:
+    rules:
       - id: comparison-dict-equality
-        type: rule
-        text: |
+        rule: |
           The compare_yaml_docs.py tool uses dict-to-dict comparison (dict == dict)
           to detect differences. Only elements with `id` fields are tracked. Changes
           to any field within an ID'd element will be detected as a difference.

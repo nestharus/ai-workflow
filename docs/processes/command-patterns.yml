@@ -8,13 +8,10 @@ sections:
   index: 1
   title: Orchestrator Message Submission
   category: standard
-  summary: ''
   items:
   - id: orchestrator-message-submission-1
-    type: text
     text: 'Agents invoke other agents or report status by submitting messages to the orchestrator:'
   - id: orchestrator-message-submission-code-2
-    type: code
     text: |
       # Agent submits a message to orchestrator
       curl -X POST http://localhost:8000/api/v1/orchestrator/submit \
@@ -26,39 +23,30 @@ sections:
           "requesting_agent": "R1 Tech Strategist"
         }'
   - id: orchestrator-message-submission-3
-    type: text
     text: 'The message payload includes:'
   - id: orchestrator-message-submission-role-the-target-role-to-h
-    type: text
     text: 'role: The target role to handle the task'
   - id: orchestrator-message-submission-task-description-of-what
-    type: text
     text: 'task: Description of what needs to be done'
   - id: orchestrator-message-submission-context-additional-contex
-    type: text
     text: 'context: Additional context data (file paths, metadata)'
   - id: orchestrator-message-submission-requesting_agent-the-agen
-    type: text
     text: 'requesting_agent: The agent submitting the message'
 - id: orchestrator-invokes-agents
   index: 2
   title: Orchestrator Invokes Agents
   category: standard
-  summary: ''
   items:
   - id: orchestrator-invokes-agents-1
-    type: rule
-    text: The orchestrator manages the execution environment and invokes agents using subprocess calls
+    rule: The orchestrator manages the execution environment and invokes agents using subprocess calls
       to `droid exec`. Agents should not worry about this mechanism but should be aware they are running
       in this context.
 - id: github-integration
   index: 3
   title: GitHub Integration
   category: standard
-  summary: ''
   items:
   - id: github-integration-1
-    type: text
     text: All GitHub interactions start with a webhook to the receiver service, flow to the orchestrator,
       and result in an agent being invoked with GitHub MCP access. Agents use MCP to fetch PR details,
       issue information, and other GitHub data as needed for their tasks.

@@ -24,7 +24,7 @@ sections:
   - id: source-target-files
     heading: Source and Target Files
     content: |
-      **Source file**: `docs/development/general/general.rest.api-patterns.yml`
+      Source file: `docs/development/general/general.rest.api-patterns.yml`
 
       The source contains multi-domain content (rest, fastapi, python) with 7 sections:
       - URL structure and prefix conventions
@@ -35,7 +35,7 @@ sections:
       - API versioning
       - Anti-patterns
 
-      **Target file**: `docs/development/project/rest/project.rest.api-patterns.yml`
+      Target file: `docs/development/project/rest/project.rest.api-patterns.yml`
 
   - id: workflow-steps
     heading: Workflow Steps
@@ -47,34 +47,34 @@ sections:
           migration on GENERAL to extract protocol rules and on PROJECT to extract any
           existing project-specific REST wiring facts.
 
-          **Command for GENERAL file**:
+          Command for GENERAL file:
           ```bash
           uv run knowledge.start-fact-migration \
             --yaml-file docs/development/general/general.rest.api-patterns.yml \
             --element-id <id>
           ```
 
-          **Command for PROJECT file**:
+          Command for PROJECT file:
           ```bash
           uv run knowledge.start-fact-migration \
             --yaml-file docs/development/project/rest/project.rest.api-patterns.yml \
             --element-id <id>
           ```
 
-          **Element IDs to process in GENERAL file**:
+          Element IDs to process in GENERAL file:
           - `url.prefix`
           - `http.status.named-constants`
           - `modeling.pydantic-extra-forbid`
           - (other elements as identified in source file)
 
-          **Element IDs to process in PROJECT file**:
+          Element IDs to process in PROJECT file:
           Process analogous element IDs if present in the PROJECT file. Inspect the
           file structure to identify project-specific elements for fact extraction.
 
-          **Entities to extract**: FastAPI, APIRouter, status, URL, Pydantic,
+          Entities to extract: FastAPI, APIRouter, status, URL, Pydantic,
           response_model, deprecated, Content-Type
 
-          **Output**:
+          Output:
           - Facts stored in `.knowledge/facts/extractions.csv`
           - Task created in `.knowledge/migrations/fact_tasks.csv`
           - Returns task ID and fact count
@@ -85,22 +85,22 @@ sections:
           Print instructions for invoking the knowledge-analyzer sub-agent to classify
           each extracted fact.
 
-          **Command**:
+          Command:
           ```bash
           uv run knowledge.classify-facts --task-id <uuid>
           ```
 
-          **Sub-agent invocation**:
+          Sub-agent invocation:
           ```python
           Task(subagent_type="knowledge-analyzer", prompt="")
           ```
 
           The sub-agent classifies each fact across three dimensions:
-          - **Domain**: rest, fastapi, python (multi-domain tagging allowed)
-          - **Scope**: GENERAL vs PROJECT
-          - **Pattern**: api-patterns
+          - Domain: rest, fastapi, python (multi-domain tagging allowed)
+          - Scope: GENERAL vs PROJECT
+          - Pattern: api-patterns
 
-          **Classification output schema**:
+          Classification output schema:
           ```json
           {
             "classifications": [
@@ -139,14 +139,14 @@ sections:
           Move classified PROJECT facts to the target file with semantic similarity
           tracking.
 
-          **Command**:
+          Command:
           ```bash
           uv run knowledge.move-facts \
             --task-id <uuid> \
             --classification-file classification.json
           ```
 
-          **Actions performed**:
+          Actions performed:
           - Parse classification JSON
           - Store PROJECT facts in `.knowledge/facts/rest.api-patterns.facts.yml`
           - Record movements in `.knowledge/movements/iterative_movements.csv`
@@ -160,19 +160,19 @@ sections:
           Validate that all facts are stored, movements tracked, and semantic
           preservation is maintained.
 
-          **Command**:
+          Command:
           ```bash
           uv run knowledge.validate-fact-migration --task-id <uuid>
           ```
 
-          **Validation checks**:
+          Validation checks:
           - All facts from `extractions.csv` are stored in YAML files
           - All facts have corresponding movement records
           - All movements satisfy invariant: `original = isolated_fact + residual_sentence`
           - Semantic similarity >= 0.95 for all movements
           - Task `fact_count` matches actual extracted count
 
-          **Output**: Updates task status to 'completed' or 'failed'
+          Output: Updates task status to 'completed' or 'failed'
 
   - id: entity-extraction-targets
     heading: Entity Extraction Targets
@@ -195,20 +195,20 @@ sections:
     content: |
       Tag ALL applicable domains; no precedence between domains.
 
-      **Pure REST protocol rules** (URL structure, status codes, HTTP methods):
+      Pure REST protocol rules (URL structure, status codes, HTTP methods):
       ```yaml
       domain:
         - rest
       ```
 
-      **REST + FastAPI implementation** (mounting, APIRouter, response_model):
+      REST + FastAPI implementation (mounting, APIRouter, response_model):
       ```yaml
       domain:
         - rest
         - fastapi
       ```
 
-      **REST + FastAPI + Python** (Pydantic models, type hints):
+      REST + FastAPI + Python (Pydantic models, type hints):
       ```yaml
       domain:
         - rest
@@ -219,20 +219,20 @@ sections:
   - id: classification-criteria
     heading: GENERAL vs PROJECT Classification
     content: |
-      **GENERAL facts**: REST/HTTP protocol rules that apply to any REST API project.
+      GENERAL facts: REST/HTTP protocol rules that apply to any REST API project.
 
       Examples:
       - "Use /api/{version} prefix for versioning"
       - "Return 201 for POST success"
       - "Use snake_case for JSON fields"
 
-      **PROJECT facts**: FastAPI-specific wiring in this codebase.
+      PROJECT facts: FastAPI-specific wiring in this codebase.
 
       Examples:
       - "Mount versioned endpoints using APIRouter in app/api/v1/router.py"
       - "Use fastapi.status constants from app/core/dependencies.py"
 
-      **Test question**: "Could this rule apply to a different project using REST/FastAPI?"
+      Test question: "Could this rule apply to a different project using REST/FastAPI?"
       - Yes → GENERAL
       - No (references `app/*` or project-specific components) → PROJECT
 
@@ -251,7 +251,7 @@ sections:
   - id: expected-outcomes
     heading: Expected Outcomes
     content: |
-      **After successful migration**:
+      After successful migration:
 
       - `general.rest.api-patterns.yml`: Contains only GENERAL REST/HTTP protocol rules
         (no `app/*` references)

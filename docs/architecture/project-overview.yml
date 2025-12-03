@@ -10,10 +10,8 @@ sections:
   index: 1
   title: System Description
   category: standard
-  summary: ''
   items:
   - id: system-description-1
-    type: text
     text: |
       This project implements an automated AI workflow system using a 5-role skeleton across four domains: Product, UX,
       UI, and Technical. The architecture separates concerns between workflow orchestration and external event handling
@@ -22,16 +20,13 @@ sections:
   index: 2
   title: Core Components
   category: standard
-  summary: ''
   items:
   - id: core-components-orchestrator
-    type: text
     text: |
       FastAPI Orchestrator Service: The central orchestrator service routes messages to workflows and
       coordinates agent execution. It receives messages from agents, manages workflow state, and invokes
       other agents via `droid exec` subprocesses.
   - id: core-components-webhook-receiver
-    type: text
     text: |
       Webhook Receiver Service: A standalone service handles GitHub integration by receiving webhooks,
       verifying signatures, and forwarding validated events to the orchestrator for routing to
@@ -40,32 +35,24 @@ sections:
   index: 3
   title: Agent Interaction Model
   category: standard
-  summary: ''
   items:
   - id: agent-interaction-model-1
-    type: step
     text: |
       Agents submit messages to the orchestrator rather than calling other agents directly. The orchestrator then:
   - id: agent-interaction-model-routes-messages-to-the-appropr
-    type: text
     text: Routes messages to the appropriate workflow instance
   - id: agent-interaction-model-manages-workflow-state-and-coo
-    type: text
     text: Manages workflow state and coordinates handoffs between roles
   - id: agent-interaction-model-spawns-droid-exec-subprocess
-    type: text
     text: Spawns `droid exec` subprocesses for agent execution
   - id: agent-interaction-model-handles-ticket-claiming-and-pr
-    type: text
     text: Handles ticket claiming and PR comment routing
 - id: primary-goal
   index: 4
   title: Primary Goal
   category: standard
-  summary: ''
   items:
   - id: primary-goal-1
-    type: text
     text: The system facilitates high-quality software development through structured, automated collaboration.
       By enforcing role-based workflows and centralized orchestration, agents work together efficiently
       while maintaining clear separation of responsibilities.

@@ -14,6 +14,7 @@ domain:
   - python
 primary_runtime_references:
   - path: app/repositories/example_repository.py
+    id: item.6188f374
     role: Repository implementation example.
 related_pattern_docs:
   - python/service-patterns.toon
@@ -31,35 +32,28 @@ sections:
       or entity.
     items:
       - id: responsibilities.persistence-abstraction
-        type: rule
-        text: Hide SurrealDB SQL, Elasticsearch queries, or future storage details behind a stable Python interface.
+        rule: Hide SurrealDB SQL, Elasticsearch queries, or future storage details behind a stable Python interface.
       - id: responsibilities.service-facing
-        type: rule
-        text: >
+        rule: >
           Services depend on repository interfaces, not on infrastructure classes like SurrealDBPool or
           ElasticsearchWrapper.
       - id: responsibilities.domain-mapping
-        type: rule
-        text: >
+        rule: >
           Return domain models or DTOs (Pydantic models in app/contracts/), not raw database rows or driver-specific
           response
           structures.
       - id: responsibilities.testability
-        type: rule
-        text: >
+        rule: >
           Make it straightforward to substitute real implementations with fakes or mocks for fast, isolated testing of
           business logic.
       - id: responsibilities.crud-operations
-        type: rule
-        text: >
+        rule: >
           Implement CRUD and query operations (get_by_id, list, create, update, delete) along with aggregate-specific
           queries.
       - id: responsibilities.http-agnostic
-        type: rule
-        text: Repositories are unaware of HTTP; they never import FastAPI or raise HTTP-specific exceptions.
+        rule: Repositories are unaware of HTTP; they never import FastAPI or raise HTTP-specific exceptions.
       - id: responsibilities.architecture
-        type: note
-        text: >
+        note: >
           Modern FastAPI architectures pair repositories with a dedicated service layer; services compose multiple
           repositories
           and own business rules.
@@ -75,48 +69,49 @@ sections:
         - app.contracts.users.User
       components:
         - type: protocol
+          id: item.397a2f52
           name: UserRepositoryProtocol
           methods:
             - signature: 'async def get_by_id(self, user_id: str) -> User | None'
+              id: item.3c9e0bf7
               docstring: Return a user by ID, or None if not found.
             - signature: 'async def get_by_field(self, field_name: str, value: str) -> list[User]'
+              id: item.72b56dde
               docstring: Return users matching a simple equality filter on a field.
             - signature: 'async def list(self, offset: int = 0, limit: int = 100) -> list[User]'
+              id: item.460d9b58
               docstring: Return a window of users for pagination.
             - signature: 'async def create(self, user: User) -> User'
+              id: item.c2e9e95b
               docstring: Persist a new user and return the stored record.
             - signature: 'async def update(self, user: User) -> User'
+              id: item.c6a29b4b
               docstring: Persist an updated user and return the stored record.
             - signature: 'async def delete(self, user_id: str) -> None'
+              id: item.b6f5cd66
               docstring: Delete a user by ID; succeed silently if already absent.
     items:
       - id: interface.per-entity
-        type: rule
-        text: >
+        rule: >
           Prefer one repository interface per aggregate (e.g., UserRepositoryProtocol, TicketRepositoryProtocol) instead
           of a single catch-all.
       - id: interface.typed-crud
-        type: rule
-        text: All methods must have explicit type hints for parameters and return values.
+        rule: All methods must have explicit type hints for parameters and return values.
       - id: interface.async
-        type: rule
-        text: >
+        rule: >
           Use async def for all I/O-bound operations so repositories compose naturally with async services and FastAPI
           routes.
       - id: interface.protocol
-        type: rule
-        text: >
+        rule: >
           Protocols describe the contract; concrete classes implement them in app/repositories/ or domain-specific
           modules.
       - id: interface.standard-surface
-        type: note
-        text: >
+        note: >
           A typical repository interface exposes get_by_id, get_by_field, list, create, update, delete, plus
           domain-specific
           query methods. See app/repositories/example_repository.py for reference.
       - id: interface.current-reference
-        type: note
-        text: >
+        note: >
           The repository pattern is illustrated in app/repositories/example_repository.py, where
           ExampleRepositoryProtocol
           is implemented against SurrealDBPool for save_processed_message. Services such as ExampleService in
@@ -146,25 +141,21 @@ sections:
                     ...
     items:
       - id: impl.one-per-aggregate
-        type: rule
-        text: >
+        rule: >
           Create separate repositories for distinct aggregates rather than a monolithic repository handling every table
           or index.
       - id: impl.constructor-injection
-        type: rule
-        text: >
+        rule: >
           Repository constructors accept minimal infrastructure dependencies (SurrealDBPool, ElasticsearchWrapper,
           AsyncSession);
           they do not reach into global application state.
       - id: impl.async-access
-        type: rule
-        text: >
+        rule: >
           All methods that hit external stores must be async and rely on async-aware primitives from the underlying
           client
           or wrapper.
       - id: impl.no-business-logic
-        type: rule
-        text: >
+        rule: >
           Repositories translate calls into query operations and map results; they do not implement cross-aggregate
           rules
           or workflows.
@@ -174,26 +165,22 @@ sections:
     category: standard
     summary: >
       Repositories must not commit or roll back transactions; they participate in transactions defined by services.
-    items:
+    rules:
       - id: txn.service-boundaries
-        type: rule
-        text: >
+        rule: >
           Services determine when a logical unit of work begins and ends; they may wrap repository calls in async with
           blocks or unit-of-work abstractions.
       - id: txn.relational-future
-        type: note
-        text: >
+        note: >
           If a relational database and ORM (e.g., SQLAlchemy) are introduced, repositories may accept an AsyncSession
           and call session.flush() while leaving session.commit() to the service.
       - id: txn.current-behavior
-        type: note
-        text: >
+        note: >
           With SurrealDB and Elasticsearch, each operation is effectively auto-committed. This document treats
           transaction
           boundaries as a service-level concern for architectural consistency.
       - id: txn.cross-aggregate
-        type: rule
-        text: >
+        rule: >
           When a use case spans multiple repositories, the service layer coordinates all calls and defines recovery
           behavior
           if one step fails. See service-patterns.toon for orchestration details.
@@ -205,32 +192,27 @@ sections:
     sample_code:
       description: List method signature with pagination parameters.
       code: 'async def list(self, offset: int = 0, limit: int = 100) -> list[User]: ...'
-    items:
+    rules:
       - id: query.parameterized
-        type: rule
-        text: >
+        rule: >
           Always prefer parameterized queries ($id, $namespace, etc.) with separate parameter dictionaries to avoid
           injection
           and make queries reusable.
       - id: query.pagination
-        type: rule
-        text: >
+        rule: >
           Repository methods should accept offset and limit integers for result windows. These map to API concepts like
           page and page_size (offset = (page - 1) * page_size).
       - id: query.domain-results
-        type: rule
-        text: >
+        rule: >
           Methods return lists of domain models, not raw database rows or Elasticsearch hits. Mapping is the
           repository's
           responsibility.
       - id: query.filtering
-        type: rule
-        text: >
+        rule: >
           Expose explicit filter and sort parameters rather than accepting raw where clauses or query dicts from
           callers.
       - id: query.bulk
-        type: rule
-        text: >
+        rule: >
           When the underlying store exposes efficient bulk APIs (e.g., Elasticsearch bulk), provide repository-level
           methods
           like bulk_index or bulk_insert.
@@ -239,26 +221,22 @@ sections:
     title: Error handling in repositories
     category: standard
     summary: Translate expected conditions into domain exceptions; let unexpected infrastructure errors propagate.
-    items:
+    rules:
       - id: errors.expected
-        type: rule
-        text: >
+        rule: >
           When a domain entity is not found or a known constraint is violated, raise specific exceptions like
           ResourceNotFoundError
           or DuplicateRecordError derived from DomainError in app/core/errors.py.
       - id: errors.unexpected
-        type: rule
-        text: >
+        rule: >
           Do not catch broad exceptions like Exception to hide database connectivity issues, timeouts, or driver bugs;
           let these propagate for global error handlers.
       - id: errors.logging
-        type: rule
-        text: >
+        rule: >
           When catching and translating expected errors, log only high-level context (entity type, identifier); avoid
           including sensitive data or raw query text.
       - id: errors.http-mapping
-        type: note
-        text: >
+        note: >
           Mapping domain exceptions to HTTP status codes and error payloads is the responsibility of exception-handling
           layer documented in exception-patterns.md and api-patterns.toon.
   - id: testing-strategies
@@ -266,27 +244,23 @@ sections:
     title: Repository testing strategies
     category: standard
     summary: Test repositories at multiple levels from unit tests with mocks to integration tests with real stores.
-    items:
+    rules:
       - id: testing.unit
-        type: rule
-        text: >
+        rule: >
           Replace SurrealDBPool or ElasticsearchWrapper with fakes or mocks that capture executed queries without
           performing
           real I/O. Assert on SQL strings, parameter dictionaries, or search bodies.
       - id: testing.integration
-        type: rule
-        text: >
+        rule: >
           Use test databases or indices to verify that repository methods interact correctly with actual storage
           engines.
       - id: testing.fixtures
-        type: note
-        text: >
+        note: >
           The fixtures in tests/conftest.py demonstrate application composition for integration and E2E tests.
           Repository
           tests can reuse this composition root.
       - id: testing.isolation
-        type: rule
-        text: >
+        rule: >
           Ensure test data is reset between runs by truncating collections, deleting indices, or using transactional
           rollbacks.
           See testing-patterns.md for concrete reset strategies.
@@ -305,24 +279,20 @@ sections:
             return UserRepository(pool=pool)
     items:
       - id: factory.functions
-        type: rule
-        text: >
+        rule: >
           Define simple functions like def get_user_repository(pool) -> UserRepositoryProtocol that build concrete
           repositories.
       - id: factory.app-state
-        type: rule
-        text: >
+        rule: >
           create_app stores initialized SurrealDBPool and ElasticsearchWrapper on app.state. Dependency functions
           retrieve
           these and pass them into repository factories.
       - id: factory.fastapi-deps
-        type: rule
-        text: >
+        rule: >
           Use Depends with repository factory functions to inject repositories into services or route handlers. FastAPI
           per-request dependency cache ensures each repository is constructed at most once per request.
       - id: factory.service-composition
-        type: rule
-        text: >
+        rule: >
           Services receive repositories via constructors (see service-patterns.toon), keeping dependencies explicit and
           testable.
   - id: generic-repositories
@@ -332,24 +302,20 @@ sections:
     summary: Generic base repositories can reduce duplication but should be used sparingly to avoid obscuring behavior.
     items:
       - id: generic.shared-crud
-        type: note
-        text: >
+        note: >
           If many entities share identical CRUD semantics, consider extracting a base class like GenericRepository[T]
           that implements get_by_id, list, create, delete.
       - id: generic.overrides
-        type: rule
-        text: >
+        rule: >
           Concrete repositories may override specific methods to optimize queries, enforce additional constraints, or
           integrate search backends.
       - id: generic.avoid-over-generalization
-        type: rule
-        text: >
+        rule: >
           Overly generic repositories can obscure behavior and make debugging difficult. Favor explicit, per-entity
           repositories
           when in doubt.
       - id: generic.guidance
-        type: note
-        text: >
+        note: >
           2024 industry best practices recommend explicit repositories per aggregate as the default, with generic
           abstractions
           used sparingly.
@@ -358,24 +324,18 @@ sections:
     title: Anti-patterns to avoid
     category: anti_patterns
     summary: Common pitfalls that undermine repository layer design.
-    items:
+    anti_patterns:
       - id: anti.commit-transactions
-        type: anti_pattern
-        text: Repositories that commit or roll back transactions instead of delegating transaction control to services.
+        anti_pattern: Repositories that commit or roll back transactions instead of delegating transaction control to services.
       - id: anti.business-rules
-        type: anti_pattern
-        text: Repositories that implement business rules, workflows, or cross-aggregate orchestration.
+        anti_pattern: Repositories that implement business rules, workflows, or cross-aggregate orchestration.
       - id: anti.raw-responses
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Repositories that return ORM models or raw driver responses (SurrealDB records, Elasticsearch hit structures)
           instead of domain models or DTOs.
       - id: anti.global-instances
-        type: anti_pattern
-        text: Global or module-level repository instances that bypass dependency injection and make testing difficult.
+        anti_pattern: Global or module-level repository instances that bypass dependency injection and make testing difficult.
       - id: anti.god-repositories
-        type: anti_pattern
-        text: Single god repositories that handle unrelated aggregates instead of focused, per-entity repositories.
+        anti_pattern: Single god repositories that handle unrelated aggregates instead of focused, per-entity repositories.
       - id: anti.over-generic
-        type: anti_pattern
-        text: Over-generic repositories whose type parameters and behavior are difficult to understand at call sites.
+        anti_pattern: Over-generic repositories whose type parameters and behavior are difficult to understand at call sites.

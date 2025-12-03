@@ -24,32 +24,26 @@ sections:
     title: URL structure and versioning
     category: standard
     summary: URL path conventions, version prefixes, health checks, and resource naming.
-    items:
+    rules:
       - id: url.prefix
-        type: rule
-        text: >
+        rule: >
           Mount versioned endpoints under a stable /api/{version} prefix (for example /api/v1) and keep the prefix
           consistent
           across all routes in a given version.
       - id: url.health.liveness
-        type: rule
-        text: >
+        rule: >
           Expose an unversioned liveness probe such as GET /health that checks only basic process aliveness and can be
           excluded from public API documentation.
       - id: url.health.readiness
-        type: rule
-        text: >
+        rule: >
           Expose a versioned readiness endpoint such as GET /api/{version}/health that verifies dependencies (databases,
           message brokers, upstream services) and is documented in the API definition.
       - id: url.resource-naming
-        type: rule
-        text: Use plural, kebab-case resource names in paths such as /api/v1/task-assignments and /api/v1/user-sessions.
+        rule: Use plural, kebab-case resource names in paths such as /api/v1/task-assignments and /api/v1/user-sessions.
       - id: url.path-params
-        type: rule
-        text: Use descriptive path parameter names like {user_id} instead of generic {id}.
+        rule: Use descriptive path parameter names like {user_id} instead of generic {id}.
       - id: url.trailing-slashes
-        type: rule
-        text: >
+        rule: >
           Declare canonical paths without a trailing slash (for example /users and /users/{user_id}); handling of
           redirect
           variants is implementation-specific.
@@ -92,13 +86,11 @@ sections:
         success_status_text: No Content
         error_statuses:
           - 404
-    items:
+    rules:
       - id: http.status.named-constants
-        type: rule
-        text: Use fastapi.status named constants such as status.HTTP_201_CREATED instead of hard-coded integer literals.
+        rule: Use fastapi.status named constants such as status.HTTP_201_CREATED instead of hard-coded integer literals.
       - id: http.validation.use-400
-        type: rule
-        text: >
+        rule: >
           Surface all request validation failures as HTTP 400 Bad Request rather than nonstandard validation-specific
           status codes so clients can treat them consistently.
   - id: request-response-modeling
@@ -106,26 +98,23 @@ sections:
     title: Request and response modeling
     category: standard
     summary: Pydantic conventions for request/response contracts and JSON serialization.
-    items:
+    rules:
       - id: modeling.pydantic-extra-forbid
-        type: rule
-        text: >
+        rule: >
           Define all request and response payloads as Pydantic BaseModel subclasses with ConfigDict(extra="forbid") so
           unknown JSON keys are rejected.
       - id: modeling.json-snake-case
-        type: rule
-        text: >
+        rule: >
           Use snake_case for all JSON field names and represent datetimes as timezone-aware UTC ISO 8601 strings via
           Pydantic
           serializers.
       - id: modeling.response-model-required
-        type: rule
-        text: >
+        rule: >
           Every endpoint should set an explicit response_model so that outbound schemas are enforced, extra fields from
           services are filtered out, and OpenAPI schemas are derived from the contracts.
+    notes:
       - id: modeling.describe-side-effects
-        type: note
-        text: >
+        note: >
           When a route has non-trivial side effects such as writes or external calls, the API documentation must explain
           these behaviors for consumers.
   - id: response-shape-and-pagination
@@ -138,33 +127,28 @@ sections:
       - total
       - page
       - page_size
-    items:
+    rules:
       - id: responses.no-generic-envelopes
-        type: rule
-        text: >
-          'Do not wrap successful responses in generic envelopes such as {"status": "ok", "data": ...}; return the
+        rule: >
+          Do not wrap successful responses in generic envelopes such as {"status": "ok", "data": ...}; return the
           domain
-          model directly.'
+          model directly.
       - id: pagination.standard-fields
-        type: rule
-        text: >
+        rule: >
           For paginated collections, use a structure with items, total, page, and page_size fields as a common
           convention.
       - id: errors.common-envelope
-        type: rule
-        text: >
+        rule: >
           All error responses should share a common top-level envelope with code, message, statusCode, and optional
           details
           fields so clients can handle errors consistently across endpoints.
       - id: errors.validation-envelope
-        type: rule
-        text: >
+        rule: >
           Validation failures should use the common error envelope with a stable validation error code and place
           structured
           validation details in the details field.
       - id: errors.domain-envelope
-        type: rule
-        text: >
+        rule: >
           Non-validation errors such as domain or infrastructure failures should use the same error envelope with
           domain-specific
           error codes and contextual details where applicable.
@@ -173,54 +157,45 @@ sections:
     title: Content negotiation
     category: standard
     summary: JSON as the default response format with optional compression.
-    items:
+    rules:
       - id: content.json-default
-        type: rule
-        text: >
+        rule: >
           Use application/json as the default Content-Type unless a route explicitly declares a different media type.
       - id: content.compression-gzip
-        type: rule
-        text: >
-          'Support Accept-Encoding: gzip via middleware and ensure compressed responses remain valid JSON at the payload
-          level.'
+        rule: >
+          Support Accept-Encoding: gzip via middleware and ensure compressed responses remain valid JSON at the payload
+          level.
   - id: versioning-and-deprecation
     index: 6
     title: Versioning and deprecation
     category: standard
     summary: Path-based API versioning with additive-only changes per version and explicit deprecation metadata.
-    items:
+    rules:
       - id: versioning.path-based
-        type: rule
-        text: >
+        rule: >
           Version all public endpoints in the path such as /api/v1 or /api/v2, and require a new major version for any
           breaking change.
       - id: versioning.compatibility-additive
-        type: rule
-        text: Within a given API version, allow only additive changes such as new optional fields or new endpoints.
+        rule: Within a given API version, allow only additive changes such as new optional fields or new endpoints.
       - id: versioning.compatibility-no-breaking
-        type: rule
-        text: >
+        rule: >
           Do not remove fields or change semantics within an existing API version; such changes require a new version.
       - id: deprecation.header-deprecation
-        type: rule
-        text: >
-          'For deprecated endpoints, include a Deprecation response header such as Deprecation: true or a deprecation
-          date string.'
+        rule: >
+          For deprecated endpoints, include a Deprecation response header such as Deprecation: true or a deprecation
+          date string.
       - id: deprecation.header-sunset
-        type: rule
-        text: >
+        rule: >
           When a removal date is known for a deprecated endpoint, include a Sunset header with an RFC 1123 timestamp
           such
           as Mon, 30 Jun 2025 23:59:59 GMT.
       - id: deprecation.changelog
-        type: rule
-        text: >
+        rule: >
           Record every breaking or deprecating change in the API changelog with migration guidance to replacement
           endpoints
           or versions.
       - id: deprecation.flag-endpoints
-        type: rule
-        text: >
+        rule: >
           When deprecating an endpoint, set deprecated=True in the FastAPI route decorator so OpenAPI and interactive
           docs show deprecation state.
   - id: anti-patterns
@@ -228,24 +203,18 @@ sections:
     title: Anti-patterns to avoid
     category: anti_patterns
     summary: Common pitfalls that violate these standards.
-    items:
+    anti_patterns:
       - id: anti-patterns.business-logic-in-routes
-        type: anti_pattern
-        text: Implementing business logic directly in route handlers instead of delegating to services.
+        anti_pattern: Implementing business logic directly in route handlers instead of delegating to services.
       - id: anti-patterns.orm-models-as-contracts
-        type: anti_pattern
-        text: Returning ORM or database models directly from endpoints instead of contract models.
+        anti_pattern: Returning ORM or database models directly from endpoints instead of contract models.
       - id: anti-patterns.inconsistent-error-shapes
-        type: anti_pattern
-        text: Using inconsistent or undocumented error response shapes across endpoints.
+        anti_pattern: Using inconsistent or undocumented error response shapes across endpoints.
       - id: anti-patterns.missing-response-model
-        type: anti_pattern
-        text: Omitting explicit response models or leaving success and error status codes implicit.
+        anti_pattern: Omitting explicit response models or leaving success and error status codes implicit.
       - id: anti-patterns.broad-except
-        type: anti_pattern
-        text: Catching broad exceptions in ways that hide root causes or bypass global exception handling.
+        anti_pattern: Catching broad exceptions in ways that hide root causes or bypass global exception handling.
       - id: anti-patterns.missing-openapi-docs
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Leaving API documentation incomplete, for example by omitting summary, description, tags, or documented error
           responses.

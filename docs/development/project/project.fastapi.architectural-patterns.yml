@@ -35,11 +35,9 @@ sections:
     summary: Project-specific router wiring.
     items:
       - id: router.registration-wiring
-        type: rule
-        text: See project.fastapi.factory-patterns.yml for router registration in app/core/factory.py.
+        rule: See project.fastapi.factory-patterns.yml for router registration in app/core/factory.py.
       - id: router.reference
-        type: reference
-        text: See project.fastapi.router-patterns.yml for comprehensive router implementation patterns.
+        reference: See project.fastapi.router-patterns.yml for comprehensive router implementation patterns.
   - id: service-integration
     index: 2
     title: Service layer integration
@@ -47,14 +45,11 @@ sections:
     summary: Project-specific service wiring.
     items:
       - id: service.constructor-injection-wiring
-        type: rule
-        text: See project.fastapi.service-patterns.yml for app.state restrictions.
+        rule: See project.fastapi.service-patterns.yml for app.state restrictions.
       - id: service.fastapi-reference
-        type: reference
-        text: See project.fastapi.service-patterns.yml for FastAPI-specific service factory patterns.
+        reference: See project.fastapi.service-patterns.yml for FastAPI-specific service factory patterns.
       - id: service.python-reference
-        type: reference
-        text: See project.python.service-patterns.yml for core service layer concepts and responsibilities.
+        reference: See project.python.service-patterns.yml for core service layer concepts and responsibilities.
   - id: repository-integration
     index: 3
     title: Repository layer integration
@@ -62,22 +57,18 @@ sections:
     summary: Project-specific repository wiring.
     items:
       - id: repository.state-access-wiring
-        type: rule
-        text: >
+        rule: >
           See project.fastapi.dependency-patterns.yml for request.app.state wiring with surrealdb_pool and
           elasticsearch_client.
       - id: repository.constructor-injection-wiring
-        type: rule
-        text: Repositories do not access app.state directly; see project.fastapi.dependency-patterns.yml.
+        rule: Repositories do not access app.state directly; see project.fastapi.dependency-patterns.yml.
       - id: repository.db-reference
-        type: reference
-        text: >
+        reference: >
           See project.surrealdb.repository-patterns.yml and project.elasticsearch.repository-patterns.yml for
           database-specific
           patterns.
       - id: repository.python-reference
-        type: reference
-        text: See project.python.repository-patterns.yml for core repository concepts and Protocol definitions.
+        reference: See project.python.repository-patterns.yml for core repository concepts and Protocol definitions.
   - id: factory-wiring
     index: 4
     title: Application factory and wiring
@@ -85,11 +76,9 @@ sections:
     summary: Project-specific factory wiring.
     items:
       - id: factory.settings-wiring
-        type: rule
-        text: See project.fastapi.settings-patterns.yml for get_settings dependency and app.state.settings wiring.
+        rule: See project.fastapi.settings-patterns.yml for get_settings dependency and app.state.settings wiring.
       - id: factory.reference
-        type: reference
-        text: >
+        reference: >
           See project.fastapi.factory-patterns.yml for detailed factory implementation patterns in app/core/factory.py.
   - id: dependency-injection
     index: 5
@@ -98,26 +87,22 @@ sections:
     summary: Project-specific DI wiring.
     items:
       - id: di.settings-injection-wiring
-        type: rule
-        text: See project.fastapi.dependency-patterns.yml for get_settings dependency usage.
+        rule: See project.fastapi.dependency-patterns.yml for get_settings dependency usage.
       - id: di.reference
-        type: reference
-        text: See project.fastapi.dependency-patterns.yml for comprehensive DI patterns and testing with overrides.
+        reference: See project.fastapi.dependency-patterns.yml for comprehensive DI patterns and testing with overrides.
   - id: testing-integration
     index: 6
     title: Testing integration
     category: testing
     summary: Project-specific testing wiring.
-    items:
+    references:
       - id: testing.conftest
-        type: reference
-        text: See tests/conftest.py for fixture patterns and dependency override examples.
+        reference: See tests/conftest.py for fixture patterns and dependency override examples.
   - id: fastapi-architectural-anti-patterns
     index: 7
     title: Anti-patterns
     category: anti_patterns
     summary: Project-specific anti-pattern reference.
-    items:
+    anti_patterns:
       - id: anti.direct-state-access-wiring
-        type: anti_pattern
-        text: See project.fastapi.service-patterns.yml for app.state access restrictions.
+        anti_pattern: See project.fastapi.service-patterns.yml for app.state access restrictions.

@@ -518,6 +518,7 @@ practical_examples:
     title: "Complete Fact Migration of a YAML Element"
     steps:
       - step: "Start the fact migration"
+        id: item.22aa63e3
         command: |
           uv run knowledge.start-fact-migration \
             --yaml-file docs/development/project/fastapi/project.fastapi.factory-patterns.yml \
@@ -532,6 +533,7 @@ practical_examples:
           Facts extracted: 5
 
       - step: "Classify facts with knowledge-analyzer"
+        id: item.e82400b5
         command: |
           uv run knowledge.classify-facts --task-id 550e8400-e29b-41d4-a716-446655440000
         action: |
@@ -541,6 +543,7 @@ practical_examples:
           Save classification output to classification.json
 
       - step: "Move classified facts"
+        id: item.b890e06c
         command: |
           uv run knowledge.move-facts \
             --task-id 550e8400-e29b-41d4-a716-446655440000 \
@@ -557,6 +560,7 @@ practical_examples:
           Movements tracked: 5
 
       - step: "Validate migration"
+        id: item.606a9fcc
         command: |
           uv run knowledge.validate-fact-migration --task-id 550e8400-e29b-41d4-a716-446655440000
         output: |
@@ -578,12 +582,14 @@ practical_examples:
     title: "Classifying Facts with Knowledge-Analyzer Sub-Agent"
     steps:
       - step: "Query facts for classification"
+        id: item.6d430f11
         command: |
           uv run knowledge.classify-facts --task-id 550e8400-e29b-41d4-a716-446655440000
         description: |
           This prints the extracted facts and sub-agent invocation instructions.
 
       - step: "Invoke knowledge-analyzer"
+        id: item.f8cff94f
         action: |
           In Claude Code, invoke:
             Task(subagent_type="knowledge-analyzer", prompt="")
@@ -591,6 +597,7 @@ practical_examples:
           The sub-agent will analyze each fact and produce classification output.
 
       - step: "Save classification to JSON"
+        id: item.d7ed812b
         action: |
           Copy the sub-agent output and save to classification.json:
           {
@@ -608,6 +615,7 @@ practical_examples:
     title: "Querying Fact Migration Status"
     steps:
       - step: "Check task status via DuckDB"
+        id: item.9177e885
         query: |
           SELECT task_id, element_id, status, fact_count, validated_at
           FROM read_csv_auto('.knowledge/migrations/fact_tasks.csv', ALL_VARCHAR=TRUE)
@@ -617,6 +625,7 @@ practical_examples:
           550e8400-e29b-41d4-a716-446655440000 | factory.create_app | pending | 5          |
 
       - step: "Check extracted facts"
+        id: item.a8934bb3
         query: |
           SELECT entity, COUNT(*) as fact_count
           FROM read_csv_auto('.knowledge/facts/extractions.csv', ALL_VARCHAR=TRUE)

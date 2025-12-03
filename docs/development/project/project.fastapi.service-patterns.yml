@@ -52,29 +52,24 @@ sections:
             return UserService(user_repo=user_repo, settings=settings)
     items:
       - id: factory.pattern
-        type: rule
-        text: >
+        rule: >
           Define service factory functions that accept dependencies via Depends() and construct service instances with
           explicit constructor injection.
       - id: factory.repository-deps
-        type: pattern
-        text: >
+        pattern: >
           Service factories depend on repository factories which in turn retrieve pools from app.state, forming a clear
           dependency chain.
       - id: factory.settings-injection
-        type: rule
-        text: >
+        rule: >
           Inject Settings into service factories using SettingsDep type alias rather than reading environment variables
           or accessing globals.
       - id: factory.location
-        type: rule
-        text: >
+        rule: >
           Place service factory functions in app/api/v1/dependencies.py alongside other dependency providers for the
           versioned
           API.
       - id: factory.type-aliases
-        type: pattern
-        text: >
+        pattern: >
           Define type aliases like UserServiceDep = Annotated[UserService, Depends(get_user_service)] for cleaner route
           handler signatures.
   - id: app-state-integration
@@ -97,26 +92,21 @@ sections:
             return request.app.state.elasticsearch_client
     items:
       - id: app-state.initialization
-        type: rule
-        text: >
+        rule: >
           Initialize infrastructure resources (SurrealDBPool, ElasticsearchWrapper) in the lifespan context manager and
           store them on app.state. See fastapi/factory-patterns.toon.
       - id: app-state.access-via-request
-        type: pattern
-        text: >
+        pattern: >
           Access app.state resources via request.app.state in dependency providers, not by importing a global app
           instance.
       - id: app-state.no-direct-service-access
-        type: rule
-        text: >
+        rule: >
           Services must not access app.state directly; they receive dependencies via constructor injection from factory
           functions.
       - id: app-state.cleanup
-        type: rule
-        text: Close pools and clients in the lifespan shutdown phase to ensure proper resource cleanup.
+        rule: Close pools and clients in the lifespan shutdown phase to ensure proper resource cleanup.
       - id: app-state.ref-factory
-        type: note
-        text: >
+        note: >
           The app/core/factory.py create_app function handles initialization; see fastapi/factory-patterns.toon for
           implementation
           details.
@@ -145,20 +135,15 @@ sections:
             return await service.get_user(user_id)
     items:
       - id: injection.type-alias
-        type: rule
-        text: Use Annotated type aliases for service dependencies to keep route signatures clean and readable.
+        rule: Use Annotated type aliases for service dependencies to keep route signatures clean and readable.
       - id: injection.service-method-call
-        type: pattern
-        text: Route handlers call service methods and return the result; they do not implement business logic.
+        pattern: Route handlers call service methods and return the result; they do not implement business logic.
       - id: injection.domain-exceptions
-        type: rule
-        text: Let domain exceptions from services propagate; global exception handlers translate them to HTTP responses.
+        rule: Let domain exceptions from services propagate; global exception handlers translate them to HTTP responses.
       - id: injection.no-construction
-        type: rule
-        text: Never construct services directly inside route handlers; always use Depends() for injection.
+        rule: Never construct services directly inside route handlers; always use Depends() for injection.
       - id: injection.ref-router-patterns
-        type: note
-        text: See fastapi/router-patterns.toon for comprehensive route handler patterns.
+        note: See fastapi/router-patterns.toon for comprehensive route handler patterns.
   - id: testing-service-overrides
     index: 4
     title: Testing with service overrides
@@ -196,45 +181,36 @@ sections:
                 yield client
     items:
       - id: testing.override-pattern
-        type: rule
-        text: >
+        rule: >
           Override service factory functions via app.dependency_overrides[get_service] = lambda to inject mocks without
           modifying production code.
       - id: testing.mock-services
-        type: pattern
-        text: Use unittest.mock.AsyncMock for async service methods; configure return values and side effects as needed.
+        pattern: Use unittest.mock.AsyncMock for async service methods; configure return values and side effects as needed.
       - id: testing.fixture-composition
-        type: note
-        text: Compose fixtures (test_settings → mock_service → test_app → async_client) for consistent test setup.
+        note: Compose fixtures (test_settings → mock_service → test_app → async_client) for consistent test setup.
       - id: testing.clear-overrides
-        type: rule
-        text: Clear app.dependency_overrides after tests or use fresh app instances per test to prevent state leakage.
+        rule: Clear app.dependency_overrides after tests or use fresh app instances per test to prevent state leakage.
       - id: testing.ref-conftest
-        type: note
-        text: See tests/conftest.py for production fixture patterns and app construction helpers.
+        note: See tests/conftest.py for production fixture patterns and app construction helpers.
   - id: fastapi-anti-patterns
     index: 5
     title: FastAPI service anti-patterns
     category: anti_patterns
     summary: Common FastAPI-specific mistakes that undermine service layer integration.
-    items:
+    anti_patterns:
       - id: anti.framework-imports
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Services that import FastAPI or Starlette types such as Request, Response, or HTTPException; services must
           remain
           framework-agnostic.
       - id: anti.direct-app-state
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Services that directly access app.state or request objects instead of receiving dependencies via constructor
           injection.
       - id: anti.inline-construction
-        type: anti_pattern
-        text: Constructing services inside route handlers instead of using Depends() with factory functions.
+        anti_pattern: Constructing services inside route handlers instead of using Depends() with factory functions.
       - id: anti.hardcoded-deps
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Service factory functions that create dependencies internally instead of receiving them via Depends(),
           preventing
           test overrides.

@@ -9,11 +9,9 @@ sections:
   index: 1
   title: 3.1. Define the Technical Domain Team
   category: standard
-  summary: ''
-  items:
+  content:
   - id: 31-define-the-technical-domain-team-code-1
-    type: code
-    text: |
+    code: |
       # Technical Strategy Planner (R1)
       cat << EOF > .factory/droids/tech/r1_strategist.md
       <poml>
@@ -87,11 +85,9 @@ sections:
   index: 2
   title: 3.2. Define the Product Domain Team
   category: standard
-  summary: ''
-  items:
+  content:
   - id: 32-define-the-product-domain-team-code-1
-    type: code
-    text: |
+    code: |
       # Product Strategy Planner (R1)
       cat << EOF > .factory/droids/product/r1_strategist.md
       <poml>
@@ -149,11 +145,9 @@ sections:
   index: 3
   title: 3.3. Define the UX Domain Team
   category: standard
-  summary: ''
-  items:
+  content:
   - id: 33-define-the-ux-domain-team-code-1
-    type: code
-    text: |
+    code: |
       # UX Strategy Planner (R1)
       cat << EOF > .factory/droids/ux/r1_strategist.md
       <poml>
@@ -209,11 +203,9 @@ sections:
   index: 4
   title: 3.4. Define the UI Domain Team
   category: standard
-  summary: ''
-  items:
+  content:
   - id: 34-define-the-ui-domain-team-code-1
-    type: code
-    text: |
+    code: |
       # UI Strategy Planner (R1)
       cat << EOF > .factory/droids/ui/r1_strategist.md
       <poml>
@@ -270,11 +262,9 @@ sections:
   index: 5
   title: 3.5. Define Research Agent (R1 Specialized)
   category: standard
-  summary: ''
-  items:
+  content:
   - id: 35-define-research-agent-r1-specialized-code-1
-    type: code
-    text: |
+    code: |
       cat << EOF > .factory/droids/shared/r1_research_agent.md
       <poml>
       <role>You are a specialized Research Agent. You perform deep research operations on behalf of other R1 Strategy
@@ -303,11 +293,9 @@ sections:
   index: 6
   title: 3.6. Define GitHub Integration Agent
   category: standard
-  summary: ''
-  items:
+  content:
   - id: 36-define-github-integration-agent-code-1
-    type: code
-    text: |
+    code: |
       cat << EOF > .factory/droids/shared/github_agent.md
       <poml>
       <role>You are a specialized GitHub Integration Agent. You interact with GitHub via MCP on behalf of other
@@ -335,14 +323,11 @@ sections:
   index: 7
   title: 3.7. Document Agent Message Submission Examples
   category: example
-  summary: ''
-  items:
+  content:
   - id: 37-document-agent-message-submission-examples-1
-    type: note
-    text: 'Note: These examples are illustrative. For the exact API contract, refer to `docs/architecture/orchestrator_api.md`.'
+    note: 'Note: These examples are illustrative. For the exact API contract, refer to `docs/architecture/orchestrator_api.md`.'
   - id: 37-document-agent-message-submission-examples-code-2
-    type: code
-    text: |
+    code: |
       cat << 'EOF' > docs/guides/agent_message_examples.md
       # Agent Message Submission Examples
 

@@ -14,6 +14,7 @@ domain:
   - python
 primary_runtime_references:
   - path: app/core/middleware.py
+    id: item.a1e4c4b9
     role: Custom middleware implementations demonstrating ASGI patterns.
 related_pattern_docs:
   - fastapi/middleware-patterns.toon
@@ -24,32 +25,27 @@ sections:
     title: ASGI Middleware Fundamentals
     category: standard
     summary: Core ASGI concepts about middleware as a stack and execution flow.
-    items:
+    rules:
       - id: asgi.role-cross-cutting
-        type: rule
-        text: >
+        rule: >
           Use HTTP middleware only for cross-cutting concerns that must run on every request and response (security
           headers,
           compression, logging, metrics, request IDs, rate limiting); do not implement business logic in middleware.
       - id: asgi.spec
-        type: note
-        text: >
+        note: >
           ASGI (Asynchronous Server Gateway Interface) defines how async Python web applications communicate with
           servers,
           and middleware wraps ASGI applications to add behavior.
       - id: asgi.callable-signature
-        type: rule
-        text: >
+        rule: >
           ASGI middleware is an async callable that receives scope, receive, and send parameters and wraps an inner ASGI
           application.
       - id: asgi.request-response-flow
-        type: note
-        text: >
+        note: >
           Middleware intercepts the request path before passing to the inner app, and intercepts the response path after
           the inner app completes, enabling pre-processing and post-processing.
       - id: asgi.composability
-        type: note
-        text: >
+        note: >
           Multiple middleware can be composed by wrapping one middleware around another, forming a stack where each
           layer
           adds its own behavior.
@@ -58,31 +54,26 @@ sections:
     title: Middleware Stack Behavior
     category: standard
     summary: Understanding middleware ordering and how the stack executes.
-    items:
+    rules:
       - id: stack.ordering
-        type: rule
-        text: >
+        rule: >
           Middleware is applied as a stack; the last-added middleware becomes the outermost wrapper, so it runs first
           on the request path and last on the response path.
       - id: stack.flow-example
-        type: note
-        text: >
+        note: >
           If MiddlewareA is added first and MiddlewareB second, the request flow is MiddlewareB → MiddlewareA →
           application,
           and the response flow is application → MiddlewareA → MiddlewareB.
       - id: stack.ordering-critical
-        type: rule
-        text: >
+        rule: >
           Decide the desired request-path execution order first, then add inner middleware earlier and outer middleware
           later so critical concerns like security always run.
       - id: stack.reverse-registration-generic
-        type: pattern
-        text: >
+        pattern: >
           When using APIs that add middleware to a stack, register middleware in reverse of the desired execution order
           since the last-added runs first.
       - id: stack.reasoning
-        type: note
-        text: >
+        note: >
           Understanding stack behavior is essential for debugging; trace through the stack mentally when issues arise
           with header manipulation, compression, or error handling.
   - id: asgi-middleware-implementation
@@ -117,30 +108,25 @@ sections:
                 # Post-processing: runs after inner app (limited for streaming)
     items:
       - id: impl.class-structure
-        type: rule
-        text: >
+        rule: >
           Implement custom middleware as ASGI-compatible classes with __init__(self, app, **config) storing the inner
           ASGI app and configuration, and async __call__(self, scope, receive, send) wrapping the lifecycle.
       - id: impl.scope-type-check
-        type: pattern
-        text: >
+        pattern: >
           Check scope["type"] at the start of __call__ to handle only relevant request types (http, websocket) and pass
           through others unchanged.
       - id: impl.call-inner-app
-        type: rule
-        text: >
+        rule: >
           Always call await self.app(scope, receive, send) to pass control to the inner application; skipping this
           breaks
           the middleware chain.
       - id: impl.configuration
-        type: pattern
-        text: >
+        pattern: >
           Accept configuration via __init__ parameters rather than reading from globals or environment, allowing
           different
           configurations per middleware instance.
       - id: impl.async-awareness
-        type: note
-        text: >
+        note: >
           All middleware methods should be async; avoid blocking operations that would prevent the event loop from
           handling
           other requests.
@@ -149,32 +135,27 @@ sections:
     title: Cross-Cutting Concerns
     category: standard
     summary: Guidance on what belongs in middleware versus application logic.
-    items:
+    rules:
       - id: concerns.appropriate
-        type: note
-        text: >
+        note: >
           Appropriate middleware concerns include logging, metrics, security headers, compression, request IDs, rate
           limiting,
           authentication header extraction, and CORS handling.
       - id: concerns.inappropriate
-        type: rule
-        text: >
+        rule: >
           Do not implement business logic, domain-specific validation, or complex workflows in middleware; these belong
           in services and routers.
       - id: concerns.global-coverage
-        type: rule
-        text: >
+        rule: >
           Cross-cutting concerns in middleware apply uniformly to all routes, including error handlers; this is their
           primary advantage over router-level logic.
       - id: concerns.centralization
-        type: pattern
-        text: >
+        pattern: >
           Keep cross-cutting concern implementations centralized in middleware modules rather than duplicating logic
           across
           routers or services.
       - id: concerns.thin-implementations
-        type: rule
-        text: >
+        rule: >
           Middleware implementations should be thin; complex logic should be delegated to dedicated modules that
           middleware
           calls.
@@ -204,24 +185,20 @@ sections:
                     logger.info("Request completed", duration=duration)
     items:
       - id: errors.no-swallowing
-        type: rule
-        text: >
+        rule: >
           Middleware must not swallow exceptions raised by downstream handlers; allow FastAPI’s exception handlers
           registered
           in app/core/factory.py to translate them into HTTP responses.
       - id: errors.try-finally
-        type: pattern
-        text: >
+        pattern: >
           Use try/finally blocks in middleware to ensure cleanup (timers, metrics observations, resource releases) while
           re-raising exceptions.
       - id: errors.logging-generic
-        type: note
-        text: >
+        note: >
           Middleware may log errors at appropriate levels and then allow them to propagate rather than returning ad hoc
           responses.
       - id: errors.exception-safety
-        type: rule
-        text: >
+        rule: >
           Ensure middleware behavior is exception-safe; any resources acquired before calling the inner app must be
           released
           in finally blocks.
@@ -232,60 +209,50 @@ sections:
     summary: Generic testing guidance for middleware components.
     items:
       - id: test.integration-focus-generic
-        type: pattern
-        text: >
+        pattern: >
           Test middleware via integration tests that exercise the full application stack rather than unit-testing
           middleware
           classes in isolation.
       - id: test.behavior-assertions-generic
-        type: rule
-        text: >
+        rule: >
           Assert on observable behavior such as response headers, status codes, and logged output rather than internal
           middleware state.
       - id: test.configuration-variants
-        type: pattern
-        text: >
+        pattern: >
           Test middleware with different configuration variants to verify conditional behavior (enabled/disabled
           features,
           different thresholds).
       - id: test.error-cases
-        type: rule
-        text: Include tests for error cases to verify that middleware handles exceptions correctly and performs cleanup.
+        rule: Include tests for error cases to verify that middleware handles exceptions correctly and performs cleanup.
   - id: middleware-anti-patterns
     index: 7
     title: Anti-Patterns to Avoid
     category: warning
     summary: Common mistakes when working with HTTP middleware in this project.
-    items:
+    anti_patterns:
       - id: anti.order-arbitrary-generic
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Adding middleware in an arbitrary order without reasoning about the stack behavior, leading to broken
           functionality
           or confusing behavior.
       - id: anti.body-modification-generic
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Modifying request or response bodies in middleware without preserving streaming semantics, content-type, and
           content-length headers.
       - id: anti.heavy-work
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Performing CPU-bound or blocking I/O operations directly in middleware instead of offloading to background
           tasks
           or worker pools.
       - id: anti.swallowed-exceptions
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Catching exceptions in middleware and returning ad hoc error responses that bypass centralized exception
           handling.
       - id: anti.business-logic
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Implementing business logic or domain-specific behavior in middleware instead of keeping it in services and
           routers.
       - id: anti.global-state
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Storing request-specific state in middleware class attributes, which breaks isolation between concurrent
           requests.

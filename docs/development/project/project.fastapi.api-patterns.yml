@@ -26,24 +26,21 @@ sections:
     title: FastAPI application construction
     category: standard
     summary: Project-specific wiring for create_app.
-    items:
+    rules:
       - id: construction.response-class-wiring
-        type: rule
-        text: >
+        rule: >
           See project.fastapi.factory-patterns.yml for create_app configuration of ORJSONResponse as
           default_response_class.
       - id: construction.version-prefix-wiring
-        type: rule
-        text: See project.fastapi.factory-patterns.yml for /api/{version} mounting in create_app.
+        rule: See project.fastapi.factory-patterns.yml for /api/{version} mounting in create_app.
   - id: validation-error-handling
     index: 2
     title: Validation error handling
     category: standard
     summary: Project-specific validation handler wiring.
-    items:
+    rules:
       - id: validation.handler-wiring
-        type: rule
-        text: >
+        rule: >
           See project.fastapi.exception-patterns.yml for validation_exception_handler registration and AppError envelope
           configuration in app/core/exceptions.py.
   - id: response-model-configuration
@@ -51,20 +48,18 @@ sections:
     title: Response model configuration
     category: standard
     summary: Project-specific validation response constant.
-    items:
+    rules:
       - id: response.validation-response-wiring
-        type: rule
-        text: >
+        rule: >
           See project.fastapi.exception-patterns.yml for VALIDATION_ERROR_RESPONSE usage from app/contracts/errors.py.
   - id: openapi-documentation
     index: 4
     title: OpenAPI documentation standards
     category: standard
     summary: Project-specific error schema registration.
-    items:
+    rules:
       - id: openapi.errors.schema-registration-wiring
-        type: rule
-        text: >
+        rule: >
           See project.fastapi.factory-patterns.yml for AppError and HTTPValidationError schema registration in
           create_app.
   - id: router-registration
@@ -72,33 +67,28 @@ sections:
     title: Router registration
     category: standard
     summary: Project-specific router wiring.
-    items:
+    rules:
       - id: registration.versioned-mount-wiring
-        type: rule
-        text: >
+        rule: >
           See project.fastapi.factory-patterns.yml for app.include_router(api_router, prefix=settings.api_prefix) in
           create_app.
       - id: registration.router-inclusion-wiring
-        type: rule
-        text: See project.fastapi.router-patterns.yml for domain router inclusion in app/api/v1/router.py.
+        rule: See project.fastapi.router-patterns.yml for domain router inclusion in app/api/v1/router.py.
   - id: response-serialization
     index: 6
     title: Response serialization
     category: standard
     summary: Project-specific serialization wiring.
-    items:
+    rules:
       - id: serialization.orjson-wiring
-        type: rule
-        text: See project.fastapi.factory-patterns.yml for ORJSONResponse configuration in create_app.
+        rule: See project.fastapi.factory-patterns.yml for ORJSONResponse configuration in create_app.
       - id: serialization.compression-wiring
-        type: rule
-        text: See project.fastapi.middleware-patterns.yml for gzip middleware configuration in create_app.
+        rule: See project.fastapi.middleware-patterns.yml for gzip middleware configuration in create_app.
   - id: deprecation-metadata
     index: 7
     title: Deprecation metadata
     category: standard
     summary: Project-specific deprecation header implementation.
-    items:
+    rules:
       - id: deprecation.headers-wiring
-        type: rule
-        text: See project.python.api-patterns.yml for Deprecation and Sunset header implementation.
+        rule: See project.python.api-patterns.yml for Deprecation and Sunset header implementation.

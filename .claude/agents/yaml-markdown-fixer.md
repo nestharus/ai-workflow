@@ -130,6 +130,31 @@ and a descriptive suffix from the content.
 
 3. **Empty items**: Remove items with empty or whitespace-only text
 
+4. **Markdown separator items**: Remove items that are just `text: '---'` (horizontal rules from markdown):
+   ```yaml
+   # Before (WRONG - markdown separator as YAML item)
+   - id: separator-1
+     text: '---'
+
+   # After (CORRECT - remove entirely)
+   # (deleted)
+   ```
+
+5. **Folded scalars that should be literal**: Multi-line text using `>` (folded) should use `|` (literal)
+   to preserve line breaks in documentation:
+   ```yaml
+   # Before (WRONG - folded scalar loses line structure)
+   rule: >
+     Line one of rule.
+     Line two of rule.
+
+   # After (CORRECT - literal scalar preserves lines)
+   rule: |
+     Line one of rule.
+     Line two of rule.
+   ```
+   Exception: Single-line text that just happens to be wrapped can stay as `>` or plain string.
+
 ## ID Generation Rules
 
 When splitting a collapsed list into separate items, generate IDs like this:

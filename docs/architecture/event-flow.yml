@@ -9,11 +9,9 @@ sections:
   index: 1
   title: Sequence Diagram
   category: workflow
-  summary: ''
   items:
   - id: sequence-diagram-code-1
-    type: code
-    text: |
+    diagram: |
       sequenceDiagram
           participant GH as GitHub
           participant WR as Webhook Receiver
@@ -34,37 +32,28 @@ sections:
   index: 2
   title: Flow Stages
   category: workflow
-  summary: ''
   items:
   - id: flow-stages-webhook-reception-github
-    type: text
     title: Webhook Reception
     text: GitHub sends a webhook to the Webhook Receiver service
   - id: flow-stages-signature-verification-th
-    type: text
     title: Signature Verification
     text: The receiver verifies the HMAC SHA256 signature
   - id: flow-stages-event-forwarding-validate
-    type: text
     title: Event Forwarding
     text: Validated events are forwarded to the Orchestrator
   - id: flow-stages-workflow-routing-the-orch
-    type: rule
     title: Workflow Routing
-    text: The orchestrator determines which workflow should handle the event
+    rule: The orchestrator determines which workflow should handle the event
   - id: flow-stages-agent-invocation-the-orch
-    type: text
     title: Agent Invocation
     text: The orchestrator spawns an agent via `droid exec` subprocess
   - id: flow-stages-github-mcp-access-the-age
-    type: text
     title: GitHub MCP Access
     text: The agent fetches additional details from GitHub using MCP
   - id: flow-stages-result-submission-the-age
-    type: text
     title: Result Submission
     text: The agent submits its result back to the orchestrator
   - id: flow-stages-result-processing-the-orc
-    type: text
     title: Result Processing
     text: The orchestrator processes the result and continues the workflow

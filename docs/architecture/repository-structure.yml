@@ -8,95 +8,69 @@ sections:
   index: 1
   title: Application Code
   category: standard
-  summary: ''
   items:
   - id: application-code-app-routes
-    type: text
     text: '`app/routes/`: API endpoint routers, including `orchestrator_router.py`'
   - id: application-code-app-services
-    type: text
     text: '`app/services/`: Business logic layer, including `orchestrator_service.py` and `agent_invoker.py`'
   - id: application-code-app-contracts
-    type: text
     text: '`app/contracts/`: Pydantic models, including `orchestrator_contracts.py`'
   - id: application-code-app-core
-    type: text
     text: '`app/core/`: Core application setup including `factory.py` for app construction'
 - id: agent-definitions
   index: 2
   title: Agent Definitions
   category: standard
-  summary: ''
   items:
   - id: agent-definitions-factorydroids-agent
-    type: text
     text: '`.factory/droids/`: Agent definitions (POML) organized by domain'
 - id: documentation
   index: 3
   title: Documentation
   category: standard
-  summary: ''
   items:
   - id: documentation-docs-root
-    type: text
     text: '`docs/`: The Coarse Knowledge Graph (source of truth) with subdirectories for each domain'
   - id: documentation-docs-usage
-    type: text
     text: '`docs/usage/`: Documentation for using the application'
   - id: documentation-docs-development
-    type: text
     text: '`docs/development/`: Writing application code, docstrings, code style'
   - id: documentation-docs-testing
-    type: text
     text: '`docs/testing/`: Writing and running test code'
   - id: documentation-docs-architecture
-    type: text
     text: '`docs/architecture/`: Folder structure, services, endpoints, integrations'
   - id: documentation-docs-processes
-    type: text
     text: '`docs/processes/`: Development processes like git releases, code reviews'
 - id: infrastructure
   index: 4
   title: Infrastructure
   category: standard
-  summary: ''
   items:
   - id: infrastructure-webhook_receiver-stand
-    type: text
     text: '`webhook_receiver/`: Standalone service for handling GitHub webhooks'
   - id: infrastructure-openapi-generated-open
-    type: text
     text: '`openapi/`: Generated OpenAPI schema JSON'
 - id: testing
   index: 5
   title: Testing
   category: standard
-  summary: ''
   items:
   - id: testing-tests-test-organizatio
-    type: text
     text: '`tests/`: Test organization:'
   - id: testing-testsunit-unit-tests
-    type: text
     text: '`tests/unit/`: Unit tests'
   - id: testing-testsintegration-integrat
-    type: text
     text: '`tests/integration/`: Integration tests (in-process)'
   - id: testing-testse2e-end-to-end-tests
-    type: text
     text: '`tests/e2e/`: End-to-end tests (live server)'
 - id: tooling
   index: 6
   title: Tooling
   category: standard
-  summary: ''
   items:
   - id: tooling-scripts-helper-scripts
-    type: text
     text: '`scripts/`: Runtime and development scripts'
   - id: tooling-scripts-dev-folder
-    type: text
     text: '`scripts/dev/`: Development tools (linting, testing, code review)'
   - id: tooling-scripts-knowledge-folder
-    type: text
     text: '`scripts/knowledge/`: Knowledge management system scripts'

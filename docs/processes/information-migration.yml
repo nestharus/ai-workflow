@@ -74,7 +74,9 @@ directory_structure:
       contents: |
         Timestamped YAML/YML files with two naming variants:
         - resolution_tracker: preserves original filename (e.g., 20241201T103045Z-original.api-patterns.yml)
+          id: item.58a06b45
         - migration_manager: uses pattern name (e.g., 20241201T103045Z-api-patterns.yml)
+          id: item.e900dcd7
 
     migrations:
       path: ".knowledge/migrations/"
@@ -315,10 +317,13 @@ workflow_steps:
       Supports filtering by pattern, origin type, and resolution status.
     examples:
       - command: "uv run knowledge.query-comparisons --pattern api-patterns"
+        id: item.52f12ce7
         description: "Show all differences for api-patterns"
       - command: "uv run knowledge.query-comparisons --exclude-resolved"
+        id: item.09ccce51
         description: "Show only unresolved differences"
       - command: "uv run knowledge.query-comparisons --origin-type original"
+        id: item.67a97311
         description: "Show elements from original files with differing or missing split text"
 
   step_5_resolve_differences:
@@ -701,6 +706,7 @@ practical_examples:
     title: "Complete Migration of api-patterns.yml"
     steps:
       - step: "Start the migration"
+        id: item.5181b3ce
         command: |
           uv run knowledge.start-migration --original-file docs/development/original.api-patterns.yml
         output: |
@@ -709,9 +715,11 @@ practical_examples:
           Pattern: api-patterns
 
       - step: "Perform migration work (manual)"
+        id: item.621a5547
         description: "Split content into domain-specific files"
 
       - step: "Run comparison"
+        id: item.0a367a15
         command: |
           uv run knowledge.compare-yml-docs --path docs/development
         output: |
@@ -719,12 +727,14 @@ practical_examples:
           Found 45 elements, 12 differences detected
 
       - step: "Query unresolved differences"
+        id: item.9484a623
         command: |
           uv run knowledge.query-comparisons --pattern api-patterns --exclude-resolved
         output: |
           12 unresolved differences found
 
       - step: "Resolve intentional differences"
+        id: item.000770d2
         command: |
           uv run knowledge.mark-resolved \
             --id "api_patterns.deprecated_endpoints" \
@@ -732,6 +742,7 @@ practical_examples:
             --split-file docs/development/python/api-patterns.yml
 
       - step: "Validate migration"
+        id: item.eaae0313
         command: |
           uv run knowledge.validate-migration --task-id 550e8400-e29b-41d4-a716-446655440000
         output: |
@@ -742,6 +753,7 @@ practical_examples:
     title: "Resolving a Specific Difference"
     steps:
       - step: "Identify the difference"
+        id: item.2cc193ef
         command: |
           uv run knowledge.query-comparisons --id "config.database.pool_size"
         output: |
@@ -752,6 +764,7 @@ practical_examples:
           split_text: "pool_size: 20  # Updated for production"
 
       - step: "Mark as intentionally resolved"
+        id: item.67c477d8
         command: |
           uv run knowledge.mark-resolved \
             --id "config.database.pool_size" \
@@ -764,6 +777,7 @@ practical_examples:
     title: "Finding All Unresolved Items"
     steps:
       - step: "Query all patterns excluding resolved"
+        id: item.a411efb8
         command: |
           uv run knowledge.query-comparisons --exclude-resolved
         output: |

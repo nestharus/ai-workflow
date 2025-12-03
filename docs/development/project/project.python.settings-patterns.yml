@@ -25,31 +25,26 @@ sections:
     title: Pydantic Settings Best Practices
     category: standard
     summary: Core responsibilities and conventions for the Settings model.
-    items:
+    rules:
       - id: best.single-settings-class
-        type: rule
-        text: >
+        rule: >
           Use a single Settings class in app/core/settings.py that subclasses pydantic-settings.BaseSettings as the
           canonical
           representation of all runtime configuration.
       - id: best.single-source-of-truth
-        type: rule
-        text: >
+        rule: >
           Model all runtime options on Settings; do not hard-code configuration in routers, services, or infrastructure
           modules.
       - id: best.environment-first
-        type: note
-        text: >
+        note: >
           Treat environment variables as the primary configuration source following BaseSettings conventions, with model
           defaults as fallbacks.
       - id: best.fail-fast-validation
-        type: rule
-        text: >
+        rule: >
           Rely on Pydantic validation during Settings initialization to detect invalid configuration at startup instead
           of at runtime.
       - id: best.secrets-testability
-        type: note
-        text: >
+        note: >
           Handle secrets securely (masked in repr and schema) while ensuring Settings instances remain easy to construct
           and override in tests.
   - id: settings-structure
@@ -59,31 +54,26 @@ sections:
     summary: Logical grouping of configuration fields and naming conventions.
     items:
       - id: structure.logical-groups
-        type: note
-        text: >
+        note: >
           Group Settings fields into logical areas such as application identity (app_name, app_version, debug), routing
           (api_prefix, example_prefix), error handling flags (include_error_body), database, search, embeddings, and
           middleware
           toggles.
       - id: structure.surrealdb-fields
-        type: note
-        text: >
+        note: >
           Include SurrealDB configuration fields surrealdb_url, surrealdb_namespace, surrealdb_database, surrealdb_user,
           surrealdb_pass, and surrealdb_pool_size for the RPC endpoint and pool behavior.
       - id: structure.elasticsearch-fields
-        type: note
-        text: >
+        note: >
           Include Elasticsearch configuration fields elasticsearch_url, elasticsearch_connections_per_node,
           elasticsearch_request_timeout,
           elasticsearch_shards, and elasticsearch_replicas.
       - id: structure.middleware-fields
-        type: note
-        text: >
+        note: >
           Model middleware behavior with fields such as enable_gzip, enforce_https, allowed_hosts, cors_allow_origins,
           cors_allow_methods, cors_allow_headers, cors_expose_headers, cors_allow_credentials, and cors_max_age.
       - id: structure.naming-conventions
-        type: rule
-        text: >
+        rule: >
           Use descriptive, explicit field names (for example surrealdb_url instead of db_url) and add new configuration
           fields directly to the Settings class rather than using module-level constants.
   - id: environment-variables-and-dotenv
@@ -91,34 +81,29 @@ sections:
     title: Environment Variables and .env Files
     category: standard
     summary: How BaseSettings reads configuration from the environment and .env files.
-    items:
+    rules:
       - id: env.env-vars-primary
-        type: rule
-        text: >
+        rule: >
           Map each Settings field to an environment variable using BaseSettings defaults (for example surrealdb_url →
           SURREALDB_URL) and treat environment variables as the authoritative configuration source.
       - id: env.defaults
-        type: note
-        text: >
+        note: >
           Provide sensible default values on the Settings model for non-secret fields so local development can start
           with
           minimal environment setup; defaults should suit local development, not production maximums (for example, pool
           sizes
           should be modest, not scaled for production load).
       - id: env.secrets-production
-        type: rule
-        text: >
+        rule: >
           In production, supply credentials and other secrets via environment variables or a secrets manager; do not
           rely
           on .env files checked into source control.
       - id: env.env-file-local
-        type: note
-        text: >
+        note: >
           Use .env files only as a convenience for local development; when configured via model_config.env_file, treat
           them as a thin layer over environment variables.
       - id: env.validation-on-init
-        type: note
-        text: >
+        note: >
           Regardless of configuration source, Settings initialization performs Pydantic type conversion and validation
           before the application starts.
   - id: field-validation-patterns
@@ -126,40 +111,34 @@ sections:
     title: Field Validation Patterns
     category: standard
     summary: URL and numeric validation rules applied via Pydantic validators.
-    items:
+    rules:
       - id: validation.url-surreal
-        type: rule
-        text: >
+        rule: >
           Use a @field_validator _validate_surrealdb_url to ensure surrealdb_url uses ws, wss, http, or https schemes
           and has a non-empty host, raising InvalidSurrealUrlError on failure.
       - id: validation.url-elasticsearch
-        type: rule
-        text: >
+        rule: >
           Use _validate_elasticsearch_url to ensure elasticsearch_url uses http or https and has a host, raising
           InvalidElasticsearchUrlError
           when invalid.
       - id: validation.positive-numeric
-        type: rule
-        text: >
+        rule: >
           Apply _validate_positive to numeric fields that must be strictly positive—surrealdb_pool_size,
           elasticsearch_connections_per_node,
           elasticsearch_request_timeout, elasticsearch_shards, and embedding_dimension—and raise
           PositiveIntegerValidationError
           on violation.
       - id: validation.non-negative-replicas
-        type: rule
-        text: >
+        rule: >
           Apply _validate_non_negative to elasticsearch_replicas so it must be zero or positive, raising
           NonNegativeElasticsearchReplicasError
           when negative.
       - id: validation.defaults-checked
-        type: note
-        text: >
+        note: >
           Because Settings inherits from BaseSettings, validator logic is applied to both environment-provided values
           and model defaults, catching misconfigured defaults at startup.
       - id: validation-consistency
-        type: note
-        text: >
+        note: >
           Keep new URL and numeric configuration fields aligned with existing validators so configuration rules remain
           consistent and fail-fast.
   - id: credential-security-and-complexity
@@ -167,19 +146,16 @@ sections:
     title: Credential Security and Complexity
     category: standard
     summary: Requirements and validation for SurrealDB credentials on Settings.
-    items:
+    rules:
       - id: creds.fields
-        type: note
-        text: >
+        note: >
           'Define SurrealDB credentials as surrealdb_user and surrealdb_pass fields on Settings using pydantic.Field
           with
           repr=False and json_schema_extra={"format": "password"} options.'
       - id: creds.min-length
-        type: rule
-        text: Require credential values to be at least 12 characters long to provide a minimum level of strength.
+        rule: Require credential values to be at least 12 characters long to provide a minimum level of strength.
       - id: creds.complexity-pattern
-        type: rule
-        text: >
+        rule: >
           Enforce CREDENTIAL_COMPLEXITY_PATTERN so credentials include at least one uppercase letter, one lowercase
           letter,
           one digit, one special character, and a minimum total length of 12 characters. Because Pydantic's underlying
@@ -187,19 +163,16 @@ sections:
           engine does not support lookahead assertions, the pattern enumerates valid permutations instead of using
           lookaheads.
       - id: creds.secret-repr
-        type: rule
-        text: >
+        rule: >
           'Mark credential fields with repr=False and json_schema_extra={"format": "password"} so values do not appear
           in repr output and are treated as secrets in schemas.'
       - id: creds.validation-fail-fast
-        type: note
-        text: >
+        note: >
           Treat invalid credentials (too short or failing the complexity pattern) as startup errors; Settings
           initialization
           should fail rather than allowing weak secrets.
       - id: creds.test-helpers
-        type: note
-        text: >
+        note: >
           Use helpers such as _generate_test_credential and _build_settings in tests to construct credentials that
           satisfy
           complexity rules while keeping test code readable.
@@ -208,24 +181,20 @@ sections:
     title: Environment-Specific Behavior
     category: standard
     summary: Using configuration values instead of environment-name branching.
-    items:
+    rules:
       - id: env-specific.fields
-        type: note
-        text: >
+        note: >
           Use fields like debug and include_error_body to differentiate behavior across environments without introducing
           environment-specific Settings subclasses.
       - id: env-specific.development
-        type: note
-        text: In development, it is common to run with DEBUG=true and INCLUDE_ERROR_BODY=true to maximize observability.
+        note: In development, it is common to run with DEBUG=true and INCLUDE_ERROR_BODY=true to maximize observability.
       - id: env-specific.staging-production
-        type: note
-        text: >
+        note: >
           In staging, run with debug disabled but optionally enable include_error_body for troubleshooting; in
           production,
           disable both to avoid leaking request payloads.
       - id: env-specific.no-env-name-branching
-        type: rule
-        text: >
+        rule: >
           Do not branch logic in Settings based on an environment name; choose behavior by setting appropriate field
           values
           via environment variables.
@@ -234,32 +203,27 @@ sections:
     title: Settings in Tests
     category: testing
     summary: How tests construct and override Settings instances safely.
-    items:
+    rules:
       - id: tests.test-settings-fixture
-        type: pattern
-        text: >
+        pattern: >
           Provide a test_settings fixture in tests/conftest.py that builds a Settings instance with safe defaults for
           integration tests via the test_app and async_client fixtures.
       - id: tests.include-error-body-fixture
-        type: note
-        text: >
+        note: >
           'Use fixtures such as client_include_error_body that copy test_settings with
           model_copy(update={"include_error_body":
           True}) to enable body echoing for specific tests.'
       - id: tests.build-settings-helper
-        type: note
-        text: >
+        note: >
           Use helpers such as _build_settings in tests/unit/test_validation_errors.py to create Settings instances with
           generated credentials and toggled flags.
       - id: tests.override-usage
-        type: rule
-        text: >
+        rule: >
           When tests require custom configuration, start from a known-safe Settings instance, override fields using
           model_copy(update={...}),
           then pass it into create_app or override get_settings via app.dependency_overrides.
       - id: tests-no-global-mutation
-        type: rule
-        text: >
+        rule: >
           Avoid mutating global Settings or environment variables mid-test; construct explicit Settings instances to
           keep
           tests deterministic.
@@ -268,28 +232,24 @@ sections:
     title: Database and Search Settings
     category: standard
     summary: Configuration fields for SurrealDB, Elasticsearch, and embeddings.
-    items:
+    rules:
       - id: dbsearch.surreal-fields
-        type: note
-        text: >
+        note: >
           SurrealDB settings define the RPC endpoint and pool behavior via surrealdb_url, surrealdb_namespace,
           surrealdb_database,
           surrealdb_user, surrealdb_pass, and surrealdb_pool_size.
       - id: dbsearch.elasticsearch-fields
-        type: note
-        text: >
+        note: >
           Elasticsearch settings include elasticsearch_url, elasticsearch_connections_per_node,
           elasticsearch_request_timeout,
           elasticsearch_shards, and elasticsearch_replicas.
       - id: dbsearch.embeddings
-        type: note
-        text: >
+        note: >
           The embedding_dimension field captures the dimensionality of embeddings used in the knowledge graph and is
           validated
           as a positive integer.
       - id: dbsearch.validation
-        type: rule
-        text: >
+        rule: >
           Validators enforce positive values for pool sizes, timeouts, shards, and embedding dimensions and non-negative
           values for replicas, while connection lifecycle and pooling details are handled in
           app/infrastructure/db_connections.py
@@ -299,27 +259,23 @@ sections:
     title: Feature Flags
     category: standard
     summary: Using boolean Settings fields as lightweight feature flags.
-    items:
+    rules:
       - id: flags.current-examples
-        type: note
-        text: >
+        note: >
           Use debug and include_error_body as lightweight feature flags to toggle diagnostics and validation error body
           echoing.
       - id: flags.validation-handler
-        type: note
-        text: >
+        note: >
           validation_exception_handler in app/core/exceptions.py reads request.app.state.settings.include_error_body to
           decide whether to include the request body in HTTPValidationError (defined in app/contracts/errors.py) .body
           field.
       - id: flags.adding-new
-        type: rule
-        text: >
+        rule: >
           Introduce new feature flags as boolean fields on Settings and consume them via DI or app.state.settings in
           routers,
           middleware, or services.
       - id: flags.safe-defaults
-        type: rule
-        text: >
+        rule: >
           Default feature flags to the safest production behavior and require explicit opt-in via environment variables
           for more permissive or experimental features.
   - id: settings-documentation-and-naming
@@ -327,32 +283,27 @@ sections:
     title: Settings Documentation and Naming
     category: standard
     summary: Documentation and naming conventions for configuration fields.
-    items:
+    rules:
       - id: docs.self-documenting
-        type: rule
-        text: >
+        rule: >
           Make Settings fields self-documenting with clear names and type hints so their purpose and constraints are
           obvious.
       - id: docs.field-comments
-        type: note
-        text: >
+        note: >
           Document each Settings field in app/core/settings.py with comments or docstrings describing its purpose,
           default
           value, valid range, and corresponding environment variable name.
       - id: docs.env-var-alignment
-        type: rule
-        text: >
+        rule: >
           Keep environment variable names aligned with field names using BaseSettings conventions (for example
           surrealdb_url
           → SURREALDB_URL).
       - id: docs.defaults-not-production
-        type: rule
-        text: >
+        rule: >
           Ensure defaults and valid ranges are consistent with operational expectations; for example, default pool sizes
           suitable for local development, not production maximums.
       - id: docs.unmodeled-config
-        type: rule
-        text: >
+        rule: >
           Treat configuration that is not modeled on Settings as effectively undocumented and refactor such values into
           the Settings model.
   - id: settings-anti-patterns
@@ -360,32 +311,27 @@ sections:
     title: Anti-Patterns to Avoid
     category: warning
     summary: Configuration practices that undermine centralization, validation, or security.
-    items:
+    anti_patterns:
       - id: anti.hardcoded-config
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Embedding URLs, credentials, or environment-specific constants directly in routers, services, or
           infrastructure
           code instead of using Settings.
       - id: anti.global-mutable-config
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Using global mutable configuration objects or ad-hoc singletons instead of constructing and injecting Settings
           instances.
       - id: anti.bypassing-validators
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Creating partial configuration objects or bypassing Settings validators when adding new fields, allowing
           invalid
           values into the system.
       - id: anti.leaking-secrets
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Logging credential values or including secrets in error messages rather than relying on repr=False and careful
           logging practices.
       - id: anti.divergent-patterns
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Introducing alternative configuration mechanisms or models in new modules; all runtime configuration must
           ultimately
           flow through the Settings class and its helpers.

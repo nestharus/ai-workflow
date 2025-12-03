@@ -9,15 +9,12 @@ sections:
   index: 1
   title: 4.1. Configure Quality Reviewer (R4 - CodeRabbit/Macroscope)
   category: standard
-  summary: ''
-  items:
+  content:
   - id: 41-configure-quality-reviewer-r4-coderabbitmacroscope-1
-    type: text
     text: We configure CodeRabbit (R4) to apply labels that the Orchestrator Service uses for automatic
       routing.
   - id: 41-configure-quality-reviewer-r4-coderabbitmacroscope-code-2
-    type: code
-    text: |
+    code: |
       cat << EOF > .coderabbit.yaml
       reviews:
         profile: "assertive"
@@ -41,15 +38,12 @@ sections:
   index: 2
   title: 4.2. Implement Automated Feedback Routing
   category: standard
-  summary: ''
-  items:
+  content:
   - id: 42-implement-automated-feedback-routing-1
-    type: text
     text: We replace the manual feedback notifier with an automated routing architecture integrated into
       the orchestrator.
   - id: 42-implement-automated-feedback-routing-code-2
-    type: code
-    text: |
+    code: |
       cat << EOF > docs/architecture/feedback_routing.md
       # Automated Feedback Routing Architecture
 
@@ -95,15 +89,12 @@ sections:
   index: 3
   title: 4.3. QA & Maintenance Monitoring Integration (R5)
   category: standard
-  summary: ''
-  items:
+  content:
   - id: 43-qa-maintenance-monitoring-integration-r5-1
-    type: text
     text: The QA role (R5) lives in the cloud and observes metrics, feeding alerts back into the workflow
       via webhooks.
   - id: 43-qa-maintenance-monitoring-integration-r5-code-2
-    type: code
-    text: |
+    code: |
       cat << EOF > docs/qa/r5_monitoring_integration.md # QA & Maintenance Monitoring Integration (Role 5) ## Monitoring
       Platform Webhook Configuration Configure monitoring platform (Datadog, Sentry, Prometheus Alertmanager) to send
       alerts to webhook receiver: - Webhook URL: https://your-domain.com/webhook/monitoring - Payload format: JSON with
@@ -123,11 +114,9 @@ sections:
   index: 4
   title: 4.4. Configure Webhook Receiver for Multiple Event Sources
   category: standard
-  summary: ''
-  items:
+  content:
   - id: 44-configure-webhook-receiver-for-multiple-event-sources-code-1
-    type: code
-    text: |
+    code: |
       # Update webhook_receiver/main.py to handle multiple endpoints # - POST /webhook/github: GitHub events (PR
       comments, issues) # - POST /webhook/monitoring: Monitoring alerts (Datadog, Sentry) # - POST /webhook/coderabbit:
       CodeRabbit-specific events # Each endpoint has its own signature verification # Each endpoint forwards to
@@ -137,15 +126,12 @@ sections:
   index: 5
   title: 4.5. Document Ticket Claiming and PR Comment Subscription
   category: standard
-  summary: ''
-  items:
+  content:
   - id: 45-document-ticket-claiming-and-pr-comment-subscription-1
-    type: note
-    text: |
+    note: |
       Note: Refer to `docs/architecture/orchestrator_api.md` for the canonical API definition for ticket claiming.
   - id: 45-document-ticket-claiming-and-pr-comment-subscription-code-2
-    type: code
-    text: |
+    code: |
       cat << EOF > docs/architecture/ticket_claiming.md # Ticket Claiming and Subscription Mechanism ## New Ticket Flow
       1. GitHub webhook for new issue arrives at receiver 2. Receiver forwards to orchestrator 3. Orchestrator
       broadcasts "new_ticket" event 4. First available agent (determined by orchestrator) claims ticket 5. Orchestrator
@@ -160,11 +146,9 @@ sections:
   index: 6
   title: 4.6. Document User-Provided URL Handling
   category: standard
-  summary: ''
-  items:
+  content:
   - id: 46-document-user-provided-url-handling-code-1
-    type: code
-    text: |
+    code: |
       cat << 'EOF' > docs/guides/user_url_handling.md
       # User-Provided URL Handling
 

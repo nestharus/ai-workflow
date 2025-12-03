@@ -19,37 +19,29 @@ sections:
     title: General Rules
     category: standard
     summary: Core conventions for writing docstrings in this project.
-    items:
+    rules:
       - id: general.triple-quotes
-        type: rule
-        text: Use triple double quotes (""") and keep the opening summary on one line.
+        rule: Use triple double quotes (""") and keep the opening summary on one line.
       - id: general.summary-format
-        type: rule
-        text: Write clear, sentence-case summaries ending with a period.
+        rule: Write clear, sentence-case summaries ending with a period.
       - id: general.type-hints
-        type: rule
-        text: Prefer type hints in code; avoid duplicating types in docstrings unless it aids clarity.
+        rule: Prefer type hints in code; avoid duplicating types in docstrings unless it aids clarity.
       - id: general.focus
-        type: rule
-        text: Keep docstrings focused on behavior, side effects, and important constraints.
+        rule: Keep docstrings focused on behavior, side effects, and important constraints.
       - id: general.sections
-        type: rule
-        text: Include argument, return, and raises sections only when they add information beyond type hints.
+        rule: Include argument, return, and raises sections only when they add information beyond type hints.
   - id: recommended-structure
     index: 2
     title: Recommended Structure
     category: standard
     summary: Ordering and organization of docstring content.
-    items:
+    rules:
       - id: structure.summary-line
-        type: rule
-        text: Begin with a summary line.
+        rule: Begin with a summary line.
       - id: structure.blank-line
-        type: rule
-        text: Add an optional blank line when additional detail follows the summary.
+        rule: Add an optional blank line when additional detail follows the summary.
       - id: structure.section-order
-        type: rule
-        text: 'Order sections as: Args, Returns, Yields, Raises, Examples.'
+        rule: 'Order sections as: Args, Returns, Yields, Raises, Examples.'
   - id: function-example
     index: 3
     title: Function Example
@@ -69,10 +61,9 @@ sections:
             Raises:
                 UserNotFoundError: No user matched the provided id and filters.
             """
-    items:
+    notes:
       - id: function-example.note
-        type: note
-        text: This example demonstrates a complete function docstring with summary, Args, Returns, and Raises sections.
+        note: This example demonstrates a complete function docstring with summary, Args, Returns, and Raises sections.
   - id: class-example
     index: 4
     title: Class Example
@@ -88,33 +79,28 @@ sections:
                 """Create a queue with a maximum in-flight capacity."""
             def acquire(self) -> None:
                 """Block until a slot is available, then reserve it."""
-    items:
+    notes:
       - id: class-example.note
-        type: note
-        text: This example shows class-level docstrings plus method docstrings for __init__ and public methods.
+        note: This example shows class-level docstrings plus method docstrings for __init__ and public methods.
   - id: additional-guidance
     index: 5
     title: Additional Guidance
     category: guidance
     summary: Supplementary conventions for specific scenarios.
-    items:
+    rules:
       - id: additional.modules
-        type: rule
         title: Modules
-        text: Provide a brief description when the module exposes public APIs or significant setup logic.
+        rule: Provide a brief description when the module exposes public APIs or significant setup logic.
       - id: additional.properties
-        type: rule
         title: Properties
-        text: |
+        rule: |
           Document behavior in the getter; setters rarely need separate docstrings unless they
           perform non-trivial work.
       - id: additional.async
-        type: rule
         title: Async functions
-        text: Document awaited side effects and cancellation behavior if relevant.
+        rule: Document awaited side effects and cancellation behavior if relevant.
       - id: additional.examples
-        type: rule
         title: Examples
-        text: |
+        rule: |
           Use fenced code blocks with the language set (```python) and keep them minimal and
           runnable when possible.

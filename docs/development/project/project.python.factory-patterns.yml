@@ -44,34 +44,28 @@ sections:
             return UserService(user_repo=user_repo, settings=settings)
     items:
       - id: factory.purpose
-        type: note
-        text: >
+        note: >
           Factory functions encapsulate object construction logic, isolating wiring code from business logic and making
           dependency graphs explicit.
       - id: factory.explicit-params
-        type: rule
-        text: >
+        rule: >
           Factory functions accept explicit parameters for all dependencies they need to wire, making the dependency
           graph
           visible and testable.
       - id: factory.vs-constructors
-        type: note
-        text: >
+        note: >
           Use factory functions when construction involves complex wiring, conditional logic, or multiple steps; use
           constructors
           directly when dependencies are simple and explicit.
       - id: factory.composition-root
-        type: pattern
-        text: >
+        pattern: >
           Centralize factory functions at the composition root (application startup or test setup) rather than
           scattering
           construction logic throughout the codebase.
       - id: factory.return-types
-        type: rule
-        text: Factory functions should have explicit return type annotations matching the constructed object type.
+        rule: Factory functions should have explicit return type annotations matching the constructed object type.
       - id: factory.no-hidden-deps
-        type: rule
-        text: >
+        rule: >
           Factory functions should not import or create dependencies internally; all dependencies must be passed as
           parameters
           to maintain testability.
@@ -100,30 +94,25 @@ sections:
             return pool
     items:
       - id: resources.factory-functions-generic
-        type: rule
-        text: >
+        rule: >
           Use dedicated factory functions to initialize external resources (database pools, clients, caches) instead of
           building them inline at the call site.
       - id: resources.init-then-setup
-        type: pattern
-        text: >
+        pattern: >
           Structure resource initialization as connection/init followed by setup (schema, indices, validation), with
           cleanup
           on setup failure.
       - id: resources.error-handling-generic
-        type: rule
-        text: >
+        rule: >
           If resource initialization or setup fails, close any partially created resources and raise an error so the
           application
           does not run in a degraded state.
       - id: resources.try-except-cleanup
-        type: pattern
-        text: >
+        pattern: >
           Use try/except blocks around setup operations, calling cleanup methods in the except block before re-raising
           to prevent resource leaks.
       - id: resources.settings-driven
-        type: rule
-        text: >
+        rule: >
           Resource factory functions should accept Settings or specific configuration values as parameters rather than
           reading from environment or globals directly.
   - id: composition-and-wiring
@@ -152,30 +141,25 @@ sections:
             )
     items:
       - id: composition.centralized
-        type: rule
-        text: >
+        rule: >
           Centralize composition logic in dedicated factory functions or modules rather than distributing it across the
           codebase.
       - id: composition.dependency-order
-        type: pattern
-        text: >
+        pattern: >
           Build dependencies in order from lowest-level (pools, clients) to highest-level (services, orchestrators),
           ensuring
           each component has its dependencies available.
       - id: composition.avoid-cycles
-        type: rule
-        text: >
+        rule: >
           Avoid circular dependencies between modules or classes; refactor shared logic into lower-level utilities when
           cycles appear.
       - id: composition.dag-structure
-        type: note
-        text: >
+        note: >
           The dependency graph should be a directed acyclic graph (DAG); cycles indicate architectural issues that
           should
           be resolved by extracting shared components.
       - id: composition.testability
-        type: note
-        text: >
+        note: >
           Composition functions make testing easier by providing clear injection points; tests can call factories with
           test doubles at any level of the graph.
   - id: factory-testing-patterns
@@ -204,29 +188,24 @@ sections:
             return build_user_service(mock_user_repo, test_settings)
     items:
       - id: testing.fixture-composition
-        type: pattern
-        text: >
+        pattern: >
           Use pytest fixtures that call factory functions with test-specific dependencies to create isolated instances
           for each test.
       - id: testing.config-injection
-        type: rule
-        text: >
+        rule: >
           Tests inject configuration through Settings instances passed to factories, avoiding environment variable
           manipulation
           or global state mutation.
       - id: testing.mock-at-boundaries
-        type: pattern
-        text: >
+        pattern: >
           Mock dependencies at the factory boundary by passing test doubles as parameters rather than patching imports
           inside the system under test.
       - id: testing.no-global-state
-        type: rule
-        text: >
+        rule: >
           Factory functions should not rely on or modify global state; each call should produce an independent instance
           based solely on its parameters.
       - id: testing.factory-benefits-generic
-        type: note
-        text: >
+        note: >
           Relying on factory functions allows tests to run with different configurations without altering global state
           or production code paths.
   - id: factory-anti-patterns
@@ -234,31 +213,26 @@ sections:
     title: Anti-Patterns to Avoid
     category: warning
     summary: Factory-level mistakes that harm testability, resource safety, or configuration hygiene.
-    items:
+    anti_patterns:
       - id: anti.global-instances
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Creating global instances at module load time (for example db_pool = DatabasePool()) instead of using factory
           functions called during application initialization.
       - id: anti.init-without-cleanup
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Initializing resources without providing corresponding cleanup mechanisms, leading to resource leaks during
           failures or test teardown.
       - id: anti.hardcoded-config-generic
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Hardcoding configuration values such as URLs, pool sizes, or timeouts directly in factory functions instead
           of accepting them as parameters.
       - id: anti.business-logic-in-factories
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Embedding complex business logic or workflows directly inside factory functions; factories should focus on
           wiring
           and delegate behavior to dedicated modules and services.
       - id: anti.hidden-dependencies
-        type: anti_pattern
-        text: >
+        anti_pattern: >
           Factory functions that import and create dependencies internally rather than accepting them as parameters,
           hiding
           the true dependency graph and making testing difficult.
