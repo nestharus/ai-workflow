@@ -308,7 +308,7 @@ def pytest_configure(config: pytest.Config) -> None:
         "last_updated": data.get("last_updated", "unknown"),
     }
 
-    # Extract use-case IDs from features, excluding future use-cases
+    # Extract use-case IDs from features
     features = data.get("features", {})
     all_ids: list[str] = []
     by_feature: dict[str, list[str]] = {}
@@ -320,9 +320,6 @@ def pytest_configure(config: pytest.Config) -> None:
         feature_ids: list[str] = []
 
         for use_case in use_cases:
-            # Skip use-cases marked as future
-            if use_case.get("future", False):
-                continue
             uc_id = use_case.get("id")
             if uc_id:
                 all_ids.append(uc_id)
