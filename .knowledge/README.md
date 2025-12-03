@@ -1229,7 +1229,136 @@ uv run knowledge.query-artifacts --stats
 
 - **Manifests**: `.knowledge/artifacts/<artifact_id>.yml`
 - **Rendered artifacts**: `.knowledge/artifacts/rendered/<artifact_id>.<ext>` (extension determined by artifact_format)
+- **Render plans**: `.knowledge/artifacts/render_plans/<render_plan_id>.yml`
+- **Validation results**: `.knowledge/artifacts/validations.csv`
 - **Registry**: `.knowledge/artifacts/kinds.yml`
+
+## Render Plans
+
+Render plans define deterministic, stepwise algorithms for rendering artifacts from facts
+per `docs/plans/fact_redesign.md` lines 522-560.
+
+### Storage
+
+Render plans are stored as YAML files in `.knowledge/artifacts/render_plans/` with naming
+convention `<render_plan_id>.yml`.
+
+### Schema
+
+Each render plan includes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| render_plan_id | string | Stable identifier (e.g., prose.paragraph.v1) |
+| render_engine | enum | text_llm (LLM-based rendering) or none (tracked but not re-rendered) |
+| artifact_kind | string | Artifact kind this plan applies to |
+| inputs | object | use_structural_fieldfacts (bool), use_semantic_facts (bool) |
+| determinism | object | ordering (list of priority keys: role_priority, group_id, field_path) |
+| steps | list | Ordered list of rendering steps with id and instruction |
+| notes | string | Optional documentation |
+
+### Initial Render Plans
+
+1. **prose.paragraph.v1**: Prose paragraph rendering with fact-to-text conversion
+2. **table.discriminator-grouped.v1**: Discriminator-grouped table rendering (e.g., HTTP method defaults)
+3. **prose.code-block.v1**: Prose + code block rendering with verbatim code preservation
+4. **schema.nested-hierarchy.v1**: Nested YAML hierarchy rendering with containment edges
+5. **diagram.mermaid.sequence.v1**: Mermaid diagram tracking (render_engine=none)
+
+### Render CLI Commands
+
+**Render artifacts** using render plans:
+
+```bash
+# Render all V1 artifacts
+uv run knowledge.render-artifacts
+
+# Render artifacts from a specific source file
+uv run knowledge.render-artifacts --source-file docs/architecture/event-flow.yml
+
+# Render with validation
+uv run knowledge.render-artifacts --validate
+
+# Filter by artifact kind
+uv run knowledge.render-artifacts --artifact-kind 'prose/*'
+
+# Filter by artifact ID prefix
+uv run knowledge.render-artifacts --artifact-id abc123
+```
+
+## Artifact Validation
+
+Validation compares rendered artifacts to source artifacts per `docs/plans/fact_redesign.md`
+lines 948-967.
+
+### Validation Comparators
+
+| Comparator | Artifact Kind | Description |
+|------------|---------------|-------------|
+| normalized_text | prose/* | Semantic similarity (embedding cosine) + structural checks |
+| normalized_rows_by_discriminator | table/* | Parsed row comparison by discriminator field |
+| structure_and_leaf_text | schema/* | Structural equality for nested hierarchies |
+| normalized_diff | prose/code-block | Formatting-insensitive diff for code blocks |
+
+### Validation Results Storage
+
+Validation results are stored in `.knowledge/artifacts/validations.csv` with schema:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| validation_id | string | UUID for this validation run |
+| artifact_id | string | Artifact being validated |
+| source_file | string | Source YAML file |
+| source_element_id | string | Element ID in source |
+| field_path | string | Field path in element |
+| render_plan_id | string | Render plan used |
+| projection_version | string | FieldFact projection version |
+| source_hash | string | SHA-256 hash of source artifact text |
+| rendered_hash | string | SHA-256 hash of rendered artifact text |
+| similarity_score | float | Validation similarity score (0.0-1.0) |
+| passed | bool | Validation passed (true/false) |
+| mismatch_summary | string | Description of mismatches if failed |
+| validated_at | string | ISO 8601 timestamp |
+
+### Validation CLI Commands
+
+**Query validation results**:
+
+```bash
+# List all validation results
+uv run knowledge.query-validations
+
+# Filter by artifact ID
+uv run knowledge.query-validations --artifact-id abc123
+
+# Filter by passed status
+uv run knowledge.query-validations --passed false
+
+# Filter by minimum similarity
+uv run knowledge.query-validations --min-similarity 0.9
+
+# Show aggregate statistics
+uv run knowledge.query-validations --stats
+
+# Output as JSON
+uv run knowledge.query-validations --output-format json
+```
+
+## Rendered Artifacts
+
+Rendered artifacts are stored in `.knowledge/artifacts/rendered/<artifact_id>.<ext>` where
+extension is determined by artifact_format:
+
+| MIME Type | Extension |
+|-----------|-----------|
+| text/markdown | .md |
+| text/yaml | .yml |
+| application/json | .json |
+| text/x-mermaid | .mmd |
+| text/plain | .txt |
+
+Rendered artifacts are regenerated from facts during the rendering phase and validated
+against source artifacts.
 
 ## Field-Level Fact Extraction
 

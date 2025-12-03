@@ -1,0 +1,48 @@
+render_plan_id: schema.nested-hierarchy.v1
+render_engine: text_llm
+artifact_kind: schema/nested-hierarchy
+
+inputs:
+  use_structural_fieldfacts: true
+  use_semantic_facts: false
+
+determinism:
+  ordering:
+    - field_path
+    - containment_edge_order
+
+steps:
+  - id: gather
+    instruction: >
+      Collect FieldFacts preserving containment edges (parent-child relationships).
+      For nested elements, preserve $ref pointers as structural references. Include
+      element IDs for each nested item to maintain addressability.
+
+  - id: normalize
+    instruction: >
+      Normalize terminology to canonical forms. Preserve structural keywords like
+      $ref, id, type unchanged. Preserve element IDs exactly as-is.
+
+  - id: order
+    instruction: >
+      Order by field_path with depth-first traversal. Respect containment edges so
+      parent elements precede their children. Within siblings at same level, order
+      alphabetically by field name for deterministic output.
+
+  - id: render
+    instruction: >
+      Render YAML with nested structure reflecting containment hierarchy. Preserve
+      $ref pointers for cross-references. Each nested element retains its ID. Use
+      consistent indentation (2 spaces). Preserve scalar types (strings, numbers,
+      booleans) from source.
+
+  - id: self_check
+    instruction: >
+      Verify all containment edges intact (parent-child relationships preserved).
+      Verify all leaf values match source. Verify all element IDs present. Verify
+      $ref pointers resolve correctly. Flag any structural changes or data loss.
+
+notes: >
+  Example from MODULE-DEFINITIONS.yml nested items with IDs. Validation uses
+  structure_and_leaf_text comparator which parses YAML, compares tree structure,
+  and verifies leaf node text equality.

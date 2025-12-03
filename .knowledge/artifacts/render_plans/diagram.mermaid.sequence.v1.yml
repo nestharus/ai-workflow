@@ -1,0 +1,19 @@
+render_plan_id: diagram.mermaid.sequence.v1
+render_engine: none
+artifact_kind: diagram/mermaid.sequence
+
+inputs:
+  use_structural_fieldfacts: true
+  use_semantic_facts: false
+
+determinism:
+  ordering: []
+
+steps: []
+
+notes: >
+  Mermaid sequence diagrams are tracked for provenance and indexing but not
+  re-rendered from facts. The render_engine=none indicates this artifact type is
+  pass-through only. Validation compares normalized text (trim whitespace, normalize
+  newlines) per rendering_contract in kinds.yml. Diagrams are indexed for search
+  and cross-reference but their visual rendering is preserved as-is from source.

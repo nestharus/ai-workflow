@@ -498,3 +498,119 @@ representable but bypassed. Use `--no-v1-only` in CLI commands to include all ar
 - Registry validation: `uv run knowledge.validate-artifact-kinds`
 
 See `.knowledge/README.md` "Artifact Manifests" section for schema details.
+
+## Artifact Rendering and Validation
+
+The artifact rendering system implements lifecycle steps 3-5 per `docs/plans/fact_redesign.md`
+lines 561-569: extract semantic facts, render artifacts from facts, and validate
+rendered vs source.
+
+### Modules
+
+**render_plan_manager.py** - Render plan CRUD operations:
+
+- `load_render_plan(render_plan_id, render_plans_dir)`: Load render plan YAML
+- `list_render_plans(render_plans_dir)`: List all render plans
+- `get_render_plan_for_artifact_kind(artifact_kind, render_plans_dir)`: Find plan for kind
+- `validate_render_plan_schema(plan_dict)`: Validate render plan schema
+
+**artifact_renderer.py** - Artifact rendering logic:
+
+- `render_artifact(manifest, render_plan, artifacts_dir, rendered_dir)`: Main rendering function
+- Follows render plan steps: gather contributor facts, normalize terminology, order by
+  determinism rules, render with LLM or none engine, self-check
+- Returns Path to rendered artifact file
+
+**artifact_validator.py** - Artifact validation:
+
+- `validate_artifact(manifest, rendered_path, source_text, comparator)`: Main validation
+- Validation comparators: normalized_text, normalized_rows_by_discriminator,
+  structure_and_leaf_text, normalized_diff
+- `write_validation_result(result, validations_csv_path)`: Append to CSV
+- Returns ValidationResult with similarity_score, passed flag, mismatch_summary
+
+### CLI Commands
+
+**render_artifacts.py** - Render artifacts from facts:
+
+```bash
+# Render all V1 artifacts
+uv run knowledge.render-artifacts
+
+# Render specific artifact
+uv run knowledge.render-artifacts --artifact-id abc123
+
+# Render by artifact kind pattern
+uv run knowledge.render-artifacts --artifact-kind 'diagram/*'
+
+# Render by source file
+uv run knowledge.render-artifacts --source-file docs/architecture/event-flow.yml
+
+# Render with validation
+uv run knowledge.render-artifacts --validate
+
+# Include non-V1 artifacts
+uv run knowledge.render-artifacts --no-v1-only
+```
+
+**query_validations.py** - Query validation results:
+
+```bash
+# List all validation results
+uv run knowledge.query-validations
+
+# Filter by artifact_id
+uv run knowledge.query-validations --artifact-id abc123
+
+# Filter by passed status
+uv run knowledge.query-validations --passed false
+
+# Filter by minimum similarity
+uv run knowledge.query-validations --min-similarity 0.9
+
+# Show aggregate statistics
+uv run knowledge.query-validations --stats
+
+# Output as JSON/YAML/CSV
+uv run knowledge.query-validations --output-format json
+```
+
+### Render Plan Storage
+
+Render plans are stored in `.knowledge/artifacts/render_plans/` as YAML files. Initial plans:
+
+1. **prose.paragraph.v1**: Prose paragraph rendering
+2. **table.discriminator-grouped.v1**: Discriminator-grouped table rendering
+3. **prose.code-block.v1**: Prose + code block rendering
+4. **schema.nested-hierarchy.v1**: Nested YAML hierarchy rendering
+5. **diagram.mermaid.sequence.v1**: Mermaid diagram tracking (render_engine=none)
+
+### Validation Results Storage
+
+Validation results are stored in `.knowledge/artifacts/validations.csv` with columns:
+validation_id, artifact_id, source_file, source_element_id, field_path, render_plan_id,
+projection_version, source_hash, rendered_hash, similarity_score, passed, mismatch_summary,
+validated_at.
+
+### Rendered Artifacts Storage
+
+Rendered artifacts are stored in `.knowledge/artifacts/rendered/<artifact_id>.<ext>` where
+extension is determined by artifact_format (.md, .yml, .json, .mmd, .txt).
+
+### Current Implementation Status
+
+- **Implemented**: Render plan loading, artifact rendering infrastructure, validation
+  comparators, CLI commands
+- **Stub/Placeholder**: LLM rendering (returns placeholder text), semantic similarity
+  validation (uses simple text comparison), terminology normalization (returns facts unchanged)
+- **Deferred to Phase 2**: Semantic fact extraction (Hunter/Surgeon/Auditor pipeline), LLM
+  integration for rendering, embedding-based semantic similarity
+
+### Related Files
+
+- Render plans: `.knowledge/artifacts/render_plans/*.yml`
+- Rendered artifacts: `.knowledge/artifacts/rendered/<artifact_id>.<ext>`
+- Validation results: `.knowledge/artifacts/validations.csv`
+- Artifact manifests: `.knowledge/artifacts/<artifact_id>.yml`
+
+See `.knowledge/README.md` "Render Plans" and "Artifact Validation" sections for schema details.

@@ -114,6 +114,8 @@ test-coverage = "scripts.dev.test_runner.test_coverage:main"
 # Artifact lifecycle management (per docs/plans/fact_redesign.md lines 561-569)
 "knowledge.detect-artifacts" = "scripts.knowledge.detect_artifacts:main"
 "knowledge.query-artifacts" = "scripts.knowledge.query_artifacts:main"
+"knowledge.render-artifacts" = "scripts.knowledge.render_artifacts:main"
+"knowledge.query-validations" = "scripts.knowledge.query_validations:main"
 
 [tool.uv]
 link-mode = "copy"
