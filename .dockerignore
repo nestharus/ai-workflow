@@ -55,6 +55,8 @@ scripts/knowledge/
 
 # Test coverage reports
 .coverage
+.coverage.*
+coverage_*.json
 htmlcov/
 
 # Tool caches

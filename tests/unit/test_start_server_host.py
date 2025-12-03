@@ -1,4 +1,4 @@
-from scripts.start_server import _format_health_probe_host
+from scripts.app.start_server import _format_health_probe_host
 
 
 def test_format_health_probe_host_preserves_encoded_zone_id() -> None:

@@ -860,8 +860,9 @@ class TestMain:
 
     def test_returns_one_when_uv_not_found(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should return 1 when uv is not found."""
+        # Run specifically the ruff linter which requires uv
         with (
-            patch("sys.argv", ["lint"]),
+            patch("sys.argv", ["lint", "ruff"]),
             patch("shutil.which", return_value=None),
         ):
             result = main()
@@ -886,6 +887,10 @@ class TestMain:
         fs.create_file("/fake/repo/.lint.pymarkdown.yaml", contents="targets: []\nexcludes: []")
         fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/.lint.yamldocs.yaml", contents="targets: []\nexclude_dirs: []")
+        fs.create_file(
+            "/fake/repo/.lint.markdown-restriction.yaml",
+            contents="restrictions: []\nexclude_dirs: []",
+        )
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
@@ -898,6 +903,10 @@ class TestMain:
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
             patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
+            patch.object(
+                lint, "LINT_MARKDOWN_RESTRICTION_CONFIG",
+                Path("/fake/repo/.lint.markdown-restriction.yaml"),
+            ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
         ):
@@ -909,8 +918,9 @@ class TestMain:
 
     def test_returns_one_on_subprocess_error(self) -> None:
         """Should return exit code from subprocess error."""
+        # Run specifically ruff which uses subprocess.check_call
         with (
-            patch("sys.argv", ["lint"]),
+            patch("sys.argv", ["lint", "ruff"]),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call") as mock_check,
         ):
@@ -938,6 +948,10 @@ class TestMain:
         fs.create_file("/fake/repo/.lint.pymarkdown.yaml", contents="targets: []\nexcludes: []")
         fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/.lint.yamldocs.yaml", contents="targets: []\nexclude_dirs: []")
+        fs.create_file(
+            "/fake/repo/.lint.markdown-restriction.yaml",
+            contents="restrictions: []\nexclude_dirs: []",
+        )
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
@@ -952,6 +966,10 @@ class TestMain:
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
             patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
+            patch.object(
+                lint, "LINT_MARKDOWN_RESTRICTION_CONFIG",
+                Path("/fake/repo/.lint.markdown-restriction.yaml"),
+            ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
         ):
@@ -979,6 +997,10 @@ class TestMain:
         fs.create_file("/fake/repo/.lint.pymarkdown.yaml", contents="targets: []\nexcludes: []")
         fs.create_file("/fake/repo/.lint.yamllint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/.lint.yamldocs.yaml", contents="targets: []\nexclude_dirs: []")
+        fs.create_file(
+            "/fake/repo/.lint.markdown-restriction.yaml",
+            contents="restrictions: []\nexclude_dirs: []",
+        )
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
@@ -993,6 +1015,10 @@ class TestMain:
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
             patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
+            patch.object(
+                lint, "LINT_MARKDOWN_RESTRICTION_CONFIG",
+                Path("/fake/repo/.lint.markdown-restriction.yaml"),
+            ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
         ):

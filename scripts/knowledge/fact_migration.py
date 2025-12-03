@@ -334,8 +334,10 @@ def normalize_classifications(data: dict[str, Any]) -> list[dict[str, Any]]:
         >>> normalize_classifications(data)
         [{"fact_id": "...", "domain": "fastapi", "pattern": "factory"}]
     """
-    # Resolve the list from either key
-    classifications = data.get("classifications") or data.get("facts")
+    # Resolve the list from either key - check for None explicitly to allow empty lists
+    classifications = data.get("classifications")
+    if classifications is None:
+        classifications = data.get("facts")
 
     if classifications is None:
         raise ValueError(

@@ -32,7 +32,7 @@ from typing import Any
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 # Coverage configuration defaults
 # These can be overridden via command line arguments
@@ -468,7 +468,10 @@ def run_test_suite(config: TestTierConfig) -> CoverageResult | None:
         "--cov-branch",
         f"--cov-report=json:{config.coverage_file}",
         "--cov-report=term-missing",
+        "--cov-fail-under=0",  # Disable fail-under (we do our own validation)
         "-q",
+        "-p",
+        "no:randomly",
     ]
 
     print(f"\n{'=' * 70}")
@@ -793,7 +796,7 @@ def main() -> int:
     args = parse_args()
 
     # Load use cases for integration/e2e coverage
-    use_cases_path = REPO_ROOT / "tests" / "use_cases.yaml"
+    use_cases_path = REPO_ROOT / "tests" / "docs" / "use_cases.yaml"
     use_cases = load_use_cases(use_cases_path)
 
     # Determine which tiers to run
@@ -822,7 +825,7 @@ def main() -> int:
 
         elif config.coverage_type == "usecase":
             # Run tests (without coverage measurement for usecase tiers)
-            cmd = ["uv", "run", "python", "-m", "pytest", config.test_path, "-v"]
+            cmd = ["uv", "run", "python", "-m", "pytest", config.test_path, "-v", "-p", "no:randomly"]
             print(f"\n{'=' * 70}")
             print(f"Running {config.name} tests: {config.test_path}")
             print("=" * 70)
