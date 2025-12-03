@@ -1025,3 +1025,7 @@ Fact-based migration extends the existing file-level migration system (migration
 - File-level comparison and resolution is sufficient
 
 See `docs/processes/fact-migration.yml` for complete workflow documentation
+
+### Artifact Kind Governance
+
+For governance rules on how LLM-defined artifact kinds are validated and managed (including schema validation, sample execution checks, and duplicate detection), see the "Governance loop for new LLM-defined artifact kinds" subsection in `docs/plans/fact_redesign.md`.
