@@ -1085,3 +1085,63 @@ See `docs/processes/fact-migration.yml` for complete workflow documentation
 ### Artifact Kind Governance
 
 For governance rules on how LLM-defined artifact kinds are validated and managed (including schema validation, sample execution checks, and duplicate detection), see the "Governance loop for new LLM-defined artifact kinds" subsection in `docs/plans/fact_redesign.md`.
+
+## Field-Level Fact Extraction
+
+The FieldFact extraction system provides a structured, field-aware representation of YAML elements that supports artifact detection, entity resolution, and semantic fact extraction.
+
+### FieldFact Dataclass
+
+Each `FieldFact` captures field-level metadata:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| element_id | string | ID of the element this fact belongs to |
+| field_path | string | Full path from element root (e.g., "raises[0].status_code") |
+| key | string | Last segment of field_path (e.g., "status_code") |
+| scope_path | string | Prefix of field_path (e.g., "raises[0]") |
+| value | any | The normalized leaf value, or a $ref dict |
+| value_kind | enum | Classification: scalar-str, scalar-num, scalar-bool, scalar-null, ref, list-scalar, list-object, object |
+| ancestors | list[string] | List of ancestor element IDs |
+| source_file | string | Relative path to source YAML file |
+| role | enum | Semantic role: constraint, entity_ref, artifact_root, metadata |
+| artifact_kind | string | Artifact kind (when role == artifact_root) |
+| artifact_format | string | MIME type for artifact |
+| artifact_locator | enum | "inline" or "reference" |
+| artifact_uri | string | URI when locator == reference |
+| group_key | string | Semantic grouping key for constraint grouping |
+| group_id | string | SHA-256 hash of group_key |
+
+### Role Assignment Rules
+
+Role assignment per `docs/plans/fact_redesign.md` lines 210-235:
+
+1. **entity_ref**: value_kind == "ref" (contains $ref)
+2. **metadata**: key in {doc_id, id, version_hint, kind, index, category, domain}
+3. **artifact_root**: Detected by artifact detection rules (placeholder until Artifact Kind Registry is implemented)
+4. **constraint**: Default for all other fields
+
+### Constraint Grouping
+
+Fields are grouped into semantic units via group_key:
+
+- **Default**: group_key = scope_path
+- **Discriminator-based** for known patterns:
+  - `http_method_defaults[*]` → `http_method_defaults::method={method_value}`
+  - `sample_code` → `sample_code::language={language_value}`
+
+### Usage Example
+
+```python
+from scripts.knowledge.compare_yaml_docs import extract_field_facts
+
+data = parse_yaml_file("docs/development/example.yml")
+facts_by_element = extract_field_facts(data, "docs/development/example.yml")
+
+for element_id, facts in facts_by_element.items():
+    print(f"Element: {element_id}")
+    for fact in facts:
+        print(f"  {fact.field_path}: {fact.value} (role={fact.role})")
+```
+
+**Note**: Artifact root detection is a placeholder until the Artifact Kind Registry is implemented in a subsequent phase. See `docs/plans/fact_redesign.md` lines 143-279 for the complete specification.

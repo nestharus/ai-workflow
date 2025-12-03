@@ -15,14 +15,22 @@ from scripts.knowledge.compare_yaml_docs import (
     CSV_COLUMNS,
     ComparisonEntry,
     ContainmentEdge,
+    FieldFact,
     SplitEntry,
+    _assign_role,
+    _build_ancestors_map,
+    _compute_group_key,
+    _determine_value_kind,
     _flatten_entry_to_rows,
+    _is_artifact_root,
     _is_element,
+    _iter_field_facts,
     _slice_element,
     _strip_timestamp_prefix,
     _validate_yaml_result,
     aggregate_split_objects,
     compare_original_to_splits,
+    extract_field_facts,
     extract_ids_and_objects,
     extract_ids_and_text,
     find_all_yml,
@@ -819,3 +827,603 @@ items:
 
         captured = capsys.readouterr()
         assert "containment edge" in captured.out
+
+
+# ==============================================================================
+# FieldFact Extraction Tests
+# ==============================================================================
+
+
+class TestDetermineValueKind:
+    """Tests for _determine_value_kind helper function."""
+
+    def test_ref_dict_returns_ref(self) -> None:
+        """Should return 'ref' for dict with $ref key."""
+        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
+
+        result = _determine_value_kind({"$ref": "child-id"})
+        assert result == "ref"
+
+    def test_scalar_string_returns_scalar_str(self) -> None:
+        """Should return 'scalar-str' for string values."""
+        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
+
+        assert _determine_value_kind("hello") == "scalar-str"
+        assert _determine_value_kind("") == "scalar-str"
+
+    def test_scalar_number_returns_scalar_num(self) -> None:
+        """Should return 'scalar-num' for numeric values."""
+        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
+
+        assert _determine_value_kind(42) == "scalar-num"
+        assert _determine_value_kind(3.14) == "scalar-num"
+        assert _determine_value_kind(0) == "scalar-num"
+
+    def test_scalar_bool_returns_scalar_bool(self) -> None:
+        """Should return 'scalar-bool' for boolean values."""
+        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
+
+        assert _determine_value_kind(True) == "scalar-bool"
+        assert _determine_value_kind(False) == "scalar-bool"
+
+    def test_scalar_null_returns_scalar_null(self) -> None:
+        """Should return 'scalar-null' for None values."""
+        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
+
+        assert _determine_value_kind(None) == "scalar-null"
+
+    def test_list_of_scalars_returns_list_scalar(self) -> None:
+        """Should return 'list-scalar' for lists of primitives."""
+        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
+
+        assert _determine_value_kind(["a", "b", "c"]) == "list-scalar"
+        assert _determine_value_kind([1, 2, 3]) == "list-scalar"
+        assert _determine_value_kind([]) == "list-scalar"
+
+    def test_list_of_dicts_returns_list_object(self) -> None:
+        """Should return 'list-object' for lists containing dicts."""
+        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
+
+        assert _determine_value_kind([{"key": "value"}]) == "list-object"
+        assert _determine_value_kind([{"a": 1}, {"b": 2}]) == "list-object"
+
+    def test_dict_without_ref_returns_object(self) -> None:
+        """Should return 'object' for dicts without $ref."""
+        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
+
+        assert _determine_value_kind({"key": "value"}) == "object"
+        assert _determine_value_kind({}) == "object"
+
+
+class TestAssignRole:
+    """Tests for _assign_role helper function."""
+
+    def test_ref_value_kind_returns_entity_ref(self) -> None:
+        """Should return 'entity_ref' when value_kind is 'ref'."""
+        from scripts.knowledge.compare_yaml_docs import _assign_role
+
+        result = _assign_role("child", "ref", "items[0].child", None)
+        assert result == "entity_ref"
+
+    def test_metadata_keys_return_metadata(self) -> None:
+        """Should return 'metadata' for known metadata keys."""
+        from scripts.knowledge.compare_yaml_docs import _assign_role
+
+        assert _assign_role("id", "scalar-str", "id", None) == "metadata"
+        assert _assign_role("doc_id", "scalar-str", "doc_id", None) == "metadata"
+        assert _assign_role("version_hint", "scalar-str", "version_hint", None) == "metadata"
+        assert _assign_role("kind", "scalar-str", "kind", None) == "metadata"
+        assert _assign_role("index", "scalar-num", "index", None) == "metadata"
+        assert _assign_role("category", "scalar-str", "category", None) == "metadata"
+        assert _assign_role("domain", "scalar-str", "domain", None) == "metadata"
+
+    def test_default_returns_constraint(self) -> None:
+        """Should return 'constraint' for non-metadata, non-ref keys."""
+        from scripts.knowledge.compare_yaml_docs import _assign_role
+
+        assert _assign_role("text", "scalar-str", "text", None) == "constraint"
+        assert _assign_role("status_code", "scalar-num", "raises[0].status_code", None) == "constraint"
+        assert _assign_role("method", "scalar-str", "http_method_defaults[0].method", None) == "constraint"
+
+    def test_artifact_root_placeholder_returns_false(self) -> None:
+        """Should verify artifact root detection returns False for now (placeholder)."""
+        from scripts.knowledge.compare_yaml_docs import _is_artifact_root
+
+        # TODO: Artifact root detection is a placeholder until Artifact Kind Registry
+        result = _is_artifact_root("text", "scalar-str", "items[0].text", None)
+        assert result is False
+
+
+class TestComputeGroupKey:
+    """Tests for _compute_group_key helper function."""
+
+    def test_default_grouping_returns_scope_path(self) -> None:
+        """Should return scope_path when no discriminator pattern matches."""
+        from scripts.knowledge.compare_yaml_docs import _compute_group_key
+
+        result = _compute_group_key("items[0]", "items[0].text", None)
+        assert result == "items[0]"
+
+    def test_empty_scope_path_returns_root(self) -> None:
+        """Should return '<root>' when scope_path is empty."""
+        from scripts.knowledge.compare_yaml_docs import _compute_group_key
+
+        result = _compute_group_key("", "text", None)
+        assert result == "<root>"
+
+    def test_http_method_defaults_discriminator(self) -> None:
+        """Should use method discriminator for http_method_defaults."""
+        from scripts.knowledge.compare_yaml_docs import _compute_group_key
+
+        parent_data = {"method": "GET", "success_status": 200}
+        result = _compute_group_key("http_method_defaults[0]", "http_method_defaults[0].success_status", parent_data)
+        assert result == "http_method_defaults::method=GET"
+
+    def test_sample_code_discriminator(self) -> None:
+        """Should use language discriminator for sample_code."""
+        from scripts.knowledge.compare_yaml_docs import _compute_group_key
+
+        parent_data = {"language": "python", "code": "print('hello')"}
+        result = _compute_group_key("sample_code", "sample_code.code", parent_data)
+        assert result == "sample_code::language=python"
+
+    def test_nested_list_index_extraction(self) -> None:
+        """Should handle list index patterns correctly."""
+        from scripts.knowledge.compare_yaml_docs import _compute_group_key
+
+        # Without discriminator, should strip index for container matching but return full scope_path
+        result = _compute_group_key("sections[0].items[1]", "sections[0].items[1].text", None)
+        assert result == "sections[0].items[1]"
+
+
+class TestBuildAncestorsMap:
+    """Tests for _build_ancestors_map helper function."""
+
+    def test_empty_edges_returns_empty_map(self) -> None:
+        """Should return empty map for no edges."""
+        result = _build_ancestors_map([])
+        assert result == {}
+
+    def test_single_parent_child(self) -> None:
+        """Should build ancestors for single parent-child relationship."""
+        edges = [
+            ContainmentEdge(
+                parent_id="parent",
+                child_id="child",
+                field_path="items[0]",
+                source_file="test.yml",
+            )
+        ]
+        result = _build_ancestors_map(edges)
+
+        assert "child" in result
+        assert result["child"] == ["parent"]
+
+    def test_three_level_hierarchy(self) -> None:
+        """Should build ancestors for grandparent-parent-child hierarchy."""
+        edges = [
+            ContainmentEdge(
+                parent_id="grandparent",
+                child_id="parent",
+                field_path="sections[0]",
+                source_file="test.yml",
+            ),
+            ContainmentEdge(
+                parent_id="parent",
+                child_id="child",
+                field_path="items[0]",
+                source_file="test.yml",
+            ),
+        ]
+        result = _build_ancestors_map(edges)
+
+        # Parent's ancestors = [grandparent]
+        assert result["parent"] == ["grandparent"]
+        # Child's ancestors = [grandparent, parent] (outermost first)
+        assert result["child"] == ["grandparent", "parent"]
+
+    def test_multiple_children_same_parent(self) -> None:
+        """Should handle multiple children with same parent."""
+        edges = [
+            ContainmentEdge(
+                parent_id="parent",
+                child_id="child-1",
+                field_path="items[0]",
+                source_file="test.yml",
+            ),
+            ContainmentEdge(
+                parent_id="parent",
+                child_id="child-2",
+                field_path="items[1]",
+                source_file="test.yml",
+            ),
+        ]
+        result = _build_ancestors_map(edges)
+
+        assert result["child-1"] == ["parent"]
+        assert result["child-2"] == ["parent"]
+
+
+class TestIterFieldFacts:
+    """Tests for _iter_field_facts generator function."""
+
+    def test_simple_element_produces_field_facts(self) -> None:
+        """Should produce FieldFacts for element with scalar fields."""
+        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
+
+        data = {"id": "test-1", "text": "Hello", "count": 5}
+        facts = _iter_field_facts("test-1", data, [], "test.yml")
+
+        # Should have facts for text and count (id is skipped at root)
+        assert len(facts) == 2
+        field_paths = {f.field_path for f in facts}
+        assert "text" in field_paths
+        assert "count" in field_paths
+
+        text_fact = next(f for f in facts if f.field_path == "text")
+        assert text_fact.element_id == "test-1"
+        assert text_fact.key == "text"
+        assert text_fact.value == "Hello"
+        assert text_fact.value_kind == "scalar-str"
+        assert text_fact.source_file == "test.yml"
+
+    def test_nested_dict_produces_nested_field_facts(self) -> None:
+        """Should produce FieldFacts with nested field_paths for nested dicts."""
+        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
+
+        data = {
+            "id": "test-1",
+            "raises": [{"status_code": 404, "description": "Not found"}],
+        }
+        facts = _iter_field_facts("test-1", data, [], "test.yml")
+
+        field_paths = {f.field_path for f in facts}
+        assert "raises[0].status_code" in field_paths
+        assert "raises[0].description" in field_paths
+
+        status_fact = next(f for f in facts if f.field_path == "raises[0].status_code")
+        assert status_fact.key == "status_code"
+        assert status_fact.scope_path == "raises[0]"
+        assert status_fact.value == 404
+        assert status_fact.value_kind == "scalar-num"
+
+    def test_list_items_produce_indexed_field_facts(self) -> None:
+        """Should produce field_paths with indices for list items."""
+        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
+
+        data = {
+            "id": "test-1",
+            "items": ["a", "b", "c"],
+        }
+        facts = _iter_field_facts("test-1", data, [], "test.yml")
+
+        field_paths = {f.field_path for f in facts}
+        assert "items[0]" in field_paths
+        assert "items[1]" in field_paths
+        assert "items[2]" in field_paths
+
+        item0 = next(f for f in facts if f.field_path == "items[0]")
+        assert item0.key == "0"
+        assert item0.scope_path == "items"
+        assert item0.value == "a"
+
+    def test_ref_value_produces_entity_ref_role(self) -> None:
+        """Should produce role='entity_ref' for $ref values."""
+        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
+
+        data = {
+            "id": "parent",
+            "child": {"$ref": "child-1"},
+        }
+        facts = _iter_field_facts("parent", data, [], "test.yml")
+
+        child_fact = next(f for f in facts if f.field_path == "child")
+        assert child_fact.role == "entity_ref"
+        assert child_fact.value_kind == "ref"
+        assert child_fact.value == {"$ref": "child-1"}
+
+    def test_metadata_fields_produce_metadata_role(self) -> None:
+        """Should produce role='metadata' for metadata fields."""
+        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
+
+        data = {
+            "id": "test-1",
+            "doc_id": "test-doc",
+            "version_hint": "2024",
+            "category": "standard",
+        }
+        facts = _iter_field_facts("test-1", data, [], "test.yml")
+
+        doc_id_fact = next(f for f in facts if f.field_path == "doc_id")
+        assert doc_id_fact.role == "metadata"
+
+        version_fact = next(f for f in facts if f.field_path == "version_hint")
+        assert version_fact.role == "metadata"
+
+        category_fact = next(f for f in facts if f.field_path == "category")
+        assert category_fact.role == "metadata"
+
+    def test_skips_root_id_field(self) -> None:
+        """Should not emit FieldFact for root 'id' field."""
+        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
+
+        data = {"id": "test-1", "text": "Hello"}
+        facts = _iter_field_facts("test-1", data, [], "test.yml")
+
+        # Should only have text, not id
+        field_paths = {f.field_path for f in facts}
+        assert "id" not in field_paths
+        assert "text" in field_paths
+
+    def test_group_id_is_sha256_of_group_key(self) -> None:
+        """Should verify group_id is SHA-256 hash of group_key."""
+        import hashlib
+
+        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
+
+        data = {"id": "test-1", "text": "Hello"}
+        facts = _iter_field_facts("test-1", data, [], "test.yml")
+
+        text_fact = next(f for f in facts if f.field_path == "text")
+        expected_hash = hashlib.sha256(text_fact.group_key.encode("utf-8")).hexdigest()
+        assert text_fact.group_id == expected_hash
+
+
+class TestExtractFieldFacts:
+    """Tests for extract_field_facts public function."""
+
+    def test_returns_dict_of_element_to_field_facts(self) -> None:
+        """Should return dict[str, list[FieldFact]]."""
+        from scripts.knowledge.compare_yaml_docs import FieldFact, extract_field_facts
+
+        data = {
+            "id": "root",
+            "text": "Root text",
+            "items": [{"id": "item-1", "text": "Item text"}],
+        }
+        result = extract_field_facts(data, "test.yml")
+
+        assert isinstance(result, dict)
+        assert "root" in result
+        assert "item-1" in result
+
+        # Check all values are lists of FieldFacts
+        for facts in result.values():
+            assert isinstance(facts, list)
+            for fact in facts:
+                assert isinstance(fact, FieldFact)
+
+    def test_http_method_defaults_example(self) -> None:
+        """Should produce correct FieldFacts for http_method_defaults.
+
+        Uses structure from general.rest.api-patterns.yml lines 61-94.
+        Discriminator-based grouping uses the list item's own data as
+        parent_data since that's where the discriminator field ("method") lives.
+        """
+        from scripts.knowledge.compare_yaml_docs import extract_field_facts
+
+        data = {
+            "id": "http-methods-section",
+            "http_method_defaults": [
+                {"method": "GET", "success_status": 200, "error_statuses": [404]},
+                {"method": "POST", "success_status": 201, "error_statuses": [400, 409]},
+            ],
+        }
+        result = extract_field_facts(data, "test.yml")
+
+        facts = result["http-methods-section"]
+
+        # Verify we have facts for the http_method_defaults entries
+        method_facts = [f for f in facts if f.field_path.endswith(".method")]
+        assert len(method_facts) == 2
+
+        # Verify discriminator grouping for GET method
+        get_method_fact = next(
+            (f for f in facts if f.field_path == "http_method_defaults[0].method"), None
+        )
+        assert get_method_fact is not None
+        assert get_method_fact.value == "GET"
+        # Assert explicit discriminator-based group_key
+        assert get_method_fact.group_key == "http_method_defaults::method=GET"
+
+        # Verify success_status under GET also has discriminator-based group_key
+        get_success_fact = next(
+            (f for f in facts if f.field_path == "http_method_defaults[0].success_status"),
+            None,
+        )
+        assert get_success_fact is not None
+        assert get_success_fact.value == 200
+        assert get_success_fact.group_key == "http_method_defaults::method=GET"
+
+        # Verify error_statuses under GET - these are scalar list items with their own scope_path
+        # The discriminator applies to dict fields, not nested list scalars
+        get_error_facts = [
+            f for f in facts if f.field_path.startswith("http_method_defaults[0].error_statuses")
+        ]
+        assert len(get_error_facts) == 1  # [404]
+        # List items have their own group_key based on scope_path
+        assert get_error_facts[0].group_key == "http_method_defaults[0].error_statuses"
+
+        # Verify POST method has different discriminator-based group_key
+        post_method_fact = next(
+            (f for f in facts if f.field_path == "http_method_defaults[1].method"), None
+        )
+        assert post_method_fact is not None
+        assert post_method_fact.value == "POST"
+        assert post_method_fact.group_key == "http_method_defaults::method=POST"
+
+        # POST success_status should share group_id with POST method
+        post_success_fact = next(
+            (f for f in facts if f.field_path == "http_method_defaults[1].success_status"),
+            None,
+        )
+        assert post_success_fact is not None
+        assert post_success_fact.group_id == post_method_fact.group_id
+
+    def test_sample_code_example(self) -> None:
+        """Should handle sample_code structures correctly.
+
+        Uses structure from general.python.docstrings-guide.yml lines 58-71.
+        Discriminator-based grouping uses "language" field from sample_code dict.
+        """
+        from scripts.knowledge.compare_yaml_docs import extract_field_facts
+
+        data = {
+            "id": "function-example",
+            "sample_code": {
+                "description": "Example function with Args",
+                "language": "python",
+                "code": "def fetch_user(): ...",
+            },
+        }
+        result = extract_field_facts(data, "test.yml")
+
+        facts = result["function-example"]
+
+        # Find sample_code facts
+        code_facts = [f for f in facts if "sample_code" in f.field_path]
+        assert len(code_facts) == 3  # description, language, code
+
+        # Verify discriminator grouping for sample_code with explicit group_key
+        language_fact = next(
+            (f for f in facts if f.field_path == "sample_code.language"), None
+        )
+        assert language_fact is not None
+        assert language_fact.value == "python"
+        # Assert explicit discriminator-based group_key
+        assert language_fact.group_key == "sample_code::language=python"
+
+        # Verify description also has discriminator-based group_key
+        description_fact = next(
+            (f for f in facts if f.field_path == "sample_code.description"), None
+        )
+        assert description_fact is not None
+        assert description_fact.group_key == "sample_code::language=python"
+
+        # Verify code also has discriminator-based group_key
+        code_fact = next(
+            (f for f in facts if f.field_path == "sample_code.code"), None
+        )
+        assert code_fact is not None
+        assert code_fact.group_key == "sample_code::language=python"
+
+        # All sample_code fields should share the same group_id
+        assert language_fact.group_id == description_fact.group_id
+        assert language_fact.group_id == code_fact.group_id
+
+    def test_nested_elements_with_containment(self) -> None:
+        """Should handle nested elements with $ref correctly."""
+        from scripts.knowledge.compare_yaml_docs import extract_field_facts
+
+        data = {
+            "id": "parent",
+            "title": "Parent Title",
+            "items": [
+                {"id": "child-1", "text": "Child 1 text"},
+                {"id": "child-2", "text": "Child 2 text"},
+            ],
+        }
+        result = extract_field_facts(data, "test.yml")
+
+        # Parent should exist
+        assert "parent" in result
+        parent_facts = result["parent"]
+
+        # Parent should have title fact
+        title_fact = next((f for f in parent_facts if f.field_path == "title"), None)
+        assert title_fact is not None
+        assert title_fact.value == "Parent Title"
+
+        # Parent should have $ref facts for children (sliced representation)
+        ref_facts = [f for f in parent_facts if f.value_kind == "ref"]
+        assert len(ref_facts) == 2  # Two children
+
+        # Verify $ref structure
+        for ref_fact in ref_facts:
+            assert "$ref" in ref_fact.value
+            assert ref_fact.role == "entity_ref"
+
+        # Children should have separate FieldFacts
+        assert "child-1" in result
+        assert "child-2" in result
+
+        child1_facts = result["child-1"]
+        text_fact = next((f for f in child1_facts if f.field_path == "text"), None)
+        assert text_fact is not None
+        assert text_fact.value == "Child 1 text"
+
+    def test_ancestor_tracking_in_nested_elements(self) -> None:
+        """Should populate ancestors field from containment edges."""
+        from scripts.knowledge.compare_yaml_docs import extract_field_facts
+
+        data = {
+            "id": "grandparent",
+            "title": "Grandparent",
+            "sections": [
+                {
+                    "id": "parent",
+                    "title": "Parent",
+                    "items": [
+                        {"id": "child-1", "text": "Child 1"},
+                        {"id": "child-2", "text": "Child 2"},
+                    ],
+                }
+            ],
+        }
+        result = extract_field_facts(data, "test.yml")
+
+        # Grandparent should have no ancestors
+        grandparent_facts = result["grandparent"]
+        for fact in grandparent_facts:
+            assert fact.ancestors == []
+
+        # Parent should have grandparent as ancestor
+        parent_facts = result["parent"]
+        for fact in parent_facts:
+            assert fact.ancestors == ["grandparent"]
+
+        # Child should have grandparent, then parent as ancestors (outermost first)
+        child1_facts = result["child-1"]
+        for fact in child1_facts:
+            assert fact.ancestors == ["grandparent", "parent"]
+
+        child2_facts = result["child-2"]
+        for fact in child2_facts:
+            assert fact.ancestors == ["grandparent", "parent"]
+
+
+class TestExtractIdsAndTextWithFieldFacts:
+    """Tests to verify backward compatibility of extract_ids_and_text."""
+
+    def test_text_projection_unchanged(self) -> None:
+        """Should verify extract_ids_and_text still produces same text format."""
+        data = {"id": "test", "text": "Hello", "count": 5}
+        result = extract_ids_and_text(data)  # type: ignore[arg-type]
+
+        assert "test" in result
+        text = result["test"]
+        # Should have key=value format
+        assert "count=5" in text
+        assert "id=test" in text
+        assert "text=Hello" in text
+
+    def test_field_facts_used_for_structured_access(self) -> None:
+        """Should verify FieldFacts can be used for structured access."""
+        from scripts.knowledge.compare_yaml_docs import extract_field_facts
+
+        data = {"id": "test", "text": "Hello", "count": 5}
+
+        # extract_ids_and_text produces text
+        text_result = extract_ids_and_text(data)  # type: ignore[arg-type]
+
+        # extract_field_facts produces structured FieldFacts
+        facts_result = extract_field_facts(data, "test.yml")
+
+        # Both should cover the same elements
+        assert set(text_result.keys()) == set(facts_result.keys())
+
+        # Facts should provide structured access to the same data
+        facts = facts_result["test"]
+        text_fact = next((f for f in facts if f.key == "text"), None)
+        assert text_fact is not None
+        assert text_fact.value == "Hello"

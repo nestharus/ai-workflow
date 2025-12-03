@@ -24,16 +24,24 @@ Args:
             falls back to the default glob pattern.
 
 Example:
-    uv run knowledge.compare-yml-docs \
+    uv run knowledge.compare-yml-docs \\
       --original-files .knowledge/originals/20251201T134735Z-api-patterns.yml
+
+FieldFact Extraction:
+    Produces field-level facts from sliced YAML elements with role assignment
+    (constraint/entity_ref/artifact_root/metadata), constraint grouping via
+    group_key/group_id, and deterministic text projection. FieldFacts are the
+    foundation for artifact detection (subsequent phase) and entity resolution.
+    See docs/plans/fact_redesign.md lines 143-279 for specification.
 """
 
 import argparse
+import hashlib
 import json
 import re
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
@@ -62,6 +70,577 @@ class ContainmentEdge:
     child_id: str
     field_path: str
     source_file: str
+
+
+# Type aliases for FieldFact value_kind and role
+ValueKind = Literal[
+    "scalar-str",
+    "scalar-num",
+    "scalar-bool",
+    "scalar-null",
+    "ref",
+    "list-scalar",
+    "list-object",
+    "object",
+]
+FieldRole = Literal["constraint", "entity_ref", "artifact_root", "metadata"]
+ArtifactLocator = Literal["inline", "reference"]
+
+
+@dataclass
+class FieldFact:
+    """Represents a field-level fact extracted from a sliced YAML element.
+
+    FieldFacts capture field-level metadata including role assignment
+    (constraint/entity_ref/artifact_root/metadata), constraint grouping via
+    group_key/group_id, and all necessary context for deterministic text
+    projection and downstream processing.
+
+    Per the fact redesign specification (docs/plans/fact_redesign.md lines 180-202),
+    FieldFacts form the canonical structural representation that enables:
+    - Artifact detection (via role == artifact_root)
+    - Entity resolution (via role == entity_ref and $ref values)
+    - Constraint grouping (via group_key/group_id)
+    - Semantic fact extraction
+
+    Attributes:
+        element_id: The ID of the element this fact belongs to.
+        field_path: Full path from element root (e.g., "raises[0].status_code").
+        key: Last segment of field_path (e.g., "status_code").
+        scope_path: Prefix of field_path (e.g., "raises[0]").
+        value: The normalized leaf value, or a $ref dict.
+        value_kind: Classification of the value type.
+        ancestors: List of ancestor element IDs (outermost to nearest).
+        source_file: Relative path to the source YAML file.
+        role: Semantic role of this field (constraint/entity_ref/artifact_root/metadata).
+        artifact_kind: Open-ended artifact kind (set when role == artifact_root).
+        artifact_format: MIME type for artifact (set when role == artifact_root).
+        artifact_locator: How artifact content is located (inline/reference).
+        artifact_uri: URI when artifact_locator == reference.
+        group_key: Explicit semantic grouping key for constraint grouping.
+        group_id: SHA-256 hash of group_key for stable identity.
+    """
+
+    element_id: str
+    field_path: str
+    key: str
+    scope_path: str
+    value: Any  # noqa: ANN401
+    value_kind: ValueKind
+    ancestors: list[str] = field(default_factory=list)
+    source_file: str = ""
+    role: FieldRole = "constraint"
+    artifact_kind: str | None = None
+    artifact_format: str | None = None
+    artifact_locator: ArtifactLocator | None = None
+    artifact_uri: str | None = None
+    group_key: str = ""
+    group_id: str = ""
+
+
+# Metadata keys per fact_redesign.md lines 210-235
+METADATA_KEYS = frozenset(
+    {"doc_id", "id", "version_hint", "kind", "index", "category", "domain"}
+)
+
+
+def _determine_value_kind(value: Any) -> ValueKind:  # noqa: ANN401
+    """Determine the value_kind for a given value.
+
+    Classifies values into one of the ValueKind enum values based on their type.
+
+    Args:
+        value: The value to classify.
+
+    Returns:
+        The appropriate ValueKind enum value.
+    """
+    # Check for $ref dict first (entity reference)
+    if isinstance(value, dict):
+        if "$ref" in value and isinstance(value["$ref"], str):
+            return "ref"
+        return "object"
+
+    # Check for None
+    if value is None:
+        return "scalar-null"
+
+    # Check for bool before numeric (bool is subclass of int in Python)
+    if isinstance(value, bool):
+        return "scalar-bool"
+
+    # Check for numeric types
+    if isinstance(value, (int, float)):
+        return "scalar-num"
+
+    # Check for string
+    if isinstance(value, str):
+        return "scalar-str"
+
+    # Check for list
+    if isinstance(value, list):
+        # Determine if list contains scalars or objects
+        if not value:
+            return "list-scalar"  # Empty list treated as scalar list
+        for item in value:
+            if isinstance(item, (dict, list)):
+                return "list-object"
+        return "list-scalar"
+
+    # Fallback to scalar-str for any other types
+    return "scalar-str"
+
+
+def _is_artifact_root(
+    key: str,
+    value_kind: ValueKind,
+    field_path: str,
+    parent_data: dict[str, Any] | None = None,
+) -> bool:
+    """Determine if a field is an artifact root.
+
+    TODO: This is a placeholder that always returns False until the Artifact Kind
+    Registry is implemented in a subsequent phase. Per fact_redesign.md lines 221-229,
+    artifact roots are discovered by deterministic rules based on:
+    - field_path / key name (e.g., text/description/summary)
+    - sibling + parent structure (e.g., objects with type: code)
+    - content sniffing (e.g., Mermaid preambles like sequenceDiagram)
+
+    Args:
+        key: The field key name.
+        value_kind: The classified value kind.
+        field_path: Full path from element root.
+        parent_data: Parent dict for sibling inspection (optional).
+
+    Returns:
+        True if the field is an artifact root, False otherwise.
+    """
+    # Placeholder: artifact root detection not yet implemented
+    # Will be implemented when Artifact Kind Registry is added
+    return False
+
+
+def _assign_role(
+    key: str,
+    value_kind: ValueKind,
+    field_path: str,
+    parent_data: dict[str, Any] | None = None,
+) -> FieldRole:
+    """Assign a semantic role to a field based on deterministic rules.
+
+    Role assignment follows the rules in fact_redesign.md lines 210-235:
+    1. If value_kind == "ref" -> role = entity_ref
+    2. If key in metadata keys -> role = metadata
+    3. If field is artifact root -> role = artifact_root (placeholder)
+    4. Otherwise -> role = constraint
+
+    Args:
+        key: The field key name.
+        value_kind: The classified value kind.
+        field_path: Full path from element root.
+        parent_data: Parent dict for context (optional).
+
+    Returns:
+        The assigned FieldRole.
+    """
+    # Rule 1: $ref values are entity references
+    if value_kind == "ref":
+        return "entity_ref"
+
+    # Rule 2: Known metadata keys
+    if key in METADATA_KEYS:
+        return "metadata"
+
+    # Rule 3: Artifact root detection (placeholder)
+    if _is_artifact_root(key, value_kind, field_path, parent_data):
+        return "artifact_root"
+
+    # Rule 4: Default to constraint
+    return "constraint"
+
+
+# Regex pattern for list index in field path (e.g., [0], [1], [123])
+_LIST_INDEX_PATTERN = re.compile(r"\[(\d+)\]")
+
+
+def _compute_group_key(
+    scope_path: str,
+    field_path: str,
+    parent_data: dict[str, Any] | None = None,
+) -> str:
+    """Compute the semantic grouping key for a field.
+
+    Per fact_redesign.md lines 236-260, fields are grouped into semantic units:
+    - Default grouping: group_key = scope_path
+    - Discriminator-based grouping for known patterns:
+      - http_method_defaults[*] uses discriminator "method"
+      - sample_code uses discriminator "language" (optional)
+
+    Args:
+        scope_path: The scope path (prefix of field_path).
+        field_path: Full path from element root.
+        parent_data: Parent dict containing discriminator fields.
+
+    Returns:
+        The computed group_key string.
+    """
+    # Extract container name from scope_path for discriminator matching
+    # e.g., "http_method_defaults[0]" -> "http_method_defaults"
+    container_name = _LIST_INDEX_PATTERN.sub("", scope_path).rstrip(".")
+
+    # Check for http_method_defaults discriminator pattern
+    # Example: docs/development/general/general.rest.api-patterns.yml lines 61-94
+    if container_name == "http_method_defaults" and parent_data is not None:
+        method = parent_data.get("method")
+        if method is not None:
+            return f"http_method_defaults::method={method}"
+
+    # Check for sample_code discriminator pattern
+    # Example: docs/development/general/general.python.docstrings-guide.yml lines 58-71
+    if container_name == "sample_code" and parent_data is not None:
+        language = parent_data.get("language")
+        if language is not None:
+            return f"sample_code::language={language}"
+
+    # Default: use scope_path as group_key
+    return scope_path if scope_path else "<root>"
+
+
+def _compute_group_id(group_key: str) -> str:
+    """Compute the group_id as SHA-256 hash of group_key.
+
+    Args:
+        group_key: The semantic grouping key.
+
+    Returns:
+        SHA-256 hash of the group_key.
+    """
+    return hashlib.sha256(group_key.encode("utf-8")).hexdigest()
+
+
+def _iter_field_facts(
+    element_id: str,
+    sliced_data: dict[str, Any],
+    ancestors: list[str],
+    source_file: str,
+) -> list[FieldFact]:
+    """Extract FieldFacts from a sliced element.
+
+    Traverses the sliced element data and emits a FieldFact for each scalar
+    or ref value encountered. Nested dicts without IDs are recursed into.
+    List indices are included in field_path as [0], [1], etc.
+
+    Per fact_redesign.md lines 261-272:
+    - Skip root "id" field to avoid self-reference
+    - For dicts-without-id, recurse
+    - For lists, recurse with indices in path
+    - When hitting a scalar or ref, emit a FieldFact
+    - Stop recursion at $ref values (treat as leaf)
+
+    Args:
+        element_id: The ID of the element being processed.
+        sliced_data: The sliced dict data (nested IDs replaced with $refs).
+        ancestors: List of ancestor element IDs.
+        source_file: Relative path to source YAML file.
+
+    Returns:
+        List of FieldFact instances extracted from the element.
+    """
+    facts: list[FieldFact] = []
+
+    def _is_scalar(value: Any) -> bool:  # noqa: ANN401
+        """Check if value is a scalar (not dict or list)."""
+        return isinstance(value, (str, int, float, bool)) or value is None
+
+    def _walk(
+        node: Any,  # noqa: ANN401
+        path: str,
+        container_dict: dict[str, Any] | None = None,
+    ) -> None:
+        """Recursively walk the data structure and emit FieldFacts.
+
+        Args:
+            node: Current node being walked.
+            path: Current field path from element root.
+            container_dict: The immediate container dict for discriminator lookup.
+                For fields within a dict, this is the dict itself (e.g., the
+                http_method_defaults item dict containing "method" discriminator).
+        """
+        if isinstance(node, dict):
+            # Check if this is a $ref (treat as leaf, emit entity_ref)
+            if "$ref" in node and isinstance(node["$ref"], str):
+                # This is handled by the parent call when the key is encountered
+                return
+
+            for key, value in node.items():
+                # Skip root id field to avoid self-reference
+                if key == "id" and not path:
+                    continue
+
+                child_path = f"{path}.{key}" if path else key
+
+                # Determine if value is a leaf (scalar or $ref)
+                if _is_scalar(value):
+                    # Emit scalar FieldFact
+                    # For fields within this dict, use `node` as container_dict
+                    # so _compute_group_key can access discriminator fields
+                    scope_path, _, _ = child_path.rpartition(".")
+                    value_kind = _determine_value_kind(value)
+                    role = _assign_role(key, value_kind, child_path, node)
+                    group_key = _compute_group_key(scope_path, child_path, node)
+                    group_id = _compute_group_id(group_key)
+
+                    facts.append(
+                        FieldFact(
+                            element_id=element_id,
+                            field_path=child_path,
+                            key=key,
+                            scope_path=scope_path,
+                            value=value,
+                            value_kind=value_kind,
+                            ancestors=list(ancestors),
+                            source_file=source_file,
+                            role=role,
+                            artifact_kind=None,
+                            artifact_format=None,
+                            artifact_locator=None,
+                            artifact_uri=None,
+                            group_key=group_key,
+                            group_id=group_id,
+                        )
+                    )
+                elif isinstance(value, dict):
+                    # Check if it's a $ref
+                    if "$ref" in value and isinstance(value["$ref"], str):
+                        # Emit entity_ref FieldFact for $ref
+                        scope_path, _, _ = child_path.rpartition(".")
+                        value_kind: ValueKind = "ref"
+                        role = _assign_role(key, value_kind, child_path, node)
+                        group_key = _compute_group_key(scope_path, child_path, node)
+                        group_id = _compute_group_id(group_key)
+
+                        facts.append(
+                            FieldFact(
+                                element_id=element_id,
+                                field_path=child_path,
+                                key=key,
+                                scope_path=scope_path,
+                                value=value,
+                                value_kind=value_kind,
+                                ancestors=list(ancestors),
+                                source_file=source_file,
+                                role=role,
+                                artifact_kind=None,
+                                artifact_format=None,
+                                artifact_locator=None,
+                                artifact_uri=None,
+                                group_key=group_key,
+                                group_id=group_id,
+                            )
+                        )
+                    else:
+                        # Recurse into nested dict (no id)
+                        # Pass `value` as container_dict so its fields can use it
+                        _walk(value, child_path, value)
+                elif isinstance(value, list):
+                    # Handle list - recurse with indices
+                    for idx, item in enumerate(value):
+                        item_path = f"{child_path}[{idx}]"
+                        if _is_scalar(item):
+                            # Emit scalar list item FieldFact
+                            # For scalars in a list, use node as container
+                            value_kind = _determine_value_kind(item)
+                            role = _assign_role(str(idx), value_kind, item_path, node)
+                            group_key = _compute_group_key(child_path, item_path, node)
+                            group_id = _compute_group_id(group_key)
+
+                            facts.append(
+                                FieldFact(
+                                    element_id=element_id,
+                                    field_path=item_path,
+                                    key=str(idx),
+                                    scope_path=child_path,
+                                    value=item,
+                                    value_kind=value_kind,
+                                    ancestors=list(ancestors),
+                                    source_file=source_file,
+                                    role=role,
+                                    artifact_kind=None,
+                                    artifact_format=None,
+                                    artifact_locator=None,
+                                    artifact_uri=None,
+                                    group_key=group_key,
+                                    group_id=group_id,
+                                )
+                            )
+                        elif isinstance(item, dict):
+                            # Check if it's a $ref - emit as entity_ref, don't recurse
+                            if "$ref" in item and isinstance(item["$ref"], str):
+                                value_kind = _determine_value_kind(item)
+                                role = _assign_role(str(idx), value_kind, item_path, node)
+                                group_key = _compute_group_key(
+                                    child_path, item_path, node
+                                )
+                                group_id = _compute_group_id(group_key)
+
+                                facts.append(
+                                    FieldFact(
+                                        element_id=element_id,
+                                        field_path=item_path,
+                                        key=str(idx),
+                                        scope_path=child_path,
+                                        value=item,
+                                        value_kind=value_kind,
+                                        ancestors=list(ancestors),
+                                        source_file=source_file,
+                                        role=role,
+                                        artifact_kind=None,
+                                        artifact_format=None,
+                                        artifact_locator=None,
+                                        artifact_uri=None,
+                                        group_key=group_key,
+                                        group_id=group_id,
+                                    )
+                                )
+                            else:
+                                # Recurse into list item dict (not a $ref)
+                                # Pass `item` as container_dict for discriminator lookup
+                                # This allows http_method_defaults[0].method to access
+                                # the item dict's "method" field
+                                _walk(item, item_path, item)
+                        elif isinstance(item, list):
+                            # Nested list - recurse
+                            _walk(item, item_path, container_dict)
+
+        elif isinstance(node, list):
+            # Handle top-level list (unusual but possible)
+            for idx, item in enumerate(node):
+                item_path = f"{path}[{idx}]" if path else f"[{idx}]"
+                if _is_scalar(item):
+                    value_kind = _determine_value_kind(item)
+                    role = _assign_role(str(idx), value_kind, item_path, container_dict)
+                    group_key = _compute_group_key(path, item_path, container_dict)
+                    group_id = _compute_group_id(group_key)
+
+                    facts.append(
+                        FieldFact(
+                            element_id=element_id,
+                            field_path=item_path,
+                            key=str(idx),
+                            scope_path=path,
+                            value=item,
+                            value_kind=value_kind,
+                            ancestors=list(ancestors),
+                            source_file=source_file,
+                            role=role,
+                            artifact_kind=None,
+                            artifact_format=None,
+                            artifact_locator=None,
+                            artifact_uri=None,
+                            group_key=group_key,
+                            group_id=group_id,
+                        )
+                    )
+                elif isinstance(item, dict):
+                    # Recurse into list item dict, passing item as container
+                    _walk(item, item_path, item)
+                else:
+                    _walk(item, item_path, container_dict)
+
+    _walk(sliced_data, "", None)
+    return facts
+
+
+def _build_ancestors_map(
+    edges: list[ContainmentEdge],
+) -> dict[str, list[str]]:
+    """Build a map from element_id to list of ancestor element IDs.
+
+    Traverses containment edges to compute the ancestor chain for each element,
+    ordered from outermost (root) to nearest (immediate parent).
+
+    Args:
+        edges: List of ContainmentEdge instances from extract_ids_and_objects.
+
+    Returns:
+        Dictionary mapping element_id to list of ancestor IDs (outermost first).
+    """
+    # Build parent lookup: child_id -> parent_id
+    parent_lookup: dict[str, str] = {}
+    for edge in edges:
+        parent_lookup[edge.child_id] = edge.parent_id
+
+    # Compute ancestors for each element
+    ancestors_map: dict[str, list[str]] = {}
+
+    def get_ancestors(element_id: str) -> list[str]:
+        """Recursively build ancestor list for an element."""
+        if element_id in ancestors_map:
+            return ancestors_map[element_id]
+
+        parent_id = parent_lookup.get(element_id)
+        if parent_id is None:
+            # No parent - this is a root element
+            ancestors_map[element_id] = []
+            return []
+
+        # Get parent's ancestors and append parent
+        parent_ancestors = get_ancestors(parent_id)
+        ancestors = parent_ancestors + [parent_id]
+        ancestors_map[element_id] = ancestors
+        return ancestors
+
+    # Populate ancestors for all children
+    for edge in edges:
+        get_ancestors(edge.child_id)
+
+    return ancestors_map
+
+
+def extract_field_facts(
+    data: Any,  # noqa: ANN401
+    source_file: str = "",
+) -> dict[str, list[FieldFact]]:
+    """Extract FieldFacts from parsed YAML data.
+
+    This is the primary API for downstream consumers that need structured
+    field-level access (e.g., artifact detection, entity resolution).
+
+    Calls extract_ids_and_objects to get sliced elements and containment edges,
+    then extracts FieldFacts from each element with proper ancestor tracking.
+
+    Per fact_redesign.md lines 273-279, this produces the canonical field-level
+    representation that is:
+    - Aware of field names
+    - Anchored in element ID
+    - Can reconstruct constraint groups (via group_key/group_id)
+    - Distinguishes role (constraint vs entity_ref vs artifact_root vs metadata)
+    - Tracks ancestor chain from containment edges
+
+    Args:
+        data: The parsed YAML structure (dict, list, or primitive).
+        source_file: Relative path to the source file.
+
+    Returns:
+        Dictionary mapping element_id to list of FieldFacts.
+    """
+    sliced_objects, edges = extract_ids_and_objects(data, source_file=source_file)
+    result: dict[str, list[FieldFact]] = {}
+
+    # Build ancestor map from containment edges
+    ancestors_map = _build_ancestors_map(edges)
+
+    for element_id, sliced_dict in sliced_objects.items():
+        ancestors = ancestors_map.get(element_id, [])
+        facts = _iter_field_facts(
+            element_id=element_id,
+            sliced_data=sliced_dict,
+            ancestors=ancestors,
+            source_file=source_file,
+        )
+        result[element_id] = facts
+
+    return result
 
 
 def _is_element(obj: Any) -> bool:  # noqa: ANN401
@@ -356,17 +935,19 @@ def extract_ids_and_text(
     data: YamlValue,
     source_file: str = "",
 ) -> dict[str, str]:
-    """Extract IDs and text projections from sliced elements.
+    """Extract IDs and text projections from sliced elements using FieldFacts.
 
-    Calls extract_ids_and_objects to get sliced elements, then produces a
-    deterministic text projection for each element. The text projection
-    flattens the sliced dict into key=value lines for scalars, key=[...]
-    for lists, and key=$ref:child_id for references.
+    Uses the FieldFact pipeline to produce a deterministic text projection for
+    each element. The text projection flattens the sliced dict into key=value
+    lines, where each line corresponds to a FieldFact.
 
     This function is used for hashing in resolution_tracker and for
     candidate extraction context. Per the fact redesign (lines 131-133),
     the text hash is computed from the sliced representation with child
     content excluded.
+
+    The FieldFact-based approach ensures structural and textual representations
+    are aligned, using the same traversal logic for both.
 
     Args:
         data: The parsed YAML structure (dict, list, or primitive).
@@ -375,11 +956,25 @@ def extract_ids_and_text(
     Returns:
         Dictionary mapping element IDs to their text projection strings.
     """
-    sliced_objects, _ = extract_ids_and_objects(data, source_file=source_file)
+    sliced_objects, edges = extract_ids_and_objects(data, source_file=source_file)
     result: dict[str, str] = {}
 
+    # Build ancestor map from containment edges
+    ancestors_map = _build_ancestors_map(edges)
+
     for element_id, sliced_dict in sliced_objects.items():
-        # Build deterministic text projection from sliced dict
+        # Extract FieldFacts for this element
+        ancestors = ancestors_map.get(element_id, [])
+        facts = _iter_field_facts(
+            element_id=element_id,
+            sliced_data=sliced_dict,
+            ancestors=ancestors,
+            source_file=source_file,
+        )
+
+        # Also include root-level keys that aren't captured by FieldFacts
+        # (like "id" which is skipped in _iter_field_facts)
+        # Build text projection from sliced dict for compatibility
         lines: list[str] = []
         for key in sorted(sliced_dict.keys()):
             value = sliced_dict[key]

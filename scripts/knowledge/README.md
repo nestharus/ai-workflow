@@ -302,3 +302,67 @@ Subsequent phases will add:
 * `batch_ingest.py`: Full pipeline orchestration
 
 See the subsequent phases documentation for details on these components.
+
+## compare_yaml_docs.py
+
+Compares YAML documents by extracting IDs and their associated object data, enabling dict-to-dict comparison across versions.
+
+### FieldFact Extraction API
+
+The module provides structured field-level extraction from sliced YAML elements:
+
+```python
+from scripts.knowledge.compare_yaml_docs import (
+    extract_field_facts,
+    extract_ids_and_text,
+    FieldFact,
+)
+
+# Parse YAML file
+data = parse_yaml_file("docs/development/example.yml")
+
+# Get structured FieldFacts
+facts_by_element = extract_field_facts(data, "docs/development/example.yml")
+
+for element_id, facts in facts_by_element.items():
+    for fact in facts:
+        print(f"{element_id}.{fact.field_path}: {fact.value}")
+        print(f"  role={fact.role}, group_key={fact.group_key}")
+
+# For backward compatibility, extract_ids_and_text still works
+text_by_element = extract_ids_and_text(data)
+```
+
+### FieldFact Structure
+
+Each FieldFact captures:
+
+- **element_id**: ID of the element this fact belongs to
+- **field_path**: Full path (e.g., "raises[0].status_code")
+- **key**: Last segment (e.g., "status_code")
+- **scope_path**: Prefix (e.g., "raises[0]")
+- **value**: Leaf value or $ref dict
+- **value_kind**: scalar-str, scalar-num, scalar-bool, scalar-null, ref, list-scalar, list-object, object
+- **role**: constraint, entity_ref, artifact_root, metadata
+- **group_key**: Semantic grouping key (uses discriminators for known patterns)
+- **group_id**: SHA-256 hash of group_key
+
+### Role Assignment
+
+1. **entity_ref**: $ref values (value_kind == "ref")
+2. **metadata**: Known keys (doc_id, id, version_hint, kind, index, category, domain)
+3. **artifact_root**: Placeholder (not yet implemented)
+4. **constraint**: Default for other fields
+
+### Constraint Grouping
+
+Default grouping uses scope_path. Known patterns use discriminators:
+
+- `http_method_defaults[*]` → `http_method_defaults::method={method}`
+- `sample_code` → `sample_code::language={language}`
+
+### Backward Compatibility
+
+`extract_ids_and_text()` continues to work for existing callers (resolution_tracker.py, candidate_extraction.py) while the FieldFact infrastructure provides structured access for new workflows.
+
+See `docs/plans/fact_redesign.md` lines 143-279 for the complete specification.
