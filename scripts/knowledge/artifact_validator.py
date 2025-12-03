@@ -5,15 +5,15 @@ artifacts per fact_redesign.md lines 948-967. Validation uses comparators
 specific to artifact type.
 
 Validation Comparators:
-    - normalized_text: Semantic similarity for prose artifacts
+    - normalized_text: Embedding-based semantic similarity via Qwen3 (0.8 threshold)
     - normalized_rows_by_discriminator: Row comparison for tables
     - structure_and_leaf_text: Structural equality for nested hierarchies
     - normalized_diff: Formatting-insensitive diff for code blocks
 
 Current Implementation Status:
-    - Implemented: ValidationResult dataclass, CSV writing, hash computation
-    - Stub/Placeholder: Semantic similarity (uses simple text comparison)
-    - Deferred to Phase 2: Embedding-based semantic similarity
+    - Implemented: ValidationResult dataclass, CSV writing, hash computation,
+      embedding-based semantic similarity via Qwen3 embeddings
+    - Deferred to Task 9: Entity resolution (per fact_redesign_plan.md)
 """
 
 from __future__ import annotations
@@ -129,15 +129,18 @@ def _normalize_whitespace(text: str) -> str:
 def _validate_normalized_text(
     source: str,
     rendered: str,
+    similarity_threshold: float = 0.8,
 ) -> tuple[float, bool, str]:
-    """Validate using normalized text comparison.
+    """Validate using embedding-based semantic similarity.
 
-    Stub implementation using simple text similarity. Full implementation
-    will use embedding cosine similarity for semantic comparison.
+    Uses Qwen3 embeddings to compute cosine similarity between source and
+    rendered text. Falls back to character-level comparison if embeddings
+    are unavailable.
 
     Args:
         source: Source artifact text.
         rendered: Rendered artifact text.
+        similarity_threshold: Minimum similarity for passing (default 0.8).
 
     Returns:
         Tuple of (similarity_score, passed, mismatch_summary).
@@ -146,11 +149,63 @@ def _validate_normalized_text(
     source_normalized = _normalize_whitespace(source)
     rendered_normalized = _normalize_whitespace(rendered)
 
-    # Simple character-level similarity (stub for semantic similarity)
+    # Fast path for identical text
     if source_normalized == rendered_normalized:
         return 1.0, True, ""
 
-    # Calculate basic similarity ratio
+    # Handle empty cases
+    if not source_normalized and not rendered_normalized:
+        return 1.0, True, ""
+    if not source_normalized or not rendered_normalized:
+        return 0.0, False, "One of source or rendered is empty"
+
+    # Try embedding-based semantic similarity
+    try:
+        from scripts.knowledge.variant_resolver import (
+            compute_cosine_similarity,
+            embed_keywords,
+            load_qwen_embedding_model,
+        )
+
+        model, tokenizer = load_qwen_embedding_model()
+
+        # Embed source and rendered texts
+        embeddings = embed_keywords([source_normalized, rendered_normalized], model, tokenizer)
+
+        # Compute cosine similarity (single value for 2 texts)
+        similarity_matrix = compute_cosine_similarity(
+            embeddings[:1], embeddings[1:]
+        )
+        similarity = float(similarity_matrix[0, 0])
+
+        passed = similarity >= similarity_threshold
+
+        mismatch_summary = ""
+        if not passed:
+            source_len = len(source_normalized)
+            rendered_len = len(rendered_normalized)
+            mismatch_summary = (
+                f"Semantic similarity {similarity:.2%} below threshold {similarity_threshold:.0%}. "
+                f"Source: {source_len} chars, Rendered: {rendered_len} chars."
+            )
+
+        _logger.debug(
+            "Embedding-based validation: similarity=%.4f, passed=%s",
+            similarity,
+            passed,
+        )
+        return similarity, passed, mismatch_summary
+
+    except ImportError as e:
+        _logger.warning(
+            "Qwen embeddings not available, falling back to character comparison: %s", e
+        )
+    except Exception as e:
+        _logger.warning(
+            "Embedding computation failed, falling back to character comparison: %s", e
+        )
+
+    # Fallback to character-level similarity
     source_chars = set(source_normalized)
     rendered_chars = set(rendered_normalized)
     intersection = source_chars & rendered_chars
@@ -160,14 +215,14 @@ def _validate_normalized_text(
         return 0.0, False, "Both source and rendered are empty"
 
     similarity = len(intersection) / len(union)
-    passed = similarity >= 0.8  # 80% threshold
+    passed = similarity >= similarity_threshold
 
     mismatch_summary = ""
     if not passed:
         source_len = len(source_normalized)
         rendered_len = len(rendered_normalized)
         mismatch_summary = (
-            f"Text similarity {similarity:.2%}. "
+            f"Text similarity {similarity:.2%} (character fallback). "
             f"Source: {source_len} chars, Rendered: {rendered_len} chars."
         )
 

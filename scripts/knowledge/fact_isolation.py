@@ -1,5 +1,12 @@
 """Orchestrate fact isolation workflow with validation and reporting.
 
+NOTE: This is the legacy sentence-level isolation path, preserved for debugging.
+For production use, see `knowledge.extract-artifact-facts` which uses the
+multi-agent artifact-level extraction pipeline (Hunter -> Surgeon -> Auditor).
+
+For artifact-level extraction, use `artifact_fact_extractor.py` which writes
+pass-level records directly to passes.csv with span/pass alignment.
+
 This module wraps `fact_extraction.extract_facts_main()`, reads per-iteration
 results from CSV, validates extraction completeness, and prepares for future
 integration with iterative movement tracking.
@@ -10,6 +17,12 @@ The isolation workflow:
 3. Validates extraction completeness (entity absence, semantic similarity)
 4. Prepares movement record data and writes to isolation CSV
 5. Outputs detailed report with validation status
+
+Extended Schema (per docs/plans/fact_redesign.md lines 821-824):
+    Movement records now include pass_id and span_id fields:
+    - pass_id: Links to passes.csv for artifact-level extraction
+    - span_id: Identifies the span within the artifact
+    - schema_version: 'legacy' for sentence-level, 'v2' for artifact-level
 
 Usage:
     # Isolate facts about an entity from a sentence
@@ -61,7 +74,7 @@ from scripts.knowledge.variant_resolver import (
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-# CSV columns for isolation records
+# CSV columns for isolation records (extended schema per fact_redesign.md)
 ISOLATION_CSV_COLUMNS = [
     "fact_id",
     "iteration",
@@ -69,27 +82,41 @@ ISOLATION_CSV_COLUMNS = [
     "before_sentence",
     "isolated_fact",
     "after_sentence",
+    # Extended columns for artifact-level extraction
+    "pass_id",
+    "span_id",
+    "schema_version",
 ]
 
 
-class IterativeMovementRecord(TypedDict):
+class IterativeMovementRecord(TypedDict, total=False):
     """Movement record for tracking sentence changes per iteration.
 
-    Attributes:
+    Core Attributes (always present):
         fact_id: UUID linking to the originating fact record.
         iteration: Iteration number (1-indexed).
         before_sentence: Sentence before this fact extraction.
         isolated_fact: The atomic fact extracted in this iteration.
         after_sentence: Sentence after this fact was removed.
         entity: The entity being extracted.
+
+    Extended Attributes (optional, for artifact-level extraction):
+        pass_id: Links to passes.csv for artifact-level extraction.
+        span_id: Identifies the span within the artifact.
+        schema_version: 'legacy' for sentence-level, 'v2' for artifact-level.
     """
 
+    # Core fields (required)
     fact_id: str
     iteration: int
     before_sentence: str
     isolated_fact: str
     after_sentence: str
     entity: str
+    # Extended fields (optional)
+    pass_id: str
+    span_id: str
+    schema_version: str
 
 
 class ValidationResult(TypedDict):
@@ -263,6 +290,11 @@ def prepare_movement_records(
     the before/after state of the sentence. These records include the fact_id
     for linking back to the originating fact record.
 
+    Legacy sentence-level records use markers:
+    - pass_id = fact_id
+    - span_id = 'legacy:sentence'
+    - schema_version = 'legacy'
+
     Args:
         facts: List of extracted fact records ordered by iteration.
         source_sentence: Original sentence before any extraction.
@@ -287,6 +319,10 @@ def prepare_movement_records(
             isolated_fact=fact_text,
             after_sentence=rewritten,
             entity=entity,
+            # Extended fields with legacy markers
+            pass_id=fact_id,  # Use fact_id as pass_id for legacy
+            span_id="legacy:sentence",
+            schema_version="legacy",
         )
         records.append(record)
 
@@ -299,7 +335,8 @@ def prepare_movement_records(
 def write_isolation_records(csv_path: Path, records: list[IterativeMovementRecord]) -> None:
     """Write isolation records to CSV file.
 
-    Uses DuckDB to efficiently write records to CSV.
+    Uses DuckDB to efficiently write records to CSV. Handles extended schema
+    by using empty strings for missing columns.
 
     Args:
         csv_path: Path to output CSV file.
@@ -321,12 +358,16 @@ def write_isolation_records(csv_path: Path, records: list[IterativeMovementRecor
         insert_sql = f"INSERT INTO isolation_records VALUES ({placeholders})"
         for record in records:
             values = [
-                record["fact_id"],
-                str(record["iteration"]),
-                record["entity"],
-                record["before_sentence"],
-                record["isolated_fact"],
-                record["after_sentence"],
+                record.get("fact_id", ""),
+                str(record.get("iteration", 0)),
+                record.get("entity", ""),
+                record.get("before_sentence", ""),
+                record.get("isolated_fact", ""),
+                record.get("after_sentence", ""),
+                # Extended columns with defaults
+                record.get("pass_id", ""),
+                record.get("span_id", ""),
+                record.get("schema_version", "legacy"),
             ]
             conn.execute(insert_sql, values)
 

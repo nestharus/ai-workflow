@@ -238,6 +238,75 @@ tools: Read, Edit, Bash, Grep, Glob
 System prompt instructions for the agent...
 ```
 
+## Plan Execution Guidelines
+
+When executing tasks from implementation plans (files in `docs/plans/`), agents must
+follow these strict rules to ensure complete and consistent implementation.
+
+### No Deferred Stubs Without Plan Authorization
+
+**CRITICAL**: Do NOT create placeholder stubs, TODO comments, or deferred implementations
+unless the plan explicitly indicates the item is planned for a later task.
+
+* **Before creating a stub**: Check if the functionality is specified in the current task
+* **If specified in current task**: Implement it fully, even if it requires more effort
+* **If specified in a later task**: Note that in a comment with the task reference
+* **If implementation is blocked**: Document what is blocking and what is needed to proceed
+
+Bad example (unauthorized stub):
+
+```python
+def resolve_entity(entity_mention: str) -> str:
+    # TODO: Integrate with variant_resolver
+    return entity_mention  # Placeholder
+```
+
+Good example (plan-authorized deferral):
+
+```python
+def resolve_entity(entity_mention: str) -> str:
+    # Entity resolution rules are in Task 9 (fact_redesign_plan.md lines 172-189)
+    # This task (Task 6) uses pass-through until Task 9 is implemented
+    return entity_mention
+```
+
+### Task Decomposition for Complex Plans
+
+For plans with many requirements, the primary agent should:
+
+1. **Save the plan to `.tmp/`**: Split the plan into numbered task files
+2. **Delegate to sub-agents**: Use the `Task` tool with `subagent_type="general-purpose"`
+   to delegate individual tasks
+3. **Review each completion**: After each sub-agent returns, verify the task was fully
+   implemented before proceeding to the next task
+4. **Track incomplete items**: If a sub-agent reports blockers, record them and either
+   resolve them before continuing or escalate to the user
+
+Example workflow:
+
+```
+1. Read docs/plans/my_feature_plan.md
+2. Write task files:
+   - .tmp/my_feature/task_1.md
+   - .tmp/my_feature/task_2.md
+   - .tmp/my_feature/task_3.md
+3. Delegate Task 1 to sub-agent
+4. Review sub-agent output for Task 1
+5. Delegate Task 2 to sub-agent
+6. ...
+```
+
+### Reporting Incomplete Implementation
+
+If implementation cannot be completed, you MUST report:
+
+* What was completed
+* What could NOT be completed
+* WHY it could not be completed (missing dependency, unclear requirement, etc.)
+* What is needed to complete it
+
+Do NOT silently skip requirements or create stubs without explicit acknowledgment.
+
 ## External Resources
 
 When stuck on implementation details, library usage, or unfamiliar patterns, use the

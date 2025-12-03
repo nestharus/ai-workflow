@@ -18,9 +18,13 @@ Usage:
         --reason "..." --coverage "..." --before-text "..." --after-text-source "..." \
         --target-before "..." --target-after "..."
 
-    # Iterative sentence-level movement tracking
+    # Legacy sentence-level movement tracking
     uv run knowledge.record-iterative-movement --fact-id <uuid> --before "..." --fact "..." \
         --after "..."
+
+    # Artifact-level movement tracking (with pass/span/artifact IDs)
+    uv run knowledge.record-iterative-movement --fact-id <uuid> --before "..." --fact "..." \
+        --after "..." --pass-id <pass_uuid> --span-id <span_id> --artifact-id <artifact_id>
 
     # Query iterative movements
     uv run knowledge.query-iterative-movements --entity "create_app"
@@ -83,6 +87,11 @@ ITERATIVE_CSV_COLUMNS = [
     "similarity_score",
     "reason",
     "moved_at",
+    # Extended columns for artifact-level extraction (pass/span model)
+    "pass_id",
+    "span_id",
+    "artifact_id",
+    "schema_version",
 ]
 
 
@@ -116,24 +125,32 @@ class MovementRecord(TypedDict):
     moved_at: str
 
 
-class IterativeMovementRecord(TypedDict):
-    """A record for tracking iterative sentence-level fact movements.
+class IterativeMovementRecord(TypedDict, total=False):
+    """A record for tracking iterative sentence/span-level fact movements.
 
-    Tracks per-iteration sentence changes during fact extraction, linking to
+    Tracks per-iteration sentence/span changes during fact extraction, linking to
     fact records via fact_id for traceability. Includes semantic similarity
     validation score computed using Qwen embeddings.
+
+    Extended for artifact-level extraction to support the pass/span model where
+    movements are tracked per-pass with span context.
 
     Attributes:
         iteration_id: Unique UUID for this iteration record.
         fact_id: Links to fact record in facts/extractions.csv.
-        source_sentence: Sentence before this fact extraction.
+        source_sentence: Sentence/span text before this fact extraction.
         isolated_fact: The atomic fact extracted in this iteration.
-        residual_sentence: Sentence after this fact was removed.
+        residual_sentence: Sentence/span text after this fact was removed.
         similarity_score: Cosine similarity between source and (fact + residual), 0.0-1.0.
         reason: Explanation for this movement (typically "Fact extraction").
         moved_at: ISO 8601 basic format timestamp (YYYYMMDDTHHMMSSZ, UTC).
+        pass_id: Links to pass record in facts/passes.csv (artifact-level extraction).
+        span_id: Identifier for the span within the artifact being processed.
+        artifact_id: Identifier for the artifact being processed.
+        schema_version: Schema version for backward compatibility (default: "1.0").
     """
 
+    # Required base fields
     iteration_id: str
     fact_id: str
     source_sentence: str
@@ -142,6 +159,11 @@ class IterativeMovementRecord(TypedDict):
     similarity_score: str
     reason: str
     moved_at: str
+    # Extended fields for artifact-level extraction (optional for backward compat)
+    pass_id: str
+    span_id: str
+    artifact_id: str
+    schema_version: str
 
 
 def ensure_csv_exists(csv_path: Path) -> None:
@@ -242,6 +264,7 @@ def append_iterative_movement(csv_path: Path, record: IterativeMovementRecord) -
     """Append an iterative movement record to the CSV file.
 
     Uses DuckDB to read existing data, add the new record, and write back.
+    Handles extended schema with defaults for backward compatibility.
 
     Args:
         csv_path: Path to the iterative movements CSV file.
@@ -254,7 +277,21 @@ def append_iterative_movement(csv_path: Path, record: IterativeMovementRecord) -
             SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
         """)
         placeholders = ", ".join("?" for _ in ITERATIVE_CSV_COLUMNS)
-        values = [record[col] for col in ITERATIVE_CSV_COLUMNS]  # type: ignore[literal-required]
+        # Handle extended schema with defaults for backward compatibility
+        values = [
+            record.get("iteration_id", ""),
+            record.get("fact_id", ""),
+            record.get("source_sentence", ""),
+            record.get("isolated_fact", ""),
+            record.get("residual_sentence", ""),
+            record.get("similarity_score", ""),
+            record.get("reason", ""),
+            record.get("moved_at", ""),
+            record.get("pass_id", "legacy:sentence"),
+            record.get("span_id", "legacy:sentence"),
+            record.get("artifact_id", ""),
+            record.get("schema_version", "1.0"),
+        ]
         conn.execute(f"INSERT INTO iterative_movements VALUES ({placeholders})", values)
         conn.execute(f"COPY iterative_movements TO '{csv_path}' (HEADER, DELIMITER ',')")
     finally:
@@ -316,6 +353,11 @@ def query_iterative_movements(
                 "similarity_score": row[5],
                 "reason": row[6],
                 "moved_at": row[7],
+                # Extended columns (may be empty for legacy records)
+                "pass_id": row[8] if len(row) > 8 else "",
+                "span_id": row[9] if len(row) > 9 else "",
+                "artifact_id": row[10] if len(row) > 10 else "",
+                "schema_version": row[11] if len(row) > 11 else "1.0",
             }
             for row in result
         ]
@@ -465,7 +507,7 @@ def parse_record_iterative_args(argv: Sequence[str] | None = None) -> argparse.N
         Parsed argument namespace.
     """
     parser = argparse.ArgumentParser(
-        description="Record an iterative sentence-level fact movement with validation.",
+        description="Record an iterative sentence/span-level fact movement with validation.",
     )
     parser.add_argument(
         "--fact-id",
@@ -476,17 +518,17 @@ def parse_record_iterative_args(argv: Sequence[str] | None = None) -> argparse.N
     parser.add_argument(
         "--before",
         required=True,
-        help="Original sentence before fact extraction.",
+        help="Original sentence/span before fact extraction.",
     )
     parser.add_argument(
         "--fact",
         required=True,
-        help="The atomic fact extracted from the sentence.",
+        help="The atomic fact extracted from the sentence/span.",
     )
     parser.add_argument(
         "--after",
         required=True,
-        help="Residual sentence after fact was removed.",
+        help="Residual sentence/span after fact was removed.",
     )
     parser.add_argument(
         "--reason",
@@ -505,16 +547,35 @@ def parse_record_iterative_args(argv: Sequence[str] | None = None) -> argparse.N
         default="Qwen/Qwen3-Embedding-0.6B",
         help="HuggingFace model for embeddings (default: Qwen/Qwen3-Embedding-0.6B).",
     )
+    # Extended arguments for artifact-level extraction
+    parser.add_argument(
+        "--pass-id",
+        dest="pass_id",
+        help="Pass ID linking to facts/passes.csv (artifact-level extraction).",
+    )
+    parser.add_argument(
+        "--span-id",
+        dest="span_id",
+        help="Span ID within the artifact being processed.",
+    )
+    parser.add_argument(
+        "--artifact-id",
+        dest="artifact_id",
+        help="Artifact ID being processed.",
+    )
     return parser.parse_args(argv)
 
 
 def record_iterative_movement_main(args: argparse.Namespace) -> int:
-    """Record an iterative sentence-level fact movement with validation.
+    """Record an iterative sentence/span-level fact movement with validation.
 
     Loads Qwen model to compute similarity score, validates semantic similarity,
     and records the movement to the iterative movements CSV. The record is always
     persisted for debugging purposes, but a non-zero exit code indicates validation
     failure when similarity is below the required threshold.
+
+    Supports both legacy sentence-level extraction (with auto-generated markers)
+    and artifact-level extraction (with explicit --pass-id, --span-id, --artifact-id).
 
     Args:
         args: Parsed command-line arguments.
@@ -524,6 +585,8 @@ def record_iterative_movement_main(args: argparse.Namespace) -> int:
         1 on error (model loading failure, file I/O error).
         2 on validation failure (similarity < 0.95, record still persisted).
     """
+    import hashlib
+
     # Resolve knowledge path
     if args.knowledge_path.is_absolute():
         knowledge_path = args.knowledge_path.resolve()
@@ -547,6 +610,19 @@ def record_iterative_movement_main(args: argparse.Namespace) -> int:
     iteration_id = str(uuid.uuid4())
     moved_at = utc_timestamp()
 
+    # Use CLI-provided values if available, otherwise fall back to legacy markers
+    if getattr(args, "pass_id", None) and getattr(args, "span_id", None) and getattr(args, "artifact_id", None):
+        # Artifact-level extraction with explicit IDs
+        pass_id = args.pass_id
+        span_id = args.span_id
+        artifact_id = args.artifact_id
+    else:
+        # Legacy sentence-level extraction with auto-generated markers
+        sentence_hash = hashlib.sha256(args.before.encode()).hexdigest()[:16]
+        pass_id = args.fact_id  # Use fact_id as pass_id for legacy
+        span_id = "legacy:sentence"
+        artifact_id = f"legacy:sentence:{sentence_hash}"
+
     record = IterativeMovementRecord(
         iteration_id=iteration_id,
         fact_id=args.fact_id,
@@ -556,6 +632,10 @@ def record_iterative_movement_main(args: argparse.Namespace) -> int:
         similarity_score=f"{similarity:.4f}",
         reason=args.reason,
         moved_at=moved_at,
+        pass_id=pass_id,
+        span_id=span_id,
+        artifact_id=artifact_id,
+        schema_version="1.0",
     )
 
     # Ensure CSV exists and append record (always persist for debugging)

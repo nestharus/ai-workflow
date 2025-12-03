@@ -32,10 +32,12 @@ Artifact Lifecycle Integration:
     Per fact_redesign.md lines 561-569, manifest CRUD supports:
     1) Detect artifact roots and assign metadata (handled by compare_yaml_docs)
     2) Create/update Artifact Manifest (create_artifact_manifest, update_artifact_manifest)
-    3) Extract semantic facts (deferred to subsequent phase)
-    4) Render artifact from facts (deferred to subsequent phase)
-    5) Validate rendered vs source (deferred to subsequent phase)
-    6) Persist validation results (update_artifact_manifest)
+    3) Extract semantic facts (execute_artifact_lifecycle via artifact_fact_extractor)
+    4) Render artifact from facts (execute_artifact_lifecycle via artifact_renderer)
+    5) Validate rendered vs source (execute_artifact_lifecycle via artifact_validator)
+    6) Persist validation results (execute_artifact_lifecycle, set_validation_result)
+
+    Deferred to Task 9: Entity resolution (per fact_redesign_plan.md)
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import yaml
 
 if TYPE_CHECKING:
+    from scripts.knowledge.artifact_validator import ValidationResult
     from scripts.knowledge.compare_yaml_docs import Artifact
 
 # Module-level logger
@@ -494,3 +497,195 @@ def set_validation_result(
         }
     }
     update_artifact_manifest(artifact_id, updates, artifacts_dir)
+
+
+def execute_artifact_lifecycle(
+    artifact_id: str,
+    artifacts_dir: Path,
+    rendered_dir: Path,
+    validations_csv: Path,
+    knowledge_path: Path,
+) -> tuple[Path | None, "ValidationResult | None"]:
+    """Execute the full artifact lifecycle for a single artifact.
+
+    Orchestrates semantic fact extraction, rendering, and validation per
+    fact_redesign.md lines 561-569. Only processes V1 artifacts (modality=text
+    AND extraction_mode=full).
+
+    Lifecycle steps:
+    1. Load artifact manifest
+    2. Check V1 participation rule (skip if not V1)
+    3. Extract semantic facts (if artifact_fact_extractor available)
+    4. Load render plan
+    5. Render artifact from facts
+    6. Load source text for validation
+    7. Validate rendered vs source using appropriate comparator
+    8. Persist validation result to CSV
+    9. Update manifest with validation status
+    10. Return (rendered_path, ValidationResult)
+
+    Args:
+        artifact_id: The artifact identifier.
+        artifacts_dir: Base artifacts directory (e.g., .knowledge/artifacts).
+        rendered_dir: Directory for rendered artifacts (e.g., .knowledge/artifacts/rendered).
+        validations_csv: Path to the validations CSV file.
+        knowledge_path: Path to knowledge directory (e.g., .knowledge).
+
+    Returns:
+        Tuple of (rendered_path, ValidationResult) if successful, or (None, None)
+        if artifact is skipped or lifecycle fails.
+
+    Raises:
+        FileNotFoundError: If the manifest file doesn't exist.
+        ValueError: If the manifest is invalid or render plan not found.
+    """
+    # Import lazily to avoid circular imports
+    from scripts.knowledge.artifact_renderer import render_artifact
+    from scripts.knowledge.artifact_validator import (
+        ValidationResult,
+        get_comparator_for_artifact_kind,
+        validate_artifact,
+        write_validation_result,
+    )
+    from scripts.knowledge.render_plan_manager import load_render_plan
+
+    # Step 1: Load manifest
+    manifest = load_artifact_manifest(artifact_id, artifacts_dir)
+    _logger.info("Loaded manifest for artifact: %s", artifact_id)
+
+    # Step 2: Check V1 participation rule
+    modality = manifest.get("modality", "text")
+    extraction_mode = manifest.get("extraction_mode", "full")
+    if modality != "text" or extraction_mode != "full":
+        _logger.info(
+            "Skipping non-V1 artifact %s (modality=%s, extraction_mode=%s)",
+            artifact_id,
+            modality,
+            extraction_mode,
+        )
+        return None, None
+
+    # Step 3: Extract semantic facts (optional - may not have extractor)
+    try:
+        from scripts.knowledge.artifact_fact_extractor import extract_artifact_facts
+
+        extract_artifact_facts(manifest, knowledge_path)
+        _logger.info("Extracted semantic facts for artifact: %s", artifact_id)
+    except ImportError:
+        _logger.debug("artifact_fact_extractor not available, skipping fact extraction")
+    except Exception as e:
+        _logger.warning("Fact extraction failed for %s: %s", artifact_id, e)
+
+    # Step 4: Load render plan
+    render_plan_id = manifest.get("render_plan_id", "")
+    if not render_plan_id:
+        _logger.warning("No render_plan_id in manifest: %s", artifact_id)
+        return None, None
+
+    render_plans_dir = artifacts_dir.parent / "render_plans"
+    if not render_plans_dir.exists():
+        render_plans_dir = artifacts_dir / "render_plans"
+
+    try:
+        render_plan = load_render_plan(render_plan_id, render_plans_dir)
+        _logger.debug("Loaded render plan: %s", render_plan_id)
+    except FileNotFoundError:
+        _logger.warning("Render plan not found: %s", render_plan_id)
+        return None, None
+
+    # Step 5: Render artifact
+    try:
+        rendered_path = render_artifact(
+            manifest, render_plan, artifacts_dir, rendered_dir
+        )
+        _logger.info("Rendered artifact to: %s", rendered_path)
+    except Exception as e:
+        _logger.error("Rendering failed for %s: %s", artifact_id, e)
+        return None, None
+
+    # Step 6: Load source text for validation
+    source = manifest.get("source", {})
+    source_file = source.get("source_file", "")
+    if not source_file:
+        _logger.warning("No source_file in manifest: %s", artifact_id)
+        return rendered_path, None
+
+    # Resolve source file path
+    repo_root = artifacts_dir.parent.parent
+    source_path = Path(source_file)
+    if not source_path.is_absolute():
+        source_path = repo_root / source_file
+
+    if not source_path.exists():
+        _logger.warning("Source file not found: %s", source_path)
+        return rendered_path, None
+
+    try:
+        source_text = source_path.read_text(encoding="utf-8")
+
+        # Extract specific field if field_path is specified
+        field_path = source.get("field_path", "")
+        if field_path:
+            import yaml as yaml_lib
+
+            try:
+                data = yaml_lib.safe_load(source_text)
+                parts = field_path.split(".")
+                for part in parts:
+                    if isinstance(data, dict) and part in data:
+                        data = data[part]
+                    elif isinstance(data, list) and part.isdigit():
+                        data = data[int(part)]
+                    else:
+                        break
+                if isinstance(data, str):
+                    source_text = data
+                else:
+                    source_text = yaml_lib.safe_dump(
+                        data, default_flow_style=False, allow_unicode=True
+                    )
+            except yaml_lib.YAMLError:
+                pass  # Use full content
+    except OSError as e:
+        _logger.warning("Failed to read source file: %s", e)
+        return rendered_path, None
+
+    # Step 7: Validate rendered vs source
+    artifact_kind = manifest.get("artifact_kind", "prose/paragraph")
+    comparator = get_comparator_for_artifact_kind(artifact_kind)
+
+    try:
+        result = validate_artifact(
+            manifest, rendered_path, source_text, comparator
+        )
+        _logger.info(
+            "Validation result for %s: similarity=%.2f, passed=%s",
+            artifact_id,
+            result.similarity_score,
+            result.passed,
+        )
+    except Exception as e:
+        _logger.error("Validation failed for %s: %s", artifact_id, e)
+        return rendered_path, None
+
+    # Step 8: Persist validation result to CSV
+    try:
+        write_validation_result(result, validations_csv)
+        _logger.debug("Wrote validation result to: %s", validations_csv)
+    except OSError as e:
+        _logger.warning("Failed to write validation result: %s", e)
+
+    # Step 9: Update manifest with validation status
+    try:
+        set_validation_result(
+            artifact_id,
+            artifacts_dir,
+            str(result.similarity_score),
+            result.passed,
+            result.mismatch_summary,
+        )
+    except Exception as e:
+        _logger.warning("Failed to update manifest validation: %s", e)
+
+    # Step 10: Return results
+    return rendered_path, result

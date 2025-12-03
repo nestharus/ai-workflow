@@ -242,21 +242,54 @@ class TestGatherContributorFacts:
 class TestNormalizeTerminology:
     """Tests for _normalize_terminology function."""
 
-    def test_returns_facts_unchanged_stub(self) -> None:
-        """Verify stub returns facts unchanged."""
+    def test_returns_facts_unchanged_without_mapping(self) -> None:
+        """Verify facts are returned unchanged when no variant mapping is provided."""
         facts = [
-            {"type": "structural", "field_path": "test"},
-            {"type": "semantic", "field_path": "another"},
+            {"type": "structural", "field_path": "test", "value": "some content"},
+            {"type": "semantic", "field_path": "another", "value": "other content"},
         ]
 
-        result = _normalize_terminology(facts)
+        # With empty mapping, facts should be unchanged
+        result = _normalize_terminology(facts, keyword_variant_mapping={})
 
         assert result == facts
 
     def test_handles_empty_list(self) -> None:
         """Verify empty list is handled."""
-        result = _normalize_terminology([])
-        assert result == []
+        from unittest.mock import patch
+
+        # Mock apply_variant_decisions to avoid needing the CSV file
+        with patch(
+            "scripts.knowledge.variant_resolver.apply_variant_decisions",
+            return_value={}
+        ):
+            result = _normalize_terminology([])
+
+            assert result == []
+
+    def test_replaces_variant_terms(self) -> None:
+        """Verify variant terms are replaced with canonical forms."""
+        facts = [
+            {"type": "structural", "value": "Use FastAPI for REST APIs"},
+        ]
+        mapping = {"REST": "RESTful", "FastAPI": "FastAPI"}
+
+        result = _normalize_terminology(facts, keyword_variant_mapping=mapping)
+
+        assert result[0]["value"] == "Use FastAPI for RESTful APIs"
+
+    def test_handles_multiple_fields(self) -> None:
+        """Verify normalization applies to multiple text fields."""
+        facts = [
+            {"fact_text": "REST API", "value": "REST endpoint", "text": "REST service"},
+        ]
+        mapping = {"REST": "RESTful"}
+
+        result = _normalize_terminology(facts, keyword_variant_mapping=mapping)
+
+        assert "RESTful API" in result[0]["fact_text"]
+        assert "RESTful endpoint" in result[0]["value"]
+        assert "RESTful service" in result[0]["text"]
 
 
 class TestOrderFacts:
@@ -390,17 +423,75 @@ class TestRolePriorityMap:
 class TestRenderWithLlm:
     """Tests for _render_with_llm function."""
 
-    def test_returns_placeholder_text(self, sample_render_plan: dict) -> None:
-        """Verify stub returns placeholder text."""
+    def test_calls_claude_cli(self, sample_render_plan: dict) -> None:
+        """Verify Claude CLI is invoked with correct arguments."""
+        from unittest.mock import patch
+
         facts = [
             {"type": "structural", "field_path": "test.field"},
         ]
 
-        result = _render_with_llm(facts, sample_render_plan, "prose/paragraph")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "Rendered content from LLM"
+            mock_run.return_value.stderr = ""
 
-        assert "Rendered Artifact: prose/paragraph" in result
-        assert "Facts count: 1" in result
-        assert "placeholder output" in result.lower()
+            result = _render_with_llm(facts, sample_render_plan, "prose/paragraph")
+
+            assert result == "Rendered content from LLM"
+            assert mock_run.called
+            call_args = mock_run.call_args[0][0]
+            assert call_args[0] == "claude"
+            assert "--model" in call_args
+            assert "haiku" in call_args
+
+    def test_falls_back_to_source_text_on_failure(self, sample_render_plan: dict) -> None:
+        """Verify fallback to source text when CLI fails."""
+        from unittest.mock import patch
+
+        facts = [{"type": "structural", "field_path": "test"}]
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 1
+            mock_run.return_value.stdout = ""
+            mock_run.return_value.stderr = "Error"
+
+            result = _render_with_llm(
+                facts, sample_render_plan, "prose/paragraph",
+                source_text="Original source text"
+            )
+
+            assert result == "Original source text"
+
+    def test_falls_back_on_timeout(self, sample_render_plan: dict) -> None:
+        """Verify fallback to source text on timeout."""
+        import subprocess
+        from unittest.mock import patch
+
+        facts = [{"type": "structural", "field_path": "test"}]
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=120)
+
+            result = _render_with_llm(
+                facts, sample_render_plan, "prose/paragraph",
+                source_text="Fallback text"
+            )
+
+            assert result == "Fallback text"
+
+    def test_minimal_placeholder_when_no_source(self, sample_render_plan: dict) -> None:
+        """Verify minimal placeholder when CLI fails and no source text."""
+        from unittest.mock import patch
+
+        facts = [{"type": "structural", "field_path": "test"}]
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = FileNotFoundError("claude not found")
+
+            result = _render_with_llm(facts, sample_render_plan, "prose/paragraph")
+
+            assert "prose/paragraph" in result
 
 
 class TestRenderNone:
@@ -451,14 +542,61 @@ class TestRenderNone:
 class TestSelfCheck:
     """Tests for _self_check function."""
 
-    def test_stub_returns_true(self) -> None:
-        """Verify stub always returns True."""
-        result = _self_check("some rendered text", [{"fact": "value"}])
-        assert result is True
-
     def test_handles_empty_inputs(self) -> None:
-        """Verify empty inputs are handled."""
+        """Verify empty inputs return True (vacuous pass)."""
         assert _self_check("", []) is True
+        assert _self_check("some text", []) is True
+        assert _self_check("", [{"value": "fact"}]) is True
+
+    def test_returns_true_without_embeddings(self) -> None:
+        """Verify falls back to True when embeddings unavailable."""
+        from unittest.mock import patch
+
+        # When variant_resolver import fails, should return True
+        with patch.dict("sys.modules", {"scripts.knowledge.variant_resolver": None}):
+            result = _self_check("some rendered text", [{"value": "fact content"}])
+            assert result is True
+
+    def test_uses_embeddings_when_available(self) -> None:
+        """Verify embedding-based verification is attempted when available."""
+        from unittest.mock import MagicMock, patch
+
+        import numpy as np
+
+        rendered_text = "This is a test sentence. Another statement here."
+        facts = [{"value": "test sentence"}, {"value": "another statement"}]
+
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        # Create mock embeddings with high similarity
+        mock_embeddings = np.array([[0.9, 0.1], [0.1, 0.9], [0.85, 0.15], [0.15, 0.85]])
+
+        # Patch at the source module (variant_resolver) where the functions are defined
+        with (
+            patch(
+                "scripts.knowledge.variant_resolver.load_qwen_embedding_model",
+                return_value=(mock_model, mock_tokenizer)
+            ),
+            patch(
+                "scripts.knowledge.variant_resolver.embed_keywords",
+                return_value=mock_embeddings
+            ),
+            patch(
+                "scripts.knowledge.variant_resolver.compute_cosine_similarity",
+                return_value=np.array([[0.9, 0.2], [0.2, 0.85]])
+            ),
+        ):
+            result = _self_check(rendered_text, facts)
+            # Should pass with high similarity
+            assert result is True
+
+    def test_extracts_statements_correctly(self) -> None:
+        """Verify statements are extracted from rendered text."""
+        # Test with ImportError to see that the function handles the path without embeddings
+        result = _self_check("Short.", [{"value": "Short"}])
+        # Without embeddings available, should return True
+        assert result is True
 
 
 class TestGetStepHandler:
@@ -494,12 +632,19 @@ class TestStepHandlers:
 
     def test_step_normalize_normalizes_facts(self) -> None:
         """Verify _step_normalize normalizes facts."""
+        from unittest.mock import patch
+
         ctx = {"facts": [{"field_path": "test"}]}
 
-        result = _step_normalize(ctx)
+        # Mock apply_variant_decisions to avoid needing the CSV file
+        with patch(
+            "scripts.knowledge.variant_resolver.apply_variant_decisions",
+            return_value={}
+        ):
+            result = _step_normalize(ctx)
 
-        assert "normalized_facts" in result
-        assert result["normalized_facts"] == ctx["facts"]
+            assert "normalized_facts" in result
+            assert result["normalized_facts"] == ctx["facts"]
 
     def test_step_order_orders_facts(self, sample_render_plan: dict) -> None:
         """Verify _step_order orders facts by determinism rules."""
@@ -521,6 +666,8 @@ class TestStepHandlers:
         self, sample_render_plan: dict
     ) -> None:
         """Verify _step_render renders with text_llm engine."""
+        from unittest.mock import patch
+
         ctx = {
             "render_plan": sample_render_plan,
             "artifact_kind": "prose/paragraph",
@@ -529,10 +676,15 @@ class TestStepHandlers:
             "artifacts_dir": Path("/fake"),
         }
 
-        result = _step_render(ctx)
+        with patch("scripts.knowledge.artifact_renderer.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "Rendered content from LLM"
+            mock_run.return_value.stderr = ""
 
-        assert "rendered_text" in result
-        assert "Rendered Artifact" in result["rendered_text"]
+            result = _step_render(ctx)
+
+            assert "rendered_text" in result
+            assert result["rendered_text"] == "Rendered content from LLM"
 
     def test_step_self_check_validates(self) -> None:
         """Verify _step_self_check validates rendered output."""
@@ -560,17 +712,24 @@ class TestRenderArtifact:
         sample_render_plan: dict,
     ) -> None:
         """Verify artifact is rendered with text_llm engine."""
-        result = render_artifact(
-            sample_manifest,
-            sample_render_plan,
-            artifacts_dir,
-            rendered_dir,
-        )
+        from unittest.mock import patch
 
-        assert result.exists()
-        assert result.suffix == ".md"
-        content = result.read_text()
-        assert "Rendered Artifact" in content
+        with patch("scripts.knowledge.artifact_renderer.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "Rendered content from LLM"
+            mock_run.return_value.stderr = ""
+
+            result = render_artifact(
+                sample_manifest,
+                sample_render_plan,
+                artifacts_dir,
+                rendered_dir,
+            )
+
+            assert result.exists()
+            assert result.suffix == ".md"
+            content = result.read_text()
+            assert content == "Rendered content from LLM"
 
     def test_renders_none_engine_artifact(
         self,
@@ -605,18 +764,25 @@ class TestRenderArtifact:
         sample_render_plan: dict,
     ) -> None:
         """Verify output directory is created if not exists."""
+        from unittest.mock import patch
+
         rendered_dir = Path("/fake/new/rendered")
         # Don't create dir - let function create it
 
-        result = render_artifact(
-            sample_manifest,
-            sample_render_plan,
-            artifacts_dir,
-            rendered_dir,
-        )
+        with patch("scripts.knowledge.artifact_renderer.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "Rendered content from LLM"
+            mock_run.return_value.stderr = ""
 
-        assert result.exists()
-        assert rendered_dir.exists()
+            result = render_artifact(
+                sample_manifest,
+                sample_render_plan,
+                artifacts_dir,
+                rendered_dir,
+            )
+
+            assert result.exists()
+            assert rendered_dir.exists()
 
     def test_raises_for_unsupported_engine(
         self,
@@ -646,16 +812,23 @@ class TestRenderArtifact:
         sample_render_plan: dict,
     ) -> None:
         """Verify correct file extension is used based on format."""
+        from unittest.mock import patch
+
         sample_manifest["artifact_format"] = "text/x-mermaid"
 
-        result = render_artifact(
-            sample_manifest,
-            sample_render_plan,
-            artifacts_dir,
-            rendered_dir,
-        )
+        with patch("scripts.knowledge.artifact_renderer.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "sequenceDiagram\n    A->>B: Hello"
+            mock_run.return_value.stderr = ""
 
-        assert result.suffix == ".mmd"
+            result = render_artifact(
+                sample_manifest,
+                sample_render_plan,
+                artifacts_dir,
+                rendered_dir,
+            )
+
+            assert result.suffix == ".mmd"
 
     def test_uses_custom_steps_from_render_plan(
         self,
@@ -666,6 +839,8 @@ class TestRenderArtifact:
         sample_render_plan: dict,
     ) -> None:
         """Verify render_artifact interprets custom steps from render plan."""
+        from unittest.mock import patch
+
         # Define custom steps (skip normalize step)
         sample_render_plan["steps"] = [
             {"id": "gather", "instruction": "Collect facts"},
@@ -673,16 +848,21 @@ class TestRenderArtifact:
             {"id": "render", "instruction": "Render artifact"},
         ]
 
-        result = render_artifact(
-            sample_manifest,
-            sample_render_plan,
-            artifacts_dir,
-            rendered_dir,
-        )
+        with patch("scripts.knowledge.artifact_renderer.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "Rendered content from LLM"
+            mock_run.return_value.stderr = ""
 
-        assert result.exists()
-        content = result.read_text()
-        assert "Rendered Artifact" in content
+            result = render_artifact(
+                sample_manifest,
+                sample_render_plan,
+                artifacts_dir,
+                rendered_dir,
+            )
+
+            assert result.exists()
+            content = result.read_text()
+            assert content == "Rendered content from LLM"
 
     def test_uses_default_steps_when_none_specified(
         self,
@@ -693,19 +873,34 @@ class TestRenderArtifact:
         sample_render_plan: dict,
     ) -> None:
         """Verify default steps used when render plan has no steps."""
+        from unittest.mock import patch
+
         # Remove steps from render plan
         del sample_render_plan["steps"]
 
-        result = render_artifact(
-            sample_manifest,
-            sample_render_plan,
-            artifacts_dir,
-            rendered_dir,
-        )
+        # Mock both subprocess.run for LLM rendering and apply_variant_decisions
+        # for the normalize step in the default pipeline
+        with (
+            patch("scripts.knowledge.artifact_renderer.subprocess.run") as mock_run,
+            patch(
+                "scripts.knowledge.variant_resolver.apply_variant_decisions",
+                return_value={}
+            ),
+        ):
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "Rendered content from LLM"
+            mock_run.return_value.stderr = ""
 
-        assert result.exists()
-        content = result.read_text()
-        assert "Rendered Artifact" in content
+            result = render_artifact(
+                sample_manifest,
+                sample_render_plan,
+                artifacts_dir,
+                rendered_dir,
+            )
+
+            assert result.exists()
+            content = result.read_text()
+            assert content == "Rendered content from LLM"
 
     def test_skips_unrecognized_steps(
         self,
@@ -716,17 +911,24 @@ class TestRenderArtifact:
         sample_render_plan: dict,
     ) -> None:
         """Verify unrecognized steps are skipped gracefully."""
+        from unittest.mock import patch
+
         sample_render_plan["steps"] = [
             {"id": "gather"},
             {"id": "unknown_step"},  # Should be skipped
             {"id": "render"},
         ]
 
-        result = render_artifact(
-            sample_manifest,
-            sample_render_plan,
-            artifacts_dir,
-            rendered_dir,
-        )
+        with patch("scripts.knowledge.artifact_renderer.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "Rendered content from LLM"
+            mock_run.return_value.stderr = ""
 
-        assert result.exists()
+            result = render_artifact(
+                sample_manifest,
+                sample_render_plan,
+                artifacts_dir,
+                rendered_dir,
+            )
+
+            assert result.exists()

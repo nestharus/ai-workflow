@@ -4,6 +4,12 @@ This module provides utilities for:
 1. Storing extracted facts from extractions.csv into domain/pattern YAML files
 2. Querying facts by domain, pattern, entity, or fact_id
 3. Decorating YAML documentation with fact_ids and entity_id fields
+4. Fact identity and deduplication using canonical fact_key (per fact_redesign.md)
+
+Fact Identity (per docs/plans/fact_redesign.md lines 893-908):
+    Facts are deduplicated by canonical fact_key = sha256(normalize(fact_text) + '|' + entity_id + '|' + artifact_id)
+    Normalization: Unicode NFC, trim, collapse whitespace, stable punctuation.
+    Multiple extractions of the same fact merge provenance in fact_provenance.csv.
 
 Usage:
     # Store facts for an entity to domain/pattern YAML
@@ -43,7 +49,10 @@ Note:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import re
 import sys
+import unicodedata
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, TypedDict
@@ -53,6 +62,246 @@ import yaml
 
 from scripts.dev.utils import REPO_ROOT, utc_timestamp
 from scripts.knowledge.compare_yaml_docs import parse_yaml_file
+
+# --- Fact Identity and Deduplication (per fact_redesign.md lines 893-908) ---
+
+# CSV columns for fact provenance tracking
+PROVENANCE_CSV_COLUMNS = [
+    "fact_id",
+    "fact_key",
+    "artifact_id",
+    "pass_id",
+    "span_id",
+    "source_file",
+    "source_element_id",
+    "source_field_path",
+    "extracted_at",
+    "confidence",
+]
+
+
+class FactProvenanceRecord(TypedDict):
+    """A provenance record linking fact extractions to their sources.
+
+    Attributes:
+        fact_id: UUID of the fact extraction.
+        fact_key: Canonical fact key (sha256 hash).
+        artifact_id: Artifact where fact was extracted.
+        pass_id: Pass ID from artifact extraction.
+        span_id: Span ID within artifact.
+        source_file: Source YAML file path.
+        source_element_id: Element ID within YAML.
+        source_field_path: Field path within element.
+        extracted_at: ISO 8601 timestamp.
+        confidence: Confidence score as string.
+    """
+
+    fact_id: str
+    fact_key: str
+    artifact_id: str
+    pass_id: str
+    span_id: str
+    source_file: str
+    source_element_id: str
+    source_field_path: str
+    extracted_at: str
+    confidence: str
+
+
+def normalize_fact_text(fact_text: str) -> str:
+    """Normalize fact text for canonical comparison.
+
+    Normalization steps:
+    1. Unicode normalization (NFC)
+    2. Trim leading/trailing whitespace
+    3. Collapse internal whitespace to single spaces
+    4. Stable punctuation (normalize quotes, dashes)
+
+    Args:
+        fact_text: Raw fact text to normalize.
+
+    Returns:
+        Normalized fact text.
+    """
+    # Unicode normalization (NFC)
+    text = unicodedata.normalize("NFC", fact_text)
+
+    # Trim whitespace
+    text = text.strip()
+
+    # Collapse internal whitespace
+    text = re.sub(r"\s+", " ", text)
+
+    # Stable punctuation: normalize various quote types
+    text = text.replace("\u2018", "'")  # Left single quote
+    text = text.replace("\u2019", "'")  # Right single quote
+    text = text.replace("\u201c", '"')  # Left double quote
+    text = text.replace("\u201d", '"')  # Right double quote
+
+    # Normalize dashes
+    text = text.replace("\u2013", "-")  # En dash
+    text = text.replace("\u2014", "-")  # Em dash
+
+    return text
+
+
+def compute_fact_key(fact_text: str, entity_id: str, artifact_id: str) -> str:
+    """Compute canonical fact key for deduplication.
+
+    The fact_key is a SHA-256 hash of normalized fact text combined with
+    entity_id and artifact_id, ensuring uniqueness within context.
+
+    Args:
+        fact_text: The fact text to hash.
+        entity_id: Resolved entity ID.
+        artifact_id: Artifact ID for context.
+
+    Returns:
+        Hex digest of SHA-256 hash.
+    """
+    normalized = normalize_fact_text(fact_text)
+    composite = f"{normalized}|{entity_id}|{artifact_id}"
+    return hashlib.sha256(composite.encode("utf-8")).hexdigest()
+
+
+def ensure_provenance_csv_exists(csv_path: Path) -> None:
+    """Create fact provenance CSV with header if it doesn't exist.
+
+    Args:
+        csv_path: Path to the provenance CSV file.
+    """
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    needs_header = not csv_path.exists() or csv_path.stat().st_size == 0
+    if needs_header:
+        cols_select = ", ".join(f"'' AS {col}" for col in PROVENANCE_CSV_COLUMNS)
+        query = f"COPY (SELECT * FROM (SELECT {cols_select}) WHERE 1=0) "
+        query += f"TO '{csv_path}' (HEADER, DELIMITER ',')"
+        duckdb.execute(query)
+
+
+def append_provenance(csv_path: Path, record: FactProvenanceRecord) -> None:
+    """Append a provenance record to the CSV.
+
+    Args:
+        csv_path: Path to the provenance CSV file.
+        record: Provenance record to append.
+    """
+    ensure_provenance_csv_exists(csv_path)
+
+    conn = duckdb.connect()
+    try:
+        conn.execute(f"""
+            CREATE TABLE provenance AS
+            SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
+        """)
+        placeholders = ", ".join("?" for _ in PROVENANCE_CSV_COLUMNS)
+        values = [record[col] for col in PROVENANCE_CSV_COLUMNS]  # type: ignore[literal-required]
+        conn.execute(f"INSERT INTO provenance VALUES ({placeholders})", values)
+        conn.execute(f"COPY provenance TO '{csv_path}' (HEADER, DELIMITER ',')")
+    finally:
+        conn.close()
+
+
+def fact_key_exists(csv_path: Path, fact_key: str) -> bool:
+    """Check if a fact_key already exists in the extractions CSV.
+
+    Args:
+        csv_path: Path to the extractions CSV file.
+        fact_key: Fact key to check.
+
+    Returns:
+        True if fact_key exists, False otherwise.
+    """
+    if not csv_path.exists() or csv_path.stat().st_size == 0:
+        return False
+
+    # Note: This assumes extractions.csv has been updated with fact_key column
+    # For now, we check against fact_provenance.csv instead
+    provenance_csv = csv_path.parent / "fact_provenance.csv"
+    if not provenance_csv.exists() or provenance_csv.stat().st_size == 0:
+        return False
+
+    query = """
+        SELECT COUNT(*) FROM read_csv_auto(?, ALL_VARCHAR=TRUE)
+        WHERE fact_key = ?
+    """
+    try:
+        result = duckdb.execute(query, [str(provenance_csv), fact_key]).fetchone()
+        return result is not None and result[0] > 0
+    except duckdb.Error:
+        return False
+
+
+def query_fact_provenance(
+    fact_key: str,
+    knowledge_path: Path,
+) -> list[dict[str, str]]:
+    """Query all provenance records for a fact_key.
+
+    Args:
+        fact_key: Canonical fact key to query.
+        knowledge_path: Base knowledge directory.
+
+    Returns:
+        List of provenance records.
+    """
+    provenance_csv = knowledge_path / "facts" / "fact_provenance.csv"
+    if not provenance_csv.exists() or provenance_csv.stat().st_size == 0:
+        return []
+
+    query = """
+        SELECT * FROM read_csv_auto(?, ALL_VARCHAR=TRUE)
+        WHERE fact_key = ?
+        ORDER BY extracted_at
+    """
+    try:
+        result = duckdb.execute(query, [str(provenance_csv), fact_key]).fetchall()
+        return [
+            {col: row[i] for i, col in enumerate(PROVENANCE_CSV_COLUMNS)}
+            for row in result
+        ]
+    except duckdb.Error:
+        return []
+
+
+def store_fact_with_deduplication(
+    fact_text: str,
+    entity_id: str,
+    artifact_id: str,
+    provenance: FactProvenanceRecord,
+    knowledge_path: Path,
+) -> tuple[str, bool]:
+    """Store a fact with deduplication by fact_key.
+
+    If the fact_key already exists, only provenance is appended.
+    If the fact_key is new, the fact is inserted and provenance recorded.
+
+    Args:
+        fact_text: The fact text.
+        entity_id: Resolved entity ID.
+        artifact_id: Artifact ID.
+        provenance: Provenance record for this extraction.
+        knowledge_path: Base knowledge directory.
+
+    Returns:
+        Tuple of (fact_key, is_new) where is_new is True if fact was inserted.
+    """
+    fact_key = compute_fact_key(fact_text, entity_id, artifact_id)
+    provenance_csv = knowledge_path / "facts" / "fact_provenance.csv"
+
+    # Update provenance record with computed fact_key
+    provenance_with_key: FactProvenanceRecord = {
+        **provenance,
+        "fact_key": fact_key,
+    }
+
+    # Check if fact_key exists
+    is_new = not fact_key_exists(knowledge_path / "facts" / "extractions.csv", fact_key)
+
+    # Always append provenance (merges multiple extractions)
+    append_provenance(provenance_csv, provenance_with_key)
+
+    return fact_key, is_new
 
 
 class FactStoreRecord(TypedDict):

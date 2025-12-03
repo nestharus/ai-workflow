@@ -1168,12 +1168,15 @@ Other combinations are representable in manifests but bypassed by the V1 pipelin
 
 Per `docs/plans/fact_redesign.md` lines 561-569:
 
-1. **Detect artifact roots**: Assign artifact_kind, artifact_format, render_engine, render_plan_id
-2. **Create/update manifests**: Store in `.knowledge/artifacts/<artifact_id>.yml`
-3. **Extract semantic facts**: From source artifact blob (deferred to subsequent phase)
-4. **Render from facts**: Using render plan into `.knowledge/artifacts/rendered/`
-5. **Validate**: Compare rendered artifact back to original source
-6. **Persist validation**: Store results and mismatches for auditability
+1. **Detect artifact roots** (implemented): Assign artifact_kind, artifact_format, render_engine, render_plan_id
+2. **Create/update manifests** (implemented): Store in `.knowledge/artifacts/<artifact_id>.yml`
+3. **Extract semantic facts** (implemented): `artifact_fact_extractor.extract_artifact_facts()` with Hunter/Surgeon/Auditor pipeline
+4. **Render from facts** (implemented): `artifact_renderer.render_artifact()` with LLM rendering via Claude CLI
+5. **Validate** (implemented): `artifact_validator.validate_artifact()` with embedding-based similarity via Qwen3
+6. **Persist validation** (implemented): Store results and mismatches to CSV and manifest
+
+The full lifecycle can be executed via `artifact_manager.execute_artifact_lifecycle()`.
+Entity resolution is correctly deferred to Task 9 (per fact_redesign_plan.md).
 
 ### Example Manifest
 

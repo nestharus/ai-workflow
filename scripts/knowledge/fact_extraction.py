@@ -5,6 +5,10 @@ about a given entity from a sentence. Facts are extracted one at a time, with
 the sentence rewritten after each extraction, until no facts about the entity
 remain. Results are stored in `.knowledge/facts/extractions.csv`.
 
+NOTE: This is the legacy sentence-level extraction path, preserved for debugging.
+For production use, see `knowledge.extract-artifact-facts` which uses the
+multi-agent artifact-level extraction pipeline (Hunter -> Surgeon -> Auditor).
+
 The CLI first attempts to use the fact-extractor sub-agent (haiku model). If the
 sub-agent succeeds, Qwen embeddings are used to re-validate the extraction results.
 If the sub-agent is unavailable, the CLI falls back to inline heuristic-based
@@ -35,11 +39,26 @@ Args:
 
 Future enhancements:
     --input-file: Batch processing from YAML/JSONL file (not yet implemented).
+
+Extended Schema (per docs/plans/fact_redesign.md lines 849-863):
+    The CSV now includes provenance columns for artifact-level extraction:
+    - source_file, source_element_id, source_field_path: Source location
+    - artifact_id, span_id, pass_id: Artifact extraction context
+    - entity_mention, entity_id: Entity identification
+    - extraction_model, rewrite_model: Models used
+    - state_hash_before, state_hash_after: State tracking
+
+    Legacy sentence-level extractions use markers:
+    - pass_id = fact_id
+    - span_id = 'legacy:sentence'
+    - artifact_id = 'legacy:sentence:<sha256(source_sentence)>'
+    - extraction_model = 'legacy'
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -61,7 +80,7 @@ from scripts.knowledge.variant_resolver import (
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-# CSV columns for fact extraction records
+# CSV columns for fact extraction records (extended schema per fact_redesign.md)
 CSV_COLUMNS = [
     "fact_id",
     "source_sentence",
@@ -71,13 +90,26 @@ CSV_COLUMNS = [
     "iteration",
     "confidence",
     "extracted_at",
+    # Extended provenance columns (artifact-level extraction)
+    "source_file",
+    "source_element_id",
+    "source_field_path",
+    "artifact_id",
+    "span_id",
+    "pass_id",
+    "entity_mention",
+    "entity_id",
+    "extraction_model",
+    "rewrite_model",
+    "state_hash_before",
+    "state_hash_after",
 ]
 
 
-class FactRecord(TypedDict):
-    """A fact extraction record.
+class FactRecord(TypedDict, total=False):
+    """A fact extraction record with extended provenance.
 
-    Attributes:
+    Core Attributes (always present):
         fact_id: UUID for this fact extraction record.
         source_sentence: Original sentence before any extraction.
         entity: Entity/keyword being extracted.
@@ -86,8 +118,29 @@ class FactRecord(TypedDict):
         iteration: Iteration number (1-indexed, as string).
         confidence: Confidence score (0.0-1.0, as string).
         extracted_at: ISO 8601 timestamp.
+
+    Extended Provenance Attributes (optional, for artifact-level extraction):
+        source_file: YAML file path where fact originated.
+        source_element_id: Element ID within YAML file.
+        source_field_path: Field path within element.
+        artifact_id: Artifact ID for artifact-level extraction.
+        span_id: Span ID within artifact.
+        pass_id: Pass ID linking to passes.csv.
+        entity_mention: Entity mention as it appeared in text.
+        entity_id: Resolved entity ID.
+        extraction_model: Model used for extraction.
+        rewrite_model: Model used for rewriting.
+        state_hash_before: State hash before this extraction.
+        state_hash_after: State hash after this extraction.
+
+    Legacy sentence-level extractions use markers:
+        - pass_id = fact_id
+        - span_id = 'legacy:sentence'
+        - artifact_id = 'legacy:sentence:<sha256(source_sentence)>'
+        - extraction_model = 'legacy'
     """
 
+    # Core fields (required)
     fact_id: str
     source_sentence: str
     entity: str
@@ -96,6 +149,19 @@ class FactRecord(TypedDict):
     iteration: str
     confidence: str
     extracted_at: str
+    # Extended provenance fields (optional)
+    source_file: str
+    source_element_id: str
+    source_field_path: str
+    artifact_id: str
+    span_id: str
+    pass_id: str
+    entity_mention: str
+    entity_id: str
+    extraction_model: str
+    rewrite_model: str
+    state_hash_before: str
+    state_hash_after: str
 
 
 def ensure_csv_exists(csv_path: Path) -> None:
@@ -119,6 +185,8 @@ def append_fact_batch(csv_path: Path, records: list[FactRecord]) -> None:
     """Append multiple fact records to the CSV file efficiently.
 
     Uses DuckDB to read existing data, add new records in batch, and write back.
+    Handles extended schema by using empty strings for missing columns.
+    Supports backward compatibility with old CSVs that have fewer columns.
 
     Args:
         csv_path: Path to the CSV file.
@@ -129,14 +197,37 @@ def append_fact_batch(csv_path: Path, records: list[FactRecord]) -> None:
 
     conn = duckdb.connect()
     try:
+        # Read existing CSV - may have old schema with fewer columns
         conn.execute(f"""
-            CREATE TABLE facts AS
+            CREATE TABLE facts_old AS
             SELECT * FROM read_csv_auto('{csv_path}', ALL_VARCHAR=TRUE)
         """)
+
+        # Get existing columns from the old table
+        existing_cols_result = conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'facts_old' ORDER BY ordinal_position"
+        ).fetchall()
+        existing_cols = {row[0] for row in existing_cols_result}
+
+        # Build SELECT statement that adds missing columns with empty string defaults
+        select_cols = []
+        for col in CSV_COLUMNS:
+            if col in existing_cols:
+                select_cols.append(col)
+            else:
+                select_cols.append(f"'' AS {col}")
+
+        # Create new table with full schema from old data
+        select_sql = ", ".join(select_cols)
+        conn.execute(f"CREATE TABLE facts AS SELECT {select_sql} FROM facts_old")
+
+        # Insert new records
         placeholders = ", ".join("?" for _ in CSV_COLUMNS)
         insert_sql = f"INSERT INTO facts VALUES ({placeholders})"
         for record in records:
-            values = [record[col] for col in CSV_COLUMNS]  # type: ignore[literal-required]
+            # Use empty string for missing extended columns
+            values = [record.get(col, "") for col in CSV_COLUMNS]  # type: ignore[literal-required]
             conn.execute(insert_sql, values)
         conn.execute(f"COPY facts TO '{csv_path}' (HEADER, DELIMITER ',')")
     finally:
@@ -649,6 +740,10 @@ def extract_facts_main(args: argparse.Namespace) -> int:
     timestamp = utc_timestamp()
     records: list[FactRecord] = []
 
+    # Compute artifact_id for legacy sentence-level extraction
+    sentence_hash = hashlib.sha256(args.sentence.encode("utf-8")).hexdigest()[:16]
+    legacy_artifact_id = f"legacy:sentence:{sentence_hash}"
+
     for i, fact_info in enumerate(facts, 1):
         # Use per-iteration rewritten_sentence from the fact
         rewritten_sentence = fact_info.get("rewritten_sentence", "")
@@ -656,8 +751,9 @@ def extract_facts_main(args: argparse.Namespace) -> int:
         if not rewritten_sentence and i == len(facts):
             rewritten_sentence = residual
 
+        fact_id = str(uuid.uuid4())
         record = FactRecord(
-            fact_id=str(uuid.uuid4()),
+            fact_id=fact_id,
             source_sentence=args.sentence,
             entity=args.entity,
             fact_text=str(fact_info.get("fact", "")),
@@ -665,6 +761,19 @@ def extract_facts_main(args: argparse.Namespace) -> int:
             iteration=str(i),
             confidence=f"{fact_info.get('confidence', 0.0):.4f}",
             extracted_at=timestamp,
+            # Extended provenance fields with legacy markers
+            source_file="",
+            source_element_id="",
+            source_field_path="",
+            artifact_id=legacy_artifact_id,
+            span_id="legacy:sentence",
+            pass_id=fact_id,  # Use fact_id as pass_id for legacy
+            entity_mention=args.entity,
+            entity_id=args.entity,
+            extraction_model="legacy",
+            rewrite_model="legacy",
+            state_hash_before="",
+            state_hash_after="",
         )
         records.append(record)
 

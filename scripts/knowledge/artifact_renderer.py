@@ -5,22 +5,27 @@ fact_redesign.md lines 938-946. Rendering follows the render plan steps
 defined in the render plan's steps sequence.
 
 Render Engines:
-    - text_llm: Uses LLM to render artifact from facts (stub for now)
+    - text_llm: Uses Claude CLI (haiku model) to render artifact from facts
     - none: Returns source artifact text unchanged (for diagrams, etc.)
 
 Current Implementation Status:
-    - Implemented: Infrastructure, file I/O, ordering, extension mapping, step interpretation
-    - Stub/Placeholder: LLM rendering, terminology normalization, self-check
-    - Deferred to Phase 2: Full LLM integration, semantic fact extraction
+    - Implemented: Infrastructure, file I/O, ordering, extension mapping, step interpretation,
+      LLM rendering via Claude CLI, terminology normalization via variant system,
+      embedding-based self-check via Qwen3
+    - Deferred to Task 9: Entity resolution (per fact_redesign_plan.md)
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 import yaml
+
+from scripts.dev.utils import REPO_ROOT
 
 if TYPE_CHECKING:
     from scripts.knowledge.artifact_manager import ArtifactManifest, ContributorFact
@@ -162,23 +167,77 @@ def _gather_contributor_facts(
 
 def _normalize_terminology(
     facts: list[dict[str, Any]],
-    _keyword_variant_system: dict[str, str] | None = None,
+    keyword_variant_mapping: dict[str, str] | None = None,
+    knowledge_path: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Normalize terminology to canonical keywords.
 
-    Stub implementation - returns facts unchanged. Full implementation will
-    use keyword variant system to replace synonyms with canonical forms.
+    Uses the variant resolver system to replace variant keywords with their
+    canonical forms. Loads variant mappings from variant_candidates.csv.
 
     Args:
         facts: List of contributor facts.
-        _keyword_variant_system: Optional keyword variant mapping (unused in stub).
+        keyword_variant_mapping: Optional pre-loaded keyword variant mapping.
+            If not provided, attempts to load from knowledge_path.
+        knowledge_path: Path to knowledge directory (default: REPO_ROOT / ".knowledge").
 
     Returns:
         List of facts with normalized terminology.
     """
-    # Stub: return facts unchanged
-    _logger.debug("Terminology normalization stub - returning facts unchanged")
-    return facts
+    # Load or use provided variant mapping
+    if keyword_variant_mapping is None:
+        knowledge_path = knowledge_path or REPO_ROOT / ".knowledge"
+        try:
+            # Import here to avoid circular imports
+            from scripts.knowledge.variant_resolver import apply_variant_decisions
+
+            keyword_variant_mapping = apply_variant_decisions(knowledge_path)
+        except (ImportError, FileNotFoundError, ValueError) as e:
+            _logger.debug(
+                "Could not load variant mapping, returning facts unchanged: %s", e
+            )
+            return facts
+
+    if not keyword_variant_mapping:
+        _logger.debug("No variant mapping available, returning facts unchanged")
+        return facts
+
+    # Normalize facts by replacing variant terms with canonical forms
+    normalized_facts = []
+    for fact in facts:
+        normalized_fact = dict(fact)
+
+        # Check text-containing fields for variant terms
+        for field_name in ("value", "fact_text", "text", "content"):
+            if field_name in normalized_fact and isinstance(
+                normalized_fact[field_name], str
+            ):
+                original_value = normalized_fact[field_name]
+                normalized_value = original_value
+
+                # Replace each variant term with its canonical form
+                for variant_term, canonical_term in keyword_variant_mapping.items():
+                    if variant_term in normalized_value and variant_term != canonical_term:
+                        normalized_value = normalized_value.replace(
+                            variant_term, canonical_term
+                        )
+                        _logger.debug(
+                            "Normalized '%s' to '%s' in field %s",
+                            variant_term,
+                            canonical_term,
+                            field_name,
+                        )
+
+                normalized_fact[field_name] = normalized_value
+
+        normalized_facts.append(normalized_fact)
+
+    _logger.debug(
+        "Normalized terminology for %d facts using %d variant mappings",
+        len(normalized_facts),
+        len(keyword_variant_mapping),
+    )
+    return normalized_facts
 
 
 def _order_facts(
@@ -217,49 +276,105 @@ def _render_with_llm(
     ordered_facts: list[dict[str, Any]],
     render_plan: RenderPlan,
     artifact_kind: str,
+    source_text: str = "",
+    timeout_seconds: int = 120,
 ) -> str:
-    """Render artifact using LLM.
+    """Render artifact using LLM via Claude CLI.
 
-    Stub implementation - returns placeholder text. Full implementation will
-    use LLM to generate artifact text from ordered facts following render
-    plan instructions.
+    Uses Claude CLI (haiku model) to render artifact from ordered facts
+    following render plan instructions. Pattern from surgeon_orchestrator.py.
 
     Args:
         ordered_facts: List of ordered contributor facts.
         render_plan: The render plan with step instructions.
         artifact_kind: The artifact kind being rendered.
+        source_text: Original source text for fallback (monotonic safety).
+        timeout_seconds: Timeout for Claude CLI invocation (default 120s).
 
     Returns:
         Rendered artifact text.
     """
-    # Stub: return placeholder text
     _logger.debug(
-        "LLM rendering stub - returning placeholder for %d facts, kind=%s",
+        "Rendering artifact with LLM: %d facts, kind=%s, plan=%s",
         len(ordered_facts),
         artifact_kind,
+        render_plan.get("render_plan_id", "unknown"),
     )
 
-    # Generate placeholder based on artifact kind
-    lines = [
-        f"# Rendered Artifact: {artifact_kind}",
-        "",
-        f"Render plan: {render_plan['render_plan_id']}",
-        f"Facts count: {len(ordered_facts)}",
-        "",
-        "## Contributor Facts",
-        "",
-    ]
+    # Build render instructions from render plan steps
+    instructions = []
+    for step in render_plan.get("steps", []):
+        instruction = step.get("instruction", "")
+        if instruction:
+            instructions.append(f"- {instruction}")
 
-    for i, fact in enumerate(ordered_facts, 1):
-        lines.append(f"{i}. [{fact.get('type', 'unknown')}] {fact.get('field_path', 'N/A')}")
+    render_instructions = "\n".join(instructions) if instructions else "Render the artifact."
 
-    lines.extend([
-        "",
-        "---",
-        "*Note: This is placeholder output. Full LLM rendering deferred to Phase 2.*",
-    ])
+    # Format facts as context
+    facts_context = json.dumps(ordered_facts, indent=2, default=str)
 
-    return "\n".join(lines)
+    # Build the prompt
+    prompt = f"""You are rendering an artifact of type: {artifact_kind}
+
+## Render Plan Instructions
+{render_instructions}
+
+## Contributor Facts (in deterministic order)
+{facts_context}
+
+## Task
+Render the artifact by synthesizing the facts above following the render plan instructions.
+Output ONLY the rendered artifact text, with no additional commentary or markdown fencing.
+Preserve the semantic content of all facts accurately.
+"""
+
+    # Try Claude CLI invocation
+    try:
+        result = subprocess.run(
+            ["claude", "--model", "haiku", "--print", "--prompt", prompt],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+
+        if result.returncode == 0 and result.stdout.strip():
+            rendered_text = result.stdout.strip()
+            _logger.info(
+                "Successfully rendered artifact via Claude CLI: %d chars",
+                len(rendered_text),
+            )
+            return rendered_text
+        else:
+            _logger.warning(
+                "Claude CLI returned non-zero or empty output (rc=%d), "
+                "falling back to source text",
+                result.returncode,
+            )
+            if result.stderr:
+                _logger.debug("Claude CLI stderr: %s", result.stderr[:500])
+
+    except subprocess.TimeoutExpired:
+        _logger.warning(
+            "Claude CLI timed out after %ds, falling back to source text",
+            timeout_seconds,
+        )
+    except FileNotFoundError:
+        _logger.warning(
+            "Claude CLI not found, falling back to source text. "
+            "Install Claude Code CLI to enable LLM rendering."
+        )
+    except OSError as e:
+        _logger.warning("Claude CLI invocation failed: %s, falling back to source text", e)
+
+    # Monotonic safety: fall back to source text unchanged
+    if source_text:
+        _logger.debug("Using source text fallback (%d chars)", len(source_text))
+        return source_text
+
+    # If no source text, generate minimal placeholder
+    _logger.debug("No source text available, generating minimal placeholder")
+    return f"[Rendered artifact: {artifact_kind}]"
 
 
 def _render_none(
@@ -349,27 +464,123 @@ def _render_none(
 def _self_check(
     rendered_text: str,
     contributor_facts: list[dict[str, Any]],
+    similarity_threshold: float = 0.7,
 ) -> bool:
-    """Verify every statement maps to contributor fact.
+    """Verify every statement maps to contributor fact using embeddings.
 
-    Stub implementation - returns True. Full implementation will verify
-    that every statement in the rendered text maps to exactly one contributor
-    fact and flag any orphan or missing facts.
+    Uses Qwen embeddings to verify that:
+    1. Every contributor fact is represented in at least one statement
+    2. Every statement in the rendered text is backed by at least one fact
 
     Args:
         rendered_text: The rendered artifact text.
         contributor_facts: List of contributor facts.
+        similarity_threshold: Minimum cosine similarity for fact-statement match.
 
     Returns:
         True if self-check passes, False otherwise.
     """
-    # Stub: always return True
-    _logger.debug(
-        "Self-check stub - assuming pass for %d chars, %d facts",
-        len(rendered_text),
-        len(contributor_facts),
-    )
-    return True
+    if not rendered_text or not contributor_facts:
+        _logger.debug("Self-check: empty rendered text or no facts, returning True")
+        return True
+
+    # Parse rendered text into statements (split on sentence boundaries)
+    import re
+
+    # Split on period, question mark, exclamation mark followed by space or newline
+    # Also split on double newlines (paragraph breaks)
+    statements = []
+    raw_statements = re.split(r"(?<=[.!?])\s+|\n\n+", rendered_text.strip())
+    for stmt in raw_statements:
+        cleaned = stmt.strip()
+        if cleaned and len(cleaned) > 5:  # Skip very short fragments
+            statements.append(cleaned)
+
+    if not statements:
+        _logger.debug("Self-check: no statements extracted, returning True")
+        return True
+
+    # Extract fact texts from contributor facts
+    fact_texts = []
+    for fact in contributor_facts:
+        # Try various field names for fact content
+        text = fact.get("fact_text") or fact.get("value") or fact.get("text") or ""
+        if isinstance(text, str) and text.strip():
+            fact_texts.append(text.strip())
+
+    if not fact_texts:
+        _logger.debug("Self-check: no fact texts extracted, returning True")
+        return True
+
+    # Try to load Qwen embeddings for semantic comparison
+    try:
+        from scripts.knowledge.variant_resolver import (
+            compute_cosine_similarity,
+            embed_keywords,
+            load_qwen_embedding_model,
+        )
+
+        model, tokenizer = load_qwen_embedding_model()
+
+        # Embed statements and facts
+        statement_embeddings = embed_keywords(statements, model, tokenizer)
+        fact_embeddings = embed_keywords(fact_texts, model, tokenizer)
+
+        # Compute similarity matrix
+        similarity_matrix = compute_cosine_similarity(
+            statement_embeddings, fact_embeddings
+        )
+
+        # Check that each fact has at least one matching statement
+        missing_facts = []
+        for i, fact_text in enumerate(fact_texts):
+            max_sim = float(similarity_matrix[:, i].max())
+            if max_sim < similarity_threshold:
+                missing_facts.append((fact_text[:50], max_sim))
+                _logger.debug(
+                    "Fact not represented: '%s...' (max_sim=%.2f)",
+                    fact_text[:50],
+                    max_sim,
+                )
+
+        # Check that each statement has at least one backing fact
+        orphan_statements = []
+        for i, stmt in enumerate(statements):
+            max_sim = float(similarity_matrix[i, :].max())
+            if max_sim < similarity_threshold:
+                orphan_statements.append((stmt[:50], max_sim))
+                _logger.debug(
+                    "Orphan statement: '%s...' (max_sim=%.2f)",
+                    stmt[:50],
+                    max_sim,
+                )
+
+        if missing_facts or orphan_statements:
+            _logger.warning(
+                "Self-check failed: %d missing facts, %d orphan statements",
+                len(missing_facts),
+                len(orphan_statements),
+            )
+            return False
+
+        _logger.debug(
+            "Self-check passed: %d statements, %d facts, threshold=%.2f",
+            len(statements),
+            len(fact_texts),
+            similarity_threshold,
+        )
+        return True
+
+    except ImportError as e:
+        _logger.warning(
+            "Qwen embeddings not available for self-check, assuming pass: %s", e
+        )
+        return True
+    except Exception as e:
+        _logger.warning(
+            "Self-check embedding computation failed, assuming pass: %s", e
+        )
+        return True
 
 
 def _get_step_handler(

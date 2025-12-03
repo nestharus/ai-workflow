@@ -475,10 +475,12 @@ Per `docs/plans/fact_redesign.md` lines 561-569, the current implementation cove
 
 1. **Detect artifact roots** (implemented): `detect_artifacts_from_field_facts()`
 2. **Create/update manifests** (implemented): `artifact_manager.create_artifact_manifest()`
-3. **Extract semantic facts** (deferred): Phase 2
-4. **Render from facts** (deferred): Phase 2
-5. **Validate rendered vs source** (deferred): Phase 2
+3. **Extract semantic facts** (implemented): `artifact_fact_extractor.extract_artifact_facts()`
+4. **Render from facts** (implemented): `artifact_renderer.render_artifact()` with LLM rendering
+5. **Validate rendered vs source** (implemented): `artifact_validator.validate_artifact()` with embedding-based similarity
 6. **Persist validation results** (implemented): `artifact_manager.set_validation_result()`
+
+The full lifecycle can be executed via `artifact_manager.execute_artifact_lifecycle()`.
 
 ### V1 Participation Rule
 
@@ -533,8 +535,12 @@ rendered vs source.
 
 **render_artifacts.py** - Render artifacts from facts:
 
+By default, `render_artifacts.py` uses `execute_artifact_lifecycle()` for full lifecycle
+orchestration including semantic fact extraction, LLM rendering, and embedding-based
+validation. Use `--legacy-mode` to opt into the legacy `_render_manifest()` behavior.
+
 ```bash
-# Render all V1 artifacts
+# Render all V1 artifacts (default: full lifecycle orchestration)
 uv run knowledge.render-artifacts
 
 # Render specific artifact
@@ -546,11 +552,14 @@ uv run knowledge.render-artifacts --artifact-kind 'diagram/*'
 # Render by source file
 uv run knowledge.render-artifacts --source-file docs/architecture/event-flow.yml
 
-# Render with validation
-uv run knowledge.render-artifacts --validate
-
 # Include non-V1 artifacts
 uv run knowledge.render-artifacts --no-v1-only
+
+# Legacy mode: Use _render_manifest() without lifecycle orchestration
+uv run knowledge.render-artifacts --legacy-mode
+
+# Legacy mode with validation
+uv run knowledge.render-artifacts --legacy-mode --validate
 ```
 
 **query_validations.py** - Query validation results:
@@ -600,11 +609,10 @@ extension is determined by artifact_format (.md, .yml, .json, .mmd, .txt).
 ### Current Implementation Status
 
 - **Implemented**: Render plan loading, artifact rendering infrastructure, validation
-  comparators, CLI commands
-- **Stub/Placeholder**: LLM rendering (returns placeholder text), semantic similarity
-  validation (uses simple text comparison), terminology normalization (returns facts unchanged)
-- **Deferred to Phase 2**: Semantic fact extraction (Hunter/Surgeon/Auditor pipeline), LLM
-  integration for rendering, embedding-based semantic similarity
+  comparators, CLI commands, LLM rendering via Claude CLI, terminology normalization via
+  variant system, embedding-based semantic similarity via Qwen3, semantic fact extraction
+  (Hunter/Surgeon/Auditor pipeline), full artifact lifecycle orchestration
+- **Deferred to Task 9**: Entity resolution (correctly deferred per fact_redesign_plan.md)
 
 ### Related Files
 

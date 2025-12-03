@@ -41,6 +41,7 @@ import yaml
 from scripts.dev.utils import REPO_ROOT
 from scripts.knowledge.artifact_manager import (
     ArtifactManifest,
+    execute_artifact_lifecycle,
     list_artifact_manifests,
     update_artifact_manifest,
 )
@@ -315,11 +316,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+    # Default: Use full lifecycle orchestration (semantic fact extraction,
+    # LLM rendering, embedding-based validation)
     uv run knowledge.render-artifacts
     uv run knowledge.render-artifacts --source-file docs/architecture/event-flow.yml
     uv run knowledge.render-artifacts --artifact-kind 'diagram/*'
-    uv run knowledge.render-artifacts --validate
     uv run knowledge.render-artifacts --artifact-id abc123
+
+    # Legacy mode: Use _render_manifest() without lifecycle orchestration
+    uv run knowledge.render-artifacts --legacy-mode
+    uv run knowledge.render-artifacts --legacy-mode --validate
         """,
     )
     parser.add_argument(
@@ -383,6 +389,20 @@ Examples:
         action="store_true",
         help="Enable verbose logging.",
     )
+    parser.add_argument(
+        "--legacy-mode",
+        action="store_true",
+        default=False,
+        help="Use legacy _render_manifest() instead of execute_artifact_lifecycle(). "
+        "Default behavior uses full lifecycle orchestration including semantic fact "
+        "extraction, LLM rendering, and embedding-based validation.",
+    )
+    parser.add_argument(
+        "--knowledge-path",
+        type=Path,
+        default=REPO_ROOT / ".knowledge",
+        help="Path to knowledge directory (default: .knowledge).",
+    )
     return parser.parse_args(argv)
 
 
@@ -435,24 +455,55 @@ def main(argv: list[str] | None = None) -> int:
     validation_failed_count = 0
 
     for manifest in filtered_manifests:
-        render_success, validation_passed, _ = _render_manifest(
-            manifest,
-            args.artifacts_dir,
-            args.render_plans_dir,
-            args.rendered_dir,
-            args.validate,
-            args.validations_csv,
-        )
+        artifact_id = manifest["artifact_id"]
 
-        if render_success:
-            render_success_count += 1
-            if args.validate:
-                if validation_passed:
-                    validation_passed_count += 1
-                else:
-                    validation_failed_count += 1
+        if args.legacy_mode:
+            # Use legacy rendering logic (for backward compatibility)
+            render_success, validation_passed, _ = _render_manifest(
+                manifest,
+                args.artifacts_dir,
+                args.render_plans_dir,
+                args.rendered_dir,
+                args.validate,
+                args.validations_csv,
+            )
+
+            if render_success:
+                render_success_count += 1
+                if args.validate:
+                    if validation_passed:
+                        validation_passed_count += 1
+                    else:
+                        validation_failed_count += 1
+            else:
+                render_failed_count += 1
         else:
-            render_failed_count += 1
+            # Default: Use full lifecycle orchestration
+            try:
+                rendered_path, validation_result = execute_artifact_lifecycle(
+                    artifact_id,
+                    args.artifacts_dir,
+                    args.rendered_dir,
+                    args.validations_csv,
+                    args.knowledge_path,
+                )
+
+                if rendered_path is not None:
+                    render_success_count += 1
+                    if validation_result is not None:
+                        if validation_result.passed:
+                            validation_passed_count += 1
+                        else:
+                            validation_failed_count += 1
+                else:
+                    # Skipped (non-V1) or failed
+                    if manifest.get("modality") != "text" or manifest.get("extraction_mode") != "full":
+                        _logger.info("Skipped non-V1 artifact: %s", artifact_id[:12])
+                    else:
+                        render_failed_count += 1
+            except Exception as exc:
+                _logger.warning("Lifecycle failed for %s: %s", artifact_id[:12], exc)
+                render_failed_count += 1
 
     # Print summary
     print(f"\nRendering Summary:")
@@ -460,7 +511,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Rendered successfully: {render_success_count}")
     print(f"  Render failed: {render_failed_count}")
 
-    if args.validate:
+    if args.validate or not args.legacy_mode:
         print(f"\nValidation Summary:")
         print(f"  Validation passed: {validation_passed_count}")
         print(f"  Validation failed: {validation_failed_count}")

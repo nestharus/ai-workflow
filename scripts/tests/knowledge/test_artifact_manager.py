@@ -11,6 +11,7 @@ from scripts.knowledge.artifact_manager import (
     artifact_to_manifest,
     create_artifact_manifest,
     delete_artifact_manifest,
+    execute_artifact_lifecycle,
     get_manifests_by_kind,
     get_manifests_by_source_file,
     list_artifact_manifests,
@@ -561,3 +562,190 @@ class TestSetValidationResult:
 
         assert validation["passed"] == "false"
         assert validation["notes"] == "Content mismatch detected"
+
+
+class TestExecuteArtifactLifecycle:
+    """Tests for execute_artifact_lifecycle function."""
+
+    def test_skips_non_v1_artifacts(
+        self, fs: FakeFilesystem, artifacts_dir: Path
+    ) -> None:
+        """Verify non-V1 artifacts are skipped."""
+        # Create non-V1 manifest (image modality)
+        non_v1_manifest = {
+            "artifact_id": "non-v1-artifact",
+            "artifact_kind": "image/png",
+            "artifact_format": "image/png",
+            "source": {
+                "source_file": "docs/test.yml",
+                "source_element_id": "test-id",
+                "field_path": "image",
+                "source_locator": "reference",
+                "source_uri": "assets/image.png",
+            },
+            "render_plan_id": "none",
+            "projection_version": "fieldfacts.v2",
+            "modality": "image",  # Non-V1
+            "extraction_mode": "full",
+            "contributors": {"structural": [], "semantic": []},
+            "entities": [],
+            "rendered": {
+                "path": "",
+                "validation": {
+                    "last_validated_at": "",
+                    "similarity": "",
+                    "passed": "",
+                    "notes": "",
+                },
+            },
+        }
+        manifest_path = artifacts_dir / "non-v1-artifact.yml"
+        fs.create_file(manifest_path, contents=yaml.safe_dump(non_v1_manifest))
+
+        rendered_dir = artifacts_dir / "rendered"
+        fs.create_dir(rendered_dir)
+        validations_csv = artifacts_dir / "validations.csv"
+        knowledge_path = artifacts_dir.parent
+
+        rendered_path, result = execute_artifact_lifecycle(
+            "non-v1-artifact",
+            artifacts_dir,
+            rendered_dir,
+            validations_csv,
+            knowledge_path,
+        )
+
+        assert rendered_path is None
+        assert result is None
+
+    def test_orchestration_with_mocks(
+        self, fs: FakeFilesystem, sample_artifact: Artifact, artifacts_dir: Path
+    ) -> None:
+        """Verify lifecycle orchestration calls rendering and validation."""
+        from dataclasses import dataclass
+        from unittest.mock import MagicMock, patch
+
+        # Create manifest
+        create_artifact_manifest(sample_artifact, artifacts_dir)
+
+        # Setup directories
+        rendered_dir = artifacts_dir / "rendered"
+        fs.create_dir(rendered_dir)
+        render_plans_dir = artifacts_dir.parent / "render_plans"
+        fs.create_dir(render_plans_dir)
+        validations_csv = artifacts_dir / "validations.csv"
+        knowledge_path = artifacts_dir.parent
+
+        # Create a render plan matching load_render_plan schema expectations
+        render_plan_content = {
+            "render_plan_id": "diagram.mermaid.sequence.v1",
+            "render_engine": "text_llm",
+            "artifact_kind": "diagram/mermaid.sequence",
+            "inputs": {
+                "use_structural_fieldfacts": True,
+                "use_semantic_facts": True,
+            },
+            "determinism": {
+                "ordering": ["field_path"],
+            },
+            "steps": [{"id": "render", "instruction": "Render the artifact"}],
+            "notes": "Test render plan for mermaid sequence diagrams",
+        }
+        render_plan_path = render_plans_dir / "diagram.mermaid.sequence.v1.yml"
+        fs.create_file(render_plan_path, contents=yaml.safe_dump(render_plan_content))
+
+        # Create source file
+        source_content = {
+            "items": [
+                {
+                    "id": "sequence-diagram-code-1",
+                    "text": "sequenceDiagram\n    A->>B: Hello",
+                }
+            ]
+        }
+        source_path = artifacts_dir.parent.parent / "docs" / "architecture" / "event-flow.yml"
+        fs.create_file(source_path, contents=yaml.safe_dump(source_content))
+
+        # Create mock rendered file
+        rendered_file = rendered_dir / f"{sample_artifact.artifact_id}.mmd"
+
+        @dataclass
+        class MockValidationResult:
+            passed: bool = True
+            similarity_score: float = 0.95
+            mismatch_summary: str = ""
+
+        mock_validation = MockValidationResult()
+
+        with (
+            patch(
+                "scripts.knowledge.artifact_renderer.render_artifact",
+                return_value=rendered_file
+            ) as mock_render,
+            patch(
+                "scripts.knowledge.artifact_validator.validate_artifact",
+                return_value=mock_validation
+            ) as mock_validate,
+            patch(
+                "scripts.knowledge.artifact_validator.write_validation_result"
+            ) as mock_write,
+        ):
+            # Create the rendered file that validation expects
+            fs.create_file(rendered_file, contents="sequenceDiagram\n    A->>B: Hello")
+
+            result_path, result = execute_artifact_lifecycle(
+                sample_artifact.artifact_id,
+                artifacts_dir,
+                rendered_dir,
+                validations_csv,
+                knowledge_path,
+            )
+
+            # Verify render was called
+            assert mock_render.called
+
+            # Verify validation was called
+            assert mock_validate.called
+
+    def test_handles_missing_render_plan(
+        self, fs: FakeFilesystem, sample_artifact: Artifact, artifacts_dir: Path
+    ) -> None:
+        """Verify graceful handling when render plan is not found."""
+        # Create manifest
+        create_artifact_manifest(sample_artifact, artifacts_dir)
+
+        # Setup directories but no render plans
+        rendered_dir = artifacts_dir / "rendered"
+        fs.create_dir(rendered_dir)
+        validations_csv = artifacts_dir / "validations.csv"
+        knowledge_path = artifacts_dir.parent
+
+        rendered_path, result = execute_artifact_lifecycle(
+            sample_artifact.artifact_id,
+            artifacts_dir,
+            rendered_dir,
+            validations_csv,
+            knowledge_path,
+        )
+
+        # Should return None when render plan not found
+        assert rendered_path is None
+        assert result is None
+
+    def test_raises_for_missing_manifest(
+        self, fs: FakeFilesystem, artifacts_dir: Path
+    ) -> None:
+        """Verify FileNotFoundError raised for missing manifest."""
+        rendered_dir = artifacts_dir / "rendered"
+        fs.create_dir(rendered_dir)
+        validations_csv = artifacts_dir / "validations.csv"
+        knowledge_path = artifacts_dir.parent
+
+        with pytest.raises(FileNotFoundError, match="Artifact manifest not found"):
+            execute_artifact_lifecycle(
+                "nonexistent-id",
+                artifacts_dir,
+                rendered_dir,
+                validations_csv,
+                knowledge_path,
+            )

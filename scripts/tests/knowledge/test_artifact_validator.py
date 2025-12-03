@@ -112,15 +112,41 @@ class TestValidateNormalizedText:
         assert passed is True
         assert mismatch == ""
 
-    def test_similar_text_passes(self) -> None:
-        """Verify similar text passes with high similarity."""
-        similarity, passed, mismatch = _validate_normalized_text(
-            "The quick brown fox jumps.",
-            "The quick brown fox jumped.",  # Similar but not identical
-        )
+    def test_similar_text_passes_with_mocked_embeddings(self) -> None:
+        """Verify similar text passes with high similarity using mocked embeddings."""
+        from unittest.mock import MagicMock, patch
 
-        assert similarity > 0.8
-        assert passed is True
+        import numpy as np
+
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        # Mock embeddings with high similarity between similar texts
+        mock_embeddings = np.array([[0.9, 0.1], [0.85, 0.15]])
+        mock_similarity = np.array([[0.92]])
+
+        # Patch at the source module (variant_resolver) where the functions are defined
+        with (
+            patch(
+                "scripts.knowledge.variant_resolver.load_qwen_embedding_model",
+                return_value=(mock_model, mock_tokenizer)
+            ),
+            patch(
+                "scripts.knowledge.variant_resolver.embed_keywords",
+                return_value=mock_embeddings
+            ),
+            patch(
+                "scripts.knowledge.variant_resolver.compute_cosine_similarity",
+                return_value=mock_similarity
+            ),
+        ):
+            similarity, passed, mismatch = _validate_normalized_text(
+                "The quick brown fox jumps.",
+                "The quick brown fox jumped.",  # Similar but not identical
+            )
+
+            assert similarity == 0.92
+            assert passed is True
 
     def test_different_text_fails(self) -> None:
         """Verify very different text fails."""
@@ -132,6 +158,88 @@ class TestValidateNormalizedText:
         assert similarity < 0.8
         assert passed is False
         assert "similarity" in mismatch.lower()
+
+    def test_embedding_based_similarity(self) -> None:
+        """Verify embedding-based similarity is used when available."""
+        from unittest.mock import MagicMock, patch
+
+        import numpy as np
+
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        # Mock embeddings with high similarity
+        mock_embeddings = np.array([[0.9, 0.1], [0.85, 0.15]])
+        mock_similarity = np.array([[0.95]])
+
+        # Patch at the source module (variant_resolver) where the functions are defined
+        with (
+            patch(
+                "scripts.knowledge.variant_resolver.load_qwen_embedding_model",
+                return_value=(mock_model, mock_tokenizer)
+            ),
+            patch(
+                "scripts.knowledge.variant_resolver.embed_keywords",
+                return_value=mock_embeddings
+            ),
+            patch(
+                "scripts.knowledge.variant_resolver.compute_cosine_similarity",
+                return_value=mock_similarity
+            ),
+        ):
+            similarity, passed, _ = _validate_normalized_text(
+                "Source text content",
+                "Rendered text content"
+            )
+
+            assert similarity == 0.95
+            assert passed is True
+
+    def test_fallback_on_embedding_failure_different_text(self) -> None:
+        """Verify fallback to character-level comparison when embeddings unavailable."""
+        from unittest.mock import patch
+
+        # Force ImportError to trigger fallback to character-set similarity
+        # Patch at the source module (variant_resolver) where the functions are defined
+        with patch(
+            "scripts.knowledge.variant_resolver.load_qwen_embedding_model",
+            side_effect=ImportError("No embeddings")
+        ):
+            # Test with texts that share some characters but aren't identical
+            similarity, passed, mismatch = _validate_normalized_text(
+                "abc def ghi",
+                "abc xyz ghi"
+            )
+
+            # Character-set (Jaccard) similarity: intersection / union
+            # source chars: {a,b,c, ,d,e,f,g,h,i}
+            # rendered chars: {a,b,c, ,x,y,z,g,h,i}
+            # intersection: {a,b,c, ,g,h,i} = 7
+            # union: {a,b,c, ,d,e,f,g,h,i,x,y,z} = 13
+            # similarity = 7/13 ≈ 0.538
+            assert 0.5 < similarity < 0.6
+            assert passed is False
+            assert "character fallback" in mismatch.lower()
+
+    def test_handles_empty_source(self) -> None:
+        """Verify empty source text is handled."""
+        similarity, passed, mismatch = _validate_normalized_text("", "content")
+        assert similarity == 0.0
+        assert passed is False
+        assert "empty" in mismatch.lower()
+
+    def test_handles_empty_rendered(self) -> None:
+        """Verify empty rendered text is handled."""
+        similarity, passed, mismatch = _validate_normalized_text("content", "")
+        assert similarity == 0.0
+        assert passed is False
+        assert "empty" in mismatch.lower()
+
+    def test_handles_both_empty(self) -> None:
+        """Verify both empty texts return success."""
+        similarity, passed, mismatch = _validate_normalized_text("", "")
+        assert similarity == 1.0
+        assert passed is True
 
 
 class TestValidateNormalizedRowsByDiscriminator:
