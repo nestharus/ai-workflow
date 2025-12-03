@@ -22,14 +22,33 @@ This redesign **only supports fully-extractable textual artifacts**.
 
 All artifacts must be extractable into **FieldFacts** and, when applicable, re-renderable back to a textual artifact.
 
-### 0.2 Out of scope
+### 0.2 Out of scope for v1 extraction/rendering
 
 Out of scope for this plan (not first-class artifact kinds, not ingested/extracted/rendered):
 - images, audio, video, and any other non-text modalities
-- “query-only” artifacts (data that cannot be fully extracted from source at ingest time)
+- "query-only" artifacts (data that cannot be fully extracted from source at ingest time)
 - partially-extractable artifacts that require external transforms outside the ingest process
 
 If a YAML document contains references to non-text media (e.g., URLs), they may be indexed as **plain string metadata** or **entity references**, but are not treated as artifact roots.
+
+### 0.2.1 Representable but not fully processed (reserved schema hooks)
+
+To avoid future breaking schema changes while keeping v1 execution narrow, the Artifact and Artifact Kind Registry schemas include reserved hooks for broader artifact modalities and extraction modes:
+
+- `modality`: `text` | `image` | `audio` | `video` | `other`
+- `extraction_mode`: `full` | `incremental` | `query_only`
+
+**V1 participation rule**: Only artifacts where `modality=text AND extraction_mode=full` participate in the current render-from-facts loop. All other combinations are representable in the schema but bypassed by v1 extraction/rendering pipelines.
+
+---
+
+## 0.3 Design invariants
+
+1. **The text is the state**. Anything not extracted yet must still exist in the current artifact text state.
+2. **Extraction must be monotonic**. Each committed rewrite strictly reduces extractable information (or triggers safety handling).
+3. **Rewrites are localized**. Only the span(s) returned by the Hunter are rewritten/replaced, never wholesale “delete the document” behavior.
+4. **Non-target preservation is mandatory**. If a span contains overlap, the rewrite preserves all non-target (“Anchor”) information.
+5. **Entity discovery and fact discovery are unified**. The system alternates between finding entities and exhausting facts per entity until no entities remain.
 
 ---
 
@@ -295,6 +314,12 @@ Artifact:
     - identifier for a deterministic render procedure (stored in `.knowledge/artifacts/render_plans/`)
 - projection_version: string
     - ties to the FieldFact projection version used to build contributors and synthetic projections
+- modality: enum (reserved schema hook)
+    - text | image | audio | video | other
+    - V1 only processes `text`; other values are representable but bypassed
+- extraction_mode: enum (reserved schema hook)
+    - full | incremental | query_only
+    - V1 only processes `full`; other values are representable but bypassed
 
 
 Artifacts are always backed by an **Artifact Manifest** in `.knowledge` and (optionally) a rendered payload file.
@@ -339,6 +364,8 @@ Optional metadata fields (non-exhaustive; not a closed list):
 - `default_format`, `allowed_formats`
 - `aliases` (list of kind_ids), `supersedes` (kind_id), `deprecation_note`
 - `examples` (sample artifacts / roots), `notes`
+- `modality` (enum): `text` | `image` | `audio` | `video` | `other` (reserved; defaults to `text` for v1)
+- `extraction_mode` (enum): `full` | `incremental` | `query_only` (reserved; defaults to `full` for v1)
 
 Small example entry (uses the exact required keys):
 
@@ -558,17 +585,171 @@ Artifact-bearing FieldFacts are identified via `role == artifact_root` and class
 1) creates/updates an Artifact Manifest
 2) extracts semantic facts from the artifact content (above and beyond structural FieldFacts)
 
-### Fact extraction from artifacts
+### Document-level semantic fact extraction (Iterative Sanitization)
 
-Prose artifacts:
-- split into sentences (or sentence-like segments)
-- for each target entity/keyword, invoke `fact_extraction.py` to isolate atomic facts
-- store results with provenance
+Semantic fact extraction operates on artifact text as mutable state, driving extraction via an **Iterative Sanitization** loop:
 
-Code artifacts:
-- treat code as an artifact blob; extract facts at code-line / block level
-- initial approach: run keyword candidate extraction on code text, then invoke fact extraction on code-line "sentences"
-- later: add a code-aware extractor, but the storage/provenance model stays the same
+`Discover Entities → Resolve → Extract Facts → Sanitize (rewrite-remove) → Repeat`
+
+This replaces the previous per-sentence / per-target approach with a **document-state-driven** approach that naturally terminates when the Hunter cannot find further facts.
+
+#### Artifact text state
+
+For each `role==artifact_root`, define `state_text` initialized from the inline field (or referenced payload). This is the mutable document that the extraction loop operates on.
+
+#### Chunking strategy (internal)
+
+Chunking is allowed for runtime efficiency, but correctness is defined on the evolving `state_text`:
+- Recommend "chunk IDs" (sentinel markers) to avoid brittle char-offset matching
+- Chunks are an implementation detail; the loop semantics operate on `state_text` as a whole
+
+#### Extraction loop (high-level)
+
+1. **Entity discovery**: Hunter finds entities (or picks the most salient entity) in `state_text`.
+2. **Entity resolution**: Resolve entity mentions to canonical entities (see Entity Resolution Rules).
+3. **Fact extraction**: For one entity, Hunter extracts **as many explicit facts as possible** about it and identifies minimal span(s).
+4. **Sanitization**: Surgeon rewrites each span to remove those facts for that entity, preserving Anchors (non-target information).
+5. **Commit**: Commit rewrite(s) into `state_text`.
+6. **Repeat**: Repeat until Hunter returns no more facts for that entity; then return to entity discovery.
+7. **Terminate**: Terminate when entity discovery yields nothing and a final audit confirms no remaining facts.
+
+#### Termination and safety
+
+- **No-op detection**: If `hash(state_text)` repeats, break and escalate to fallback.
+- **Hard iteration caps**: Apply iteration limits per artifact and per entity to prevent infinite loops.
+- **Residue handling**: If text remains but Hunter returns no entities/facts, use strategy selection + Opus audit.
+
+### LLM roles and contracts
+
+The Iterative Sanitization loop is implemented by three distinct LLM roles with well-defined contracts.
+
+#### Hunter
+
+**Responsibilities:**
+- **Entity discovery**: Return entities mentioned in the current `state_text` (optimize for recall).
+- **Fact extraction**: For a chosen entity, return all explicit facts about that entity and the minimal span(s) that contain those facts.
+- **Termination**: Return an explicit empty result when no entities / no facts remain.
+
+**Output contract (JSON):**
+```json
+{
+  "mode": "entities",
+  "entities": [{"mention": "Alice", "type_hint": "person", "evidence_span_id": "span_001"}],
+  "target_entity": {"mention": "Alice", "resolved_id": "entity:alice"},
+  "facts": [{"fact_text": "Alice is 25 years old", "evidence_span_id": "span_001", "confidence": 0.95}],
+  "spans": [{"span_id": "span_001", "original_text": "Alice and Bob are 25."}],
+  "done": false,
+  "reason": null
+}
+```
+
+#### Surgeon
+
+**Responsibilities:**
+- Given an original span and a list of target facts for one entity, rewrite the span so those facts are impossible to infer while preserving all non-target (“Anchor”) information.
+- Rewrite must be localized to the span(s) provided by the Hunter unless cross-span dependencies require grouping.
+- If the span contains only target facts (no Anchors), output `[DELETE]`.
+
+**Required behaviors:**
+- **Anchor listing**: Explicitly enumerate `anchors_to_keep` (non-target facts to preserve) before producing the final rewrite.
+- **Self-check**: Before outputting, verify `target_inferable == false`; if inferable, rewrite again.
+- **Coreference safety**: If removing the target facts would strand pronouns or references elsewhere, inject the explicit referent (or mark spans for joint rewrite) before deletion.
+
+**Output contract (JSON):**
+```json
+{
+  "span_id": "span_001",
+  "replacement_text": "Bob is 25.",
+  "anchors_to_keep": ["Bob is 25 years old"],
+  "targets_removed": ["Alice is 25 years old"],
+  "self_check": {"target_inferable": false, "notes": null}
+}
+```
+
+#### Auditor / Unknown-case handler
+
+**Responsibilities:**
+- **Residue audit**: Given final `state_text`, determine whether any extractable facts remain; if yes, return a structured report of what remains.
+- **Stuck handling**: When the orchestrator detects oscillation/no-op, propose a safe remediation strategy (or an escalation decision).
+
+**Output contract (JSON):**
+```json
+{
+  "has_remaining_facts": false,
+  "remaining_facts": [],
+  "recommended_action": "terminate",
+  "notes": null
+}
+```
+
+### Artifact-level fact extraction orchestrator
+
+The orchestrator implements the canonical control flow for artifact-level semantic fact extraction.
+
+#### Input
+
+- Artifact manifest: `artifact_id`, `source_file`, `source_element_id`, `field_path`, initial text
+
+#### Orchestrator loop
+
+```
+INITIALIZE:
+  state_text = load artifact text from manifest
+  state_hash = hash(state_text)
+  seen_hashes = {state_hash}
+  entity_queue = []
+
+MAIN LOOP:
+  WHILE true:
+    # Entity discovery phase
+    IF entity_queue is empty:
+      hunter_result = Hunter.discover_entities(state_text)
+      IF hunter_result.done OR no entities found:
+        BREAK to FINAL AUDIT
+      entity_queue = hunter_result.entities
+
+    # Fact extraction phase for current entity
+    current_entity = entity_queue.pop()
+    resolved_entity = resolve_entity(current_entity)
+
+    WHILE true:
+      hunter_result = Hunter.extract_facts(state_text, target_entity=resolved_entity)
+      IF hunter_result.done OR no facts found:
+        BREAK to next entity
+
+      # Sanitization phase
+      FOR each span in hunter_result.spans:
+        surgeon_result = Surgeon.rewrite(span, hunter_result.facts)
+        state_text = apply_rewrite(state_text, span, surgeon_result)
+
+      # Commit and check for stuck state
+      new_hash = hash(state_text)
+      IF new_hash in seen_hashes:
+        ESCALATE to Auditor for stuck handling
+        BREAK
+      seen_hashes.add(new_hash)
+
+      # Persist pass record
+      persist_pass(artifact_id, resolved_entity, span, facts_removed, state_hash, new_hash)
+      state_hash = new_hash
+
+FINAL AUDIT:
+  auditor_result = Auditor.audit_residue(state_text)
+  IF auditor_result.has_remaining_facts:
+    persist_residue_report(artifact_id, auditor_result)
+  persist_final_state(artifact_id, state_text)
+```
+
+#### Canonical CLI (planned)
+
+- `uv run knowledge.extract-artifact-facts` (or similar)
+- Uses: `fact_extraction.py` (or new orchestrator module), `movement_tracker.py`, embeddings validator
+
+#### Debugging utilities
+
+Sentence-level tools remain available as debugging utilities but are not the production path:
+- `fact_extraction.py --sentence` for single-sentence extraction
+- `fact_isolation.py --sentence` for single-sentence isolation
 
 ### Storage: extend `.knowledge/facts/extractions.csv` provenance
 
@@ -577,8 +758,87 @@ Add columns (append-only schema evolution):
 - source_element_id
 - source_field_path
 - artifact_id (optional but recommended)
+- span_id (chunk/span identifier)
+- pass_id (one Hunter→Surgeon commit)
+- entity_mention (original mention)
+- entity_id (resolved canonical entity id, when available)
+- extraction_model, rewrite_model
+- state_hash_before, state_hash_after
 
 These columns link semantic extracted facts to the underlying FieldFacts and artifact manifests.
+
+### Passes table (new)
+
+Add `.knowledge/facts/passes.csv` to record each commit:
+- pass_id
+- artifact_id
+- entity_id / entity_mention
+- span_id
+- span_before
+- span_after
+- facts_removed (serialized list or join table reference)
+- similarity_score
+- status / failure_reason
+
+### Movements tracking update
+
+Extend/clarify the relationship between movements and the new span/pass model:
+- `movements/iterative_movements.csv` was sentence-level
+- Options:
+  - Becomes span-level (replacing sentence with span_id)
+  - Remains per-fact but references `pass_id` and `span_id`
+
+### Residue snapshots
+
+Add `.knowledge/facts/residue/` storing:
+- `<artifact_id>.before.txt` - original artifact text
+- `<artifact_id>.after.txt` - final sanitized text
+- (optional) intermediate `<artifact_id>.<pass_id>.txt` snapshots for debugging
+
+### Fact identity and deduplication
+
+Define a canonical fact identity so storage remains stable across passes and overlapping queries.
+
+**Canonical identity key:**
+- `fact_key = sha256(normalize(fact_text) + "|" + entity_id + "|" + artifact_id)`
+- If `entity_id` is unavailable, use `entity_mention` in place of `entity_id` for keying.
+- `normalize(fact_text)` should be deterministic (e.g., Unicode normalization, trim, collapse internal whitespace, and stable punctuation normalization).
+
+**Deduplication rule:**
+- The orchestrator/storage layer must avoid inserting a duplicate fact with the same `fact_key`.
+- On duplicates, merge/append provenance instead of producing another canonical fact row.
+
+**Provenance merge mechanism (recommended):**
+- Treat `.knowledge/facts/extractions.csv` as the canonical fact table (one row per `fact_key`), and store multiple "where this came from" references in a separate join table such as `.knowledge/facts/fact_provenance.csv` with rows like:
+  - `fact_id`, `fact_key`, `artifact_id`, `pass_id`, `span_id`, `source_file`, `source_element_id`, `source_field_path`, `extracted_at`, `confidence`
+
+### Migration strategy for existing `.knowledge` data
+
+Introduce the new artifact/span/pass concepts without breaking existing `.knowledge` data, and define how legacy sentence-level records are treated during rollout.
+
+**High-level migration approach:**
+
+**`facts/extractions.csv`:**
+- Add the new columns (`artifact_id`, `span_id`, `pass_id`, plus any new provenance columns) as append-only schema evolution.
+- Backfill legacy rows:
+  - `pass_id`: set to the existing `fact_id` (each legacy extraction iteration becomes a pass).
+  - `span_id`: set to a stable legacy marker (e.g., `legacy:sentence`), or a hash derived from `source_sentence` if you need uniqueness.
+  - `artifact_id`: if legacy records have no artifact provenance, set to a stable synthetic identifier (e.g., `legacy:sentence:<sha256(source_sentence)>`). If provenance columns exist (file/element/field), prefer `sha256(source_file + ":" + source_element_id + ":" + source_field_path)`.
+
+**Passes table initialization:**
+- Create `.knowledge/facts/passes.csv` for the new pipeline.
+- For legacy data, optionally backfill one pass row per legacy `fact_id`:
+  - `pass_id = fact_id`
+  - `span_before = source_sentence`
+  - `span_after = rewritten_sentence`
+  - `facts_removed[] = [fact_text]`
+  - Mark with a legacy flag or status (e.g., `status=legacy_backfill`) to distinguish from new orchestrator passes.
+
+**Existing movement records (`movements/iterative_movements.csv`):**
+- Treat existing rows as legacy and either:
+  - append new columns (`pass_id`, `span_id`, `artifact_id`, `schema_version`) and backfill them consistently, or
+  - keep the legacy file unchanged and write new span/pass-aware movements to a new file (while documenting both as supported inputs during transition).
+- If backfilling: set `pass_id = fact_id`, and derive `artifact_id`/`span_id` using the same rules as `facts/extractions.csv`. Tag legacy rows via `schema_version` (or equivalent) to prevent accidental mixing.
 
 ### Rendering artifacts from facts
 
@@ -685,6 +945,28 @@ Populate:
 - facts table: structural FieldFacts + semantic extracted facts
 - MENTIONS edges: fact → referenced entities (from entity_ref FieldFacts or extracted semantic facts)
 - containment edges: entity → entity (parent/child)
+
+### Resolution of discovered entity mentions
+
+When the Hunter discovers entity mentions during semantic extraction, resolve them using this precedence:
+
+1. **Exact match to YAML `id` entities**: Direct element reference
+2. **Exact match to canonical keywords**: Keyword entity reference
+3. **Variant match via variant table**: Use validated merges (`merge=true AND validated=true`)
+4. **Embedding similarity above threshold**: Candidate mapping (using Qwen3 or similar)
+5. **Else**: Record as unresolved candidate (do not hallucinate identity)
+
+### Entity candidate feedback channel
+
+Create/update `.knowledge/entities/entity_candidates.csv` (or extend an existing candidates table) with:
+- mention
+- context
+- artifact_id
+- source_file
+- confidence
+- suggested_canonical
+
+This becomes an input to the keyword/variant review workflow, enabling iterative refinement of the entity resolution system.
 
 ---
 
@@ -1091,7 +1373,7 @@ You now have the raw material to let later stages decide:
 
     * Every element id is an entity candidate (from YAML structure).
     * Values of fields like `name`, `title`, `summary`, `command`, `keyword`, etc. (configurable list) are also entity-like strings.
-    * Nested elements referenced via `$ref` are entity relationships (parent/child, composition, etc.), matching the future SurrealDB entity graph in `KNOWLEDGE SYSTEM README.md`.
+    * Nested elements referenced via `$ref` are entity relationships (parent/child, composition, etc.), matching the future SurrealDB entity graph in `scripts/knowledge/README.md`.
 
 2. **Constraints**
 
@@ -1205,6 +1487,41 @@ This plan intentionally only supports **fully-extractable textual artifacts** an
 - DuckDB queries and SurrealDB ingestion MUST prefer projection-aware fields and partition by `projection_version`
 - do not use text hashes as identity keys; use (source_file, element_id, split_file) + projection_version
 
+5) Implement orchestrator and stateful sanitization loop (artifact-level)
+- Build the artifact-level extraction orchestrator implementing the Hunter/Surgeon/Auditor loop
+- Integrate with movement tracking and fact storage
+
+6) Implement Hunter adapter + prompts + JSON parsing
+- Adapter for entity discovery and fact extraction
+- JSON output parsing and validation
+
+7) Implement Surgeon prompt and self-check + coreference rules
+- Rewrite logic with anchor preservation
+- Self-check for target inferability
+- Coreference safety handling
+
+8) Add pass-level persistence + schema evolution
+- `.knowledge/facts/passes.csv` for commit tracking
+- Schema evolution for `extractions.csv` with new columns
+- Fact identity and deduplication
+
+9) Add stuck detection + fallback strategy selection + audit
+- State hash tracking for oscillation detection
+- Fallback strategy selection
+- Residue audit integration
+
+10) Add tests for the new extraction system
+- See "Testing / acceptance criteria" section
+
+### Testing / acceptance criteria
+
+1. **Idempotence**: Rerunning extraction on an already-sanitized artifact yields no new facts and no text changes.
+2. **No overlap loss**: "Alice and Bob are 25" extracts both ages without losing either.
+3. **Coreference safety**: Deletion doesn't strand pronouns; orphans are corrected.
+4. **Stuck detection**: Repeated state hash triggers fallback path, never infinite loops.
+5. **Residue audit**: Auditor confirms residue contains no extractable facts, or produces a structured "remaining facts" report.
+6. **Provenance completeness**: Every extracted fact row links back to (artifact_id, file, element, field_path, span_id, pass_id).
+
 ---
 ## 7. How this changes each existing module concretely
 
@@ -1315,3 +1632,40 @@ This design:
 * makes **field names first-class**,
 * treats **object membership and ancestor chain as context**, not incidental,
 * and gives you a clear path from YAML → field-facts → keyword candidates → entity/fact extraction.
+
+---
+
+## System changes required outside `fact_redesign.md`
+
+This section documents required follow-ups in other parts of the codebase to implement this design.
+
+### Agents (Claude)
+
+- Update or replace `.claude/agents/fact-extractor.md`:
+    - Either split into `fact-hunter` + `fact-surgeon` + `fact-auditor`
+    - Or redefine `fact-extractor` as the Surgeon and add new agents for Auditor.
+
+### Python orchestrator + models
+
+- Update `scripts/knowledge/fact_extraction.py`:
+    - Replace "extract facts from a sentence for a given entity" as the main path.
+    - Add artifact-level loop and Hunter/Surgeon delegation.
+- Add `scripts/knowledge/ministral_hunter.py` (or similar) using HF Transformers:
+    - `ministral-8b-2512-instruct` load + inference + JSON output parsing.
+- Update `scripts/knowledge/fact_isolation.py`:
+    - Move from sentence-only isolation to span/commit isolation aligned with `pass_id`.
+- Update `scripts/knowledge/movement_tracker.py`:
+    - Add pass-level records, link to fact rows, store similarity + hashes.
+
+### Validation (Qwen)
+
+- Keep Qwen embeddings-based similarity check, but make it pass-level:
+    - validate `original_span ~ (facts_removed + residual_span)`
+- Optional: use Qwen reranker to rank candidate entities/facts/spans.
+
+### Documentation alignment
+
+- Update `.knowledge/README.md` and `scripts/knowledge/README.md` to match:
+    - new orchestrator command
+    - new CSV columns / tables
+    - updated meaning of iterative movements
