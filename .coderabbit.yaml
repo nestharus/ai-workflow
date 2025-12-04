@@ -15,7 +15,7 @@ reviews:
   # We use '/**' to ensure the entire directory content is ignored.
   path_filters:
     - "!.review/**"
-    - "!.tasks/**"
+    - "!.tasks/store/**"
     - "!.venv*/**"
     - "!venv/**"
     - "!env/**"

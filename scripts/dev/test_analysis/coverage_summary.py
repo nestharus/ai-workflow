@@ -1,11 +1,12 @@
 """Coverage summary tool - get totals across tiers with exclusions.
 
-Provides a high-level summary of coverage data from coverage_llm.json,
+Provides a high-level summary of coverage data from the SQLite database,
 filtering out excluded paths (infrastructure, HTTP handling).
 
 Usage:
     uv run coverage-summary
     uv run coverage-summary --json
+    uv run coverage-summary --db .coverage/coverage.db
 """
 
 from __future__ import annotations
@@ -13,34 +14,38 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 from scripts.dev.test_analysis.common import (
+    DEFAULT_COVERAGE_DB_PATH,
     format_percentage,
+    get_db_connection,
+    get_functions_below_threshold,
+    get_missing_lines,
+    get_tier_summary,
+    get_usecase_coverage,
     is_excluded_path,
-    load_coverage_llm,
 )
 
 
 def get_filtered_functions(
-    data: dict[str, Any],
+    db_path: Path,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Get functions below threshold, split into included and excluded.
 
     Args:
-        data: The coverage_llm.json data.
+        db_path: Path to the coverage database.
 
     Returns:
         Tuple of (included_functions, excluded_functions).
     """
-    functions = data.get("function_coverage", {}).get("functions_below_threshold", [])
+    functions = get_functions_below_threshold(db_path)
     included = []
     excluded = []
 
     for func in functions:
-        file_path = func.get("file", "")
+        file_path = func.get("file_path", "")
 
         if is_excluded_path(file_path):
             excluded.append(func)
@@ -51,22 +56,22 @@ def get_filtered_functions(
 
 
 def get_filtered_missing_lines(
-    data: dict[str, Any],
+    db_path: Path,
 ) -> tuple[list[dict[str, Any]], int]:
     """Get missing lines, filtering out excluded paths.
 
     Args:
-        data: The coverage_llm.json data.
+        db_path: Path to the coverage database.
 
     Returns:
         Tuple of (included_lines, excluded_count).
     """
-    missing_lines = data.get("code_coverage", {}).get("missing_lines", [])
+    missing_lines = get_missing_lines(db_path)
     included = []
     excluded_count = 0
 
     for line in missing_lines:
-        file_path = line.get("file", "")
+        file_path = line.get("file_path", "")
         if is_excluded_path(file_path):
             excluded_count += 1
         else:
@@ -75,64 +80,91 @@ def get_filtered_missing_lines(
     return included, excluded_count
 
 
-def get_files_by_coverage(
-    data: dict[str, Any],
+def aggregate_files_by_coverage(
+    missing_lines: list[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     """Aggregate missing lines by file with coverage stats.
 
     Args:
-        data: The coverage_llm.json data.
+        missing_lines: List of missing line records.
 
     Returns:
         Dict mapping file paths to their coverage info.
     """
-    missing_lines, _ = get_filtered_missing_lines(data)
-    files: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"missing_lines": 0, "missing_branches": 0}
-    )
+    files: dict[str, dict[str, Any]] = {}
 
     for line in missing_lines:
-        file_path = line.get("file", "")
+        file_path = line.get("file_path", "")
+        if file_path not in files:
+            files[file_path] = {"missing_lines": 0, "missing_branches": 0}
+
         files[file_path]["missing_lines"] += 1
         files[file_path]["missing_branches"] += len(line.get("missing_branch_exits", []))
 
-    return dict(files)
+    return files
 
 
-def generate_summary(data: dict[str, Any]) -> dict[str, Any]:
+def generate_summary(db_path: Path) -> dict[str, Any]:
     """Generate a filtered coverage summary.
 
     Args:
-        data: The coverage_llm.json data.
+        db_path: Path to the coverage database.
 
     Returns:
         Summary dict with filtered statistics.
     """
-    # Get raw totals
-    code_coverage = data.get("code_coverage", {})
-    totals = code_coverage.get("coverage_totals", {})
-    function_coverage = data.get("function_coverage", {})
-    use_case_coverage = data.get("use_case_coverage", {})
+    # Get tier summaries
+    tier_summaries = get_tier_summary(db_path)
+
+    # Calculate raw totals from tier summaries
+    total_functions_below = 0
+    overall_line_pct = 0.0
+
+    if tier_summaries:
+        # Use the first tier's overall percentages (all tiers should have same overall)
+        first_tier = next(iter(tier_summaries.values()), {})
+        overall_line_pct = first_tier.get("overall_line_pct", 0.0) or 0.0
+
+        # Sum up functions below threshold across all tiers
+        for tier_data in tier_summaries.values():
+            total_functions_below += tier_data.get("failing_functions", 0)
 
     # Filter functions
-    included_funcs, excluded_funcs = get_filtered_functions(data)
+    included_funcs, excluded_funcs = get_filtered_functions(db_path)
 
     # Filter missing lines
-    included_lines, excluded_line_count = get_filtered_missing_lines(data)
+    included_lines, excluded_line_count = get_filtered_missing_lines(db_path)
+
+    # Count total missing lines and branches from included lines
+    total_missing_lines = len(included_lines)
+    total_missing_branches = sum(
+        len(line.get("missing_branch_exits", [])) for line in included_lines
+    )
 
     # Get files with issues
-    files_with_issues = get_files_by_coverage(data)
+    files_with_issues = aggregate_files_by_coverage(included_lines)
+
+    # Get use case coverage
+    use_case_coverage = get_usecase_coverage(db_path)
+
+    # Get run metadata
+    try:
+        conn = get_db_connection(db_path)
+        cursor = conn.execute("SELECT generated_at FROM cc_run_metadata WHERE id = 1")
+        row = cursor.fetchone()
+        generated_at = row["generated_at"] if row else "Unknown"
+        conn.close()
+    except Exception:
+        generated_at = "Unknown"
 
     # Build summary
     return {
-        "generated_at": data.get("generated_at"),
+        "generated_at": generated_at,
         "raw_totals": {
-            "percent_covered": totals.get("percent_covered", 0),
-            "missing_lines": totals.get("missing_lines", 0),
-            "missing_branches": totals.get("missing_branches", 0),
-            "total_functions_below_threshold": function_coverage.get(
-                "total_functions_below_threshold", 0
-            ),
+            "percent_covered": overall_line_pct,
+            "missing_lines": total_missing_lines,
+            "missing_branches": total_missing_branches,
+            "total_functions_below_threshold": total_functions_below,
         },
         "filtered_totals": {
             "functions_below_threshold": len(included_funcs),
@@ -141,11 +173,22 @@ def generate_summary(data: dict[str, Any]) -> dict[str, Any]:
             "excluded_lines": excluded_line_count,
             "files_with_issues": len(files_with_issues),
         },
-        "tier_summaries": function_coverage.get("tier_summaries", {}),
+        "tier_summaries": {
+            tier: {
+                "coverage_type": data.get("coverage_type", "line_branch"),
+                "overall_line_pct": data.get("overall_line_pct", 0.0) or 0.0,
+                "overall_branch_pct": data.get("overall_branch_pct", 0.0) or 0.0,
+                "total_functions": data.get("total_functions", 0),
+                "passing_functions": data.get("passing_functions", 0),
+                "failing_functions": data.get("failing_functions", 0),
+                "tier_pass": bool(data.get("tier_pass", 0)),
+            }
+            for tier, data in tier_summaries.items()
+        },
         "use_case_coverage": {
-            "total": use_case_coverage.get("totals", {}).get("total", 0),
-            "covered": use_case_coverage.get("totals", {}).get("covered", 0),
-            "uncovered": len(use_case_coverage.get("uncovered_use_cases", [])),
+            "total": use_case_coverage.get("total", 0),
+            "covered": use_case_coverage.get("covered", 0),
+            "uncovered": len(use_case_coverage.get("uncovered", [])),
         },
         "top_files_by_missing_lines": sorted(
             [
@@ -215,20 +258,28 @@ def main() -> int:
         help="Output as JSON instead of human-readable format",
     )
     parser.add_argument(
-        "--path",
+        "--db",
         type=Path,
         default=None,
-        help="Path to coverage_llm.json (default: coverage_llm.json)",
+        help=f"Path to coverage database (default: {DEFAULT_COVERAGE_DB_PATH})",
     )
     args = parser.parse_args()
 
-    try:
-        data = load_coverage_llm(args.path)
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
+    db_path = args.db or DEFAULT_COVERAGE_DB_PATH
+
+    if not db_path.exists():
+        print(
+            f"Error: Coverage database not found at {db_path}. "
+            "Run 'uv run test-coverage' to generate it.",
+            file=sys.stderr,
+        )
         return 1
 
-    summary = generate_summary(data)
+    try:
+        summary = generate_summary(db_path)
+    except Exception as e:
+        print(f"Error generating summary: {e}", file=sys.stderr)
+        return 1
 
     if args.json:
         print(json.dumps(summary, indent=2))

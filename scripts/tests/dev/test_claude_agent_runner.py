@@ -10,7 +10,6 @@ import pytest
 
 from scripts.dev.claude_agent_runner import (
     build_command,
-    load_agent,
     main,
     parse_args,
     run_command,

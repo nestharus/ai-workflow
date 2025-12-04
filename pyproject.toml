@@ -70,13 +70,15 @@ knowledge = [
 # Development scripts
 setup = "scripts.dev.setup:main"
 lint = "scripts.dev.lint:main"
+"agent.claude" = "scripts.dev.claude_agent_runner:main"
 "agent.huggingface" = "scripts.dev.huggingface_agent_runner:main"
+"agent.opencode" = "scripts.dev.opencode_agent_runner:main"
+"agent.tasks" = "scripts.dev.tasks_agent_runner:main"
 # Review scripts
 "review.coderabbit" = "scripts.dev.review.coderabbit_review:main"
 "review.sonar" = "scripts.dev.review.sonar_review:main"
 "review.latest" = "scripts.dev.review.latest_review:main"
 # Test runner scripts
-llm-coverage-report = "scripts.dev.test_runner.llm_coverage_report:main"
 test-coverage = "scripts.dev.test_runner.test_coverage:main"
 # Test analysis scripts (LLM-friendly coverage querying)
 coverage-summary = "scripts.dev.test_analysis.coverage_summary:main"
@@ -139,11 +141,8 @@ exclude = [
     ".venv",
     "build",
     "dist",
-    ".coverage",
+    ".coverage/",
     "htmlcov/",
-    ".coverage.*",
-    "coverage.xml",
-    "junit.xml",
     "uv.lock",
     "to_adapt/",
     ".idea/",
@@ -152,7 +151,7 @@ exclude = [
     "openapi/",
     ".review/",
     ".serena/",
-    ".tasks/",
+    ".tasks/store/",
     ".huggingface/",
     "LICENSE",
 ]
@@ -237,7 +236,7 @@ source = [
     "scripts/",
 ]
 
-# Custom coverage settings used by test_coverage.py and llm_coverage_report.py
+# Custom coverage settings used by test_coverage.py
 # Each tier has its own thresholds based on coverage type:
 # - unit/component/scripts: line/branch coverage (per-function and overall)
 # - integration/e2e: use-case coverage only

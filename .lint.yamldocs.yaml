@@ -9,7 +9,7 @@ targets:
 
 # Directories to exclude from linting
 exclude_dirs:
-  - .tasks
+  - .tasks/store  # Generated task files
   - .venv
   - __pycache__
   - node_modules

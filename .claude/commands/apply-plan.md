@@ -1,6 +1,6 @@
 ---
 description: Apply Traycer AI implementation plans by orchestrating sub-agents
-argument-hint: [--tasks-dir .tasks/<timestamp>]
+argument-hint: [--tasks-dir .tasks/store/<timestamp>]
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Task, TodoWrite
 ---
 
@@ -10,8 +10,8 @@ Automates execution of Traycer AI implementation plans by orchestrating sub-agen
 
 ## Usage
 
-- `/apply-plan` - Parse plan from clipboard, create timestamped folder under `.tasks/`
-- `/apply-plan --tasks-dir .tasks/<timestamp>` - Resume from existing tasks directory
+- `/apply-plan` - Parse plan from clipboard, create timestamped folder under `.tasks/store/`
+- `/apply-plan --tasks-dir .tasks/store/<timestamp>` - Resume from existing tasks directory
 
 ## Workflow
 
@@ -20,7 +20,7 @@ Automates execution of Traycer AI implementation plans by orchestrating sub-agen
 If `--tasks-dir` is provided in `$ARGUMENTS`, use that directory. Otherwise:
 
 1. Run `python scripts/clipboard_to_plan.py` to create a new tasks directory
-2. The script outputs the path to the created directory (e.g., `.tasks/20241203_120000/`)
+2. The script outputs the path to the created directory (e.g., `.tasks/store/20241203_120000/`)
 3. Capture and use this path for subsequent operations
 
 ### Step 2: Load or Initialize Status

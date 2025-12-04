@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
-"""Parse a Traycer AI implementation plan from the clipboard and write structured tasks."""
+"""Parse a Traycer AI implementation plan from the clipboard and write structured tasks.
 
+When the --use-tasks-system flag is enabled, this script integrates with the .tasks
+routing system to generate task metadata JSON files alongside the task markdown files.
+Each agent defines its own `routing_thresholds` in its frontmatter to map prompt
+character counts to runner/model combinations.
+"""
+
+import argparse
+import json
 import platform
 import re
 import shutil
@@ -8,6 +16,9 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 
 def is_wsl() -> bool:
@@ -108,6 +119,133 @@ SECTION_HEADERS = {
 }
 
 
+def _count_task_chars(task_path: Path) -> int:
+    """Count total characters in a task file.
+
+    Args:
+        task_path: Path to the task file.
+
+    Returns:
+        Number of characters in the file content.
+    """
+    content = task_path.read_text(encoding="utf-8")
+    return len(content)
+
+
+def _load_tasks_config(project_root: Path) -> dict[str, Any]:
+    """Load and validate the .tasks.yaml configuration file.
+
+    Args:
+        project_root: Path to the project root directory.
+
+    Returns:
+        Parsed configuration dictionary with 'agents_dir' key.
+
+    Raises:
+        FileNotFoundError: If .tasks.yaml is not found in the project root.
+        ValueError: If the YAML is invalid or missing required keys.
+    """
+    config_path = project_root / ".tasks.yaml"
+    if not config_path.exists():
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
+    try:
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise ValueError(f"Invalid YAML in {config_path}: {e}") from e
+
+    if not isinstance(config, dict):
+        raise ValueError(f"Expected dict in {config_path}, got {type(config).__name__}")
+
+    required_keys = ["agents_dir"]
+    missing_keys = [key for key in required_keys if key not in config]
+    if missing_keys:
+        raise ValueError(f"Missing required keys in {config_path}: {missing_keys}")
+
+    return config
+
+
+def _generate_task_metadata(
+    task_path: Path,
+    config_path: Path,
+    agent_name: str = "implementor",
+) -> dict[str, Any]:
+    """Generate metadata for a task file based on agent's routing thresholds.
+
+    Counts the characters in the task file and routes to the appropriate
+    model and provider based on the agent's `routing_thresholds` from its
+    frontmatter. When routing is not available or returns None, uses fallback
+    values.
+
+    Args:
+        task_path: Path to the task markdown file.
+        config_path: Path to the .tasks.yaml configuration file.
+        agent_name: Name of the agent to assign (default: "implementor").
+
+    Returns:
+        Dictionary with keys: 'runner', 'agent', 'model', 'provider',
+        'prompt_file', 'char_count'. If routing returns None or the agent
+        has no routing_thresholds, uses fallback values:
+        model="factory/gpt-5.1-high", provider="opencode".
+    """
+    from scripts.dev.agent_runner import AgentRunner
+
+    char_count = _count_task_chars(task_path)
+
+    # Load agent frontmatter to access routing_thresholds
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    # Resolve agents_dir the same way as AgentRunner.from_agent_name()
+    agents_dir_path = Path(config["agents_dir"])
+    agents_dir = agents_dir_path if agents_dir_path.is_absolute() else config_path.parent / agents_dir_path
+    agent_path = agents_dir / f"{agent_name}.md"
+
+    model = "factory/gpt-5.1-high"
+    provider = "opencode"
+
+    try:
+        agent_config = AgentRunner.load_frontmatter(agent_path)
+        routing_thresholds = agent_config.get("routing_thresholds")
+
+        if routing_thresholds:
+            routing_result = AgentRunner.select_from_routing_thresholds(
+                routing_thresholds, char_count
+            )
+            if routing_result is not None:
+                model, provider = routing_result
+    except (FileNotFoundError, ValueError, KeyError):
+        pass  # Use fallback values
+
+    return {
+        "runner": "agent.tasks",
+        "agent": agent_name,
+        "model": model,
+        "provider": provider,
+        "prompt_file": task_path.name,
+        "char_count": char_count,
+    }
+
+
+def _write_task_metadata_files(
+    output_dir: Path,
+    task_metadata: list[dict[str, Any]],
+) -> None:
+    """Write JSON metadata files for each task.
+
+    For each task, creates a corresponding task_XXX.json file containing
+    agent assignment and routing information. Uses precomputed metadata to
+    ensure consistency with the Agent Assignments section in outline.md.
+
+    Args:
+        output_dir: Directory containing task markdown files.
+        task_metadata: Precomputed list of metadata dicts for each task.
+    """
+    for idx, metadata in enumerate(task_metadata, start=1):
+        metadata_path = output_dir / f"task_{idx:03d}.json"
+        with metadata_path.open("w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+            f.write("\n")
+
+
 def parse_plan_sections(content: str) -> dict[str, str]:
     """Extract known sections from the plan content.
 
@@ -178,8 +316,23 @@ def extract_file_changes(file_changes_body: str) -> list[dict[str, str]]:
     return tasks
 
 
-def generate_outline(sections: dict[str, str], file_changes: list[dict[str, str]]) -> str:
-    """Create outline content for outline.md."""
+def generate_outline(
+    sections: dict[str, str],
+    file_changes: list[dict[str, str]],
+    task_metadata: list[dict[str, Any]] | None = None,
+) -> str:
+    """Create outline content for outline.md.
+
+    Args:
+        sections: Parsed sections from the plan content.
+        file_changes: List of file change dicts with 'filepath' and 'content' keys.
+        task_metadata: Optional list of metadata dicts for each task, containing
+            'agent', 'model', 'provider', and 'char_count' keys. When provided,
+            an "Agent Assignments" section is added to the outline.
+
+    Returns:
+        Formatted outline content as a string.
+    """
     lines: list[str] = []
     if intro := sections.get("intro"):
         lines.append(intro)
@@ -199,6 +352,16 @@ def generate_outline(sections: dict[str, str], file_changes: list[dict[str, str]
     if mermaid := sections.get("mermaid"):
         lines.append("## Mermaid Diagram")
         lines.append(mermaid.strip())
+        lines.append("")
+
+    if task_metadata:
+        lines.append("## Agent Assignments")
+        for idx, metadata in enumerate(task_metadata, start=1):
+            agent = metadata["agent"]
+            model = metadata["model"]
+            provider = metadata["provider"]
+            char_count = metadata["char_count"]
+            lines.append(f"- Task {idx:03d}: {agent} ({model}, {provider}) - {char_count} chars")
         lines.append("")
 
     lines.append("## File Changes")
@@ -234,14 +397,27 @@ def write_task_files(output_dir: Path, file_changes: list[dict[str, str]], intro
 
 def main() -> None:
     """Read clipboard, parse plan, and write structured tasks."""
+    parser = argparse.ArgumentParser(
+        description="Parse Traycer AI implementation plans from clipboard"
+    )
+    parser.add_argument(
+        "--use-tasks-system",
+        action="store_true",
+        default=False,
+        help="Enable .tasks integration: load agent routing from frontmatter, "
+        "generate task metadata JSON files with agent/model/provider assignments, "
+        "and include Agent Assignments section in outline.md",
+    )
+    args = parser.parse_args()
+
     script_dir = Path(__file__).resolve().parent
     project_root = script_dir.parent
 
-    tasks_root = project_root / ".tasks"
-    tasks_root.mkdir(parents=True, exist_ok=True)
+    store_root = project_root / ".tasks" / "store"
+    store_root.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    timestamp_dir = tasks_root / timestamp
+    timestamp_dir = store_root / timestamp
     timestamp_dir.mkdir(parents=True, exist_ok=True)
 
     content = get_clipboard_content()
@@ -258,12 +434,43 @@ def main() -> None:
         print("Error: '## Proposed File Changes' section not found", file=sys.stderr)
         sys.exit(1)
 
-    outline = generate_outline(sections, file_changes)
+    # Load tasks config if --use-tasks-system is enabled
+    config_path: Path | None = None
+    if args.use_tasks_system:
+        try:
+            _load_tasks_config(project_root)
+            config_path = project_root / ".tasks.yaml"
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    # Generate initial outline without task metadata
+    task_metadata: list[dict[str, Any]] | None = None
+    outline = generate_outline(sections, file_changes, task_metadata)
     (timestamp_dir / "outline.md").write_text(outline)
 
     if file_changes:
         intro = sections.get("intro", "")
         write_task_files(timestamp_dir, file_changes, intro)
+
+        # Generate metadata after task files are written (so we can count chars)
+        if args.use_tasks_system and config_path is not None:
+            task_metadata = [
+                _generate_task_metadata(
+                    timestamp_dir / f"task_{idx:03d}.md", config_path
+                )
+                for idx in range(1, len(file_changes) + 1)
+            ]
+            # Write JSON files using precomputed metadata (ensures consistency
+            # with Agent Assignments section in outline.md)
+            _write_task_metadata_files(timestamp_dir, task_metadata)
+
+            # Regenerate outline with task metadata
+            outline = generate_outline(sections, file_changes, task_metadata)
+            (timestamp_dir / "outline.md").write_text(outline)
     else:
         print("Warning: No file changes detected", file=sys.stderr)
 

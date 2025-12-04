@@ -10,7 +10,6 @@ import pytest
 
 from scripts.dev.huggingface_agent_runner import (
     build_prompt,
-    load_agent,
     load_model,
     main,
     parse_args,

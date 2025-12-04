@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-
-from app.infrastructure.surrealdb.pool import create_surrealdb_pool
 
 from app.infrastructure.surrealdb.exceptions import (
     SurrealDBPoolNotInitializedError,

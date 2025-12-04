@@ -293,8 +293,7 @@ def _invoke_huggingface_agent(
 
     if result.returncode != 0:
         raise HunterError(
-            f"Agent {agent_name} returned non-zero exit code "
-            f"{result.returncode}: {result.stderr}"
+            f"Agent {agent_name} returned non-zero exit code {result.returncode}: {result.stderr}"
         )
 
     # Parse JSON output from stdout
@@ -304,9 +303,7 @@ def _invoke_huggingface_agent(
 
     # Log the interaction with target_entity metadata
     target_entity = input_json.get("target_entity")
-    _log_interaction(
-        log_dir, prompt_str, stdout, input_json.get("mode", "unknown"), target_entity
-    )
+    _log_interaction(log_dir, prompt_str, stdout, input_json.get("mode", "unknown"), target_entity)
 
     return _parse_json_response(stdout)
 

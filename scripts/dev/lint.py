@@ -211,20 +211,33 @@ def _run_pymarkdown() -> None:
     _run_checked(pymarkdown_cmd)
 
 
+def _is_path_excluded(path: Path, exclude_paths: set[Path]) -> bool:
+    """Check if a path is under any excluded directory.
+
+    Args:
+        path: The file path to check.
+        exclude_paths: Set of excluded directory paths (relative to REPO_ROOT).
+
+    Returns:
+        True if the path is under an excluded directory.
+    """
+    return any(excluded in path.parents for excluded in exclude_paths)
+
+
 def _run_yamllint() -> None:
     """Run yamllint on YAML files."""
     uv_exe = _uv()
     config = _load_yaml_config(LINT_YAMLLINT_CONFIG)
-    exclude_dirs = set(config.get("exclude_dirs", []))
+    exclude_dirs = {REPO_ROOT / d for d in config.get("exclude_dirs", [])}
     yaml_files = [
         str(path)
         for path in REPO_ROOT.rglob("*.yml")
-        if path.is_file() and not any(excl in path.parts for excl in exclude_dirs)
+        if path.is_file() and not _is_path_excluded(path, exclude_dirs)
     ]
     yaml_files.extend(
         str(path)
         for path in REPO_ROOT.rglob("*.yaml")
-        if path.is_file() and not any(excl in path.parts for excl in exclude_dirs)
+        if path.is_file() and not _is_path_excluded(path, exclude_dirs)
     )
     if yaml_files:
         yamllint_config = str(REPO_ROOT / ".yamllint.yaml")

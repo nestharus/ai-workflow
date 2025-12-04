@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -98,6 +99,8 @@ class TestTestTiers:
         assert config.coverage_type == "line_branch"
         assert config.skip_private_functions is False
         assert config.service_layer_only is False
+        # coverage_file field should be removed
+        assert not hasattr(config, "coverage_file")
 
     def test_component_tier_config(self) -> None:
         """Component tier should target service layer only."""
@@ -107,6 +110,8 @@ class TestTestTiers:
         assert config.coverage_type == "line_branch"
         assert config.skip_private_functions is True
         assert config.service_layer_only is True
+        # coverage_file field should be removed
+        assert not hasattr(config, "coverage_file")
 
     def test_integration_tier_config(self) -> None:
         """Integration tier should use use-case coverage."""
@@ -114,6 +119,8 @@ class TestTestTiers:
         config = tiers["integration"]
         assert config.test_path == "tests/integration"
         assert config.coverage_type == "usecase"
+        # coverage_file field should be removed
+        assert not hasattr(config, "coverage_file")
 
     def test_e2e_tier_config(self) -> None:
         """E2E tier should use use-case coverage."""
@@ -121,6 +128,8 @@ class TestTestTiers:
         config = tiers["e2e"]
         assert config.test_path == "tests/e2e"
         assert config.coverage_type == "usecase"
+        # coverage_file field should be removed
+        assert not hasattr(config, "coverage_file")
 
     def test_scripts_tier_config(self) -> None:
         """Scripts tier should target scripts/ and tools/."""
@@ -130,6 +139,8 @@ class TestTestTiers:
         assert config.source_paths == ["scripts", "tools"]
         assert config.coverage_type == "line_branch"
         assert config.skip_private_functions is True
+        # coverage_file field should be removed
+        assert not hasattr(config, "coverage_file")
 
 
 class TestIsPrivateFunction:
@@ -546,7 +557,6 @@ class TestValidateLineBranchCoverage:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_file="coverage.json",
             coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=80.0,
@@ -583,7 +593,6 @@ class TestValidateLineBranchCoverage:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_file="coverage.json",
             coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=80.0,
@@ -621,7 +630,6 @@ class TestValidateLineBranchCoverage:
             name="scripts",
             test_path="scripts/tests",
             source_paths=["scripts"],
-            coverage_file="coverage.json",
             coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=80.0,
@@ -659,7 +667,6 @@ class TestValidateLineBranchCoverage:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_file="coverage.json",
             coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=80.0,
@@ -698,7 +705,6 @@ class TestValidateLineBranchCoverage:
             name="component",
             test_path="tests/unit",
             source_paths=["app/services"],
-            coverage_file="coverage.json",
             coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=80.0,
@@ -749,7 +755,6 @@ class TestValidateUsecaseCoverage:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_file="coverage.json",
             coverage_type="usecase",
             min_usecase=100.0,
         )
@@ -771,7 +776,6 @@ class TestValidateUsecaseCoverage:
             name="e2e",
             test_path="tests/e2e",
             source_paths=["app"],
-            coverage_file="coverage.json",
             coverage_type="usecase",
             min_usecase=100.0,
         )
@@ -872,7 +876,6 @@ class TestPrintSummary:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_file="coverage.json",
             coverage_type="line_branch",
         )
         result = CoverageResult(
@@ -902,7 +905,6 @@ class TestPrintSummary:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_file="coverage.json",
             coverage_type="usecase",
         )
         uc_result = UseCaseCoverageResult(
@@ -919,3 +921,423 @@ class TestPrintSummary:
         assert "INTEGRATION TEST SUITE" in captured.out
         assert "Use-Case Coverage" in captured.out
         assert "UC-1" in captured.out
+
+
+class TestGenerateMissingLineDetails:
+    """Tests for generate_missing_line_details function."""
+
+    def test_generates_missing_line_details(self, fs: FakeFilesystem) -> None:
+        """Should generate missing line details with context."""
+        from scripts.dev.test_runner.test_coverage import generate_missing_line_details
+
+        code = """def test_func():
+    line_one = 1
+    line_two = 2
+    line_three = 3
+    return line_one + line_two
+"""
+        fs.create_dir("/repo")
+        fs.create_file("/repo/test.py", contents=code)
+
+        coverage_data = {
+            "files": {
+                "test.py": {
+                    "executed_lines": [1, 2, 3],
+                    "missing_lines": [4, 5],
+                    "missing_branches": [[4, 5]],
+                }
+            }
+        }
+
+        results = generate_missing_line_details(coverage_data, Path("/repo"))
+
+        assert len(results) == 2
+        # First missing line
+        assert results[0].file == "test.py"
+        assert results[0].line_number == 4
+        assert "line_three" in results[0].content
+        assert len(results[0].context_before) > 0
+        assert len(results[0].context_after) > 0
+
+    def test_handles_missing_file(self) -> None:
+        """Should handle missing source files gracefully."""
+        from scripts.dev.test_runner.test_coverage import generate_missing_line_details
+
+        coverage_data = {
+            "files": {
+                "nonexistent.py": {
+                    "executed_lines": [1],
+                    "missing_lines": [2],
+                    "missing_branches": [],
+                }
+            }
+        }
+
+        results = generate_missing_line_details(coverage_data, Path("/nonexistent"))
+
+        # Should return empty list when source file doesn't exist
+        assert results == []
+
+
+class TestMissingLineDetail:
+    """Tests for MissingLineDetail dataclass."""
+
+    def test_creates_missing_line_detail(self) -> None:
+        """Should create missing line detail with all fields."""
+        from scripts.dev.test_runner.test_coverage import MissingLineDetail
+
+        detail = MissingLineDetail(
+            file="test.py",
+            line_number=10,
+            content="    return value",
+            context_before=[{"line_number": 9, "content": "    value = 42"}],
+            context_after=[{"line_number": 11, "content": ""}],
+            missing_branch_exits=[15, 20],
+        )
+
+        assert detail.file == "test.py"
+        assert detail.line_number == 10
+        assert detail.content == "    return value"
+        assert len(detail.context_before) == 1
+        assert len(detail.context_after) == 1
+        assert detail.missing_branch_exits == [15, 20]
+
+
+class TestUsecaseMarkerVisitor:
+    """Tests for _UsecaseMarkerVisitor AST visitor."""
+
+    def test_extracts_usecase_from_decorator(self, fs: FakeFilesystem) -> None:
+        """Should extract use case ID from pytest.mark.usecase decorator."""
+        from scripts.dev.test_runner.test_coverage import _UsecaseMarkerVisitor
+
+        code = """
+import pytest
+
+@pytest.mark.usecase("UC-HEALTH-001")
+def test_health_check():
+    pass
+"""
+        tree = compile(code, "test.py", "exec", flags=ast.PyCF_ONLY_AST)
+        visitor = _UsecaseMarkerVisitor("tests/e2e/test_health.py")
+        visitor.visit(tree)
+
+        assert "UC-HEALTH-001" in visitor.found
+        assert len(visitor.found["UC-HEALTH-001"]) == 1
+        assert visitor.found["UC-HEALTH-001"][0]["file"] == "tests/e2e/test_health.py"
+        assert visitor.found["UC-HEALTH-001"][0]["test_function"] == "test_health_check"
+
+    def test_extracts_multiple_usecases(self, fs: FakeFilesystem) -> None:
+        """Should extract multiple use case IDs from the same file."""
+        from scripts.dev.test_runner.test_coverage import _UsecaseMarkerVisitor
+
+        code = """
+import pytest
+
+@pytest.mark.usecase("UC-TEST-001")
+def test_one():
+    pass
+
+@pytest.mark.usecase("UC-TEST-002")
+def test_two():
+    pass
+"""
+        tree = compile(code, "test.py", "exec", flags=ast.PyCF_ONLY_AST)
+        visitor = _UsecaseMarkerVisitor("tests/integration/test_api.py")
+        visitor.visit(tree)
+
+        assert "UC-TEST-001" in visitor.found
+        assert "UC-TEST-002" in visitor.found
+        assert visitor.found["UC-TEST-001"][0]["test_function"] == "test_one"
+        assert visitor.found["UC-TEST-002"][0]["test_function"] == "test_two"
+
+    def test_handles_single_quotes(self, fs: FakeFilesystem) -> None:
+        """Should handle single-quoted use case IDs."""
+        from scripts.dev.test_runner.test_coverage import _UsecaseMarkerVisitor
+
+        code = """
+import pytest
+
+@pytest.mark.usecase('UC-EXAMPLE-001')
+def test_example():
+    pass
+"""
+        tree = compile(code, "test.py", "exec", flags=ast.PyCF_ONLY_AST)
+        visitor = _UsecaseMarkerVisitor("tests/integration/test_example.py")
+        visitor.visit(tree)
+
+        assert "UC-EXAMPLE-001" in visitor.found
+
+    def test_handles_async_functions(self, fs: FakeFilesystem) -> None:
+        """Should extract use cases from async test functions."""
+        from scripts.dev.test_runner.test_coverage import _UsecaseMarkerVisitor
+
+        code = """
+import pytest
+
+@pytest.mark.usecase("UC-ASYNC-001")
+async def test_async_operation():
+    pass
+"""
+        tree = compile(code, "test.py", "exec", flags=ast.PyCF_ONLY_AST)
+        visitor = _UsecaseMarkerVisitor("tests/integration/test_async.py")
+        visitor.visit(tree)
+
+        assert "UC-ASYNC-001" in visitor.found
+        assert visitor.found["UC-ASYNC-001"][0]["test_function"] == "test_async_operation"
+
+    def test_ignores_non_usecase_decorators(self, fs: FakeFilesystem) -> None:
+        """Should ignore decorators that are not usecase markers."""
+        from scripts.dev.test_runner.test_coverage import _UsecaseMarkerVisitor
+
+        code = """
+import pytest
+
+@pytest.mark.asyncio
+@pytest.mark.skip
+def test_skipped():
+    pass
+"""
+        tree = compile(code, "test.py", "exec", flags=ast.PyCF_ONLY_AST)
+        visitor = _UsecaseMarkerVisitor("tests/integration/test_skip.py")
+        visitor.visit(tree)
+
+        assert len(visitor.found) == 0
+
+
+class TestScanTestsForUsecases:
+    """Tests for _scan_tests_for_usecases function."""
+
+    def test_scans_test_directory(self, fs: FakeFilesystem) -> None:
+        """Should scan test directory and extract use case markers."""
+        from scripts.dev.test_runner.test_coverage import _scan_tests_for_usecases
+
+        test_content = """
+import pytest
+
+@pytest.mark.usecase("UC-HEALTH-001")
+def test_health():
+    pass
+
+@pytest.mark.usecase("UC-HEALTH-002")
+def test_readiness():
+    pass
+"""
+        fs.create_dir("/repo/tests/e2e")
+        fs.create_file("/repo/tests/e2e/test_health.py", contents=test_content)
+
+        result = _scan_tests_for_usecases("/repo/tests/e2e", Path("/repo"))
+
+        assert "UC-HEALTH-001" in result
+        assert "UC-HEALTH-002" in result
+        assert len(result["UC-HEALTH-001"]) == 1
+        assert result["UC-HEALTH-001"][0]["test_function"] == "test_health"
+        assert "tests/e2e/test_health.py" in result["UC-HEALTH-001"][0]["file"]
+
+    def test_scans_multiple_files(self, fs: FakeFilesystem) -> None:
+        """Should scan multiple test files in directory."""
+        from scripts.dev.test_runner.test_coverage import _scan_tests_for_usecases
+
+        health_test = """
+import pytest
+
+@pytest.mark.usecase("UC-HEALTH-001")
+def test_health():
+    pass
+"""
+        example_test = """
+import pytest
+
+@pytest.mark.usecase("UC-EXAMPLE-001")
+def test_example():
+    pass
+"""
+        fs.create_dir("/repo/tests/integration")
+        fs.create_file("/repo/tests/integration/test_health.py", contents=health_test)
+        fs.create_file("/repo/tests/integration/test_example.py", contents=example_test)
+
+        result = _scan_tests_for_usecases("/repo/tests/integration", Path("/repo"))
+
+        assert "UC-HEALTH-001" in result
+        assert "UC-EXAMPLE-001" in result
+
+    def test_handles_nonexistent_directory(self) -> None:
+        """Should return empty dict for nonexistent directory."""
+        from scripts.dev.test_runner.test_coverage import _scan_tests_for_usecases
+
+        result = _scan_tests_for_usecases("/nonexistent/path", Path("/repo"))
+
+        assert result == {}
+
+    def test_handles_syntax_errors(self, fs: FakeFilesystem) -> None:
+        """Should skip files with syntax errors."""
+        from scripts.dev.test_runner.test_coverage import _scan_tests_for_usecases
+
+        fs.create_dir("/repo/tests/integration")
+        fs.create_file("/repo/tests/integration/test_broken.py", contents="def broken(:")
+
+        result = _scan_tests_for_usecases("/repo/tests/integration", Path("/repo"))
+
+        assert result == {}
+
+    def test_aggregates_same_usecase_across_tests(self, fs: FakeFilesystem) -> None:
+        """Should aggregate multiple tests covering the same use case."""
+        from scripts.dev.test_runner.test_coverage import _scan_tests_for_usecases
+
+        test_content = """
+import pytest
+
+@pytest.mark.usecase("UC-TEST-001")
+def test_scenario_a():
+    pass
+
+@pytest.mark.usecase("UC-TEST-001")
+def test_scenario_b():
+    pass
+"""
+        fs.create_dir("/repo/tests/integration")
+        fs.create_file("/repo/tests/integration/test_multi.py", contents=test_content)
+
+        result = _scan_tests_for_usecases("/repo/tests/integration", Path("/repo"))
+
+        assert "UC-TEST-001" in result
+        assert len(result["UC-TEST-001"]) == 2
+        assert result["UC-TEST-001"][0]["test_function"] == "test_scenario_a"
+        assert result["UC-TEST-001"][1]["test_function"] == "test_scenario_b"
+
+
+class TestUsecaseDatabaseIntegration:
+    """Tests for use case database integration."""
+
+    def test_writes_usecase_registry_to_database(self, tmp_path: Path) -> None:
+        """Should write use case registry to database."""
+        from scripts.dev.test_runner import coverage_db
+
+        db_path = tmp_path / "coverage.db"
+        coverage_db.init_custom_tables(db_path)
+
+        use_cases = [
+            UseCase("UC-TEST-001", "/api/test", "GET", "Test case", "integration"),
+            UseCase("UC-TEST-002", "/api/test", "POST", "Test case 2", "e2e"),
+        ]
+
+        coverage_db.write_usecase_registry(db_path, use_cases)
+
+        # Verify data was written
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.execute("SELECT usecase_id, endpoint, test_tier FROM cc_usecase")
+        rows = cursor.fetchall()
+        conn.close()
+
+        assert len(rows) == 2
+        assert rows[0][0] == "UC-TEST-001"
+        assert rows[0][1] == "/api/test"
+        assert rows[0][2] == "integration"
+
+    def test_writes_usecase_coverage_covered(self, tmp_path: Path) -> None:
+        """Should write covered use case to database."""
+        from scripts.dev.test_runner import coverage_db
+
+        db_path = tmp_path / "coverage.db"
+        coverage_db.init_custom_tables(db_path)
+
+        # Write use case registry first
+        use_cases = [UseCase("UC-TEST-001", "/api/test", "GET", "Test", "integration")]
+        coverage_db.write_usecase_registry(db_path, use_cases)
+
+        # Write coverage
+        coverage_db.write_usecase_coverage(
+            db_path,
+            "UC-TEST-001",
+            covered=True,
+            test_file="tests/integration/test_api.py",
+            test_function="test_endpoint",
+        )
+
+        # Verify data
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.execute(
+            "SELECT usecase_id, covered, test_file, test_function FROM cc_usecase_coverage"
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        assert row[0] == "UC-TEST-001"
+        assert row[1] == 1  # covered=True
+        assert row[2] == "tests/integration/test_api.py"
+        assert row[3] == "test_endpoint"
+
+    def test_writes_usecase_coverage_uncovered(self, tmp_path: Path) -> None:
+        """Should write uncovered use case to database."""
+        from scripts.dev.test_runner import coverage_db
+
+        db_path = tmp_path / "coverage.db"
+        coverage_db.init_custom_tables(db_path)
+
+        # Write use case registry first
+        use_cases = [UseCase("UC-TEST-002", "/api/test", "POST", "Test", "integration")]
+        coverage_db.write_usecase_registry(db_path, use_cases)
+
+        # Write coverage as uncovered
+        coverage_db.write_usecase_coverage(
+            db_path,
+            "UC-TEST-002",
+            covered=False,
+            test_file=None,
+            test_function=None,
+        )
+
+        # Verify data
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.execute(
+            "SELECT usecase_id, covered, test_file, test_function FROM cc_usecase_coverage"
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        assert row[0] == "UC-TEST-002"
+        assert row[1] == 0  # covered=False
+        assert row[2] is None
+        assert row[3] is None
+
+    def test_queries_usecase_coverage(self, tmp_path: Path) -> None:
+        """Should query use case coverage statistics."""
+        from scripts.dev.test_runner import coverage_db
+
+        db_path = tmp_path / "coverage.db"
+        coverage_db.init_custom_tables(db_path)
+
+        # Write use case registry
+        use_cases = [
+            UseCase("UC-TEST-001", "/api/a", "GET", "Test 1", "integration"),
+            UseCase("UC-TEST-002", "/api/b", "GET", "Test 2", "integration"),
+            UseCase("UC-TEST-003", "/api/c", "GET", "Test 3", "e2e"),
+        ]
+        coverage_db.write_usecase_registry(db_path, use_cases)
+
+        # Write coverage
+        coverage_db.write_usecase_coverage(
+            db_path, "UC-TEST-001", covered=True, test_file="test.py", test_function="test_1"
+        )
+        coverage_db.write_usecase_coverage(
+            db_path, "UC-TEST-002", covered=False, test_file=None, test_function=None
+        )
+        coverage_db.write_usecase_coverage(
+            db_path, "UC-TEST-003", covered=True, test_file="test.py", test_function="test_3"
+        )
+
+        # Query coverage
+        result = coverage_db.get_usecase_coverage(db_path)
+
+        assert result["total"] == 3
+        assert result["covered"] == 2
+        assert result["coverage_pct"] == pytest.approx(66.67, rel=0.01)
+        assert "UC-TEST-002" in result["uncovered"]
+        assert "integration" in result["by_tier"]
+        assert result["by_tier"]["integration"]["total"] == 2
+        assert result["by_tier"]["integration"]["covered"] == 1

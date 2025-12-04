@@ -1,6 +1,6 @@
 """Coverage files tool - list files with coverage problems.
 
-Lists all files that have coverage issues from coverage_llm.json,
+Lists all files that have coverage issues from the SQLite database,
 filtering out excluded paths and providing filtering options.
 
 Usage:
@@ -8,6 +8,7 @@ Usage:
     uv run coverage-files --filter app/services
     uv run coverage-files --limit 20
     uv run coverage-files --json
+    uv run coverage-files --db .coverage/coverage.db
 """
 
 from __future__ import annotations
@@ -20,16 +21,22 @@ from pathlib import Path
 from typing import Any
 
 from scripts.dev.test_analysis.common import (
+    DEFAULT_COVERAGE_DB_PATH,
+    get_functions_below_threshold,
+    get_missing_lines,
     is_excluded_path,
-    load_coverage_llm,
 )
 
 
-def aggregate_files(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def aggregate_files(
+    functions: list[dict[str, Any]],
+    missing_lines: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
     """Aggregate coverage issues by file.
 
     Args:
-        data: The coverage_llm.json data.
+        functions: List of function coverage records.
+        missing_lines: List of missing line records.
 
     Returns:
         Dict mapping file paths to their coverage info.
@@ -43,22 +50,20 @@ def aggregate_files(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     )
 
     # Collect missing lines
-    missing_lines = data.get("code_coverage", {}).get("missing_lines", [])
     for line in missing_lines:
-        file_path = line.get("file", "")
+        file_path = line.get("file_path", "")
         if not is_excluded_path(file_path):
             files[file_path]["missing_lines"].append(line.get("line_number"))
             for branch in line.get("missing_branch_exits", []):
                 files[file_path]["missing_branches"].append(branch)
 
     # Collect functions below threshold
-    functions = data.get("function_coverage", {}).get("functions_below_threshold", [])
     for func in functions:
-        file_path = func.get("file", "")
+        file_path = func.get("file_path", "")
         if not is_excluded_path(file_path):
             files[file_path]["functions_below_threshold"].append(
                 {
-                    "name": func.get("function", ""),
+                    "name": func.get("function_name", ""),
                     "line_coverage": func.get("line_coverage_pct", 0),
                     "branch_coverage": func.get("branch_coverage_pct", 0),
                 }
@@ -91,7 +96,7 @@ def format_file_entry(file_path: str, info: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_files_with_issues(
-    data: dict[str, Any],
+    db_path: Path,
     path_filter: str | None = None,
     limit: int | None = None,
     sort_by: str = "total_issues",
@@ -99,7 +104,7 @@ def get_files_with_issues(
     """Get list of files with coverage issues.
 
     Args:
-        data: The coverage_llm.json data.
+        db_path: Path to the coverage database.
         path_filter: Optional path prefix to filter by.
         limit: Optional limit on number of results.
         sort_by: Field to sort by (total_issues, missing_lines_count, file).
@@ -107,7 +112,12 @@ def get_files_with_issues(
     Returns:
         List of file entries sorted by the specified field.
     """
-    files = aggregate_files(data)
+    # Get data from database
+    functions = get_functions_below_threshold(db_path)
+    missing_lines = get_missing_lines(db_path)
+
+    # Aggregate by file
+    files = aggregate_files(functions, missing_lines)
 
     # Format entries
     entries = [format_file_entry(f, info) for f, info in files.items()]
@@ -184,25 +194,33 @@ def main() -> int:
         help="Output as JSON",
     )
     parser.add_argument(
-        "--path",
+        "--db",
         type=Path,
         default=None,
-        help="Path to coverage_llm.json",
+        help=f"Path to coverage database (default: {DEFAULT_COVERAGE_DB_PATH})",
     )
     args = parser.parse_args()
 
-    try:
-        data = load_coverage_llm(args.path)
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
+    db_path = args.db or DEFAULT_COVERAGE_DB_PATH
+
+    if not db_path.exists():
+        print(
+            f"Error: Coverage database not found at {db_path}. "
+            "Run 'uv run test-coverage' to generate it.",
+            file=sys.stderr,
+        )
         return 1
 
-    entries = get_files_with_issues(
-        data,
-        path_filter=args.filter,
-        limit=args.limit,
-        sort_by=args.sort,
-    )
+    try:
+        entries = get_files_with_issues(
+            db_path,
+            path_filter=args.filter,
+            limit=args.limit,
+            sort_by=args.sort,
+        )
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
     if args.json:
         print(json.dumps(entries, indent=2))

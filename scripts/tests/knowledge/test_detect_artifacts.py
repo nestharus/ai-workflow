@@ -220,9 +220,12 @@ class TestDetectFromFile:
         registry_path = artifacts_dir / "kinds.yml"
         fs.create_file(registry_path, contents=yaml.safe_dump({"kinds": registry}))
 
-        with patch("scripts.knowledge.detect_artifacts.REPO_ROOT", Path("/")), patch(
-            "scripts.knowledge.compare_yaml_docs._load_artifact_registry",
-            return_value=registry,
+        with (
+            patch("scripts.knowledge.detect_artifacts.REPO_ROOT", Path("/")),
+            patch(
+                "scripts.knowledge.compare_yaml_docs._load_artifact_registry",
+                return_value=registry,
+            ),
         ):
             artifacts, created, skipped = _detect_from_file(
                 Path("/docs/test.yml"),

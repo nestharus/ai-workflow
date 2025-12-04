@@ -17,7 +17,7 @@ excludes:
   - .ruff_cache
   - .sonar/**
   - .review
-  - .tasks
+  - .tasks/store  # Generated task files
   - openapi
   - .idea*
   - to_adapt

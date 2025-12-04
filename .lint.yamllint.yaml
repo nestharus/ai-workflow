@@ -10,7 +10,7 @@ exclude_dirs:
   - .ruff_cache
   - .sonar
   - .review
-  - .tasks
+  - .tasks/store  # Generated task files
   - .idea
   - .git
   - .github

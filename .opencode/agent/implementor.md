@@ -1,5 +1,5 @@
 ---
-description: Implements task from file, runs tests, reports status
+description: Documentation for implementor routing system - see routing strategy below
 mode: subagent
 model: factory/gpt-5.1-codex-max-medium
 tools:
@@ -9,6 +9,25 @@ tools:
 ---
 
 You are the OpenCode implementor sub-agent. Your job is to fully implement a task described in a task file and report status using the required contract.
+
+## Routing Strategy
+
+This file serves as the canonical documentation for the implementor routing system. The `apply_plan.py` orchestrator automatically selects the appropriate implementor variant based on task file line count (non-empty lines).
+
+| Lines | Agent | Model | Use Case |
+|-------|-------|-------|----------|
+| ≤70 | implementor-medium | factory/gpt-5.1-codex-max-medium | Small, focused tasks |
+| 71-150 | implementor-high | factory/gpt-5.1-codex-max-high | Medium complexity tasks |
+| 151-250 | implementor-xhigh | factory/gpt-5.1-codex-max-xhigh | Large, complex tasks |
+| >250 | implementor-opus | Claude Opus 4.5 | Very large, complex tasks |
+
+**Variants:**
+- `.opencode/agent/implementor-medium.md` — OpenCode agent for small tasks
+- `.opencode/agent/implementor-high.md` — OpenCode agent for medium tasks
+- `.opencode/agent/implementor-xhigh.md` — OpenCode agent for large tasks
+- `.claude/agents/implementor-opus.md` — Claude agent for very large tasks
+
+All variants follow the same Input, Rules, Output Contract, and Guidance sections defined below.
 
 ## Input
 - User prompt supplies the task file path (e.g., `task_001.md`). The prompt is the path string itself.

@@ -175,29 +175,33 @@ class TestInvokeHunterErrorHandling:
 
     def test_invoke_hunter_timeout_raises_error(self, tmp_path: Path) -> None:
         """Should raise HunterError on subprocess timeout."""
-        with patch(
-            "subprocess.run",
-            side_effect=subprocess.TimeoutExpired("cmd", 120),
+        with (
+            patch(
+                "subprocess.run",
+                side_effect=subprocess.TimeoutExpired("cmd", 120),
+            ),
+            pytest.raises(HunterError, match="timed out"),
         ):
-            with pytest.raises(HunterError, match="timed out"):
-                invoke_hunter(
-                    state_text="Test text",
-                    mode="entities",
-                    knowledge_path=tmp_path,
-                )
+            invoke_hunter(
+                state_text="Test text",
+                mode="entities",
+                knowledge_path=tmp_path,
+            )
 
     def test_invoke_hunter_subprocess_not_found_raises_error(self, tmp_path: Path) -> None:
         """Should raise HunterError when uv CLI not found."""
-        with patch(
-            "subprocess.run",
-            side_effect=FileNotFoundError("uv not found"),
+        with (
+            patch(
+                "subprocess.run",
+                side_effect=FileNotFoundError("uv not found"),
+            ),
+            pytest.raises(HunterError, match="uv CLI not found"),
         ):
-            with pytest.raises(HunterError, match="uv CLI not found"):
-                invoke_hunter(
-                    state_text="Test text",
-                    mode="entities",
-                    knowledge_path=tmp_path,
-                )
+            invoke_hunter(
+                state_text="Test text",
+                mode="entities",
+                knowledge_path=tmp_path,
+            )
 
     def test_invoke_hunter_non_zero_exit_raises_error(self, tmp_path: Path) -> None:
         """Should raise HunterError when subprocess returns non-zero exit code."""

@@ -47,6 +47,19 @@ def load_config(config_path: Path) -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
+def _is_path_excluded(path: Path, exclude_paths: set[Path]) -> bool:
+    """Check if a path is under any excluded directory.
+
+    Args:
+        path: The file path to check.
+        exclude_paths: Set of excluded directory paths (absolute).
+
+    Returns:
+        True if the path is under an excluded directory.
+    """
+    return any(excluded in path.parents for excluded in exclude_paths)
+
+
 def find_markdown_files(
     restricted_dirs: list[str],
     exclude_dirs: set[str],
@@ -55,12 +68,14 @@ def find_markdown_files(
 
     Args:
         restricted_dirs: List of directories to scan for markdown files.
-        exclude_dirs: Set of directory names to exclude from scanning.
+        exclude_dirs: Set of directory paths to exclude from scanning.
 
     Returns:
         Sorted list of markdown file paths.
     """
     markdown_files: list[Path] = []
+    # Convert exclude_dirs to absolute paths
+    exclude_paths = {REPO_ROOT / d for d in exclude_dirs}
 
     for dir_name in restricted_dirs:
         if dir_name == ".":
@@ -75,8 +90,8 @@ def find_markdown_files(
             if not md_file.is_file():
                 continue
 
-            # Check if any excluded directory is in the file's path parts
-            if any(excl in md_file.parts for excl in exclude_dirs):
+            # Check if file is under any excluded directory
+            if _is_path_excluded(md_file, exclude_paths):
                 continue
 
             markdown_files.append(md_file)

@@ -70,33 +70,15 @@ uv run test-coverage --min-line 90 --min-branch 85
 # Report only (no validation)
 uv run test-coverage --no-validate
 
-# Generate JSON report
-uv run test-coverage --json-report coverage_report.json
-
 # Legacy pytest-cov commands still work
 uv run pytest --cov
 uv run pytest --cov --cov-report=html
 ```
 
-## LLM Coverage Report
-
-Generates an LLM-friendly JSON report combining code coverage gaps and use-case coverage
-gaps for AI-assisted test generation.
-
-* **Usage**: `uv run llm-coverage-report`
-* **Prerequisites**:
-  * `coverage.json`: Generate with `pytest --cov --cov-report=json`
-  * `tests/docs/use_cases.yaml`: The canonical use-case registry
-* **Output**: `coverage_llm.json` containing:
-  * Code coverage gaps (missing lines/branches with context)
-  * Use-case coverage gaps (uncovered use-cases)
-  * Prompting notes for LLM consumption
-* **Common Options**:
-  * `--coverage-json PATH`: Specify coverage JSON path (default: `coverage.json`)
-  * `--output PATH`: Specify output path (default: `coverage_llm.json`)
-  * `--context-radius N`: Number of surrounding lines (default: 2)
-  * `--use-cases PATH`: Path to use-case registry (default: `tests/docs/use_cases.yaml`)
-* **Integration**: Used by the test-fixer sub-agent to identify coverage gaps
+**Output**: Test coverage data is written to `.coverage/coverage.db` SQLite database,
+which contains per-function coverage statistics, use-case coverage, test results, and
+detailed missing line/branch information. Analysis tools (`coverage-summary`,
+`coverage-files`, `coverage-file`, `coverage-functions`) read from this database.
 
 ## Linting
 

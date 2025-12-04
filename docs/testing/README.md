@@ -69,23 +69,26 @@ test commands.
 * Executing test commands for specific test tiers
 * Understanding per-function vs use-case coverage requirements
 
-### LLM Coverage Report
+### Coverage Database and Analysis Tools
 
-**File:** `testing-workflow.md` (section: LLM Coverage Report)
+**File:** `testing-workflow.md` (section: Coverage Database)
 
-Describes the `llm-coverage-report` tool that generates an LLM-friendly JSON report combining:
+The `test-coverage` command generates a comprehensive SQLite database (`.coverage/coverage.db`)
+that serves as the single source of truth for all coverage information. The database contains:
 
-* **Per-function coverage gaps**: Functions below threshold with tier-specific rules
-* **Line/branch coverage gaps**: Missing lines with source context
-* **Use-case coverage gaps**: Use-cases without tests from the registry
+* **Per-function coverage**: Line/branch coverage with pass/fail flags and tier-specific rules
+* **Missing lines**: Uncovered lines with source context and branch information
+* **Use-case coverage**: Coverage status for all use cases from the registry
+* **Test results**: Individual test pass/fail status with error details
+* **Tier summaries**: Overall metrics and pass/fail status per tier
 
-The tool auto-discovers tier-specific coverage files (`coverage_unit.json`, etc.) and applies
-appropriate rules per tier (unit validates all functions, component validates service layer only).
+Analysis tools (`coverage-summary`, `coverage-files`, `coverage-file`, `coverage-functions`)
+read directly from this database and support filtering by tier and file path.
 
 **Apply when:**
 
 * Identifying functions below the configured coverage threshold
 * Finding uncovered use-cases from the registry
-* Preparing coverage data for LLM-assisted test generation
 * Analyzing coverage quality before code review
-* Integrating coverage analysis into automated workflows
+* Reviewing detailed coverage metrics for specific files
+* Investigating test failures and coverage gaps

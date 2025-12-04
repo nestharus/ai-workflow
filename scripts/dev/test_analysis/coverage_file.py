@@ -6,6 +6,7 @@ with context and functions below threshold.
 Usage:
     uv run coverage-file app/services/example_service.py
     uv run coverage-file app/core/factory.py --json
+    uv run coverage-file app/core/factory.py --db .coverage/coverage.db
 """
 
 from __future__ import annotations
@@ -17,17 +18,19 @@ from pathlib import Path
 from typing import Any
 
 from scripts.dev.test_analysis.common import (
+    DEFAULT_COVERAGE_DB_PATH,
     format_percentage,
+    get_functions_below_threshold,
+    get_missing_lines,
     is_excluded_path,
-    load_coverage_llm,
 )
 
 
-def get_file_details(data: dict[str, Any], file_path: str) -> dict[str, Any] | None:
+def get_file_details(db_path: Path, file_path: str) -> dict[str, Any] | None:
     """Get detailed coverage info for a specific file.
 
     Args:
-        data: The coverage_llm.json data.
+        db_path: Path to the coverage database.
         file_path: The file path to look up.
 
     Returns:
@@ -44,50 +47,49 @@ def get_file_details(data: dict[str, Any], file_path: str) -> dict[str, Any] | N
             "functions_below_threshold": [],
         }
 
-    # Collect missing lines for this file
+    # Get missing lines for this file
+    all_missing = get_missing_lines(db_path, file_path=file_path)
     missing_lines = []
     missing_branches = []
-    all_missing = data.get("code_coverage", {}).get("missing_lines", [])
 
     for line in all_missing:
-        if line.get("file") == file_path:
-            missing_lines.append(
+        missing_lines.append(
+            {
+                "line_number": line.get("line_number"),
+                "content": line.get("content", "").strip(),
+                "context_before": [
+                    {
+                        "line": c.get("line_number"),
+                        "content": c.get("content", "").strip(),
+                    }
+                    for c in line.get("context_before", [])
+                ],
+                "context_after": [
+                    {
+                        "line": c.get("line_number"),
+                        "content": c.get("content", "").strip(),
+                    }
+                    for c in line.get("context_after", [])
+                ],
+            }
+        )
+        for branch in line.get("missing_branch_exits", []):
+            missing_branches.append(
                 {
-                    "line_number": line.get("line_number"),
-                    "content": line.get("content", "").strip(),
-                    "context_before": [
-                        {
-                            "line": c.get("line_number"),
-                            "content": c.get("content", "").strip(),
-                        }
-                        for c in line.get("context_before", [])
-                    ],
-                    "context_after": [
-                        {
-                            "line": c.get("line_number"),
-                            "content": c.get("content", "").strip(),
-                        }
-                        for c in line.get("context_after", [])
-                    ],
+                    "from_line": line.get("line_number"),
+                    "to_line": branch,
                 }
             )
-            for branch in line.get("missing_branch_exits", []):
-                missing_branches.append(
-                    {
-                        "from_line": line.get("line_number"),
-                        "to_line": branch,
-                    }
-                )
 
-    # Collect functions below threshold for this file
+    # Get functions below threshold for this file
+    all_functions = get_functions_below_threshold(db_path, file_filter=file_path)
     functions_below = []
-    all_functions = data.get("function_coverage", {}).get("functions_below_threshold", [])
 
     for func in all_functions:
-        if func.get("file") == file_path:
+        if func.get("file_path") == file_path:
             functions_below.append(
                 {
-                    "name": func.get("function", ""),
+                    "name": func.get("function_name", ""),
                     "line_coverage": func.get("line_coverage_pct", 0),
                     "branch_coverage": func.get("branch_coverage_pct", 0),
                     "missing_lines": func.get("missing_lines", []),
@@ -154,16 +156,14 @@ def print_file_details(details: dict[str, Any]) -> None:
         print("\n" + "-" * 70)
         print("MISSING LINES (with context):")
         print("-" * 70)
-        # Group consecutive lines
-        shown = 0
-        for line in missing_lines[:20]:  # Limit to first 20
+        # Show first 20 lines
+        for line in missing_lines[:20]:
             print(f"\n  Line {line['line_number']}:")
             for ctx in line.get("context_before", []):
                 print(f"    {ctx['line']:4d} | {ctx['content']}")
             print(f"  > {line['line_number']:4d} | {line['content']}")
             for ctx in line.get("context_after", []):
                 print(f"    {ctx['line']:4d} | {ctx['content']}")
-            shown += 1
 
         if len(missing_lines) > 20:
             print(f"\n  ... and {len(missing_lines) - 20} more missing lines")
@@ -191,20 +191,28 @@ def main() -> int:
         help="Output as JSON",
     )
     parser.add_argument(
-        "--path",
+        "--db",
         type=Path,
         default=None,
-        help="Path to coverage_llm.json",
+        help=f"Path to coverage database (default: {DEFAULT_COVERAGE_DB_PATH})",
     )
     args = parser.parse_args()
 
-    try:
-        data = load_coverage_llm(args.path)
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
+    db_path = args.db or DEFAULT_COVERAGE_DB_PATH
+
+    if not db_path.exists():
+        print(
+            f"Error: Coverage database not found at {db_path}. "
+            "Run 'uv run test-coverage' to generate it.",
+            file=sys.stderr,
+        )
         return 1
 
-    details = get_file_details(data, args.file)
+    try:
+        details = get_file_details(db_path, args.file)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
     if details is None:
         print(f"No coverage issues found for: {args.file}")

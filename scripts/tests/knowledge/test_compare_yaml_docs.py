@@ -1180,7 +1180,6 @@ class TestIterFieldFacts:
         """Should verify group_id is SHA-256 hash of group_key."""
         import hashlib
 
-
         data = {"id": "test-1", "text": "Hello"}
         facts = _iter_field_facts("test-1", data, [], "test.yml")
 

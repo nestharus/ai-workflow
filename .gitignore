@@ -32,16 +32,11 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
+.coverage/
 coverage.xml
 htmlcov/
-.coverage
-.coverage.*
-coverage_*.json
 .cache/
 nosetests.xml
-junit.xml
-coverage.json
-coverage_llm.json
 
 # Static analysis
 .mypy_cache/
@@ -49,7 +44,9 @@ coverage_llm.json
 .ruff_cache/
 .sonar/
 .review/
-.tasks/
+# .tasks/store/ contains generated task files (ignored)
+# .tasks/agents/ and other subdirs are tracked
+.tasks/store/
 openapi/
 
 # IDEs and editors

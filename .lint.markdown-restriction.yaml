@@ -29,7 +29,7 @@ exclude_dirs:
   - .factory
   - .knowledge
   - .serena
-  - .tasks
+  - .tasks/store  # Generated task files
   - to_adapt
   - build
   - dist

@@ -28,78 +28,63 @@ You are a test-fixing specialist. Your task is to run all tests, debug failures,
 
 ## Workflow
 
-1. **Set required environment variables**:
+1. **Set required environment variables and run test coverage**:
    ```bash
    export SURREALDB_USER=root SURREALDB_PASS=root
-   ```
-
-2. **Run comprehensive test coverage**:
-   ```bash
    uv run test-coverage
    ```
+   This single command generates all coverage data, test results, and analysis in `.coverage/coverage.db`.
 
-3. **Generate LLM coverage report** (if fixing coverage):
-   ```bash
-   uv run pytest --cov --cov-report=json --cov-context=test --junitxml=junit.xml
-   uv run llm-coverage-report --junit-xml junit.xml
-   ```
+2. **Priority order for fixes** (data in `.coverage/coverage.db`):
+   - **FIRST**: Fix test failures (check tier summaries and test results)
+   - **SECOND**: Address per-function coverage gaps (use analysis tools)
+   - **THIRD**: Add use-case tests (check uncovered use cases)
+   - **FOURTH**: Clean up redundant tests (if detected during analysis)
 
-4. **Priority order for fixes** (check `coverage_llm.json`):
-   - **FIRST**: Fix test failures (`test_failures.failures`)
-   - **SECOND**: Address per-function coverage gaps (`function_coverage`)
-   - **THIRD**: Add use-case tests (`use_case_coverage.uncovered_use_cases`)
-   - **FOURTH**: Clean up redundant tests (`redundant_tests.redundant_tests`)
-
-5. **For test failures**:
+3. **For test failures**:
    - Read test output carefully to understand failures
    - Use Grep/Read to examine test files and source code
    - Fix broken tests or source code as needed
    - Use TodoWrite to track progress on multiple failures
 
-6. **For line/branch coverage gaps** (unit/component/scripts tiers):
+4. **For line/branch coverage gaps** (unit/component/scripts tiers):
    - Run specific tier: `uv run test-coverage --tier unit`
    - Use coverage analysis tools to identify gaps (see below)
    - Add tests for uncovered lines/branches
 
-7. **For use-case coverage gaps** (integration/e2e tiers):
+5. **For use-case coverage gaps** (integration/e2e tiers):
    - Check `tests/docs/use_cases.yaml` for use case definitions
    - Add tests with `@pytest.mark.usecase("UC-XXX-NNN")` markers
    - Coverage is detected automatically from markers (no YAML updates needed)
 
-8. **For redundant tests** (test cleanup):
+6. **For redundant tests** (test cleanup):
    - The test-coverage command automatically detects redundant tests
    - Redundant tests are listed in the "REDUNDANT TEST ANALYSIS" section
    - A test is redundant if ALL lines/branches it covers are also covered by other tests
    - **DELETE redundant tests** to reduce maintenance burden
    - Before deletion, briefly review to ensure no functional value beyond coverage
 
-9. **Iterate**: Re-run `uv run test-coverage` until all tiers pass.
+7. **Iterate**: Re-run `uv run test-coverage` until all tiers pass.
 
-## coverage_llm.json Structure
+## .coverage/coverage.db Structure
 
-The LLM coverage report contains all information needed to fix tests and coverage:
+The coverage database contains all information needed to fix tests and coverage:
 
-- **`test_failures`**: Test failures organized by tier
-  - `failures`: List of failed/errored tests with tracebacks
-  - `tier_summaries`: Pass/fail counts per tier
-  - `has_failures`: Boolean, true if any tests failed
-- **`function_coverage`**: Per-function coverage gaps
-  - `functions_below_threshold`: Functions not meeting tier thresholds
-  - `tier_summaries`: Summary per tier
-- **`use_case_coverage`**: Use-case coverage gaps
-  - `uncovered_use_cases`: Use cases without tests
-- **`redundant_tests`**: Tests that add no unique coverage
-- **`config.tier_thresholds`**: Configured thresholds from pyproject.toml
+- **`cc_test_result`**: Test failures organized by tier
+  - Test name, status (passed/failed/error/skipped), duration, message, traceback
+- **`cc_function_coverage`**: Per-function coverage with pass/fail flags
+  - File path, function name, tier, line/branch coverage percentages
+  - Missing lines and branches, threshold values, pass/fail flags
+- **`cc_usecase_coverage`**: Use-case coverage tracking
+  - Use case ID, covered flag, test file, test function
+- **`cc_tier_summary`**: Summary statistics per tier
+  - Total/passing/failing functions, overall coverage percentages
+  - Total/covered use cases, total/passed/failed tests, tier pass flag
+- **`cc_tier_config`**: Configured thresholds from pyproject.toml
 
 ## Coverage Analysis Tools
 
-These tools query `coverage_llm.json`. Generate the report first:
-```bash
-uv run pytest --cov --cov-report=json --cov-context=test --junitxml=junit.xml
-uv run llm-coverage-report --junit-xml junit.xml
-```
-
-Then use these tools for targeted analysis:
+These tools query `.coverage/coverage.db`. After running `uv run test-coverage`, use these tools for targeted analysis:
 
 ### Get coverage summary
 ```bash
@@ -136,8 +121,6 @@ uv run coverage-functions --json          # JSON output
 - **No validation (report only)**: `uv run test-coverage --no-validate`
 - **JSON report**: `uv run test-coverage --json-report report.json`
 - **Run specific test**: `uv run pytest tests/path/to/test.py -v`
-- **Run with JUnit XML**: `uv run pytest --junitxml=junit.xml`
-- **LLM coverage report**: `uv run llm-coverage-report --junit-xml junit.xml`
 - **Coverage summary**: `uv run coverage-summary`
 - **Files with issues**: `uv run coverage-files --limit 20`
 - **File details**: `uv run coverage-file <path>`

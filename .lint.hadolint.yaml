@@ -2,7 +2,7 @@
 # Directories to exclude when searching for Dockerfiles
 
 exclude_dirs:
-  - .tasks
+  - .tasks/store  # Generated task files
   - .venv
   - .venv2
   - docs/plans

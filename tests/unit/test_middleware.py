@@ -132,9 +132,8 @@ def test_request_logging_logs_successful_request(
     app = create_app(settings)
     _add_test_route(app)
 
-    with caplog.at_level(logging.INFO):
-        with TestClient(app) as client:
-            client.get("/echo")
+    with caplog.at_level(logging.INFO), TestClient(app) as client:
+        client.get("/echo")
 
     # Should have logged request completion
     assert any("Request completed" in record.message for record in caplog.records)
@@ -224,7 +223,9 @@ def test_csp_header_applied(monkeypatch: pytest.MonkeyPatch) -> None:
     with TestClient(app) as client:
         response = client.get("/echo")
 
-    assert response.headers["content-security-policy"] == "default-src 'none'; frame-ancestors 'none'"
+    assert (
+        response.headers["content-security-policy"] == "default-src 'none'; frame-ancestors 'none'"
+    )
 
 
 def test_non_http_scope_passes_through_security_headers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -433,9 +434,7 @@ def test_request_id_extract_or_generate_returns_existing_id() -> None:
     """Test _extract_or_generate_id returns existing ID from headers."""
     from app.core.middleware import RequestIDMiddleware
 
-    scope = {
-        "headers": [(b"x-request-id", b"existing-id-123")]
-    }
+    scope = {"headers": [(b"x-request-id", b"existing-id-123")]}
     result = RequestIDMiddleware._extract_or_generate_id(scope)
     assert result == "existing-id-123"
 
@@ -451,69 +450,66 @@ def test_request_id_extract_or_generate_generates_new_id() -> None:
 
 def test_rate_limit_is_rate_limited_returns_false_after_window_expires() -> None:
     """Test _is_rate_limited returns False after window expires."""
-    from app.core.middleware import RateLimitingMiddleware
     import time
+
+    from app.core.middleware import RateLimitingMiddleware
 
     async def dummy_app(scope: dict, receive: object, send: object) -> None:
         pass
 
-    middleware = RateLimitingMiddleware(
-        dummy_app, requests_per_window=1, window_seconds=1
-    )
+    middleware = RateLimitingMiddleware(dummy_app, requests_per_window=1, window_seconds=1)
     client_ip = "192.168.1.1"
     current_time = time.time()
-    
+
     # Record a request
     middleware._record_request(client_ip, current_time - 2)  # 2 seconds ago
-    
+
     # Should not be rate limited because window expired
     assert middleware._is_rate_limited(client_ip, current_time) is False
 
 
 def test_rate_limit_is_rate_limited_returns_true_when_exceeded() -> None:
     """Test _is_rate_limited returns True when limit is exceeded."""
-    from app.core.middleware import RateLimitingMiddleware
     import time
+
+    from app.core.middleware import RateLimitingMiddleware
 
     async def dummy_app(scope: dict, receive: object, send: object) -> None:
         pass
 
-    middleware = RateLimitingMiddleware(
-        dummy_app, requests_per_window=2, window_seconds=60
-    )
+    middleware = RateLimitingMiddleware(dummy_app, requests_per_window=2, window_seconds=60)
     client_ip = "192.168.1.1"
     current_time = time.time()
-    
+
     # Record requests up to the limit
     middleware._window_start[client_ip] = current_time
     middleware._request_counts[client_ip] = 2
-    
+
     # Should be rate limited
     assert middleware._is_rate_limited(client_ip, current_time) is True
 
 
 def test_rate_limit_record_request_resets_window_when_expired() -> None:
     """Test _record_request resets window when it has expired."""
-    from app.core.middleware import RateLimitingMiddleware
     import time
+
+    from app.core.middleware import RateLimitingMiddleware
 
     async def dummy_app(scope: dict, receive: object, send: object) -> None:
         pass
 
-    middleware = RateLimitingMiddleware(
-        dummy_app, requests_per_window=10, window_seconds=1
-    )
+    middleware = RateLimitingMiddleware(dummy_app, requests_per_window=10, window_seconds=1)
     client_ip = "192.168.1.1"
     old_time = time.time() - 10  # 10 seconds ago
     current_time = time.time()
-    
+
     # Set old window
     middleware._window_start[client_ip] = old_time
     middleware._request_counts[client_ip] = 5
-    
+
     # Record new request
     middleware._record_request(client_ip, current_time)
-    
+
     # Window should have been reset
     assert middleware._window_start[client_ip] == current_time
     assert middleware._request_counts[client_ip] == 1
@@ -521,24 +517,23 @@ def test_rate_limit_record_request_resets_window_when_expired() -> None:
 
 def test_rate_limit_record_request_increments_count_in_window() -> None:
     """Test _record_request increments count within current window."""
-    from app.core.middleware import RateLimitingMiddleware
     import time
+
+    from app.core.middleware import RateLimitingMiddleware
 
     async def dummy_app(scope: dict, receive: object, send: object) -> None:
         pass
 
-    middleware = RateLimitingMiddleware(
-        dummy_app, requests_per_window=10, window_seconds=60
-    )
+    middleware = RateLimitingMiddleware(dummy_app, requests_per_window=10, window_seconds=60)
     client_ip = "192.168.1.1"
     current_time = time.time()
-    
+
     # Set current window
     middleware._window_start[client_ip] = current_time
     middleware._request_counts[client_ip] = 3
-    
+
     # Record another request
     middleware._record_request(client_ip, current_time + 1)
-    
+
     # Count should have incremented
     assert middleware._request_counts[client_ip] == 4

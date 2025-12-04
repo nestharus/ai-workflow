@@ -1,0 +1,51 @@
+doc_id: tasks-system-readme
+
+overview: |
+  The .tasks system provides automated orchestration of AI agents for implementing
+  plans. It supports multiple providers (Claude, OpenCode, HuggingFace) and
+  automatically routes tasks to appropriate models based on prompt complexity.
+
+routing_architecture: |
+  Each agent defines its own `routing_thresholds` in its frontmatter to specify
+  which runner/model combination to use for different prompt character counts.
+  This allows a single agent (e.g., implementor) to dynamically route to different
+  execution backends based on workload complexity.
+
+  The routing algorithm iterates through thresholds in order and selects the
+  first entry where `prompt_chars <= max_chars` or `max_chars` is null (catch-all).
+
+routing_thresholds_schema: |
+  The `routing_thresholds` field in agent frontmatter is a list of entries:
+    - max_chars: Maximum character count (null for catch-all)
+    - model: Model identifier
+    - provider: Provider name (claude, opencode, huggingface)
+
+implementor_routing: |
+  The implementor agent routes based on task complexity:
+    <=3500 chars:    factory/gpt-5.1-codex-max-medium (opencode) - small tasks
+    3501-7500:       factory/gpt-5.1-codex-max-high (opencode) - medium tasks
+    7501-12500:      factory/gpt-5.1-codex-max-xhigh (opencode) - large tasks
+    >12500:          opus (claude) - very large tasks
+
+configuration: |
+  .tasks.yaml contains system-wide config:
+    - agents_dir: Path to agent definitions (default: .tasks/agents)
+
+  Agent-specific config lives in each agent's frontmatter, including
+  routing_thresholds for automatic model selection.
+
+cli_usage: |
+  Run agents via tasks_agent_runner.py:
+    uv run agent.tasks --agent implementor --prompt 'task' --prompt-chars 5000
+
+  When --prompt-chars is provided, routing_thresholds are consulted.
+  When omitted, the agent's default model from frontmatter is used.
+
+files:
+  - .tasks.yaml: System configuration (agents_dir)
+  - .tasks/agents/*.md: Agent definitions with frontmatter and system prompts
+  - .tasks/store/: Generated task files from clipboard_to_plan.py
+  - scripts/dev/agent_runner.py: Base class with routing logic
+  - scripts/dev/tasks_agent_runner.py: CLI runner for .tasks agents
+  - scripts/apply_plan.py: Orchestrator that processes plans using agents
+  - scripts/clipboard_to_plan.py: Parses plans from clipboard into task files

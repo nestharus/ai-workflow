@@ -187,10 +187,13 @@ class TestBuildApplication:
     def test_imports_and_returns_fastapi_app(self) -> None:
         """Test build_application returns a FastAPI app."""
         # Need to have credentials set for this to work
-        with patch.dict(os.environ, {
-            "SURREALDB_USER": "TestUser1!Abc#",
-            "SURREALDB_PASS": "TestPass1!Xyz$",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "SURREALDB_USER": "TestUser1!Abc#",
+                "SURREALDB_PASS": "TestPass1!Xyz$",
+            },
+        ):
             app = build_application()
             # Verify it's a FastAPI app
             assert hasattr(app, "openapi")

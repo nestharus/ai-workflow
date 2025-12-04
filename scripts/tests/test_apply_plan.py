@@ -466,7 +466,7 @@ class TestMain:
         self, fs: FakeFilesystem, fake_repo_root: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Should reuse provided tasks dir and skip completed tasks."""
-        task_dir = fake_repo_root / ".tasks" / "resume"
+        task_dir = fake_repo_root / ".tasks" / "store" / "resume"
         fs.create_dir(str(task_dir))
         status_data = {
             "plan_hash": apply_plan._compute_plan_hash("plan"),
@@ -485,7 +485,7 @@ class TestMain:
         self, fs: FakeFilesystem, fake_repo_root: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Should invoke task patcher when plan hash differs."""
-        task_dir = fake_repo_root / ".tasks" / "hash"
+        task_dir = fake_repo_root / ".tasks" / "store" / "hash"
         fs.create_dir(str(task_dir))
         fs.create_file(str(task_dir / "task_001.md"), contents="# file\n")
         status_data = {
@@ -532,7 +532,7 @@ class TestMain:
         self, fs: FakeFilesystem, fake_repo_root: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Should return code 2 when conclusion is detected."""
-        task_dir = fake_repo_root / ".tasks" / "conclusion"
+        task_dir = fake_repo_root / ".tasks" / "store" / "conclusion"
         fs.create_dir(str(task_dir))
         fs.create_file(str(task_dir / "task_001.md"), contents="# file\n")
         # Use matching hash to avoid triggering _patch_incomplete_tasks
@@ -557,7 +557,7 @@ class TestMain:
         self, fs: FakeFilesystem, fake_repo_root: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Should return code 1 when tasks remain incomplete."""
-        task_dir = fake_repo_root / ".tasks" / "incomplete"
+        task_dir = fake_repo_root / ".tasks" / "store" / "incomplete"
         fs.create_dir(str(task_dir))
         fs.create_file(str(task_dir / "task_001.md"), contents="# file\n")
         # Use matching hash to avoid triggering _patch_incomplete_tasks
@@ -630,11 +630,11 @@ class TestMain:
                 # Execute clipboard_to_plan logic directly in pyfakefs context
                 from datetime import datetime
 
-                tasks_root = fake_repo_root / ".tasks"
-                tasks_root.mkdir(parents=True, exist_ok=True)
+                store_root = fake_repo_root / ".tasks" / "store"
+                store_root.mkdir(parents=True, exist_ok=True)
 
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                timestamp_dir = tasks_root / timestamp
+                timestamp_dir = store_root / timestamp
                 timestamp_dir.mkdir(parents=True, exist_ok=True)
 
                 content = clipboard_to_plan.get_clipboard_content()

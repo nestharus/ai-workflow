@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -28,7 +28,7 @@ class TestSampleItem:
     def test_returns_demo_response(self) -> None:
         """Test sample_item returns a hardcoded demo response."""
         result = sample_item()
-        
+
         assert isinstance(result, ExampleResponse)
         assert result.result == "[DEMO] Sample Result"
         assert result.original_length == 13
@@ -39,7 +39,7 @@ class TestSampleItem:
         before = datetime.now(UTC)
         result = sample_item()
         after = datetime.now(UTC)
-        
+
         assert before <= result.processed_at <= after
 
 
@@ -55,10 +55,10 @@ class TestProcessMessage:
             processed_at=datetime.now(UTC),
             original_length=5,
         )
-        
+
         request = ExampleRequest(message="Hello", type="info")
         result = await process_message(request, mock_service)
-        
+
         mock_service.process.assert_called_once_with(request)
         assert result.result == "Processed"
 
@@ -83,9 +83,9 @@ class TestListProcessedMessages:
             page=1,
             page_size=10,
         )
-        
+
         result = await list_processed_messages(mock_service, page=1, page_size=10)
-        
+
         assert isinstance(result, Paginated)
         assert result.total == 1
         assert result.page == 1
@@ -102,9 +102,9 @@ class TestListProcessedMessages:
             page=3,
             page_size=25,
         )
-        
+
         await list_processed_messages(mock_service, page=3, page_size=25)
-        
+
         mock_service.list_processed_messages.assert_called_once_with(3, 25)
 
 
@@ -121,9 +121,9 @@ class TestGetProcessedMessage:
             type="warning",
             processed_at=datetime.now(UTC),
         )
-        
+
         result = await get_processed_message("msg_001", mock_service)
-        
+
         assert isinstance(result, ProcessedMessageResponse)
         assert result.id == "msg_001"
         assert result.content == "Test content"
@@ -139,7 +139,7 @@ class TestGetProcessedMessage:
             type="info",
             processed_at=datetime.now(UTC),
         )
-        
+
         await get_processed_message("test_id", mock_service)
-        
+
         mock_service.get_processed_message.assert_called_once_with("test_id")

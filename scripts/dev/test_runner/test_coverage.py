@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,11 +38,6 @@ try:
 except ImportError:
     import tomli as tomllib  # type: ignore[import-not-found,no-redef]
 
-from scripts.dev.test_runner.redundant_test_detector import (
-    RedundantTestResult,
-    detect_redundant_tests,
-)
-
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 # Fallback defaults if pyproject.toml settings are missing
@@ -50,6 +46,74 @@ DEFAULT_MIN_BRANCH_OVERALL = 70.0
 DEFAULT_MIN_LINE_PER_FUNCTION = 60.0
 DEFAULT_MIN_BRANCH_PER_FUNCTION = 50.0
 DEFAULT_MIN_USECASE = 100.0
+
+
+# Define dataclasses early to avoid circular import with coverage_db
+@dataclass
+class MissingLineDetail:
+    """Details about a missing line of coverage."""
+
+    file: str
+    line_number: int
+    content: str
+    context_before: list[dict[str, Any]]
+    context_after: list[dict[str, Any]]
+    missing_branch_exits: list[int]
+
+
+@dataclass
+class FunctionCoverage:
+    """Coverage data for a single function."""
+
+    name: str
+    file_path: str
+    start_line: int
+    end_line: int
+    total_lines: int
+    covered_lines: int
+    missing_lines: list[int]
+    line_coverage_pct: float
+    total_branches: int
+    covered_branches: int
+    missing_branches: list[tuple[int, int]]
+    branch_coverage_pct: float
+
+
+@dataclass
+class UseCase:
+    """A single use case from the registry."""
+
+    id: str
+    endpoint: str
+    method: str
+    description: str
+    test_tier: str
+
+
+@dataclass
+class TestTierConfig:
+    """Configuration for a test tier."""
+
+    name: str
+    test_path: str
+    source_paths: list[str]
+    coverage_type: str  # "line_branch" or "usecase"
+    min_line_overall: float = DEFAULT_MIN_LINE_OVERALL
+    min_branch_overall: float = DEFAULT_MIN_BRANCH_OVERALL
+    min_line_per_function: float = DEFAULT_MIN_LINE_PER_FUNCTION
+    min_branch_per_function: float = DEFAULT_MIN_BRANCH_PER_FUNCTION
+    min_usecase: float = DEFAULT_MIN_USECASE
+    skip_private_functions: bool = False
+    service_layer_only: bool = False
+    exclude_class_fields: bool = True
+
+
+# Import modules after dataclass definitions to avoid circular imports
+from scripts.dev.test_runner import coverage_db  # noqa: E402
+from scripts.dev.test_runner.redundant_test_detector import (  # noqa: E402
+    RedundantTestResult,
+    detect_redundant_tests,
+)
 
 
 @dataclass
@@ -126,6 +190,7 @@ def get_settings() -> CoverageSettings:
         _settings = load_coverage_settings()
     return _settings
 
+
 # Service layer path pattern (relative to repo root)
 SERVICE_LAYER_PATH = "app/services"
 
@@ -158,35 +223,6 @@ class CoverageResult:
 
 
 @dataclass
-class FunctionCoverage:
-    """Coverage data for a single function."""
-
-    name: str
-    file_path: str
-    start_line: int
-    end_line: int
-    total_lines: int
-    covered_lines: int
-    missing_lines: list[int]
-    line_coverage_pct: float
-    total_branches: int
-    covered_branches: int
-    missing_branches: list[tuple[int, int]]
-    branch_coverage_pct: float
-
-
-@dataclass
-class UseCase:
-    """A single use case from the registry."""
-
-    id: str
-    endpoint: str
-    method: str
-    description: str
-    test_tier: str
-
-
-@dataclass
 class UseCaseCoverageResult:
     """Use case coverage results for a test tier."""
 
@@ -197,25 +233,6 @@ class UseCaseCoverageResult:
     coverage_pct: float
 
 
-@dataclass
-class TestTierConfig:
-    """Configuration for a test tier."""
-
-    name: str
-    test_path: str
-    source_paths: list[str]
-    coverage_file: str
-    coverage_type: str  # "line_branch" or "usecase"
-    min_line_overall: float = DEFAULT_MIN_LINE_OVERALL
-    min_branch_overall: float = DEFAULT_MIN_BRANCH_OVERALL
-    min_line_per_function: float = DEFAULT_MIN_LINE_PER_FUNCTION
-    min_branch_per_function: float = DEFAULT_MIN_BRANCH_PER_FUNCTION
-    min_usecase: float = DEFAULT_MIN_USECASE
-    skip_private_functions: bool = False
-    service_layer_only: bool = False
-    exclude_class_fields: bool = True
-
-
 def get_test_tiers() -> dict[str, TestTierConfig]:
     """Get test tier configurations with settings from pyproject.toml."""
     settings = get_settings()
@@ -224,7 +241,6 @@ def get_test_tiers() -> dict[str, TestTierConfig]:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_file="coverage_unit.json",
             coverage_type="line_branch",
             min_line_overall=settings.unit.min_line_overall,
             min_branch_overall=settings.unit.min_branch_overall,
@@ -238,7 +254,6 @@ def get_test_tiers() -> dict[str, TestTierConfig]:
             name="component",
             test_path="tests/unit",  # Component tests may be within unit tests targeting services
             source_paths=["app/services"],
-            coverage_file="coverage_component.json",
             coverage_type="line_branch",
             min_line_overall=settings.component.min_line_overall,
             min_branch_overall=settings.component.min_branch_overall,
@@ -252,7 +267,6 @@ def get_test_tiers() -> dict[str, TestTierConfig]:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_file="coverage_integration.json",
             coverage_type="usecase",
             min_usecase=settings.integration.min_usecase,
         ),
@@ -260,7 +274,6 @@ def get_test_tiers() -> dict[str, TestTierConfig]:
             name="e2e",
             test_path="tests/e2e",
             source_paths=["app"],
-            coverage_file="coverage_e2e.json",
             coverage_type="usecase",
             min_usecase=settings.e2e.min_usecase,
         ),
@@ -268,7 +281,6 @@ def get_test_tiers() -> dict[str, TestTierConfig]:
             name="scripts",
             test_path="scripts/tests",
             source_paths=["scripts", "tools"],
-            coverage_file="coverage_scripts.json",
             coverage_type="line_branch",
             min_line_overall=settings.scripts.min_line_overall,
             min_branch_overall=settings.scripts.min_branch_overall,
@@ -281,13 +293,29 @@ def get_test_tiers() -> dict[str, TestTierConfig]:
     }
 
 
-def _run_command(cmd: list[str], capture: bool = True) -> subprocess.CompletedProcess[str]:
-    """Run a subprocess command."""
+def _run_command(
+    cmd: list[str], capture: bool = True, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run a subprocess command.
+
+    Args:
+        cmd: Command and arguments to run
+        capture: If True, capture stdout/stderr
+        env: Optional environment variables to set (merged with current env)
+
+    Returns:
+        Completed process with return code and output
+    """
+    run_env = None
+    if env:
+        run_env = os.environ.copy()
+        run_env.update(env)
     return subprocess.run(  # noqa: S603
         cmd,
         capture_output=capture,
         text=True,
         cwd=str(REPO_ROOT),
+        env=run_env,
     )
 
 
@@ -514,15 +542,27 @@ def load_use_cases(use_cases_path: Path) -> list[UseCase]:
     return use_cases
 
 
-def run_test_suite(config: TestTierConfig) -> CoverageResult | None:
+def run_test_suite(
+    config: TestTierConfig, coverage_db_path: Path, first_tier: bool = False
+) -> tuple[CoverageResult | None, Any]:
     """Run a test suite and collect coverage data.
 
     Args:
         config: Test tier configuration
+        coverage_db_path: Path to the .coverage database
+        first_tier: If True, this is the first tier (don't use --cov-append)
 
     Returns:
-        CoverageResult if successful, None if tests failed
+        Tuple of (CoverageResult if successful, TestSummary from junit XML)
     """
+    # Set up junit XML output path
+    junit_xml_path = coverage_db_path.parent / f"junit_{config.name}.xml"
+
+    # Set up coverage data file path (inside .coverage directory to avoid conflict)
+    # pytest-cov uses .coverage as a file by default, but we use .coverage as a directory
+    coverage_data_file = coverage_db_path.parent / "data"
+    cov_env = {"COVERAGE_FILE": str(coverage_data_file)}
+
     # Build pytest command with coverage
     # Each source path needs its own --cov argument
     cov_args = [f"--cov={path}" for path in config.source_paths]
@@ -536,37 +576,79 @@ def run_test_suite(config: TestTierConfig) -> CoverageResult | None:
         *cov_args,
         "--cov-branch",
         "--cov-context=test",  # Enable per-test coverage tracking for redundant test detection
-        f"--cov-report=json:{config.coverage_file}",
         "--cov-report=term-missing",
         "--cov-fail-under=0",  # Disable fail-under (we do our own validation)
+        f"--junitxml={junit_xml_path}",  # Generate JUnit XML for test results
         "-q",
         "-p",
         "no:randomly",
     ]
+
+    # Add --cov-append for all tiers except the first one
+    if not first_tier:
+        cmd.append("--cov-append")
 
     print(f"\n{'=' * 70}")
     print(f"Running {config.name} tests: {config.test_path}")
     print(f"Measuring coverage for: {', '.join(config.source_paths)}")
     print("=" * 70)
 
-    result = _run_command(cmd, capture=False)
+    result = _run_command(cmd, capture=False, env=cov_env)
+
+    # Parse junit XML to extract test results
+    test_summary = None
+    if junit_xml_path.exists():
+        from scripts.dev.test_runner.junit_parser import parse_junit_xml
+
+        try:
+            test_results, test_summary = parse_junit_xml(junit_xml_path)
+            # Write test results to database
+            for test_result in test_results:
+                coverage_db.write_test_result(
+                    coverage_db_path,
+                    tier=config.name,
+                    test_name=test_result.test_name,
+                    status=test_result.status,
+                    duration=test_result.duration,
+                    message=test_result.message,
+                    traceback=test_result.traceback,
+                )
+        except Exception as e:
+            print(f"\nWARNING: Failed to parse junit XML: {e}")
 
     if result.returncode != 0:
         print(f"\nWARNING: {config.name} tests had failures (exit code {result.returncode})")
 
-    # Load coverage data
-    coverage_path = REPO_ROOT / config.coverage_file
-    if not coverage_path.exists():
-        print(f"ERROR: Coverage file not found: {config.coverage_file}")
+    # Load coverage data from the consolidated .coverage database
+    # We need to generate a JSON report temporarily to extract the data
+    json_output_path = REPO_ROOT / ".coverage" / f"temp_{config.name}.json"
+    json_output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Generate JSON report for this tier's coverage
+    cov_report_cmd = [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "coverage",
+        "json",
+        "-o",
+        str(json_output_path),
+    ]
+    _run_command(cov_report_cmd, capture=True, env=cov_env)
+
+    if not json_output_path.exists():
+        print(f"ERROR: Coverage JSON report not generated: {json_output_path}")
         return None
 
-    with coverage_path.open() as f:
+    with json_output_path.open() as f:
         coverage_data = json.load(f)
 
     totals = coverage_data.get("totals", {})
 
     # Calculate function-level coverage
     all_functions: dict[str, dict[str, Any]] = {}
+    all_function_coverages: list[FunctionCoverage] = []
     files_data = coverage_data.get("files", {})
 
     for file_path in files_data:
@@ -581,6 +663,15 @@ def run_test_suite(config: TestTierConfig) -> CoverageResult | None:
             exclude_class_fields=config.exclude_class_fields,
         )
         for fc in func_coverages:
+            # Skip private functions if configured
+            if config.skip_private_functions and _is_private_function(fc.name):
+                continue
+
+            # For service-layer-only mode, skip non-service files
+            if config.service_layer_only and not _is_in_service_layer(fc.file_path):
+                continue
+
+            all_function_coverages.append(fc)
             key = f"{fc.file_path}::{fc.name}"
             all_functions[key] = {
                 "name": fc.name,
@@ -593,7 +684,23 @@ def run_test_suite(config: TestTierConfig) -> CoverageResult | None:
                 "missing_branches": fc.missing_branches,
             }
 
-    return CoverageResult(
+    # Write tier configuration to database
+    coverage_db.write_tier_config(coverage_db_path, config.name, config)
+
+    # Write function coverage to database with pass/fail flags
+    if all_function_coverages:
+        coverage_db.write_function_coverage(
+            coverage_db_path,
+            config.name,
+            all_function_coverages,
+            config.min_line_per_function,
+            config.min_branch_per_function,
+        )
+
+    # Clean up temporary JSON file
+    json_output_path.unlink(missing_ok=True)
+
+    coverage_result = CoverageResult(
         suite_name=config.name,
         total_lines=totals.get("num_statements", 0),
         covered_lines=totals.get("covered_lines", 0),
@@ -608,6 +715,8 @@ def run_test_suite(config: TestTierConfig) -> CoverageResult | None:
         files=files_data,
         functions=all_functions,
     )
+
+    return coverage_result, test_summary
 
 
 def _parse_usecase_markers_from_content(content: str) -> set[str]:
@@ -625,6 +734,130 @@ def _parse_usecase_markers_from_content(content: str) -> set[str]:
     pattern = r'usecase\(["\']?(UC-[A-Z]+-\d+)["\']?\)'
     matches = re.findall(pattern, content)
     return set(matches)
+
+
+class _UsecaseMarkerVisitor(ast.NodeVisitor):
+    """AST visitor that collects pytest.mark.usecase markers with test function info."""
+
+    def __init__(self, rel_path: str) -> None:
+        """Initialize visitor with relative file path."""
+        self.rel_path = rel_path
+        self.found: dict[str, list[dict[str, str]]] = {}
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Visit regular function definition."""
+        self._visit_test_node(node)
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """Visit async function definition."""
+        self._visit_test_node(node)
+        self.generic_visit(node)
+
+    def _visit_test_node(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        """Extract usecase markers from test function decorators."""
+        func_name = node.name
+        for dec in node.decorator_list:
+            uc_ids = self._extract_usecase_ids(dec)
+            for uc_id in uc_ids:
+                if uc_id not in self.found:
+                    self.found[uc_id] = []
+                self.found[uc_id].append(
+                    {
+                        "file": self.rel_path,
+                        "test_function": func_name,
+                    }
+                )
+
+    @staticmethod
+    def _extract_usecase_ids(dec: ast.expr) -> list[str]:
+        """Extract usecase IDs from a decorator expression."""
+        if not isinstance(dec, ast.Call):
+            return []
+
+        func = dec.func
+        func_name = ""
+
+        # Handle pytest.mark.usecase (attribute access)
+        if isinstance(func, ast.Attribute):
+            parts: list[str] = []
+            cur: ast.expr | None = func
+            while isinstance(cur, ast.Attribute):
+                parts.append(cur.attr)
+                cur = cur.value
+            if isinstance(cur, ast.Name):
+                parts.append(cur.id)
+            func_name = ".".join(reversed(parts))
+        elif isinstance(func, ast.Name):
+            func_name = func.id
+
+        if not func_name.endswith("usecase"):
+            return []
+
+        uc_ids: list[str] = []
+        # Extract from positional arguments
+        for arg in dec.args:
+            if (
+                isinstance(arg, ast.Constant)
+                and isinstance(arg.value, str)
+                and arg.value.startswith("UC-")
+            ):
+                uc_ids.append(arg.value)
+
+        # Extract from keyword arguments (e.g., id="UC-XXX-001")
+        for kw in dec.keywords:
+            if (
+                kw.arg == "id"
+                and isinstance(kw.value, ast.Constant)
+                and isinstance(kw.value.value, str)
+                and kw.value.value.startswith("UC-")
+            ):
+                uc_ids.append(kw.value.value)
+
+        return uc_ids
+
+
+def _scan_tests_for_usecases(test_path: str, repo_root: Path) -> dict[str, list[dict[str, str]]]:
+    """Scan test files for usecase markers using AST parsing.
+
+    Args:
+        test_path: Path to test directory
+        repo_root: Repository root directory
+
+    Returns:
+        Dictionary mapping use case IDs to list of test locations
+        Example: {"UC-HEALTH-001": [{"file": "tests/e2e/test_health.py",
+                                      "test_function": "test_health"}]}
+    """
+    usecase_to_tests: dict[str, list[dict[str, str]]] = {}
+    test_dir = Path(test_path)
+
+    if not test_dir.exists():
+        return usecase_to_tests
+
+    for test_file in test_dir.rglob("test_*.py"):
+        try:
+            text = test_file.read_text(encoding="utf-8")
+            tree = ast.parse(text, filename=str(test_file))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+
+        # Get relative path from repo root
+        try:
+            rel_path = str(test_file.relative_to(repo_root))
+        except ValueError:
+            rel_path = str(test_file)
+
+        visitor = _UsecaseMarkerVisitor(rel_path)
+        visitor.visit(tree)
+
+        # Merge visitor results into global mapping
+        for uc_id, occurrences in visitor.found.items():
+            if uc_id not in usecase_to_tests:
+                usecase_to_tests[uc_id] = []
+            usecase_to_tests[uc_id].extend(occurrences)
+
+    return usecase_to_tests
 
 
 def collect_covered_usecases(test_path: str) -> set[str]:
@@ -746,6 +979,92 @@ def validate_usecase_coverage(
             failures.append(f"  ... and {len(uc_result.uncovered_cases) - 10} more")
 
     return failures
+
+
+def _read_source_lines(repo_root: Path, filename: str) -> list[str] | None:
+    """Read source lines from a file."""
+    file_path = (repo_root / filename).resolve()
+    try:
+        text = file_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return text.splitlines()
+
+
+def _build_context(
+    lines: list[str],
+    lineno: int,
+    radius: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build context lines before and after a given line number."""
+    before: list[dict[str, Any]] = []
+    after: list[dict[str, Any]] = []
+    total = len(lines)
+    start = max(1, lineno - radius)
+    end = min(total, lineno + radius)
+
+    for n in range(start, lineno):
+        before.append({"line_number": n, "content": lines[n - 1]})
+    for n in range(lineno + 1, end + 1):
+        after.append({"line_number": n, "content": lines[n - 1]})
+    return before, after
+
+
+def generate_missing_line_details(
+    coverage_data: dict[str, Any], repo_root: Path, context_radius: int = 3
+) -> list[MissingLineDetail]:
+    """Generate missing line details with source context.
+
+    Args:
+        coverage_data: Coverage data from coverage.py JSON report
+        repo_root: Repository root path
+        context_radius: Number of lines of context before/after
+
+    Returns:
+        List of MissingLineDetail objects
+    """
+    from collections import defaultdict
+
+    files = coverage_data.get("files", {})
+    missing_lines_details: list[MissingLineDetail] = []
+
+    for filename, file_data in files.items():
+        missing_lines = list(file_data.get("missing_lines", []))
+        missing_branches_raw = file_data.get("missing_branches", []) or []
+
+        source_lines = _read_source_lines(repo_root, filename)
+        if source_lines is None:
+            continue
+
+        # Group missing branch arcs by source line
+        branch_exits_by_source: dict[int, list[int]] = defaultdict(list)
+        for arc in missing_branches_raw:
+            if not isinstance(arc, (list, tuple)) or len(arc) != 2:
+                continue
+            src, dst = int(arc[0]), int(arc[1])
+            branch_exits_by_source[src].append(dst)
+
+        # Generate line-level gap details
+        for lineno in sorted(missing_lines):
+            if lineno < 1 or lineno > len(source_lines):
+                content = ""
+                before: list[dict[str, Any]] = []
+                after: list[dict[str, Any]] = []
+            else:
+                content = source_lines[lineno - 1]
+                before, after = _build_context(source_lines, lineno, context_radius)
+
+            missing_line_detail = MissingLineDetail(
+                file=filename,
+                line_number=lineno,
+                content=content,
+                context_before=before,
+                context_after=after,
+                missing_branch_exits=sorted(set(branch_exits_by_source.get(lineno, []))),
+            )
+            missing_lines_details.append(missing_line_detail)
+
+    return missing_lines_details
 
 
 def print_summary(
@@ -884,9 +1203,27 @@ def main() -> int:
     """Run test coverage analysis and validation."""
     args = parse_args()
 
+    # Set up coverage database path (.coverage/coverage.db)
+    coverage_dir = REPO_ROOT / ".coverage"
+    coverage_dir.mkdir(parents=True, exist_ok=True)
+    coverage_db_path = coverage_dir / "coverage.db"
+
+    # Set up coverage data file path (inside .coverage directory)
+    # pytest-cov uses .coverage as a file by default, but we use .coverage as a directory
+    coverage_data_file = coverage_dir / "data"
+    cov_env = {"COVERAGE_FILE": str(coverage_data_file)}
+
+    # Initialize custom tables and clear previous run data
+    coverage_db.init_custom_tables(coverage_db_path)
+    coverage_db.clear_custom_tables(coverage_db_path)
+
     # Load use cases for integration/e2e coverage
     use_cases_path = REPO_ROOT / "tests" / "docs" / "use_cases.yaml"
     use_cases = load_use_cases(use_cases_path)
+
+    # Write use case registry to database
+    if use_cases:
+        coverage_db.write_usecase_registry(coverage_db_path, use_cases)
 
     # Get tier configurations from settings
     test_tiers = get_test_tiers()
@@ -898,8 +1235,10 @@ def main() -> int:
     line_branch_results: list[tuple[TestTierConfig, CoverageResult]] = []
     usecase_results: list[tuple[TestTierConfig, UseCaseCoverageResult]] = []
     all_failures: list[str] = []
+    # Track test summaries for each tier (tier_name -> TestSummary)
+    tier_test_summaries: dict[str, Any] = {}
 
-    for tier_name in tiers_to_run:
+    for idx, tier_name in enumerate(tiers_to_run):
         config = test_tiers[tier_name]
 
         # Override per-function thresholds from args if provided
@@ -911,7 +1250,13 @@ def main() -> int:
             config.min_usecase = args.min_usecase
 
         if config.coverage_type == "line_branch":
-            result = run_test_suite(config)
+            # First tier should not use --cov-append
+            is_first_tier = idx == 0
+            result, test_summary = run_test_suite(
+                config, coverage_db_path, first_tier=is_first_tier
+            )
+            if test_summary:
+                tier_test_summaries[tier_name] = test_summary
             if result:
                 line_branch_results.append((config, result))
                 if not args.no_validate:
@@ -936,8 +1281,35 @@ def main() -> int:
             print("=" * 70)
             _run_command(cmd, capture=False)
 
-            # Collect covered use cases from pytest markers
-            covered_ids = collect_covered_usecases(config.test_path)
+            # Write tier config for usecase tiers too
+            coverage_db.write_tier_config(coverage_db_path, config.name, config)
+
+            # Scan test files for usecase markers with test function information
+            usecase_to_tests = _scan_tests_for_usecases(config.test_path, REPO_ROOT)
+            covered_ids = set(usecase_to_tests.keys())
+
+            # Write use case coverage to database for each use case in this tier
+            tier_use_cases = [uc for uc in use_cases if uc.test_tier == tier_name]
+            for uc in tier_use_cases:
+                if uc.id in usecase_to_tests:
+                    # Use case is covered - get first test location
+                    test_info = usecase_to_tests[uc.id][0]
+                    coverage_db.write_usecase_coverage(
+                        coverage_db_path,
+                        uc.id,
+                        covered=True,
+                        test_file=test_info["file"],
+                        test_function=test_info["test_function"],
+                    )
+                else:
+                    # Use case is not covered
+                    coverage_db.write_usecase_coverage(
+                        coverage_db_path,
+                        uc.id,
+                        covered=False,
+                        test_file=None,
+                        test_function=None,
+                    )
 
             # Calculate use-case coverage from detected markers
             uc_result = calculate_usecase_coverage(tier_name, use_cases, covered_ids)
@@ -950,16 +1322,94 @@ def main() -> int:
         print("ERROR: No coverage results collected")
         return 1
 
+    # Write run metadata
+    coverage_db.write_run_metadata(coverage_db_path, REPO_ROOT)
+
+    # Generate and write missing line details with context
+    # Generate JSON report from .coverage to extract missing lines
+    json_output_path = coverage_dir / "temp_missing_lines.json"
+    cov_report_cmd = [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "coverage",
+        "json",
+        "-o",
+        str(json_output_path),
+    ]
+    _run_command(cov_report_cmd, capture=True, env=cov_env)
+
+    if json_output_path.exists():
+        with json_output_path.open() as f:
+            coverage_data = json.load(f)
+        missing_line_details = generate_missing_line_details(coverage_data, REPO_ROOT)
+        if missing_line_details:
+            coverage_db.write_missing_lines(coverage_db_path, missing_line_details)
+        # Clean up temporary file
+        json_output_path.unlink(missing_ok=True)
+
+    # Write tier summaries for each tier
+    for config, result in line_branch_results:
+        # Calculate passing/failing functions
+        passing_funcs = sum(
+            1
+            for func_data in result.functions.values()
+            if func_data["line_coverage"] >= config.min_line_per_function
+            and func_data["branch_coverage"] >= config.min_branch_per_function
+        )
+        failing_funcs = len(result.functions) - passing_funcs
+
+        # Get test counts from junit summary
+        test_summary = tier_test_summaries.get(config.name)
+        total_tests = test_summary.total if test_summary else 0
+        tests_passed = test_summary.passed if test_summary else 0
+        tests_failed = (test_summary.failed + test_summary.errors) if test_summary else 0
+
+        # Check if there are tier-specific coverage failures
+        tier_failures = [f for f in all_failures if f.startswith(f"{config.name}:")]
+        has_coverage_failures = len(tier_failures) > 0
+        has_test_failures = tests_failed > 0
+
+        # Determine if tier passes all requirements (coverage + all tests passed)
+        tier_pass = 1 if not has_coverage_failures and not has_test_failures else 0
+
+        summary = {
+            "coverage_type": config.coverage_type,
+            "total_functions": len(result.functions),
+            "passing_functions": passing_funcs,
+            "failing_functions": failing_funcs,
+            "overall_line_pct": result.line_coverage_pct,
+            "overall_branch_pct": result.branch_coverage_pct,
+            "total_tests": total_tests,
+            "tests_passed": tests_passed,
+            "tests_failed": tests_failed,
+            "tier_pass": tier_pass,
+        }
+        coverage_db.write_tier_summary(coverage_db_path, config.name, summary)
+
+    for config, uc_result in usecase_results:
+        # Determine if tier passes
+        tier_pass = 1 if uc_result.coverage_pct >= config.min_usecase else 0
+
+        summary = {
+            "coverage_type": config.coverage_type,
+            "total_usecases": uc_result.total_cases,
+            "usecases_covered": uc_result.covered_cases,
+            "tier_pass": tier_pass,
+        }
+        coverage_db.write_tier_summary(coverage_db_path, config.name, summary)
+
     # Run redundant test detection
     redundant_result: RedundantTestResult | None = None
     if not args.skip_redundant_detection:
-        coverage_db_path = REPO_ROOT / ".coverage"
-        if coverage_db_path.exists():
+        # The coverage data file is now at .coverage/data (not .coverage which is a directory)
+        if coverage_data_file.exists():
             print("\n" + "=" * 70)
             print("Analyzing test coverage for redundant tests...")
             print("=" * 70)
             redundant_result = detect_redundant_tests(
-                coverage_db_path,
+                coverage_data_file,
                 include_partial=args.include_partial_redundant,
             )
 

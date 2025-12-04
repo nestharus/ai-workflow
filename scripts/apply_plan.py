@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Orchestrate Traycer AI plans using OpenCode and Claude agents."""
+"""Orchestrate Traycer AI plans using OpenCode and Claude agents.
+
+This orchestrator automatically routes tasks to appropriate implementor models
+based on task file complexity (character count). The routing is now automatic
+based on the implementor agent's `routing_thresholds` configuration in its
+frontmatter, using prompt character count to select the appropriate runner/model
+combination dynamically.
+"""
 
 from __future__ import annotations
 
@@ -122,6 +129,34 @@ def _run_claude_agent(agent: str, prompt: str) -> subprocess.CompletedProcess[st
     return _run(command)
 
 
+def _run_tasks_agent(
+    agent_name: str, prompt: str, prompt_chars: int | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run a .tasks system agent with optional prompt character count for routing.
+
+    Invokes tasks_agent_runner.py with the specified agent and prompt. When
+    prompt_chars is provided, the agent's routing_thresholds are automatically
+    consulted to select the appropriate model/provider.
+
+    Args:
+        agent_name: Name of the agent to run (without .md extension).
+        prompt: Prompt to pass to the agent.
+        prompt_chars: Optional character count for routing. When provided,
+            enables automatic model selection based on the agent's
+            routing_thresholds configuration.
+
+    Returns:
+        CompletedProcess result from subprocess execution.
+    """
+    runner = PROJECT_ROOT / "scripts" / "dev" / "tasks_agent_runner.py"
+    command = [sys.executable, str(runner), "--agent", agent_name, "--prompt", prompt]
+
+    if prompt_chars is not None:
+        command.extend(["--prompt-chars", str(prompt_chars)])
+
+    return _run(command)
+
+
 def _create_changes_files(task_dir: Path) -> list[str]:
     names_result = subprocess.run(
         ["git", "diff", "--name-only"], capture_output=True, text=True, cwd=PROJECT_ROOT
@@ -145,6 +180,19 @@ def _create_changes_files(task_dir: Path) -> list[str]:
 def _detect_conclusion(task_dir: Path) -> Path | None:
     conclusions = sorted(task_dir.glob("*.conclusion"))
     return conclusions[0] if conclusions else None
+
+
+def _count_task_chars(task_path: Path) -> int:
+    """Count total characters in a task file.
+
+    Args:
+        task_path: Path to the task file.
+
+    Returns:
+        Number of characters in the file content.
+    """
+    content = task_path.read_text(encoding="utf-8")
+    return len(content)
 
 
 def _patch_incomplete_tasks(
@@ -180,8 +228,12 @@ def _process_task(
 
     _update_status(status_path, status_data, task_file, status="in_progress")
 
+    # Route to appropriate implementor model based on task complexity (character count)
+    char_count = _count_task_chars(task_path)
     implementor_prompt = str(task_path)
-    result = _run_opencode_agent("implementor", implementor_prompt)
+
+    # Use _run_tasks_agent which automatically routes via agent's routing_thresholds
+    result = _run_tasks_agent("implementor", implementor_prompt, char_count)
     mode, tests, failure_detail = _parse_implementor_output(result.stdout or "")
 
     if mode == "success":

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from app.api.v1.dependencies import (
     get_db_pool,
     get_duckdb_client,

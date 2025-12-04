@@ -2,6 +2,8 @@
 
 Parses YAML frontmatter from an agent markdown file and invokes the local
 `./claude` wrapper with the appropriate flags.
+
+The ClaudeRunner class is available for programmatic use via the AgentRunner interface.
 """
 
 from __future__ import annotations
@@ -10,8 +12,12 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
+
+if TYPE_CHECKING:
+    from scripts.dev.agent_runner import AgentRunner
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,7 +93,16 @@ def build_command(frontmatter: dict, system_prompt: str, prompt: str) -> list[st
     return command
 
 
-def run_command(command: list[str]) -> int:
+def run_command(command: list[str], *, stream_output: bool = True) -> tuple[int, str]:
+    """Run a command and return exit code and captured output.
+
+    Args:
+        command: Command to execute as list of strings.
+        stream_output: If True, also write stdout to sys.stdout (for CLI usage).
+
+    Returns:
+        Tuple of (exit_code, stdout_output).
+    """
     project_root = Path(__file__).resolve().parents[2]
     result = subprocess.run(
         command,
@@ -97,15 +112,44 @@ def run_command(command: list[str]) -> int:
         check=False,
     )
 
-    if result.stdout:
+    if stream_output and result.stdout:
         sys.stdout.write(result.stdout)
 
     if result.returncode != 0:
         if result.stderr:
             sys.stderr.write(result.stderr)
-        return result.returncode
+        return result.returncode, result.stdout or ""
 
-    return 0
+    return 0, result.stdout or ""
+
+
+def _get_agent_runner_base() -> type[AgentRunner]:
+    """Import AgentRunner base class lazily to avoid circular imports."""
+    from scripts.dev.agent_runner import AgentRunner
+
+    return AgentRunner
+
+
+class ClaudeRunner(_get_agent_runner_base()):
+    """Claude provider runner implementation."""
+
+    def run(self, prompt: str) -> str:
+        """Execute Claude agent with the given prompt.
+
+        Args:
+            prompt: User prompt to send to the agent.
+
+        Returns:
+            Captured stdout output from the Claude CLI.
+
+        Raises:
+            RuntimeError: If Claude agent fails with non-zero exit code.
+        """
+        command = build_command(self.agent_config, self.system_prompt, prompt)
+        exit_code, output = run_command(command, stream_output=False)
+        if exit_code != 0:
+            raise RuntimeError(f"Claude agent failed with exit code {exit_code}")
+        return output
 
 
 def main() -> int:
@@ -113,7 +157,8 @@ def main() -> int:
         args = parse_args()
         frontmatter, system_prompt = load_agent(args.agent)
         command = build_command(frontmatter, system_prompt, args.prompt)
-        return run_command(command)
+        exit_code, _ = run_command(command)
+        return exit_code
     except FileNotFoundError as exc:
         sys.stderr.write(f"{exc}\n")
         return 1
