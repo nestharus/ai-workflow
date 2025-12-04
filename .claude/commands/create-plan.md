@@ -1,10 +1,10 @@
 ---
-description: Create an implementation plan from a Linear ticket
-argument-hint: <ticket-id>
-allowed-tools: Bash, Read, Write, Glob, Grep, mcp__linear-server__get_issue, mcp__linear-server__create_comment
+description: Create an implementation plan from a Linear ticket (or create ticket from prompt)
+argument-hint: [<ticket-id> | <description of work>]
+allowed-tools: Bash, Read, Write, Glob, Grep, mcp__linear-server__get_issue, mcp__linear-server__create_issue, mcp__linear-server__create_comment, mcp__linear-server__update_issue, mcp__linear-server__list_projects, mcp__linear-server__list_teams
 ---
 
-Create an implementation plan for Linear ticket `$ARGUMENTS`.
+Create an implementation plan. If `$ARGUMENTS` is a ticket ID (e.g., `NES-123`), fetch that ticket. Otherwise, create a new ticket using the arguments as a description.
 
 ## File Naming Convention
 
@@ -16,22 +16,53 @@ All plan and strategy files follow this naming convention and are attached to th
 
 ## Workflow
 
-1. **Fetch Ticket**: Use `mcp__linear-server__get_issue` to retrieve the ticket details including title and description.
+### Step 1: Determine Ticket
 
-2. **Run Planner Agent**: Execute the planner agent with the ticket details:
-   ```bash
-   uv run agent.tasks --agent planner --prompt "Ticket ID: <ID>
-   Title: <TITLE>
-   Description:
-   <DESCRIPTION>"
-   ```
-   Capture the plan output from stdout.
+Check if `$ARGUMENTS` looks like a ticket ID (format: `XXX-NNN` where XXX is letters and NNN is numbers):
 
-3. **Save Plan**: Write the plan to `.tasks/plans/<ticket-id>/implementation-plan.md` (create directory if needed).
+**If ticket ID provided:**
+- Use `mcp__linear-server__get_issue` to fetch the ticket
 
-4. **Update Linear**: Add the plan as a comment on the ticket using `mcp__linear-server__create_comment` with the full plan content in markdown format.
+**If no ticket ID (description provided instead):**
+1. Use `mcp__linear-server__list_projects` to get available projects
+2. Analyze the description to determine the most appropriate project:
+   - "AI Workflow Application Phase N" - for app development work
+   - "Task System" - for task/agent system work
+   - "Test Framework" - for testing infrastructure
+   - "Documentation" - for documentation work
+   - "GitHub CI" - for CI/CD work
+   - "Knowledge System" - for knowledge/fact extraction work
+   - Default to "Task System" if unclear
+3. Use `mcp__linear-server__list_teams` to get team ID (use "Neshq")
+4. Create ticket with `mcp__linear-server__create_issue`:
+   - `title`: Extract a concise title from the description (first sentence or main topic)
+   - `description`: Full description from `$ARGUMENTS`
+   - `team`: "Neshq"
+   - `project`: Selected project name
+5. Capture the created ticket ID
 
-5. **Output Review Request**: Print the following to terminal:
+### Step 2: Run Planner Agent
+
+Execute the planner agent with the ticket details:
+```bash
+uv run agent.tasks --agent planner --prompt "Ticket ID: <ID>
+Title: <TITLE>
+Description:
+<DESCRIPTION>"
+```
+Capture the plan output from stdout.
+
+### Step 3: Save Plan
+
+Write the plan to `.tasks/plans/<ticket-id>/implementation-plan.md` (create directory if needed).
+
+### Step 4: Update Linear
+
+Add the plan as a comment on the ticket using `mcp__linear-server__create_comment` with the full plan content in markdown format.
+
+### Step 5: Output Review Request
+
+Print the following to terminal:
 
 ```
 ================================================================================
@@ -48,13 +79,14 @@ Please review the plan on the ticket:
 3. Verify the plan adequately addresses all requirements
 4. Check that success criteria are measurable and complete
 
-After review, run /apply-plan to execute the implementation.
+After review, run /execute-plan <ticket-id> to implement.
 ================================================================================
 ```
 
 ## Error Handling
 
 - If ticket fetch fails, report the error and stop
+- If ticket creation fails, report the error and stop
 - If planner agent fails, report the error output and stop
 - If Linear comment creation fails, still save the local plan file and notify the user
 
