@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +20,13 @@ from typing import Any
 import yaml
 
 from scripts.tasks.commands import clipboard_to_plan
+from scripts.tasks.workflows.implementation import (
+    ImplementationResult,
+    _count_task_chars,
+    _parse_implementor_output,
+    _run_tasks_agent,
+    run_implementation_workflow,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -104,19 +110,6 @@ def _run_clipboard_to_plan() -> Path:
     return Path(result.stdout.strip().splitlines()[-1])
 
 
-def _parse_implementor_output(output: str) -> tuple[str, list[str] | None, str | None]:
-    if "SUCCESS" in output:
-        return "success", None, None
-    tests_match = re.search(r"TESTS:\s*\[(.*?)\]", output, re.IGNORECASE)
-    if tests_match:
-        tests = [t.strip() for t in tests_match.group(1).split(",") if t.strip()]
-        return "tests", tests, None
-    fail_match = re.search(r"FAIL:\s*(.+)", output, re.IGNORECASE)
-    if fail_match:
-        return "fail", None, fail_match.group(1).strip()
-    return "fail", None, "Unrecognized implementor response"
-
-
 def _run_opencode_agent(agent: str, prompt: str) -> subprocess.CompletedProcess[str]:
     runner = PROJECT_ROOT / "scripts" / "dev" / "opencode_agent_runner.py"
     command = [sys.executable, str(runner), "--agent", agent, "--prompt", prompt]
@@ -126,34 +119,6 @@ def _run_opencode_agent(agent: str, prompt: str) -> subprocess.CompletedProcess[
 def _run_claude_agent(agent: str, prompt: str) -> subprocess.CompletedProcess[str]:
     runner = PROJECT_ROOT / "scripts" / "dev" / "claude_agent_runner.py"
     command = [sys.executable, str(runner), "--agent", agent, "--prompt", prompt]
-    return _run(command)
-
-
-def _run_tasks_agent(
-    agent_name: str, prompt: str, prompt_chars: int | None = None
-) -> subprocess.CompletedProcess[str]:
-    """Run a .tasks system agent with optional prompt character count for routing.
-
-    Invokes tasks_agent_runner.py with the specified agent and prompt. When
-    prompt_chars is provided, the agent's routing_thresholds are automatically
-    consulted to select the appropriate model/provider.
-
-    Args:
-        agent_name: Name of the agent to run (without .md extension).
-        prompt: Prompt to pass to the agent.
-        prompt_chars: Optional character count for routing. When provided,
-            enables automatic model selection based on the agent's
-            routing_thresholds configuration.
-
-    Returns:
-        CompletedProcess result from subprocess execution.
-    """
-    runner = PROJECT_ROOT / "scripts" / "dev" / "tasks_agent_runner.py"
-    command = [sys.executable, str(runner), "--agent", agent_name, "--prompt", prompt]
-
-    if prompt_chars is not None:
-        command.extend(["--prompt-chars", str(prompt_chars)])
-
     return _run(command)
 
 
@@ -180,19 +145,6 @@ def _create_changes_files(task_dir: Path) -> list[str]:
 def _detect_conclusion(task_dir: Path) -> Path | None:
     conclusions = sorted(task_dir.glob("*.conclusion"))
     return conclusions[0] if conclusions else None
-
-
-def _count_task_chars(task_path: Path) -> int:
-    """Count total characters in a task file.
-
-    Args:
-        task_path: Path to the task file.
-
-    Returns:
-        Number of characters in the file content.
-    """
-    content = task_path.read_text(encoding="utf-8")
-    return len(content)
 
 
 def _patch_incomplete_tasks(

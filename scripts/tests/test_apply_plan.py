@@ -14,8 +14,9 @@ import pytest
 import yaml
 
 from scripts.tasks.commands import clipboard_to_plan
-from scripts.tasks.workflows import apply_plan
+from scripts.tasks.workflows import apply_plan, implementation
 from scripts.tasks.workflows.apply_plan import ApplyPlanError
+from scripts.tasks.workflows.implementation import ImplementationResult
 
 if TYPE_CHECKING:
     from pyfakefs.fake_filesystem import FakeFilesystem
@@ -24,7 +25,10 @@ if TYPE_CHECKING:
 @pytest.fixture(autouse=True)
 def patch_project_root(fake_repo_root: Path) -> Iterator[None]:
     """Ensure PROJECT_ROOT points to the fake repository."""
-    with patch.object(apply_plan, "PROJECT_ROOT", fake_repo_root):
+    with (
+        patch.object(apply_plan, "PROJECT_ROOT", fake_repo_root),
+        patch.object(implementation, "PROJECT_ROOT", fake_repo_root),
+    ):
         yield
 
 
@@ -140,45 +144,6 @@ class TestRunClipboardToPlan:
         )
         with patch("subprocess.run", return_value=completed), pytest.raises(ApplyPlanError):
             apply_plan._run_clipboard_to_plan()
-
-
-class TestParseImplementorOutput:
-    """Tests for _parse_implementor_output."""
-
-    def test_detects_success(self) -> None:
-        """Should detect SUCCESS token."""
-        assert apply_plan._parse_implementor_output("random SUCCESS text") == (
-            "success",
-            None,
-            None,
-        )
-
-    def test_extracts_tests(self) -> None:
-        """Should parse test list from output."""
-        output = "TESTS: [tests/unit/a.py::test_one, tests/unit/b.py::test_two]"
-        assert apply_plan._parse_implementor_output(output) == (
-            "tests",
-            ["tests/unit/a.py::test_one", "tests/unit/b.py::test_two"],
-            None,
-        )
-
-    def test_extracts_fail_detail(self) -> None:
-        """Should parse fail message."""
-        output = "FAIL: missing environment"
-        assert apply_plan._parse_implementor_output(output) == (
-            "fail",
-            None,
-            "missing environment",
-        )
-
-    def test_defaults_to_fail_when_unrecognized(self) -> None:
-        """Should return fail when output does not match known patterns."""
-        output = "No markers present"
-        assert apply_plan._parse_implementor_output(output) == (
-            "fail",
-            None,
-            "Unrecognized implementor response",
-        )
 
 
 class TestRunOpencodeAgent:
@@ -704,3 +669,219 @@ class TestMain:
 
         task_002_content = (task_dir / "task_002.md").read_text()
         assert "# app/utils.py" in task_002_content
+
+
+class TestImplementationParseImplementorOutput:
+    """Tests for implementation._parse_implementor_output."""
+
+    def test_detects_success(self) -> None:
+        """Should detect SUCCESS token."""
+        assert implementation._parse_implementor_output("random SUCCESS text") == (
+            "success",
+            None,
+            None,
+        )
+
+    def test_extracts_tests(self) -> None:
+        """Should parse test list from output."""
+        output = "TESTS: [tests/unit/a.py::test_one, tests/unit/b.py::test_two]"
+        assert implementation._parse_implementor_output(output) == (
+            "tests",
+            ["tests/unit/a.py::test_one", "tests/unit/b.py::test_two"],
+            None,
+        )
+
+    def test_extracts_fail_detail(self) -> None:
+        """Should parse fail message."""
+        output = "FAIL: missing environment"
+        assert implementation._parse_implementor_output(output) == (
+            "fail",
+            None,
+            "missing environment",
+        )
+
+    def test_defaults_to_fail_when_unrecognized(self) -> None:
+        """Should return fail when output does not match known patterns."""
+        output = "No markers present"
+        assert implementation._parse_implementor_output(output) == (
+            "fail",
+            None,
+            "Unrecognized implementor response",
+        )
+
+
+class TestImplementationCountTaskChars:
+    """Tests for implementation._count_task_chars."""
+
+    def test_counts_characters_in_file(self, fs: FakeFilesystem, fake_repo_root: Path) -> None:
+        """Should return character count of file content."""
+        task_path = fake_repo_root / "task_001.md"
+        content = "# file_a\nDo things here"
+        fs.create_file(str(task_path), contents=content)
+
+        assert implementation._count_task_chars(task_path) == len(content)
+
+    def test_counts_empty_file(self, fs: FakeFilesystem, fake_repo_root: Path) -> None:
+        """Should return zero for empty file."""
+        task_path = fake_repo_root / "task_empty.md"
+        fs.create_file(str(task_path), contents="")
+
+        assert implementation._count_task_chars(task_path) == 0
+
+    def test_counts_large_file(self, fs: FakeFilesystem, fake_repo_root: Path) -> None:
+        """Should count characters in large files."""
+        task_path = fake_repo_root / "task_large.md"
+        content = "x" * 10000
+        fs.create_file(str(task_path), contents=content)
+
+        assert implementation._count_task_chars(task_path) == 10000
+
+
+class TestImplementationRunTasksAgent:
+    """Tests for implementation._run_tasks_agent."""
+
+    def test_invokes_runner_with_agent_and_prompt(self) -> None:
+        """Should call _run with tasks_agent_runner arguments."""
+        mock_completed = subprocess.CompletedProcess([], 0, stdout="SUCCESS", stderr="")
+        with patch.object(implementation, "_run", return_value=mock_completed) as mock_run:
+            result = implementation._run_tasks_agent("implementor", "task_path")
+
+        assert result is mock_completed
+        mock_run.assert_called_once()
+        args = mock_run.call_args.args[0]
+        assert "tasks_agent_runner.py" in args[1]
+        assert args[2:4] == ["--agent", "implementor"]
+        assert args[-2:] == ["--prompt", "task_path"]
+
+    def test_includes_prompt_chars_when_provided(self) -> None:
+        """Should include --prompt-chars when char count provided."""
+        mock_completed = subprocess.CompletedProcess([], 0, stdout="SUCCESS", stderr="")
+        with patch.object(implementation, "_run", return_value=mock_completed) as mock_run:
+            result = implementation._run_tasks_agent("implementor", "task_path", prompt_chars=5000)
+
+        assert result is mock_completed
+        args = mock_run.call_args.args[0]
+        assert "--prompt-chars" in args
+        chars_idx = args.index("--prompt-chars")
+        assert args[chars_idx + 1] == "5000"
+
+    def test_omits_prompt_chars_when_none(self) -> None:
+        """Should not include --prompt-chars when not provided."""
+        mock_completed = subprocess.CompletedProcess([], 0, stdout="SUCCESS", stderr="")
+        with patch.object(implementation, "_run", return_value=mock_completed) as mock_run:
+            implementation._run_tasks_agent("implementor", "task_path", prompt_chars=None)
+
+        args = mock_run.call_args.args[0]
+        assert "--prompt-chars" not in args
+
+
+class TestRunImplementationWorkflow:
+    """Tests for implementation.run_implementation_workflow."""
+
+    def _setup_task(
+        self, fs: FakeFilesystem, fake_repo_root: Path
+    ) -> tuple[Path, Path]:
+        """Create a task file and directory for testing."""
+        task_dir = fake_repo_root / "scripts" / "tasks"
+        fs.create_dir(str(task_dir))
+        task_path = task_dir / "task_001.md"
+        fs.create_file(str(task_path), contents="# file_a\nDo things")
+        return task_path, task_dir
+
+    def test_returns_success_result(self, fs: FakeFilesystem, fake_repo_root: Path) -> None:
+        """Should return ImplementationResult with success status."""
+        task_path, task_dir = self._setup_task(fs, fake_repo_root)
+
+        with patch.object(
+            implementation,
+            "_run_tasks_agent",
+            return_value=subprocess.CompletedProcess([], 0, stdout="SUCCESS", stderr=""),
+        ):
+            result = implementation.run_implementation_workflow(task_path, task_dir)
+
+        assert isinstance(result, ImplementationResult)
+        assert result.status == "success"
+        assert result.failing_tests is None
+        assert result.failure_detail is None
+
+    def test_returns_tests_result(self, fs: FakeFilesystem, fake_repo_root: Path) -> None:
+        """Should return ImplementationResult with tests status and failing test list."""
+        task_path, task_dir = self._setup_task(fs, fake_repo_root)
+
+        with patch.object(
+            implementation,
+            "_run_tasks_agent",
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout="TESTS: [test_one, test_two]", stderr=""
+            ),
+        ):
+            result = implementation.run_implementation_workflow(task_path, task_dir)
+
+        assert result.status == "tests"
+        assert result.failing_tests == ["test_one", "test_two"]
+        assert result.failure_detail is None
+
+    def test_returns_fail_result(self, fs: FakeFilesystem, fake_repo_root: Path) -> None:
+        """Should return ImplementationResult with fail status and detail."""
+        task_path, task_dir = self._setup_task(fs, fake_repo_root)
+
+        with patch.object(
+            implementation,
+            "_run_tasks_agent",
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout="FAIL: blocking issue", stderr=""
+            ),
+        ):
+            result = implementation.run_implementation_workflow(task_path, task_dir)
+
+        assert result.status == "fail"
+        assert result.failing_tests is None
+        assert result.failure_detail == "blocking issue"
+
+    def test_passes_character_count_for_routing(
+        self, fs: FakeFilesystem, fake_repo_root: Path
+    ) -> None:
+        """Should pass character count to _run_tasks_agent for routing."""
+        task_path, task_dir = self._setup_task(fs, fake_repo_root)
+        task_content = task_path.read_text()
+
+        with patch.object(
+            implementation,
+            "_run_tasks_agent",
+            return_value=subprocess.CompletedProcess([], 0, stdout="SUCCESS", stderr=""),
+        ) as mock_agent:
+            implementation.run_implementation_workflow(task_path, task_dir)
+
+        mock_agent.assert_called_once()
+        call_args = mock_agent.call_args
+        assert call_args.args[0] == "implementor"
+        assert call_args.args[1] == str(task_path)
+        assert call_args.args[2] == len(task_content)
+
+    def test_handles_empty_stdout(self, fs: FakeFilesystem, fake_repo_root: Path) -> None:
+        """Should handle empty stdout gracefully."""
+        task_path, task_dir = self._setup_task(fs, fake_repo_root)
+
+        with patch.object(
+            implementation,
+            "_run_tasks_agent",
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        ):
+            result = implementation.run_implementation_workflow(task_path, task_dir)
+
+        assert result.status == "fail"
+        assert result.failure_detail == "Unrecognized implementor response"
+
+    def test_handles_none_stdout(self, fs: FakeFilesystem, fake_repo_root: Path) -> None:
+        """Should handle None stdout gracefully."""
+        task_path, task_dir = self._setup_task(fs, fake_repo_root)
+
+        with patch.object(
+            implementation,
+            "_run_tasks_agent",
+            return_value=subprocess.CompletedProcess([], 0, stdout=None, stderr=""),
+        ):
+            result = implementation.run_implementation_workflow(task_path, task_dir)
+
+        assert result.status == "fail"
+        assert result.failure_detail == "Unrecognized implementor response"
