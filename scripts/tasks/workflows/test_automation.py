@@ -556,10 +556,18 @@ def format_strategy_prompt(
             "",
             "The structured input above follows the test-strategy-input.schema.json format "
             "(review mode).",
-            "Output one of:",
-            "- APPROVED (if plan satisfies strategy)",
-            "- FEEDBACK: <specific issues to address>",
-            "- BLOCKED: <reason review cannot proceed>",
+            "",
+            "## Output Contract",
+            "Output structured YAML data after the `STRATEGY:` marker. The response must",
+            "conform to `docs/schemas/test-strategy-review.schema.json` with the following",
+            "structure:",
+            "",
+            "- **APPROVED**: `STRATEGY:\\nstatus: \"APPROVED\"`",
+            "- **FEEDBACK**: Include `status: \"FEEDBACK\"` and an `issues` array with",
+            "  `category`, `description`, `severity`, and optional `strategy_reference`",
+            "- **BLOCKED**: Include `status: \"BLOCKED\"` and a `reason` string",
+            "",
+            "See `.tasks/agents/test-strategy.md` Review Output Contract for full examples.",
         ]
 
     else:  # revise mode
@@ -831,10 +839,18 @@ Verify the plan adequately covers the strategy requirements:
 4. Edge cases from strategy are planned
 
 The structured input above follows the test-strategy-input.schema.json format (review mode).
-Output one of:
-- APPROVED (if plan satisfies strategy)
-- FEEDBACK: <specific issues to address>
-- BLOCKED: <reason review cannot proceed>
+
+## Output Contract
+Output structured YAML data after the `STRATEGY:` marker. The response must
+conform to `docs/schemas/test-strategy-review.schema.json` with the following
+structure:
+
+- **APPROVED**: `STRATEGY:\\nstatus: "APPROVED"`
+- **FEEDBACK**: Include `status: "FEEDBACK"` and an `issues` array with
+  `category`, `description`, `severity`, and optional `strategy_reference`
+- **BLOCKED**: Include `status: "BLOCKED"` and a `reason` string
+
+See `.tasks/agents/test-strategy.md` Review Output Contract for full examples.
 """
 
 

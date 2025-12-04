@@ -1,9 +1,9 @@
-Review the implementation of ticket ID NES-18 in linear.
+Review the implementation of ticket ID <ID> in linear.
 
 The ticket's attached file(s) are plan/spec files.
 
 Code has been implemented locally and is ready for review.
 
-You need to review implementation against plan
+You need to review implementation against plan.
 
 You may use git commands to see changes.

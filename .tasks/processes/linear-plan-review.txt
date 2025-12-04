@@ -1,4 +1,4 @@
-Review the plan on ticket ID NES-6 in linear.
+Review the plan on ticket ID <ID> in linear.
 
 The ticket's attached file is a plan file.
 
