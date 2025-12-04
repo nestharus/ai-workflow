@@ -56,7 +56,8 @@ def load_agent(agent_name: str) -> tuple[dict[str, Any], str]:
 
     Raises:
         FileNotFoundError: If agent file not found.
-        ValueError: If frontmatter is invalid YAML or not a dict.
+        ValueError: If frontmatter is invalid YAML, not a dict, or generation_config
+            is present but not a dict.
         KeyError: If required frontmatter fields are missing.
     """
     project_root = Path(__file__).resolve().parents[2]
@@ -83,6 +84,11 @@ def load_agent(agent_name: str) -> tuple[dict[str, Any], str]:
 
     if "model" not in frontmatter:
         raise KeyError("Missing required frontmatter field: model")
+
+    if "generation_config" in frontmatter and not isinstance(
+        frontmatter["generation_config"], dict
+    ):
+        raise ValueError("generation_config must be a dict")
 
     system_prompt = parts[2].strip()
     return frontmatter, system_prompt

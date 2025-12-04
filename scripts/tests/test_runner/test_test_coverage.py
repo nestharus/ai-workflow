@@ -8,12 +8,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from scripts.dev.test_runner.test_coverage import (
-    DEFAULT_MIN_BRANCH_COVERAGE,
-    DEFAULT_MIN_FUNCTION_BRANCH_COVERAGE,
-    DEFAULT_MIN_FUNCTION_LINE_COVERAGE,
-    DEFAULT_MIN_LINE_COVERAGE,
-    DEFAULT_USECASE_COVERAGE,
-    TEST_TIERS,
+    DEFAULT_MIN_BRANCH_OVERALL,
+    DEFAULT_MIN_BRANCH_PER_FUNCTION,
+    DEFAULT_MIN_LINE_OVERALL,
+    DEFAULT_MIN_LINE_PER_FUNCTION,
+    DEFAULT_MIN_USECASE,
     CoverageResult,
     FunctionCoverage,
     TestTierConfig,
@@ -26,6 +25,7 @@ from scripts.dev.test_runner.test_coverage import (
     _is_private_function,
     calculate_usecase_coverage,
     collect_covered_usecases,
+    get_test_tiers,
     load_use_cases,
     parse_args,
     print_summary,
@@ -40,53 +40,59 @@ if TYPE_CHECKING:
 class TestDefaultThresholds:
     """Tests for default threshold constants."""
 
-    def test_default_min_line_coverage(self) -> None:
+    def test_default_min_line_overall(self) -> None:
         """Should have 80% default overall line coverage."""
-        assert DEFAULT_MIN_LINE_COVERAGE == 80.0
+        assert DEFAULT_MIN_LINE_OVERALL == 80.0
 
-    def test_default_min_branch_coverage(self) -> None:
+    def test_default_min_branch_overall(self) -> None:
         """Should have 70% default overall branch coverage."""
-        assert DEFAULT_MIN_BRANCH_COVERAGE == 70.0
+        assert DEFAULT_MIN_BRANCH_OVERALL == 70.0
 
-    def test_default_min_function_line_coverage(self) -> None:
+    def test_default_min_line_per_function(self) -> None:
         """Should have 60% default per-function line coverage."""
-        assert DEFAULT_MIN_FUNCTION_LINE_COVERAGE == 60.0
+        assert DEFAULT_MIN_LINE_PER_FUNCTION == 60.0
 
-    def test_default_min_function_branch_coverage(self) -> None:
+    def test_default_min_branch_per_function(self) -> None:
         """Should have 50% default per-function branch coverage."""
-        assert DEFAULT_MIN_FUNCTION_BRANCH_COVERAGE == 50.0
+        assert DEFAULT_MIN_BRANCH_PER_FUNCTION == 50.0
 
     def test_default_usecase_coverage(self) -> None:
         """Should have 100% default use-case coverage."""
-        assert DEFAULT_USECASE_COVERAGE == 100.0
+        assert DEFAULT_MIN_USECASE == 100.0
 
 
 class TestTestTiers:
-    """Tests for TEST_TIERS configuration."""
+    """Tests for get_test_tiers() configuration."""
 
     def test_has_unit_tier(self) -> None:
         """Should have unit test tier."""
-        assert "unit" in TEST_TIERS
+        tiers = get_test_tiers()
+        assert "unit" in tiers
 
     def test_has_component_tier(self) -> None:
         """Should have component test tier."""
-        assert "component" in TEST_TIERS
+        tiers = get_test_tiers()
+        assert "component" in tiers
 
     def test_has_integration_tier(self) -> None:
         """Should have integration test tier."""
-        assert "integration" in TEST_TIERS
+        tiers = get_test_tiers()
+        assert "integration" in tiers
 
     def test_has_e2e_tier(self) -> None:
         """Should have e2e test tier."""
-        assert "e2e" in TEST_TIERS
+        tiers = get_test_tiers()
+        assert "e2e" in tiers
 
     def test_has_scripts_tier(self) -> None:
         """Should have scripts test tier."""
-        assert "scripts" in TEST_TIERS
+        tiers = get_test_tiers()
+        assert "scripts" in tiers
 
     def test_unit_tier_config(self) -> None:
         """Unit tier should target app/ with all functions."""
-        config = TEST_TIERS["unit"]
+        tiers = get_test_tiers()
+        config = tiers["unit"]
         assert config.test_path == "tests/unit"
         assert config.source_paths == ["app"]
         assert config.coverage_type == "line_branch"
@@ -95,7 +101,8 @@ class TestTestTiers:
 
     def test_component_tier_config(self) -> None:
         """Component tier should target service layer only."""
-        config = TEST_TIERS["component"]
+        tiers = get_test_tiers()
+        config = tiers["component"]
         assert config.source_paths == ["app/services"]
         assert config.coverage_type == "line_branch"
         assert config.skip_private_functions is True
@@ -103,19 +110,22 @@ class TestTestTiers:
 
     def test_integration_tier_config(self) -> None:
         """Integration tier should use use-case coverage."""
-        config = TEST_TIERS["integration"]
+        tiers = get_test_tiers()
+        config = tiers["integration"]
         assert config.test_path == "tests/integration"
         assert config.coverage_type == "usecase"
 
     def test_e2e_tier_config(self) -> None:
         """E2E tier should use use-case coverage."""
-        config = TEST_TIERS["e2e"]
+        tiers = get_test_tiers()
+        config = tiers["e2e"]
         assert config.test_path == "tests/e2e"
         assert config.coverage_type == "usecase"
 
     def test_scripts_tier_config(self) -> None:
         """Scripts tier should target scripts/ and tools/."""
-        config = TEST_TIERS["scripts"]
+        tiers = get_test_tiers()
+        config = tiers["scripts"]
         assert config.test_path == "scripts/tests"
         assert config.source_paths == ["scripts", "tools"]
         assert config.coverage_type == "line_branch"
@@ -538,8 +548,8 @@ class TestValidateLineBranchCoverage:
             source_paths=["app"],
             coverage_file="coverage.json",
             coverage_type="line_branch",
-            min_line=80.0,
-            min_branch=80.0,
+            min_line_per_function=80.0,
+            min_branch_per_function=80.0,
         )
         result = CoverageResult(
             suite_name="unit",
@@ -575,8 +585,8 @@ class TestValidateLineBranchCoverage:
             source_paths=["app"],
             coverage_file="coverage.json",
             coverage_type="line_branch",
-            min_line=80.0,
-            min_branch=80.0,
+            min_line_per_function=80.0,
+            min_branch_per_function=80.0,
         )
         result = CoverageResult(
             suite_name="unit",
@@ -613,8 +623,8 @@ class TestValidateLineBranchCoverage:
             source_paths=["scripts"],
             coverage_file="coverage.json",
             coverage_type="line_branch",
-            min_line=80.0,
-            min_branch=80.0,
+            min_line_per_function=80.0,
+            min_branch_per_function=80.0,
             skip_private_functions=True,
         )
         result = CoverageResult(
@@ -651,8 +661,8 @@ class TestValidateLineBranchCoverage:
             source_paths=["app"],
             coverage_file="coverage.json",
             coverage_type="line_branch",
-            min_line=80.0,
-            min_branch=80.0,
+            min_line_per_function=80.0,
+            min_branch_per_function=80.0,
             skip_private_functions=False,
         )
         result = CoverageResult(
@@ -690,8 +700,8 @@ class TestValidateLineBranchCoverage:
             source_paths=["app/services"],
             coverage_file="coverage.json",
             coverage_type="line_branch",
-            min_line=80.0,
-            min_branch=80.0,
+            min_line_per_function=80.0,
+            min_branch_per_function=80.0,
             service_layer_only=True,
             skip_private_functions=True,
         )
@@ -815,7 +825,7 @@ class TestParseArgs:
     def test_default_min_line(self) -> None:
         """Should use default minimum per-function line coverage."""
         args = parse_args([])
-        assert args.min_line == DEFAULT_MIN_FUNCTION_LINE_COVERAGE
+        assert args.min_line == DEFAULT_MIN_LINE_PER_FUNCTION
 
     def test_custom_min_line(self) -> None:
         """Should accept custom minimum line coverage."""
@@ -825,7 +835,7 @@ class TestParseArgs:
     def test_default_min_branch(self) -> None:
         """Should use default minimum per-function branch coverage."""
         args = parse_args([])
-        assert args.min_branch == DEFAULT_MIN_FUNCTION_BRANCH_COVERAGE
+        assert args.min_branch == DEFAULT_MIN_BRANCH_PER_FUNCTION
 
     def test_custom_min_branch(self) -> None:
         """Should accept custom minimum branch coverage."""
@@ -835,7 +845,7 @@ class TestParseArgs:
     def test_default_min_usecase(self) -> None:
         """Should use default minimum use-case coverage."""
         args = parse_args([])
-        assert args.min_usecase == DEFAULT_USECASE_COVERAGE
+        assert args.min_usecase == DEFAULT_MIN_USECASE
 
     def test_custom_min_usecase(self) -> None:
         """Should accept custom minimum use-case coverage."""

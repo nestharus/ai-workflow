@@ -153,7 +153,8 @@ class SurrealDBPool:
             return False
         try:
             async with self.acquire() as conn:
-                await conn.query("SELECT 1")
+                # SurrealQL requires RETURN for simple value evaluation
+                await conn.query("RETURN 1")
             return True
         except Exception as exc:
             logger.warning("SurrealDB health check failed: %s", exc)

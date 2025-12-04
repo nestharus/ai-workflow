@@ -190,8 +190,10 @@ def live_server() -> Iterator[str]:
         stderr_output = exc.stderr.decode("utf-8") if exc.stderr else ""
         raise DockerBuildError(stderr_output) from exc
     # Poll for health
+    # Elasticsearch has a 60s start_period + 30s healthcheck interval,
+    # so we need more time for the full stack to become healthy
     start_time = time.time()
-    timeout = 20.0  # seconds
+    timeout = 120.0  # seconds
     healthy = False
 
     with httpx.Client() as client:

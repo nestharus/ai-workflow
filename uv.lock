@@ -26,6 +26,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
+    { name = "duckdb" },
     { name = "elasticsearch" },
     { name = "fastapi" },
     { name = "orjson" },
@@ -88,6 +89,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "anyio", specifier = ">=4.11.0,<4.12.0" },
+    { name = "duckdb", specifier = ">=1.4.2,<1.5.0" },
     { name = "elasticsearch", specifier = ">=9.2.0,<9.3.0" },
     { name = "fastapi", specifier = ">=0.121.2,<0.122.0" },
     { name = "orjson", specifier = ">=3.11.4,<3.12.0" },

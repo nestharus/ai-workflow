@@ -524,7 +524,8 @@ def run_test_suite(config: TestTierConfig) -> CoverageResult | None:
         CoverageResult if successful, None if tests failed
     """
     # Build pytest command with coverage
-    source_args = ",".join(config.source_paths)
+    # Each source path needs its own --cov argument
+    cov_args = [f"--cov={path}" for path in config.source_paths]
     cmd = [
         "uv",
         "run",
@@ -532,7 +533,7 @@ def run_test_suite(config: TestTierConfig) -> CoverageResult | None:
         "-m",
         "pytest",
         config.test_path,
-        f"--cov={source_args}",
+        *cov_args,
         "--cov-branch",
         "--cov-context=test",  # Enable per-test coverage tracking for redundant test detection
         f"--cov-report=json:{config.coverage_file}",
@@ -545,7 +546,7 @@ def run_test_suite(config: TestTierConfig) -> CoverageResult | None:
 
     print(f"\n{'=' * 70}")
     print(f"Running {config.name} tests: {config.test_path}")
-    print(f"Measuring coverage for: {source_args}")
+    print(f"Measuring coverage for: {', '.join(config.source_paths)}")
     print("=" * 70)
 
     result = _run_command(cmd, capture=False)
@@ -777,11 +778,11 @@ def print_summary(
         low_coverage_funcs = [
             (key, data)
             for key, data in result.functions.items()
-            if data["line_coverage"] < config.min_line
+            if data["line_coverage"] < config.min_line_per_function
             and not (config.skip_private_functions and _is_private_function(data["name"]))
         ]
         if low_coverage_funcs:
-            print(f"\n  Functions below {config.min_line:.0f}% line coverage:")
+            print(f"\n  Functions below {config.min_line_per_function:.0f}% line coverage:")
             for key, data in sorted(low_coverage_funcs, key=lambda x: x[1]["line_coverage"])[:10]:
                 print(f"    {key}: {data['line_coverage']:.1f}%")
             if len(low_coverage_funcs) > 10:
