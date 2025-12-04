@@ -60,6 +60,7 @@ scripts/knowledge/
 .coverage.*
 coverage_*.json
 htmlcov/
+junit.xml
 
 # Tool caches
 .pytest_cache/

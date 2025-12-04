@@ -39,6 +39,7 @@ htmlcov/
 coverage_*.json
 .cache/
 nosetests.xml
+junit.xml
 coverage.json
 coverage_llm.json
 

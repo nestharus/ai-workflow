@@ -32,6 +32,7 @@ reviews:
     - "!.coverage.*"
     - "!htmlcov/**"
     - "!coverage.xml"
+    - "!junit.xml"
     - "!.mypy_cache/**"
     - "!.pytest_cache/**"
     - "!.ruff_cache/**"

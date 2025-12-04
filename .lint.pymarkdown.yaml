@@ -25,6 +25,7 @@ excludes:
   - htmlcov
   - .coverage*
   - coverage.xml
+  - junit.xml
   - uv.lock
   - LICENSE
   - .git
