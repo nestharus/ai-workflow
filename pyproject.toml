@@ -152,6 +152,7 @@ exclude = [
     ".review/",
     ".serena/",
     ".tasks/",
+    ".huggingface/",
     "LICENSE",
 ]
 

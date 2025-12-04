@@ -33,6 +33,7 @@ ENV/
 .github/
 .code/
 .factory/
+.huggingface/
 .review/
 .tasks/
 .pre-commit-config.yaml

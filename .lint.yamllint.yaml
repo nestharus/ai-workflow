@@ -14,6 +14,7 @@ exclude_dirs:
   - .idea
   - .git
   - .github
+  - .huggingface
   - .cache
   - .uv-cache
   - node_modules

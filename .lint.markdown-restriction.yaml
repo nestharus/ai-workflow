@@ -24,6 +24,7 @@ exclude_dirs:
   - .git
   - .github
   - .claude
+  - .huggingface
   - .opencode
   - .factory
   - .knowledge
