@@ -1,0 +1,3 @@
+Template is at .tasks/light_template.txt
+Create plan at .tasks/plans following template
+Execute plan

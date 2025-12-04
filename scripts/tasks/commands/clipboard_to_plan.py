@@ -196,7 +196,9 @@ def _generate_task_metadata(
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     # Resolve agents_dir the same way as AgentRunner.from_agent_name()
     agents_dir_path = Path(config["agents_dir"])
-    agents_dir = agents_dir_path if agents_dir_path.is_absolute() else config_path.parent / agents_dir_path
+    agents_dir = (
+        agents_dir_path if agents_dir_path.is_absolute() else config_path.parent / agents_dir_path
+    )
     agent_path = agents_dir / f"{agent_name}.md"
 
     model = "factory/gpt-5.1-high"
@@ -459,9 +461,7 @@ def main() -> None:
         # Generate metadata after task files are written (so we can count chars)
         if args.use_tasks_system and config_path is not None:
             task_metadata = [
-                _generate_task_metadata(
-                    timestamp_dir / f"task_{idx:03d}.md", config_path
-                )
+                _generate_task_metadata(timestamp_dir / f"task_{idx:03d}.md", config_path)
                 for idx in range(1, len(file_changes) + 1)
             ]
             # Write JSON files using precomputed metadata (ensures consistency

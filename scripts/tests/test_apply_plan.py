@@ -14,9 +14,10 @@ import pytest
 import yaml
 
 from scripts.tasks.commands import clipboard_to_plan
-from scripts.tasks.workflows import apply_plan, implementation
+from scripts.tasks.workflows import apply_plan, implementation, testing
 from scripts.tasks.workflows.apply_plan import ApplyPlanError
 from scripts.tasks.workflows.implementation import ImplementationResult
+from scripts.tasks.workflows.testing import TestingResult
 
 if TYPE_CHECKING:
     from pyfakefs.fake_filesystem import FakeFilesystem
@@ -28,6 +29,7 @@ def patch_project_root(fake_repo_root: Path) -> Iterator[None]:
     with (
         patch.object(apply_plan, "PROJECT_ROOT", fake_repo_root),
         patch.object(implementation, "PROJECT_ROOT", fake_repo_root),
+        patch.object(testing, "PROJECT_ROOT", fake_repo_root),
     ):
         yield
 
@@ -164,22 +166,6 @@ class TestRunOpencodeAgent:
         assert args[-2:] == ["--prompt", "prompt path"]
 
 
-class TestRunClaudeAgent:
-    """Tests for _run_claude_agent."""
-
-    def test_invokes_runner_with_agent(self) -> None:
-        """Should call _run with claude arguments."""
-        mock_completed = subprocess.CompletedProcess([], 0)
-        with patch.object(apply_plan, "_run", return_value=mock_completed) as mock_run:
-            result = apply_plan._run_claude_agent("test-fixer", "")
-
-        assert result is mock_completed
-        mock_run.assert_called_once()
-        args = mock_run.call_args.args[0]
-        assert "claude_agent_runner.py" in args[1]
-        assert args[-2:] == ["--prompt", ""]
-
-
 class TestCreateChangesFiles:
     """Tests for _create_changes_files."""
 
@@ -256,7 +242,7 @@ class TestPatchIncompleteTasks:
     def test_invokes_task_patcher_for_incomplete_tasks(
         self, fs: FakeFilesystem, fake_repo_root: Path
     ) -> None:
-        """Should call claude agent for non-completed tasks and keep status."""
+        """Should call tasks agent for non-completed tasks and keep status."""
         task_dir = fake_repo_root / "scripts" / "tasks"
         fs.create_dir(str(task_dir))
         task_file = task_dir / "task_001.md"
@@ -272,11 +258,11 @@ class TestPatchIncompleteTasks:
         fs.create_file(str(status_path), contents=yaml.safe_dump(status_data))
         calls: list[str] = []
 
-        def fake_run_claude(agent: str, prompt: str) -> subprocess.CompletedProcess[str]:
+        def fake_run_tasks(agent: str, prompt: str) -> subprocess.CompletedProcess[str]:
             calls.append(agent)
             return subprocess.CompletedProcess([], 0)
 
-        with patch.object(apply_plan, "_run_claude_agent", side_effect=fake_run_claude):
+        with patch.object(apply_plan, "_run_tasks_agent", side_effect=fake_run_tasks):
             apply_plan._patch_incomplete_tasks(task_dir, status_path, status_data, "new plan text")
 
         assert calls == ["task-patcher"]
@@ -303,7 +289,7 @@ class TestProcessTask:
         return task_dir, status_path, status_data
 
     def test_process_successful_task(self, fs: FakeFilesystem, fake_repo_root: Path) -> None:
-        """Should mark task completed and run reviewer and test-fixer."""
+        """Should mark task completed and run reviewer."""
         task_dir, status_path, status_data = self._setup_task(fs, fake_repo_root)
 
         with (
@@ -317,11 +303,6 @@ class TestProcessTask:
                 "_run_opencode_agent",
                 return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
             ) as mock_opencode,
-            patch.object(
-                apply_plan,
-                "_run_claude_agent",
-                return_value=subprocess.CompletedProcess([], 0),
-            ) as mock_claude,
         ):
             result = apply_plan._process_task(
                 task_dir, status_data["tasks"][0], status_path, status_data
@@ -331,12 +312,11 @@ class TestProcessTask:
         assert status_data["tasks"][0]["status"] == "completed"
         mock_tasks_agent.assert_called_once()
         mock_opencode.assert_called_once()
-        mock_claude.assert_called_once()
 
     def test_process_task_with_failing_tests(
         self, fs: FakeFilesystem, fake_repo_root: Path
     ) -> None:
-        """Should invoke test-debugger and reset status to pending."""
+        """Should invoke run_testing_workflow and reset status to pending."""
         task_dir, status_path, status_data = self._setup_task(fs, fake_repo_root)
 
         with (
@@ -349,9 +329,9 @@ class TestProcessTask:
             ),
             patch.object(
                 apply_plan,
-                "_run_claude_agent",
-                return_value=subprocess.CompletedProcess([], 0),
-            ) as mock_claude,
+                "run_testing_workflow",
+                return_value=TestingResult(status="fixed", message="All tests pass"),
+            ) as mock_testing,
         ):
             result = apply_plan._process_task(
                 task_dir, status_data["tasks"][0], status_path, status_data
@@ -359,7 +339,7 @@ class TestProcessTask:
 
         assert result == "tests"
         assert status_data["tasks"][0]["status"] == "pending"
-        mock_claude.assert_called_once()
+        mock_testing.assert_called_once()
 
     def test_process_task_with_conclusion(self, fs: FakeFilesystem, fake_repo_root: Path) -> None:
         """Should mark pending with conclusion when detected."""
@@ -367,23 +347,26 @@ class TestProcessTask:
         changes_file = task_dir / "change.changes"
         fs.create_file(str(changes_file), contents="diff content")
 
+        tasks_agent_calls: list[str] = []
+
+        def track_tasks_agent_calls(
+            agent: str, *args: Any, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            tasks_agent_calls.append(agent)
+            if agent == "implementor":
+                return subprocess.CompletedProcess([], 0, stdout="FAIL: blocking issue", stderr="")
+            return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
         with (
             patch.object(
                 apply_plan,
                 "_run_tasks_agent",
-                return_value=subprocess.CompletedProcess(
-                    [], 0, stdout="FAIL: blocking issue", stderr=""
-                ),
+                side_effect=track_tasks_agent_calls,
             ),
             patch.object(apply_plan, "_create_changes_files", return_value=[str(changes_file)]),
             patch.object(
                 apply_plan, "_detect_conclusion", return_value=task_dir / "design.conclusion"
             ),
-            patch.object(
-                apply_plan,
-                "_run_claude_agent",
-                return_value=subprocess.CompletedProcess([], 0),
-            ) as mock_claude,
         ):
             result = apply_plan._process_task(
                 task_dir, status_data["tasks"][0], status_path, status_data
@@ -392,7 +375,8 @@ class TestProcessTask:
         assert result == "conclusion"
         assert status_data["tasks"][0]["status"] == "pending"
         assert status_data["tasks"][0]["conclusion_file"] == str(task_dir / "design.conclusion")
-        mock_claude.assert_called_once()
+        assert "implementor" in tasks_agent_calls
+        assert "implementation-analyzer" in tasks_agent_calls
 
     def test_process_task_with_failure_no_conclusion(
         self, fs: FakeFilesystem, fake_repo_root: Path
@@ -402,21 +386,24 @@ class TestProcessTask:
         changes_file = task_dir / "change.changes"
         fs.create_file(str(changes_file), contents="diff content")
 
+        tasks_agent_calls: list[str] = []
+
+        def track_tasks_agent_calls(
+            agent: str, *args: Any, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            tasks_agent_calls.append(agent)
+            if agent == "implementor":
+                return subprocess.CompletedProcess([], 0, stdout="FAIL: needs work", stderr="")
+            return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
         with (
             patch.object(
                 apply_plan,
                 "_run_tasks_agent",
-                return_value=subprocess.CompletedProcess(
-                    [], 0, stdout="FAIL: needs work", stderr=""
-                ),
+                side_effect=track_tasks_agent_calls,
             ),
             patch.object(apply_plan, "_create_changes_files", return_value=[str(changes_file)]),
             patch.object(apply_plan, "_detect_conclusion", return_value=None),
-            patch.object(
-                apply_plan,
-                "_run_claude_agent",
-                return_value=subprocess.CompletedProcess([], 0),
-            ) as mock_claude,
         ):
             result = apply_plan._process_task(
                 task_dir, status_data["tasks"][0], status_path, status_data
@@ -425,7 +412,8 @@ class TestProcessTask:
         assert result == "fail"
         assert status_data["tasks"][0]["status"] == "pending"
         assert status_data["tasks"][0]["changes_file"] == [str(changes_file)]
-        mock_claude.assert_called_once()
+        assert "implementor" in tasks_agent_calls
+        assert "implementation-analyzer" in tasks_agent_calls
 
 
 class TestMain:
@@ -778,9 +766,7 @@ class TestImplementationRunTasksAgent:
 class TestRunImplementationWorkflow:
     """Tests for implementation.run_implementation_workflow."""
 
-    def _setup_task(
-        self, fs: FakeFilesystem, fake_repo_root: Path
-    ) -> tuple[Path, Path]:
+    def _setup_task(self, fs: FakeFilesystem, fake_repo_root: Path) -> tuple[Path, Path]:
         """Create a task file and directory for testing."""
         task_dir = fake_repo_root / "scripts" / "tasks"
         fs.create_dir(str(task_dir))
@@ -885,3 +871,156 @@ class TestRunImplementationWorkflow:
 
         assert result.status == "fail"
         assert result.failure_detail == "Unrecognized implementor response"
+
+
+class TestTestingParseTestDebuggerOutput:
+    """Tests for testing._parse_test_debugger_output."""
+
+    def test_detects_fixed(self) -> None:
+        """Should detect FIXED token and extract message."""
+        output = "Some output\nFIXED: All tests now pass\nMore output"
+        status, message = testing._parse_test_debugger_output(output)
+
+        assert status == "fixed"
+        assert message == "All tests now pass"
+
+    def test_detects_partial(self) -> None:
+        """Should detect PARTIAL token and extract message."""
+        output = "PARTIAL: 2 tests still failing"
+        status, message = testing._parse_test_debugger_output(output)
+
+        assert status == "partial"
+        assert message == "2 tests still failing"
+
+    def test_detects_blocked(self) -> None:
+        """Should detect BLOCKED token and extract message."""
+        output = "BLOCKED: needs design decision for auth flow"
+        status, message = testing._parse_test_debugger_output(output)
+
+        assert status == "blocked"
+        assert message == "needs design decision for auth flow"
+
+    def test_defaults_to_blocked_when_unrecognized(self) -> None:
+        """Should return blocked status when output does not match known patterns."""
+        output = "No markers present in output"
+        status, message = testing._parse_test_debugger_output(output)
+
+        assert status == "blocked"
+        assert message == "Unrecognized test-debugger response"
+
+    def test_case_insensitive_matching(self) -> None:
+        """Should match tokens case-insensitively."""
+        output = "fixed: all tests pass"
+        status, message = testing._parse_test_debugger_output(output)
+
+        assert status == "fixed"
+        assert message == "all tests pass"
+
+
+class TestRunTestingWorkflow:
+    """Tests for testing.run_testing_workflow."""
+
+    def test_returns_fixed_result(self) -> None:
+        """Should return TestingResult with fixed status."""
+        mock_completed = subprocess.CompletedProcess(
+            [], 0, stdout="FIXED: All tests now pass", stderr=""
+        )
+        with patch.object(testing, "_run_tasks_agent", return_value=mock_completed):
+            result = testing.run_testing_workflow("task content", ["test_one", "test_two"])
+
+        assert isinstance(result, TestingResult)
+        assert result.status == "fixed"
+        assert result.message == "All tests now pass"
+
+    def test_returns_partial_result(self) -> None:
+        """Should return TestingResult with partial status and message extraction."""
+        mock_completed = subprocess.CompletedProcess(
+            [], 0, stdout="PARTIAL: test_two still failing", stderr=""
+        )
+        with patch.object(testing, "_run_tasks_agent", return_value=mock_completed):
+            result = testing.run_testing_workflow("task content", ["test_one", "test_two"])
+
+        assert result.status == "partial"
+        assert result.message == "test_two still failing"
+
+    def test_returns_blocked_result(self) -> None:
+        """Should return TestingResult with blocked status and message extraction."""
+        mock_completed = subprocess.CompletedProcess(
+            [], 0, stdout="BLOCKED: needs database schema change", stderr=""
+        )
+        with patch.object(testing, "_run_tasks_agent", return_value=mock_completed):
+            result = testing.run_testing_workflow("task content", ["test_one"])
+
+        assert result.status == "blocked"
+        assert result.message == "needs database schema change"
+
+    def test_formats_prompt_correctly(self) -> None:
+        """Should format prompt with task content, failing tests, and instructions."""
+        mock_completed = subprocess.CompletedProcess([], 0, stdout="FIXED: done", stderr="")
+        with patch.object(testing, "_run_tasks_agent", return_value=mock_completed) as mock_agent:
+            testing.run_testing_workflow(
+                "# Task\nDo something", ["tests/unit/test_a.py", "tests/unit/test_b.py"]
+            )
+
+        mock_agent.assert_called_once()
+        call_args = mock_agent.call_args
+        prompt = call_args.args[1]
+
+        assert "Task: # Task\nDo something" in prompt
+        assert "Failing Tests: [tests/unit/test_a.py, tests/unit/test_b.py]" in prompt
+        assert "Instructions: Debug and fix the failing tests" in prompt
+
+    def test_handles_empty_failing_tests(self) -> None:
+        """Should handle empty failing_tests list."""
+        mock_completed = subprocess.CompletedProcess([], 0, stdout="FIXED: done", stderr="")
+        with patch.object(testing, "_run_tasks_agent", return_value=mock_completed) as mock_agent:
+            result = testing.run_testing_workflow("task content", [])
+
+        assert result.status == "fixed"
+        call_args = mock_agent.call_args
+        prompt = call_args.args[1]
+        assert "Failing Tests: []" in prompt
+
+    def test_handles_empty_stdout(self) -> None:
+        """Should handle empty stdout gracefully."""
+        mock_completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with patch.object(testing, "_run_tasks_agent", return_value=mock_completed):
+            result = testing.run_testing_workflow("task content", ["test_one"])
+
+        assert result.status == "blocked"
+        assert result.message == "Unrecognized test-debugger response"
+
+    def test_handles_none_stdout(self) -> None:
+        """Should handle None stdout gracefully."""
+        mock_completed = subprocess.CompletedProcess([], 0, stdout=None, stderr="")
+        with patch.object(testing, "_run_tasks_agent", return_value=mock_completed):
+            result = testing.run_testing_workflow("task content", ["test_one"])
+
+        assert result.status == "blocked"
+        assert result.message == "Unrecognized test-debugger response"
+
+
+class TestTestingRunTasksAgent:
+    """Tests for testing._run_tasks_agent."""
+
+    def test_invokes_runner_with_agent(self) -> None:
+        """Should call _run with tasks_agent_runner arguments."""
+        mock_completed = subprocess.CompletedProcess([], 0)
+        with patch.object(testing, "_run", return_value=mock_completed) as mock_run:
+            result = testing._run_tasks_agent("test-debugger", "prompt text")
+
+        assert result is mock_completed
+        mock_run.assert_called_once()
+        args = mock_run.call_args.args[0]
+        assert "tasks_agent_runner.py" in args[1]
+        assert args[2:4] == ["--agent", "test-debugger"]
+        assert args[-2:] == ["--prompt", "prompt text"]
+
+    def test_invokes_runner_with_empty_prompt(self) -> None:
+        """Should handle empty prompt correctly."""
+        mock_completed = subprocess.CompletedProcess([], 0)
+        with patch.object(testing, "_run", return_value=mock_completed) as mock_run:
+            testing._run_tasks_agent("test-fixer", "")
+
+        args = mock_run.call_args.args[0]
+        assert args[-2:] == ["--prompt", ""]

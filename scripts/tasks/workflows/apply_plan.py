@@ -21,11 +21,12 @@ import yaml
 
 from scripts.tasks.commands import clipboard_to_plan
 from scripts.tasks.workflows.implementation import (
-    ImplementationResult,
     _count_task_chars,
     _parse_implementor_output,
     _run_tasks_agent,
-    run_implementation_workflow,
+)
+from scripts.tasks.workflows.testing import (
+    run_testing_workflow,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -116,12 +117,6 @@ def _run_opencode_agent(agent: str, prompt: str) -> subprocess.CompletedProcess[
     return _run(command)
 
 
-def _run_claude_agent(agent: str, prompt: str) -> subprocess.CompletedProcess[str]:
-    runner = PROJECT_ROOT / "scripts" / "dev" / "claude_agent_runner.py"
-    command = [sys.executable, str(runner), "--agent", agent, "--prompt", prompt]
-    return _run(command)
-
-
 def _create_changes_files(task_dir: Path) -> list[str]:
     names_result = subprocess.run(
         ["git", "diff", "--name-only"], capture_output=True, text=True, cwd=PROJECT_ROOT
@@ -163,7 +158,7 @@ def _patch_incomplete_tasks(
             f"Not Implemented: Remaining items in task file\n"
             f"New Plan Content: {plan_text}"
         )
-        _run_claude_agent("task-patcher", prompt)
+        _run_tasks_agent("task-patcher", prompt)
         _update_status(
             status_path, status_data, task["task_file"], status=task.get("status", "pending")
         )
@@ -191,18 +186,11 @@ def _process_task(
     if mode == "success":
         review_prompt = f"Review the implementation in {task_path} against the plan"
         _run_opencode_agent("reviewer", review_prompt)
-        _run_claude_agent("test-fixer", "")
         _update_status(status_path, status_data, task_file, status="completed")
         return "completed"
 
     if mode == "tests" and tests:
-        fail_list = ", ".join(tests)
-        prompt = (
-            f"Task: {task_content}\n"
-            f"Failing Tests: [{fail_list}]\n"
-            "Instructions: Debug and fix the failing tests. Run tests after fixes to verify."
-        )
-        _run_claude_agent("test-debugger", prompt)
+        run_testing_workflow(task_content, tests)
         _update_status(status_path, status_data, task_file, status="pending")
         return "tests"
 
@@ -221,7 +209,7 @@ def _process_task(
         f"Failure: {failure_detail or 'No detail provided'}\n"
         "Instructions: Analyze the current state and determine if you can complete the implementation or if design decisions are needed."
     )
-    _run_claude_agent("implementation-analyzer", fail_prompt)
+    _run_tasks_agent("implementation-analyzer", fail_prompt)
     conclusion = _detect_conclusion(task_dir)
     if conclusion:
         _update_status(
