@@ -36,24 +36,38 @@ For each Plan in sequence:
 
 **Implementation Phase (use `timeout: 600000`):**
 ```bash
-cd .worktrees/<ticket-id> && python ../scripts/tasks/poll_agents.py --spawn "uv run agent.tasks --agent implementor --prompt \"<PLAN_CONTENT>\""
+cd .worktrees/<ticket-id> && uv run agent.mcp wait --command "uv run agent.tasks --agent implementor --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
 ```
 
 Where `<PLAN_CONTENT>` is the specific plan section from the ticket description.
 
-The script outputs JSON. Re-run on `"status": "timeout"` until `"status": "complete"`. Check implementor output:
-- `SUCCESS` → proceed to review
-- `TESTS: [...]` → run test-debugger, then retry
-- `FAIL: ...` → analyze failure, may need human intervention
+The `agent.mcp wait` command handles all polling internally and returns a final status.
+No re-running is required in the normal case.
+
+Handle each status:
+- `"status": "completed"` → Check implementor output:
+  - `SUCCESS` → proceed to review
+  - `TESTS: [...]` → run test-debugger, then retry
+  - `FAIL: ...` → analyze failure, may need human intervention
+- `"status": "failed"` → Check `error` field and `stderr` for details
+- `"status": "timeout"` → Job exceeded time limit. Options:
+  1. Increase `--max-seconds` and re-run if more time is needed
+  2. Check agent logs for stuck processes
+  3. Manually intervene if the task is inherently too long
+- `"status": "killed"` → Job was externally terminated
 
 **Review Phase (use `timeout: 600000`):**
 ```bash
-cd .worktrees/<ticket-id> && python ../scripts/tasks/poll_agents.py --spawn "uv run agent.tasks --agent reviewer --prompt \"<PLAN_CONTENT>\""
+cd .worktrees/<ticket-id> && uv run agent.mcp wait --command "uv run agent.tasks --agent reviewer --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
 ```
 
-Re-run on `"status": "timeout"` until `"status": "complete"`. Check reviewer output:
-- `REVIEW: PASS` → proceed to next plan
-- `REVIEW: FAIL - ...` → re-run implementor with feedback, then re-review
+Handle each status:
+- `"status": "completed"` → Check reviewer output:
+  - `REVIEW: PASS` → proceed to next plan
+  - `REVIEW: FAIL - ...` → re-run implementor with feedback, then re-review
+- `"status": "failed"` → Check `error` field and `stderr` for details
+- `"status": "timeout"` → Job exceeded time limit (see options above)
+- `"status": "killed"` → Job was externally terminated
 
 ### Step 4: Commit and Push
 

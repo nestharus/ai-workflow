@@ -18,9 +18,9 @@ Parse arguments: first token is ticket ID, rest is the update prompt.
 
 ### Step 2: Run Planner Agent with Update Context
 
-Execute the planner agent with the existing plan and update request using the polling script (use `timeout: 600000`):
+Execute the planner agent with the existing plan and update request using the MCP client (use `timeout: 600000`):
 ```bash
-python scripts/tasks/poll_agents.py --spawn "uv run agent.tasks --agent planner --prompt \"Ticket ID: <ID>
+uv run agent.mcp wait --command "uv run agent.tasks --agent planner --prompt \"Ticket ID: <ID>
 Title: <TITLE>
 Description:
 <DESCRIPTION>
@@ -32,15 +32,20 @@ Description:
 <UPDATE_PROMPT>
 
 ## Instructions
-Revise the existing plan to incorporate the update request. Preserve what is still valid, modify what needs to change, and add any new requirements. Output the complete revised plan.\""
+Revise the existing plan to incorporate the update request. Preserve what is still valid, modify what needs to change, and add any new requirements. Output the complete revised plan.\"" --max-seconds 600
 ```
 
-The script outputs JSON. Handle each status:
-- `"status": "complete"` → Agent finished, extract plan from `stdout`
-- `"status": "timeout"` → Re-run the same command to continue polling
-- `"status": "output"` → Intermediate output, re-run to continue
+The `agent.mcp wait` command handles all polling internally and returns a final status.
+No re-running is required in the normal case.
 
-Keep re-running on timeout until status is `complete`.
+Handle each status:
+- `"status": "completed"` → Agent finished, extract plan from `stdout`
+- `"status": "failed"` → Check `error` field and `stderr` for details
+- `"status": "timeout"` → Job exceeded time limit. Options:
+  1. Increase `--max-seconds` and re-run if more time is needed
+  2. Check agent logs for stuck processes
+  3. Manually intervene if the task is inherently too long
+- `"status": "killed"` → Job was externally terminated
 
 ### Step 3: Update Linear Ticket
 

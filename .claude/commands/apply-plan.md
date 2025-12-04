@@ -4,16 +4,20 @@ argument-hint: [--tasks-dir .tasks/store/<timestamp>]
 allowed-tools: Bash
 ---
 
-Run the apply-plan orchestrator using the polling script (use `timeout: 600000`):
+Run the apply-plan orchestrator using the MCP client (use `timeout: 600000`):
 
 ```bash
-python scripts/tasks/poll_agents.py --spawn "python scripts/tasks/workflows/apply_plan.py $ARGUMENTS"
+uv run agent.mcp wait --command "python scripts/tasks/workflows/apply_plan.py $ARGUMENTS" --max-seconds 600
 ```
 
-The script outputs JSON with status. Handle each status:
-- `"status": "complete"` → Process finished, check `exit_code`, `stdout`, `stderr`
-- `"status": "timeout"` → Re-run the same command to continue polling
-- `"status": "output"` → Intermediate output available, re-run to continue
-- `"status": "empty"` → No processes to poll
+The `agent.mcp wait` command handles all polling internally and returns a final status.
+No re-running is required in the normal case.
 
-Keep re-running on timeout until status is `complete` or `empty`.
+Handle each status:
+- `"status": "completed"` → Process finished, check `exit_code`, `stdout`, `stderr`
+- `"status": "failed"` → Check `error` field and `stderr` for details
+- `"status": "timeout"` → Job exceeded time limit. Options:
+  1. Increase `--max-seconds` and re-run if more time is needed
+  2. Check agent logs for stuck processes
+  3. Manually intervene if the task is inherently too long
+- `"status": "killed"` → Job was externally terminated
