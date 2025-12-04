@@ -152,7 +152,8 @@ class AgentRunner(ABC):
             FileNotFoundError: If the agent file does not exist.
             ValueError: If the file has invalid frontmatter format, invalid YAML,
                 or the parsed frontmatter is not a dict.
-            KeyError: If required fields 'model' or 'provider' are missing.
+            KeyError: If neither 'routing_thresholds' nor both 'model' and 'provider'
+                are specified in frontmatter.
         """
         try:
             content = agent_path.read_text(encoding="utf-8")
@@ -171,10 +172,14 @@ class AgentRunner(ABC):
         if not isinstance(frontmatter, dict):
             raise TypeError("Invalid frontmatter in agent file")
 
-        # Validate required fields
-        for key in ("model", "provider"):
-            if key not in frontmatter:
-                raise KeyError(f"Missing required frontmatter field: {key}")
+        # Validate required fields: either routing_thresholds or model/provider
+        has_routing = "routing_thresholds" in frontmatter
+        has_model_provider = "model" in frontmatter and "provider" in frontmatter
+        if not has_routing and not has_model_provider:
+            raise KeyError(
+                "Missing required frontmatter: either 'routing_thresholds' "
+                "or both 'model' and 'provider' must be specified"
+            )
 
         # Store system prompt inside the config dict
         frontmatter[_SYSTEM_PROMPT_KEY] = parts[2].strip()
@@ -257,15 +262,16 @@ class AgentRunner(ABC):
         agent_path = agents_dir / f"{agent_name}.md"
         agent_config = AgentRunner.load_frontmatter(agent_path)
 
-        # Apply routing if prompt_chars is provided and no explicit overrides
+        # Apply routing if routing_thresholds exist and no explicit overrides
         if (
-            prompt_chars is not None
-            and model is None
+            model is None
             and provider is None
             and "routing_thresholds" in agent_config
         ):
+            # Use prompt_chars if provided, otherwise use large value to select catch-all
+            effective_chars = prompt_chars if prompt_chars is not None else 2**31
             routing_result = AgentRunner.select_from_routing_thresholds(
-                agent_config["routing_thresholds"], prompt_chars
+                agent_config["routing_thresholds"], effective_chars
             )
             if routing_result is not None:
                 model, provider = routing_result

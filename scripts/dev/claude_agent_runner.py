@@ -75,24 +75,33 @@ def load_agent(agent_name: str) -> tuple[dict, str]:
     return frontmatter, system_prompt
 
 
-def build_command(frontmatter: dict, system_prompt: str, prompt: str) -> list[str]:
+def build_command(frontmatter: dict, system_prompt: str) -> list[str]:
     """Build command line arguments for Claude CLI invocation.
 
     Args:
         frontmatter: Agent configuration dict.
         system_prompt: System prompt for the agent.
-        prompt: User prompt to pass to the agent.
 
     Returns:
-        List of command line arguments.
+        List of command line arguments. Prompt should be passed via stdin.
     """
     tools_field = frontmatter.get("tools", "")
-    tools_list = [tool.strip() for tool in str(tools_field).split(",") if tool.strip()]
+
+    # Handle both string format ("Read, Write") and dict format ({write: true, bash: true})
+    if isinstance(tools_field, dict):
+        tools_list = [tool for tool, enabled in tools_field.items() if enabled]
+    else:
+        tools_list = [tool.strip() for tool in str(tools_field).split(",") if tool.strip()]
 
     disallowed_field = frontmatter.get("disallowedTools", "")
-    disallowed_tools_list = [
-        tool.strip() for tool in str(disallowed_field).split(",") if tool.strip()
-    ]
+
+    # Handle both string format and dict format for disallowed tools
+    if isinstance(disallowed_field, dict):
+        disallowed_tools_list = [tool for tool, disabled in disallowed_field.items() if disabled]
+    else:
+        disallowed_tools_list = [
+            tool.strip() for tool in str(disallowed_field).split(",") if tool.strip()
+        ]
 
     command = [
         "claude",
@@ -101,23 +110,27 @@ def build_command(frontmatter: dict, system_prompt: str, prompt: str) -> list[st
         str(frontmatter["model"]),
         "--system-prompt",
         system_prompt,
-        "--allowedTools",
-        *tools_list,
     ]
 
-    if disallowed_tools_list:
-        command.extend(["--disallowedTools", *disallowed_tools_list])
+    if tools_list:
+        command.extend(["--allowedTools", ",".join(tools_list)])
 
-    command.extend(["--prompt", prompt])
+    if disallowed_tools_list:
+        command.extend(["--disallowedTools", ",".join(disallowed_tools_list)])
+
+    # Prompt is passed via stdin, not as positional argument
     return command
 
 
-def run_command(command: list[str], *, stream_output: bool = True) -> tuple[int, str]:
+def run_command(
+    command: list[str], *, stream_output: bool = True, stdin_input: str | None = None
+) -> tuple[int, str]:
     """Run a command and return exit code and captured output.
 
     Args:
         command: Command to execute as list of strings.
         stream_output: If True, also write stdout to sys.stdout (for CLI usage).
+        stdin_input: Optional string to pass to the command via stdin.
 
     Returns:
         Tuple of (exit_code, stdout_output).
@@ -129,6 +142,7 @@ def run_command(command: list[str], *, stream_output: bool = True) -> tuple[int,
         text=True,
         cwd=project_root,
         check=False,
+        input=stdin_input,
     )
 
     if stream_output and result.stdout:
@@ -164,8 +178,8 @@ class ClaudeRunner(_get_agent_runner_base()):
         Raises:
             RuntimeError: If Claude agent fails with non-zero exit code.
         """
-        command = build_command(self.agent_config, self.system_prompt, prompt)
-        exit_code, output = run_command(command, stream_output=False)
+        command = build_command(self.agent_config, self.system_prompt)
+        exit_code, output = run_command(command, stream_output=False, stdin_input=prompt)
         if exit_code != 0:
             raise RuntimeError(f"Claude agent failed with exit code {exit_code}")
         return output
@@ -176,8 +190,8 @@ def main() -> int:
     try:
         args = parse_args()
         frontmatter, system_prompt = load_agent(args.agent)
-        command = build_command(frontmatter, system_prompt, args.prompt)
-        exit_code, _ = run_command(command)
+        command = build_command(frontmatter, system_prompt)
+        exit_code, _ = run_command(command, stdin_input=args.prompt)
     except FileNotFoundError as exc:
         sys.stderr.write(f"{exc}\n")
         return 1

@@ -26,7 +26,7 @@ The worktree branch is created from the current branch and PRs back to it.
 
 ### Step 2: Load Plan
 
-1. Read the plan from `.tasks/plans/<ticket-id>/implementation-plan.md`
+1. The plan is in the ticket description (from Step 1), after the `---` separator
 2. Parse the plan to identify individual Plans (Plan 1, Plan 2, etc.)
 3. Extract the success criteria
 
@@ -37,8 +37,10 @@ For each Plan in sequence:
 **Implementation Phase:**
 ```bash
 cd .worktrees/<ticket-id>
-uv run agent.tasks --agent implementor --prompt "<PLAN_FILE_PATH>"
+uv run agent.tasks --agent implementor --prompt "<PLAN_CONTENT>"
 ```
+
+Where `<PLAN_CONTENT>` is the specific plan section from the ticket description.
 
 Check implementor output:
 - `SUCCESS` → proceed to review
@@ -48,7 +50,7 @@ Check implementor output:
 **Review Phase:**
 ```bash
 cd .worktrees/<ticket-id>
-uv run agent.tasks --agent reviewer --prompt "<PLAN_FILE_PATH>"
+uv run agent.tasks --agent reviewer --prompt "<PLAN_CONTENT>"
 ```
 
 Check reviewer output:
@@ -159,7 +161,7 @@ To clean up the worktree after merge:
 ## Error Handling
 
 - If ticket fetch fails, report the error and stop
-- If plan not found, suggest running /create-plan first
+- If plan not found in ticket description, suggest running /create-plan first
 - If worktree creation fails (branch exists), offer to reuse or clean up
 - If any agent fails, save progress and report what completed vs what failed
 - If PR creation fails, report the error but keep the branch pushed

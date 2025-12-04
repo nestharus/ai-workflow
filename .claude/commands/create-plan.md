@@ -6,13 +6,10 @@ allowed-tools: Bash, Read, Write, Glob, Grep, mcp__linear-server__get_issue, mcp
 
 Create an implementation plan. If `$ARGUMENTS` is a ticket ID (e.g., `NES-123`), fetch that ticket. Otherwise, create a new ticket using the arguments as a description.
 
-## File Naming Convention
+## Plan Storage
 
-All plan and strategy files follow this naming convention and are attached to the ticket:
-- `implementation-plan.md` - Implementation plan
-- `implementation-strategy.md` - Implementation strategy
-- `test-plan.md` - Test plan
-- `test-strategy.md` - Test strategy
+Plans are stored directly in the Linear ticket description. When a plan is created or updated,
+the ticket description is updated to include the full plan content below a `---` separator.
 
 ## Workflow
 
@@ -52,15 +49,17 @@ Description:
 ```
 Capture the plan output from stdout.
 
-### Step 3: Save Plan
+### Step 3: Update Linear Ticket
 
-Write the plan to `.tasks/plans/<ticket-id>/implementation-plan.md` (create directory if needed).
+Update the ticket description using `mcp__linear-server__update_issue` to append the plan content:
+1. Keep the original ticket description
+2. Add a `---` separator
+3. Add `# Implementation Plan` header
+4. Add the full plan content in markdown format
 
-### Step 4: Update Linear
+The plan becomes part of the ticket description and is visible directly on the ticket.
 
-Add the plan as a comment on the ticket using `mcp__linear-server__create_comment` with the full plan content in markdown format.
-
-### Step 5: Output Review Request
+### Step 4: Output Review Request
 
 Print the following to terminal:
 
@@ -70,12 +69,11 @@ PLAN REVIEW REQUESTED
 ================================================================================
 
 Ticket: <TICKET_ID> - <TITLE>
-Plan saved to: .tasks/plans/<ticket-id>/implementation-plan.md
-Plan posted to Linear as comment.
+Plan attached to Linear ticket description.
 
 Please review the plan on the ticket:
-1. Open the ticket in Linear
-2. Review the attached plan comment against the ticket description
+1. Open the ticket in Linear: <LINEAR_TICKET_URL>
+2. Review the implementation plan in the ticket description
 3. Verify the plan adequately addresses all requirements
 4. Check that success criteria are measurable and complete
 
@@ -88,11 +86,4 @@ After review, run /execute-plan <ticket-id> to implement.
 - If ticket fetch fails, report the error and stop
 - If ticket creation fails, report the error and stop
 - If planner agent fails, report the error output and stop
-- If Linear comment creation fails, still save the local plan file and notify the user
-
-## Design Notes
-
-The current implementation posts the concrete plan content as a comment on the Linear
-ticket. It does not maintain a separate template artifact per ticket. If future work
-requires a distinct reusable template object (separate from the generated plan), this
-workflow will need to be extended to create and store that artifact.
+- If Linear ticket update fails, report the error and stop

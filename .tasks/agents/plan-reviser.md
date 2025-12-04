@@ -229,4 +229,3 @@ reason: "Cannot revise - feedback contains conflicting requirements: SR-4-001 re
 - `docs/schemas/planner-revision.schema.json` - Output contract schema
 - `docs/schemas/strategy-review-output.schema.json` - Input feedback schema
 - `.tasks/agents/strategy-reviewer.md` - Source of review feedback
-- `.tasks/plans/strategy-planner-review-loop.md` - Overall review loop design
