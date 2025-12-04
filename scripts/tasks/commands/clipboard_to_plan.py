@@ -411,7 +411,7 @@ def main() -> None:
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
-    project_root = script_dir.parent
+    project_root = script_dir.parent.parent.parent
 
     store_root = project_root / ".tasks" / "store"
     store_root.mkdir(parents=True, exist_ok=True)

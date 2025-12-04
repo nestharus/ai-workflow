@@ -20,9 +20,9 @@ from typing import Any
 
 import yaml
 
-from scripts import clipboard_to_plan
+from scripts.tasks.commands import clipboard_to_plan
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
 class ApplyPlanError(Exception):
@@ -91,7 +91,7 @@ def _update_status(
 
 
 def _run_clipboard_to_plan() -> Path:
-    script_path = PROJECT_ROOT / "scripts" / "clipboard_to_plan.py"
+    script_path = PROJECT_ROOT / "scripts" / "tasks" / "commands" / "clipboard_to_plan.py"
     result = subprocess.run(
         [sys.executable, str(script_path)], capture_output=True, text=True, cwd=PROJECT_ROOT
     )

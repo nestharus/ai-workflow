@@ -13,8 +13,9 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from scripts import apply_plan, clipboard_to_plan
-from scripts.apply_plan import ApplyPlanError
+from scripts.tasks.commands import clipboard_to_plan
+from scripts.tasks.workflows import apply_plan
+from scripts.tasks.workflows.apply_plan import ApplyPlanError
 
 if TYPE_CHECKING:
     from pyfakefs.fake_filesystem import FakeFilesystem
@@ -343,12 +344,14 @@ class TestProcessTask:
         with (
             patch.object(
                 apply_plan,
+                "_run_tasks_agent",
+                return_value=subprocess.CompletedProcess([], 0, stdout="SUCCESS", stderr=""),
+            ) as mock_tasks_agent,
+            patch.object(
+                apply_plan,
                 "_run_opencode_agent",
-                side_effect=[
-                    subprocess.CompletedProcess([], 0, stdout="SUCCESS", stderr=""),
-                    subprocess.CompletedProcess([], 0, stdout="", stderr=""),
-                ],
-            ) as mock_run,
+                return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            ) as mock_opencode,
             patch.object(
                 apply_plan,
                 "_run_claude_agent",
@@ -361,7 +364,8 @@ class TestProcessTask:
 
         assert result == "completed"
         assert status_data["tasks"][0]["status"] == "completed"
-        mock_run.assert_called()
+        mock_tasks_agent.assert_called_once()
+        mock_opencode.assert_called_once()
         mock_claude.assert_called_once()
 
     def test_process_task_with_failing_tests(
@@ -373,7 +377,7 @@ class TestProcessTask:
         with (
             patch.object(
                 apply_plan,
-                "_run_opencode_agent",
+                "_run_tasks_agent",
                 return_value=subprocess.CompletedProcess(
                     [], 0, stdout="TESTS: [tests/unit/test_one.py::test_ok]", stderr=""
                 ),
@@ -401,7 +405,7 @@ class TestProcessTask:
         with (
             patch.object(
                 apply_plan,
-                "_run_opencode_agent",
+                "_run_tasks_agent",
                 return_value=subprocess.CompletedProcess(
                     [], 0, stdout="FAIL: blocking issue", stderr=""
                 ),
@@ -436,7 +440,7 @@ class TestProcessTask:
         with (
             patch.object(
                 apply_plan,
-                "_run_opencode_agent",
+                "_run_tasks_agent",
                 return_value=subprocess.CompletedProcess(
                     [], 0, stdout="FAIL: needs work", stderr=""
                 ),
