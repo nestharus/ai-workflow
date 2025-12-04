@@ -40,14 +40,20 @@ Check if `$ARGUMENTS` looks like a ticket ID (format: `XXX-NNN` where XXX is let
 
 ### Step 2: Run Planner Agent
 
-Execute the planner agent with the ticket details:
+Execute the planner agent using the polling script (use `timeout: 600000`):
 ```bash
-uv run agent.tasks --agent planner --prompt "Ticket ID: <ID>
+python scripts/tasks/poll_agents.py --spawn "uv run agent.tasks --agent planner --prompt \"Ticket ID: <ID>
 Title: <TITLE>
 Description:
-<DESCRIPTION>"
+<DESCRIPTION>\""
 ```
-Capture the plan output from stdout.
+
+The script outputs JSON. Handle each status:
+- `"status": "complete"` → Agent finished, extract plan from `stdout`
+- `"status": "timeout"` → Re-run the same command to continue polling
+- `"status": "output"` → Intermediate output, re-run to continue
+
+Keep re-running on timeout until status is `complete`.
 
 ### Step 3: Update Linear Ticket
 

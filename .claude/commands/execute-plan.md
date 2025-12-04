@@ -34,26 +34,24 @@ The worktree branch is created from the current branch and PRs back to it.
 
 For each Plan in sequence:
 
-**Implementation Phase:**
+**Implementation Phase (use `timeout: 600000`):**
 ```bash
-cd .worktrees/<ticket-id>
-uv run agent.tasks --agent implementor --prompt "<PLAN_CONTENT>"
+cd .worktrees/<ticket-id> && python ../scripts/tasks/poll_agents.py --spawn "uv run agent.tasks --agent implementor --prompt \"<PLAN_CONTENT>\""
 ```
 
 Where `<PLAN_CONTENT>` is the specific plan section from the ticket description.
 
-Check implementor output:
+The script outputs JSON. Re-run on `"status": "timeout"` until `"status": "complete"`. Check implementor output:
 - `SUCCESS` → proceed to review
 - `TESTS: [...]` → run test-debugger, then retry
 - `FAIL: ...` → analyze failure, may need human intervention
 
-**Review Phase:**
+**Review Phase (use `timeout: 600000`):**
 ```bash
-cd .worktrees/<ticket-id>
-uv run agent.tasks --agent reviewer --prompt "<PLAN_CONTENT>"
+cd .worktrees/<ticket-id> && python ../scripts/tasks/poll_agents.py --spawn "uv run agent.tasks --agent reviewer --prompt \"<PLAN_CONTENT>\""
 ```
 
-Check reviewer output:
+Re-run on `"status": "timeout"` until `"status": "complete"`. Check reviewer output:
 - `REVIEW: PASS` → proceed to next plan
 - `REVIEW: FAIL - ...` → re-run implementor with feedback, then re-review
 

@@ -18,9 +18,9 @@ Parse arguments: first token is ticket ID, rest is the update prompt.
 
 ### Step 2: Run Planner Agent with Update Context
 
-Execute the planner agent with the existing plan and update request:
+Execute the planner agent with the existing plan and update request using the polling script (use `timeout: 600000`):
 ```bash
-uv run agent.tasks --agent planner --prompt "Ticket ID: <ID>
+python scripts/tasks/poll_agents.py --spawn "uv run agent.tasks --agent planner --prompt \"Ticket ID: <ID>
 Title: <TITLE>
 Description:
 <DESCRIPTION>
@@ -32,8 +32,15 @@ Description:
 <UPDATE_PROMPT>
 
 ## Instructions
-Revise the existing plan to incorporate the update request. Preserve what is still valid, modify what needs to change, and add any new requirements. Output the complete revised plan."
+Revise the existing plan to incorporate the update request. Preserve what is still valid, modify what needs to change, and add any new requirements. Output the complete revised plan.\""
 ```
+
+The script outputs JSON. Handle each status:
+- `"status": "complete"` → Agent finished, extract plan from `stdout`
+- `"status": "timeout"` → Re-run the same command to continue polling
+- `"status": "output"` → Intermediate output, re-run to continue
+
+Keep re-running on timeout until status is `complete`.
 
 ### Step 3: Update Linear Ticket
 
