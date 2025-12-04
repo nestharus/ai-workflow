@@ -1,8 +1,9 @@
 ---
 description: Updates task files when the source plan changes mid-execution
-mode: subagent
-model: opus
-provider: claude
+routing_thresholds:
+  - max_chars: null
+    model: opus
+    provider: claude
 tools:
   read: true
   edit: true

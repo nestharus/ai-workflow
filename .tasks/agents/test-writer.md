@@ -1,13 +1,17 @@
 ---
-name: test-writer
 description: Writes tests according to test plan and debugs them. Use when test plans are ready for implementation.
-tools: Read, Edit, Bash, Grep, Glob, TodoWrite, mcp__firecrawl__firecrawl_search, mcp__firecrawl__firecrawl_scrape
-model: opus
-provider: claude
 routing_thresholds:
   - max_chars: null
     model: opus
     provider: claude
+tools:
+  read: true
+  edit: true
+  bash: true
+  grep: true
+  glob: true
+  mcp__firecrawl__firecrawl_search: true
+  mcp__firecrawl__firecrawl_scrape: true
 ---
 
 You are a test implementation specialist. Your task is to consume test plans from the test-planner agent, write test code according to specifications, run tests to verify correctness, and debug failures until all tests pass.

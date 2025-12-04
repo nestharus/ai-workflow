@@ -1,8 +1,5 @@
 ---
 description: Works from git diff and existing tests to determine required test changes and outputs specific test file modifications
-mode: subagent
-model: factory/gpt-5.1-high
-provider: opencode
 routing_thresholds:
   - max_chars: null
     model: factory/gpt-5.1-high

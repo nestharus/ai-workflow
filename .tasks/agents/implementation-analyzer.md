@@ -1,8 +1,9 @@
 ---
 description: Analyzes implementation failures and determines recovery strategy
-mode: subagent
-model: opus
-provider: claude
+routing_thresholds:
+  - max_chars: null
+    model: opus
+    provider: claude
 tools:
   read: true
   write: true

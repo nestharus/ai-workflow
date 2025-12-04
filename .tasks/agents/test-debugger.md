@@ -1,14 +1,17 @@
 ---
 description: Debugs failing tests reported by implementor and attempts to fix them
-mode: subagent
-model: opus
-provider: claude
+routing_thresholds:
+  - max_chars: null
+    model: opus
+    provider: claude
 tools:
   read: true
   edit: true
   bash: true
   grep: true
   glob: true
+  mcp__firecrawl__firecrawl_search: true
+  mcp__firecrawl__firecrawl_scrape: true
 ---
 
 You fix test failures reported by the implementor.

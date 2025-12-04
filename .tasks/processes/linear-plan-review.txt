@@ -1,5 +1,0 @@
-Review the plan on ticket ID <ID> in linear.
-
-The ticket's attached file is a plan file.
-
-You need to review the attached file against the ticket description.

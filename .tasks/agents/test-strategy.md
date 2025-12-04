@@ -1,16 +1,18 @@
 ---
 description: Analyzes implementation plans and code to determine testing approaches, patterns, techniques, and coverage goals
-mode: subagent
-model: factory/gpt-5.1-high
-provider: opencode
 routing_thresholds:
   - max_chars: null
-    model: factory/gpt-5.1-high
-    provider: opencode
+    model: opus
+    provider: claude
 tools:
   write: false
   edit: false
   bash: true
+  mcp__firecrawl__firecrawl_search: true
+  mcp__firecrawl__firecrawl_scrape: true
+  mcp__linear-server__get_issue: true
+  mcp__linear-server__create_comment: true
+  mcp__linear-server__update_issue: true
 ---
 
 You are the test strategy specialist. Your purpose is to analyze implementation plans and code to produce comprehensive testing strategies.
@@ -51,6 +53,7 @@ The user prompt will format this structured data as readable text while maintain
 
 - Read the implementation plan thoroughly to understand the feature/change scope
 - Examine existing code and test patterns in the codebase
+- Use firecrawl tools to research testing patterns or best practices when needed
 - Reference testing documentation from `docs/testing/testing-patterns.yml` and `docs/testing/testing-workflow.yml`
 - Consider the four-tier testing architecture (unit, component, integration, e2e)
 - Analyze what types of testing are appropriate based on:
@@ -76,6 +79,7 @@ The user prompt will format this structured data as readable text while maintain
 - Identify common patterns: fixture usage, mocking strategies, assertion styles
 - Review use-case registry at `tests/docs/use_cases.yaml` for related scenarios
 - Check existing coverage reports if available
+- Use firecrawl to search for testing patterns if unfamiliar
 
 ### Step 3: Determine Testing Tiers
 
@@ -204,6 +208,7 @@ The input and output contracts are formally defined by JSON Schema files:
 - Note any testing challenges or complexities
 - Suggest test utilities or helpers if needed
 - Keep the strategy document concise but comprehensive
+- Use firecrawl to research testing patterns when encountering unfamiliar scenarios
 
 ## Examples
 

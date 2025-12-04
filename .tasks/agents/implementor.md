@@ -1,8 +1,5 @@
 ---
 description: Implements tasks from plan files with automatic model routing based on complexity
-mode: subagent
-model: factory/gpt-5.1-codex-max-medium
-provider: opencode
 routing_thresholds:
   - max_chars: 3500
     model: factory/gpt-5.1-codex-max-medium
