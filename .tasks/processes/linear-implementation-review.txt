@@ -4,8 +4,6 @@ The ticket's attached file(s) are plan/spec files.
 
 Code has been implemented locally and is ready for review.
 
-You need to review
+You need to review implementation against plan
 
-spec against ticket
-plan against spec
-implementation against plan
+You may use git commands to see changes.

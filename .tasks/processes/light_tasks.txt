@@ -1,3 +1,2 @@
-Template is at .tasks/light_template.txt
-Create plan at .tasks/plans following template
-Execute plan
+Template is at .tasks/processes/light_template.txt
+Attach plan to ticket as a .md file following template

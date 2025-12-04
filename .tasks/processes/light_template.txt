@@ -8,34 +8,44 @@
 
 ## Additional Info
 
-## Tasks
+## Plans
 
-### Task 1:
-### Task 2:
-### Task 3:
-### Task 4:
-### Task N:
+### Plan 1:
+### Plan 2:
+### Plan 3:
+### Plan N:
 
 ## Execution Instructions
 
-For each task:
+Create 2 tasks per plan using TodoWrite:
 
-1. **Execute**: Use the general-purpose sub-agent to implement the task:
-   ```
-   Task(subagent_type="general-purpose", prompt="Implement Task N from <FILEPATH>. Read the plan file first, then implement the specific task requirements. Write tests as specified. Do not modify other tasks' code.")
-   ```
+1. **Execute Plan N** - Implement the plan
+2. **Review Plan N** - Verify the implementation
 
-2. **Review**: After ***EACH INDIVIDUAL*** sub-agent completes, review the changes against the task it implemented:
-   - Verify all requirements are met using git to check what changes it made
-   - Check that tests pass
-   - Check that existing functionality is preserved
-   - Note any deviations or issues
+### Execute Task
 
-3. **Iterate**: If review finds issues, pass feedback to sub-agent:
-   ```
-   Task(subagent_type="general-purpose", prompt="Review feedback for Task N: [feedback]. Fix the issues identified. The plan is in <FILEPATH>.")
-   ```
+Use the Claude Code `Task` tool to delegate implementation:
 
-4. **Proceed**: Only move to next task when current task passes review
+```
+Task(subagent_type="general-purpose", prompt="Implement Plan N from <FILEPATH>. Read the plan file first. Implement only what Plan N specifies—nothing more, nothing less. Write tests for code you add or modify. Ensure tests pass. Validate test coverage for your changes.")
+```
+
+Mark the Execute task as completed when the Task tool returns.
+
+### Review Task
+
+Review the changes:
+
+1. Run `git diff` to see what was modified
+2. Compare changes against Plan N requirements
+3. Check: Did the implementation match the plan specification?
+
+If issues are found, use the Task tool again with feedback:
+
+```
+Task(subagent_type="general-purpose", prompt="Fix Plan N from <FILEPATH>. Issues found: [describe specific problems]. Read the plan, then address these issues only.")
+```
+
+Repeat until the plan is correctly implemented. Mark the Review task as completed, then proceed to the next plan.
 
 ## Success Criteria
