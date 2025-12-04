@@ -123,7 +123,7 @@ def run_command(command: list[str], *, stream_output: bool = True) -> tuple[int,
         Tuple of (exit_code, stdout_output).
     """
     project_root = Path(__file__).resolve().parents[2]
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         command,
         capture_output=True,
         text=True,

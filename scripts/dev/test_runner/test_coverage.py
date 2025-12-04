@@ -310,7 +310,7 @@ def _run_command(
     if env:
         run_env = os.environ.copy()
         run_env.update(env)
-    return subprocess.run(  # noqa: S603
+    return subprocess.run(
         cmd,
         capture_output=capture,
         text=True,

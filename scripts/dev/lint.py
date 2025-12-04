@@ -73,7 +73,7 @@ def _run_checked(command: list[str]) -> None:
         isinstance(command, list) and command and all(isinstance(part, str) for part in command)
     ):
         raise InvalidCommandError()
-    subprocess.check_call(command)  # noqa: S603
+    subprocess.check_call(command)
 
 
 def _run_scripts() -> int:

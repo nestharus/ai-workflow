@@ -271,7 +271,7 @@ def _build_uvicorn_command(host: str, port: int, *, reload_enabled: bool) -> lis
 
 def _launch_uvicorn(command: list[str], env: dict[str, str]) -> subprocess.Popen[bytes]:
     try:
-        return subprocess.Popen(command, env=env)  # noqa: S603
+        return subprocess.Popen(command, env=env)
     except FileNotFoundError as exc:
         print(
             f"uvicorn executable not found: {exc}. Install uvicorn in the active environment.",

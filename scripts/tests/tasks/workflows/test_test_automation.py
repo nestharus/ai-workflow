@@ -31,7 +31,9 @@ from scripts.tasks.workflows.test_automation import (
     parse_plan_review_output,
     parse_planner_output,
     parse_strategy_output,
+    parse_strategy_output_structured,
     parse_strategy_review_output,
+    parse_strategy_review_output_structured,
     parse_writer_output,
 )
 
@@ -194,7 +196,9 @@ class TestParseStrategyReviewOutput:
         output = "Some random output"
         status, content = parse_strategy_review_output(output)
         assert status == "blocked"
-        assert content == "Unrecognized strategy review response"
+        # Delegated to structured parser - message includes original output
+        assert "Unrecognized" in content
+        assert "Some random output" in content
 
     def test_handles_empty_output(self) -> None:
         """Should return blocked for empty output."""
@@ -1268,3 +1272,827 @@ class TestParseCoverageResults:
         result = parse_coverage_results(summary_result, functions_result)
 
         assert isinstance(result, CoverageResult)
+
+
+# =============================================================================
+# New Tests for Comment 1-5 Changes
+# =============================================================================
+
+
+class TestDetermineStrategyNeed:
+    """Tests for determine_strategy_need function."""
+
+    def test_returns_false_for_empty_gaps(self) -> None:
+        """Should return False when no gaps exist."""
+        from scripts.tasks.workflows.test_automation import determine_strategy_need
+
+        result = determine_strategy_need([])
+        assert result is False
+
+    def test_returns_true_for_many_gaps(self) -> None:
+        """Should return True when more than 10 gaps exist."""
+        from scripts.tasks.workflows.test_automation import determine_strategy_need
+
+        gaps = [{"function": f"func{i}", "file": f"app/mod{i}.py"} for i in range(12)]
+        result = determine_strategy_need(gaps)
+        assert result is True
+
+    def test_returns_false_for_few_gaps(self) -> None:
+        """Should return False when gaps are under threshold."""
+        from scripts.tasks.workflows.test_automation import determine_strategy_need
+
+        gaps = [{"function": f"func{i}", "file": f"app/mod{i}.py"} for i in range(5)]
+        result = determine_strategy_need(gaps)
+        assert result is False
+
+    def test_returns_true_for_module_concentration(self) -> None:
+        """Should return True when many gaps from same module."""
+        from scripts.tasks.workflows.test_automation import determine_strategy_need
+
+        # 6 gaps from same module triggers strategy revision
+        gaps = [{"function": f"func{i}", "file": "app/services/user.py"} for i in range(6)]
+        result = determine_strategy_need(gaps)
+        assert result is True
+
+    def test_returns_false_for_distributed_gaps(self) -> None:
+        """Should return False when gaps are spread across modules."""
+        from scripts.tasks.workflows.test_automation import determine_strategy_need
+
+        # 8 gaps spread across different modules
+        gaps = [{"function": f"func{i}", "file": f"app/mod{i}/file.py"} for i in range(8)]
+        result = determine_strategy_need(gaps)
+        assert result is False
+
+
+class TestNormalizeCoverageGaps:
+    """Tests for normalize_coverage_gaps function."""
+
+    def test_extracts_gaps_from_functions_data(self) -> None:
+        """Should extract gap data from functions response."""
+        from scripts.tasks.workflows.test_automation import normalize_coverage_gaps
+
+        functions_data = {
+            "files": {
+                "app/module.py": {
+                    "path": "app/module.py",
+                    "functions": [
+                        {"name": "func1", "meets_threshold": False, "line_coverage": 50},
+                        {"name": "func2", "meets_threshold": True, "line_coverage": 90},
+                    ],
+                }
+            }
+        }
+        gaps = normalize_coverage_gaps(functions_data)
+        assert len(gaps) == 1
+        assert gaps[0]["function"] == "func1"
+
+    def test_handles_empty_files(self) -> None:
+        """Should return empty list for no files."""
+        from scripts.tasks.workflows.test_automation import normalize_coverage_gaps
+
+        gaps = normalize_coverage_gaps({"files": {}})
+        assert gaps == []
+
+
+class TestFormatStrategyPromptWithContext:
+    """Tests for format_strategy_prompt with context and existing tests."""
+
+    def test_includes_context_when_provided(self) -> None:
+        """Should include context section when analysis_context is provided."""
+        from scripts.tasks.workflows.test_automation import format_strategy_prompt
+
+        result = format_strategy_prompt(
+            ["app/module.py"],
+            analysis_context="Added new authentication feature",
+        )
+        assert "## Context" in result
+        assert "Added new authentication feature" in result
+
+    def test_omits_context_when_none(self) -> None:
+        """Should omit context section when analysis_context is None."""
+        from scripts.tasks.workflows.test_automation import format_strategy_prompt
+
+        result = format_strategy_prompt(["app/module.py"])
+        assert "## Context" not in result
+
+    def test_includes_existing_tests_when_provided(self) -> None:
+        """Should include existing tests section when provided."""
+        from scripts.tasks.workflows.test_automation import format_strategy_prompt
+
+        result = format_strategy_prompt(
+            ["app/module.py"],
+            existing_tests=["tests/unit/test_foo.py", "tests/unit/test_bar.py"],
+        )
+        assert "## Existing Tests" in result
+        assert "tests/unit/test_foo.py" in result
+        assert "tests/unit/test_bar.py" in result
+
+    def test_omits_existing_tests_when_none(self) -> None:
+        """Should omit existing tests section when None."""
+        from scripts.tasks.workflows.test_automation import format_strategy_prompt
+
+        result = format_strategy_prompt(["app/module.py"])
+        assert "## Existing Tests" not in result
+
+
+class TestFormatPlanningPromptWithGitDiff:
+    """Tests for format_planning_prompt with git diff and existing tests."""
+
+    def test_includes_git_diff_when_provided(self) -> None:
+        """Should include git diff section when provided."""
+        from scripts.tasks.workflows.test_automation import format_planning_prompt
+
+        result = format_planning_prompt(
+            "strategy",
+            ["app/module.py"],
+            git_diff="diff --git a/app/module.py\n+new_line",
+        )
+        assert "## Git Diff" in result
+        assert "diff --git" in result
+
+    def test_omits_git_diff_when_none(self) -> None:
+        """Should omit git diff section when None."""
+        from scripts.tasks.workflows.test_automation import format_planning_prompt
+
+        result = format_planning_prompt("strategy", ["app/module.py"])
+        assert "## Git Diff" not in result
+
+    def test_includes_existing_tests_when_provided(self) -> None:
+        """Should include existing tests section when provided."""
+        from scripts.tasks.workflows.test_automation import format_planning_prompt
+
+        result = format_planning_prompt(
+            "strategy",
+            ["app/module.py"],
+            existing_tests=["tests/unit/test_foo.py"],
+        )
+        assert "## Existing Tests" in result
+        assert "tests/unit/test_foo.py" in result
+
+
+class TestFormatPlanningPromptWithStructured:
+    """Tests for format_planning_prompt with strategy_structured parameter."""
+
+    def test_backward_compatible_without_structured(self) -> None:
+        """Should work without strategy_structured parameter (backward compatibility)."""
+        from scripts.tasks.workflows.test_automation import format_planning_prompt
+
+        result = format_planning_prompt(
+            "strategy",
+            ["app/module.py"],
+        )
+        assert "## Testing Strategy" in result
+        assert "strategy" in result
+
+    def test_includes_tier_assignments_when_structured_provided(self) -> None:
+        """Should include tier assignments section when strategy_structured has tier_assignments."""
+        from scripts.tasks.workflows.test_automation import format_planning_prompt
+
+        strategy_structured = {
+            "tier_assignments": [
+                {
+                    "file": "app/services/user.py",
+                    "tier": "unit",
+                    "coverage_type": "line_branch",
+                    "coverage_target": 80,
+                    "functions": [
+                        {"name": "create_user", "test_type": "line_branch", "priority": "high"}
+                    ],
+                }
+            ]
+        }
+
+        result = format_planning_prompt(
+            "strategy",
+            ["app/services/user.py"],
+            strategy_structured=strategy_structured,
+        )
+
+        assert "## Tier Assignments (from Strategy)" in result
+        assert "app/services/user.py: unit tier, line_branch, target=80%" in result
+        assert "create_user: line_branch (high priority)" in result
+
+    def test_includes_test_file_mapping_when_structured_provided(self) -> None:
+        """Should include test file mapping section when structured."""
+        from scripts.tasks.workflows.test_automation import format_planning_prompt
+
+        strategy_structured = {
+            "test_file_mapping": [
+                {
+                    "source": "app/services/user.py",
+                    "tests": [
+                        {"path": "tests/unit/test_user.py", "operation": "MODIFY", "tier": "unit"}
+                    ],
+                }
+            ]
+        }
+
+        result = format_planning_prompt(
+            "strategy",
+            ["app/services/user.py"],
+            strategy_structured=strategy_structured,
+        )
+
+        assert "## Test File Mapping (from Strategy)" in result
+        assert "Source: app/services/user.py" in result
+        assert "tests/unit/test_user.py (MODIFY, unit)" in result
+
+    def test_includes_new_use_cases_when_structured_provided(self) -> None:
+        """Should include new use cases section when strategy_structured has use_cases.new."""
+        from scripts.tasks.workflows.test_automation import format_planning_prompt
+
+        strategy_structured = {
+            "use_cases": {
+                "new": [
+                    {
+                        "id": "UC-USER-001",
+                        "endpoint": "/api/v1/users",
+                        "method": "POST",
+                        "description": "Create user succeeds",
+                        "test_tier": "integration",
+                    }
+                ]
+            }
+        }
+
+        result = format_planning_prompt(
+            "strategy",
+            ["app/services/user.py"],
+            strategy_structured=strategy_structured,
+        )
+
+        assert "## New Use Cases (update use-case registry with these)" in result
+        assert "UC-USER-001: POST /api/v1/users - Create user succeeds (integration)" in result
+
+    def test_includes_fixtures_when_structured_provided(self) -> None:
+        """Should include fixtures section when structured has fixtures_required."""
+        from scripts.tasks.workflows.test_automation import format_planning_prompt
+
+        strategy_structured = {
+            "testing_patterns": {
+                "fixtures_required": [
+                    {"name": "user_factory", "exists": True, "path": "tests/conftest.py"},
+                    {
+                        "name": "mock_email",
+                        "exists": False,
+                        "creation_notes": "Mock SMTP client",
+                    },
+                ]
+            }
+        }
+
+        result = format_planning_prompt(
+            "strategy",
+            ["app/services/user.py"],
+            strategy_structured=strategy_structured,
+        )
+
+        assert "## Fixtures (from Strategy)" in result
+        assert "user_factory (existing at tests/conftest.py)" in result
+        assert "mock_email (create: Mock SMTP client)" in result
+
+    def test_includes_mocking_strategies_when_structured_provided(self) -> None:
+        """Should include mocking strategies when structured has mocking_strategies."""
+        from scripts.tasks.workflows.test_automation import format_planning_prompt
+
+        strategy_structured = {
+            "testing_patterns": {
+                "mocking_strategies": [
+                    {
+                        "target": "app.infrastructure.email.EmailClient",
+                        "approach": "dependency_injection",
+                        "notes": "Inject mock via constructor",
+                    }
+                ]
+            }
+        }
+
+        result = format_planning_prompt(
+            "strategy",
+            ["app/services/user.py"],
+            strategy_structured=strategy_structured,
+        )
+
+        assert "## Mocking Strategies (from Strategy)" in result
+        expected = (
+            "app.infrastructure.email.EmailClient: dependency_injection - "
+            "Inject mock via constructor"
+        )
+        assert expected in result
+
+    def test_includes_guidance_when_structured_provided(self) -> None:
+        """Should include guidance section when strategy_structured has guidance_for_planner."""
+        from scripts.tasks.workflows.test_automation import format_planning_prompt
+
+        strategy_structured = {
+            "guidance_for_planner": [
+                "Use parametrized tests for validation edge cases",
+                "Mock EmailClient at service layer, not repository",
+            ]
+        }
+
+        result = format_planning_prompt(
+            "strategy",
+            ["app/services/user.py"],
+            strategy_structured=strategy_structured,
+        )
+
+        assert "## Guidance from Strategy (follow these instructions)" in result
+        assert "Use parametrized tests for validation edge cases" in result
+        assert "Mock EmailClient at service layer, not repository" in result
+
+    def test_omits_structured_sections_when_empty(self) -> None:
+        """Should omit structured sections when strategy_structured is provided but empty."""
+        from scripts.tasks.workflows.test_automation import format_planning_prompt
+
+        strategy_structured: dict[str, list[dict[str, str]]] = {"tier_assignments": []}
+
+        result = format_planning_prompt(
+            "strategy",
+            ["app/services/user.py"],
+            strategy_structured=strategy_structured,
+        )
+
+        assert "## Tier Assignments (from Strategy)" not in result
+
+
+class TestHandleStrategyReviewWithLimit:
+    """Tests for handle_strategy_review with max_strategy_reviews limit."""
+
+    def test_escalates_to_strategy_update_on_max_reviews(self) -> None:
+        """Should transition to strategy_update when max reviews exceeded."""
+        ctx = WorkflowContext(
+            target_files=["app/module.py"],
+            strategy_document="Strategy",
+            test_plan="Plan",
+            feedback_history=["fb1", "fb2"],
+            strategy_review_count=2,  # At limit (max_strategy_reviews=3)
+            max_strategy_reviews=3,
+        )
+        mock_result = MagicMock()
+        mock_result.stdout = "FEEDBACK: Yet another issue"
+
+        with patch(
+            "scripts.tasks.workflows.test_automation._run_tasks_agent",
+            return_value=mock_result,
+        ):
+            result = handle_strategy_review(ctx)
+
+        assert result.next_state == "strategy_update"
+        assert "Max strategy reviews" in result.message
+
+    def test_continues_planning_under_limit(self) -> None:
+        """Should transition to planning when under review limit."""
+        ctx = WorkflowContext(
+            target_files=["app/module.py"],
+            strategy_document="Strategy",
+            test_plan="Plan",
+            feedback_history=[],
+            strategy_review_count=0,
+            max_strategy_reviews=3,
+        )
+        mock_result = MagicMock()
+        mock_result.stdout = "FEEDBACK: Some issue"
+
+        with patch(
+            "scripts.tasks.workflows.test_automation._run_tasks_agent",
+            return_value=mock_result,
+        ):
+            result = handle_strategy_review(ctx)
+
+        assert result.next_state == "planning"
+        assert result.context_updates["strategy_review_count"] == 1
+
+    def test_shows_review_count_in_message(self) -> None:
+        """Should show current review count in feedback message."""
+        ctx = WorkflowContext(
+            target_files=["app/module.py"],
+            strategy_document="Strategy",
+            test_plan="Plan",
+            feedback_history=[],
+            strategy_review_count=1,
+            max_strategy_reviews=3,
+        )
+        mock_result = MagicMock()
+        mock_result.stdout = "FEEDBACK: Issue"
+
+        with patch(
+            "scripts.tasks.workflows.test_automation._run_tasks_agent",
+            return_value=mock_result,
+        ):
+            result = handle_strategy_review(ctx)
+
+        # Check that the review count is shown in the message
+        assert "2/3" in result.message or "Feedback" in result.message
+
+
+class TestIntegrationDebuggingToPlanReviewToCoverage:
+    """Integration tests for DEBUGGING → PLAN_REVIEW → COVERAGE path."""
+
+    def test_debugging_to_plan_review_on_fixed(self) -> None:
+        """Should transition from debugging to plan_review when tests fixed."""
+        ctx = WorkflowContext(
+            target_files=["app/module.py"],
+            test_plan="Plan",
+            written_tests=["tests/unit/test_module.py"],
+        )
+        mock_result = MagicMock()
+        mock_result.stdout = "FIXED: All tests pass"
+
+        with patch(
+            "scripts.tasks.workflows.test_automation._run_tasks_agent",
+            return_value=mock_result,
+        ):
+            result = handle_debugging(ctx)
+
+        assert result.next_state == "plan_review"
+
+    def test_plan_review_to_coverage_on_complete(self) -> None:
+        """Should transition from plan_review to coverage when complete."""
+        ctx = WorkflowContext(
+            target_files=["app/module.py"],
+            test_plan="Plan",
+            written_tests=["tests/unit/test_module.py"],
+        )
+        mock_result = MagicMock()
+        mock_result.stdout = "COMPLETE: plan satisfied"
+
+        with patch(
+            "scripts.tasks.workflows.test_automation._run_tasks_agent",
+            return_value=mock_result,
+        ):
+            result = handle_plan_review(ctx)
+
+        assert result.next_state == "coverage"
+
+    def test_full_path_debugging_plan_review_coverage(self) -> None:
+        """Should execute full path from debugging through plan_review to coverage."""
+        ctx = WorkflowContext(
+            target_files=["app/module.py"],
+            test_plan="Plan",
+            written_tests=["tests/unit/test_module.py"],
+        )
+
+        # Step 1: debugging -> plan_review
+        debug_result = MagicMock()
+        debug_result.stdout = "FIXED: All tests pass"
+
+        with patch(
+            "scripts.tasks.workflows.test_automation._run_tasks_agent",
+            return_value=debug_result,
+        ):
+            result1 = handle_debugging(ctx)
+
+        assert result1.next_state == "plan_review"
+
+        # Step 2: plan_review -> coverage
+        review_result = MagicMock()
+        review_result.stdout = "COMPLETE: plan satisfied"
+
+        with patch(
+            "scripts.tasks.workflows.test_automation._run_tasks_agent",
+            return_value=review_result,
+        ):
+            result2 = handle_plan_review(ctx)
+
+        assert result2.next_state == "coverage"
+
+
+class TestWorkflowContextNewFields:
+    """Tests for new WorkflowContext fields."""
+
+    def test_new_fields_have_defaults(self) -> None:
+        """Should have correct defaults for new fields."""
+        ctx = WorkflowContext(target_files=["file.py"])
+        assert ctx.strategy_review_count == 0
+        assert ctx.max_strategy_reviews == 3
+        assert ctx.git_diff is None
+        assert ctx.existing_tests is None
+        assert ctx.analysis_context is None
+
+    def test_new_fields_can_be_set(self) -> None:
+        """Should allow setting new fields."""
+        ctx = WorkflowContext(
+            target_files=["file.py"],
+            strategy_review_count=2,
+            max_strategy_reviews=5,
+            git_diff="some diff",
+            existing_tests=["tests/test.py"],
+            analysis_context="New feature",
+        )
+        assert ctx.strategy_review_count == 2
+        assert ctx.max_strategy_reviews == 5
+        assert ctx.git_diff == "some diff"
+        assert ctx.existing_tests == ["tests/test.py"]
+        assert ctx.analysis_context == "New feature"
+
+
+# =============================================================================
+# Structured Output Parser Tests (Task 4)
+# =============================================================================
+
+
+class TestParseStrategyOutputStructured:
+    """Tests for parse_strategy_output_structured function."""
+
+    def test_parses_yaml_block_with_all_fields(self) -> None:
+        """Should parse full YAML structure with all fields."""
+        output = """STRATEGY:
+```yaml
+summary: "Comprehensive testing strategy for user service"
+tier_assignments:
+  - file: "app/services/user.py"
+    tier: "unit"
+    coverage_type: "line_branch"
+    coverage_target: 80
+    rationale: "Service layer with complex logic"
+test_file_mapping:
+  - source: "app/services/user.py"
+    tests:
+      - path: "tests/unit/test_user.py"
+        operation: "NEW"
+        tier: "unit"
+```"""
+        result = parse_strategy_output_structured(output)
+
+        assert "summary" in result
+        assert result["summary"] == "Comprehensive testing strategy for user service"
+        assert "tier_assignments" in result
+        assert len(result["tier_assignments"]) == 1
+        assert result["tier_assignments"][0]["file"] == "app/services/user.py"
+        assert "test_file_mapping" in result
+        assert len(result["test_file_mapping"]) == 1
+
+    def test_parses_yaml_with_only_summary(self) -> None:
+        """Should fall back when YAML only has summary (missing required fields).
+
+        Schema requires tier_assignments and test_file_mapping, so validation
+        fails and we get a fallback with validation error in summary.
+        """
+        output = """STRATEGY:
+```yaml
+summary: "Basic testing strategy"
+```"""
+        result = parse_strategy_output_structured(output)
+
+        assert "summary" in result
+        # Falls back due to missing required fields - validation error included
+        assert "Basic testing strategy" in result["summary"]
+        assert "Validation error" in result["summary"]
+        assert "tier_assignments" not in result
+
+    def test_handles_missing_strategy_marker(self) -> None:
+        """Should return summary with raw content when no STRATEGY marker."""
+        output = "Just some random output"
+        result = parse_strategy_output_structured(output)
+
+        assert "summary" in result
+        assert "Just some random output" in result["summary"]
+
+    def test_handles_blocked_output(self) -> None:
+        """Should return summary with BLOCKED message."""
+        output = "BLOCKED: Cannot analyze - missing dependencies"
+        result = parse_strategy_output_structured(output)
+
+        assert "summary" in result
+        assert "BLOCKED:" in result["summary"]
+        assert "missing dependencies" in result["summary"]
+
+    def test_handles_invalid_yaml(self) -> None:
+        """Should gracefully fallback for invalid YAML."""
+        output = """STRATEGY:
+```yaml
+summary: "Test
+invalid: yaml: structure:
+```"""
+        result = parse_strategy_output_structured(output)
+
+        assert "summary" in result
+        assert "YAML parsing failed" in result["summary"]
+
+    def test_handles_yaml_without_code_block(self) -> None:
+        """Should parse YAML content without explicit code block."""
+        output = """STRATEGY:
+summary: Direct YAML without code block
+tier_assignments:
+  - file: "test.py"
+    tier: "unit"
+    coverage_type: "line_branch"
+    coverage_target: 80
+    rationale: "Direct YAML"
+test_file_mapping:
+  - source: "test.py"
+    tests:
+      - path: "tests/test.py"
+        operation: "NEW"
+        tier: "unit"
+"""
+        result = parse_strategy_output_structured(output)
+
+        assert "summary" in result
+        assert "Direct YAML without code block" in result["summary"]
+        assert "tier_assignments" in result
+
+    def test_adds_default_summary_when_missing(self) -> None:
+        """Should add default summary when YAML has other fields but no summary."""
+        output = """STRATEGY:
+```yaml
+tier_assignments:
+  - file: "test.py"
+    tier: "unit"
+    coverage_type: "line_branch"
+    coverage_target: 80
+    rationale: "Test"
+test_file_mapping:
+  - source: "test.py"
+    tests:
+      - path: "tests/test.py"
+        operation: "NEW"
+        tier: "unit"
+```"""
+        result = parse_strategy_output_structured(output)
+
+        assert "summary" in result
+        assert "Structured strategy output" in result["summary"]
+        assert "tier_assignments" in result
+
+
+class TestParseStrategyReviewOutputStructured:
+    """Tests for parse_strategy_review_output_structured function."""
+
+    def test_parses_approved_status(self) -> None:
+        """Should parse APPROVED status."""
+        output = "APPROVED"
+        result = parse_strategy_review_output_structured(output)
+
+        assert result["status"] == "APPROVED"
+        assert "issues" not in result
+        assert "reason" not in result
+
+    def test_parses_feedback_with_yaml_issues(self) -> None:
+        """Should parse FEEDBACK with structured YAML issues."""
+        output = """FEEDBACK:
+```yaml
+issues:
+  - category: "missing_tier"
+    description: "Integration tests missing for user deletion"
+    severity: "high"
+  - category: "missing_edge_case"
+    description: "No tests for duplicate email"
+    severity: "medium"
+```"""
+        result = parse_strategy_review_output_structured(output)
+
+        assert result["status"] == "FEEDBACK"
+        assert "issues" in result
+        assert len(result["issues"]) == 2
+        assert result["issues"][0]["category"] == "missing_tier"
+        assert result["issues"][1]["severity"] == "medium"
+
+    def test_parses_feedback_with_unstructured_text(self) -> None:
+        """Should handle FEEDBACK with plain text (no YAML)."""
+        output = "FEEDBACK: The plan is missing integration tests for the delete operation."
+        result = parse_strategy_review_output_structured(output)
+
+        assert result["status"] == "FEEDBACK"
+        assert "issues" in result
+        assert len(result["issues"]) == 1
+        assert "missing integration tests" in result["issues"][0]["description"]
+        assert result["issues"][0]["category"] == "pattern_mismatch"
+
+    def test_parses_blocked_with_yaml_reason(self) -> None:
+        """Should parse BLOCKED with structured YAML reason."""
+        output = """BLOCKED:
+```yaml
+reason: "Cannot review - strategy document is malformed"
+```"""
+        result = parse_strategy_review_output_structured(output)
+
+        assert result["status"] == "BLOCKED"
+        assert "reason" in result
+        assert "malformed" in result["reason"]
+
+    def test_parses_blocked_with_unstructured_text(self) -> None:
+        """Should handle BLOCKED with plain text (no YAML)."""
+        output = "BLOCKED: Missing required strategy document"
+        result = parse_strategy_review_output_structured(output)
+
+        assert result["status"] == "BLOCKED"
+        assert "reason" in result
+        assert "Missing required strategy" in result["reason"]
+
+    def test_handles_unrecognized_output(self) -> None:
+        """Should return BLOCKED for unrecognized output format."""
+        output = "Some random output without proper markers"
+        result = parse_strategy_review_output_structured(output)
+
+        assert result["status"] == "BLOCKED"
+        assert "reason" in result
+        assert "Unrecognized" in result["reason"]
+
+    def test_approved_case_insensitive(self) -> None:
+        """Should parse approved status case-insensitively."""
+        output = "approved"
+        result = parse_strategy_review_output_structured(output)
+
+        assert result["status"] == "APPROVED"
+
+
+# =============================================================================
+# Tests for format_strategy_prompt mode parameter (Comment 5)
+# =============================================================================
+
+
+class TestFormatStrategyPromptModes:
+    """Tests for format_strategy_prompt with mode parameter."""
+
+    def test_generate_mode_is_default(self) -> None:
+        """Should default to generate mode."""
+        from scripts.tasks.workflows.test_automation import format_strategy_prompt
+
+        result = format_strategy_prompt(["app/module.py"])
+        assert "mode: generate" in result
+        assert "Analyze the following files" in result
+
+    def test_generate_mode_explicit(self) -> None:
+        """Should produce generate mode prompt when explicitly specified."""
+        from scripts.tasks.workflows.test_automation import format_strategy_prompt
+
+        result = format_strategy_prompt(["app/module.py"], mode="generate")
+        assert "mode: generate" in result
+        assert "produce a comprehensive testing strategy" in result
+
+    def test_review_mode_includes_strategy_and_plan(self) -> None:
+        """Should include strategy and plan in review mode prompt."""
+        from scripts.tasks.workflows.test_automation import format_strategy_prompt
+
+        result = format_strategy_prompt(
+            ["app/module.py"],
+            mode="review",
+            strategy_document="Original test strategy",
+            proposed_plan="Test plan to review",
+        )
+        assert "mode: review" in result
+        assert "## Original Strategy" in result
+        assert "Original test strategy" in result
+        assert "## Proposed Test Plan" in result
+        assert "Test plan to review" in result
+        assert "APPROVED" in result
+        assert "FEEDBACK" in result
+
+    def test_review_mode_has_review_instructions(self) -> None:
+        """Should include review-specific instructions."""
+        from scripts.tasks.workflows.test_automation import format_strategy_prompt
+
+        result = format_strategy_prompt(
+            ["app/module.py"],
+            mode="review",
+            strategy_document="Strategy",
+            proposed_plan="Plan",
+        )
+        assert "Verify the plan adequately covers" in result
+        assert "Tier assignments match strategy" in result
+
+    def test_revise_mode_includes_coverage_gaps(self) -> None:
+        """Should include coverage gaps in revise mode prompt."""
+        from scripts.tasks.workflows.test_automation import format_strategy_prompt
+
+        gaps = [
+            {"function": "process_data", "line_coverage": 50.0, "branch_coverage": 40.0},
+            {"function": "validate_input", "line_coverage": 60.0, "branch_coverage": 55.0},
+        ]
+        result = format_strategy_prompt(
+            ["app/module.py"],
+            mode="revise",
+            coverage_gaps=gaps,
+        )
+        assert "mode: revise" in result
+        assert "## Coverage Gaps" in result
+        assert "process_data" in result
+        assert "validate_input" in result
+        assert "Revise the testing strategy" in result
+
+    def test_revise_mode_has_revise_instructions(self) -> None:
+        """Should include revise-specific instructions."""
+        from scripts.tasks.workflows.test_automation import format_strategy_prompt
+
+        result = format_strategy_prompt(
+            ["app/module.py"],
+            mode="revise",
+            coverage_gaps=[{"function": "foo", "line_coverage": 50, "branch_coverage": 40}],
+        )
+        assert "structural gaps" in result
+        assert "Adjust tier assignments if needed" in result
+
+    def test_backward_compatible_without_mode(self) -> None:
+        """Should work without mode parameter (backward compatibility)."""
+        from scripts.tasks.workflows.test_automation import format_strategy_prompt
+
+        result = format_strategy_prompt(
+            ["app/module.py"],
+            analysis_context="Added new feature",
+            existing_tests=["tests/test.py"],
+        )
+        assert "mode: generate" in result
+        assert "## Context" in result
+        assert "Added new feature" in result

@@ -269,7 +269,7 @@ def _invoke_huggingface_agent(
     prompt_str = json.dumps(input_json)
 
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             [
                 "uv",
                 "run",

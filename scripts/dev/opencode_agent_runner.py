@@ -38,7 +38,7 @@ def run_agent(agent: str, prompt: str, *, stream_output: bool = True) -> tuple[i
         Tuple of (exit_code, stdout_output).
     """
     command = [str(PROJECT_ROOT / "opencode"), "run", "--agent", agent, prompt]
-    result = subprocess.run(command, capture_output=True, text=True, cwd=PROJECT_ROOT)  # noqa: S603
+    result = subprocess.run(command, capture_output=True, text=True, cwd=PROJECT_ROOT)
 
     if stream_output and result.stdout:
         sys.stdout.write(result.stdout)

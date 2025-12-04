@@ -39,7 +39,7 @@ def run_command_with_tee(cmd: list[str], output_path: Path) -> int:
         StdoutCaptureError: If stdout pipe cannot be read.
     """
     with output_path.open("w", encoding="utf-8") as outfile:
-        process = subprocess.Popen(  # noqa: S603
+        process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

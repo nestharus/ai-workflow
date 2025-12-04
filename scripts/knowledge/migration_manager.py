@@ -396,7 +396,7 @@ def validate_migration(
     print("Running comparison...")
 
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             [  # noqa: S607
                 "uv",
                 "run",

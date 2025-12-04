@@ -17,12 +17,35 @@ You are the test strategy specialist. Your purpose is to analyze implementation 
 
 ## Input
 
-- Implementation plan files (from `docs/plans/` or `.tmp/` directories)
-- Code files (existing and planned changes)
-- Existing test files for pattern analysis
-- Git diff output for understanding scope of changes
+The agent receives structured input adhering to the schema defined in `docs/schemas/test-strategy-input.schema.json`:
 
-The user prompt should provide the plan file path or describe the implementation scope.
+- **mode**: Operation mode - one of:
+  - `generate`: Create a new testing strategy
+  - `review`: Validate a proposed plan against a strategy
+  - `revise`: Update a strategy based on coverage gaps
+
+- **target_files**: Array of source files requiring test strategy planning. Each file entry contains:
+  - `path`: Relative path to the source file from repository root
+  - `change_type` (optional): Type of change - `NEW`, `MODIFY`, `DELETE`, or `RENAME`
+  - `functions_changed` (optional): List of function/method names modified (for `MODIFY` changes)
+
+- **context** (optional): Additional context to inform strategy generation:
+  - `analysis_description`: Human-readable description of the changes
+  - `git_diff`: Git diff output showing the changes
+  - `existing_tests`: Paths to existing test files that cover the target files
+
+- **For review mode only**:
+  - `strategy_document`: The original strategy document being reviewed
+  - `proposed_plan`: The plan to review against the strategy
+
+- **For revise mode only**:
+  - `coverage_gaps`: Array of functions with insufficient coverage, each containing:
+    - `function`: Function name with coverage gaps
+    - `file`: File path containing the function
+    - `line_coverage`: Current line coverage percentage
+    - `branch_coverage`: Current branch coverage percentage
+
+The user prompt will format this structured data as readable text while maintaining the schema structure.
 
 ## Rules
 
@@ -74,72 +97,100 @@ Consider tier-specific coverage requirements from `docs/testing/testing-workflow
 
 ## Output Contract
 
-Your output must be a structured testing strategy document with these sections:
+Your output must be structured YAML data after the `STRATEGY:` marker, adhering to the schema defined in `docs/schemas/test-strategy-output.schema.json`:
 
-### 1. Implementation Summary (2-3 sentences)
+```yaml
+STRATEGY:
+summary: "Brief 2-3 sentence summary of the testing strategy"
 
-- Brief description of what is being implemented
-- Key components affected
+tier_assignments:
+  - file: "path/to/source/file.py"
+    tier: "unit" | "component" | "integration" | "e2e"
+    coverage_type: "line_branch" | "use_case"
+    coverage_target: 80  # percentage for line_branch, count for use_case
+    rationale: "Justification for this tier assignment"
+    functions:
+      - name: "function_name"
+        test_type: "line_branch" | "use_case"
+        priority: "high" | "medium" | "low"
+        notes: "Testing considerations for this function"
 
-### 2. Testing Tier Assignments
+testing_patterns:
+  fixtures_required:
+    - name: "fixture_name"
+      exists: true | false
+      path: "path/to/fixture.py"  # if exists
+      creation_notes: "How to create this fixture"  # if not exists
+  mocking_strategies:
+    - target: "fully.qualified.ClassName"
+      approach: "dependency_injection | monkeypatch | unittest.mock"
+      notes: "Implementation notes for mocking"
+  assertion_patterns:
+    - pattern: "pattern_name"
+      description: "How to use this assertion pattern"
 
-List each tier (unit, component, integration, e2e) with:
+use_cases:
+  new:
+    - id: "UC-CATEGORY-001"
+      endpoint: "/api/v1/endpoint"
+      method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
+      description: "Use case description"
+      test_tier: "integration" | "e2e"
+  existing_applicable:
+    - id: "UC-EXISTING-001"
+      notes: "How this existing use case relates to the changes"
 
-- Which components/functions should be tested at this tier
-- Rationale for tier assignment
-- Coverage expectations (per-function % or use-case count)
+edge_cases:
+  - scenario: "Edge case scenario description"
+    severity: "high" | "medium" | "low"
+    test_approach: "How to test this edge case"
 
-### 3. Testing Patterns
+test_file_mapping:
+  - source: "path/to/source/file.py"
+    tests:
+      - path: "path/to/test_file.py"
+        operation: "NEW" | "MODIFY" | "DELETE"
+        tier: "unit" | "component" | "integration" | "e2e"
 
-- Fixture requirements (which fixtures to use/create)
-- Mocking strategies (what to mock, how to mock it)
-- Assertion patterns (what to verify, how to structure assertions)
-- Test data requirements (fixtures, factories, sample data)
+guidance_for_planner:
+  - "Specific guidance item for the test-planner agent"
+  - "Additional considerations for test implementation"
+```
 
-### 4. Testing Techniques
+**Coverage Type Definitions:**
+- `line_branch`: Per-function line and branch % coverage (target: 80%, applies to unit/component/scripts)
+- `use_case`: Use-case ID coverage (target: 100%, applies to integration/e2e)
 
-Specific techniques for this implementation:
+**Test Tier Definitions:**
+- `unit`: Pure functions, utilities, isolated logic
+- `component`: Service layer public APIs (functions in `app/services/`)
+- `integration`: API endpoints with mocked external dependencies
+- `e2e`: Full stack scenarios requiring Docker/real services
 
-- Parametrized tests for multiple scenarios
-- Async testing patterns for async code
-- Exception testing for error handling
-- Integration testing with dependency overrides
-- E2E testing with Docker containers
+**File Change Types:**
+- `NEW`: New file created (full test coverage required)
+- `MODIFY`: Existing file changed (test additions/updates for changed functions)
+- `DELETE`: File removed (remove corresponding tests, check for broken refs)
+- `RENAME`: File renamed (update test imports, verify no logic changes)
 
-### 5. Coverage Goals
+## Schema Reference
 
-Per-tier coverage targets:
+The input and output contracts are formally defined by JSON Schema files:
 
-- **Unit**: X functions requiring 80% line/branch coverage
-- **Component**: Y service functions requiring 80% line/branch coverage
-- **Integration**: Z use-cases requiring 100% coverage
-- **E2E**: W use-cases requiring 100% coverage
+- **Input Schema**: `docs/schemas/test-strategy-input.schema.json`
+  - Defines the structure of input data (mode, target_files, context, etc.)
+  - Includes conditional requirements for review and revise modes
+  - Contains examples for all three modes
 
-Include new use-case IDs to add to `tests/docs/use_cases.yaml`.
+- **Output Schema (Generate Mode)**: `docs/schemas/test-strategy-output.schema.json`
+  - Defines the YAML structure after the `STRATEGY:` marker
+  - Specifies tier_assignments, testing_patterns, use_cases, edge_cases, test_file_mapping, and guidance_for_planner
+  - Contains complete example with all fields
 
-### 6. Edge Cases and Error Scenarios
-
-- List critical edge cases to test
-- Error conditions to validate
-- Boundary conditions to verify
-
-### 7. Test File Organization
-
-- Recommended test file structure
-- Naming conventions to follow
-- Where to place new test files
-
-### 8. Dependencies and Prerequisites
-
-- Required fixtures or test utilities
-- Mock objects or test doubles needed
-- Test data setup requirements
-
-### 9. Guidance for Test Planner
-
-- Specific notes for the test-planner agent (next phase)
-- Areas requiring special attention
-- Patterns to follow from existing tests
+- **Output Schema (Review Mode)**: `docs/schemas/test-strategy-review.schema.json`
+  - Defines the review response structure (status, issues, reason)
+  - Specifies issue categories and severity levels
+  - Contains examples for APPROVED, FEEDBACK, and BLOCKED statuses
 
 ## Guidance
 
@@ -158,55 +209,327 @@ Include new use-case IDs to add to `tests/docs/use_cases.yaml`.
 
 ### Example 1: New API Endpoint
 
-**Implementation**: Adding `/api/v1/users/profile` GET endpoint
+**Input**: Adding `/api/v1/users/profile` GET endpoint
 
-**Tier Assignments**:
+**Output**:
+```yaml
+STRATEGY:
+summary: "New user profile endpoint requires unit tests for the service layer function, component tests for the public API, and integration tests for the endpoint with response validation. Standard REST endpoint pattern with repository mocking."
 
-- Unit: `get_user_profile()` function in `user_service.py`
-- Component: `UserService.get_profile()` public method
-- Integration: UC-USER-001 (profile retrieval succeeds), UC-USER-002 (404 for missing user)
-- E2E: None required (standard endpoint behavior)
+tier_assignments:
+  - file: "app/services/user_service.py"
+    tier: "unit"
+    coverage_type: "line_branch"
+    coverage_target: 80
+    rationale: "Service layer with business logic for profile retrieval"
+    functions:
+      - name: "get_user_profile"
+        test_type: "line_branch"
+        priority: "high"
+        notes: "Test happy path and error handling for missing users"
+  - file: "app/services/user_service.py"
+    tier: "component"
+    coverage_type: "line_branch"
+    coverage_target: 80
+    rationale: "Public API method requires component-level testing"
+    functions:
+      - name: "UserService.get_profile"
+        test_type: "line_branch"
+        priority: "high"
+        notes: "Test with mocked repository"
+  - file: "app/api/v1/users.py"
+    tier: "integration"
+    coverage_type: "use_case"
+    coverage_target: 2
+    rationale: "API endpoint requires integration tests for success and error cases"
+    functions: []
 
-**Key Patterns**:
+testing_patterns:
+  fixtures_required:
+    - name: "user_repository_mock"
+      exists: true
+      path: "tests/conftest.py"
+    - name: "async_client"
+      exists: true
+      path: "tests/conftest.py"
+  mocking_strategies:
+    - target: "app.repositories.UserRepository"
+      approach: "dependency_injection"
+      notes: "Mock at service layer for unit/component tests"
+  assertion_patterns:
+    - pattern: "response_schema_validation"
+      description: "Assert response matches UserProfileResponse schema using pydantic"
+    - pattern: "status_code_validation"
+      description: "Verify 200 for success, 404 for missing user"
 
-- Mock `UserRepository` for unit/component tests
-- Use `async_client` fixture for integration tests
-- Assert response schema matches `UserProfileResponse`
+use_cases:
+  new:
+    - id: "UC-USER-001"
+      endpoint: "/api/v1/users/profile"
+      method: "GET"
+      description: "Profile retrieval succeeds for existing user"
+      test_tier: "integration"
+    - id: "UC-USER-002"
+      endpoint: "/api/v1/users/profile"
+      method: "GET"
+      description: "404 returned for missing user"
+      test_tier: "integration"
+
+edge_cases:
+  - scenario: "User profile request for non-existent user"
+    severity: "high"
+    test_approach: "Expect 404 Not Found response"
+
+test_file_mapping:
+  - source: "app/services/user_service.py"
+    tests:
+      - path: "tests/unit/test_user_service.py"
+        operation: "MODIFY"
+        tier: "unit"
+      - path: "tests/component/test_user_service.py"
+        operation: "MODIFY"
+        tier: "component"
+  - source: "app/api/v1/users.py"
+    tests:
+      - path: "tests/integration/test_user_endpoints.py"
+        operation: "MODIFY"
+        tier: "integration"
+
+guidance_for_planner:
+  - "Use existing user_repository_mock fixture for mocking"
+  - "Follow existing pattern in test_user_endpoints.py for integration tests"
+  - "Ensure response schema validation using pydantic model_validate"
+```
 
 ### Example 2: Refactoring Existing Service
 
-**Implementation**: Refactoring `MessageProcessor` to use strategy pattern
+**Input**: Refactoring `MessageProcessor` to use strategy pattern
 
-**Tier Assignments**:
+**Output**:
+```yaml
+STRATEGY:
+summary: "Refactoring requires comprehensive unit tests for new strategy classes and regression testing to ensure existing behavior is maintained. Focus on unit testing the strategy implementations and verifying existing integration tests still pass."
 
-- Unit: All strategy implementations, processor logic
-- Component: `MessageProcessor.process()` public API
-- Integration: Existing use-cases remain covered (regression)
-- E2E: None required
+tier_assignments:
+  - file: "app/services/message_strategies.py"
+    tier: "unit"
+    coverage_type: "line_branch"
+    coverage_target: 80
+    rationale: "New strategy implementations require full unit coverage"
+    functions:
+      - name: "EmailStrategy.process"
+        test_type: "line_branch"
+        priority: "high"
+        notes: "Test message formatting and validation"
+      - name: "SmsStrategy.process"
+        test_type: "line_branch"
+        priority: "high"
+        notes: "Test character limits and phone number validation"
+      - name: "PushStrategy.process"
+        test_type: "line_branch"
+        priority: "high"
+        notes: "Test payload construction"
+  - file: "app/services/message_processor.py"
+    tier: "component"
+    coverage_type: "line_branch"
+    coverage_target: 80
+    rationale: "Public API must maintain existing behavior"
+    functions:
+      - name: "MessageProcessor.process"
+        test_type: "line_branch"
+        priority: "high"
+        notes: "Verify strategy selection logic and delegation"
 
-**Key Patterns**:
+testing_patterns:
+  fixtures_required:
+    - name: "message_data_factory"
+      exists: true
+      path: "tests/conftest.py"
+  mocking_strategies:
+    - target: "app.services.message_strategies.EmailStrategy"
+      approach: "dependency_injection"
+      notes: "Inject mock strategies for component tests"
+  assertion_patterns:
+    - pattern: "behavior_preservation"
+      description: "Compare output with previous implementation results"
 
-- Focus on maintaining existing behavior (regression tests)
-- Add unit tests for new strategy classes
-- Verify all existing integration tests still pass
+use_cases:
+  existing_applicable:
+    - id: "UC-MSG-001"
+      notes: "Existing message processing use case must continue to pass"
+    - id: "UC-MSG-002"
+      notes: "Batch message processing regression test"
+
+edge_cases:
+  - scenario: "Unknown message type selection"
+    severity: "high"
+    test_approach: "Expect ValueError with clear message"
+  - scenario: "Strategy process method raises exception"
+    severity: "medium"
+    test_approach: "Verify proper error propagation"
+
+test_file_mapping:
+  - source: "app/services/message_strategies.py"
+    tests:
+      - path: "tests/unit/test_message_strategies.py"
+        operation: "NEW"
+        tier: "unit"
+  - source: "app/services/message_processor.py"
+    tests:
+      - path: "tests/component/test_message_processor.py"
+        operation: "MODIFY"
+        tier: "component"
+
+guidance_for_planner:
+  - "Add unit tests for each strategy implementation before modifying processor"
+  - "Run existing integration tests as regression suite"
+  - "Parametrize strategy tests for different message types"
+  - "Verify existing behavior is preserved through comparison tests"
+```
 
 ### Example 3: Infrastructure Change
 
-**Implementation**: Adding Redis caching layer
+**Input**: Adding Redis caching layer
 
-**Tier Assignments**:
+**Output**:
+```yaml
+STRATEGY:
+summary: "Redis caching layer requires unit tests for key generation and serialization, component tests for the cache service API with fakeredis, and e2e tests for Redis integration and graceful degradation. Testing must cover cache hit/miss scenarios and TTL behavior."
 
-- Unit: Cache key generation, serialization logic
-- Component: Cache service public methods
-- Integration: API endpoints with cache behavior
-- E2E: UC-CACHE-001 (startup with Redis), UC-CACHE-002 (graceful degradation)
+tier_assignments:
+  - file: "app/infrastructure/cache.py"
+    tier: "unit"
+    coverage_type: "line_branch"
+    coverage_target: 80
+    rationale: "Cache utilities require thorough unit testing"
+    functions:
+      - name: "generate_cache_key"
+        test_type: "line_branch"
+        priority: "high"
+        notes: "Test key generation for various input types"
+      - name: "serialize_value"
+        test_type: "line_branch"
+        priority: "high"
+        notes: "Test serialization of complex objects"
+      - name: "deserialize_value"
+        test_type: "line_branch"
+        priority: "high"
+        notes: "Test deserialization and error handling"
+  - file: "app/services/cache_service.py"
+    tier: "component"
+    coverage_type: "line_branch"
+    coverage_target: 80
+    rationale: "Cache service public API requires component testing"
+    functions:
+      - name: "CacheService.get"
+        test_type: "line_branch"
+        priority: "high"
+        notes: "Test cache hit and miss scenarios"
+      - name: "CacheService.set"
+        test_type: "line_branch"
+        priority: "high"
+        notes: "Test value storage with TTL"
+      - name: "CacheService.delete"
+        test_type: "line_branch"
+        priority: "medium"
+        notes: "Test cache invalidation"
+  - file: "app/api/v1/cached_endpoints.py"
+    tier: "integration"
+    coverage_type: "use_case"
+    coverage_target: 2
+    rationale: "API endpoints with caching require integration tests"
+    functions: []
+  - file: "app/main.py"
+    tier: "e2e"
+    coverage_type: "use_case"
+    coverage_target: 2
+    rationale: "Redis startup and graceful degradation require e2e tests"
+    functions: []
 
-**Key Patterns**:
+testing_patterns:
+  fixtures_required:
+    - name: "fake_redis"
+      exists: false
+      creation_notes: "Create fakeredis fixture for unit/component tests"
+    - name: "redis_container"
+      exists: false
+      creation_notes: "Docker container fixture for e2e tests with real Redis"
+  mocking_strategies:
+    - target: "redis.Redis"
+      approach: "dependency_injection"
+      notes: "Use fakeredis for unit/component tests"
+  assertion_patterns:
+    - pattern: "cache_behavior"
+      description: "Assert cache hit returns cached value, miss returns None"
+    - pattern: "ttl_validation"
+      description: "Verify cache entries expire after TTL"
 
-- Use `fakeredis` for unit/component tests
-- E2E requires Docker with Redis container
-- Test cache hit/miss scenarios
-- Verify TTL behavior
+use_cases:
+  new:
+    - id: "UC-CACHE-001"
+      endpoint: "/api/v1/health"
+      method: "GET"
+      description: "Application starts successfully with Redis connection"
+      test_tier: "e2e"
+    - id: "UC-CACHE-002"
+      endpoint: "/api/v1/health"
+      method: "GET"
+      description: "Application continues operating when Redis is unavailable"
+      test_tier: "e2e"
+    - id: "UC-CACHE-003"
+      endpoint: "/api/v1/users/{id}"
+      method: "GET"
+      description: "Cached endpoint returns cached data on cache hit"
+      test_tier: "integration"
+    - id: "UC-CACHE-004"
+      endpoint: "/api/v1/users/{id}"
+      method: "GET"
+      description: "Cached endpoint fetches and caches data on cache miss"
+      test_tier: "integration"
+
+edge_cases:
+  - scenario: "Redis connection timeout"
+    severity: "high"
+    test_approach: "Verify graceful degradation, no cache errors propagated"
+  - scenario: "Cache key collision"
+    severity: "medium"
+    test_approach: "Test key generation uniqueness with various inputs"
+  - scenario: "Serialization of unsupported type"
+    severity: "medium"
+    test_approach: "Expect TypeError with clear message"
+  - scenario: "TTL expiration during request"
+    severity: "low"
+    test_approach: "Verify cache miss behavior when entry expires"
+
+test_file_mapping:
+  - source: "app/infrastructure/cache.py"
+    tests:
+      - path: "tests/unit/infrastructure/test_cache.py"
+        operation: "NEW"
+        tier: "unit"
+  - source: "app/services/cache_service.py"
+    tests:
+      - path: "tests/component/test_cache_service.py"
+        operation: "NEW"
+        tier: "component"
+  - source: "app/api/v1/cached_endpoints.py"
+    tests:
+      - path: "tests/integration/test_cached_endpoints.py"
+        operation: "NEW"
+        tier: "integration"
+  - source: "app/main.py"
+    tests:
+      - path: "tests/e2e/test_redis_integration.py"
+        operation: "NEW"
+        tier: "e2e"
+
+guidance_for_planner:
+  - "Use fakeredis library for unit and component tests"
+  - "E2E tests require Docker Compose with Redis service"
+  - "Test cache hit/miss scenarios with time-based assertions"
+  - "Verify TTL behavior using fakeredis time manipulation"
+  - "Test graceful degradation by stopping Redis container during e2e test"
+```
 
 ## Review Mode
 
@@ -218,10 +541,42 @@ When the prompt contains "Mode: review" and includes both a strategy and plan:
 4. Verify testing patterns align with strategy guidance
 5. Confirm edge cases from strategy are planned
 
-Output one of:
-- APPROVED (if plan satisfies strategy)
-- FEEDBACK: <specific issues to address>
-- BLOCKED: <reason review cannot proceed>
+Output structured YAML data after the `STRATEGY:` marker, adhering to `docs/schemas/test-strategy-review.schema.json`:
+
+**APPROVED Status** (plan satisfies strategy):
+```yaml
+STRATEGY:
+status: "APPROVED"
+```
+
+**FEEDBACK Status** (plan needs improvements):
+```yaml
+STRATEGY:
+status: "FEEDBACK"
+issues:
+  - category: "missing_tier" | "wrong_coverage_type" | "missing_edge_case" | "pattern_mismatch" | "insufficient_coverage" | "wrong_tier_assignment" | "missing_use_case" | "incomplete_mocking" | "missing_fixture"
+    description: "Detailed description of the issue"
+    strategy_reference: "tier_assignments[0].functions[1]"  # optional reference to strategy section
+    severity: "high" | "medium" | "low"
+```
+
+**BLOCKED Status** (cannot review):
+```yaml
+STRATEGY:
+status: "BLOCKED"
+reason: "Explanation for why the review is blocked (e.g., missing required inputs)"
+```
+
+**Issue Categories:**
+- `missing_tier`: Test tier specified in strategy is missing from plan
+- `wrong_coverage_type`: Plan uses wrong coverage type (line_branch vs use_case)
+- `missing_edge_case`: Edge case from strategy not covered in plan
+- `pattern_mismatch`: Testing pattern doesn't align with strategy guidance
+- `insufficient_coverage`: Coverage target below strategy requirements
+- `wrong_tier_assignment`: Function assigned to wrong test tier
+- `missing_use_case`: Use case from strategy not included in plan
+- `incomplete_mocking`: Mocking strategy not fully implemented
+- `missing_fixture`: Required fixture not included in plan
 
 ## Related Documentation
 

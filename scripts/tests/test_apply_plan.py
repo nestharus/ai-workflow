@@ -1020,7 +1020,7 @@ class TestTestingRunTasksAgent:
         """Should handle empty prompt correctly."""
         mock_completed = subprocess.CompletedProcess([], 0)
         with patch.object(testing, "_run", return_value=mock_completed) as mock_run:
-            testing._run_tasks_agent("test-fixer", "")
+            testing._run_tasks_agent("test-debugger", "")
 
         args = mock_run.call_args.args[0]
         assert args[-2:] == ["--prompt", ""]

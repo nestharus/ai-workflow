@@ -361,7 +361,7 @@ def invoke_fact_extractor(sentence: str, entity: str) -> dict:
 
     # Invoke the sub-agent using claude CLI with haiku model for cost-efficiency
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             [
                 "claude",
                 "--agent",

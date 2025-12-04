@@ -197,7 +197,7 @@ def invoke_sub_agent(
     prompt_str = json.dumps(prompt_json, indent=2)
 
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             [
                 "claude",
                 "--agent",
