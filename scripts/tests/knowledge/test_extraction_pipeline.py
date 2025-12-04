@@ -486,7 +486,7 @@ class TestRunVariantsStage:
         ):
             mock_apply.return_value = 0
 
-            result = run_variants_stage(knowledge_path, dry_run=True)
+            run_variants_stage(knowledge_path, dry_run=True)
 
             mock_track.assert_not_called()
             captured = capsys.readouterr()

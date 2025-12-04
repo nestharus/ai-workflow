@@ -25,8 +25,8 @@ For each task:
    Task(subagent_type="general-purpose", prompt="Implement Task N from <FILEPATH>. Read the plan file first, then implement the specific task requirements. Write tests as specified. Do not modify other tasks' code.")
    ```
 
-2. **Review**: After sub-agent completes, review the changes against the plan:
-   - Verify all requirements are met
+2. **Review**: After ***EACH INDIVIDUAL*** sub-agent completes, review the changes against the task it implemented:
+   - Verify all requirements are met using git to check what changes it made
    - Check that tests pass
    - Check that existing functionality is preserved
    - Note any deviations or issues

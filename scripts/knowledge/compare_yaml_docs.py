@@ -1,4 +1,4 @@
-"""Compare YAML documents by extracting IDs and their associated object data.
+r"""Compare YAML documents by extracting IDs and their associated object data.
 
 This module provides utilities for parsing YAML files and extracting ID-to-object
 mappings, enabling dict-to-dict comparison of document content across different

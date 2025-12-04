@@ -155,10 +155,11 @@ class SurrealDBPool:
             async with self.acquire() as conn:
                 # SurrealQL requires RETURN for simple value evaluation
                 await conn.query("RETURN 1")
-            return True
         except Exception as exc:
             logger.warning("SurrealDB health check failed: %s", exc)
             return False
+        else:
+            return True
 
     async def initialize_schema(self) -> None:
         """Define Knowledge Graph tables, relationships, and vector index."""

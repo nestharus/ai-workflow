@@ -1,4 +1,4 @@
-"""CLI script for artifact detection from YAML documentation files.
+r"""CLI script for artifact detection from YAML documentation files.
 
 This script implements artifact lifecycle step 1 per fact_redesign.md lines 561-569:
 detect artifact roots and assign artifact_kind, artifact_format, render_engine,
@@ -192,7 +192,6 @@ def _format_output(
 
     if output_format == "csv":
         # Flatten to CSV with key columns
-        output_lines: list[str] = []
         fieldnames = [
             "artifact_id",
             "artifact_kind",

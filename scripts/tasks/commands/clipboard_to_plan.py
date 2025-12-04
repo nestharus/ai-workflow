@@ -274,7 +274,9 @@ def parse_plan_sections(content: str) -> dict[str, str]:
             sections["intro"] = intro_text
 
     sorted_indices = sorted(header_indices.items())
-    for (start_idx, key), next_item in zip(sorted_indices, sorted_indices[1:] + [(len(lines), "")]):
+    for (start_idx, key), next_item in zip(
+        sorted_indices, sorted_indices[1:] + [(len(lines), "")], strict=False
+    ):
         end_idx = next_item[0]
         body = "\n".join(lines[start_idx + 1 : end_idx]).strip()
         sections[key] = body

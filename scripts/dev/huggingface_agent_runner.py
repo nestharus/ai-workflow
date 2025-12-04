@@ -82,7 +82,7 @@ def load_agent(agent_name: str) -> tuple[dict[str, Any], str]:
         raise ValueError("Invalid YAML frontmatter") from exc
 
     if not isinstance(frontmatter, dict):
-        raise ValueError("Invalid frontmatter in agent file")
+        raise TypeError("Invalid frontmatter in agent file")
 
     if "model" not in frontmatter:
         raise KeyError("Missing required frontmatter field: model")
@@ -121,9 +121,10 @@ def load_model(model_name: str) -> tuple[PreTrainedModel, PreTrainedTokenizer]:
         )
         model.eval()
         logger.info("Model loaded successfully")
-        return model, tokenizer
     except Exception as e:
         raise RuntimeError(f"Failed to load model '{model_name}': {e}") from e
+    else:
+        return model, tokenizer
 
 
 def run_inference(
@@ -177,10 +178,10 @@ def run_inference(
         # Extract generated portion by removing the prompt prefix if present
         if prompt in response:
             response = response[len(prompt) :].strip()
-
-        return response
     except Exception as e:
         raise RuntimeError(f"Inference failed: {e}") from e
+    else:
+        return response
 
 
 def build_prompt(system_prompt: str, user_prompt: str) -> str:
@@ -249,7 +250,6 @@ def main() -> int:
 
         output = run_inference(model, tokenizer, full_prompt, generation_config)
         sys.stdout.write(output)
-        return 0
     except FileNotFoundError as exc:
         sys.stderr.write(f"{exc}\n")
         return 1
@@ -265,6 +265,8 @@ def main() -> int:
     except Exception as exc:  # pragma: no cover - defensive catch-all
         sys.stderr.write(f"{exc}\n")
         return 1
+    else:
+        return 0
 
 
 if __name__ == "__main__":

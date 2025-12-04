@@ -169,7 +169,7 @@ class AgentRunner(ABC):
             raise ValueError("Invalid YAML frontmatter") from exc
 
         if not isinstance(frontmatter, dict):
-            raise ValueError("Invalid frontmatter in agent file")
+            raise TypeError("Invalid frontmatter in agent file")
 
         # Validate required fields
         for key in ("model", "provider"):
@@ -241,7 +241,7 @@ class AgentRunner(ABC):
             raise ValueError(f"Invalid YAML in config file: {config_path}") from exc
 
         if not isinstance(config, dict):
-            raise ValueError(f"Config file must contain a dict: {config_path}")
+            raise TypeError(f"Config file must contain a dict: {config_path}")
 
         if "agents_dir" not in config:
             raise ValueError(f"Config file missing 'agents_dir' field: {config_path}")

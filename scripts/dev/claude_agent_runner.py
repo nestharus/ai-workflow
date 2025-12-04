@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command line arguments for Claude agent runner."""
     parser = argparse.ArgumentParser(description="Run a Claude sub-agent defined in .claude/agents")
     parser.add_argument(
         "--agent",
@@ -38,6 +39,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_agent(agent_name: str) -> tuple[dict, str]:
+    """Load and parse a Claude agent definition from markdown file.
+
+    Args:
+        agent_name: Name of the agent to load.
+
+    Returns:
+        Tuple of (frontmatter_dict, system_prompt_string).
+    """
     project_root = Path(__file__).resolve().parents[2]
     agent_path = project_root / "claude" / "agents" / f"{agent_name}.md"
 
@@ -56,7 +65,7 @@ def load_agent(agent_name: str) -> tuple[dict, str]:
         raise ValueError("Invalid YAML frontmatter") from exc
 
     if not isinstance(frontmatter, dict):
-        raise ValueError("Invalid frontmatter in agent file")
+        raise TypeError("Invalid frontmatter in agent file")
 
     for key in ("tools", "model"):
         if key not in frontmatter:
@@ -67,6 +76,16 @@ def load_agent(agent_name: str) -> tuple[dict, str]:
 
 
 def build_command(frontmatter: dict, system_prompt: str, prompt: str) -> list[str]:
+    """Build command line arguments for Claude CLI invocation.
+
+    Args:
+        frontmatter: Agent configuration dict.
+        system_prompt: System prompt for the agent.
+        prompt: User prompt to pass to the agent.
+
+    Returns:
+        List of command line arguments.
+    """
     tools_field = frontmatter.get("tools", "")
     tools_list = [tool.strip() for tool in str(tools_field).split(",") if tool.strip()]
 
@@ -104,7 +123,7 @@ def run_command(command: list[str], *, stream_output: bool = True) -> tuple[int,
         Tuple of (exit_code, stdout_output).
     """
     project_root = Path(__file__).resolve().parents[2]
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603
         command,
         capture_output=True,
         text=True,
@@ -153,12 +172,12 @@ class ClaudeRunner(_get_agent_runner_base()):
 
 
 def main() -> int:
+    """Main entry point for Claude agent runner."""
     try:
         args = parse_args()
         frontmatter, system_prompt = load_agent(args.agent)
         command = build_command(frontmatter, system_prompt, args.prompt)
         exit_code, _ = run_command(command)
-        return exit_code
     except FileNotFoundError as exc:
         sys.stderr.write(f"{exc}\n")
         return 1
@@ -175,6 +194,8 @@ def main() -> int:
     except Exception as exc:  # pragma: no cover - defensive catch-all
         sys.stderr.write(f"{exc}\n")
         return 1
+    else:
+        return exit_code
 
 
 if __name__ == "__main__":

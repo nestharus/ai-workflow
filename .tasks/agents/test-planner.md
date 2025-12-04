@@ -77,6 +77,21 @@ The user prompt should provide the strategy file path or describe the implementa
 - Assign use-case markers for integration/e2e tests
 - Note dependencies and prerequisites
 
+## Review Mode
+
+When the prompt contains "Mode: review" and includes written test files:
+
+1. Compare written tests against the original plan
+2. Verify each planned test function exists
+3. Check use-case markers are correctly applied
+4. Verify assertions match plan specifications
+5. Confirm edge cases are covered as planned
+
+Output one of:
+- COMPLETE: plan satisfied
+- INCOMPLETE: <list of missing tests or gaps>
+- BLOCKED: <reason review cannot proceed>
+
 ## Output Contract
 
 Your output must be a structured test plan document with these sections:

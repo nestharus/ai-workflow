@@ -208,6 +208,21 @@ Include new use-case IDs to add to `tests/docs/use_cases.yaml`.
 - Test cache hit/miss scenarios
 - Verify TTL behavior
 
+## Review Mode
+
+When the prompt contains "Mode: review" and includes both a strategy and plan:
+
+1. Compare the plan against the original strategy
+2. Verify tier assignments match strategy recommendations
+3. Check use-case coverage goals are addressed
+4. Verify testing patterns align with strategy guidance
+5. Confirm edge cases from strategy are planned
+
+Output one of:
+- APPROVED (if plan satisfies strategy)
+- FEEDBACK: <specific issues to address>
+- BLOCKED: <reason review cannot proceed>
+
 ## Related Documentation
 
 - `docs/testing/testing-patterns.yml` - Use-case coverage approach

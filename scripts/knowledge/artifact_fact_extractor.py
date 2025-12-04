@@ -172,7 +172,7 @@ def _compute_text_diff_regions(old_text: str, new_text: str) -> list[tuple[int, 
     matcher = SequenceMatcher(None, old_text, new_text)
     diff_regions: list[tuple[int, int]] = []
 
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+    for tag, i1, i2, _, _ in matcher.get_opcodes():
         if tag != "equal":
             # This region was changed in the original text
             diff_regions.append((i1, i2))
@@ -797,7 +797,6 @@ def extract_artifact_facts(
 
         # Compute new hash
         state_hash = _compute_hash(state_text)
-        new_len = len(state_text)
 
         # Assert localized rewrites (with new state text for diff comparison)
         _assert_localized_rewrites(old_state_text, rewrites, span_inputs, state_text)

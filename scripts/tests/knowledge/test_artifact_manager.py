@@ -665,7 +665,7 @@ class TestExecuteArtifactLifecycle:
                 "scripts.knowledge.artifact_validator.validate_artifact",
                 return_value=mock_validation,
             ) as mock_validate,
-            patch("scripts.knowledge.artifact_validator.write_validation_result") as mock_write,
+            patch("scripts.knowledge.artifact_validator.write_validation_result"),
         ):
             # Create the rendered file that validation expects
             fs.create_file(rendered_file, contents="sequenceDiagram\n    A->>B: Hello")

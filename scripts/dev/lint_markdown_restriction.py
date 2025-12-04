@@ -78,10 +78,7 @@ def find_markdown_files(
     exclude_paths = {REPO_ROOT / d for d in exclude_dirs}
 
     for dir_name in restricted_dirs:
-        if dir_name == ".":
-            search_path = REPO_ROOT
-        else:
-            search_path = REPO_ROOT / dir_name
+        search_path = REPO_ROOT if dir_name == "." else REPO_ROOT / dir_name
 
         if not search_path.exists() or not search_path.is_dir():
             continue

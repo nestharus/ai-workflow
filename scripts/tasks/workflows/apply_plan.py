@@ -231,6 +231,7 @@ def _process_task(
 
 
 def main() -> int:
+    """Main entry point for applying Traycer AI plan."""
     parser = argparse.ArgumentParser(
         description="Apply Traycer AI plan using OpenCode and Claude agents"
     )

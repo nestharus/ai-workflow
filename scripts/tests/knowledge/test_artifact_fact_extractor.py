@@ -720,7 +720,7 @@ class TestPersistPassAndAuditWrites:
         manifest_path = artifacts_dir / "audit-test.yml"
         manifest_path.write_text(yaml.dump(manifest), encoding="utf-8")
 
-        result = extract_artifact_facts(
+        extract_artifact_facts(
             "audit-test",
             knowledge_path,
             use_mock=True,

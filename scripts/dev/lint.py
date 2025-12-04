@@ -268,7 +268,7 @@ def _run_yamldocs() -> int:
             continue
 
         # Filter out excluded directories
-        results, doc_count, error_count = lint_directory(target_path)
+        results, _, _ = lint_directory(target_path)
 
         # Filter results to exclude configured directories
         filtered_results = [

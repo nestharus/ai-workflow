@@ -652,14 +652,6 @@ def get_usecase_coverage(db_path: Path) -> dict[str, Any]:
             ORDER BY cu.usecase_id
         """)
         uncovered = [row["usecase_id"] for row in cursor]
-
-        return {
-            "total": total,
-            "covered": covered,
-            "coverage_pct": coverage_pct,
-            "by_tier": by_tier,
-            "uncovered": uncovered,
-        }
     except sqlite3.OperationalError:
         # Table doesn't exist
         return {
@@ -668,6 +660,14 @@ def get_usecase_coverage(db_path: Path) -> dict[str, Any]:
             "coverage_pct": 0.0,
             "by_tier": {},
             "uncovered": [],
+        }
+    else:
+        return {
+            "total": total,
+            "covered": covered,
+            "coverage_pct": coverage_pct,
+            "by_tier": by_tier,
+            "uncovered": uncovered,
         }
     finally:
         conn.close()
@@ -761,7 +761,7 @@ def get_tier_summary(
             return {row["tier"]: dict(row) for row in cursor}
     except sqlite3.OperationalError:
         # Table doesn't exist
-        return {} if tier is None else {}
+        return {}
     finally:
         conn.close()
 

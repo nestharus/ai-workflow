@@ -41,7 +41,7 @@ uv run extract-keywords --stage variants
 
 ### Pipeline Workflow
 
-```
+```text
                                     +-----------------+
                                     |  YAML Docs      |
                                     |  (docs/*.yml)   |
@@ -167,10 +167,10 @@ directly:
 
 **When to use underlying commands:**
 
-- **Debugging**: Inspect intermediate state or test individual stages
-- **Custom options**: Access stage-specific flags not exposed by the pipeline
-- **Per-file processing**: Target a specific file instead of batch processing
-- **Integration**: Call from external scripts or automation
+* **Debugging**: Inspect intermediate state or test individual stages
+* **Custom options**: Access stage-specific flags not exposed by the pipeline
+* **Per-file processing**: Target a specific file instead of batch processing
+* **Integration**: Call from external scripts or automation
 
 **Note**: The pipeline command does not replace these underlying commands; it orchestrates
 them. Both can be used together as needed.
@@ -178,22 +178,23 @@ them. Both can be used together as needed.
 ### Troubleshooting
 
 **Missing CSV files:**
-- Run stages in order; each stage depends on the previous
-- Ensure `.knowledge/keywords/` directory exists
+* Run stages in order; each stage depends on the previous
+* Ensure `.knowledge/keywords/` directory exists
 
 **spaCy model not found:**
+
 ```bash
 python -m spacy download en_core_web_trf
 ```
 
 **Qwen model loading errors:**
-- Ensure `transformers` and `torch` are installed
-- Check GPU memory for large models (8B parameters)
-- Use `--score-batch-size 8` for lower memory usage
+* Ensure `transformers` and `torch` are installed
+* Check GPU memory for large models (8B parameters)
+* Use `--score-batch-size 8` for lower memory usage
 
 **No candidates extracted:**
-- Verify YAML files have `id` and `text` fields
-- Check source path points to valid YAML documentation
+* Verify YAML files have `id` and `text` fields
+* Check source path points to valid YAML documentation
 
 ## Architecture Overview
 
@@ -312,21 +313,26 @@ schema compliance, deterministic structure patterns, and prevent duplicate/overl
 
 **Arguments:**
 
-- `--knowledge-path <path>`: Base knowledge directory (default: `.knowledge`)
-- `--strict`: Upgrade warnings to blocking errors
-- `--json-report <path>`: Output JSON validation report
+* `--knowledge-path <path>`: Base knowledge directory (default: `.knowledge`)
+* `--strict`: Upgrade warnings to blocking errors
+* `--json-report <path>`: Output JSON validation report
 
 **Validation Checks:**
 
-1. **Schema checks (blocking)**: Required fields present, kind_id uniqueness, alias targets exist, render plan references validated
-2. **Sample execution (blocking when samples present)**: Loads sample YAML files, extracts FieldFacts using `extract_field_facts`, verifies required fields from structure_pattern exist in element, validates contributor paths from extraction_contract
-3. **Determinism checks (blocking)**: root_path syntax validation, sibling_constraint operators, content_sniff regex patterns
-4. **Duplicate detection**: Identical patterns (blocking error), near-duplicates using Jaccard similarity (warning at threshold >= 0.8, blocking with `--strict`)
+1. **Schema checks (blocking)**: Required fields present, kind_id uniqueness, alias
+   targets exist, render plan references validated
+2. **Sample execution (blocking when samples present)**: Loads sample YAML files,
+   extracts FieldFacts using `extract_field_facts`, verifies required fields from
+   structure_pattern exist in element, validates contributor paths from extraction_contract
+3. **Determinism checks (blocking)**: root_path syntax validation, sibling_constraint
+   operators, content_sniff regex patterns
+4. **Duplicate detection**: Identical patterns (blocking error), near-duplicates using
+   Jaccard similarity (warning at threshold >= 0.8, blocking with `--strict`)
 
 **Exit Codes:**
 
-- 0: Success (or warnings only)
-- 1: Blocking errors
+* 0: Success (or warnings only)
+* 1: Blocking errors
 
 **Example Usage:**
 
@@ -343,9 +349,9 @@ uv run knowledge.validate-artifact-kinds --json-report validation_report.json
 
 **Related Files:**
 
-- Registry: `.knowledge/artifacts/kinds.yml`
-- Validation script: `scripts/knowledge/validate_artifact_kinds.py`
-- Specification: `docs/plans/fact_redesign.md` lines 341-479
+* Registry: `.knowledge/artifacts/kinds.yml`
+* Validation script: `scripts/knowledge/validate_artifact_kinds.py`
+* Specification: `docs/plans/fact_redesign.md` lines 341-479
 
 ## compare_yaml_docs.py
 
@@ -381,33 +387,36 @@ text_by_element = extract_ids_and_text(data)
 
 Each FieldFact captures:
 
-- **element_id**: ID of the element this fact belongs to
-- **field_path**: Full path (e.g., "raises[0].status_code")
-- **key**: Last segment (e.g., "status_code")
-- **scope_path**: Prefix (e.g., "raises[0]")
-- **value**: Leaf value or $ref dict
-- **value_kind**: scalar-str, scalar-num, scalar-bool, scalar-null, ref, list-scalar, list-object, object
-- **role**: constraint, entity_ref, artifact_root, metadata
-- **group_key**: Semantic grouping key (uses discriminators for known patterns)
-- **group_id**: SHA-256 hash of group_key
+* **element_id**: ID of the element this fact belongs to
+* **field_path**: Full path (e.g., "raises[0].status_code")
+* **key**: Last segment (e.g., "status_code")
+* **scope_path**: Prefix (e.g., "raises[0]")
+* **value**: Leaf value or $ref dict
+* **value_kind**: scalar-str, scalar-num, scalar-bool, scalar-null, ref, list-scalar, list-object, object
+* **role**: constraint, entity_ref, artifact_root, metadata
+* **group_key**: Semantic grouping key (uses discriminators for known patterns)
+* **group_id**: SHA-256 hash of group_key
 
 ### Role Assignment
 
 1. **entity_ref**: $ref values (value_kind == "ref")
 2. **metadata**: Known keys (doc_id, id, version_hint, kind, index, category, domain)
-3. **artifact_root**: Detected via Artifact Kind Registry using root_path matching, sibling_constraints, and content_sniff patterns
+3. **artifact_root**: Detected via Artifact Kind Registry using root_path matching,
+   sibling_constraints, and content_sniff patterns
 4. **constraint**: Default for other fields
 
 ### Constraint Grouping
 
 Default grouping uses scope_path. Known patterns use discriminators:
 
-- `http_method_defaults[*]` → `http_method_defaults::method={method}`
-- `sample_code` → `sample_code::language={language}`
+* `http_method_defaults[*]` → `http_method_defaults::method={method}`
+* `sample_code` → `sample_code::language={language}`
 
 ### Backward Compatibility
 
-`extract_ids_and_text()` continues to work for existing callers (resolution_tracker.py, candidate_extraction.py) while the FieldFact infrastructure provides structured access for new workflows.
+`extract_ids_and_text()` continues to work for existing callers (resolution_tracker.py,
+candidate_extraction.py) while the FieldFact infrastructure provides structured access
+for new workflows.
 
 See `docs/plans/fact_redesign.md` lines 143-279 for the complete specification.
 
@@ -420,14 +429,14 @@ per `docs/plans/fact_redesign.md` lines 282-569.
 
 **artifact_manager.py** - CRUD operations for artifact manifests:
 
-- `create_artifact_manifest(artifact, output_dir)`: Create manifest YAML file
-- `load_artifact_manifest(artifact_id, artifacts_dir)`: Load manifest from file
-- `update_artifact_manifest(artifact_id, updates, artifacts_dir)`: Merge updates
-- `list_artifact_manifests(artifacts_dir, filter_v1_only)`: List all manifests
-- `delete_artifact_manifest(artifact_id, artifacts_dir)`: Remove manifest file
-- `get_manifests_by_source_file(source_file, artifacts_dir)`: Filter by source
-- `get_manifests_by_kind(artifact_kind_pattern, artifacts_dir)`: Filter by kind pattern
-- `set_validation_result(artifact_id, artifacts_dir, ...)`: Update validation status
+* `create_artifact_manifest(artifact, output_dir)`: Create manifest YAML file
+* `load_artifact_manifest(artifact_id, artifacts_dir)`: Load manifest from file
+* `update_artifact_manifest(artifact_id, updates, artifacts_dir)`: Merge updates
+* `list_artifact_manifests(artifacts_dir, filter_v1_only)`: List all manifests
+* `delete_artifact_manifest(artifact_id, artifacts_dir)`: Remove manifest file
+* `get_manifests_by_source_file(source_file, artifacts_dir)`: Filter by source
+* `get_manifests_by_kind(artifact_kind_pattern, artifacts_dir)`: Filter by kind pattern
+* `set_validation_result(artifact_id, artifacts_dir, ...)`: Update validation status
 
 ### CLI Commands
 
@@ -486,18 +495,18 @@ The full lifecycle can be executed via `artifact_manager.execute_artifact_lifecy
 
 Per `docs/plans/fact_redesign.md` lines 36-42, only artifacts with:
 
-- `modality == "text"`
-- `extraction_mode == "full"`
+* `modality == "text"`
+* `extraction_mode == "full"`
 
 ...participate in current extraction/rendering pipelines. Other combinations are
 representable but bypassed. Use `--no-v1-only` in CLI commands to include all artifacts.
 
 ### Related Files
 
-- Artifact Kind Registry: `.knowledge/artifacts/kinds.yml`
-- Artifact manifests: `.knowledge/artifacts/<artifact_id>.yml`
-- Rendered artifacts: `.knowledge/artifacts/rendered/<artifact_id>.<ext>`
-- Registry validation: `uv run knowledge.validate-artifact-kinds`
+* Artifact Kind Registry: `.knowledge/artifacts/kinds.yml`
+* Artifact manifests: `.knowledge/artifacts/<artifact_id>.yml`
+* Rendered artifacts: `.knowledge/artifacts/rendered/<artifact_id>.<ext>`
+* Registry validation: `uv run knowledge.validate-artifact-kinds`
 
 See `.knowledge/README.md` "Artifact Manifests" section for schema details.
 
@@ -511,25 +520,25 @@ rendered vs source.
 
 **render_plan_manager.py** - Render plan CRUD operations:
 
-- `load_render_plan(render_plan_id, render_plans_dir)`: Load render plan YAML
-- `list_render_plans(render_plans_dir)`: List all render plans
-- `get_render_plan_for_artifact_kind(artifact_kind, render_plans_dir)`: Find plan for kind
-- `validate_render_plan_schema(plan_dict)`: Validate render plan schema
+* `load_render_plan(render_plan_id, render_plans_dir)`: Load render plan YAML
+* `list_render_plans(render_plans_dir)`: List all render plans
+* `get_render_plan_for_artifact_kind(artifact_kind, render_plans_dir)`: Find plan for kind
+* `validate_render_plan_schema(plan_dict)`: Validate render plan schema
 
 **artifact_renderer.py** - Artifact rendering logic:
 
-- `render_artifact(manifest, render_plan, artifacts_dir, rendered_dir)`: Main rendering function
-- Follows render plan steps: gather contributor facts, normalize terminology, order by
+* `render_artifact(manifest, render_plan, artifacts_dir, rendered_dir)`: Main rendering function
+* Follows render plan steps: gather contributor facts, normalize terminology, order by
   determinism rules, render with LLM or none engine, self-check
-- Returns Path to rendered artifact file
+* Returns Path to rendered artifact file
 
 **artifact_validator.py** - Artifact validation:
 
-- `validate_artifact(manifest, rendered_path, source_text, comparator)`: Main validation
-- Validation comparators: normalized_text, normalized_rows_by_discriminator,
+* `validate_artifact(manifest, rendered_path, source_text, comparator)`: Main validation
+* Validation comparators: normalized_text, normalized_rows_by_discriminator,
   structure_and_leaf_text, normalized_diff
-- `write_validation_result(result, validations_csv_path)`: Append to CSV
-- Returns ValidationResult with similarity_score, passed flag, mismatch_summary
+* `write_validation_result(result, validations_csv_path)`: Append to CSV
+* Returns ValidationResult with similarity_score, passed flag, mismatch_summary
 
 ### CLI Commands
 
@@ -608,18 +617,18 @@ extension is determined by artifact_format (.md, .yml, .json, .mmd, .txt).
 
 ### Current Implementation Status
 
-- **Implemented**: Render plan loading, artifact rendering infrastructure, validation
+* **Implemented**: Render plan loading, artifact rendering infrastructure, validation
   comparators, CLI commands, LLM rendering via Claude CLI, terminology normalization via
   variant system, embedding-based semantic similarity via Qwen3, semantic fact extraction
   (Hunter/Surgeon/Auditor pipeline), full artifact lifecycle orchestration
-- **Deferred to Task 9**: Entity resolution (correctly deferred per fact_redesign_plan.md)
+* **Deferred to Task 9**: Entity resolution (correctly deferred per fact_redesign_plan.md)
 
 ### Related Files
 
-- Render plans: `.knowledge/artifacts/render_plans/*.yml`
-- Rendered artifacts: `.knowledge/artifacts/rendered/<artifact_id>.<ext>`
-- Validation results: `.knowledge/artifacts/validations.csv`
-- Artifact manifests: `.knowledge/artifacts/<artifact_id>.yml`
+* Render plans: `.knowledge/artifacts/render_plans/*.yml`
+* Rendered artifacts: `.knowledge/artifacts/rendered/<artifact_id>.<ext>`
+* Validation results: `.knowledge/artifacts/validations.csv`
+* Artifact manifests: `.knowledge/artifacts/<artifact_id>.yml`
 
 See `.knowledge/README.md` "Render Plans" and "Artifact Validation" sections for schema details.
 
@@ -632,9 +641,9 @@ multi-domain tagging, JSONL export, and relationship edge tracking.
 
 Per `docs/plans/fact_redesign.md` lines 1565-1613:
 
-- **Structural facts**: Derived mechanically from YAML structure via FieldFacts. Form the base
+* **Structural facts**: Derived mechanically from YAML structure via FieldFacts. Form the base
   provenance layer for hashing, candidate extraction, and artifact manifests.
-- **Semantic facts**: Derived from artifact blobs via fact_extraction.py. Additive layer that
+* **Semantic facts**: Derived from artifact blobs via fact_extraction.py. Additive layer that
   does not replace structural facts.
 
 ### Key Functions
@@ -651,9 +660,9 @@ Per `docs/plans/fact_redesign.md` lines 1565-1613:
 
 ### TypedDicts
 
-- `StructuralFactRecord`: Storage format for structural facts
-- `EdgeRecord`: Relationship edge for JSONL export (containment/entity_ref)
-- `FactStoreRecord`: Updated with optional `domains` field for multi-domain tagging
+* `StructuralFactRecord`: Storage format for structural facts
+* `EdgeRecord`: Relationship edge for JSONL export (containment/entity_ref)
+* `FactStoreRecord`: Updated with optional `domains` field for multi-domain tagging
 
 ## Structural Fact Workflow
 
@@ -751,19 +760,19 @@ output_path = export_facts_to_jsonl(
 ### JSONL Record Fields
 
 **Fact records** (`record_type: "fact"`):
-- `fact_id`: UUID
-- `fact_type`: "semantic" or "structural"
-- `domains`: Array of domain tags (supports multi-domain)
-- `pattern`: Pattern name
-- `source_file`, `source_element_id`: Provenance
-- For semantic: `fact_text`, `entity`, `confidence`, `source_field_path`, `provenance`
-- For structural: `element_id`, `field_path`, `value`, `role`, etc.
+* `fact_id`: UUID
+* `fact_type`: "semantic" or "structural"
+* `domains`: Array of domain tags (supports multi-domain)
+* `pattern`: Pattern name
+* `source_file`, `source_element_id`: Provenance
+* For semantic: `fact_text`, `entity`, `confidence`, `source_field_path`, `provenance`
+* For structural: `element_id`, `field_path`, `value`, `role`, etc.
 
 **Edge records** (`record_type: "edge"`):
-- `edge_id`: UUID
-- `edge_type`: "containment" or "entity_ref"
-- `source_id`, `target_id`: Element IDs
-- `metadata`: Additional context (field_path, key)
+* `edge_id`: UUID
+* `edge_type`: "containment" or "entity_ref"
+* `source_id`, `target_id`: Element IDs
+* `metadata`: Additional context (field_path, key)
 
 ### Parsing JSONL
 
@@ -835,23 +844,23 @@ Per `docs/development/domain-definitions.yml`:
 
 ### Primary Domain Rule
 
-- Primary domain = first domain in array
-- Used for filename: `<primary_domain>.<pattern>.facts.yml`
-- If len == 1: use that domain
-- If len > 1: use first domain (not "mixed" for storage)
+* Primary domain = first domain in array
+* Used for filename: `<primary_domain>.<pattern>.facts.yml`
+* If len == 1: use that domain
+* If len > 1: use first domain (not "mixed" for storage)
 
 ## Edge List Export
 
 ### Edge Types
 
 1. **containment**: Parent→child relationships from `ContainmentEdge`
-   - Generated during YAML comparison (`compare_yaml_docs.py`)
-   - Stored in `.knowledge/graph/containment_edges.csv`
-   - Exported from CSV if exists
+   * Generated during YAML comparison (`compare_yaml_docs.py`)
+   * Stored in `.knowledge/graph/containment_edges.csv`
+   * Exported from CSV if exists
 
 2. **entity_ref**: Entity reference edges from FieldFacts
-   - Generated from structural facts with `role=="entity_ref"`
-   - Target extracted from `$ref` value
+   * Generated from structural facts with `role=="entity_ref"`
+   * Target extracted from `$ref` value
 
 ### Edge Conversion Functions
 
@@ -883,23 +892,23 @@ edge_records = entity_ref_fieldfacts_to_edge_records(field_facts)
 
 ### compare_yaml_docs.py
 
-- `extract_field_facts()`: Extracts FieldFact instances from YAML
-- `ContainmentEdge`: Dataclass for parent-child relationships
-- `FieldFact`: Dataclass for structural field facts
+* `extract_field_facts()`: Extracts FieldFact instances from YAML
+* `ContainmentEdge`: Dataclass for parent-child relationships
+* `FieldFact`: Dataclass for structural field facts
 
 ### artifact_manager.py
 
-- Uses structural facts for artifact manifest contributors
-- Links artifacts to source via `source_file`, `source_element_id`, `field_path`
+* Uses structural facts for artifact manifest contributors
+* Links artifacts to source via `source_file`, `source_element_id`, `field_path`
 
 ### artifact_fact_extractor.py
 
-- Extracts semantic facts from artifact blobs
-- Links back to structural layer via provenance fields
+* Extracts semantic facts from artifact blobs
+* Links back to structural layer via provenance fields
 
 ### Data Flow
 
-```
+```text
 YAML → FieldFacts → structural facts → artifact detection → semantic extraction → unified JSONL
                   ↓
             ContainmentEdges → containment_edges.csv → edge list
@@ -909,13 +918,13 @@ YAML → FieldFacts → structural facts → artifact detection → semantic ext
 
 Tests are in `scripts/tests/knowledge/test_fact_store.py`:
 
-- `TestDeterminePrimaryDomain`: Primary domain selection
-- `TestFieldfactToStructuralRecord`: FieldFact conversion
-- `TestStoreStructuralFacts`: Structural fact storage
-- `TestContainmentEdgesToEdgeRecords`: Containment edge conversion
-- `TestEntityRefFieldfactsToEdgeRecords`: Entity ref edge extraction
-- `TestQueryStructuralFacts`: Structural fact queries
-- `TestExportFactsToJsonl`: JSONL export
-- `TestIntegrationStructuralAndSemanticFacts`: End-to-end workflow
+* `TestDeterminePrimaryDomain`: Primary domain selection
+* `TestFieldfactToStructuralRecord`: FieldFact conversion
+* `TestStoreStructuralFacts`: Structural fact storage
+* `TestContainmentEdgesToEdgeRecords`: Containment edge conversion
+* `TestEntityRefFieldfactsToEdgeRecords`: Entity ref edge extraction
+* `TestQueryStructuralFacts`: Structural fact queries
+* `TestExportFactsToJsonl`: JSONL export
+* `TestIntegrationStructuralAndSemanticFacts`: End-to-end workflow
 
 Tests use `tmp_path` fixture for filesystem isolation.

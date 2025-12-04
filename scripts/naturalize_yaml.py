@@ -128,8 +128,6 @@ def process_yaml_file(file_path: Path) -> tuple[bool, dict]:
         item_start_match = re.match(r"^(\s*)-\s+(?!id:)(\w+):\s*(.*)$", line)
         if item_start_match:
             indent = item_start_match.group(1)
-            field = item_start_match.group(2)
-            value = item_start_match.group(3)
 
             # Check if the next line has an id field
             if i + 1 < len(lines):

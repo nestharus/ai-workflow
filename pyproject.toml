@@ -80,6 +80,8 @@ lint = "scripts.dev.lint:main"
 "review.latest" = "scripts.dev.review.latest_review:main"
 # Test runner scripts
 test-coverage = "scripts.dev.test_runner.test_coverage:main"
+# Test workflow orchestration
+test-workflow = "scripts.tasks.workflows.test_automation:main"
 # Test analysis scripts (LLM-friendly coverage querying)
 coverage-summary = "scripts.dev.test_analysis.coverage_summary:main"
 coverage-files = "scripts.dev.test_analysis.coverage_files:main"
@@ -184,7 +186,7 @@ convention = "google"
 "app/contracts/**/*.py" = ["TCH003"]
 "app/schemas/**/*.py" = ["TCH003"]
 "app/api/**/*.py" = ["TC001"]
-"scripts/**/*.py" = ["TRY003", "TCH003", "TC002", "TC001", "S608"]
+"scripts/**/*.py" = ["TRY003", "TCH003", "TC002", "TC001", "S608", "S603"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "scripts/tests"]

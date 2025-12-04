@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Apply YAML naturalization transformations to documentation files.
+
 Transformations:
 1. Remove all 'type:' fields
 2. Rename 'text:' to semantic field based on type (rule:, note:, anti_pattern:, pattern:, reference:)
@@ -20,8 +21,6 @@ def naturalize_yaml_file(file_path: Path) -> dict[str, int]:
     stats = {"types_removed": 0, "fields_renamed": 0, "collections_renamed": 0}
 
     # First pass: Analyze section content types to determine if we should rename items:
-    sections = re.findall(r"sections:.*?(?=\n\S|\Z)", content, re.DOTALL)
-
     for section_match in re.finditer(
         r"( +)- id: [^\n]+\n(?:.*?(?=\n\1- id:|\n(?!\1  )|\Z))", content, re.DOTALL
     ):

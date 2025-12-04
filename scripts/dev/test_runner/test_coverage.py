@@ -1402,16 +1402,15 @@ def main() -> int:
 
     # Run redundant test detection
     redundant_result: RedundantTestResult | None = None
-    if not args.skip_redundant_detection:
+    if not args.skip_redundant_detection and coverage_data_file.exists():
         # The coverage data file is now at .coverage/data (not .coverage which is a directory)
-        if coverage_data_file.exists():
-            print("\n" + "=" * 70)
-            print("Analyzing test coverage for redundant tests...")
-            print("=" * 70)
-            redundant_result = detect_redundant_tests(
-                coverage_data_file,
-                include_partial=args.include_partial_redundant,
-            )
+        print("\n" + "=" * 70)
+        print("Analyzing test coverage for redundant tests...")
+        print("=" * 70)
+        redundant_result = detect_redundant_tests(
+            coverage_data_file,
+            include_partial=args.include_partial_redundant,
+        )
 
     # Print summary
     print_summary(line_branch_results, usecase_results, redundant_result)

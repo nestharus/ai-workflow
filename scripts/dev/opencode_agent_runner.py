@@ -19,6 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command line arguments for OpenCode agent runner."""
     parser = argparse.ArgumentParser(description="Run an OpenCode sub-agent")
     parser.add_argument("--agent", required=True, type=str, help="Agent name")
     parser.add_argument("--prompt", required=True, type=str, help="Prompt to pass to the agent")
@@ -37,7 +38,7 @@ def run_agent(agent: str, prompt: str, *, stream_output: bool = True) -> tuple[i
         Tuple of (exit_code, stdout_output).
     """
     command = [str(PROJECT_ROOT / "opencode"), "run", "--agent", agent, prompt]
-    result = subprocess.run(command, capture_output=True, text=True, cwd=PROJECT_ROOT)
+    result = subprocess.run(command, capture_output=True, text=True, cwd=PROJECT_ROOT)  # noqa: S603
 
     if stream_output and result.stdout:
         sys.stdout.write(result.stdout)
@@ -77,6 +78,7 @@ class OpencodeRunner(_get_agent_runner_base()):
 
 
 def main() -> int:
+    """Main entry point for OpenCode agent runner."""
     try:
         args = parse_args()
         exit_code, _ = run_agent(args.agent, args.prompt)

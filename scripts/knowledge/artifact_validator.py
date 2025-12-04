@@ -258,7 +258,7 @@ def _validate_normalized_rows_by_discriminator(
                 continue
             values = [v.strip() for v in line.strip("|").split("|")]
             if len(values) == len(headers):
-                rows.append(dict(zip(headers, values)))
+                rows.append(dict(zip(headers, values, strict=True)))
 
         return headers, rows
 
@@ -331,7 +331,7 @@ def _validate_structure_and_leaf_text(
         """Recursively compare structure and values."""
         differences: list[str] = []
 
-        if type(s) != type(r):
+        if type(s) is not type(r):
             differences.append(f"{path}: type mismatch ({type(s).__name__} vs {type(r).__name__})")
             return differences
 
@@ -354,7 +354,7 @@ def _validate_structure_and_leaf_text(
             if len(s) != len(r):
                 differences.append(f"{path}: length mismatch ({len(s)} vs {len(r)})")
             else:
-                for i, (s_item, r_item) in enumerate(zip(s, r)):
+                for i, (s_item, r_item) in enumerate(zip(s, r, strict=True)):
                     item_path = f"{path}[{i}]"
                     differences.extend(compare_structure(s_item, r_item, item_path))
 
@@ -453,7 +453,9 @@ def _validate_normalized_diff(
                 ),
             )
 
-        for i, (src_code, rnd_code) in enumerate(zip(source_code_blocks, rendered_code_blocks)):
+        for i, (src_code, rnd_code) in enumerate(
+            zip(source_code_blocks, rendered_code_blocks, strict=True)
+        ):
             if src_code.strip() != rnd_code.strip():
                 return 0.0, False, f"Code block {i} differs"
 

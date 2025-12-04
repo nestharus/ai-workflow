@@ -263,7 +263,7 @@ For plans with many requirements, the primary agent should:
 
 Example workflow:
 
-```
+```text
 1. Read docs/plans/my_feature_plan.md
 2. Write task files:
    - .tmp/my_feature/task_1.md

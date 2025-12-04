@@ -560,10 +560,6 @@ def store_structural_facts(
     if "structural_facts" not in data or not isinstance(data["structural_facts"], list):
         data["structural_facts"] = []
 
-    existing_ids = {
-        fact.get("fact_id") for fact in data["structural_facts"] if isinstance(fact, dict)
-    }
-
     success_count = 0
     extracted_at = utc_timestamp()
 

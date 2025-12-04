@@ -1,4 +1,4 @@
-"""Validate keyword variant pair candidates.
+r"""Validate keyword variant pair candidates.
 
 This module provides functionality for validating keyword variant pair candidates,
 recording merge decisions with canonical form selection and reasoning.

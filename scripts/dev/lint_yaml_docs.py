@@ -185,7 +185,9 @@ def validate_sections(
                     file_path=file_path,
                     line=None,
                     error_type="invalid_section_type",
-                    message=f"Section at index {index} must be a dict, got {type(section).__name__}",
+                    message=(
+                        f"Section at index {index} must be a dict, got {type(section).__name__}"
+                    ),
                 )
             )
             continue

@@ -1,4 +1,4 @@
-"""CLI script for querying artifact manifests.
+r"""CLI script for querying artifact manifests.
 
 This script provides commands for querying and filtering artifact manifests
 stored in `.knowledge/artifacts/`.

@@ -121,8 +121,6 @@ def strip_markdown_bold(content: str) -> str:
         plain_start = re.match(r"^(\s*)(\w+):\s+(.+)$", line)
         if plain_start and not line.rstrip().endswith("|") and not line.rstrip().endswith(">"):
             indent = plain_start.group(1)
-            field_name = plain_start.group(2)
-            first_value = plain_start.group(3)
             cont_indent = indent + "  "
 
             # Check if this field continues on next lines
@@ -273,14 +271,14 @@ def fix_double_quoted_field(content: str, field_name: str) -> str:
 
 
 def unescape_double_quoted(content: str) -> str:
-    """Unescape a double-quoted YAML string.
+    r"""Unescape a double-quoted YAML string.
 
     YAML double-quoted strings support:
-    - \\n for newlines
-    - \\" for literal quotes
-    - \\\\ for literal backslash
-    - \\ followed by space = escaped space (just becomes a space)
-    - \\ followed by actual newline for line continuation (folding)
+    - \n for newlines
+    - \" for literal quotes
+    - \\ for literal backslash
+    - \ followed by space = escaped space (just becomes a space)
+    - \ followed by actual newline for line continuation (folding)
     """
     # First, handle YAML line continuations: backslash followed by
     # actual newline and optional leading whitespace on next line.
