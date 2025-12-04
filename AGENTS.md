@@ -175,36 +175,71 @@ Generates the OpenAPI 3.1 schema JSON file from the FastAPI application code.
 
 ## Sub-agents
 
-This project includes specialized Claude sub-agents for automated task delegation.
-Sub-agents are defined in `.claude/agents/` and can be invoked via the Task tool.
+This project has two distinct agent systems with strict call-boundary rules.
 
-**Important**: All sub-agents contain their own instructions. Always pass an empty string
-(`""`) for the prompt parameter to avoid overriding their built-in workflows.
+### Call-Boundary Invariant
 
-### lint-fixer
+**IMPORTANT**: The `.tasks` orchestration system (including `apply_plan` and all
+scripts under `scripts/tasks/workflows/`) must ONLY dispatch to agents defined in
+`.tasks/agents/`. These workflows must NOT invoke `.claude/agents/` agents directly.
+This separation ensures that orchestration agents have consistent behavior and can
+be tested independently.
+
+### Claude Code Sub-agents (Manual Use Only)
+
+These agents are defined in `.claude/agents/` and can be invoked manually via the
+Task tool during interactive Claude Code sessions. They are NOT called
+programmatically from `.tasks` orchestration workflows.
+
+**Important**: All sub-agents contain their own instructions. Always pass an empty
+string (`""`) for the prompt parameter to avoid overriding their built-in workflows.
+
+#### lint-fixer
 
 Resolves and fixes lint errors iteratively until all issues pass.
 
 * **Invocation**: `Task(subagent_type="lint-fixer", prompt="")`
 * **Prompt**: `""` (empty string required)
+* **Use case**: Manual invocation when you need to fix lint errors interactively
 
-### test-fixer
+#### test-fixer
 
 Runs all tests, debugs failures, and ensures coverage requirements are met.
 
 * **Invocation**: `Task(subagent_type="test-fixer", prompt="")`
 * **Prompt**: `""` (empty string required)
+* **Use case**: Manual invocation when you need to debug test failures interactively
+* **Note**: This agent is for direct manual use only; `.tasks` workflows use the
+  separate `test-debugger` agent in `.tasks/agents/` for programmatic test debugging
 
-### knowledge-analyzer
+#### knowledge-analyzer
 
 Analyzes YAML documentation items with chunking and multi-dimensional classification.
 
 * **Invocation**: `Task(subagent_type="knowledge-analyzer", prompt="")`
 * **Prompt**: `""` (empty string required)
+* **Use case**: Manual invocation for documentation analysis tasks
+
+### Tasks Orchestration Agents
+
+These agents are defined in `.tasks/agents/` and are called programmatically by
+the `.tasks` orchestration system. They follow a different frontmatter format and
+are managed separately from Claude Code sub-agents.
+
+Key orchestration agents include:
+
+* `implementor` - Implements tasks from plan files
+* `test-debugger` - Debugs failing tests reported by implementor
+* `task-patcher` - Updates task files when source plan changes
+* `implementation-analyzer` - Analyzes implementation failures
+
+See `.tasks/agents/` for the full list. These agents are invoked via
+`_run_tasks_agent()` in the orchestration code and should not be called directly
+via the Task tool.
 
 ### Creating New Sub-agents
 
-Sub-agents are Markdown files with YAML frontmatter in `.claude/agents/`:
+Claude Code sub-agents are Markdown files with YAML frontmatter in `.claude/agents/`:
 
 ```markdown
 ---
@@ -216,6 +251,9 @@ tools: Read, Edit, Bash, Grep, Glob
 
 System prompt instructions for the agent...
 ```
+
+Tasks orchestration agents use a different format in `.tasks/agents/` - see existing
+agents in that directory for the schema.
 
 ## Plan Execution Guidelines
 

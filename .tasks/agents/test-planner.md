@@ -87,10 +87,69 @@ When the prompt contains "Mode: review" and includes written test files:
 4. Verify assertions match plan specifications
 5. Confirm edge cases are covered as planned
 
-Output one of:
-- COMPLETE: plan satisfied
-- INCOMPLETE: <list of missing tests or gaps>
-- BLOCKED: <reason review cannot proceed>
+### Review Output Contract
+
+**IMPORTANT**: Review mode outputs MUST conform to `docs/schemas/test-planner-review.schema.json`. Output structured YAML data after the `PLAN_REVIEW:` marker.
+
+**COMPLETE Status** (plan satisfied):
+```yaml
+PLAN_REVIEW:
+status: "COMPLETE"
+summary: "All planned tests implemented successfully"
+```
+
+For backward compatibility, you may also output the text prefix:
+```
+COMPLETE: plan satisfied
+```
+
+**INCOMPLETE Status** (tests have gaps):
+```yaml
+PLAN_REVIEW:
+status: "INCOMPLETE"
+gaps:
+  - category: "missing_test"
+    description: "test_get_user_profile_returns_404_for_missing_user not implemented"
+    plan_reference: "Test Functions[2]"
+    test_file: "tests/integration/test_user_endpoints.py"
+    severity: "high"
+  - category: "missing_usecase_marker"
+    description: "test_create_user missing @pytest.mark.usecase marker"
+    plan_reference: "Test Functions[1]"
+    test_file: "tests/integration/test_user_endpoints.py"
+    severity: "medium"
+```
+
+For backward compatibility, you may also output the text prefix:
+```
+INCOMPLETE: <list of missing tests or gaps>
+```
+
+**BLOCKED Status** (cannot review):
+```yaml
+PLAN_REVIEW:
+status: "BLOCKED"
+reason: "Cannot review - test plan document is missing or malformed"
+```
+
+For backward compatibility, you may also output the text prefix:
+```
+BLOCKED: <reason review cannot proceed>
+```
+
+### Review Schema Fields
+
+The review output schema (`docs/schemas/test-planner-review.schema.json`) defines:
+
+- **status** (required): One of `COMPLETE`, `INCOMPLETE`, or `BLOCKED`
+- **gaps** (required when status is `INCOMPLETE`): Array of gap objects, each containing:
+  - **category** (required): One of `missing_test`, `missing_assertion`, `missing_usecase_marker`, `wrong_tier`, `missing_edge_case`, `incomplete_setup`, `missing_fixture`
+  - **description** (required): Detailed description of the gap
+  - **plan_reference** (optional): Reference to plan section (e.g., `Test Functions[2]`)
+  - **test_file** (optional): Path to the test file where the gap was found
+  - **severity** (required): One of `high`, `medium`, or `low`
+- **reason** (required when status is `BLOCKED`): Explanation for why review is blocked
+- **summary** (optional): Summary message for any status
 
 ## Output Contract
 

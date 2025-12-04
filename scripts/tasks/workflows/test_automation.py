@@ -79,6 +79,16 @@ def _get_review_schema_validator() -> jsonschema.Draft7Validator:
     return jsonschema.Draft7Validator(schema)
 
 
+def _get_plan_review_schema_validator() -> jsonschema.Draft7Validator:
+    """Get a cached Draft7Validator for the plan review schema.
+
+    Returns:
+        Configured Draft7Validator instance.
+    """
+    schema = _load_schema("test-planner-review.schema.json")
+    return jsonschema.Draft7Validator(schema)
+
+
 # Type alias for workflow states
 TestWorkflowState = Literal[
     "init",
@@ -339,6 +349,41 @@ class StrategyReviewOutputStructured(TypedDict, total=False):
     status: Literal["APPROVED", "FEEDBACK", "BLOCKED"]
     issues: list[ReviewIssue]
     reason: str
+
+
+# Type alias for plan review gap categories
+PlanReviewGapCategory = Literal[
+    "missing_test",
+    "missing_assertion",
+    "missing_usecase_marker",
+    "wrong_tier",
+    "missing_edge_case",
+    "incomplete_setup",
+    "missing_fixture",
+]
+
+
+class PlanReviewGap(TypedDict, total=False):
+    """A gap identified during plan review."""
+
+    category: PlanReviewGapCategory
+    description: str
+    plan_reference: str
+    test_file: str
+    severity: IssueSeverity
+
+
+class PlanReviewOutputStructured(TypedDict, total=False):
+    """Structured output from test-planner agent (review mode).
+
+    This follows the test-planner-review.schema.json format.
+    All fields are optional except status.
+    """
+
+    status: Literal["COMPLETE", "INCOMPLETE", "BLOCKED"]
+    gaps: list[PlanReviewGap]
+    reason: str
+    summary: str
 
 
 # -----------------------------------------------------------------------------
@@ -1347,25 +1392,210 @@ def parse_debugger_output(output: str) -> tuple[str, str]:
 def parse_plan_review_output(output: str) -> tuple[str, str]:
     """Parse test-planner agent review mode output.
 
+    Delegates to parse_plan_review_output_structured for parsing and
+    converts the structured result to the legacy tuple format.
+
     Args:
         output: Stdout from test-planner agent in review mode.
 
     Returns:
         Tuple of (status, content) where status is "complete", "incomplete", or "blocked".
     """
+    # Delegate to structured parser
+    structured = parse_plan_review_output_structured(output)
+
+    # Convert structured result to legacy tuple format
+    status = structured["status"].lower()
+
+    if status == "complete":
+        summary = structured.get("summary", "plan satisfied")
+        return "complete", summary
+
+    if status == "incomplete":
+        # Extract gap content from structured result
+        gaps = structured.get("gaps", [])
+        if gaps:
+            # Concatenate all gap descriptions
+            content = "\n".join(gap.get("description", str(gap)) for gap in gaps)
+            return "incomplete", content
+        return "incomplete", ""
+
+    # blocked
+    return "blocked", structured.get("reason", "Unrecognized plan review response")
+
+
+def parse_plan_review_output_structured(output: str) -> PlanReviewOutputStructured:
+    r"""Parse test-planner agent review mode output and extract structured data.
+
+    Extracts status (COMPLETE/INCOMPLETE/BLOCKED) and parses structured YAML
+    if present after the PLAN_REVIEW: marker. Implements graceful fallback
+    for unstructured output.
+
+    Args:
+        output: Stdout from test-planner agent in review mode.
+
+    Returns:
+        PlanReviewOutputStructured dict with status and optional
+        gaps/reason/summary fields. For unstructured output, extracts status
+        and puts raw text in appropriate field.
+
+    Examples:
+        >>> output = "COMPLETE: plan satisfied"
+        >>> result = parse_plan_review_output_structured(output)
+        >>> result['status']
+        'COMPLETE'
+
+        >>> output = "PLAN_REVIEW:\\n```yaml\\nstatus: INCOMPLETE\\ngaps:\\n```"
+        >>> result = parse_plan_review_output_structured(output)
+        >>> result['status']
+        'INCOMPLETE'
+    """
+    # First check for structured PLAN_REVIEW: marker
+    plan_review_match = re.search(r"PLAN_REVIEW:\s*(.+)", output, re.IGNORECASE | re.DOTALL)
+    if plan_review_match:
+        content = plan_review_match.group(1).strip()
+        return _parse_plan_review_with_yaml(content)
+
+    # Fall back to text prefix parsing for backward compatibility
     complete_match = re.search(r"COMPLETE:\s*(.+)", output, re.IGNORECASE)
     if complete_match:
-        return "complete", complete_match.group(1).strip()
+        return PlanReviewOutputStructured(
+            status="COMPLETE", summary=complete_match.group(1).strip()
+        )
 
     incomplete_match = re.search(r"INCOMPLETE:\s*(.+)", output, re.IGNORECASE | re.DOTALL)
     if incomplete_match:
-        return "incomplete", incomplete_match.group(1).strip()
+        content = incomplete_match.group(1).strip()
+        # Create a single gap from the raw content
+        return PlanReviewOutputStructured(
+            status="INCOMPLETE",
+            gaps=[
+                {
+                    "category": "missing_test",
+                    "description": content,
+                    "severity": "medium",
+                }
+            ],
+        )
 
     blocked_match = re.search(r"BLOCKED:\s*(.+)", output, re.IGNORECASE | re.DOTALL)
     if blocked_match:
-        return "blocked", blocked_match.group(1).strip()
+        return PlanReviewOutputStructured(status="BLOCKED", reason=blocked_match.group(1).strip())
 
-    return "blocked", "Unrecognized plan review response"
+    # Unrecognized format - return BLOCKED with raw output
+    return PlanReviewOutputStructured(
+        status="BLOCKED", reason=f"Unrecognized plan review response: {output.strip()}"
+    )
+
+
+def _parse_plan_review_with_yaml(content: str) -> PlanReviewOutputStructured:
+    """Helper to parse plan review content with optional YAML structure.
+
+    Parses the content, validates against the plan review schema, and returns
+    structured data with graceful fallback on validation errors.
+
+    Args:
+        content: The content after PLAN_REVIEW: marker.
+
+    Returns:
+        PlanReviewOutputStructured with parsed data or graceful fallback.
+    """
+    # Try to extract YAML block
+    yaml_block_match = re.search(
+        r"```(?:yaml|yml)\s*\n(.+?)\n```", content, re.IGNORECASE | re.DOTALL
+    )
+
+    yaml_content = yaml_block_match.group(1).strip() if yaml_block_match else content
+
+    # Attempt to parse YAML
+    try:
+        parsed_data = yaml.safe_load(yaml_content)
+
+        if isinstance(parsed_data, dict):
+            # Extract status - required field
+            status_raw = parsed_data.get("status", "BLOCKED")
+            status: Literal["COMPLETE", "INCOMPLETE", "BLOCKED"]
+            if status_raw.upper() == "COMPLETE":
+                status = "COMPLETE"
+            elif status_raw.upper() == "INCOMPLETE":
+                status = "INCOMPLETE"
+            else:
+                status = "BLOCKED"
+
+            result = PlanReviewOutputStructured(status=status)
+
+            # Extract optional fields based on status
+            if status == "COMPLETE":
+                if "summary" in parsed_data:
+                    result["summary"] = str(parsed_data["summary"])
+
+            elif status == "INCOMPLETE":
+                # Look for gaps array
+                if "gaps" in parsed_data and isinstance(parsed_data["gaps"], list):
+                    result["gaps"] = parsed_data["gaps"]
+                else:
+                    # No structured gaps - put raw content as single gap
+                    result["gaps"] = [
+                        {
+                            "category": "missing_test",
+                            "description": content,
+                            "severity": "medium",
+                        }
+                    ]
+
+            elif status == "BLOCKED":
+                # Look for reason string
+                if "reason" in parsed_data:
+                    result["reason"] = str(parsed_data["reason"])
+                else:
+                    # No structured reason - use raw content
+                    result["reason"] = content
+
+            # Add summary if present (any status)
+            if "summary" in parsed_data and "summary" not in result:
+                result["summary"] = str(parsed_data["summary"])
+
+            # Validate against JSON Schema
+            try:
+                validator = _get_plan_review_schema_validator()
+                validator.validate(dict(result))
+            except jsonschema.ValidationError as ve:
+                # Validation failed - return fallback with error details
+                error_path = (
+                    ".".join(str(p) for p in ve.absolute_path) if ve.absolute_path else "root"
+                )
+                error_msg = f"Schema validation failed at '{error_path}': {ve.message}"
+                fallback = PlanReviewOutputStructured(status=status)
+                if status == "INCOMPLETE":
+                    fallback["gaps"] = [
+                        {
+                            "category": "missing_test",
+                            "description": f"{content}\n\n(Validation error: {error_msg})",
+                            "severity": "medium",
+                        }
+                    ]
+                elif status == "BLOCKED":
+                    fallback["reason"] = f"{content}\n\n(Validation error: {error_msg})"
+                return fallback
+            except (FileNotFoundError, json.JSONDecodeError):
+                # Schema loading failed - continue with parsed result
+                pass
+
+            return result
+
+    except (yaml.YAMLError, ValueError, AttributeError):
+        # YAML parsing failed - use graceful fallback
+        pass
+
+    # Fallback: try to determine status from raw content
+    if "COMPLETE" in content.upper():
+        return PlanReviewOutputStructured(status="COMPLETE", summary=content)
+    if "INCOMPLETE" in content.upper():
+        return PlanReviewOutputStructured(
+            status="INCOMPLETE",
+            gaps=[{"category": "missing_test", "description": content, "severity": "medium"}],
+        )
+    return PlanReviewOutputStructured(status="BLOCKED", reason=content)
 
 
 def extract_written_files(writer_output: str) -> list[str]:

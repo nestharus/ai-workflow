@@ -541,7 +541,11 @@ When the prompt contains "Mode: review" and includes both a strategy and plan:
 4. Verify testing patterns align with strategy guidance
 5. Confirm edge cases from strategy are planned
 
-Output structured YAML data after the `STRATEGY:` marker, adhering to `docs/schemas/test-strategy-review.schema.json`:
+### Review Output Contract
+
+**IMPORTANT**: Review mode outputs MUST conform to `docs/schemas/test-strategy-review.schema.json`. When structured YAML is used after the `STRATEGY:` marker, its shape must match the `status/issues/reason` fields described in the schema.
+
+Output structured YAML data after the `STRATEGY:` marker:
 
 **APPROVED Status** (plan satisfies strategy):
 ```yaml
@@ -554,20 +558,37 @@ status: "APPROVED"
 STRATEGY:
 status: "FEEDBACK"
 issues:
-  - category: "missing_tier" | "wrong_coverage_type" | "missing_edge_case" | "pattern_mismatch" | "insufficient_coverage" | "wrong_tier_assignment" | "missing_use_case" | "incomplete_mocking" | "missing_fixture"
-    description: "Detailed description of the issue"
-    strategy_reference: "tier_assignments[0].functions[1]"  # optional reference to strategy section
-    severity: "high" | "medium" | "low"
+  - category: "missing_tier"
+    description: "Integration tests missing for user deletion endpoint"
+    strategy_reference: "tier_assignments[0].functions[1]"
+    severity: "high"
+  - category: "missing_edge_case"
+    description: "Plan does not include tests for duplicate email scenario"
+    strategy_reference: "edge_cases[0]"
+    severity: "medium"
 ```
 
 **BLOCKED Status** (cannot review):
 ```yaml
 STRATEGY:
 status: "BLOCKED"
-reason: "Explanation for why the review is blocked (e.g., missing required inputs)"
+reason: "Cannot review - strategy document is missing or malformed"
 ```
 
-**Issue Categories:**
+### Review Schema Fields
+
+The review output schema (`docs/schemas/test-strategy-review.schema.json`) defines:
+
+- **status** (required): One of `APPROVED`, `FEEDBACK`, or `BLOCKED`
+- **issues** (required when status is `FEEDBACK`): Array of issue objects, each containing:
+  - **category** (required): One of the issue categories listed below
+  - **description** (required): Detailed description of the issue
+  - **strategy_reference** (optional): Reference to strategy section (e.g., `tier_assignments[0].functions[1]`)
+  - **severity** (required): One of `high`, `medium`, or `low`
+- **reason** (required when status is `BLOCKED`): Explanation for why review is blocked
+
+### Issue Categories
+
 - `missing_tier`: Test tier specified in strategy is missing from plan
 - `wrong_coverage_type`: Plan uses wrong coverage type (line_branch vs use_case)
 - `missing_edge_case`: Edge case from strategy not covered in plan
