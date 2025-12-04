@@ -18,7 +18,6 @@ from typing import Any
 
 from scripts.dev.test_analysis.common import (
     format_percentage,
-    is_excluded_function,
     is_excluded_path,
     load_coverage_llm,
 )
@@ -86,17 +85,15 @@ def get_file_details(data: dict[str, Any], file_path: str) -> dict[str, Any] | N
 
     for func in all_functions:
         if func.get("file") == file_path:
-            func_name = func.get("function", "")
-            if not is_excluded_function(file_path, func_name):
-                functions_below.append(
-                    {
-                        "name": func_name,
-                        "line_coverage": func.get("line_coverage_pct", 0),
-                        "branch_coverage": func.get("branch_coverage_pct", 0),
-                        "missing_lines": func.get("missing_lines", []),
-                        "missing_branches": func.get("missing_branches", []),
-                    }
-                )
+            functions_below.append(
+                {
+                    "name": func.get("function", ""),
+                    "line_coverage": func.get("line_coverage_pct", 0),
+                    "branch_coverage": func.get("branch_coverage_pct", 0),
+                    "missing_lines": func.get("missing_lines", []),
+                    "missing_branches": func.get("missing_branches", []),
+                }
+            )
 
     if not missing_lines and not missing_branches and not functions_below:
         return None

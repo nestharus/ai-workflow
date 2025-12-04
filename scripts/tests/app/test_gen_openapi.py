@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import os
-from unittest.mock import patch
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from scripts.app.gen_openapi import (
+    OpenAPISchemaTypeError,
+    SchemaSerializationError,
     _debug_enabled,
     _is_local_environment,
+    build_application,
+    generate_schema,
     main,
+    normalize_openapi_schema,
+    parse_args,
+    write_schema,
 )
 
 
@@ -155,3 +164,139 @@ class TestMain:
 
         captured = capsys.readouterr()
         assert "Traceback" in captured.err or "RuntimeError" in captured.err
+
+
+class TestExceptionClasses:
+    """Tests for exception classes."""
+
+    def test_openapi_schema_type_error_message(self) -> None:
+        """Test OpenAPISchemaTypeError includes type name."""
+        exc = OpenAPISchemaTypeError("str")
+        assert "str" in str(exc)
+        assert "dict" in str(exc).lower()
+
+    def test_schema_serialization_error_message(self) -> None:
+        """Test SchemaSerializationError has correct message."""
+        exc = SchemaSerializationError()
+        assert "serialize" in str(exc).lower() or "failed" in str(exc).lower()
+
+
+class TestBuildApplication:
+    """Tests for build_application function."""
+
+    def test_imports_and_returns_fastapi_app(self) -> None:
+        """Test build_application returns a FastAPI app."""
+        # Need to have credentials set for this to work
+        with patch.dict(os.environ, {
+            "SURREALDB_USER": "TestUser1!Abc#",
+            "SURREALDB_PASS": "TestPass1!Xyz$",
+        }):
+            app = build_application()
+            # Verify it's a FastAPI app
+            assert hasattr(app, "openapi")
+
+
+class TestGenerateSchema:
+    """Tests for generate_schema function."""
+
+    def test_returns_schema_dict(self) -> None:
+        """Test generate_schema returns the OpenAPI schema dict."""
+        mock_app = MagicMock()
+        mock_app.openapi.return_value = {"openapi": "3.1.0", "info": {"title": "Test"}}
+
+        result = generate_schema(mock_app)
+
+        assert isinstance(result, dict)
+        assert "openapi" in result
+        mock_app.openapi.assert_called_once()
+
+    def test_raises_for_non_dict_schema(self) -> None:
+        """Test generate_schema raises for non-dict schema."""
+        mock_app = MagicMock()
+        mock_app.openapi.return_value = "not a dict"
+
+        with pytest.raises(OpenAPISchemaTypeError):
+            generate_schema(mock_app)
+
+
+class TestNormalizeOpenAPISchema:
+    """Tests for normalize_openapi_schema function."""
+
+    def test_removes_unsupported_keys(self) -> None:
+        """Test that unsupported keys are removed."""
+        schema: dict[str, Any] = {
+            "openapi": "3.0.0",
+            "info": {"title": "Test"},
+            "paths": {},
+            "unsupported_key": "value",
+        }
+
+        result = normalize_openapi_schema(schema)
+
+        assert "unsupported_key" not in result
+        assert "info" in result
+        assert "paths" in result
+
+    def test_preserves_vendor_extensions(self) -> None:
+        """Test that x-* vendor extensions are preserved."""
+        schema: dict[str, Any] = {
+            "openapi": "3.0.0",
+            "info": {"title": "Test"},
+            "x-custom-extension": "custom value",
+        }
+
+        result = normalize_openapi_schema(schema)
+
+        assert "x-custom-extension" in result
+        assert result["x-custom-extension"] == "custom value"
+
+    def test_sets_openapi_version_to_3_1_0(self) -> None:
+        """Test that openapi version is set to 3.1.0."""
+        schema: dict[str, Any] = {"openapi": "3.0.0", "info": {}}
+
+        result = normalize_openapi_schema(schema)
+
+        assert result["openapi"] == "3.1.0"
+
+
+class TestWriteSchema:
+    """Tests for write_schema function."""
+
+    def test_writes_json_to_file(self, tmp_path: Path) -> None:
+        """Test write_schema writes JSON to the specified path."""
+        output_path = tmp_path / "output" / "schema.json"
+        schema: dict[str, Any] = {"openapi": "3.1.0", "info": {"title": "Test"}}
+
+        write_schema(schema, output_path)
+
+        assert output_path.exists()
+        content = output_path.read_text()
+        assert "openapi" in content
+        assert "3.1.0" in content
+
+    def test_creates_parent_directories(self, tmp_path: Path) -> None:
+        """Test write_schema creates parent directories."""
+        output_path = tmp_path / "deep" / "nested" / "dir" / "schema.json"
+        schema: dict[str, Any] = {"openapi": "3.1.0"}
+
+        write_schema(schema, output_path)
+
+        assert output_path.exists()
+
+
+class TestParseArgs:
+    """Tests for parse_args function."""
+
+    def test_default_output_path(self) -> None:
+        """Test default output path when no args provided."""
+        with patch("sys.argv", ["gen_openapi"]):
+            args = parse_args()
+
+        assert args.output == Path("openapi/openapi.json")
+
+    def test_custom_output_path(self) -> None:
+        """Test custom output path from command line."""
+        with patch("sys.argv", ["gen_openapi", "--output", "custom/path.json"]):
+            args = parse_args()
+
+        assert args.output == Path("custom/path.json")

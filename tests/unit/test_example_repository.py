@@ -171,6 +171,53 @@ class TestListPaginated:
         assert "ORDER BY processed_at DESC" in data_query
 
 
+class TestSaveProcessedMessage:
+    """Tests for ExampleRepository.save_processed_message method."""
+
+    @pytest.mark.asyncio
+    async def test_save_processed_message_executes_query(
+        self, mock_pool: MagicMock, mock_duckdb_client: AsyncMock
+    ) -> None:
+        """Test that save_processed_message executes correct query."""
+        mock_conn = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        repository = ExampleRepository(pool=mock_pool, duckdb_client=mock_duckdb_client)
+        dt = datetime(2024, 6, 15, 14, 0, 0, tzinfo=UTC)
+
+        await repository.save_processed_message(
+            content="Test content",
+            message_type="info",
+            processed_at=dt,
+        )
+
+        mock_conn.query.assert_called_once()
+        call_args = mock_conn.query.call_args
+        assert "CREATE processed_messages SET" in call_args[0][0]
+        assert call_args[0][1]["content"] == "Test content"
+        assert call_args[0][1]["type"] == "info"
+
+    @pytest.mark.asyncio
+    async def test_save_processed_message_includes_timestamp_iso_format(
+        self, mock_pool: MagicMock, mock_duckdb_client: AsyncMock
+    ) -> None:
+        """Test that timestamp is saved in ISO format."""
+        mock_conn = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        repository = ExampleRepository(pool=mock_pool, duckdb_client=mock_duckdb_client)
+        dt = datetime(2024, 6, 15, 14, 30, 45, tzinfo=UTC)
+
+        await repository.save_processed_message(
+            content="Test",
+            message_type="warning",
+            processed_at=dt,
+        )
+
+        call_args = mock_conn.query.call_args
+        assert call_args[0][1]["processed_at"] == "2024-06-15T14:30:45+00:00"
+
+
 class TestMapToProcessedMessage:
     """Tests for the _map_to_processed_message static method."""
 

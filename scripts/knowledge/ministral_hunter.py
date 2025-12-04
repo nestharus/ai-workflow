@@ -1,18 +1,25 @@
 """Ministral Hunter module for entity discovery and fact extraction.
 
 This module provides functionality for entity discovery and fact extraction using
-the Ministral-3-8B-Instruct model from HuggingFace. It implements the Hunter role
-in the multi-agent extraction pipeline as specified in docs/plans/fact_redesign.md.
+the HuggingFace agent runner with the ministral-recognizer agent. It implements
+the Hunter role in the multi-agent extraction pipeline as specified in
+docs/plans/fact_redesign.md.
 
 The Hunter is optimized for recall over precision, returning minimal spans containing
 facts about target entities with explicit termination signals when extraction is complete.
 
+Note:
+    This module now delegates model inference to the huggingface_agent_runner via
+    subprocess invocation. Direct model loading is no longer required.
+
 Usage:
     # Entity discovery mode
-    entities = invoke_hunter(state_text, mode='entities')
+    entities = invoke_hunter(state_text, mode='entities', knowledge_path=knowledge_path)
 
     # Fact extraction mode
-    facts = invoke_hunter(state_text, target_entity='create_app', mode='facts')
+    facts = invoke_hunter(
+        state_text, target_entity='create_app', mode='facts', knowledge_path=knowledge_path
+    )
 
 Modes:
     - entities: Discover all entities mentioned in the text
@@ -37,14 +44,12 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from scripts.dev.utils import REPO_ROOT
-
-if TYPE_CHECKING:
-    from transformers import PreTrainedModel, PreTrainedTokenizer
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -240,38 +245,70 @@ def _log_interaction(
         logger.warning("Failed to write hunter log: %s", e)
 
 
-def load_ministral_model(
-    model_name: str = "mistralai/Ministral-3B-Instruct-2412",
-) -> tuple[PreTrainedModel, PreTrainedTokenizer]:
-    """Load Ministral model and tokenizer from HuggingFace.
-
-    Note: The default model is Ministral-3B-Instruct-2412 as a reasonable starting
-    point. For larger models like Ministral-8B, ensure sufficient GPU memory.
+def _invoke_huggingface_agent(
+    agent_name: str,
+    input_json: dict[str, Any],
+    timeout: int,
+    knowledge_path: Path,
+) -> dict[str, Any]:
+    """Invoke a HuggingFace agent via subprocess.
 
     Args:
-        model_name: HuggingFace model name (default: mistralai/Ministral-3B-Instruct-2412).
+        agent_name: Name of the agent (e.g., 'ministral-recognizer').
+        input_json: JSON input to send to the agent.
+        timeout: Timeout in seconds.
+        knowledge_path: Base knowledge directory for logging.
 
     Returns:
-        Tuple of (model, tokenizer).
+        Parsed JSON output from the agent.
 
     Raises:
-        HunterError: If model loading fails.
+        HunterError: If invocation fails, times out, or returns invalid JSON.
     """
-    try:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+    log_dir = _ensure_log_dir(knowledge_path)
+    prompt_str = json.dumps(input_json)
 
-        logger.info("Loading Ministral model: %s", model_name)
-        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            device_map="auto",
+    try:
+        result = subprocess.run(  # noqa: S603
+            [
+                "uv",
+                "run",
+                "agent.huggingface",
+                "--agent",
+                agent_name,
+                "--prompt",
+                prompt_str,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=REPO_ROOT,
         )
-        model.eval()
-        logger.info("Model loaded successfully")
-        return model, tokenizer
-    except Exception as e:
-        raise HunterError(f"Failed to load Ministral model '{model_name}': {e}") from e
+    except subprocess.TimeoutExpired as e:
+        raise HunterError(f"Agent {agent_name} timed out after {timeout}s: {e}") from e
+    except FileNotFoundError as e:
+        raise HunterError(f"uv CLI not found: {e}") from e
+    except subprocess.SubprocessError as e:
+        raise HunterError(f"Agent invocation failed: {e}") from e
+
+    if result.returncode != 0:
+        raise HunterError(
+            f"Agent {agent_name} returned non-zero exit code "
+            f"{result.returncode}: {result.stderr}"
+        )
+
+    # Parse JSON output from stdout
+    stdout = result.stdout.strip()
+    if not stdout:
+        raise HunterError(f"Agent {agent_name} returned empty output")
+
+    # Log the interaction with target_entity metadata
+    target_entity = input_json.get("target_entity")
+    _log_interaction(
+        log_dir, prompt_str, stdout, input_json.get("mode", "unknown"), target_entity
+    )
+
+    return _parse_json_response(stdout)
 
 
 def _parse_json_response(response: str) -> dict[str, Any]:
@@ -327,24 +364,30 @@ def invoke_hunter(
     state_text: str,
     target_entity: str | None = None,
     mode: Literal["entities", "facts"] = "entities",
-    model: PreTrainedModel | None = None,
-    tokenizer: PreTrainedTokenizer | None = None,
-    model_name: str = "mistralai/Ministral-3B-Instruct-2412",
+    model: Any | None = None,  # noqa: ANN401 - Deprecated, ignored
+    tokenizer: Any | None = None,  # noqa: ANN401 - Deprecated, ignored
+    model_name: str = "mistralai/Ministral-3B-Instruct-2412",  # Deprecated, ignored
     knowledge_path: Path | None = None,
     timeout: int = 120,
 ) -> HunterOutput:
     """Invoke the Hunter for entity discovery or fact extraction.
 
-    This function runs inference with the Ministral model to either discover
-    entities in the text or extract facts about a specific entity.
+    This function delegates to the ministral-recognizer agent via the
+    huggingface_agent_runner subprocess. It either discovers entities in the text
+    or extracts facts about a specific entity.
+
+    Note:
+        The `model`, `tokenizer`, and `model_name` parameters are deprecated and
+        ignored. Model loading is now handled by the agent runner, which reads
+        the model configuration from the agent's frontmatter.
 
     Args:
         state_text: The current state text to analyze.
         target_entity: Target entity for fact extraction (required for 'facts' mode).
         mode: 'entities' for entity discovery, 'facts' for fact extraction.
-        model: Pre-loaded Ministral model (optional, will load if not provided).
-        tokenizer: Pre-loaded tokenizer (optional, will load if not provided).
-        model_name: HuggingFace model name to load if model not provided.
+        model: Deprecated. Ignored.
+        tokenizer: Deprecated. Ignored.
+        model_name: Deprecated. Ignored.
         knowledge_path: Base knowledge directory for logging (default: .knowledge).
         timeout: Timeout in seconds for inference (default: 120).
 
@@ -355,6 +398,9 @@ def invoke_hunter(
         HunterError: If inference fails, JSON parsing fails, or required fields missing.
         ValueError: If mode is 'facts' but target_entity is not provided.
     """
+    # Silence unused variable warnings for deprecated params
+    _ = model, tokenizer, model_name
+
     if mode == "facts" and not target_entity:
         raise ValueError("target_entity is required for 'facts' mode")
 
@@ -364,55 +410,23 @@ def invoke_hunter(
     elif not knowledge_path.is_absolute():
         knowledge_path = REPO_ROOT / knowledge_path
 
-    log_dir = _ensure_log_dir(knowledge_path)
+    # Build input JSON matching ministral-recognizer agent contract
+    input_json: dict[str, Any] = {
+        "mode": mode,
+        "state_text": state_text,
+    }
+    if mode == "facts":
+        input_json["target_entity"] = target_entity
 
-    # Build prompt based on mode
-    if mode == "entities":
-        prompt = ENTITY_DISCOVERY_PROMPT.format(state_text=state_text)
-    else:
-        prompt = FACT_EXTRACTION_PROMPT.format(
-            state_text=state_text,
-            target_entity=target_entity,
-        )
+    # Invoke the huggingface agent
+    data = _invoke_huggingface_agent(
+        agent_name="ministral-recognizer",
+        input_json=input_json,
+        timeout=timeout,
+        knowledge_path=knowledge_path,
+    )
 
-    # Load model if not provided
-    if model is None or tokenizer is None:
-        model, tokenizer = load_ministral_model(model_name)
-
-    # Run inference
-    try:
-        import torch
-
-        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=4096)
-
-        # Move inputs to same device as model
-        device = next(model.parameters()).device
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=2048,
-                temperature=0.1,
-                do_sample=True,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-
-        # Decode response
-        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-        # Extract just the generated part (after the prompt)
-        if prompt in response:
-            response = response[len(prompt) :].strip()
-
-    except Exception as e:
-        raise HunterError(f"Inference failed: {e}") from e
-
-    # Log interaction
-    _log_interaction(log_dir, prompt, response, mode, target_entity)
-
-    # Parse and validate response
-    data = _parse_json_response(response)
+    # Validate response
     _validate_hunter_output(data, mode)
 
     # Build output

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -18,66 +19,18 @@ from scripts.knowledge.ministral_hunter import (
     _validate_hunter_output,
     invoke_hunter,
     invoke_hunter_mock,
-    load_ministral_model,
 )
-
-
-class TestLoadMinistralModel:
-    """Tests for load_ministral_model function."""
-
-    def test_loads_model_and_tokenizer(self) -> None:
-        """Should load model and tokenizer from transformers."""
-        with patch("transformers.AutoTokenizer") as mock_tokenizer_cls:
-            with patch("transformers.AutoModelForCausalLM") as mock_model_cls:
-                mock_tokenizer = MagicMock()
-                mock_model = MagicMock()
-                mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
-                mock_model_cls.from_pretrained.return_value = mock_model
-
-                model, tokenizer = load_ministral_model("test-model")
-
-                mock_tokenizer_cls.from_pretrained.assert_called_once_with(
-                    "test-model", trust_remote_code=True
-                )
-                mock_model_cls.from_pretrained.assert_called_once()
-                mock_model.eval.assert_called_once()
-                assert model == mock_model
-                assert tokenizer == mock_tokenizer
-
-    def test_raises_hunter_error_on_failure(self) -> None:
-        """Should raise HunterError when model loading fails."""
-        with patch("transformers.AutoTokenizer") as mock_tokenizer_cls:
-            mock_tokenizer_cls.from_pretrained.side_effect = RuntimeError("Load failed")
-
-            with pytest.raises(HunterError, match="Failed to load Ministral model"):
-                load_ministral_model("invalid-model")
 
 
 class TestInvokeHunterEntitiesMode:
     """Tests for invoke_hunter in entities mode."""
 
     def test_invoke_hunter_entities_mode_returns_output(self, tmp_path: Path) -> None:
-        """Should return HunterOutput with entities."""
-        mock_model = MagicMock()
-        mock_tokenizer = MagicMock()
-
-        # Mock tokenizer behavior
-        mock_tokenizer.return_tensors = "pt"
-        mock_tokenizer.return_value = {"input_ids": MagicMock()}
-        mock_tokenizer.eos_token_id = 1
-
-        # Mock model parameters
-        mock_param = MagicMock()
-        mock_param.device = "cpu"
-        mock_model.parameters.return_value = iter([mock_param])
-
-        # Mock generate output
-        mock_outputs = MagicMock()
-        mock_model.generate.return_value = mock_outputs
-
-        # Mock decode to return valid JSON
-        mock_tokenizer.decode.return_value = """
-        {
+        """Should return HunterOutput with entities via subprocess."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stderr = ""
+        mock_result.stdout = """{
             "mode": "entities",
             "entities": [{"mention": "create_app", "type_hint": "FUNCTION", "evidence_span_id": "span_1"}],
             "target_entity": null,
@@ -85,17 +38,20 @@ class TestInvokeHunterEntitiesMode:
             "spans": [{"span_id": "span_1", "original_text": "The create_app function."}],
             "done": false,
             "reason": null
-        }
-        """
+        }"""
 
-        with patch("torch.no_grad"):
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
             result = invoke_hunter(
                 state_text="The create_app function initializes the app.",
                 mode="entities",
-                model=mock_model,
-                tokenizer=mock_tokenizer,
                 knowledge_path=tmp_path,
             )
+
+            mock_run.assert_called_once()
+            call_args = mock_run.call_args
+            assert call_args[0][0][0] == "uv"
+            assert "--agent" in call_args[0][0]
+            assert "ministral-recognizer" in call_args[0][0]
 
         assert result["mode"] == "entities"
         assert len(result["entities"]) == 1
@@ -112,27 +68,11 @@ class TestInvokeHunterFactsMode:
             invoke_hunter(state_text="Some text", mode="facts")
 
     def test_invoke_hunter_facts_mode_returns_facts(self, tmp_path: Path) -> None:
-        """Should return HunterOutput with facts for target entity."""
-        mock_model = MagicMock()
-        mock_tokenizer = MagicMock()
-
-        # Mock tokenizer behavior
-        mock_tokenizer.return_tensors = "pt"
-        mock_tokenizer.return_value = {"input_ids": MagicMock()}
-        mock_tokenizer.eos_token_id = 1
-
-        # Mock model parameters
-        mock_param = MagicMock()
-        mock_param.device = "cpu"
-        mock_model.parameters.return_value = iter([mock_param])
-
-        # Mock generate output
-        mock_outputs = MagicMock()
-        mock_model.generate.return_value = mock_outputs
-
-        # Mock decode to return valid JSON
-        mock_tokenizer.decode.return_value = """
-        {
+        """Should return HunterOutput with facts for target entity via subprocess."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stderr = ""
+        mock_result.stdout = """{
             "mode": "facts",
             "entities": [],
             "target_entity": {"mention": "create_app", "resolved_id": "create_app"},
@@ -140,18 +80,17 @@ class TestInvokeHunterFactsMode:
             "spans": [{"span_id": "span_1", "original_text": "create_app is a factory function."}],
             "done": false,
             "reason": null
-        }
-        """
+        }"""
 
-        with patch("torch.no_grad"):
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
             result = invoke_hunter(
                 state_text="The create_app is a factory function that initializes the app.",
                 target_entity="create_app",
                 mode="facts",
-                model=mock_model,
-                tokenizer=mock_tokenizer,
                 knowledge_path=tmp_path,
             )
+
+            mock_run.assert_called_once()
 
         assert result["mode"] == "facts"
         assert result["target_entity"]["mention"] == "create_app"
@@ -232,31 +171,63 @@ class TestInvokeHunterValidation:
 
 
 class TestInvokeHunterErrorHandling:
-    """Tests for error handling in invoke_hunter."""
+    """Tests for error handling in invoke_hunter via subprocess."""
 
     def test_invoke_hunter_timeout_raises_error(self, tmp_path: Path) -> None:
-        """Should raise HunterError on inference timeout."""
-        mock_model = MagicMock()
-        mock_tokenizer = MagicMock()
+        """Should raise HunterError on subprocess timeout."""
+        with patch(
+            "subprocess.run",
+            side_effect=subprocess.TimeoutExpired("cmd", 120),
+        ):
+            with pytest.raises(HunterError, match="timed out"):
+                invoke_hunter(
+                    state_text="Test text",
+                    mode="entities",
+                    knowledge_path=tmp_path,
+                )
 
-        mock_tokenizer.return_value = {"input_ids": MagicMock()}
-        mock_tokenizer.eos_token_id = 1
+    def test_invoke_hunter_subprocess_not_found_raises_error(self, tmp_path: Path) -> None:
+        """Should raise HunterError when uv CLI not found."""
+        with patch(
+            "subprocess.run",
+            side_effect=FileNotFoundError("uv not found"),
+        ):
+            with pytest.raises(HunterError, match="uv CLI not found"):
+                invoke_hunter(
+                    state_text="Test text",
+                    mode="entities",
+                    knowledge_path=tmp_path,
+                )
 
-        mock_param = MagicMock()
-        mock_param.device = "cpu"
-        mock_model.parameters.return_value = iter([mock_param])
+    def test_invoke_hunter_non_zero_exit_raises_error(self, tmp_path: Path) -> None:
+        """Should raise HunterError when subprocess returns non-zero exit code."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = "Agent failed"
+        mock_result.stdout = ""
 
-        # Mock generate to raise timeout error
-        mock_model.generate.side_effect = TimeoutError("Inference timed out")
+        with patch("subprocess.run", return_value=mock_result):
+            with pytest.raises(HunterError, match="non-zero exit code"):
+                invoke_hunter(
+                    state_text="Test text",
+                    mode="entities",
+                    knowledge_path=tmp_path,
+                )
 
-        with patch("torch.no_grad"), pytest.raises(HunterError, match="Inference failed"):
-            invoke_hunter(
-                state_text="Test text",
-                mode="entities",
-                model=mock_model,
-                tokenizer=mock_tokenizer,
-                knowledge_path=tmp_path,
-            )
+    def test_invoke_hunter_empty_output_raises_error(self, tmp_path: Path) -> None:
+        """Should raise HunterError when subprocess returns empty output."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stderr = ""
+        mock_result.stdout = ""
+
+        with patch("subprocess.run", return_value=mock_result):
+            with pytest.raises(HunterError, match="empty output"):
+                invoke_hunter(
+                    state_text="Test text",
+                    mode="entities",
+                    knowledge_path=tmp_path,
+                )
 
 
 class TestInvokeHunterMock:

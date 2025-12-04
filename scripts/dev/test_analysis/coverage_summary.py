@@ -19,7 +19,6 @@ from typing import Any
 
 from scripts.dev.test_analysis.common import (
     format_percentage,
-    is_excluded_function,
     is_excluded_path,
     load_coverage_llm,
 )
@@ -42,9 +41,8 @@ def get_filtered_functions(
 
     for func in functions:
         file_path = func.get("file", "")
-        func_name = func.get("function", "")
 
-        if is_excluded_path(file_path) or is_excluded_function(file_path, func_name):
+        if is_excluded_path(file_path):
             excluded.append(func)
         else:
             included.append(func)

@@ -5,6 +5,10 @@ extraction as specified in docs/plans/fact_redesign.md. It coordinates the Hunte
 Surgeon, and Auditor agents to extract facts from artifacts while maintaining
 design invariants.
 
+Note:
+    The Hunter now uses the huggingface_agent_runner internally, which delegates
+    model inference to the ministral-recognizer agent via subprocess.
+
 Control Flow:
     INITIALIZE -> MAIN LOOP -> FINAL AUDIT
 
@@ -617,11 +621,17 @@ def extract_artifact_facts(
     Implements the canonical control flow:
     INITIALIZE -> MAIN LOOP -> FINAL AUDIT
 
+    Note:
+        The Hunter now uses the huggingface_agent_runner internally, which loads
+        the model configuration from the ministral-recognizer agent's frontmatter.
+
     Args:
         artifact_id: ID of the artifact to process.
         knowledge_path: Base knowledge directory.
         qwen_model_name: Qwen model for embedding validation.
-        ministral_model_name: Ministral model for Hunter (if not mock).
+        ministral_model_name: Deprecated. This parameter is retained for backward
+            compatibility but is ignored. The Ministral model is now configured
+            via the ministral-recognizer agent's frontmatter.
         max_iterations: Maximum extraction iterations (default: 50).
         use_mock: Use mock implementations for testing (default: False).
 
@@ -632,6 +642,8 @@ def extract_artifact_facts(
         ArtifactExtractionError: If extraction fails.
         InvariantViolation: If a design invariant is violated.
     """
+    # Silence unused variable warning for deprecated parameter
+    _ = ministral_model_name
     # INITIALIZE
     print(f"Initializing extraction for artifact: {artifact_id}")
 
@@ -660,13 +672,10 @@ def extract_artifact_facts(
     # Load models
     qwen_model: PreTrainedModel | None = None
     qwen_tokenizer: PreTrainedTokenizer | None = None
-    ministral_model = None
-    ministral_tokenizer = None
 
     if not use_mock:
         print(f"Loading Qwen model: {qwen_model_name}")
         qwen_model, qwen_tokenizer = load_qwen_embedding_model(qwen_model_name)
-        # Ministral model loaded lazily by invoke_hunter
 
     # MAIN LOOP
     iteration = 0
@@ -683,9 +692,6 @@ def extract_artifact_facts(
                 hunter_result = invoke_hunter(
                     state_text,
                     mode="entities",
-                    model=ministral_model,
-                    tokenizer=ministral_tokenizer,
-                    model_name=ministral_model_name,
                     knowledge_path=knowledge_path,
                 )
 
@@ -721,9 +727,6 @@ def extract_artifact_facts(
                 state_text,
                 target_entity=target_entity,
                 mode="facts",
-                model=ministral_model,
-                tokenizer=ministral_tokenizer,
-                model_name=ministral_model_name,
                 knowledge_path=knowledge_path,
             )
 
@@ -950,7 +953,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--ministral-model",
         default="mistralai/Ministral-3B-Instruct-2412",
         dest="ministral_model",
-        help="Ministral model for Hunter.",
+        help=(
+            "Deprecated. Retained for backward compatibility but ignored. "
+            "The Ministral model is now configured via the ministral-recognizer agent."
+        ),
     )
     parser.add_argument(
         "--max-iterations",

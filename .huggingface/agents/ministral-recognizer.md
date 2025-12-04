@@ -26,7 +26,7 @@ You must respond with a JSON object containing ALL of the following fields:
 
 - `mode`: Echo the input mode
 - `entities`: Array of entity objects (for entities mode)
-- `target_entity`: Object with `mention` and `resolved_id` (for facts mode), or `null`
+- `target_entity`: For `mode="entities"` this field must be `null`. For `mode="facts"` this field must always be an object with `mention` and `resolved_id`, even when the entity is not found in the text
 - `facts`: Array of fact objects (for facts mode)
 - `spans`: Array of evidence span objects
 - `done`: Boolean indicating if extraction is complete
@@ -200,7 +200,7 @@ When `mode="facts"`:
 
 3. **Use consistent span_id format** (e.g., `"span_1"`, `"span_2"`, etc.)
 
-4. **For facts mode**, `target_entity` is required in the input
+4. **For facts mode**, `target_entity` is required in the input, and in the output it must always be an object (never `null`), even when the entity is not found
 
 5. **Confidence scores** should reflect certainty:
    - 0.0 = completely uncertain

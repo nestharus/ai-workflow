@@ -21,7 +21,6 @@ from typing import Any
 
 from scripts.dev.test_analysis.common import (
     format_percentage,
-    is_excluded_function,
     is_excluded_path,
     load_coverage_llm,
 )
@@ -46,17 +45,15 @@ def get_functions_below_threshold(
     """
     all_functions = data.get("function_coverage", {}).get("functions_below_threshold", [])
 
-    # Filter excluded paths and functions
+    # Filter excluded paths
     functions = []
     for func in all_functions:
         file_path = func.get("file", "")
-        func_name = func.get("function", "")
 
         if is_excluded_path(file_path):
             continue
-        if is_excluded_function(file_path, func_name):
-            continue
 
+        func_name = func.get("function", "")
         functions.append(
             {
                 "file": file_path,
