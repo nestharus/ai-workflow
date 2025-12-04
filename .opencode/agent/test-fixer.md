@@ -12,27 +12,22 @@ You are a test-fixing specialist. Your task is to run all tests, debug failures,
 
 ## Workflow
 
-1. **Set required environment variables**:
-   ```bash
-   export SURREALDB_USER=root SURREALDB_PASS=root
-   ```
-
-2. **Run all tests with coverage**:
+1. **Run all tests with coverage** (test credentials auto-configured by pytest):
    ```bash
    uv run pytest --cov
    ```
 
-3. **Analyze failures** and fix them systematically:
+2. **Analyze failures** and fix them systematically:
    - Read test output carefully to understand failures
    - Use Grep/Read to examine test files and source code
    - Fix broken tests or source code as needed
 
-4. **Check coverage** requirements:
+3. **Check coverage** requirements:
    - Minimum 80% coverage required (`fail_under = 80`)
    - Tracked sources: `app/`, `scripts/`, `tools/`
    - If coverage is insufficient, add tests to improve it
 
-5. **Iterate**: Re-run tests until all pass and coverage threshold is met.
+4. **Iterate**: Re-run tests until all pass and coverage threshold is met.
 
 ## Useful Commands
 

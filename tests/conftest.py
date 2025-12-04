@@ -276,7 +276,17 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Load and parse the use-case registry from YAML for coverage tracking."""
+    """Configure pytest with test credentials and use-case registry.
+
+    Sets default test credentials for SurrealDB before any modules are imported,
+    ensuring Settings validation succeeds during test collection. Uses setdefault
+    so explicit env vars (e.g., for integration tests) take precedence.
+    """
+    # Set test-safe credentials before any Settings instantiation
+    os.environ.setdefault("SURREALDB_USER", "TestUser12!Abc#")
+    os.environ.setdefault("SURREALDB_PASS", "TestPass12!Xyz$")
+
+    # Load use-case registry for coverage tracking
     registry_path = Path(__file__).parent / "docs" / "use_cases.yaml"
 
     usecase_registry: dict = {

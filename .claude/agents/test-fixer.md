@@ -28,12 +28,12 @@ You are a test-fixing specialist. Your task is to run all tests, debug failures,
 
 ## Workflow
 
-1. **Set required environment variables and run test coverage**:
+1. **Run test coverage**:
    ```bash
-   export SURREALDB_USER=root SURREALDB_PASS=root
    uv run test-coverage
    ```
    This single command generates all coverage data, test results, and analysis in `.coverage/coverage.db`.
+   Note: Test credentials are automatically set by `pytest_configure` in `tests/conftest.py`.
 
 2. **Priority order for fixes** (data in `.coverage/coverage.db`):
    - **FIRST**: Fix test failures (check tier summaries and test results)

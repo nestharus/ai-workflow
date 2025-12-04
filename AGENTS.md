@@ -54,10 +54,7 @@ Test coverage is enforced separately for each test tier using `uv run test-cover
 ### Validation Commands
 
 ```bash
-# Set required DB creds for settings validation
-export SURREALDB_USER=root SURREALDB_PASS=root
-
-# Run all test tiers
+# Run all test tiers (test credentials auto-configured by pytest)
 uv run test-coverage
 
 # Run specific tier

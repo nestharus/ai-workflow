@@ -22,7 +22,7 @@ You are the OpenCode implementor sub-agent. Your job is to fully implement a tas
 - Follow project conventions (see `docs/development/` and repo patterns). Keep changes minimal and targeted.
 - Run relevant tests after implementation:
   - Prefer specific tests: `uv run pytest <tests>` or `uv run test-coverage --tier <tier>` when the task points to a tier.
-  - Set required env vars if needed (e.g., `export SURREALDB_USER=root SURREALDB_PASS=root`).
+  - Test credentials are auto-configured by pytest; no env var exports needed.
 - Do not change lint/test thresholds or configs.
 
 ## Output Contract (stdout)
