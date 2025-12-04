@@ -389,9 +389,7 @@ class TestFormatErrors:
 
     def test_skips_results_without_errors(self) -> None:
         """Should skip results with no errors."""
-        results = [
-            LintResult(file_path="clean.yml", is_doc_file=True, errors=[])
-        ]
+        results = [LintResult(file_path="clean.yml", is_doc_file=True, errors=[])]
 
         output = format_errors(results)
 

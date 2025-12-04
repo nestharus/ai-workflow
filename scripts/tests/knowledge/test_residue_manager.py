@@ -403,7 +403,9 @@ class TestGetSnapshotMetadata:
         """Should return metadata for all snapshot types."""
         knowledge_path = tmp_path / ".knowledge"
 
-        save_residue_snapshot("artifact-123", "before text", "before", knowledge_path=knowledge_path)
+        save_residue_snapshot(
+            "artifact-123", "before text", "before", knowledge_path=knowledge_path
+        )
         save_residue_snapshot("artifact-123", "after text", "after", knowledge_path=knowledge_path)
         save_residue_snapshot(
             "artifact-123",

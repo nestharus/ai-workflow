@@ -60,7 +60,10 @@ def get_variant_by_id(csv_path: Path, pair_id: str) -> dict[str, str] | None:
         conn.close()
         if row:
             # Convert None values to empty strings to preserve consistency with CSV format
-            return {col: (val if val is not None else "") for col, val in zip(columns, row, strict=False)}
+            return {
+                col: (val if val is not None else "")
+                for col, val in zip(columns, row, strict=False)
+            }
     except duckdb.Error:
         pass
     return None

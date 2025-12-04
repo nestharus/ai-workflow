@@ -291,10 +291,7 @@ def query_fact_provenance(
     """
     try:
         result = duckdb.execute(query, [str(provenance_csv), fact_key]).fetchall()
-        return [
-            {col: row[i] for i, col in enumerate(PROVENANCE_CSV_COLUMNS)}
-            for row in result
-        ]
+        return [{col: row[i] for i, col in enumerate(PROVENANCE_CSV_COLUMNS)} for row in result]
     except duckdb.Error:
         return []
 
@@ -585,9 +582,7 @@ def store_structural_facts(
             success_count += 1  # Consider duplicate as success
             continue
 
-        record = fieldfact_to_structural_record(
-            field_fact, domains, pattern, fact_id, extracted_at
-        )
+        record = fieldfact_to_structural_record(field_fact, domains, pattern, fact_id, extracted_at)
         data["structural_facts"].append(dict(record))
         success_count += 1
 
@@ -1743,7 +1738,9 @@ def decorate_yaml_main(args: argparse.Namespace) -> int:
         return 1
 
     entity_msg = " and entity ID" if entity_id_added else ""
-    print(f"\nDecorated element '{args.element_id}' with {fact_ids_added} new fact ID(s){entity_msg}")
+    print(
+        f"\nDecorated element '{args.element_id}' with {fact_ids_added} new fact ID(s){entity_msg}"
+    )
 
     return 0
 

@@ -68,9 +68,7 @@ def sample_manifests() -> list[ArtifactManifest]:
             modality="text",
             extraction_mode="full",
             contributors={
-                "structural": [
-                    {"element_id": "element-2", "field_path": "sample_code.code"}
-                ],
+                "structural": [{"element_id": "element-2", "field_path": "sample_code.code"}],
                 "semantic": [],
             },
             entities=[],
@@ -145,13 +143,9 @@ class TestFilterManifests:
         assert len(result) == 1
         assert result[0]["artifact_id"] == "abc123"
 
-    def test_filters_by_artifact_kind_exact(
-        self, sample_manifests: list[ArtifactManifest]
-    ) -> None:
+    def test_filters_by_artifact_kind_exact(self, sample_manifests: list[ArtifactManifest]) -> None:
         """Should filter by exact artifact_kind."""
-        result = _filter_manifests(
-            sample_manifests, artifact_kind="diagram/mermaid.sequence"
-        )
+        result = _filter_manifests(sample_manifests, artifact_kind="diagram/mermaid.sequence")
         assert len(result) == 1
         assert result[0]["artifact_kind"] == "diagram/mermaid.sequence"
 
@@ -165,15 +159,11 @@ class TestFilterManifests:
 
     def test_filters_by_source_file(self, sample_manifests: list[ArtifactManifest]) -> None:
         """Should filter by source_file."""
-        result = _filter_manifests(
-            sample_manifests, source_file="docs/architecture/event-flow.yml"
-        )
+        result = _filter_manifests(sample_manifests, source_file="docs/architecture/event-flow.yml")
         assert len(result) == 1
         assert result[0]["source"]["source_file"] == "docs/architecture/event-flow.yml"
 
-    def test_combines_multiple_filters(
-        self, sample_manifests: list[ArtifactManifest]
-    ) -> None:
+    def test_combines_multiple_filters(self, sample_manifests: list[ArtifactManifest]) -> None:
         """Should combine multiple filters."""
         result = _filter_manifests(
             sample_manifests,
@@ -182,9 +172,7 @@ class TestFilterManifests:
         )
         assert len(result) == 1
 
-    def test_returns_all_with_no_filters(
-        self, sample_manifests: list[ArtifactManifest]
-    ) -> None:
+    def test_returns_all_with_no_filters(self, sample_manifests: list[ArtifactManifest]) -> None:
         """Should return all manifests with no filters."""
         result = _filter_manifests(sample_manifests)
         assert len(result) == 2
@@ -278,18 +266,14 @@ class TestFormatCsv:
         assert "artifact_kind" in output
         assert "abc123" in output
 
-    def test_includes_validation_columns(
-        self, sample_manifests: list[ArtifactManifest]
-    ) -> None:
+    def test_includes_validation_columns(self, sample_manifests: list[ArtifactManifest]) -> None:
         """Should include validation columns when requested."""
         output = _format_csv(sample_manifests, show_validation=True)
 
         assert "validation_passed" in output
         assert "validation_similarity" in output
 
-    def test_includes_contributor_counts(
-        self, sample_manifests: list[ArtifactManifest]
-    ) -> None:
+    def test_includes_contributor_counts(self, sample_manifests: list[ArtifactManifest]) -> None:
         """Should include contributor counts when requested."""
         output = _format_csv(sample_manifests, show_contributors=True)
 
@@ -317,18 +301,14 @@ class TestComputeStats:
         assert stats["by_kind"]["diagram/mermaid.sequence"] == 1
         assert stats["by_kind"]["prose/code-block"] == 1
 
-    def test_computes_by_source_file(
-        self, sample_manifests: list[ArtifactManifest]
-    ) -> None:
+    def test_computes_by_source_file(self, sample_manifests: list[ArtifactManifest]) -> None:
         """Should compute counts by source_file."""
         stats = _compute_stats(sample_manifests)
 
         assert stats["by_source_file"]["docs/architecture/event-flow.yml"] == 1
         assert stats["by_source_file"]["docs/development/test.yml"] == 1
 
-    def test_computes_validation_status(
-        self, sample_manifests: list[ArtifactManifest]
-    ) -> None:
+    def test_computes_validation_status(self, sample_manifests: list[ArtifactManifest]) -> None:
         """Should compute validation status counts."""
         stats = _compute_stats(sample_manifests)
 
@@ -407,11 +387,14 @@ class TestMain:
         manifest_path = artifacts_dir / "test-id.yml"
         fs.create_file(manifest_path, contents=yaml.safe_dump(manifest))
 
-        result = main([
-            "--artifacts-dir", str(artifacts_dir),
-            "--stats",
-            "--no-v1-only",
-        ])
+        result = main(
+            [
+                "--artifacts-dir",
+                str(artifacts_dir),
+                "--stats",
+                "--no-v1-only",
+            ]
+        )
 
         assert result == 0
         captured = capsys.readouterr()

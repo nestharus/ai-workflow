@@ -68,7 +68,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
 import duckdb
-import numpy as np
 
 from scripts.dev.utils import REPO_ROOT, utc_timestamp
 from scripts.knowledge.variant_resolver import (
@@ -362,7 +361,7 @@ def invoke_fact_extractor(sentence: str, entity: str) -> dict:
 
     # Invoke the sub-agent using claude CLI with haiku model for cost-efficiency
     try:
-        result = subprocess.run(  # noqa: S603, S607
+        result = subprocess.run(  # noqa: S603
             [
                 "claude",
                 "--agent",
@@ -627,7 +626,7 @@ def extract_facts_main(args: argparse.Namespace) -> int:
     csv_path = knowledge_path / "facts" / "extractions.csv"
 
     print(f"Extracting facts about '{args.entity}' from sentence...")
-    print(f"Sentence: \"{args.sentence}\"")
+    print(f'Sentence: "{args.sentence}"')
     print()
 
     # Try to invoke the sub-agent first (before loading Qwen model)
@@ -695,15 +694,15 @@ def extract_facts_main(args: argparse.Namespace) -> int:
         confidence = fact_info.get("confidence", 0.0)
         rewritten = fact_info.get("rewritten_sentence", "")
         print(f"Iteration {i}:")
-        print(f"  Fact: \"{fact_text}\"")
+        print(f'  Fact: "{fact_text}"')
         print(f"  Confidence: {confidence:.2f}")
         if rewritten:
-            print(f"  Rewritten: \"{rewritten}\"")
+            print(f'  Rewritten: "{rewritten}"')
         print()
 
     print("Extraction complete:")
     print(f"  Total facts: {len(facts)}")
-    print(f"  Residual: \"{residual}\"")
+    print(f'  Residual: "{residual}"')
     print(f"  Semantic similarity: {validation.get('semantic_similarity', 0):.2f}")
     print(f"  Entity absent: {'Yes' if validation.get('entity_absent') else 'No'}")
     print(f"  Information preserved: {'Yes' if validation.get('information_preserved') else 'No'}")

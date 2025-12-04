@@ -26,54 +26,118 @@ import argparse
 import ast
 import json
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # type: ignore[import-not-found,no-redef]
+
 from scripts.dev.test_runner.redundant_test_detector import (
     RedundantTestResult,
     detect_redundant_tests,
-    format_redundant_test_report,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-# Coverage configuration defaults
-# These can be overridden via command line arguments
-# Per-function thresholds are intentionally lower than overall thresholds
-# because some infrastructure code is excluded from unit testing
-DEFAULT_MIN_LINE_COVERAGE = 80.0
-DEFAULT_MIN_BRANCH_COVERAGE = 70.0
-DEFAULT_MIN_FUNCTION_LINE_COVERAGE = 60.0
-DEFAULT_MIN_FUNCTION_BRANCH_COVERAGE = 50.0
-DEFAULT_USECASE_COVERAGE = 100.0
+# Fallback defaults if pyproject.toml settings are missing
+DEFAULT_MIN_LINE_OVERALL = 80.0
+DEFAULT_MIN_BRANCH_OVERALL = 70.0
+DEFAULT_MIN_LINE_PER_FUNCTION = 60.0
+DEFAULT_MIN_BRANCH_PER_FUNCTION = 50.0
+DEFAULT_MIN_USECASE = 100.0
+
+
+@dataclass
+class TierSettings:
+    """Settings for a single test tier loaded from pyproject.toml."""
+
+    min_line_overall: float = DEFAULT_MIN_LINE_OVERALL
+    min_branch_overall: float = DEFAULT_MIN_BRANCH_OVERALL
+    min_line_per_function: float = DEFAULT_MIN_LINE_PER_FUNCTION
+    min_branch_per_function: float = DEFAULT_MIN_BRANCH_PER_FUNCTION
+    min_usecase: float = DEFAULT_MIN_USECASE
+
+
+@dataclass
+class CoverageSettings:
+    """All coverage settings loaded from pyproject.toml."""
+
+    unit: TierSettings = field(default_factory=TierSettings)
+    component: TierSettings = field(default_factory=TierSettings)
+    integration: TierSettings = field(default_factory=TierSettings)
+    e2e: TierSettings = field(default_factory=TierSettings)
+    scripts: TierSettings = field(default_factory=TierSettings)
+
+
+def load_coverage_settings(pyproject_path: Path | None = None) -> CoverageSettings:
+    """Load coverage settings from pyproject.toml.
+
+    Args:
+        pyproject_path: Path to pyproject.toml. Defaults to REPO_ROOT/pyproject.toml.
+
+    Returns:
+        CoverageSettings with all tier configurations.
+    """
+    path = pyproject_path or REPO_ROOT / "pyproject.toml"
+    if not path.exists():
+        return CoverageSettings()
+
+    with path.open("rb") as f:
+        data = tomllib.load(f)
+
+    test_coverage = data.get("tool", {}).get("test_coverage", {})
+
+    def load_tier(name: str) -> TierSettings:
+        tier_data = test_coverage.get(name, {})
+        return TierSettings(
+            min_line_overall=tier_data.get("min_line_overall", DEFAULT_MIN_LINE_OVERALL),
+            min_branch_overall=tier_data.get("min_branch_overall", DEFAULT_MIN_BRANCH_OVERALL),
+            min_line_per_function=tier_data.get(
+                "min_line_per_function", DEFAULT_MIN_LINE_PER_FUNCTION
+            ),
+            min_branch_per_function=tier_data.get(
+                "min_branch_per_function", DEFAULT_MIN_BRANCH_PER_FUNCTION
+            ),
+            min_usecase=tier_data.get("min_usecase", DEFAULT_MIN_USECASE),
+        )
+
+    return CoverageSettings(
+        unit=load_tier("unit"),
+        component=load_tier("component"),
+        integration=load_tier("integration"),
+        e2e=load_tier("e2e"),
+        scripts=load_tier("scripts"),
+    )
+
+
+# Load settings at module level (can be reloaded for testing)
+_settings: CoverageSettings | None = None
+
+
+def get_settings() -> CoverageSettings:
+    """Get cached coverage settings."""
+    global _settings
+    if _settings is None:
+        _settings = load_coverage_settings()
+    return _settings
 
 # Service layer path pattern (relative to repo root)
 SERVICE_LAYER_PATH = "app/services"
 
-# Infrastructure paths that are excluded from unit test coverage validation
-# These modules require external dependencies and are tested via integration/e2e tests
-INFRASTRUCTURE_PATHS = (
-    "app/infrastructure/",
-    "app/repositories/",
-    "app/main.py",
-)
 
-# HTTP handling paths excluded from unit test coverage - tested via integration tests
-# These involve HTTP request/response handling which is inherently integration-level
-HTTP_HANDLING_PATHS = (
-    "app/api/v1/endpoints/",
-    "app/api/v1/dependencies.py",
-    "app/core/middleware.py",
-)
+def is_excluded_path(file_path: str) -> bool:
+    """Check if a file path is excluded from coverage validation.
 
-# Functions to skip from coverage validation (framework-generated code)
-SKIP_FUNCTIONS = {
-    # Pydantic BaseSettings __init__ is auto-generated and mostly covered via validation tests
-    "app/core/settings.py::__init__",
-}
+    Note: Currently no path exclusions - unit tests cover all of app/.
+    This function is kept for API compatibility but always returns False.
+    """
+    # No path exclusions - unit tests cover ALL paths
+    return False
 
 
 @dataclass
@@ -142,63 +206,79 @@ class TestTierConfig:
     source_paths: list[str]
     coverage_file: str
     coverage_type: str  # "line_branch" or "usecase"
-    min_line: float = DEFAULT_MIN_FUNCTION_LINE_COVERAGE
-    min_branch: float = DEFAULT_MIN_FUNCTION_BRANCH_COVERAGE
-    min_usecase: float = DEFAULT_USECASE_COVERAGE
+    min_line_overall: float = DEFAULT_MIN_LINE_OVERALL
+    min_branch_overall: float = DEFAULT_MIN_BRANCH_OVERALL
+    min_line_per_function: float = DEFAULT_MIN_LINE_PER_FUNCTION
+    min_branch_per_function: float = DEFAULT_MIN_BRANCH_PER_FUNCTION
+    min_usecase: float = DEFAULT_MIN_USECASE
     skip_private_functions: bool = False
     service_layer_only: bool = False
     exclude_class_fields: bool = True
 
 
-# Test tier configurations
-TEST_TIERS: dict[str, TestTierConfig] = {
-    "unit": TestTierConfig(
-        name="unit",
-        test_path="tests/unit",
-        source_paths=["app"],
-        coverage_file="coverage_unit.json",
-        coverage_type="line_branch",
-        skip_private_functions=False,
-        service_layer_only=False,
-        exclude_class_fields=True,
-    ),
-    "component": TestTierConfig(
-        name="component",
-        test_path="tests/unit",  # Component tests may be within unit tests targeting services
-        source_paths=["app/services"],
-        coverage_file="coverage_component.json",
-        coverage_type="line_branch",
-        skip_private_functions=True,
-        service_layer_only=True,
-        exclude_class_fields=True,
-    ),
-    "integration": TestTierConfig(
-        name="integration",
-        test_path="tests/integration",
-        source_paths=["app"],
-        coverage_file="coverage_integration.json",
-        coverage_type="usecase",
-        min_usecase=100.0,
-    ),
-    "e2e": TestTierConfig(
-        name="e2e",
-        test_path="tests/e2e",
-        source_paths=["app"],
-        coverage_file="coverage_e2e.json",
-        coverage_type="usecase",
-        min_usecase=100.0,
-    ),
-    "scripts": TestTierConfig(
-        name="scripts",
-        test_path="scripts/tests",
-        source_paths=["scripts", "tools"],
-        coverage_file="coverage_scripts.json",
-        coverage_type="line_branch",
-        skip_private_functions=True,
-        service_layer_only=False,
-        exclude_class_fields=True,
-    ),
-}
+def get_test_tiers() -> dict[str, TestTierConfig]:
+    """Get test tier configurations with settings from pyproject.toml."""
+    settings = get_settings()
+    return {
+        "unit": TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            coverage_file="coverage_unit.json",
+            coverage_type="line_branch",
+            min_line_overall=settings.unit.min_line_overall,
+            min_branch_overall=settings.unit.min_branch_overall,
+            min_line_per_function=settings.unit.min_line_per_function,
+            min_branch_per_function=settings.unit.min_branch_per_function,
+            skip_private_functions=False,
+            service_layer_only=False,
+            exclude_class_fields=True,
+        ),
+        "component": TestTierConfig(
+            name="component",
+            test_path="tests/unit",  # Component tests may be within unit tests targeting services
+            source_paths=["app/services"],
+            coverage_file="coverage_component.json",
+            coverage_type="line_branch",
+            min_line_overall=settings.component.min_line_overall,
+            min_branch_overall=settings.component.min_branch_overall,
+            min_line_per_function=settings.component.min_line_per_function,
+            min_branch_per_function=settings.component.min_branch_per_function,
+            skip_private_functions=True,
+            service_layer_only=True,
+            exclude_class_fields=True,
+        ),
+        "integration": TestTierConfig(
+            name="integration",
+            test_path="tests/integration",
+            source_paths=["app"],
+            coverage_file="coverage_integration.json",
+            coverage_type="usecase",
+            min_usecase=settings.integration.min_usecase,
+        ),
+        "e2e": TestTierConfig(
+            name="e2e",
+            test_path="tests/e2e",
+            source_paths=["app"],
+            coverage_file="coverage_e2e.json",
+            coverage_type="usecase",
+            min_usecase=settings.e2e.min_usecase,
+        ),
+        "scripts": TestTierConfig(
+            name="scripts",
+            test_path="scripts/tests",
+            source_paths=["scripts", "tools"],
+            coverage_file="coverage_scripts.json",
+            coverage_type="line_branch",
+            min_line_overall=settings.scripts.min_line_overall,
+            min_branch_overall=settings.scripts.min_branch_overall,
+            min_line_per_function=settings.scripts.min_line_per_function,
+            min_branch_per_function=settings.scripts.min_branch_per_function,
+            skip_private_functions=True,
+            service_layer_only=False,
+            exclude_class_fields=True,
+        ),
+    }
 
 
 def _run_command(cmd: list[str], capture: bool = True) -> subprocess.CompletedProcess[str]:
@@ -406,24 +486,6 @@ def _is_private_function(func_name: str) -> bool:
 def _is_in_service_layer(file_path: str) -> bool:
     """Check if a file is in the service layer."""
     return file_path.startswith(SERVICE_LAYER_PATH)
-
-
-def _is_infrastructure_path(file_path: str) -> bool:
-    """Check if a file is in the infrastructure layer.
-
-    Infrastructure modules require external dependencies and are excluded
-    from unit test coverage validation.
-    """
-    return any(file_path.startswith(path) for path in INFRASTRUCTURE_PATHS)
-
-
-def _is_http_handling_path(file_path: str) -> bool:
-    """Check if a file is HTTP handling code.
-
-    HTTP handling code (endpoints, middleware) is tested via integration tests
-    rather than unit tests, as it involves request/response processing.
-    """
-    return any(file_path.startswith(path) for path in HTTP_HANDLING_PATHS)
 
 
 def load_use_cases(use_cases_path: Path) -> list[UseCase]:
@@ -644,31 +706,19 @@ def validate_line_branch_coverage(
         if config.service_layer_only and not _is_in_service_layer(file_path):
             continue
 
-        # For unit tests, skip infrastructure files (they require integration testing)
-        if config.name == "unit" and _is_infrastructure_path(file_path):
-            continue
-
-        # For unit tests, skip HTTP handling files (tested via integration tests)
-        if config.name == "unit" and _is_http_handling_path(file_path):
-            continue
-
-        # Skip explicitly exempted functions (framework-generated code)
-        if func_key in SKIP_FUNCTIONS:
-            continue
-
         line_cov = func_data["line_coverage"]
         branch_cov = func_data["branch_coverage"]
 
-        if line_cov < config.min_line:
+        if line_cov < config.min_line_per_function:
             failures.append(
                 f"{config.name}: Function {func_key} line coverage "
-                f"{line_cov:.1f}% < {config.min_line:.1f}% minimum"
+                f"{line_cov:.1f}% < {config.min_line_per_function:.1f}% minimum"
             )
 
-        if branch_cov < config.min_branch and func_data.get("missing_branches"):
+        if branch_cov < config.min_branch_per_function and func_data.get("missing_branches"):
             failures.append(
                 f"{config.name}: Function {func_key} branch coverage "
-                f"{branch_cov:.1f}% < {config.min_branch:.1f}% minimum"
+                f"{branch_cov:.1f}% < {config.min_branch_per_function:.1f}% minimum"
             )
 
     return failures
@@ -791,21 +841,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--min-line",
         type=float,
-        default=DEFAULT_MIN_FUNCTION_LINE_COVERAGE,
-        help=f"Minimum per-function line coverage (default: {DEFAULT_MIN_FUNCTION_LINE_COVERAGE})",
+        default=DEFAULT_MIN_LINE_PER_FUNCTION,
+        help=f"Minimum per-function line coverage (default: {DEFAULT_MIN_LINE_PER_FUNCTION})",
     )
-    branch_default = DEFAULT_MIN_FUNCTION_BRANCH_COVERAGE
     parser.add_argument(
         "--min-branch",
         type=float,
-        default=DEFAULT_MIN_FUNCTION_BRANCH_COVERAGE,
-        help=f"Minimum per-function branch coverage (default: {branch_default})",
+        default=DEFAULT_MIN_BRANCH_PER_FUNCTION,
+        help=f"Minimum per-function branch coverage (default: {DEFAULT_MIN_BRANCH_PER_FUNCTION})",
     )
     parser.add_argument(
         "--min-usecase",
         type=float,
-        default=DEFAULT_USECASE_COVERAGE,
-        help=f"Minimum use-case coverage %% (default: {DEFAULT_USECASE_COVERAGE})",
+        default=DEFAULT_MIN_USECASE,
+        help=f"Minimum use-case coverage %% (default: {DEFAULT_MIN_USECASE})",
     )
     parser.add_argument(
         "--no-validate",
@@ -838,8 +887,11 @@ def main() -> int:
     use_cases_path = REPO_ROOT / "tests" / "docs" / "use_cases.yaml"
     use_cases = load_use_cases(use_cases_path)
 
+    # Get tier configurations from settings
+    test_tiers = get_test_tiers()
+
     # Determine which tiers to run
-    tiers_to_run = list(TEST_TIERS.keys()) if args.tier == "all" else [args.tier]
+    tiers_to_run = list(test_tiers.keys()) if args.tier == "all" else [args.tier]
 
     # Collect results
     line_branch_results: list[tuple[TestTierConfig, CoverageResult]] = []
@@ -847,12 +899,15 @@ def main() -> int:
     all_failures: list[str] = []
 
     for tier_name in tiers_to_run:
-        config = TEST_TIERS[tier_name]
+        config = test_tiers[tier_name]
 
-        # Override thresholds from args
-        config.min_line = args.min_line
-        config.min_branch = args.min_branch
-        config.min_usecase = args.min_usecase
+        # Override per-function thresholds from args if provided
+        if args.min_line != DEFAULT_MIN_LINE_PER_FUNCTION:
+            config.min_line_per_function = args.min_line
+        if args.min_branch != DEFAULT_MIN_BRANCH_PER_FUNCTION:
+            config.min_branch_per_function = args.min_branch
+        if args.min_usecase != DEFAULT_MIN_USECASE:
+            config.min_usecase = args.min_usecase
 
         if config.coverage_type == "line_branch":
             result = run_test_suite(config)
@@ -864,7 +919,17 @@ def main() -> int:
 
         elif config.coverage_type == "usecase":
             # Run tests (without coverage measurement for usecase tiers)
-            cmd = ["uv", "run", "python", "-m", "pytest", config.test_path, "-v", "-p", "no:randomly"]
+            cmd = [
+                "uv",
+                "run",
+                "python",
+                "-m",
+                "pytest",
+                config.test_path,
+                "-v",
+                "-p",
+                "no:randomly",
+            ]
             print(f"\n{'=' * 70}")
             print(f"Running {config.name} tests: {config.test_path}")
             print("=" * 70)

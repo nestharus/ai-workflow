@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -287,9 +287,7 @@ class TestAssertNonTargetPreservation:
         rewrites = []
 
         # Should not raise
-        _assert_non_target_preservation(
-            original_text, new_text, spans, rewrites
-        )
+        _assert_non_target_preservation(original_text, new_text, spans, rewrites)
 
     def test_raises_when_non_targets_removed(self) -> None:
         """Should raise InvariantViolation when non-target removed."""
@@ -306,9 +304,7 @@ class TestAssertNonTargetPreservation:
         rewrites = []
 
         with pytest.raises(InvariantViolation, match="non-target-preservation"):
-            _assert_non_target_preservation(
-                original_text, new_text, spans, rewrites
-            )
+            _assert_non_target_preservation(original_text, new_text, spans, rewrites)
 
 
 class TestApplyRewrite:
@@ -501,9 +497,7 @@ class TestExtractArtifactFacts:
         manifest_path = artifacts_dir / "test-artifact.yml"
         manifest_path.write_text(yaml.dump(manifest), encoding="utf-8")
 
-        with patch(
-            "scripts.knowledge.artifact_fact_extractor.invoke_hunter_mock"
-        ) as mock_hunter:
+        with patch("scripts.knowledge.artifact_fact_extractor.invoke_hunter_mock") as mock_hunter:
             # Hunter never signals done
             mock_hunter.return_value = {
                 "mode": "entities",
@@ -605,28 +599,39 @@ class TestParseArgs:
 
     def test_custom_knowledge_path(self) -> None:
         """Should accept custom knowledge path."""
-        args = parse_args([
-            "--artifact-id", "test",
-            "--knowledge-path", "custom/.knowledge",
-        ])
+        args = parse_args(
+            [
+                "--artifact-id",
+                "test",
+                "--knowledge-path",
+                "custom/.knowledge",
+            ]
+        )
 
         assert args.knowledge_path == Path("custom/.knowledge")
 
     def test_max_iterations_option(self) -> None:
         """Should accept max-iterations option."""
-        args = parse_args([
-            "--artifact-id", "test",
-            "--max-iterations", "50",
-        ])
+        args = parse_args(
+            [
+                "--artifact-id",
+                "test",
+                "--max-iterations",
+                "50",
+            ]
+        )
 
         assert args.max_iterations == 50
 
     def test_mock_flag(self) -> None:
         """Should accept mock flag."""
-        args = parse_args([
-            "--artifact-id", "test",
-            "--mock",
-        ])
+        args = parse_args(
+            [
+                "--artifact-id",
+                "test",
+                "--mock",
+            ]
+        )
 
         assert args.mock is True
 

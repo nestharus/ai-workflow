@@ -29,6 +29,11 @@ def _make_csv_row(
     reason: str = "",
     classified_at: str = "",
     qwen_score: str = "",
+    projection_version: str = "fieldfacts.v2",
+    source_field_path: str = "",
+    source_scope_path: str = "",
+    field_role: str = "",
+    artifact_kind: str = "",
 ) -> str:
     """Helper to create a CSV row matching the candidates schema."""
     return ",".join(
@@ -46,6 +51,11 @@ def _make_csv_row(
             reason,
             classified_at,
             qwen_score,
+            projection_version,
+            source_field_path,
+            source_scope_path,
+            field_role,
+            artifact_kind,
         ]
     )
 

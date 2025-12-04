@@ -63,14 +63,16 @@ class RenderPlan(TypedDict):
 
 
 # Required fields for validation
-REQUIRED_FIELDS = frozenset({
-    "render_plan_id",
-    "render_engine",
-    "artifact_kind",
-    "inputs",
-    "determinism",
-    "steps",
-})
+REQUIRED_FIELDS = frozenset(
+    {
+        "render_plan_id",
+        "render_engine",
+        "artifact_kind",
+        "inputs",
+        "determinism",
+        "steps",
+    }
+)
 
 VALID_RENDER_ENGINES = frozenset({"text_llm", "none"})
 

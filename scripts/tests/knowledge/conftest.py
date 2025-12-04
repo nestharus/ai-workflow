@@ -100,6 +100,11 @@ def make_candidate_row(
     reason: str = "",
     classified_at: str = "",
     qwen_score: str = "",
+    projection_version: str = "fieldfacts.v2",
+    source_field_path: str = "",
+    source_scope_path: str = "",
+    field_role: str = "",
+    artifact_kind: str = "",
 ) -> str:
     """Create a CSV row for the candidates table.
 
@@ -117,6 +122,11 @@ def make_candidate_row(
         reason: Classification reason (default: "").
         classified_at: Classification timestamp (default: "").
         qwen_score: Qwen relevance score (default: "").
+        projection_version: Text projection version (default: "fieldfacts.v2").
+        source_field_path: FieldFact.field_path (default: "").
+        source_scope_path: FieldFact.scope_path (default: "").
+        field_role: FieldFact.role (default: "").
+        artifact_kind: FieldFact.artifact_kind (default: "").
 
     Returns:
         CSV row string matching the candidates schema.
@@ -136,5 +146,10 @@ def make_candidate_row(
             reason,
             classified_at,
             qwen_score,
+            projection_version,
+            source_field_path,
+            source_scope_path,
+            field_role,
+            artifact_kind,
         ]
     )

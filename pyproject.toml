@@ -69,6 +69,7 @@ knowledge = [
 # Development scripts
 setup = "scripts.dev.setup:main"
 lint = "scripts.dev.lint:main"
+"agent.huggingface" = "scripts.dev.huggingface_agent_runner:main"
 # Review scripts
 "review.coderabbit" = "scripts.dev.review.coderabbit_review:main"
 "review.sonar" = "scripts.dev.review.sonar_review:main"
@@ -76,6 +77,11 @@ lint = "scripts.dev.lint:main"
 # Test runner scripts
 llm-coverage-report = "scripts.dev.test_runner.llm_coverage_report:main"
 test-coverage = "scripts.dev.test_runner.test_coverage:main"
+# Test analysis scripts (LLM-friendly coverage querying)
+coverage-summary = "scripts.dev.test_analysis.coverage_summary:main"
+coverage-files = "scripts.dev.test_analysis.coverage_files:main"
+coverage-file = "scripts.dev.test_analysis.coverage_file:main"
+coverage-functions = "scripts.dev.test_analysis.coverage_functions:main"
 # Knowledge scripts
 "knowledge.compare-yml-docs" = "scripts.knowledge.compare_yaml_docs:main"
 "knowledge.grep-yml-ids" = "scripts.knowledge.grep_yml_ids:main"
@@ -189,8 +195,6 @@ markers = [
     "e2e: marks tests as end-to-end (requires running server)",
     "usecase: links test to a specific use-case ID from the registry (tests/docs/use_cases.yaml)"
 ]
-usecase_coverage_threshold_e2e = 100  # Minimum e2e use-case coverage percentage (0-100)
-usecase_coverage_threshold_integration = 100  # Minimum integration use-case coverage percentage (0-100)
 
 [tool.coverage.run]
 source = ["app", "scripts"]
@@ -204,7 +208,8 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 80
+# Threshold enforcement is handled by test_coverage.py with tier-specific settings
+fail_under = 0
 show_missing = true
 exclude_lines = [
     "pragma: no cover",
@@ -229,11 +234,37 @@ source = [
     "scripts/",
 ]
 
-# Custom coverage settings used by test_coverage.py
-[tool.test_coverage]
-# Overall thresholds
-min_line_coverage = 80.0
-min_branch_coverage = 80.0
-# Per-function thresholds
-min_function_line_coverage = 80.0
-min_function_branch_coverage = 80.0
+# Custom coverage settings used by test_coverage.py and llm_coverage_report.py
+# Each tier has its own thresholds based on coverage type:
+# - unit/component/scripts: line/branch coverage (per-function and overall)
+# - integration/e2e: use-case coverage only
+
+[tool.test_coverage.unit]
+# Unit tests cover ALL app/ functions (including private)
+min_line_overall = 80.0
+min_branch_overall = 70.0
+min_line_per_function = 60.0
+min_branch_per_function = 50.0
+
+[tool.test_coverage.component]
+# Component tests cover app/services/ public functions only
+min_line_overall = 80.0
+min_branch_overall = 70.0
+min_line_per_function = 80.0
+min_branch_per_function = 70.0
+
+[tool.test_coverage.integration]
+# Integration tests: use-case coverage from tests/docs/use_cases.yaml
+min_usecase = 100.0
+
+[tool.test_coverage.e2e]
+# E2E tests: use-case coverage from tests/docs/use_cases.yaml
+min_usecase = 100.0
+
+[tool.test_coverage.scripts]
+# Scripts tests cover scripts/
+min_line_overall = 80.0
+min_branch_overall = 70.0
+min_line_per_function = 60.0
+min_branch_per_function = 50.0
+

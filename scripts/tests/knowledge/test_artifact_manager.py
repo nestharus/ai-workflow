@@ -7,7 +7,6 @@ import yaml
 from pyfakefs.fake_filesystem import FakeFilesystem
 
 from scripts.knowledge.artifact_manager import (
-    ArtifactManifest,
     artifact_to_manifest,
     create_artifact_manifest,
     delete_artifact_manifest,
@@ -136,16 +135,12 @@ class TestLoadArtifactManifest:
         assert manifest["artifact_id"] == sample_artifact.artifact_id
         assert manifest["artifact_kind"] == "diagram/mermaid.sequence"
 
-    def test_raises_for_missing_manifest(
-        self, fs: FakeFilesystem, artifacts_dir: Path
-    ) -> None:
+    def test_raises_for_missing_manifest(self, fs: FakeFilesystem, artifacts_dir: Path) -> None:
         """Verify FileNotFoundError raised for missing manifest."""
         with pytest.raises(FileNotFoundError, match="Artifact manifest not found"):
             load_artifact_manifest("nonexistent-id", artifacts_dir)
 
-    def test_raises_for_invalid_yaml(
-        self, fs: FakeFilesystem, artifacts_dir: Path
-    ) -> None:
+    def test_raises_for_invalid_yaml(self, fs: FakeFilesystem, artifacts_dir: Path) -> None:
         """Verify ValueError raised for invalid YAML."""
         manifest_path = artifacts_dir / "bad-manifest.yml"
         fs.create_file(manifest_path, contents="invalid: yaml: syntax: {{")
@@ -218,11 +213,7 @@ class TestUpdateArtifactManifest:
 
         update_artifact_manifest(
             sample_artifact.artifact_id,
-            {
-                "contributors": {
-                    "structural": [{"element_id": "test", "field_path": "text"}]
-                }
-            },
+            {"contributors": {"structural": [{"element_id": "test", "field_path": "text"}]}},
             artifacts_dir,
         )
 
@@ -230,9 +221,7 @@ class TestUpdateArtifactManifest:
         assert len(manifest["contributors"]["structural"]) == 1
         assert manifest["contributors"]["structural"][0]["element_id"] == "test"
 
-    def test_raises_for_missing_manifest(
-        self, fs: FakeFilesystem, artifacts_dir: Path
-    ) -> None:
+    def test_raises_for_missing_manifest(self, fs: FakeFilesystem, artifacts_dir: Path) -> None:
         """Verify FileNotFoundError raised for missing manifest."""
         with pytest.raises(FileNotFoundError):
             update_artifact_manifest("nonexistent", {"key": "value"}, artifacts_dir)
@@ -267,9 +256,7 @@ class TestListArtifactManifests:
 
         assert len(manifests) == 2
 
-    def test_filters_by_v1_rule(
-        self, fs: FakeFilesystem, artifacts_dir: Path
-    ) -> None:
+    def test_filters_by_v1_rule(self, fs: FakeFilesystem, artifacts_dir: Path) -> None:
         """Verify V1 filtering works (modality=text AND extraction_mode=full)."""
         # Create V1-compliant manifest
         v1_artifact = Artifact(
@@ -307,12 +294,15 @@ class TestListArtifactManifests:
             "extraction_mode": "full",
             "contributors": {"structural": [], "semantic": []},
             "entities": [],
-            "rendered": {"path": "", "validation": {
-                "last_validated_at": "",
-                "similarity": "",
-                "passed": "",
-                "notes": "",
-            }},
+            "rendered": {
+                "path": "",
+                "validation": {
+                    "last_validated_at": "",
+                    "similarity": "",
+                    "passed": "",
+                    "notes": "",
+                },
+            },
         }
         non_v1_path = artifacts_dir / "non-v1-artifact.yml"
         fs.create_file(non_v1_path, contents=yaml.safe_dump(non_v1_manifest))
@@ -361,9 +351,7 @@ class TestDeleteArtifactManifest:
 
         assert not path.exists()
 
-    def test_raises_for_missing_manifest(
-        self, fs: FakeFilesystem, artifacts_dir: Path
-    ) -> None:
+    def test_raises_for_missing_manifest(self, fs: FakeFilesystem, artifacts_dir: Path) -> None:
         """Verify FileNotFoundError raised for missing manifest."""
         with pytest.raises(FileNotFoundError, match="Artifact manifest not found"):
             delete_artifact_manifest("nonexistent", artifacts_dir)
@@ -372,9 +360,7 @@ class TestDeleteArtifactManifest:
 class TestGetManifestsBySourceFile:
     """Tests for get_manifests_by_source_file function."""
 
-    def test_filters_by_source_file(
-        self, fs: FakeFilesystem, artifacts_dir: Path
-    ) -> None:
+    def test_filters_by_source_file(self, fs: FakeFilesystem, artifacts_dir: Path) -> None:
         """Verify filtering by source file works."""
         artifact1 = Artifact(
             artifact_id="artifact-1",
@@ -418,9 +404,7 @@ class TestGetManifestsBySourceFile:
 class TestGetManifestsByKind:
     """Tests for get_manifests_by_kind function."""
 
-    def test_filters_by_exact_kind(
-        self, fs: FakeFilesystem, artifacts_dir: Path
-    ) -> None:
+    def test_filters_by_exact_kind(self, fs: FakeFilesystem, artifacts_dir: Path) -> None:
         """Verify exact artifact_kind filtering."""
         artifact1 = Artifact(
             artifact_id="artifact-1",
@@ -460,9 +444,7 @@ class TestGetManifestsByKind:
         assert len(results) == 1
         assert results[0]["artifact_kind"] == "diagram/mermaid.sequence"
 
-    def test_filters_by_wildcard_pattern(
-        self, fs: FakeFilesystem, artifacts_dir: Path
-    ) -> None:
+    def test_filters_by_wildcard_pattern(self, fs: FakeFilesystem, artifacts_dir: Path) -> None:
         """Verify wildcard pattern filtering works."""
         artifact1 = Artifact(
             artifact_id="artifact-1",
@@ -567,9 +549,7 @@ class TestSetValidationResult:
 class TestExecuteArtifactLifecycle:
     """Tests for execute_artifact_lifecycle function."""
 
-    def test_skips_non_v1_artifacts(
-        self, fs: FakeFilesystem, artifacts_dir: Path
-    ) -> None:
+    def test_skips_non_v1_artifacts(self, fs: FakeFilesystem, artifacts_dir: Path) -> None:
         """Verify non-V1 artifacts are skipped."""
         # Create non-V1 manifest (image modality)
         non_v1_manifest = {
@@ -623,7 +603,7 @@ class TestExecuteArtifactLifecycle:
     ) -> None:
         """Verify lifecycle orchestration calls rendering and validation."""
         from dataclasses import dataclass
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         # Create manifest
         create_artifact_manifest(sample_artifact, artifacts_dir)
@@ -679,16 +659,13 @@ class TestExecuteArtifactLifecycle:
 
         with (
             patch(
-                "scripts.knowledge.artifact_renderer.render_artifact",
-                return_value=rendered_file
+                "scripts.knowledge.artifact_renderer.render_artifact", return_value=rendered_file
             ) as mock_render,
             patch(
                 "scripts.knowledge.artifact_validator.validate_artifact",
-                return_value=mock_validation
+                return_value=mock_validation,
             ) as mock_validate,
-            patch(
-                "scripts.knowledge.artifact_validator.write_validation_result"
-            ) as mock_write,
+            patch("scripts.knowledge.artifact_validator.write_validation_result") as mock_write,
         ):
             # Create the rendered file that validation expects
             fs.create_file(rendered_file, contents="sequenceDiagram\n    A->>B: Hello")
@@ -732,9 +709,7 @@ class TestExecuteArtifactLifecycle:
         assert rendered_path is None
         assert result is None
 
-    def test_raises_for_missing_manifest(
-        self, fs: FakeFilesystem, artifacts_dir: Path
-    ) -> None:
+    def test_raises_for_missing_manifest(self, fs: FakeFilesystem, artifacts_dir: Path) -> None:
         """Verify FileNotFoundError raised for missing manifest."""
         rendered_dir = artifacts_dir / "rendered"
         fs.create_dir(rendered_dir)

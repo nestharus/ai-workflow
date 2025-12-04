@@ -117,9 +117,7 @@ def _load_test_coverage_from_db(coverage_db_path: Path) -> dict[str, TestCoverag
         has_line_bits = cursor.fetchone() is not None
 
         # Check if we have arc table (branch coverage)
-        cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='arc'"
-        )
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='arc'")
         has_arcs = cursor.fetchone() is not None
 
         # Load line coverage per context
@@ -310,9 +308,7 @@ def detect_redundant_tests(
             "total_tests_analyzed": len(test_coverage),
             "redundant_test_count": len(redundant_tests),
             "tests_with_unique_coverage": tests_with_unique,
-            "redundancy_rate_pct": round(
-                (len(redundant_tests) / len(test_coverage)) * 100, 1
-            )
+            "redundancy_rate_pct": round((len(redundant_tests) / len(test_coverage)) * 100, 1)
             if test_coverage
             else 0.0,
         },

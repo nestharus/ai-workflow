@@ -20,15 +20,16 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from scripts.dev.utils import REPO_ROOT
 
 if TYPE_CHECKING:
-    from scripts.knowledge.artifact_manager import ArtifactManifest, ContributorFact
+    from scripts.knowledge.artifact_manager import ArtifactManifest
     from scripts.knowledge.render_plan_manager import RenderPlan
 
 # Module-level logger
@@ -193,9 +194,7 @@ def _normalize_terminology(
 
             keyword_variant_mapping = apply_variant_decisions(knowledge_path)
         except (ImportError, FileNotFoundError, ValueError) as e:
-            _logger.debug(
-                "Could not load variant mapping, returning facts unchanged: %s", e
-            )
+            _logger.debug("Could not load variant mapping, returning facts unchanged: %s", e)
             return facts
 
     if not keyword_variant_mapping:
@@ -209,18 +208,14 @@ def _normalize_terminology(
 
         # Check text-containing fields for variant terms
         for field_name in ("value", "fact_text", "text", "content"):
-            if field_name in normalized_fact and isinstance(
-                normalized_fact[field_name], str
-            ):
+            if field_name in normalized_fact and isinstance(normalized_fact[field_name], str):
                 original_value = normalized_fact[field_name]
                 normalized_value = original_value
 
                 # Replace each variant term with its canonical form
                 for variant_term, canonical_term in keyword_variant_mapping.items():
                     if variant_term in normalized_value and variant_term != canonical_term:
-                        normalized_value = normalized_value.replace(
-                            variant_term, canonical_term
-                        )
+                        normalized_value = normalized_value.replace(variant_term, canonical_term)
                         _logger.debug(
                             "Normalized '%s' to '%s' in field %s",
                             variant_term,
@@ -347,8 +342,7 @@ Preserve the semantic content of all facts accurately.
             return rendered_text
         else:
             _logger.warning(
-                "Claude CLI returned non-zero or empty output (rc=%d), "
-                "falling back to source text",
+                "Claude CLI returned non-zero or empty output (rc=%d), falling back to source text",
                 result.returncode,
             )
             if result.stderr:
@@ -527,9 +521,7 @@ def _self_check(
         fact_embeddings = embed_keywords(fact_texts, model, tokenizer)
 
         # Compute similarity matrix
-        similarity_matrix = compute_cosine_similarity(
-            statement_embeddings, fact_embeddings
-        )
+        similarity_matrix = compute_cosine_similarity(statement_embeddings, fact_embeddings)
 
         # Check that each fact has at least one matching statement
         missing_facts = []
@@ -572,14 +564,10 @@ def _self_check(
         return True
 
     except ImportError as e:
-        _logger.warning(
-            "Qwen embeddings not available for self-check, assuming pass: %s", e
-        )
+        _logger.warning("Qwen embeddings not available for self-check, assuming pass: %s", e)
         return True
     except Exception as e:
-        _logger.warning(
-            "Self-check embedding computation failed, assuming pass: %s", e
-        )
+        _logger.warning("Self-check embedding computation failed, assuming pass: %s", e)
         return True
 
 

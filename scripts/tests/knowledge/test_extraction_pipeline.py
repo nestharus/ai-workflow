@@ -771,7 +771,6 @@ class TestPipelineIntegration:
         5. Verify: Assert golden keywords appear in final outputs
         """
         import shutil
-        import uuid
 
         import duckdb
 
@@ -851,7 +850,9 @@ class TestPipelineIntegration:
         # ===== STAGE 5: Run variant resolution (mocked) =====
         # Create empty variant_candidates.csv to simulate variant tracking
         variants_csv = keywords_dir / "variant_candidates.csv"
-        variants_csv.write_text("variant_id,keyword_a,keyword_b,similarity,validated,merge,canonical\n")
+        variants_csv.write_text(
+            "variant_id,keyword_a,keyword_b,similarity,validated,merge,canonical\n"
+        )
 
         # Mock variant tracking and application to avoid Qwen model dependency
         with (

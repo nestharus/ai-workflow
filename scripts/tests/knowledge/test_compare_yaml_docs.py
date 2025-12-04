@@ -309,7 +309,8 @@ class TestExtractIdsAndObjects:
             "items": [{"id": "child-1", "text": "Child text"}],
         }
         result, edges = extract_ids_and_objects(
-            data, source_file="test.yml"  # type: ignore[arg-type]
+            data,
+            source_file="test.yml",  # type: ignore[arg-type]
         )
 
         # Parent should have sliced representation
@@ -567,8 +568,12 @@ class TestFlattenEntryToRows:
             id="item-1",
             source_data={"id": "item-1", "text": "Original"},
             splits=[
-                SplitEntry(split_data={"id": "item-1", "text": "Split 1"}, source_file="split1.yml"),
-                SplitEntry(split_data={"id": "item-1", "text": "Split 2"}, source_file="split2.yml"),
+                SplitEntry(
+                    split_data={"id": "item-1", "text": "Split 1"}, source_file="split1.yml"
+                ),
+                SplitEntry(
+                    split_data={"id": "item-1", "text": "Split 2"}, source_file="split2.yml"
+                ),
             ],
             origin_type="original",
         )
@@ -869,21 +874,18 @@ class TestDetermineValueKind:
 
     def test_ref_dict_returns_ref(self) -> None:
         """Should return 'ref' for dict with $ref key."""
-        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
 
         result = _determine_value_kind({"$ref": "child-id"})
         assert result == "ref"
 
     def test_scalar_string_returns_scalar_str(self) -> None:
         """Should return 'scalar-str' for string values."""
-        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
 
         assert _determine_value_kind("hello") == "scalar-str"
         assert _determine_value_kind("") == "scalar-str"
 
     def test_scalar_number_returns_scalar_num(self) -> None:
         """Should return 'scalar-num' for numeric values."""
-        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
 
         assert _determine_value_kind(42) == "scalar-num"
         assert _determine_value_kind(3.14) == "scalar-num"
@@ -891,20 +893,17 @@ class TestDetermineValueKind:
 
     def test_scalar_bool_returns_scalar_bool(self) -> None:
         """Should return 'scalar-bool' for boolean values."""
-        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
 
         assert _determine_value_kind(True) == "scalar-bool"
         assert _determine_value_kind(False) == "scalar-bool"
 
     def test_scalar_null_returns_scalar_null(self) -> None:
         """Should return 'scalar-null' for None values."""
-        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
 
         assert _determine_value_kind(None) == "scalar-null"
 
     def test_list_of_scalars_returns_list_scalar(self) -> None:
         """Should return 'list-scalar' for lists of primitives."""
-        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
 
         assert _determine_value_kind(["a", "b", "c"]) == "list-scalar"
         assert _determine_value_kind([1, 2, 3]) == "list-scalar"
@@ -912,14 +911,12 @@ class TestDetermineValueKind:
 
     def test_list_of_dicts_returns_list_object(self) -> None:
         """Should return 'list-object' for lists containing dicts."""
-        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
 
         assert _determine_value_kind([{"key": "value"}]) == "list-object"
         assert _determine_value_kind([{"a": 1}, {"b": 2}]) == "list-object"
 
     def test_dict_without_ref_returns_object(self) -> None:
         """Should return 'object' for dicts without $ref."""
-        from scripts.knowledge.compare_yaml_docs import _determine_value_kind
 
         assert _determine_value_kind({"key": "value"}) == "object"
         assert _determine_value_kind({}) == "object"
@@ -948,8 +945,14 @@ class TestAssignRole:
     def test_default_returns_constraint(self) -> None:
         """Should return 'constraint' for non-metadata, non-ref keys."""
         assert _assign_role("text", "scalar-str", "text", None).role == "constraint"
-        assert _assign_role("status_code", "scalar-num", "raises[0].status_code", None).role == "constraint"
-        assert _assign_role("method", "scalar-str", "http_method_defaults[0].method", None).role == "constraint"
+        assert (
+            _assign_role("status_code", "scalar-num", "raises[0].status_code", None).role
+            == "constraint"
+        )
+        assert (
+            _assign_role("method", "scalar-str", "http_method_defaults[0].method", None).role
+            == "constraint"
+        )
 
     def test_artifact_root_returns_none_without_registry(self) -> None:
         """Should return None when no registry is available."""
@@ -966,29 +969,27 @@ class TestComputeGroupKey:
 
     def test_default_grouping_returns_scope_path(self) -> None:
         """Should return scope_path when no discriminator pattern matches."""
-        from scripts.knowledge.compare_yaml_docs import _compute_group_key
 
         result = _compute_group_key("items[0]", "items[0].text", None)
         assert result == "items[0]"
 
     def test_empty_scope_path_returns_root(self) -> None:
         """Should return '<root>' when scope_path is empty."""
-        from scripts.knowledge.compare_yaml_docs import _compute_group_key
 
         result = _compute_group_key("", "text", None)
         assert result == "<root>"
 
     def test_http_method_defaults_discriminator(self) -> None:
         """Should use method discriminator for http_method_defaults."""
-        from scripts.knowledge.compare_yaml_docs import _compute_group_key
 
         parent_data = {"method": "GET", "success_status": 200}
-        result = _compute_group_key("http_method_defaults[0]", "http_method_defaults[0].success_status", parent_data)
+        result = _compute_group_key(
+            "http_method_defaults[0]", "http_method_defaults[0].success_status", parent_data
+        )
         assert result == "http_method_defaults::method=GET"
 
     def test_sample_code_discriminator(self) -> None:
         """Should use language discriminator for sample_code."""
-        from scripts.knowledge.compare_yaml_docs import _compute_group_key
 
         parent_data = {"language": "python", "code": "print('hello')"}
         result = _compute_group_key("sample_code", "sample_code.code", parent_data)
@@ -996,7 +997,6 @@ class TestComputeGroupKey:
 
     def test_nested_list_index_extraction(self) -> None:
         """Should handle list index patterns correctly."""
-        from scripts.knowledge.compare_yaml_docs import _compute_group_key
 
         # Without discriminator, should strip index for container matching but return full scope_path
         result = _compute_group_key("sections[0].items[1]", "sections[0].items[1].text", None)
@@ -1076,7 +1076,6 @@ class TestIterFieldFacts:
 
     def test_simple_element_produces_field_facts(self) -> None:
         """Should produce FieldFacts for element with scalar fields."""
-        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
 
         data = {"id": "test-1", "text": "Hello", "count": 5}
         facts = _iter_field_facts("test-1", data, [], "test.yml")
@@ -1096,7 +1095,6 @@ class TestIterFieldFacts:
 
     def test_nested_dict_produces_nested_field_facts(self) -> None:
         """Should produce FieldFacts with nested field_paths for nested dicts."""
-        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
 
         data = {
             "id": "test-1",
@@ -1116,7 +1114,6 @@ class TestIterFieldFacts:
 
     def test_list_items_produce_indexed_field_facts(self) -> None:
         """Should produce field_paths with indices for list items."""
-        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
 
         data = {
             "id": "test-1",
@@ -1136,7 +1133,6 @@ class TestIterFieldFacts:
 
     def test_ref_value_produces_entity_ref_role(self) -> None:
         """Should produce role='entity_ref' for $ref values."""
-        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
 
         data = {
             "id": "parent",
@@ -1151,7 +1147,6 @@ class TestIterFieldFacts:
 
     def test_metadata_fields_produce_metadata_role(self) -> None:
         """Should produce role='metadata' for metadata fields."""
-        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
 
         data = {
             "id": "test-1",
@@ -1172,7 +1167,6 @@ class TestIterFieldFacts:
 
     def test_skips_root_id_field(self) -> None:
         """Should not emit FieldFact for root 'id' field."""
-        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
 
         data = {"id": "test-1", "text": "Hello"}
         facts = _iter_field_facts("test-1", data, [], "test.yml")
@@ -1186,7 +1180,6 @@ class TestIterFieldFacts:
         """Should verify group_id is SHA-256 hash of group_key."""
         import hashlib
 
-        from scripts.knowledge.compare_yaml_docs import _iter_field_facts
 
         data = {"id": "test-1", "text": "Hello"}
         facts = _iter_field_facts("test-1", data, [], "test.yml")
@@ -1201,7 +1194,7 @@ class TestExtractFieldFacts:
 
     def test_returns_dict_of_element_to_field_facts(self) -> None:
         """Should return dict[str, list[FieldFact]]."""
-        from scripts.knowledge.compare_yaml_docs import FieldFact, extract_field_facts
+        from scripts.knowledge.compare_yaml_docs import FieldFact
 
         data = {
             "id": "root",
@@ -1227,7 +1220,6 @@ class TestExtractFieldFacts:
         Discriminator-based grouping uses the list item's own data as
         parent_data since that's where the discriminator field ("method") lives.
         """
-        from scripts.knowledge.compare_yaml_docs import extract_field_facts
 
         data = {
             "id": "http-methods-section",
@@ -1293,7 +1285,6 @@ class TestExtractFieldFacts:
         Uses structure from general.python.docstrings-guide.yml lines 58-71.
         Discriminator-based grouping uses "language" field from sample_code dict.
         """
-        from scripts.knowledge.compare_yaml_docs import extract_field_facts
 
         data = {
             "id": "function-example",
@@ -1312,9 +1303,7 @@ class TestExtractFieldFacts:
         assert len(code_facts) == 3  # description, language, code
 
         # Verify discriminator grouping for sample_code with explicit group_key
-        language_fact = next(
-            (f for f in facts if f.field_path == "sample_code.language"), None
-        )
+        language_fact = next((f for f in facts if f.field_path == "sample_code.language"), None)
         assert language_fact is not None
         assert language_fact.value == "python"
         # Assert explicit discriminator-based group_key
@@ -1328,9 +1317,7 @@ class TestExtractFieldFacts:
         assert description_fact.group_key == "sample_code::language=python"
 
         # Verify code also has discriminator-based group_key
-        code_fact = next(
-            (f for f in facts if f.field_path == "sample_code.code"), None
-        )
+        code_fact = next((f for f in facts if f.field_path == "sample_code.code"), None)
         assert code_fact is not None
         assert code_fact.group_key == "sample_code::language=python"
 
@@ -1340,7 +1327,6 @@ class TestExtractFieldFacts:
 
     def test_nested_elements_with_containment(self) -> None:
         """Should handle nested elements with $ref correctly."""
-        from scripts.knowledge.compare_yaml_docs import extract_field_facts
 
         data = {
             "id": "parent",
@@ -1381,7 +1367,6 @@ class TestExtractFieldFacts:
 
     def test_ancestor_tracking_in_nested_elements(self) -> None:
         """Should populate ancestors field from containment edges."""
-        from scripts.knowledge.compare_yaml_docs import extract_field_facts
 
         data = {
             "id": "grandparent",
@@ -1436,7 +1421,6 @@ class TestExtractIdsAndTextWithFieldFacts:
 
     def test_field_facts_used_for_structured_access(self) -> None:
         """Should verify FieldFacts can be used for structured access."""
-        from scripts.knowledge.compare_yaml_docs import extract_field_facts
 
         data = {"id": "test", "text": "Hello", "count": 5}
 
@@ -2516,7 +2500,7 @@ class TestComputeElementContentHash:
         result = compute_element_content_hash(data, "test")  # type: ignore[arg-type]
 
         # Manual computation to verify
-        from scripts.knowledge.compare_yaml_docs import _iter_field_facts, extract_ids_and_objects
+        from scripts.knowledge.compare_yaml_docs import extract_ids_and_objects
 
         sliced_objects, edges = extract_ids_and_objects(data)
         facts = _iter_field_facts("test", sliced_objects["test"], [], "")

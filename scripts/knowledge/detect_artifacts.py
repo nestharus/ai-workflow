@@ -131,10 +131,7 @@ def _detect_from_file(
 
     # Count artifact_root FieldFacts before V1 filtering
     total_roots = sum(
-        1
-        for facts in field_facts.values()
-        for fact in facts
-        if fact.role == "artifact_root"
+        1 for facts in field_facts.values() for fact in facts if fact.role == "artifact_root"
     )
 
     # Detect artifacts (applies V1 filter internally)
@@ -258,8 +255,7 @@ Examples:
         "--v1-only",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Apply V1 participation rule (modality=text AND extraction_mode=full). "
-        "Default: True.",
+        help="Apply V1 participation rule (modality=text AND extraction_mode=full). Default: True.",
     )
     parser.add_argument(
         "--output-format",

@@ -174,7 +174,7 @@ class TestIsAlreadyResolved:
         """
         csv_path = real_knowledge_path / "resolutions" / "resolved.csv"
         header = ",".join(CSV_COLUMNS)
-        row = "res-1,item-1,source.yml,split.yml,abc,def,ghi,jkl,20240101T120000Z"
+        row = "res-1,item-1,source.yml,split.yml,abc,def,ghi,jkl,20240101T120000Z,fieldfacts.v2,content_orig,content_split"
         csv_path.write_text(f"{header}\n{row}\n")
 
         result = is_already_resolved(csv_path, "item-1", "source.yml", "split.yml")
@@ -438,7 +438,7 @@ items:
         (tmp_path / ".knowledge" / "resolutions").mkdir(parents=True)
         csv_path = tmp_path / ".knowledge" / "resolutions" / "resolved.csv"
         header = ",".join(CSV_COLUMNS)
-        row = "res-1,item-1,source.yml,split.yml,abc,def,ghi,jkl,20240101T120000Z"
+        row = "res-1,item-1,source.yml,split.yml,abc,def,ghi,jkl,20240101T120000Z,fieldfacts.v2,content_orig,content_split"
         csv_path.write_text(f"{header}\n{row}\n")
 
         with (
@@ -759,9 +759,7 @@ class TestResolutionRecordWithProjectionVersion:
 class TestContentHashStability:
     """Tests for content hash stability and behavior."""
 
-    def test_content_hash_remains_stable_when_text_format_changes(
-        self, tmp_path: Path
-    ) -> None:
+    def test_content_hash_remains_stable_when_text_format_changes(self, tmp_path: Path) -> None:
         """Should have stable content hash when only text formatting changes.
 
         Content hash is computed from canonical FieldFact payloads, independent

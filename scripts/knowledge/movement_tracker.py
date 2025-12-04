@@ -611,7 +611,11 @@ def record_iterative_movement_main(args: argparse.Namespace) -> int:
     moved_at = utc_timestamp()
 
     # Use CLI-provided values if available, otherwise fall back to legacy markers
-    if getattr(args, "pass_id", None) and getattr(args, "span_id", None) and getattr(args, "artifact_id", None):
+    if (
+        getattr(args, "pass_id", None)
+        and getattr(args, "span_id", None)
+        and getattr(args, "artifact_id", None)
+    ):
         # Artifact-level extraction with explicit IDs
         pass_id = args.pass_id
         span_id = args.span_id
@@ -765,8 +769,7 @@ def query_iterative_movements_main(args: argparse.Namespace) -> int:
     else:
         # Compact mode: truncated table with key fields
         print(
-            f"{'iteration_id':<40} {'similarity':<12} "
-            f"{'source_sentence':<52} {'isolated_fact':<52}"
+            f"{'iteration_id':<40} {'similarity':<12} {'source_sentence':<52} {'isolated_fact':<52}"
         )
         print("-" * 160)
         for record in results:

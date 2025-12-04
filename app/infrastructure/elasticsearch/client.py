@@ -59,6 +59,22 @@ class ElasticsearchWrapper:
         await anyio.to_thread.run_sync(self._client.close)
         self._initialized = False
 
+    async def health_check(self) -> bool:
+        """Check if the Elasticsearch client is healthy by executing a ping.
+
+        Returns:
+            True if the client is healthy and can communicate with Elasticsearch,
+            False otherwise.
+        """
+        if not self._initialized:
+            return False
+        try:
+            result = await anyio.to_thread.run_sync(self._client.ping)
+            return bool(result)
+        except Exception as exc:
+            logger.warning("Elasticsearch health check failed: %s", exc)
+            return False
+
     async def search(self, index: str, query: dict[str, Any]) -> dict[str, Any]:
         """Execute a search request in a worker thread."""
         self._ensure_initialized()

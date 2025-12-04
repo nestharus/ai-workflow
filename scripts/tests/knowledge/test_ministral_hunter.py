@@ -249,15 +249,14 @@ class TestInvokeHunterErrorHandling:
         # Mock generate to raise timeout error
         mock_model.generate.side_effect = TimeoutError("Inference timed out")
 
-        with patch("torch.no_grad"):
-            with pytest.raises(HunterError, match="Inference failed"):
-                invoke_hunter(
-                    state_text="Test text",
-                    mode="entities",
-                    model=mock_model,
-                    tokenizer=mock_tokenizer,
-                    knowledge_path=tmp_path,
-                )
+        with patch("torch.no_grad"), pytest.raises(HunterError, match="Inference failed"):
+            invoke_hunter(
+                state_text="Test text",
+                mode="entities",
+                model=mock_model,
+                tokenizer=mock_tokenizer,
+                knowledge_path=tmp_path,
+            )
 
 
 class TestInvokeHunterMock:

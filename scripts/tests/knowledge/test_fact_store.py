@@ -7,14 +7,11 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 import yaml
 
 from scripts.knowledge.compare_yaml_docs import ContainmentEdge, FieldFact
 from scripts.knowledge.fact_store import (
-    EdgeRecord,
     FactStoreRecord,
-    StructuralFactRecord,
     containment_edges_to_edge_records,
     decorate_yaml_main,
     decorate_yaml_with_entity_id,
@@ -472,9 +469,7 @@ class TestDecorateYamlWithFactIds:
         yaml_path = tmp_path / "test.yml"
         yaml_path.write_text("items:\n  - id: elem-1\n    text: Test item\n")
 
-        result, updates = decorate_yaml_with_fact_ids(
-            yaml_path, "elem-1", ["uuid-1", "uuid-2"]
-        )
+        result, updates = decorate_yaml_with_fact_ids(yaml_path, "elem-1", ["uuid-1", "uuid-2"])
 
         assert result == 2  # Returns count of new IDs added
         with open(yaml_path) as f:
@@ -489,9 +484,7 @@ class TestDecorateYamlWithFactIds:
             "items:\n  - id: elem-1\n    text: Test\n    fact_ids:\n      - existing\n"
         )
 
-        result, updates = decorate_yaml_with_fact_ids(
-            yaml_path, "elem-1", ["existing", "new"]
-        )
+        result, updates = decorate_yaml_with_fact_ids(yaml_path, "elem-1", ["existing", "new"])
 
         assert result == 1  # Only "new" was added, "existing" was deduplicated
         with open(yaml_path) as f:
@@ -508,9 +501,7 @@ class TestDecorateYamlWithFactIds:
             "items:\n  - id: elem-1\n    text: Test\n    fact_ids:\n      - existing\n"
         )
 
-        result, updates = decorate_yaml_with_fact_ids(
-            yaml_path, "elem-1", ["existing"]
-        )
+        result, updates = decorate_yaml_with_fact_ids(yaml_path, "elem-1", ["existing"])
 
         assert result == 0  # No new IDs added
         assert any("no new fact IDs to add" in u for u in updates)
@@ -520,9 +511,7 @@ class TestDecorateYamlWithFactIds:
         yaml_path = tmp_path / "test.yml"
         yaml_path.write_text("items:\n  - id: other\n    text: Test\n")
 
-        result, updates = decorate_yaml_with_fact_ids(
-            yaml_path, "nonexistent", ["uuid-1"]
-        )
+        result, updates = decorate_yaml_with_fact_ids(yaml_path, "nonexistent", ["uuid-1"])
 
         assert result == 0
         assert any("not found" in u for u in updates)
@@ -532,9 +521,7 @@ class TestDecorateYamlWithFactIds:
         yaml_path = tmp_path / "invalid.yml"
         yaml_path.write_text("invalid: yaml: [")
 
-        result, updates = decorate_yaml_with_fact_ids(
-            yaml_path, "elem-1", ["uuid-1"]
-        )
+        result, updates = decorate_yaml_with_fact_ids(yaml_path, "elem-1", ["uuid-1"])
 
         assert result == 0
         assert updates == []
@@ -545,9 +532,7 @@ class TestDecorateYamlWithFactIds:
         original = "items:\n  - id: elem-1\n    text: Test\n"
         yaml_path.write_text(original)
 
-        result, updates = decorate_yaml_with_fact_ids(
-            yaml_path, "elem-1", ["uuid-1"], dry_run=True
-        )
+        result, updates = decorate_yaml_with_fact_ids(yaml_path, "elem-1", ["uuid-1"], dry_run=True)
 
         assert result == 1  # Returns count of IDs that would be added
         assert yaml_path.read_text() == original
@@ -573,13 +558,9 @@ class TestDecorateYamlWithEntityId:
     def test_overwrites_existing_entity_id(self, tmp_path: Path) -> None:
         """Should overwrite existing entity_id."""
         yaml_path = tmp_path / "test.yml"
-        yaml_path.write_text(
-            "items:\n  - id: elem-1\n    text: Test\n    entity_id: old-id\n"
-        )
+        yaml_path.write_text("items:\n  - id: elem-1\n    text: Test\n    entity_id: old-id\n")
 
-        result, updates = decorate_yaml_with_entity_id(
-            yaml_path, "elem-1", "create_app", "new-id"
-        )
+        result, updates = decorate_yaml_with_entity_id(yaml_path, "elem-1", "create_app", "new-id")
 
         assert result == 1
         with open(yaml_path) as f:
@@ -591,9 +572,7 @@ class TestDecorateYamlWithEntityId:
         yaml_path = tmp_path / "test.yml"
         yaml_path.write_text("items:\n  - id: other\n    text: Test\n")
 
-        result, updates = decorate_yaml_with_entity_id(
-            yaml_path, "nonexistent", "entity", "uuid"
-        )
+        result, updates = decorate_yaml_with_entity_id(yaml_path, "nonexistent", "entity", "uuid")
 
         assert result == 0
         assert any("not found" in u for u in updates)
@@ -613,19 +592,21 @@ class TestParseStoreArgs:
 
     def test_default_knowledge_path(self) -> None:
         """Should use default knowledge path."""
-        args = parse_store_args(
-            ["--entity", "e", "--domain", "d", "--pattern", "p"]
-        )
+        args = parse_store_args(["--entity", "e", "--domain", "d", "--pattern", "p"])
         assert args.knowledge_path == Path(".knowledge")
 
     def test_custom_knowledge_path(self) -> None:
         """Should accept custom knowledge path."""
         args = parse_store_args(
             [
-                "--entity", "e",
-                "--domain", "d",
-                "--pattern", "p",
-                "--knowledge-path", "custom/.knowledge",
+                "--entity",
+                "e",
+                "--domain",
+                "d",
+                "--pattern",
+                "p",
+                "--knowledge-path",
+                "custom/.knowledge",
             ]
         )
         assert args.knowledge_path == Path("custom/.knowledge")
@@ -651,10 +632,14 @@ class TestParseQueryArgs:
         """Should parse all filter options."""
         args = parse_query_args(
             [
-                "--domain", "fastapi",
-                "--pattern", "factory",
-                "--entity", "create_app",
-                "--fact-id", "uuid-123",
+                "--domain",
+                "fastapi",
+                "--pattern",
+                "factory",
+                "--entity",
+                "create_app",
+                "--fact-id",
+                "uuid-123",
             ]
         )
         assert args.domain == "fastapi"
@@ -678,9 +663,14 @@ class TestParseDecorateArgs:
         """Should parse multiple fact IDs."""
         args = parse_decorate_args(
             [
-                "--yaml-file", "test.yml",
-                "--element-id", "elem-1",
-                "--fact-ids", "uuid-1", "uuid-2", "uuid-3",
+                "--yaml-file",
+                "test.yml",
+                "--element-id",
+                "elem-1",
+                "--fact-ids",
+                "uuid-1",
+                "uuid-2",
+                "uuid-3",
             ]
         )
         assert args.fact_ids == ["uuid-1", "uuid-2", "uuid-3"]
@@ -689,9 +679,12 @@ class TestParseDecorateArgs:
         """Should parse dry-run flag."""
         args = parse_decorate_args(
             [
-                "--yaml-file", "test.yml",
-                "--element-id", "elem-1",
-                "--entity", "e",
+                "--yaml-file",
+                "test.yml",
+                "--element-id",
+                "elem-1",
+                "--entity",
+                "e",
                 "--dry-run",
             ]
         )
@@ -1106,9 +1099,7 @@ class TestStoreStructuralFacts:
             ),
         ]
 
-        success, total = store_structural_facts(
-            field_facts, ["rest"], "api", knowledge_path
-        )
+        success, total = store_structural_facts(field_facts, ["rest"], "api", knowledge_path)
 
         assert success == 1
         assert total == 1
@@ -1173,9 +1164,7 @@ class TestStoreStructuralFacts:
 
         # Store twice with same value
         store_structural_facts([field_fact], ["rest"], "api", knowledge_path)
-        success, total = store_structural_facts(
-            [field_fact], ["rest"], "api", knowledge_path
-        )
+        success, total = store_structural_facts([field_fact], ["rest"], "api", knowledge_path)
 
         assert success == 1  # Duplicate considered success
         assert total == 1
@@ -1220,9 +1209,7 @@ class TestStoreStructuralFacts:
         # Store first fact
         store_structural_facts([field_fact_get], ["rest"], "api", knowledge_path)
         # Store second fact with different value
-        success, total = store_structural_facts(
-            [field_fact_post], ["rest"], "api", knowledge_path
-        )
+        success, total = store_structural_facts([field_fact_post], ["rest"], "api", knowledge_path)
 
         assert success == 1
         assert total == 1
@@ -1433,9 +1420,7 @@ class TestExportFactsToJsonl:
         }
         (facts_dir / "fastapi.factory.facts.yml").write_text(yaml.dump(yaml_content))
 
-        output_path = export_facts_to_jsonl(
-            knowledge_path, include_edges=False
-        )
+        output_path = export_facts_to_jsonl(knowledge_path, include_edges=False)
 
         assert output_path.exists()
         with open(output_path) as f:
@@ -1467,9 +1452,7 @@ class TestExportFactsToJsonl:
         }
         (facts_dir / "rest.api.facts.yml").write_text(yaml.dump(yaml_content))
 
-        output_path = export_facts_to_jsonl(
-            knowledge_path, include_edges=False
-        )
+        output_path = export_facts_to_jsonl(knowledge_path, include_edges=False)
 
         with open(output_path) as f:
             records = [json.loads(line) for line in f]
@@ -1502,9 +1485,7 @@ class TestExportFactsToJsonl:
         }
         (facts_dir / "rest.api.facts.yml").write_text(yaml.dump(yaml_content))
 
-        output_path = export_facts_to_jsonl(
-            knowledge_path, include_edges=True
-        )
+        output_path = export_facts_to_jsonl(knowledge_path, include_edges=True)
 
         with open(output_path) as f:
             records = [json.loads(line) for line in f]
@@ -1547,11 +1528,17 @@ class TestParseStoreStructuralArgs:
 
     def test_parses_required_args(self) -> None:
         """Parses required arguments."""
-        args = parse_store_structural_args([
-            "--yaml-file", "test.yml",
-            "--domains", "rest", "fastapi",
-            "--pattern", "api",
-        ])
+        args = parse_store_structural_args(
+            [
+                "--yaml-file",
+                "test.yml",
+                "--domains",
+                "rest",
+                "fastapi",
+                "--pattern",
+                "api",
+            ]
+        )
 
         assert args.yaml_file == Path("test.yml")
         assert args.domains == ["rest", "fastapi"]
@@ -1606,14 +1593,16 @@ class TestIntegrationStructuralAndSemanticFacts:
         # Add semantic fact to same file
         yaml_path = facts_dir / "rest.api.facts.yml"
         data = yaml.safe_load(yaml_path.read_text())
-        data["facts"].append({
-            "fact_id": "sem-uuid-1",
-            "entity": "GET method",
-            "fact_text": "GET is used for read operations",
-            "domain": "rest",
-            "pattern": "api",
-            "confidence": 0.9,
-        })
+        data["facts"].append(
+            {
+                "fact_id": "sem-uuid-1",
+                "entity": "GET method",
+                "fact_text": "GET is used for read operations",
+                "domain": "rest",
+                "pattern": "api",
+                "confidence": 0.9,
+            }
+        )
         yaml_path.write_text(yaml.dump(data))
 
         # Export to JSONL

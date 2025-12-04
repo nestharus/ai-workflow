@@ -43,7 +43,7 @@ Artifact Lifecycle Integration:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -325,7 +325,11 @@ def update_artifact_manifest(
     manifest_dict: dict[str, Any] = dict(manifest)
 
     for key, value in updates.items():
-        if key in manifest_dict and isinstance(manifest_dict[key], dict) and isinstance(value, dict):
+        if (
+            key in manifest_dict
+            and isinstance(manifest_dict[key], dict)
+            and isinstance(value, dict)
+        ):
             # Deep merge for nested dicts
             manifest_dict[key].update(value)
         else:
@@ -485,7 +489,7 @@ def set_validation_result(
         FileNotFoundError: If the manifest file doesn't exist.
         ValueError: If the manifest is invalid.
     """
-    timestamp = datetime.now(tz=timezone.utc).isoformat()
+    timestamp = datetime.now(tz=UTC).isoformat()
     updates = {
         "rendered": {
             "validation": {
@@ -505,7 +509,7 @@ def execute_artifact_lifecycle(
     rendered_dir: Path,
     validations_csv: Path,
     knowledge_path: Path,
-) -> tuple[Path | None, "ValidationResult | None"]:
+) -> tuple[Path | None, ValidationResult | None]:
     """Execute the full artifact lifecycle for a single artifact.
 
     Orchestrates semantic fact extraction, rendering, and validation per
@@ -542,7 +546,6 @@ def execute_artifact_lifecycle(
     # Import lazily to avoid circular imports
     from scripts.knowledge.artifact_renderer import render_artifact
     from scripts.knowledge.artifact_validator import (
-        ValidationResult,
         get_comparator_for_artifact_kind,
         validate_artifact,
         write_validation_result,
@@ -595,9 +598,7 @@ def execute_artifact_lifecycle(
 
     # Step 5: Render artifact
     try:
-        rendered_path = render_artifact(
-            manifest, render_plan, artifacts_dir, rendered_dir
-        )
+        rendered_path = render_artifact(manifest, render_plan, artifacts_dir, rendered_dir)
         _logger.info("Rendered artifact to: %s", rendered_path)
     except Exception as e:
         _logger.error("Rendering failed for %s: %s", artifact_id, e)
@@ -655,9 +656,7 @@ def execute_artifact_lifecycle(
     comparator = get_comparator_for_artifact_kind(artifact_kind)
 
     try:
-        result = validate_artifact(
-            manifest, rendered_path, source_text, comparator
-        )
+        result = validate_artifact(manifest, rendered_path, source_text, comparator)
         _logger.info(
             "Validation result for %s: similarity=%.2f, passed=%s",
             artifact_id,

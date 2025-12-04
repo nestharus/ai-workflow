@@ -40,8 +40,6 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
-import numpy as np
-
 from scripts.dev.utils import REPO_ROOT
 from scripts.knowledge.variant_resolver import (
     compute_cosine_similarity,
@@ -199,7 +197,7 @@ def invoke_sub_agent(
     prompt_str = json.dumps(prompt_json, indent=2)
 
     try:
-        result = subprocess.run(  # noqa: S603, S607
+        result = subprocess.run(  # noqa: S603
             [
                 "claude",
                 "--agent",
@@ -630,9 +628,7 @@ def orchestrate_surgeon_pipeline(
                     anchor_threshold=0.7,
                 )
                 min_score_drop = min(min_score_drop, validation["score_drop"])
-                max_anchor_similarity = max(
-                    max_anchor_similarity, validation["anchor_similarity"]
-                )
+                max_anchor_similarity = max(max_anchor_similarity, validation["anchor_similarity"])
 
                 if not validation["target_passed"]:
                     all_passed = False
@@ -746,9 +742,7 @@ def orchestrate_surgeon_pipeline_mock(
                 if keyword.lower() in replacement.lower():
                     # Try to remove the sentence containing the keyword
                     sentences = replacement.split(".")
-                    new_sentences = [
-                        s for s in sentences if keyword.lower() not in s.lower()
-                    ]
+                    new_sentences = [s for s in sentences if keyword.lower() not in s.lower()]
                     replacement = ".".join(new_sentences)
                     if replacement and not replacement.endswith("."):
                         replacement += "."

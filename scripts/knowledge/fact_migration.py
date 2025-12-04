@@ -45,25 +45,17 @@ import sys
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import Any, TypedDict
 
 import duckdb
 import yaml
 
 from scripts.dev.utils import REPO_ROOT, utc_timestamp
-from scripts.knowledge import fact_extraction, fact_isolation, fact_store, movement_tracker
+from scripts.knowledge import fact_extraction, fact_store, movement_tracker
 from scripts.knowledge.compare_yaml_docs import parse_yaml_file
 from scripts.knowledge.migration_manager import (
     CSV_COLUMNS as MIGRATION_CSV_COLUMNS,
-    MigrationTask,
-    append_task,
-    ensure_csv_exists,
-    get_task_by_id,
-    update_task_status,
 )
-
-if TYPE_CHECKING:
-    pass
 
 # Extended CSV columns for fact migration tasks
 FACT_MIGRATION_CSV_COLUMNS = [
@@ -342,13 +334,13 @@ def normalize_classifications(data: dict[str, Any]) -> list[dict[str, Any]]:
     if classifications is None:
         raise ValueError(
             "Classification JSON must contain 'classifications' or 'facts' key. "
-            "Expected format: {\"classifications\": [{\"fact_id\": \"...\", \"domain\": \"...\", \"pattern\": \"...\"}]}"
+            'Expected format: {"classifications": [{"fact_id": "...", "domain": "...", "pattern": "..."}]}'
         )
 
     if not isinstance(classifications, list):
         raise ValueError(
             f"Classifications must be a list, got {type(classifications).__name__}. "
-            "Expected format: {\"classifications\": [{...}, {...}]}"
+            'Expected format: {"classifications": [{...}, {...}]}'
         )
 
     if len(classifications) == 0:
@@ -362,7 +354,7 @@ def normalize_classifications(data: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             raise ValueError(
                 f"Classification at index {i} must be an object, got {type(item).__name__}. "
-                "Expected: {\"fact_id\": \"...\", \"domain\": \"...\", \"pattern\": \"...\"}"
+                'Expected: {"fact_id": "...", "domain": "...", "pattern": "..."}'
             )
 
         missing_fields = required_fields - set(item.keys())
@@ -375,19 +367,13 @@ def normalize_classifications(data: dict[str, Any]) -> list[dict[str, Any]]:
 
         # Validate field types
         if not isinstance(item.get("fact_id"), str) or not item["fact_id"]:
-            raise ValueError(
-                f"Classification at index {i}: 'fact_id' must be a non-empty string."
-            )
+            raise ValueError(f"Classification at index {i}: 'fact_id' must be a non-empty string.")
 
         if not isinstance(item.get("domain"), str) or not item["domain"]:
-            raise ValueError(
-                f"Classification at index {i}: 'domain' must be a non-empty string."
-            )
+            raise ValueError(f"Classification at index {i}: 'domain' must be a non-empty string.")
 
         if not isinstance(item.get("pattern"), str) or not item["pattern"]:
-            raise ValueError(
-                f"Classification at index {i}: 'pattern' must be a non-empty string."
-            )
+            raise ValueError(f"Classification at index {i}: 'pattern' must be a non-empty string.")
 
     return classifications
 
@@ -503,9 +489,7 @@ def _append_fact_migration_task_to_csv(csv_path: Path, task: FactMigrationTask) 
         conn.close()
 
 
-def _get_fact_migration_task_from_csv(
-    csv_path: Path, task_id: str
-) -> FactMigrationTask | None:
+def _get_fact_migration_task_from_csv(csv_path: Path, task_id: str) -> FactMigrationTask | None:
     """Query fact migration tasks CSV for a task by ID.
 
     Args:
@@ -588,9 +572,7 @@ def _update_fact_migration_task_in_csv(
 # These wrappers provide fact-specific abstractions over the generic CSV helpers.
 
 
-def append_fact_migration_task(
-    knowledge_path: Path, task: FactMigrationTask
-) -> None:
+def append_fact_migration_task(knowledge_path: Path, task: FactMigrationTask) -> None:
     """Append a fact migration task to fact_tasks.csv.
 
     Wrapper that computes the CSV path and calls the internal append function.
@@ -603,9 +585,7 @@ def append_fact_migration_task(
     _append_fact_migration_task_to_csv(csv_path, task)
 
 
-def get_fact_migration_task_by_id(
-    knowledge_path: Path, task_id: str
-) -> FactMigrationTask | None:
+def get_fact_migration_task_by_id(knowledge_path: Path, task_id: str) -> FactMigrationTask | None:
     """Get a fact migration task by ID from fact_tasks.csv.
 
     Wrapper that computes the CSV path and calls the internal query function.
@@ -709,7 +689,11 @@ def start_fact_migration(
 
     print(f"Starting fact migration for element: {element_id}")
     print(f"Source file: {yaml_file}")
-    print(f"Element text: \"{element_text[:100]}...\"" if len(element_text) > 100 else f"Element text: \"{element_text}\"")
+    print(
+        f'Element text: "{element_text[:100]}..."'
+        if len(element_text) > 100
+        else f'Element text: "{element_text}"'
+    )
     print()
 
     # Extract entities from element text
@@ -792,7 +776,9 @@ def start_fact_migration(
     print()
     print("Next steps:")
     print(f"  1. Classify facts: uv run knowledge.classify-facts --task-id {task_id}")
-    print(f"  2. Move facts: uv run knowledge.move-facts --task-id {task_id} --classification-file <path>")
+    print(
+        f"  2. Move facts: uv run knowledge.move-facts --task-id {task_id} --classification-file <path>"
+    )
     print(f"  3. Validate: uv run knowledge.validate-fact-migration --task-id {task_id}")
 
     return 2 if incomplete_extractions > 0 else 0
@@ -1348,15 +1334,11 @@ def validate_fact_migration(task_id: str, knowledge_path: Path) -> int:
     print()
 
     if issues > 0:
-        update_fact_migration_task_status(
-            knowledge_path, task_id, "failed", utc_timestamp()
-        )
+        update_fact_migration_task_status(knowledge_path, task_id, "failed", utc_timestamp())
         print(f"Validation failed: {issues} issue(s) found")
         return 1
 
-    update_fact_migration_task_status(
-        knowledge_path, task_id, "completed", utc_timestamp()
-    )
+    update_fact_migration_task_status(knowledge_path, task_id, "completed", utc_timestamp())
     print(f"Migration validated successfully for task {task_id}")
 
     return 0

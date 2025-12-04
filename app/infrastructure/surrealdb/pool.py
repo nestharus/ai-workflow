@@ -143,6 +143,22 @@ class SurrealDBPool:
         async with self.acquire() as conn:
             return await conn.query(schema_sql, params)
 
+    async def health_check(self) -> bool:
+        """Check if the pool is healthy by executing a simple query.
+
+        Returns:
+            True if the pool is healthy and can execute queries, False otherwise.
+        """
+        if not self._initialized:
+            return False
+        try:
+            async with self.acquire() as conn:
+                await conn.query("SELECT 1")
+            return True
+        except Exception as exc:
+            logger.warning("SurrealDB health check failed: %s", exc)
+            return False
+
     async def initialize_schema(self) -> None:
         """Define Knowledge Graph tables, relationships, and vector index."""
         await self.execute_schema(self._schema_version_definitions())

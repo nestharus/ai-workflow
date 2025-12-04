@@ -462,7 +462,7 @@ def _build_offset_to_fact_mapping(
     Returns:
         List of (start_offset, end_offset, fact) tuples, sorted by start_offset.
     """
-    from scripts.knowledge.compare_yaml_docs import FieldFact, _fact_to_line
+    from scripts.knowledge.compare_yaml_docs import _fact_to_line
 
     # Sort facts by field_path to match how extract_ids_and_text produces text
     sorted_facts = sorted(facts, key=lambda f: f.field_path)  # type: ignore[attr-defined]

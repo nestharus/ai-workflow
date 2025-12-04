@@ -43,7 +43,6 @@ from scripts.dev.utils import REPO_ROOT
 from scripts.knowledge.artifact_manager import (
     ArtifactManifest,
     list_artifact_manifests,
-    load_artifact_manifest,
 )
 
 # Module-level logger

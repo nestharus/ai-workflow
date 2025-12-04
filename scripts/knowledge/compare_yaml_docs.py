@@ -188,7 +188,7 @@ class FieldFact:
     field_path: str
     key: str
     scope_path: str
-    value: Any  # noqa: ANN401
+    value: Any
     value_kind: ValueKind
     ancestors: list[str] = field(default_factory=list)
     source_file: str = ""
@@ -202,9 +202,7 @@ class FieldFact:
 
 
 # Metadata keys per fact_redesign.md lines 210-235
-METADATA_KEYS = frozenset(
-    {"doc_id", "id", "version_hint", "kind", "index", "category", "domain"}
-)
+METADATA_KEYS = frozenset({"doc_id", "id", "version_hint", "kind", "index", "category", "domain"})
 
 
 def _determine_value_kind(value: Any) -> ValueKind:  # noqa: ANN401
@@ -268,7 +266,7 @@ def _load_artifact_registry(
     Returns:
         List of artifact kind entries, or empty list if registry unavailable.
     """
-    global _artifact_registry_cache  # noqa: PLW0603
+    global _artifact_registry_cache
 
     if _artifact_registry_cache is not None:
         return _artifact_registry_cache
@@ -306,7 +304,7 @@ def _load_artifact_registry(
 
 def _clear_artifact_registry_cache() -> None:
     """Clear the artifact registry cache for testing purposes."""
-    global _artifact_registry_cache  # noqa: PLW0603
+    global _artifact_registry_cache
     _artifact_registry_cache = None
 
 
@@ -1090,9 +1088,7 @@ def _iter_field_facts(
                                 role_assignment = _assign_role(
                                     str(idx), value_kind, item_path, node, item
                                 )
-                                group_key = _compute_group_key(
-                                    child_path, item_path, node
-                                )
+                                group_key = _compute_group_key(child_path, item_path, node)
                                 group_id = _compute_group_id(group_key)
 
                                 facts.append(
@@ -1369,9 +1365,7 @@ def _slice_element(
         sliced: dict[str, Any] = {}
         for key, value in data.items():
             new_path = f"{field_path_prefix}.{key}" if field_path_prefix else key
-            sliced[key] = _slice_element(
-                value, parent_id, new_path, source_file, containment_edges
-            )
+            sliced[key] = _slice_element(value, parent_id, new_path, source_file, containment_edges)
         return sliced
 
     if isinstance(data, list):
@@ -1553,26 +1547,20 @@ def extract_ids_and_objects(
             if isinstance(element_id, str):
                 # Slice this element: replace nested ID-bearing dicts with refs
                 element_edges: list[ContainmentEdge] = []
-                sliced_data = _slice_element(
-                    data, element_id, "", source_file, element_edges
-                )
+                sliced_data = _slice_element(data, element_id, "", source_file, element_edges)
                 result[element_id] = sliced_data
                 all_edges.extend(element_edges)
 
         for key, value in data.items():
             child_path = f"{parent_path}.{key}" if parent_path else key
-            child_results, child_edges = extract_ids_and_objects(
-                value, child_path, source_file
-            )
+            child_results, child_edges = extract_ids_and_objects(value, child_path, source_file)
             result.update(child_results)
             all_edges.extend(child_edges)
 
     elif isinstance(data, list):
         for index, item in enumerate(data):
             child_path = f"{parent_path}[{index}]"
-            child_results, child_edges = extract_ids_and_objects(
-                item, child_path, source_file
-            )
+            child_results, child_edges = extract_ids_and_objects(item, child_path, source_file)
             result.update(child_results)
             all_edges.extend(child_edges)
 

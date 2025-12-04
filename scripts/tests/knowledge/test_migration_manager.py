@@ -298,8 +298,8 @@ source.yml,item-2,original,text2,split.yml,text2-mod
 
         # Create resolution CSV that resolves item-1
         res_content = """resolution_id,id,source_file,split_file,original_text_hash,\
-split_text_hash,source_file_hash,split_file_hash,resolved_at
-res-1,item-1,source.yml,split.yml,abc,def,ghi,jkl,20240101T120000Z
+split_text_hash,source_file_hash,split_file_hash,resolved_at,projection_version,original_content_hash,split_content_hash
+res-1,item-1,source.yml,split.yml,abc,def,ghi,jkl,20240101T120000Z,fieldfacts.v2,content_orig,content_split
 """
         res_csv = real_knowledge_path / "resolutions" / "resolved.csv"
         res_csv.write_text(res_content)

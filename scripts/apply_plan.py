@@ -9,7 +9,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
 
@@ -22,7 +22,7 @@ class ApplyPlanError(Exception):
     """Custom exception for orchestrator failures."""
 
 
-def _run(command: List[str], *, cwd: Path = PROJECT_ROOT) -> subprocess.CompletedProcess[str]:
+def _run(command: list[str], *, cwd: Path = PROJECT_ROOT) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(command, capture_output=True, text=True, cwd=cwd)
     if result.stdout:
         sys.stdout.write(result.stdout)
@@ -31,14 +31,14 @@ def _run(command: List[str], *, cwd: Path = PROJECT_ROOT) -> subprocess.Complete
     return result
 
 
-def _load_yaml(path: Path) -> Dict[str, Any]:
+def _load_yaml(path: Path) -> dict[str, Any]:
     try:
         return yaml.safe_load(path.read_text()) or {}
     except FileNotFoundError:
         return {}
 
 
-def _write_yaml(path: Path, data: Dict[str, Any]) -> None:
+def _write_yaml(path: Path, data: dict[str, Any]) -> None:
     path.write_text(yaml.safe_dump(data, sort_keys=False))
 
 
@@ -54,11 +54,11 @@ def _parse_task_header(task_path: Path) -> str:
     return header
 
 
-def _collect_tasks(task_dir: Path) -> List[Path]:
+def _collect_tasks(task_dir: Path) -> list[Path]:
     return sorted(task_dir.glob("task_*.md"))
 
 
-def _init_status(task_dir: Path, plan_hash: str) -> Dict[str, Any]:
+def _init_status(task_dir: Path, plan_hash: str) -> dict[str, Any]:
     tasks = []
     for task_path in _collect_tasks(task_dir):
         tasks.append(
@@ -74,7 +74,7 @@ def _init_status(task_dir: Path, plan_hash: str) -> Dict[str, Any]:
 
 
 def _update_status(
-    status_path: Path, status_data: Dict[str, Any], task_file: str, **updates: Any
+    status_path: Path, status_data: dict[str, Any], task_file: str, **updates: Any
 ) -> None:
     for task in status_data.get("tasks", []):
         if task.get("task_file") == task_file:
@@ -97,7 +97,7 @@ def _run_clipboard_to_plan() -> Path:
     return Path(result.stdout.strip().splitlines()[-1])
 
 
-def _parse_implementor_output(output: str) -> tuple[str, Optional[List[str]], Optional[str]]:
+def _parse_implementor_output(output: str) -> tuple[str, list[str] | None, str | None]:
     if "SUCCESS" in output:
         return "success", None, None
     tests_match = re.search(r"TESTS:\s*\[(.*?)\]", output, re.IGNORECASE)
@@ -122,13 +122,13 @@ def _run_claude_agent(agent: str, prompt: str) -> subprocess.CompletedProcess[st
     return _run(command)
 
 
-def _create_changes_files(task_dir: Path) -> List[str]:
+def _create_changes_files(task_dir: Path) -> list[str]:
     names_result = subprocess.run(
         ["git", "diff", "--name-only"], capture_output=True, text=True, cwd=PROJECT_ROOT
     )
     if names_result.returncode != 0:
         return []
-    changes_files: List[str] = []
+    changes_files: list[str] = []
     for name in [n for n in names_result.stdout.splitlines() if n.strip()]:
         diff_result = subprocess.run(
             ["git", "diff", "--", name], capture_output=True, text=True, cwd=PROJECT_ROOT
@@ -142,13 +142,13 @@ def _create_changes_files(task_dir: Path) -> List[str]:
     return changes_files
 
 
-def _detect_conclusion(task_dir: Path) -> Optional[Path]:
+def _detect_conclusion(task_dir: Path) -> Path | None:
     conclusions = sorted(task_dir.glob("*.conclusion"))
     return conclusions[0] if conclusions else None
 
 
 def _patch_incomplete_tasks(
-    task_dir: Path, status_path: Path, status_data: Dict[str, Any], plan_text: str
+    task_dir: Path, status_path: Path, status_data: dict[str, Any], plan_text: str
 ) -> None:
     for task in status_data.get("tasks", []):
         if task.get("status") == "completed":
@@ -170,7 +170,7 @@ def _patch_incomplete_tasks(
 
 
 def _process_task(
-    task_dir: Path, task: Dict[str, Any], status_path: Path, status_data: Dict[str, Any]
+    task_dir: Path, task: dict[str, Any], status_path: Path, status_data: dict[str, Any]
 ) -> str:
     task_file = task.get("task_file")
     if not task_file:

@@ -492,8 +492,8 @@ class TestQueryIterativeMovements:
         header = ",".join(ITERATIVE_CSV_COLUMNS)
         rows = [
             header,
-            "iter-1,fact-1,create_app is in factory.py,create_app is a function,factory.py,0.98,Fact extraction,20240101T120000Z",
-            "iter-2,fact-2,Other sentence,Other fact,Other residual,0.95,Fact extraction,20240101T120001Z",
+            "iter-1,fact-1,create_app is in factory.py,create_app is a function,factory.py,0.98,Fact extraction,20240101T120000Z,,,,pass-span.v1",
+            "iter-2,fact-2,Other sentence,Other fact,Other residual,0.95,Fact extraction,20240101T120001Z,,,,pass-span.v1",
         ]
         csv_path.write_text("\n".join(rows) + "\n")
 
@@ -510,8 +510,8 @@ class TestQueryIterativeMovements:
         header = ",".join(ITERATIVE_CSV_COLUMNS)
         rows = [
             header,
-            "iter-1,fact-1,Sentence one,Fact one,Residual one,0.98,Fact extraction,20240101T120000Z",
-            "iter-2,fact-2,Sentence two,Fact two,Residual two,0.95,Fact extraction,20240101T120001Z",
+            "iter-1,fact-1,Sentence one,Fact one,Residual one,0.98,Fact extraction,20240101T120000Z,,,,pass-span.v1",
+            "iter-2,fact-2,Sentence two,Fact two,Residual two,0.95,Fact extraction,20240101T120001Z,,,,pass-span.v1",
         ]
         csv_path.write_text("\n".join(rows) + "\n")
 
@@ -540,8 +540,8 @@ class TestQueryIterativeMovements:
         header = ",".join(ITERATIVE_CSV_COLUMNS)
         rows = [
             header,
-            "iter-1,fact-1,Sentence one,Fact one,Residual one,0.98,Fact extraction,20240101T120000Z",
-            "iter-2,fact-2,Sentence two,Fact two,Residual two,0.95,Fact extraction,20240101T120001Z",
+            "iter-1,fact-1,Sentence one,Fact one,Residual one,0.98,Fact extraction,20240101T120000Z,,,,pass-span.v1",
+            "iter-2,fact-2,Sentence two,Fact two,Residual two,0.95,Fact extraction,20240101T120001Z,,,,pass-span.v1",
         ]
         csv_path.write_text("\n".join(rows) + "\n")
 
@@ -681,6 +681,10 @@ class TestRecordIterativeMovementMain:
         args.after = "Residual"
         args.reason = "Fact extraction"
         args.model = "test-model"
+        # Set extended columns to None to trigger legacy behavior
+        args.pass_id = None
+        args.span_id = None
+        args.artifact_id = None
 
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()
@@ -714,6 +718,10 @@ class TestRecordIterativeMovementMain:
         args.after = "Residual"
         args.reason = "Fact extraction"
         args.model = "test-model"
+        # Set extended columns to None to trigger legacy behavior
+        args.pass_id = None
+        args.span_id = None
+        args.artifact_id = None
 
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()
@@ -769,7 +777,7 @@ class TestQueryIterativeMovementsMain:
         header = ",".join(ITERATIVE_CSV_COLUMNS)
         rows = [
             header,
-            "iter-1,fact-1,Sentence with create_app,Fact,Residual,0.98,Fact extraction,20240101T120000Z",
+            "iter-1,fact-1,Sentence with create_app,Fact,Residual,0.98,Fact extraction,20240101T120000Z,,,,pass-span.v1",
         ]
         csv_path.write_text("\n".join(rows) + "\n")
 
@@ -787,9 +795,7 @@ class TestQueryIterativeMovementsMain:
         # In compact mode, source_sentence is shown truncated
         assert "Sentence with create_app" in captured.out
 
-    def test_returns_one_when_no_filters(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_returns_one_when_no_filters(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should return 1 when no entity or fact_id provided."""
         args = MagicMock()
         args.entity = None
@@ -811,8 +817,8 @@ class TestQueryIterativeMovementsMain:
         header = ",".join(ITERATIVE_CSV_COLUMNS)
         rows = [
             header,
-            "iter-1,fact-1,Sentence one,Fact one,Residual one,0.98,Reason one,20240101T120000Z",
-            "iter-2,fact-2,Sentence two,Fact two,Residual two,0.95,Reason two,20240101T120001Z",
+            "iter-1,fact-1,Sentence one,Fact one,Residual one,0.98,Reason one,20240101T120000Z,,,,pass-span.v1",
+            "iter-2,fact-2,Sentence two,Fact two,Residual two,0.95,Reason two,20240101T120001Z,,,,pass-span.v1",
         ]
         csv_path.write_text("\n".join(rows) + "\n")
 
@@ -844,7 +850,7 @@ class TestQueryIterativeMovementsMain:
         header = ",".join(ITERATIVE_CSV_COLUMNS)
         rows = [
             header,
-            "iter-1,fact-1,Full source sentence here,Extracted fact text,Residual after extraction,0.98,Fact extraction,20240101T120000Z",
+            "iter-1,fact-1,Full source sentence here,Extracted fact text,Residual after extraction,0.98,Fact extraction,20240101T120000Z,,,,pass-span.v1",
         ]
         csv_path.write_text("\n".join(rows) + "\n")
 

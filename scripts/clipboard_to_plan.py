@@ -8,13 +8,12 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
 
 
 def is_wsl() -> bool:
     """Check if running in Windows Subsystem for Linux."""
     try:
-        with open("/proc/version", "r") as f:
+        with open("/proc/version") as f:
             return "microsoft" in f.read().lower()
     except FileNotFoundError:
         return False
@@ -212,9 +211,7 @@ def generate_outline(sections: dict[str, str], file_changes: list[dict[str, str]
     return "\n".join(lines).rstrip() + "\n"
 
 
-def write_task_files(
-    output_dir: Path, file_changes: list[dict[str, str]], intro: str = ""
-) -> None:
+def write_task_files(output_dir: Path, file_changes: list[dict[str, str]], intro: str = "") -> None:
     """Write individual task files named task_XXX.md with file-specific content.
 
     Args:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import duckdb
@@ -23,9 +22,6 @@ from scripts.knowledge.fact_isolation import (
     validate_isolation,
     write_isolation_records,
 )
-
-if TYPE_CHECKING:
-    from pyfakefs.fake_filesystem import FakeFilesystem
 
 # CSV column header for fact extraction records
 FACT_CSV_COLUMNS = [
@@ -51,16 +47,18 @@ def _make_fact_row(
     extracted_at: str = "20240101T120000Z",
 ) -> str:
     """Create a CSV row for the extractions table."""
-    return ",".join([
-        fact_id,
-        f'"{source_sentence}"',
-        entity,
-        f'"{fact_text}"',
-        f'"{rewritten_sentence}"',
-        iteration,
-        confidence,
-        extracted_at,
-    ])
+    return ",".join(
+        [
+            fact_id,
+            f'"{source_sentence}"',
+            entity,
+            f'"{fact_text}"',
+            f'"{rewritten_sentence}"',
+            iteration,
+            confidence,
+            extracted_at,
+        ]
+    )
 
 
 @pytest.fixture
@@ -265,9 +263,7 @@ class TestValidateIsolation:
         assert result["extraction_complete"] is True
         assert result["total_facts"] == 1
 
-    def test_validation_low_similarity(
-        self, mock_qwen_model: tuple[MagicMock, MagicMock]
-    ) -> None:
+    def test_validation_low_similarity(self, mock_qwen_model: tuple[MagicMock, MagicMock]) -> None:
         """Should set information_preserved to False when similarity < 0.95."""
         model, tokenizer = mock_qwen_model
         facts = [
@@ -283,9 +279,7 @@ class TestValidateIsolation:
         assert result["semantic_similarity"] == 0.80
         assert result["extraction_complete"] is False
 
-    def test_validation_entity_present(
-        self, mock_qwen_model: tuple[MagicMock, MagicMock]
-    ) -> None:
+    def test_validation_entity_present(self, mock_qwen_model: tuple[MagicMock, MagicMock]) -> None:
         """Should return failure when entity is still in residual."""
         model, tokenizer = mock_qwen_model
         facts = [
@@ -397,7 +391,9 @@ class TestPrepareMovementRecords:
             },
         ]
 
-        records = prepare_movement_records(facts, "FastAPI is fast and uses Python for web.", "FastAPI")
+        records = prepare_movement_records(
+            facts, "FastAPI is fast and uses Python for web.", "FastAPI"
+        )
 
         assert len(records) == 2
         # First iteration
@@ -591,9 +587,7 @@ class TestParseArgs:
 
     def test_custom_output_path(self) -> None:
         """Should parse --output argument."""
-        args = parse_args(
-            ["--sentence", "Test.", "--entity", "X", "--output", "custom/output.csv"]
-        )
+        args = parse_args(["--sentence", "Test.", "--entity", "X", "--output", "custom/output.csv"])
 
         assert args.output == Path("custom/output.csv")
 
@@ -646,9 +640,7 @@ class TestIsolateEntityFactsMain:
 
             assert result == 1
 
-    def test_dry_run_returns_zero(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_dry_run_returns_zero(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Should return 0 in dry-run mode after successful extraction."""
         knowledge_path = tmp_path / ".knowledge"
         facts_dir = knowledge_path / "facts"
@@ -818,9 +810,7 @@ class TestIsolateEntityFactsMain:
             assert "test-fact-id" in content
             assert "FastAPI" in content
 
-    def test_prints_report_header(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_prints_report_header(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Should print report header with entity and sentence."""
         knowledge_path = tmp_path / ".knowledge"
         facts_dir = knowledge_path / "facts"

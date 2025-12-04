@@ -219,8 +219,10 @@ class TestApplyKeywordsMain:
         # Write valid CSV with no kept candidates
         candidates_csv.write_text(
             "candidate_id,source_file,element_id,sentence,candidate_text,"
-            "start_char,end_char,detected_at,keep,confidence,reason,classified_at,qwen_score\n"
-            "c1,docs/test.yml,elem-1,sentence,keyword1,0,7,2024-01-01,false,0.5,noise,,\n"
+            "start_char,end_char,detected_at,keep,confidence,reason,classified_at,qwen_score,"
+            "projection_version,source_field_path,source_scope_path,field_role,artifact_kind\n"
+            "c1,docs/test.yml,elem-1,sentence,keyword1,0,7,2024-01-01,false,0.5,noise,,,"
+            "fieldfacts.v2,,,,\n"
         )
 
         args = argparse.Namespace(
@@ -240,8 +242,10 @@ class TestApplyKeywordsMain:
         candidates_csv = keywords_dir / "candidates.csv"
         candidates_csv.write_text(
             "candidate_id,source_file,element_id,sentence,candidate_text,"
-            "start_char,end_char,detected_at,keep,confidence,reason,classified_at,qwen_score\n"
-            "c1,nonexistent.yml,elem-1,sentence,keyword1,0,7,2024-01-01,true,0.9,good,,\n"
+            "start_char,end_char,detected_at,keep,confidence,reason,classified_at,qwen_score,"
+            "projection_version,source_field_path,source_scope_path,field_role,artifact_kind\n"
+            "c1,nonexistent.yml,elem-1,sentence,keyword1,0,7,2024-01-01,true,0.9,good,,,"
+            "fieldfacts.v2,,,,\n"
         )
 
         args = argparse.Namespace(

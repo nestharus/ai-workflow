@@ -714,9 +714,7 @@ class TestRunYamldocs:
 class TestRunMarkdownRestriction:
     """Tests for _run_markdown_restriction function."""
 
-    def test_returns_zero_when_no_violations(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_returns_zero_when_no_violations(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should return 0 when no forbidden markdown files found."""
         from pyfakefs.fake_filesystem_unittest import Patcher
 
@@ -749,9 +747,7 @@ class TestRunMarkdownRestriction:
             captured = capsys.readouterr()
             assert "No forbidden markdown files found" in captured.out
 
-    def test_returns_one_when_violations_found(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_returns_one_when_violations_found(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should return 1 when forbidden markdown files found."""
         from pyfakefs.fake_filesystem_unittest import Patcher
 
@@ -786,9 +782,7 @@ class TestRunMarkdownRestriction:
             assert "forbidden_markdown_file" in captured.err
             assert "docs/guide.md" in captured.err
 
-    def test_excludes_directories_from_config(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_excludes_directories_from_config(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Should exclude directories specified in config."""
         from pyfakefs.fake_filesystem_unittest import Patcher
 
@@ -904,7 +898,8 @@ class TestMain:
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
             patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
             patch.object(
-                lint, "LINT_MARKDOWN_RESTRICTION_CONFIG",
+                lint,
+                "LINT_MARKDOWN_RESTRICTION_CONFIG",
                 Path("/fake/repo/.lint.markdown-restriction.yaml"),
             ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
@@ -967,7 +962,8 @@ class TestMain:
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
             patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
             patch.object(
-                lint, "LINT_MARKDOWN_RESTRICTION_CONFIG",
+                lint,
+                "LINT_MARKDOWN_RESTRICTION_CONFIG",
                 Path("/fake/repo/.lint.markdown-restriction.yaml"),
             ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
@@ -1016,7 +1012,8 @@ class TestMain:
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
             patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
             patch.object(
-                lint, "LINT_MARKDOWN_RESTRICTION_CONFIG",
+                lint,
+                "LINT_MARKDOWN_RESTRICTION_CONFIG",
                 Path("/fake/repo/.lint.markdown-restriction.yaml"),
             ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),

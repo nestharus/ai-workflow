@@ -47,8 +47,6 @@ import yaml
 
 from scripts.dev.utils import REPO_ROOT, utc_timestamp
 from scripts.knowledge.ministral_hunter import (
-    HunterError,
-    HunterOutput,
     invoke_hunter,
     invoke_hunter_mock,
 )
@@ -204,9 +202,7 @@ def _assert_localized_rewrites(
         span_id = rewrite["span_id"]
         matching_spans = [s for s in spans if s["span_id"] == span_id]
         if not matching_spans:
-            raise InvariantViolation(
-                f"localized-rewrites: rewrite for unknown span {span_id}"
-            )
+            raise InvariantViolation(f"localized-rewrites: rewrite for unknown span {span_id}")
 
     # If we have the new state text, verify changes are localized
     if new_state_text is not None and new_state_text != original_text:
@@ -743,11 +739,7 @@ def extract_artifact_facts(
         span_inputs: list[SpanInput] = []
         for span in spans:
             # Find facts for this span
-            span_facts = [
-                f["fact_text"]
-                for f in facts
-                if f["evidence_span_id"] == span["span_id"]
-            ]
+            span_facts = [f["fact_text"] for f in facts if f["evidence_span_id"] == span["span_id"]]
             # Generate chunk ID combining artifact, pass, and span info
             chunk_id = f"{artifact_id}:pass{pass_count + 1}:{span['span_id']}"
             span_inputs.append(
@@ -797,9 +789,7 @@ def extract_artifact_facts(
                     None,
                 )
                 if span:
-                    state_text = apply_rewrite(
-                        state_text, span, rewrite["replacement_text"]
-                    )
+                    state_text = apply_rewrite(state_text, span, rewrite["replacement_text"])
                     facts_this_pass.extend(span.get("target_facts", []))
 
         # Compute new hash
@@ -828,9 +818,7 @@ def extract_artifact_facts(
             facts_this_pass = []
 
         # Assert monotonic and check for no-op
-        is_no_op = _assert_monotonic_or_handle(
-            old_len, len(state_text), state_hash, seen_hashes
-        )
+        is_no_op = _assert_monotonic_or_handle(old_len, len(state_text), state_hash, seen_hashes)
 
         if is_no_op:
             print("No-op detected (same hash seen before)")

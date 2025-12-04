@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import hashlib
-import io
-import runpy
 import subprocess
 import sys
-from contextlib import redirect_stdout
+from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Tuple
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -99,7 +97,7 @@ class TestUpdateStatus:
         """Should update matching task and persist to YAML."""
         status_path = fake_repo_root / "scripts" / "status.yml"
         fs.create_file(str(status_path), contents="")
-        status_data: Dict[str, Any] = {
+        status_data: dict[str, Any] = {
             "plan_hash": "hash",
             "tasks": [
                 {"task_file": "task_001.md", "status": "pending", "file": "a.py"},
@@ -227,7 +225,7 @@ class TestCreateChangesFiles:
         fs.create_dir(str(task_dir))
 
         def fake_run(
-            cmd: List[str], *, capture_output: bool, text: bool, cwd: Path
+            cmd: list[str], *, capture_output: bool, text: bool, cwd: Path
         ) -> subprocess.CompletedProcess[str]:
             if cmd[:3] == ["git", "diff", "--name-only"]:
                 return subprocess.CompletedProcess(cmd, 0, stdout="a.txt\nb/c.txt\n", stderr="")
@@ -256,7 +254,7 @@ class TestCreateChangesFiles:
         fs.create_dir(str(task_dir))
 
         def fake_run(
-            cmd: List[str], *, capture_output: bool, text: bool, cwd: Path
+            cmd: list[str], *, capture_output: bool, text: bool, cwd: Path
         ) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="err")
 
@@ -298,7 +296,7 @@ class TestPatchIncompleteTasks:
         task_file = task_dir / "task_001.md"
         fs.create_file(str(task_file), contents="# file_a\nDetails")
         status_path = task_dir / "status.yml"
-        status_data: Dict[str, Any] = {
+        status_data: dict[str, Any] = {
             "plan_hash": "old",
             "tasks": [
                 {"task_file": "task_001.md", "status": "pending"},
@@ -306,7 +304,7 @@ class TestPatchIncompleteTasks:
             ],
         }
         fs.create_file(str(status_path), contents=yaml.safe_dump(status_data))
-        calls: List[str] = []
+        calls: list[str] = []
 
         def fake_run_claude(agent: str, prompt: str) -> subprocess.CompletedProcess[str]:
             calls.append(agent)
@@ -325,7 +323,7 @@ class TestProcessTask:
 
     def _setup_task(
         self, fs: FakeFilesystem, fake_repo_root: Path
-    ) -> tuple[Path, Path, Dict[str, Any]]:
+    ) -> tuple[Path, Path, dict[str, Any]]:
         task_dir = fake_repo_root / "scripts" / "tasks"
         fs.create_dir(str(task_dir))
         task_path = task_dir / "task_001.md"
@@ -501,21 +499,21 @@ class TestMain:
             apply_plan.clipboard_to_plan, "get_clipboard_content", lambda: "new plan"
         )
         monkeypatch.setattr(apply_plan, "_run_clipboard_to_plan", lambda: task_dir)
-        patch_calls: List[Path] = []
+        patch_calls: list[Path] = []
 
         def fake_patch(
             task_dir_path: Path,
             status_path_path: Path,
-            status_data_dict: Dict[str, Any],
+            status_data_dict: dict[str, Any],
             plan_text: str,
         ) -> None:
             patch_calls.append(task_dir_path)
 
         def fake_process(
             task_dir_path: Path,
-            task: Dict[str, Any],
+            task: dict[str, Any],
             status_path_path: Path,
-            status_data_dict: Dict[str, Any],
+            status_data_dict: dict[str, Any],
         ) -> str:
             task["status"] = "completed"
             return "completed"
@@ -617,10 +615,10 @@ class TestMain:
         monkeypatch.setattr(clipboard_to_plan, "get_clipboard_content", lambda: sample_plan)
 
         # Track created task directory
-        created_task_dir: List[Path] = []
+        created_task_dir: list[Path] = []
 
         def intercepted_subprocess_run(
-            cmd: List[str],
+            cmd: list[str],
             *,
             capture_output: bool = False,
             text: bool = False,
@@ -661,9 +659,9 @@ class TestMain:
 
         def fake_process_task(
             task_dir_path: Path,
-            task: Dict[str, Any],
+            task: dict[str, Any],
             status_path: Path,
-            status_data: Dict[str, Any],
+            status_data: dict[str, Any],
         ) -> str:
             task["status"] = "completed"
             return "completed"

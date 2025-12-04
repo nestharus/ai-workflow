@@ -44,4 +44,11 @@ async def health_check(request: Request) -> HealthResponse:
     if surrealdb_pool is None or elasticsearch_client is None:
         return HealthResponse(status="unhealthy")
 
+    # Check if dependencies are experiencing transient issues
+    surrealdb_healthy = await surrealdb_pool.health_check()
+    elasticsearch_healthy = await elasticsearch_client.health_check()
+
+    if not surrealdb_healthy or not elasticsearch_healthy:
+        return HealthResponse(status="degraded")
+
     return HealthResponse(status="ok")

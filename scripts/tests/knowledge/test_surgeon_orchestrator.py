@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -14,9 +13,9 @@ from scripts.knowledge.surgeon_orchestrator import (
     GroupResult,
     OrganizerOutput,
     PlannerOutput,
+    ReviewerOutput,
     RewriteResult,
     RewriterOutput,
-    ReviewerOutput,
     SpanInput,
     SurgeonError,
     SurgeonResult,
@@ -142,9 +141,7 @@ class TestValidateRemovalQwen3:
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()
 
-        with patch(
-            "scripts.knowledge.surgeon_orchestrator.embed_keywords"
-        ) as mock_embed:
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
             mock_embed.return_value = np.array(
                 [
                     [1.0, 0.0, 0.0],  # fact
@@ -197,9 +194,7 @@ class TestValidateRemovalQwen3:
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()
 
-        with patch(
-            "scripts.knowledge.surgeon_orchestrator.embed_keywords"
-        ) as mock_embed:
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
             mock_embed.return_value = np.array([[1.0, 0.0], [0.8, 0.2], [0.7, 0.3]])
 
             with patch(
@@ -232,12 +227,8 @@ class TestValidateRemovalWithAnchors:
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()
 
-        with patch(
-            "scripts.knowledge.surgeon_orchestrator.embed_keywords"
-        ) as mock_embed:
-            mock_embed.return_value = np.array(
-                [[1.0, 0.0, 0.0], [0.9, 0.1, 0.0], [0.8, 0.1, 0.1]]
-            )
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
+            mock_embed.return_value = np.array([[1.0, 0.0, 0.0], [0.9, 0.1, 0.0], [0.8, 0.1, 0.1]])
 
             with patch(
                 "scripts.knowledge.surgeon_orchestrator.compute_cosine_similarity"
@@ -270,12 +261,8 @@ class TestValidateRemovalWithAnchors:
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()
 
-        with patch(
-            "scripts.knowledge.surgeon_orchestrator.embed_keywords"
-        ) as mock_embed:
-            mock_embed.return_value = np.array(
-                [[1.0, 0.0, 0.0], [0.9, 0.1, 0.0], [0.2, 0.7, 0.1]]
-            )
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
+            mock_embed.return_value = np.array([[1.0, 0.0, 0.0], [0.9, 0.1, 0.0], [0.2, 0.7, 0.1]])
 
             with patch(
                 "scripts.knowledge.surgeon_orchestrator.compute_cosine_similarity"
@@ -325,9 +312,7 @@ class TestValidateRemovalWithAnchors:
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()
 
-        with patch(
-            "scripts.knowledge.surgeon_orchestrator.embed_keywords"
-        ) as mock_embed:
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
             # Mock for main embeddings, then for anchor embeddings
             mock_embed.side_effect = [
                 np.array([[1.0, 0.0], [0.9, 0.1], [0.7, 0.3]]),  # Main
@@ -339,9 +324,7 @@ class TestValidateRemovalWithAnchors:
             ) as mock_sim:
                 # Good target removal, good anchor preservation
                 mock_sim.side_effect = [
-                    np.array(
-                        [[1.0, 0.9, 0.4], [0.9, 1.0, 0.8], [0.4, 0.8, 1.0]]
-                    ),  # Main
+                    np.array([[1.0, 0.9, 0.4], [0.9, 1.0, 0.8], [0.4, 0.8, 1.0]]),  # Main
                     np.array([[1.0, 0.85], [0.85, 1.0]]),  # Anchor
                 ]
 
@@ -375,9 +358,7 @@ class TestOrchestateSurgeonPipeline:
             )
         ]
 
-        with patch(
-            "scripts.knowledge.surgeon_orchestrator.invoke_sub_agent"
-        ) as mock_invoke:
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
             # Mock responses for each stage
             mock_invoke.side_effect = [
                 # Organizer
@@ -445,9 +426,7 @@ class TestOrchestateSurgeonPipeline:
             )
         ]
 
-        with patch(
-            "scripts.knowledge.surgeon_orchestrator.invoke_sub_agent"
-        ) as mock_invoke:
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
             mock_invoke.side_effect = [
                 # Organizer
                 {
@@ -518,9 +497,7 @@ class TestOrchestateSurgeonPipeline:
             )
         ]
 
-        with patch(
-            "scripts.knowledge.surgeon_orchestrator.invoke_sub_agent"
-        ) as mock_invoke:
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
             mock_invoke.side_effect = [
                 # Organizer
                 {"groups": [{"group_id": "g1", "span_ids": ["span_1"]}]},
@@ -528,9 +505,7 @@ class TestOrchestateSurgeonPipeline:
                 {"plan": {}},
                 # Rewriter
                 {
-                    "rewrites": [
-                        {"span_id": "span_1", "replacement_text": "Bad rewrite"}
-                    ],
+                    "rewrites": [{"span_id": "span_1", "replacement_text": "Bad rewrite"}],
                     "self_check": {},
                 },
                 # Reviewer rejects
@@ -577,9 +552,7 @@ class TestOrchestateSurgeonPipeline:
             )
         ]
 
-        with patch(
-            "scripts.knowledge.surgeon_orchestrator.invoke_sub_agent"
-        ) as mock_invoke:
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
             # Organizer fails
             mock_invoke.side_effect = SurgeonError("Organizer failed")
 
@@ -611,9 +584,7 @@ class TestOrchestateSurgeonPipeline:
             )
         ]
 
-        with patch(
-            "scripts.knowledge.surgeon_orchestrator.invoke_sub_agent"
-        ) as mock_invoke:
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
             mock_invoke.return_value = {"groups": []}
 
             results = orchestrate_surgeon_pipeline(
@@ -688,9 +659,7 @@ class TestComputeScoreDrop:
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()
 
-        with patch(
-            "scripts.knowledge.surgeon_orchestrator.embed_keywords"
-        ) as mock_embed:
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
             mock_embed.return_value = np.array([[1.0, 0.0], [0.8, 0.2], [0.2, 0.8]])
 
             with patch(

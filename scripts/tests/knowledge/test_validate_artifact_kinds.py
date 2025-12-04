@@ -7,13 +7,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-import pytest
-
 from scripts.knowledge import validate_artifact_kinds
 from scripts.knowledge.validate_artifact_kinds import (
-    ValidationError,
     ValidationResult,
-    ValidationWarning,
     _compute_jaccard_similarity,
     compute_pattern_signature,
     load_registry,
@@ -599,10 +595,14 @@ kinds:
             contents=registry_content,
         )
         with patch.object(validate_artifact_kinds, "REPO_ROOT", Path("/fake")):
-            exit_code = main([
-                "--knowledge-path", "/fake/.knowledge",
-                "--json-report", "/fake/output/report.json",
-            ])
+            exit_code = main(
+                [
+                    "--knowledge-path",
+                    "/fake/.knowledge",
+                    "--json-report",
+                    "/fake/output/report.json",
+                ]
+            )
 
         assert exit_code == 0
         assert fs.exists("/fake/output/report.json")

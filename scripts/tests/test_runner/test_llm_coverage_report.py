@@ -14,20 +14,25 @@ from scripts.dev.test_runner.llm_coverage_report import (
     FunctionCoverageGap,
     MissingBranchDetail,
     MissingLineDetail,
+    TestFailure,
+    TierTestResults,
     _build_context,
     _calculate_function_coverage_gaps,
     _collect_code_gaps,
     _collect_function_coverage_gaps,
+    _collect_test_failures,
     _collect_usecase_gaps,
     _discover_tier_coverage_files,
     _extract_functions_from_file,
     _get_class_field_lines,
     _guess_repo_root,
+    _infer_tier_from_path,
     _is_in_service_layer,
     _is_private_function,
     _load_coverage_json,
     _load_pytest_testpaths,
     _load_usecase_registry,
+    _parse_junit_xml,
     _read_source_lines,
     _scan_tests_for_usecases,
     _UsecaseMarkerVisitor,
@@ -1451,11 +1456,10 @@ def func():
         }
         fs.create_file("/repo/coverage_unit.json", contents=json.dumps(coverage_data))
 
+        # Thresholds are now loaded from settings, not passed as args
         result = _collect_function_coverage_gaps(
             Path("/repo"),
             {"unit": Path("/repo/coverage_unit.json")},
-            80.0,
-            80.0,
         )
 
         assert "tier_summaries" in result
@@ -1466,11 +1470,10 @@ def func():
         """Should handle missing coverage files gracefully."""
         fs.create_dir("/repo")
 
+        # Thresholds are now loaded from settings, not passed as args
         result = _collect_function_coverage_gaps(
             Path("/repo"),
             {"unit": Path("/repo/nonexistent.json")},
-            80.0,
-            80.0,
         )
 
         assert result["tier_summaries"]["unit"]["error"] is not None
@@ -1524,25 +1527,15 @@ class TestParseArgsNewOptions:
         args = parse_args(["--tier-report", "/custom/report.json"])
         assert args.tier_report == Path("/custom/report.json")
 
-    def test_default_min_line(self) -> None:
-        """Should default min-line to 80.0."""
+    def test_default_junit_xml_is_none(self) -> None:
+        """Should default junit-xml to None."""
         args = parse_args([])
-        assert args.min_line == 80.0
+        assert args.junit_xml is None
 
-    def test_custom_min_line(self) -> None:
-        """Should accept custom min-line threshold."""
-        args = parse_args(["--min-line", "90"])
-        assert args.min_line == 90.0
-
-    def test_default_min_branch(self) -> None:
-        """Should default min-branch to 80.0."""
-        args = parse_args([])
-        assert args.min_branch == 80.0
-
-    def test_custom_min_branch(self) -> None:
-        """Should accept custom min-branch threshold."""
-        args = parse_args(["--min-branch", "75"])
-        assert args.min_branch == 75.0
+    def test_custom_junit_xml(self) -> None:
+        """Should accept custom junit-xml path."""
+        args = parse_args(["--junit-xml", "/custom/junit.xml"])
+        assert args.junit_xml == Path("/custom/junit.xml")
 
 
 class TestBuildLlmCoverageDocumentFunctionCoverage:
@@ -1595,8 +1588,8 @@ class TestBuildLlmCoverageDocumentFunctionCoverage:
         assert "function_coverage" in result
         assert "tier_summaries" in result["function_coverage"]
 
-    def test_includes_custom_thresholds_in_config(self, fs: FakeFilesystem) -> None:
-        """Should include custom thresholds in config section."""
+    def test_includes_tier_thresholds_in_config(self, fs: FakeFilesystem) -> None:
+        """Should include tier thresholds from pyproject.toml in config section."""
         coverage_data: dict[str, Any] = {"meta": {}, "files": {}, "totals": {}}
         fs.create_dir("/repo")
         fs.create_file("/repo/coverage.json", contents=json.dumps(coverage_data))
@@ -1609,9 +1602,318 @@ class TestBuildLlmCoverageDocumentFunctionCoverage:
             usecase_yaml_path=Path("/repo/use_cases.yaml"),
             tests_roots=["tests"],
             context_radius=2,
-            min_line=90.0,
-            min_branch=85.0,
         )
 
-        assert result["config"]["min_line_coverage"] == 90.0
-        assert result["config"]["min_branch_coverage"] == 85.0
+        assert "tier_thresholds" in result["config"]
+        assert "unit" in result["config"]["tier_thresholds"]
+        assert "component" in result["config"]["tier_thresholds"]
+        assert "integration" in result["config"]["tier_thresholds"]
+        assert "e2e" in result["config"]["tier_thresholds"]
+        assert "scripts" in result["config"]["tier_thresholds"]
+
+    def test_includes_test_failures_section(self, fs: FakeFilesystem) -> None:
+        """Should include test_failures section in output."""
+        coverage_data: dict[str, Any] = {"meta": {}, "files": {}, "totals": {}}
+        fs.create_dir("/repo")
+        fs.create_file("/repo/coverage.json", contents=json.dumps(coverage_data))
+        fs.create_file("/repo/use_cases.yaml", contents="features: {}")
+        fs.create_dir("/repo/tests")
+
+        result = build_llm_coverage_document(
+            repo_root=Path("/repo"),
+            coverage_json_path=Path("/repo/coverage.json"),
+            usecase_yaml_path=Path("/repo/use_cases.yaml"),
+            tests_roots=["tests"],
+            context_radius=2,
+        )
+
+        assert "test_failures" in result
+        assert "tier_summaries" in result["test_failures"]
+        assert "failures" in result["test_failures"]
+        assert "has_failures" in result["test_failures"]
+
+
+class TestTestFailureDataclass:
+    """Tests for TestFailure dataclass."""
+
+    def test_dataclass_fields(self) -> None:
+        """Should have all expected fields."""
+        failure = TestFailure(
+            test_file="tests/unit/test_example.py",
+            test_class="TestExample",
+            test_name="test_something",
+            tier="unit",
+            failure_type="failure",
+            message="AssertionError: expected 1, got 2",
+            traceback="Traceback...",
+        )
+        assert failure.test_file == "tests/unit/test_example.py"
+        assert failure.test_class == "TestExample"
+        assert failure.test_name == "test_something"
+        assert failure.tier == "unit"
+        assert failure.failure_type == "failure"
+        assert failure.message == "AssertionError: expected 1, got 2"
+        assert failure.traceback == "Traceback..."
+
+
+class TestTierTestResults:
+    """Tests for TierTestResults dataclass."""
+
+    def test_dataclass_defaults(self) -> None:
+        """Should have correct defaults."""
+        results = TierTestResults(tier="unit")
+        assert results.tier == "unit"
+        assert results.total_tests == 0
+        assert results.passed == 0
+        assert results.failed == 0
+        assert results.errors == 0
+        assert results.skipped == 0
+        assert results.failures == []
+
+    def test_dataclass_with_values(self) -> None:
+        """Should accept values for all fields."""
+        failure = TestFailure(
+            test_file="test.py",
+            test_class="",
+            test_name="test_x",
+            tier="unit",
+            failure_type="failure",
+            message="failed",
+            traceback="",
+        )
+        results = TierTestResults(
+            tier="unit",
+            total_tests=10,
+            passed=8,
+            failed=1,
+            errors=1,
+            skipped=0,
+            failures=[failure],
+        )
+        assert results.total_tests == 10
+        assert results.passed == 8
+        assert len(results.failures) == 1
+
+
+class TestInferTierFromPath:
+    """Tests for _infer_tier_from_path function."""
+
+    def test_unit_tier(self) -> None:
+        """Should infer unit tier from path."""
+        assert _infer_tier_from_path("tests/unit/test_example.py") == "unit"
+        assert _infer_tier_from_path("tests/unit/nested/test_deep.py") == "unit"
+
+    def test_integration_tier(self) -> None:
+        """Should infer integration tier from path."""
+        assert _infer_tier_from_path("tests/integration/test_api.py") == "integration"
+
+    def test_e2e_tier(self) -> None:
+        """Should infer e2e tier from path."""
+        assert _infer_tier_from_path("tests/e2e/test_flow.py") == "e2e"
+
+    def test_scripts_tier(self) -> None:
+        """Should infer scripts tier from path."""
+        assert _infer_tier_from_path("scripts/tests/test_tool.py") == "scripts"
+        assert _infer_tier_from_path("scripts/tests/nested/test_x.py") == "scripts"
+
+    def test_default_to_unit(self) -> None:
+        """Should default to unit for unrecognized paths."""
+        assert _infer_tier_from_path("tests/test_something.py") == "unit"
+        assert _infer_tier_from_path("other/test_x.py") == "unit"
+
+
+class TestParseJunitXml:
+    """Tests for _parse_junit_xml function."""
+
+    def test_parses_simple_junit_xml(self, fs: FakeFilesystem) -> None:
+        """Should parse simple JUnit XML with passing tests."""
+        xml_content = """<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="pytest" tests="2" errors="0" failures="0" skipped="0">
+    <testcase classname="tests.unit.test_example" name="test_pass" file="tests/unit/test_example.py"/>
+    <testcase classname="tests.unit.test_example" name="test_pass2" file="tests/unit/test_example.py"/>
+</testsuite>
+"""
+        fs.create_file("/junit.xml", contents=xml_content)
+
+        result = _parse_junit_xml(Path("/junit.xml"))
+
+        assert "unit" in result
+        assert result["unit"].total_tests == 2
+        assert result["unit"].passed == 2
+        assert result["unit"].failed == 0
+
+    def test_parses_failures(self, fs: FakeFilesystem) -> None:
+        """Should parse test failures from JUnit XML."""
+        xml_content = """<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="pytest" tests="1" errors="0" failures="1" skipped="0">
+    <testcase classname="tests.unit.test_example" name="test_fail" file="tests/unit/test_example.py">
+        <failure message="AssertionError">assert 1 == 2</failure>
+    </testcase>
+</testsuite>
+"""
+        fs.create_file("/junit.xml", contents=xml_content)
+
+        result = _parse_junit_xml(Path("/junit.xml"))
+
+        assert result["unit"].failed == 1
+        assert len(result["unit"].failures) == 1
+        assert result["unit"].failures[0].failure_type == "failure"
+        assert "AssertionError" in result["unit"].failures[0].message
+
+    def test_parses_errors(self, fs: FakeFilesystem) -> None:
+        """Should parse test errors from JUnit XML."""
+        xml_content = """<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="pytest" tests="1" errors="1" failures="0" skipped="0">
+    <testcase classname="tests.integration.test_api" name="test_err" file="tests/integration/test_api.py">
+        <error message="RuntimeError">Something exploded</error>
+    </testcase>
+</testsuite>
+"""
+        fs.create_file("/junit.xml", contents=xml_content)
+
+        result = _parse_junit_xml(Path("/junit.xml"))
+
+        assert "integration" in result
+        assert result["integration"].errors == 1
+        assert result["integration"].failures[0].failure_type == "error"
+
+    def test_parses_skipped(self, fs: FakeFilesystem) -> None:
+        """Should parse skipped tests from JUnit XML."""
+        xml_content = """<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="pytest" tests="1" errors="0" failures="0" skipped="1">
+    <testcase classname="tests.e2e.test_flow" name="test_skip" file="tests/e2e/test_flow.py">
+        <skipped message="needs server"/>
+    </testcase>
+</testsuite>
+"""
+        fs.create_file("/junit.xml", contents=xml_content)
+
+        result = _parse_junit_xml(Path("/junit.xml"))
+
+        assert "e2e" in result
+        assert result["e2e"].skipped == 1
+
+    def test_returns_empty_for_missing_file(self, fs: FakeFilesystem) -> None:
+        """Should return empty dict for missing file."""
+        result = _parse_junit_xml(Path("/nonexistent.xml"))
+        assert result == {}
+
+    def test_returns_empty_for_invalid_xml(self, fs: FakeFilesystem) -> None:
+        """Should return empty dict for invalid XML."""
+        fs.create_file("/invalid.xml", contents="not xml content")
+
+        result = _parse_junit_xml(Path("/invalid.xml"))
+
+        assert result == {}
+
+    def test_groups_by_tier(self, fs: FakeFilesystem) -> None:
+        """Should group results by inferred tier."""
+        xml_content = """<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="pytest" tests="3" errors="0" failures="0" skipped="0">
+    <testcase classname="tests.unit.test_a" name="test_1" file="tests/unit/test_a.py"/>
+    <testcase classname="tests.integration.test_b" name="test_2" file="tests/integration/test_b.py"/>
+    <testcase classname="scripts.tests.test_c" name="test_3" file="scripts/tests/test_c.py"/>
+</testsuite>
+"""
+        fs.create_file("/junit.xml", contents=xml_content)
+
+        result = _parse_junit_xml(Path("/junit.xml"))
+
+        assert "unit" in result
+        assert "integration" in result
+        assert "scripts" in result
+        assert result["unit"].total_tests == 1
+        assert result["integration"].total_tests == 1
+        assert result["scripts"].total_tests == 1
+
+
+class TestCollectTestFailures:
+    """Tests for _collect_test_failures function."""
+
+    def test_collects_from_junit_files(self, fs: FakeFilesystem) -> None:
+        """Should collect test failures from JUnit XML files."""
+        xml_content = """<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="pytest" tests="2" errors="0" failures="1" skipped="0">
+    <testcase classname="tests.unit.test_a" name="test_pass" file="tests/unit/test_a.py"/>
+    <testcase classname="tests.unit.test_a" name="test_fail" file="tests/unit/test_a.py">
+        <failure message="oops">traceback here</failure>
+    </testcase>
+</testsuite>
+"""
+        fs.create_dir("/repo")
+        fs.create_file("/repo/junit.xml", contents=xml_content)
+
+        result = _collect_test_failures(Path("/repo"), {"all": Path("/repo/junit.xml")})
+
+        assert result["total_failures"] == 1
+        assert result["has_failures"] is True
+        assert "unit" in result["tier_summaries"]
+        assert result["tier_summaries"]["unit"]["failed"] == 1
+        assert len(result["failures"]) == 1
+        assert result["failures"][0]["type"] == "failure"
+
+    def test_returns_empty_when_no_files(self, fs: FakeFilesystem) -> None:
+        """Should return empty results when no JUnit files found."""
+        fs.create_dir("/repo")
+
+        result = _collect_test_failures(Path("/repo"))
+
+        assert result["total_failures"] == 0
+        assert result["has_failures"] is False
+        assert result["failures"] == []
+
+    def test_auto_discovers_common_patterns(self, fs: FakeFilesystem) -> None:
+        """Should auto-discover common JUnit XML file patterns."""
+        xml_content = """<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="pytest" tests="1" errors="0" failures="1" skipped="0">
+    <testcase classname="tests.unit.test_x" name="test_y" file="tests/unit/test_x.py">
+        <failure message="fail"/>
+    </testcase>
+</testsuite>
+"""
+        fs.create_dir("/repo")
+        fs.create_file("/repo/junit.xml", contents=xml_content)
+
+        result = _collect_test_failures(Path("/repo"))
+
+        # Should find junit.xml automatically
+        assert result["total_failures"] == 1
+
+    def test_excludes_skipped_from_failures_list(self, fs: FakeFilesystem) -> None:
+        """Should exclude skipped tests from failures list."""
+        xml_content = """<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="pytest" tests="2" errors="0" failures="0" skipped="1">
+    <testcase classname="tests.unit.test_a" name="test_pass" file="tests/unit/test_a.py"/>
+    <testcase classname="tests.unit.test_a" name="test_skip" file="tests/unit/test_a.py">
+        <skipped message="skip reason"/>
+    </testcase>
+</testsuite>
+"""
+        fs.create_dir("/repo")
+        fs.create_file("/repo/junit.xml", contents=xml_content)
+
+        result = _collect_test_failures(Path("/repo"), {"all": Path("/repo/junit.xml")})
+
+        # Skipped tests should not be in failures list
+        assert result["total_failures"] == 0
+        assert result["has_failures"] is False
+        # But should be tracked in tier_summaries
+        assert result["tier_summaries"]["unit"]["skipped"] == 1
+
+    def test_truncates_long_tracebacks(self, fs: FakeFilesystem) -> None:
+        """Should truncate very long tracebacks."""
+        long_traceback = "x" * 3000  # Longer than 2000 char limit
+        xml_content = f"""<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="pytest" tests="1" errors="0" failures="1" skipped="0">
+    <testcase classname="tests.unit.test_a" name="test_fail" file="tests/unit/test_a.py">
+        <failure message="fail">{long_traceback}</failure>
+    </testcase>
+</testsuite>
+"""
+        fs.create_dir("/repo")
+        fs.create_file("/repo/junit.xml", contents=xml_content)
+
+        result = _collect_test_failures(Path("/repo"), {"all": Path("/repo/junit.xml")})
+
+        # Traceback should be truncated to 2000 chars
+        assert len(result["failures"][0]["traceback"]) <= 2000

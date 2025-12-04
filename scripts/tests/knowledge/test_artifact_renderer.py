@@ -3,11 +3,9 @@
 from pathlib import Path
 
 import pytest
-import yaml
 from pyfakefs.fake_filesystem import FakeFilesystem
 
 from scripts.knowledge.artifact_renderer import (
-    MIME_TO_EXTENSION,
     ROLE_PRIORITY_MAP,
     _derive_role_priority,
     _gather_contributor_facts,
@@ -162,18 +160,14 @@ class TestGatherContributorFacts:
         structural_facts = [f for f in facts if f["type"] == "structural"]
         assert len(structural_facts) == 2
 
-    def test_gathers_semantic_facts(
-        self, sample_manifest: dict, sample_render_plan: dict
-    ) -> None:
+    def test_gathers_semantic_facts(self, sample_manifest: dict, sample_render_plan: dict) -> None:
         """Verify semantic facts are gathered."""
         facts = _gather_contributor_facts(sample_manifest, sample_render_plan)
 
         semantic_facts = [f for f in facts if f["type"] == "semantic"]
         assert len(semantic_facts) == 1
 
-    def test_respects_input_flags(
-        self, sample_manifest: dict, sample_render_plan: dict
-    ) -> None:
+    def test_respects_input_flags(self, sample_manifest: dict, sample_render_plan: dict) -> None:
         """Verify input flags control which facts are gathered."""
         # Disable semantic facts
         sample_render_plan["inputs"]["use_semantic_facts"] = False
@@ -216,9 +210,7 @@ class TestGatherContributorFacts:
         assert semantic_fact["role"] == "entity_ref"
         assert semantic_fact["role_priority"] == 3  # Derived from entity_ref role
 
-    def test_defaults_missing_ordering_fields(
-        self, sample_render_plan: dict
-    ) -> None:
+    def test_defaults_missing_ordering_fields(self, sample_render_plan: dict) -> None:
         """Verify missing ordering fields get default values."""
         manifest = {
             "artifact_id": "test",
@@ -259,10 +251,7 @@ class TestNormalizeTerminology:
         from unittest.mock import patch
 
         # Mock apply_variant_decisions to avoid needing the CSV file
-        with patch(
-            "scripts.knowledge.variant_resolver.apply_variant_decisions",
-            return_value={}
-        ):
+        with patch("scripts.knowledge.variant_resolver.apply_variant_decisions", return_value={}):
             result = _normalize_terminology([])
 
             assert result == []
@@ -457,8 +446,7 @@ class TestRenderWithLlm:
             mock_run.return_value.stderr = "Error"
 
             result = _render_with_llm(
-                facts, sample_render_plan, "prose/paragraph",
-                source_text="Original source text"
+                facts, sample_render_plan, "prose/paragraph", source_text="Original source text"
             )
 
             assert result == "Original source text"
@@ -474,8 +462,7 @@ class TestRenderWithLlm:
             mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=120)
 
             result = _render_with_llm(
-                facts, sample_render_plan, "prose/paragraph",
-                source_text="Fallback text"
+                facts, sample_render_plan, "prose/paragraph", source_text="Fallback text"
             )
 
             assert result == "Fallback text"
@@ -576,15 +563,14 @@ class TestSelfCheck:
         with (
             patch(
                 "scripts.knowledge.variant_resolver.load_qwen_embedding_model",
-                return_value=(mock_model, mock_tokenizer)
+                return_value=(mock_model, mock_tokenizer),
             ),
             patch(
-                "scripts.knowledge.variant_resolver.embed_keywords",
-                return_value=mock_embeddings
+                "scripts.knowledge.variant_resolver.embed_keywords", return_value=mock_embeddings
             ),
             patch(
                 "scripts.knowledge.variant_resolver.compute_cosine_similarity",
-                return_value=np.array([[0.9, 0.2], [0.2, 0.85]])
+                return_value=np.array([[0.9, 0.2], [0.2, 0.85]]),
             ),
         ):
             result = _self_check(rendered_text, facts)
@@ -637,10 +623,7 @@ class TestStepHandlers:
         ctx = {"facts": [{"field_path": "test"}]}
 
         # Mock apply_variant_decisions to avoid needing the CSV file
-        with patch(
-            "scripts.knowledge.variant_resolver.apply_variant_decisions",
-            return_value={}
-        ):
+        with patch("scripts.knowledge.variant_resolver.apply_variant_decisions", return_value={}):
             result = _step_normalize(ctx)
 
             assert "normalized_facts" in result
@@ -662,9 +645,7 @@ class TestStepHandlers:
         assert result["ordered_facts"][0]["field_path"] == "a"
         assert result["ordered_facts"][1]["field_path"] == "z"
 
-    def test_step_render_renders_with_llm(
-        self, sample_render_plan: dict
-    ) -> None:
+    def test_step_render_renders_with_llm(self, sample_render_plan: dict) -> None:
         """Verify _step_render renders with text_llm engine."""
         from unittest.mock import patch
 
@@ -882,10 +863,7 @@ class TestRenderArtifact:
         # for the normalize step in the default pipeline
         with (
             patch("scripts.knowledge.artifact_renderer.subprocess.run") as mock_run,
-            patch(
-                "scripts.knowledge.variant_resolver.apply_variant_decisions",
-                return_value={}
-            ),
+            patch("scripts.knowledge.variant_resolver.apply_variant_decisions", return_value={}),
         ):
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "Rendered content from LLM"

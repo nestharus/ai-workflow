@@ -76,9 +76,7 @@ def _filter_validations(
 
     if artifact_kind:
         # Note: render_plan_id often contains artifact_kind information
-        result = [
-            v for v in result if fnmatch.fnmatch(v.render_plan_id, artifact_kind)
-        ]
+        result = [v for v in result if fnmatch.fnmatch(v.render_plan_id, artifact_kind)]
 
     if source_file:
         result = [v for v in result if v.source_file == source_file]
@@ -151,21 +149,23 @@ def _format_json(validations: list[ValidationResult]) -> str:
     """
     output = []
     for v in validations:
-        output.append({
-            "validation_id": v.validation_id,
-            "artifact_id": v.artifact_id,
-            "source_file": v.source_file,
-            "source_element_id": v.source_element_id,
-            "field_path": v.field_path,
-            "render_plan_id": v.render_plan_id,
-            "projection_version": v.projection_version,
-            "source_hash": v.source_hash,
-            "rendered_hash": v.rendered_hash,
-            "similarity_score": v.similarity_score,
-            "passed": v.passed,
-            "mismatch_summary": v.mismatch_summary,
-            "validated_at": v.validated_at,
-        })
+        output.append(
+            {
+                "validation_id": v.validation_id,
+                "artifact_id": v.artifact_id,
+                "source_file": v.source_file,
+                "source_element_id": v.source_element_id,
+                "field_path": v.field_path,
+                "render_plan_id": v.render_plan_id,
+                "projection_version": v.projection_version,
+                "source_hash": v.source_hash,
+                "rendered_hash": v.rendered_hash,
+                "similarity_score": v.similarity_score,
+                "passed": v.passed,
+                "mismatch_summary": v.mismatch_summary,
+                "validated_at": v.validated_at,
+            }
+        )
     return json.dumps(output, indent=2)
 
 
@@ -180,21 +180,23 @@ def _format_yaml(validations: list[ValidationResult]) -> str:
     """
     output = []
     for v in validations:
-        output.append({
-            "validation_id": v.validation_id,
-            "artifact_id": v.artifact_id,
-            "source_file": v.source_file,
-            "source_element_id": v.source_element_id,
-            "field_path": v.field_path,
-            "render_plan_id": v.render_plan_id,
-            "projection_version": v.projection_version,
-            "source_hash": v.source_hash,
-            "rendered_hash": v.rendered_hash,
-            "similarity_score": v.similarity_score,
-            "passed": v.passed,
-            "mismatch_summary": v.mismatch_summary,
-            "validated_at": v.validated_at,
-        })
+        output.append(
+            {
+                "validation_id": v.validation_id,
+                "artifact_id": v.artifact_id,
+                "source_file": v.source_file,
+                "source_element_id": v.source_element_id,
+                "field_path": v.field_path,
+                "render_plan_id": v.render_plan_id,
+                "projection_version": v.projection_version,
+                "source_hash": v.source_hash,
+                "rendered_hash": v.rendered_hash,
+                "similarity_score": v.similarity_score,
+                "passed": v.passed,
+                "mismatch_summary": v.mismatch_summary,
+                "validated_at": v.validated_at,
+            }
+        )
     return yaml.safe_dump(output, default_flow_style=False)
 
 
@@ -231,21 +233,23 @@ def _format_csv(validations: list[ValidationResult]) -> str:
     writer.writeheader()
 
     for v in validations:
-        writer.writerow({
-            "validation_id": v.validation_id,
-            "artifact_id": v.artifact_id,
-            "source_file": v.source_file,
-            "source_element_id": v.source_element_id,
-            "field_path": v.field_path,
-            "render_plan_id": v.render_plan_id,
-            "projection_version": v.projection_version,
-            "source_hash": v.source_hash,
-            "rendered_hash": v.rendered_hash,
-            "similarity_score": f"{v.similarity_score:.4f}",
-            "passed": str(v.passed).lower(),
-            "mismatch_summary": v.mismatch_summary,
-            "validated_at": v.validated_at,
-        })
+        writer.writerow(
+            {
+                "validation_id": v.validation_id,
+                "artifact_id": v.artifact_id,
+                "source_file": v.source_file,
+                "source_element_id": v.source_element_id,
+                "field_path": v.field_path,
+                "render_plan_id": v.render_plan_id,
+                "projection_version": v.projection_version,
+                "source_hash": v.source_hash,
+                "rendered_hash": v.rendered_hash,
+                "similarity_score": f"{v.similarity_score:.4f}",
+                "passed": str(v.passed).lower(),
+                "mismatch_summary": v.mismatch_summary,
+                "validated_at": v.validated_at,
+            }
+        )
 
     return buffer.getvalue()
 
@@ -344,8 +348,8 @@ def _format_stats(stats: dict) -> str:
     lines.append(f"Total validations: {stats['total']}")
     lines.append(f"Passed: {stats['passed']}")
     lines.append(f"Failed: {stats['failed']}")
-    if stats['total'] > 0:
-        pass_rate = stats['passed'] / stats['total'] * 100
+    if stats["total"] > 0:
+        pass_rate = stats["passed"] / stats["total"] * 100
         lines.append(f"Pass rate: {pass_rate:.1f}%")
     lines.append(f"Average similarity: {stats['avg_similarity']:.4f}")
     lines.append("")
@@ -367,7 +371,7 @@ def _format_stats(stats: dict) -> str:
     if stats["by_source_file"]:
         lines.append("By source file:")
         for source, source_stats in sorted(stats["by_source_file"].items()):
-            pass_rate = source_stats['passed'] / source_stats['count'] * 100
+            pass_rate = source_stats["passed"] / source_stats["count"] * 100
             lines.append(f"  {source}: {source_stats['count']} (pass rate: {pass_rate:.1f}%)")
 
     return "\n".join(lines)

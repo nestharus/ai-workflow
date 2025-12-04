@@ -126,8 +126,7 @@ class ValidationResult:
         return {
             "passed": self.passed,
             "errors": [
-                {"kind_id": e.kind_id, "field": e.field, "message": e.message}
-                for e in self.errors
+                {"kind_id": e.kind_id, "field": e.field, "message": e.message} for e in self.errors
             ],
             "warnings": [
                 {"kind_id": w.kind_id, "field": w.field, "message": w.message}
@@ -577,9 +576,7 @@ def validate_samples(
 
             # Validate extraction matches expected structure
             if element_facts:
-                _validate_sample_extraction(
-                    kind, element_facts, field_path, kind_id, idx, result
-                )
+                _validate_sample_extraction(kind, element_facts, field_path, kind_id, idx, result)
 
 
 def compute_pattern_signature(kind: dict[str, Any]) -> str:

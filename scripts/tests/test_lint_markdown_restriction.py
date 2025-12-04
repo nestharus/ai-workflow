@@ -12,10 +12,12 @@ from scripts.dev import lint_markdown_restriction
 from scripts.dev.lint_markdown_restriction import (
     find_markdown_files,
     format_violations,
-    lint_markdown_restriction as lint_md_restriction_func,
     load_config,
     main,
     validate_markdown_files,
+)
+from scripts.dev.lint_markdown_restriction import (
+    lint_markdown_restriction as lint_md_restriction_func,
 )
 
 if TYPE_CHECKING:
@@ -54,9 +56,7 @@ class TestLoadConfig:
         fs.create_file(
             "/fake/repo/.lint.markdown-restriction.yaml",
             contents=(
-                "restricted_dirs:\n  - .\n"
-                "allowed_files:\n  - README.md\n"
-                "exclude_dirs:\n  - .venv"
+                "restricted_dirs:\n  - .\nallowed_files:\n  - README.md\nexclude_dirs:\n  - .venv"
             ),
         )
 
@@ -183,9 +183,7 @@ class TestValidateMarkdownFiles:
     def test_scripts_readme_forbidden(self, fs: FakeFilesystem) -> None:
         """Should flag scripts/knowledge/README.md as violation."""
         fs.create_dir("/fake/repo/scripts/knowledge")
-        fs.create_file(
-            "/fake/repo/scripts/knowledge/README.md", contents="# Knowledge README"
-        )
+        fs.create_file("/fake/repo/scripts/knowledge/README.md", contents="# Knowledge README")
 
         with patch.object(lint_markdown_restriction, "REPO_ROOT", Path("/fake/repo")):
             violations = validate_markdown_files(
@@ -267,9 +265,7 @@ class TestViolationFormat:
     def test_relative_path_normalization(self, fs: FakeFilesystem) -> None:
         """Should use POSIX-style relative paths."""
         fs.create_dir("/fake/repo/docs/nested/path")
-        fs.create_file(
-            "/fake/repo/docs/nested/path/guide.md", contents="# Nested Guide"
-        )
+        fs.create_file("/fake/repo/docs/nested/path/guide.md", contents="# Nested Guide")
 
         with patch.object(lint_markdown_restriction, "REPO_ROOT", Path("/fake/repo")):
             violations = validate_markdown_files(
@@ -425,9 +421,7 @@ class TestExcludedDirectories:
         fs.create_file("/fake/repo/README.md", contents="# README")
 
         with patch.object(lint_markdown_restriction, "REPO_ROOT", Path("/fake/repo")):
-            files = find_markdown_files(
-                [".", ".venv", "__pycache__"], {".venv", "__pycache__"}
-            )
+            files = find_markdown_files([".", ".venv", "__pycache__"], {".venv", "__pycache__"})
 
         relative_paths = [f.relative_to(Path("/fake/repo")).as_posix() for f in files]
         assert "README.md" in relative_paths

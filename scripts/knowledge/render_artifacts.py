@@ -87,22 +87,15 @@ def _filter_manifests(
     filtered = manifests
 
     if artifact_id:
-        filtered = [
-            m for m in filtered
-            if m["artifact_id"].startswith(artifact_id)
-        ]
+        filtered = [m for m in filtered if m["artifact_id"].startswith(artifact_id)]
 
     if artifact_kind_pattern:
         filtered = [
-            m for m in filtered
-            if fnmatch.fnmatch(m["artifact_kind"], artifact_kind_pattern)
+            m for m in filtered if fnmatch.fnmatch(m["artifact_kind"], artifact_kind_pattern)
         ]
 
     if source_file:
-        filtered = [
-            m for m in filtered
-            if m["source"]["source_file"] == source_file
-        ]
+        filtered = [m for m in filtered if m["source"]["source_file"] == source_file]
 
     return filtered
 
@@ -380,8 +373,7 @@ Examples:
         "--v1-only",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Apply V1 participation rule (modality=text AND extraction_mode=full). "
-        "Default: True.",
+        help="Apply V1 participation rule (modality=text AND extraction_mode=full). Default: True.",
     )
     parser.add_argument(
         "-v",
@@ -497,7 +489,10 @@ def main(argv: list[str] | None = None) -> int:
                             validation_failed_count += 1
                 else:
                     # Skipped (non-V1) or failed
-                    if manifest.get("modality") != "text" or manifest.get("extraction_mode") != "full":
+                    if (
+                        manifest.get("modality") != "text"
+                        or manifest.get("extraction_mode") != "full"
+                    ):
                         _logger.info("Skipped non-V1 artifact: %s", artifact_id[:12])
                     else:
                         render_failed_count += 1
@@ -506,13 +501,13 @@ def main(argv: list[str] | None = None) -> int:
                 render_failed_count += 1
 
     # Print summary
-    print(f"\nRendering Summary:")
+    print("\nRendering Summary:")
     print(f"  Total manifests: {len(filtered_manifests)}")
     print(f"  Rendered successfully: {render_success_count}")
     print(f"  Render failed: {render_failed_count}")
 
     if args.validate or not args.legacy_mode:
-        print(f"\nValidation Summary:")
+        print("\nValidation Summary:")
         print(f"  Validation passed: {validation_passed_count}")
         print(f"  Validation failed: {validation_failed_count}")
 

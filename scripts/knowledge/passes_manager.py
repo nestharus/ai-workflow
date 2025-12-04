@@ -176,9 +176,7 @@ def query_passes(
             """
             result = duckdb.execute(query, [str(csv_path)]).fetchall()
 
-        return [
-            {col: row[i] for i, col in enumerate(PASSES_CSV_COLUMNS)} for row in result
-        ]
+        return [{col: row[i] for i, col in enumerate(PASSES_CSV_COLUMNS)} for row in result]
     except duckdb.Error as e:
         print(f"Error querying passes from {csv_path}: {e}", file=sys.stderr)
         return []
@@ -274,7 +272,15 @@ def backfill_legacy_passes(
 
     count = 0
     for row in result:
-        fact_id, source_sentence, entity, fact_text, rewritten_sentence, confidence, extracted_at = row
+        (
+            fact_id,
+            source_sentence,
+            entity,
+            fact_text,
+            rewritten_sentence,
+            confidence,
+            extracted_at,
+        ) = row
 
         # Create pass record from legacy data
         import hashlib

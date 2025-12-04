@@ -7,7 +7,6 @@ import yaml
 from pyfakefs.fake_filesystem import FakeFilesystem
 
 from scripts.knowledge.render_plan_manager import (
-    RenderPlan,
     get_render_plan_by_id,
     get_render_plan_for_artifact_kind,
     list_render_plans,
@@ -142,16 +141,12 @@ class TestLoadRenderPlan:
         assert plan["render_engine"] == "text_llm"
         assert plan["artifact_kind"] == "prose/paragraph"
 
-    def test_raises_for_missing_plan(
-        self, fs: FakeFilesystem, render_plans_dir: Path
-    ) -> None:
+    def test_raises_for_missing_plan(self, fs: FakeFilesystem, render_plans_dir: Path) -> None:
         """Verify FileNotFoundError raised for missing plan."""
         with pytest.raises(FileNotFoundError, match="Render plan not found"):
             load_render_plan("nonexistent", render_plans_dir)
 
-    def test_raises_for_invalid_yaml(
-        self, fs: FakeFilesystem, render_plans_dir: Path
-    ) -> None:
+    def test_raises_for_invalid_yaml(self, fs: FakeFilesystem, render_plans_dir: Path) -> None:
         """Verify ValueError raised for invalid YAML."""
         plan_path = render_plans_dir / "bad-plan.yml"
         fs.create_file(plan_path, contents="invalid: yaml: syntax: {{")
@@ -159,9 +154,7 @@ class TestLoadRenderPlan:
         with pytest.raises(ValueError, match="Invalid YAML"):
             load_render_plan("bad-plan", render_plans_dir)
 
-    def test_raises_for_non_dict(
-        self, fs: FakeFilesystem, render_plans_dir: Path
-    ) -> None:
+    def test_raises_for_non_dict(self, fs: FakeFilesystem, render_plans_dir: Path) -> None:
         """Verify ValueError raised for non-dict content."""
         plan_path = render_plans_dir / "array-plan.yml"
         fs.create_file(plan_path, contents="- item1\n- item2")
@@ -169,9 +162,7 @@ class TestLoadRenderPlan:
         with pytest.raises(ValueError, match="must be a dict"):
             load_render_plan("array-plan", render_plans_dir)
 
-    def test_raises_for_invalid_schema(
-        self, fs: FakeFilesystem, render_plans_dir: Path
-    ) -> None:
+    def test_raises_for_invalid_schema(self, fs: FakeFilesystem, render_plans_dir: Path) -> None:
         """Verify ValueError raised for invalid schema."""
         plan_path = render_plans_dir / "invalid-schema.yml"
         fs.create_file(plan_path, contents="render_plan_id: test")
@@ -296,9 +287,7 @@ class TestGetRenderPlanById:
         assert plan is not None
         assert plan["render_plan_id"] == "prose.paragraph.v1"
 
-    def test_returns_none_for_missing(
-        self, fs: FakeFilesystem, render_plans_dir: Path
-    ) -> None:
+    def test_returns_none_for_missing(self, fs: FakeFilesystem, render_plans_dir: Path) -> None:
         """Verify None returned for missing plan."""
         plan = get_render_plan_by_id("nonexistent", render_plans_dir)
         assert plan is None

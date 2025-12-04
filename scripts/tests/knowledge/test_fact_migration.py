@@ -329,11 +329,7 @@ class TestNormalizeClassifications:
 
     def test_normalizes_classifications_key(self) -> None:
         """Should extract list from 'classifications' key."""
-        data = {
-            "classifications": [
-                {"fact_id": "f1", "domain": "fastapi", "pattern": "factory"}
-            ]
-        }
+        data = {"classifications": [{"fact_id": "f1", "domain": "fastapi", "pattern": "factory"}]}
 
         result = normalize_classifications(data)
 
@@ -448,10 +444,10 @@ class TestCountInvariantFailures:
         DuckDB requires real filesystem.
         """
         csv_path = tmp_path / "iterative_movements.csv"
-        csv_content = """iteration_id,fact_id,source_sentence,isolated_fact,residual_sentence,similarity_score,reason,moved_at
-iter-1,fact-1,Source,Fact,Residual,0.98,Migration,20240101T120000Z
-iter-2,fact-2,Source,Fact,Residual,0.80,Migration,20240101T120000Z
-iter-3,fact-3,Source,Fact,Residual,0.92,Migration,20240101T120000Z
+        csv_content = """iteration_id,fact_id,source_sentence,isolated_fact,residual_sentence,similarity_score,reason,moved_at,pass_id,span_id,artifact_id,schema_version
+iter-1,fact-1,Source,Fact,Residual,0.98,Migration,20240101T120000Z,,,,pass-span.v1
+iter-2,fact-2,Source,Fact,Residual,0.80,Migration,20240101T120000Z,,,,pass-span.v1
+iter-3,fact-3,Source,Fact,Residual,0.92,Migration,20240101T120000Z,,,,pass-span.v1
 """
         csv_path.write_text(csv_content)
 
@@ -466,9 +462,9 @@ iter-3,fact-3,Source,Fact,Residual,0.92,Migration,20240101T120000Z
         DuckDB requires real filesystem.
         """
         csv_path = tmp_path / "iterative_movements.csv"
-        csv_content = """iteration_id,fact_id,source_sentence,isolated_fact,residual_sentence,similarity_score,reason,moved_at
-iter-1,fact-1,Source,Fact,Residual,0.98,Migration,20240101T120000Z
-iter-2,fact-2,Source,Fact,Residual,0.96,Migration,20240101T120000Z
+        csv_content = """iteration_id,fact_id,source_sentence,isolated_fact,residual_sentence,similarity_score,reason,moved_at,pass_id,span_id,artifact_id,schema_version
+iter-1,fact-1,Source,Fact,Residual,0.98,Migration,20240101T120000Z,,,,pass-span.v1
+iter-2,fact-2,Source,Fact,Residual,0.96,Migration,20240101T120000Z,,,,pass-span.v1
 """
         csv_path.write_text(csv_content)
 
@@ -497,10 +493,10 @@ iter-2,fact-2,Source,Fact,Residual,0.96,Migration,20240101T120000Z
         DuckDB requires real filesystem.
         """
         csv_path = tmp_path / "iterative_movements.csv"
-        csv_content = """iteration_id,fact_id,source_sentence,isolated_fact,residual_sentence,similarity_score,reason,moved_at
-iter-1,fact-1,Source,Fact,Residual,0.80,Migration,20240101T120000Z
-iter-2,fact-2,Source,Fact,Residual,0.80,Migration,20240101T120000Z
-iter-3,fact-3,Source,Fact,Residual,0.80,Migration,20240101T120000Z
+        csv_content = """iteration_id,fact_id,source_sentence,isolated_fact,residual_sentence,similarity_score,reason,moved_at,pass_id,span_id,artifact_id,schema_version
+iter-1,fact-1,Source,Fact,Residual,0.80,Migration,20240101T120000Z,,,,pass-span.v1
+iter-2,fact-2,Source,Fact,Residual,0.80,Migration,20240101T120000Z,,,,pass-span.v1
+iter-3,fact-3,Source,Fact,Residual,0.80,Migration,20240101T120000Z,,,,pass-span.v1
 """
         csv_path.write_text(csv_content)
 
@@ -551,9 +547,9 @@ class TestCountTrackedMovements:
         DuckDB requires real filesystem.
         """
         csv_path = tmp_path / "iterative_movements.csv"
-        csv_content = """iteration_id,fact_id,source_sentence,isolated_fact,residual_sentence,similarity_score,reason,moved_at
-iter-1,fact-1,Source,Fact,Residual,0.95,Migration,20240101T120000Z
-iter-2,fact-2,Source,Fact,Residual,0.92,Migration,20240101T120000Z
+        csv_content = """iteration_id,fact_id,source_sentence,isolated_fact,residual_sentence,similarity_score,reason,moved_at,pass_id,span_id,artifact_id,schema_version
+iter-1,fact-1,Source,Fact,Residual,0.95,Migration,20240101T120000Z,,,,pass-span.v1
+iter-2,fact-2,Source,Fact,Residual,0.92,Migration,20240101T120000Z,,,,pass-span.v1
 """
         csv_path.write_text(csv_content)
 
@@ -896,9 +892,7 @@ class TestParseStartFactMigrationArgs:
 
     def test_default_knowledge_path(self) -> None:
         """Should default to .knowledge directory."""
-        args = parse_start_fact_migration_args(
-            ["--yaml-file", "/file.yml", "--element-id", "test"]
-        )
+        args = parse_start_fact_migration_args(["--yaml-file", "/file.yml", "--element-id", "test"])
         assert args.knowledge_path == Path(".knowledge")
 
 
@@ -987,9 +981,7 @@ class TestStartFactMigration:
         fs.create_file("/test/doc.yml", contents=yaml_content)
         fs.create_dir("/knowledge")
 
-        result = start_fact_migration(
-            Path("/test/doc.yml"), "nonexistent", Path("/knowledge")
-        )
+        result = start_fact_migration(Path("/test/doc.yml"), "nonexistent", Path("/knowledge"))
 
         assert result == 1
         captured = capsys.readouterr()
@@ -1020,13 +1012,9 @@ class TestStartFactMigrationSuccess:
         # Mock fact extraction to avoid running full extraction
         with (
             patch.object(fact_migration, "REPO_ROOT", tmp_path),
-            patch.object(
-                fact_migration.fact_extraction, "extract_facts_main", return_value=0
-            ),
+            patch.object(fact_migration.fact_extraction, "extract_facts_main", return_value=0),
         ):
-            result = start_fact_migration(
-                yaml_file, "factory.create_app", knowledge_path
-            )
+            result = start_fact_migration(yaml_file, "factory.create_app", knowledge_path)
 
         assert result == 0
         captured = capsys.readouterr()
@@ -1137,9 +1125,7 @@ class TestMoveFacts:
         row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,2,5"
         csv_path.write_text(f"{header}\n{row}\n")
 
-        result = move_facts(
-            "test-id", tmp_path / "nonexistent.json", knowledge_path
-        )
+        result = move_facts("test-id", tmp_path / "nonexistent.json", knowledge_path)
 
         assert result == 1
         captured = capsys.readouterr()
@@ -1180,18 +1166,18 @@ fact-1,Test element text,create_app,Fact,Residual,1,0.95,20240101T120000Z
 
         # Create classification JSON
         classification_file = tmp_path / "classification.json"
-        classification_file.write_text(json.dumps({
-            "classifications": [{
-                "fact_id": "fact-1",
-                "domain": "fastapi",
-                "pattern": "factory"
-            }]
-        }))
+        classification_file.write_text(
+            json.dumps(
+                {
+                    "classifications": [
+                        {"fact_id": "fact-1", "domain": "fastapi", "pattern": "factory"}
+                    ]
+                }
+            )
+        )
 
         with patch.object(fact_migration, "REPO_ROOT", tmp_path):
-            result = move_facts(
-                "test-id", classification_file, knowledge_path, dry_run=True
-            )
+            result = move_facts("test-id", classification_file, knowledge_path, dry_run=True)
 
         assert result == 0
         captured = capsys.readouterr()
@@ -1453,13 +1439,9 @@ class TestIntegrationWorkflow:
         # Step 1: Start migration with mocked extraction
         with (
             patch.object(fact_migration, "REPO_ROOT", tmp_path),
-            patch.object(
-                fact_migration.fact_extraction, "extract_facts_main", return_value=0
-            ),
+            patch.object(fact_migration.fact_extraction, "extract_facts_main", return_value=0),
         ):
-            result = start_fact_migration(
-                yaml_file, "factory.create_app", knowledge_path
-            )
+            result = start_fact_migration(yaml_file, "factory.create_app", knowledge_path)
 
         assert result == 0
 
@@ -1492,13 +1474,9 @@ class TestIntegrationWorkflow:
 
         with (
             patch.object(fact_migration, "REPO_ROOT", tmp_path),
-            patch.object(
-                fact_migration.fact_extraction, "extract_facts_main", return_value=0
-            ),
+            patch.object(fact_migration.fact_extraction, "extract_facts_main", return_value=0),
         ):
-            result = start_fact_migration(
-                yaml_file, "factory.create_app", knowledge_path
-            )
+            result = start_fact_migration(yaml_file, "factory.create_app", knowledge_path)
 
         assert result == 0
         captured = capsys.readouterr()

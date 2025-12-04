@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -201,8 +200,8 @@ class TestGetExistingCandidates:
         """Should return set of (source_file, element_id, candidate_text) tuples."""
         csv_path = tmp_path / "candidates.csv"
         header = ",".join(CSV_COLUMNS)
-        row1 = "id1,docs/test.yml,elem1,sent1,FastAPI,0,7,2024-01-01,,,,,,"
-        row2 = "id2,docs/other.yml,elem2,sent2,Pydantic,0,8,2024-01-01,,,,,,"
+        row1 = "id1,docs/test.yml,elem1,sent1,FastAPI,0,7,2024-01-01,,,,,,fieldfacts.v2,,,,"
+        row2 = "id2,docs/other.yml,elem2,sent2,Pydantic,0,8,2024-01-01,,,,,,fieldfacts.v2,,,,"
         csv_path.write_text(f"{header}\n{row1}\n{row2}\n")
 
         result = get_existing_candidates(csv_path)
@@ -497,9 +496,7 @@ items:
 """
             fs.create_file("/fake/test.yml", contents=content)
 
-            records = process_yaml_file(
-                Path("/fake/test.yml"), mock_nlp, existing, timestamp
-            )
+            records = process_yaml_file(Path("/fake/test.yml"), mock_nlp, existing, timestamp)
 
             # Find records for the parent element
             parent_records = [r for r in records if r["element_id"] == "parent-section"]
@@ -705,9 +702,7 @@ text: FastAPI provides validation
 """
             fs.create_file("/fake/test.yml", contents=content)
 
-            records = process_yaml_file(
-                Path("/fake/test.yml"), mock_nlp, existing, timestamp
-            )
+            records = process_yaml_file(Path("/fake/test.yml"), mock_nlp, existing, timestamp)
 
             # All records should have projection_version populated
             for record in records:
@@ -737,9 +732,7 @@ description: API endpoint for users
 """
             fs.create_file("/fake/test.yml", contents=content)
 
-            records = process_yaml_file(
-                Path("/fake/test.yml"), mock_nlp, existing, timestamp
-            )
+            records = process_yaml_file(Path("/fake/test.yml"), mock_nlp, existing, timestamp)
 
             # All records should have provenance fields (may be empty strings if unmatched)
             for record in records:

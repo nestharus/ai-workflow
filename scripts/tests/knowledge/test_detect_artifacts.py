@@ -8,7 +8,7 @@ import pytest
 import yaml
 from pyfakefs.fake_filesystem import FakeFilesystem
 
-from scripts.knowledge.compare_yaml_docs import Artifact, FieldFact
+from scripts.knowledge.compare_yaml_docs import Artifact
 from scripts.knowledge.detect_artifacts import (
     _detect_from_file,
     _expand_source_files,
@@ -220,17 +220,16 @@ class TestDetectFromFile:
         registry_path = artifacts_dir / "kinds.yml"
         fs.create_file(registry_path, contents=yaml.safe_dump({"kinds": registry}))
 
-        with patch("scripts.knowledge.detect_artifacts.REPO_ROOT", Path("/")):
-            with patch(
-                "scripts.knowledge.compare_yaml_docs._load_artifact_registry",
-                return_value=registry,
-            ):
-                artifacts, created, skipped = _detect_from_file(
-                    Path("/docs/test.yml"),
-                    artifacts_dir,
-                    create_manifests=False,
-                    v1_only=True,
-                )
+        with patch("scripts.knowledge.detect_artifacts.REPO_ROOT", Path("/")), patch(
+            "scripts.knowledge.compare_yaml_docs._load_artifact_registry",
+            return_value=registry,
+        ):
+            artifacts, created, skipped = _detect_from_file(
+                Path("/docs/test.yml"),
+                artifacts_dir,
+                create_manifests=False,
+                v1_only=True,
+            )
 
         # Should detect the mermaid diagram artifact
         assert len(artifacts) >= 0  # Detection depends on registry matching
@@ -258,15 +257,15 @@ class TestDetectFromFile:
 class TestMain:
     """Tests for main CLI entry point."""
 
-    def test_returns_error_for_no_files(self, fs: FakeFilesystem, capsys) -> None:
+    def test_returns_error_for_no_files(self, fs: FakeFilesystem, caplog) -> None:
         """Should return error when no source files found."""
         with patch("scripts.knowledge.detect_artifacts.REPO_ROOT", Path("/fake")):
             fs.create_dir("/fake")
             result = main(["--source-files", "/nonexistent/**/*.yml"])
 
         assert result == 1
-        captured = capsys.readouterr()
-        assert "No source files found" in captured.err
+        # Error is logged, not printed to stderr
+        assert "No source files found" in caplog.text
 
     def test_prints_summary(self, fs: FakeFilesystem, capsys) -> None:
         """Should print summary of detected artifacts."""
@@ -275,11 +274,15 @@ class TestMain:
         fs.create_dir("/fake/.knowledge/artifacts")
 
         with patch("scripts.knowledge.detect_artifacts.REPO_ROOT", Path("/fake")):
-            result = main([
-                "--source-files", "/fake/docs/test.yml",
-                "--artifacts-dir", "/fake/.knowledge/artifacts",
-                "--no-create-manifests",
-            ])
+            result = main(
+                [
+                    "--source-files",
+                    "/fake/docs/test.yml",
+                    "--artifacts-dir",
+                    "/fake/.knowledge/artifacts",
+                    "--no-create-manifests",
+                ]
+            )
 
         assert result == 0
         captured = capsys.readouterr()

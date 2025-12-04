@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from scripts.knowledge.passes_manager import (
     PASSES_CSV_COLUMNS,
     PassRecord,
@@ -333,7 +331,7 @@ class TestCountPasses:
                 entity_id=f"entity-{i}",
                 entity_mention=f"mention-{i}",
                 span_id=f"span-{i}",
-                chunk_id=f"artifact-1:pass{i+1}:span-{i}",
+                chunk_id=f"artifact-1:pass{i + 1}:span-{i}",
                 span_before="before",
                 span_after="after",
                 facts_removed="[]",
@@ -361,7 +359,7 @@ class TestCountPasses:
                 entity_id=f"entity-{i}",
                 entity_mention=f"mention-{i}",
                 span_id=f"span-{i}",
-                chunk_id=f"artifact-A:pass{i+1}:span-{i}",
+                chunk_id=f"artifact-A:pass{i + 1}:span-{i}",
                 span_before="before",
                 span_after="after",
                 facts_removed="[]",
@@ -380,7 +378,7 @@ class TestCountPasses:
                 entity_id=f"entity-{i}",
                 entity_mention=f"mention-{i}",
                 span_id=f"span-{i}",
-                chunk_id=f"artifact-B:pass{i+1}:span-{i}",
+                chunk_id=f"artifact-B:pass{i + 1}:span-{i}",
                 span_before="before",
                 span_after="after",
                 facts_removed="[]",

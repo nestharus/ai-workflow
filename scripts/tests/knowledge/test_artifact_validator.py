@@ -129,15 +129,14 @@ class TestValidateNormalizedText:
         with (
             patch(
                 "scripts.knowledge.variant_resolver.load_qwen_embedding_model",
-                return_value=(mock_model, mock_tokenizer)
+                return_value=(mock_model, mock_tokenizer),
             ),
             patch(
-                "scripts.knowledge.variant_resolver.embed_keywords",
-                return_value=mock_embeddings
+                "scripts.knowledge.variant_resolver.embed_keywords", return_value=mock_embeddings
             ),
             patch(
                 "scripts.knowledge.variant_resolver.compute_cosine_similarity",
-                return_value=mock_similarity
+                return_value=mock_similarity,
             ),
         ):
             similarity, passed, mismatch = _validate_normalized_text(
@@ -176,20 +175,18 @@ class TestValidateNormalizedText:
         with (
             patch(
                 "scripts.knowledge.variant_resolver.load_qwen_embedding_model",
-                return_value=(mock_model, mock_tokenizer)
+                return_value=(mock_model, mock_tokenizer),
             ),
             patch(
-                "scripts.knowledge.variant_resolver.embed_keywords",
-                return_value=mock_embeddings
+                "scripts.knowledge.variant_resolver.embed_keywords", return_value=mock_embeddings
             ),
             patch(
                 "scripts.knowledge.variant_resolver.compute_cosine_similarity",
-                return_value=mock_similarity
+                return_value=mock_similarity,
             ),
         ):
             similarity, passed, _ = _validate_normalized_text(
-                "Source text content",
-                "Rendered text content"
+                "Source text content", "Rendered text content"
             )
 
             assert similarity == 0.95
@@ -203,13 +200,10 @@ class TestValidateNormalizedText:
         # Patch at the source module (variant_resolver) where the functions are defined
         with patch(
             "scripts.knowledge.variant_resolver.load_qwen_embedding_model",
-            side_effect=ImportError("No embeddings")
+            side_effect=ImportError("No embeddings"),
         ):
             # Test with texts that share some characters but aren't identical
-            similarity, passed, mismatch = _validate_normalized_text(
-                "abc def ghi",
-                "abc xyz ghi"
-            )
+            similarity, passed, mismatch = _validate_normalized_text("abc def ghi", "abc xyz ghi")
 
             # Character-set (Jaccard) similarity: intersection / union
             # source chars: {a,b,c, ,d,e,f,g,h,i}
@@ -252,9 +246,7 @@ class TestValidateNormalizedRowsByDiscriminator:
 | GET | true |
 | POST | false |"""
 
-        similarity, passed, mismatch = _validate_normalized_rows_by_discriminator(
-            table, table
-        )
+        similarity, passed, mismatch = _validate_normalized_rows_by_discriminator(table, table)
 
         assert similarity == 1.0
         assert passed is True
@@ -270,9 +262,7 @@ class TestValidateNormalizedRowsByDiscriminator:
 |--------|---------|
 | GET | true |"""
 
-        similarity, passed, mismatch = _validate_normalized_rows_by_discriminator(
-            source, rendered
-        )
+        similarity, passed, mismatch = _validate_normalized_rows_by_discriminator(source, rendered)
 
         assert passed is False
         assert "Missing rows" in mismatch
@@ -288,9 +278,7 @@ class TestValidateNormalizedRowsByDiscriminator:
 | GET | true |
 | POST | false |"""
 
-        similarity, passed, mismatch = _validate_normalized_rows_by_discriminator(
-            source, rendered
-        )
+        similarity, passed, mismatch = _validate_normalized_rows_by_discriminator(source, rendered)
 
         assert passed is False
         assert "Extra rows" in mismatch
@@ -305,9 +293,7 @@ class TestValidateNormalizedRowsByDiscriminator:
 |--------|---------|
 | GET | true |"""
 
-        similarity, passed, mismatch = _validate_normalized_rows_by_discriminator(
-            source, rendered
-        )
+        similarity, passed, mismatch = _validate_normalized_rows_by_discriminator(source, rendered)
 
         assert similarity == 0.0
         assert passed is False
@@ -323,9 +309,7 @@ class TestValidateStructureAndLeafText:
 nested:
   field: content"""
 
-        similarity, passed, mismatch = _validate_structure_and_leaf_text(
-            yaml_content, yaml_content
-        )
+        similarity, passed, mismatch = _validate_structure_and_leaf_text(yaml_content, yaml_content)
 
         assert similarity == 1.0
         assert passed is True
@@ -336,9 +320,7 @@ nested:
         source = "key: value"
         rendered = "different_key: value"
 
-        similarity, passed, mismatch = _validate_structure_and_leaf_text(
-            source, rendered
-        )
+        similarity, passed, mismatch = _validate_structure_and_leaf_text(source, rendered)
 
         assert passed is False
         assert "missing keys" in mismatch or "extra keys" in mismatch
@@ -348,9 +330,7 @@ nested:
         source = "key: value1"
         rendered = "key: value2"
 
-        similarity, passed, mismatch = _validate_structure_and_leaf_text(
-            source, rendered
-        )
+        similarity, passed, mismatch = _validate_structure_and_leaf_text(source, rendered)
 
         assert passed is False
         assert "value mismatch" in mismatch
@@ -360,9 +340,7 @@ nested:
         source = "valid: yaml"
         rendered = "invalid: yaml: syntax: {{"
 
-        similarity, passed, mismatch = _validate_structure_and_leaf_text(
-            source, rendered
-        )
+        similarity, passed, mismatch = _validate_structure_and_leaf_text(source, rendered)
 
         assert similarity == 0.0
         assert passed is False
@@ -524,9 +502,7 @@ class TestValidationResult:
 class TestWriteValidationResult:
     """Tests for write_validation_result function."""
 
-    def test_creates_csv_with_headers(
-        self, fs: FakeFilesystem, validations_csv: Path
-    ) -> None:
+    def test_creates_csv_with_headers(self, fs: FakeFilesystem, validations_csv: Path) -> None:
         """Verify CSV is created with headers."""
         result = ValidationResult(
             artifact_id="test-id",
@@ -542,9 +518,7 @@ class TestWriteValidationResult:
         assert "artifact_id" in content
         assert "similarity_score" in content
 
-    def test_appends_to_existing_csv(
-        self, fs: FakeFilesystem, validations_csv: Path
-    ) -> None:
+    def test_appends_to_existing_csv(self, fs: FakeFilesystem, validations_csv: Path) -> None:
         """Verify results are appended to existing CSV."""
         result1 = ValidationResult(artifact_id="id-1", similarity_score=0.8)
         result2 = ValidationResult(artifact_id="id-2", similarity_score=0.9)
@@ -562,9 +536,7 @@ class TestWriteValidationResult:
 class TestLoadValidationResults:
     """Tests for load_validation_results function."""
 
-    def test_loads_existing_results(
-        self, fs: FakeFilesystem, validations_csv: Path
-    ) -> None:
+    def test_loads_existing_results(self, fs: FakeFilesystem, validations_csv: Path) -> None:
         """Verify results are loaded from CSV."""
         result1 = ValidationResult(artifact_id="id-1", similarity_score=0.8, passed=True)
         result2 = ValidationResult(artifact_id="id-2", similarity_score=0.9, passed=False)

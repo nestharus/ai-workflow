@@ -115,11 +115,16 @@ class TestParseArgs:
 
     def test_filter_flags(self) -> None:
         """Verify filter flags are parsed."""
-        args = parse_args([
-            "--artifact-id", "abc123",
-            "--artifact-kind", "diagram/*",
-            "--source-file", "docs/test.yml",
-        ])
+        args = parse_args(
+            [
+                "--artifact-id",
+                "abc123",
+                "--artifact-kind",
+                "diagram/*",
+                "--source-file",
+                "docs/test.yml",
+            ]
+        )
 
         assert args.artifact_id == "abc123"
         assert args.artifact_kind == "diagram/*"
@@ -176,23 +181,17 @@ class TestFilterManifests:
         """Verify multiple filters are combined."""
         manifests = [sample_manifest]
 
-        result = _filter_manifests(
-            manifests, "abc", "prose/*", "docs/test.yml"
-        )
+        result = _filter_manifests(manifests, "abc", "prose/*", "docs/test.yml")
         assert len(result) == 1
 
-        result = _filter_manifests(
-            manifests, "abc", "diagram/*", "docs/test.yml"
-        )
+        result = _filter_manifests(manifests, "abc", "diagram/*", "docs/test.yml")
         assert len(result) == 0
 
 
 class TestGetSourceText:
     """Tests for _get_source_text function."""
 
-    def test_returns_source_content(
-        self, fs: FakeFilesystem, sample_manifest: dict
-    ) -> None:
+    def test_returns_source_content(self, fs: FakeFilesystem, sample_manifest: dict) -> None:
         """Verify source content is returned."""
         # Create source file
         source_path = Path("/fake/docs/test.yml")
@@ -294,9 +293,12 @@ class TestMain:
         empty_dir = Path("/fake/empty")
         fs.create_dir(empty_dir)
 
-        result = main([
-            "--artifacts-dir", str(empty_dir),
-        ])
+        result = main(
+            [
+                "--artifacts-dir",
+                str(empty_dir),
+            ]
+        )
 
         assert result == 0
         captured = capsys.readouterr()
@@ -311,11 +313,16 @@ class TestMain:
         capsys: pytest.CaptureFixture,
     ) -> None:
         """Verify artifacts are rendered successfully."""
-        result = main([
-            "--artifacts-dir", str(artifacts_dir),
-            "--render-plans-dir", str(render_plans_dir),
-            "--rendered-dir", str(rendered_dir),
-        ])
+        result = main(
+            [
+                "--artifacts-dir",
+                str(artifacts_dir),
+                "--render-plans-dir",
+                str(render_plans_dir),
+                "--rendered-dir",
+                str(rendered_dir),
+            ]
+        )
 
         assert result == 0
         captured = capsys.readouterr()
@@ -330,12 +337,18 @@ class TestMain:
         capsys: pytest.CaptureFixture,
     ) -> None:
         """Verify filtering by artifact_kind works."""
-        result = main([
-            "--artifacts-dir", str(artifacts_dir),
-            "--render-plans-dir", str(render_plans_dir),
-            "--rendered-dir", str(rendered_dir),
-            "--artifact-kind", "diagram/*",  # Won't match prose/paragraph
-        ])
+        result = main(
+            [
+                "--artifacts-dir",
+                str(artifacts_dir),
+                "--render-plans-dir",
+                str(render_plans_dir),
+                "--rendered-dir",
+                str(rendered_dir),
+                "--artifact-kind",
+                "diagram/*",  # Won't match prose/paragraph
+            ]
+        )
 
         assert result == 0
         captured = capsys.readouterr()

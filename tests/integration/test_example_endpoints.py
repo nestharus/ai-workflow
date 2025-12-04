@@ -30,6 +30,10 @@ class _DummyConnection:
 class _DummySurrealDBPool:
     """Dummy SurrealDB pool with working acquire context manager."""
 
+    def __init__(self, healthy: bool = True) -> None:
+        """Initialize with configurable health status."""
+        self._healthy = healthy
+
     def acquire(self) -> _DummySurrealDBPoolContext:
         """Return a context manager that yields a dummy connection."""
         return _DummySurrealDBPoolContext()
@@ -37,6 +41,10 @@ class _DummySurrealDBPool:
     async def close(self) -> None:
         """Simulate pool shutdown."""
         return None
+
+    async def health_check(self) -> bool:
+        """Return the configured health status."""
+        return self._healthy
 
 
 class _DummySurrealDBPoolContext:
@@ -54,8 +62,16 @@ class _DummySurrealDBPoolContext:
 class _DummyResource:
     """Dummy resource for Elasticsearch client mock."""
 
+    def __init__(self, healthy: bool = True) -> None:
+        """Initialize with configurable health status."""
+        self._healthy = healthy
+
     async def close(self) -> None:
         return None
+
+    async def health_check(self) -> bool:
+        """Return the configured health status."""
+        return self._healthy
 
 
 def _generate_test_credential(prefix: str) -> str:
@@ -323,6 +339,32 @@ class TestHealthCheckIntegration:
             assert response.status_code == 200
             payload = response.json()
             assert payload["status"] == "unhealthy"
+
+    @pytest.mark.usecase("UC-HEALTH-005")
+    def test_health_check_degraded_on_transient_failures(
+        self, monkeypatch: pytest.MonkeyPatch, test_settings: Settings
+    ) -> None:
+        """Test health returns 'degraded' when dependencies experience transient failures."""
+
+        async def _fake_surreal_pool_unhealthy(_settings: Settings) -> _DummySurrealDBPool:
+            return _DummySurrealDBPool(healthy=False)
+
+        async def _fake_elasticsearch_wrapper(_settings: Settings) -> _DummyResource:
+            return _DummyResource(healthy=True)
+
+        monkeypatch.setattr("app.core.factory.create_surrealdb_pool", _fake_surreal_pool_unhealthy)
+        monkeypatch.setattr(
+            "app.core.factory.create_elasticsearch_wrapper", _fake_elasticsearch_wrapper
+        )
+
+        app = create_app(test_settings)
+        with TestClient(app) as client:
+            api_prefix = test_settings.api_prefix
+            response = client.get(f"{api_prefix}/health")
+
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["status"] == "degraded"
 
 
 class TestSampleEndpoint:

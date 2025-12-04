@@ -424,7 +424,7 @@ def isolate_entity_facts_main(args: argparse.Namespace) -> int:
     print("Fact Isolation Report")
     print("=" * 50)
     print(f"Entity: {args.entity}")
-    print(f"Original sentence: \"{args.sentence}\"")
+    print(f'Original sentence: "{args.sentence}"')
     print()
 
     # Step 1: Call fact_extraction.extract_facts_main() directly
@@ -499,10 +499,10 @@ def isolate_entity_facts_main(args: argparse.Namespace) -> int:
     for fact in facts:
         iteration = fact.get("iteration", "?")
         fact_text = fact.get("fact_text", "")
-        print(f"  Iteration {iteration}: \"{fact_text}\"")
+        print(f'  Iteration {iteration}: "{fact_text}"')
 
     if residual:
-        print(f"  Residual: \"{residual}\"")
+        print(f'  Residual: "{residual}"')
     else:
         print("  Residual: (empty)")
 
@@ -513,7 +513,9 @@ def isolate_entity_facts_main(args: argparse.Namespace) -> int:
     status_complete = "+" if validation["extraction_complete"] else "x"
 
     print(f"  [{status_entity}] Entity absent from residual")
-    print(f"  [{status_info}] Information preserved (similarity: {validation['semantic_similarity']:.2f})")
+    print(
+        f"  [{status_info}] Information preserved (similarity: {validation['semantic_similarity']:.2f})"
+    )
     print(f"  [{status_complete}] Extraction complete")
 
     # Step 4: Prepare movement records and write to CSV
@@ -534,9 +536,9 @@ def isolate_entity_facts_main(args: argparse.Namespace) -> int:
             before_display = record["before_sentence"][:60]
             after_display = record["after_sentence"][:60]
             print(f"  Iteration {record['iteration']} (fact_id: {record['fact_id'][:8]}...):")
-            print(f"    Before: \"{before_display}...\"")
-            print(f"    Fact: \"{record['isolated_fact']}\"")
-            print(f"    After: \"{after_display}...\"")
+            print(f'    Before: "{before_display}..."')
+            print(f'    Fact: "{record["isolated_fact"]}"')
+            print(f'    After: "{after_display}..."')
 
     print()
     print("=" * 50)

@@ -24,7 +24,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -86,9 +86,7 @@ class ValidationResult:
     similarity_score: float = 0.0
     passed: bool = False
     mismatch_summary: str = ""
-    validated_at: str = field(
-        default_factory=lambda: datetime.now(tz=timezone.utc).isoformat()
-    )
+    validated_at: str = field(default_factory=lambda: datetime.now(tz=UTC).isoformat())
 
 
 def _compute_hash(text: str) -> str:
@@ -173,9 +171,7 @@ def _validate_normalized_text(
         embeddings = embed_keywords([source_normalized, rendered_normalized], model, tokenizer)
 
         # Compute cosine similarity (single value for 2 texts)
-        similarity_matrix = compute_cosine_similarity(
-            embeddings[:1], embeddings[1:]
-        )
+        similarity_matrix = compute_cosine_similarity(embeddings[:1], embeddings[1:])
         similarity = float(similarity_matrix[0, 0])
 
         passed = similarity >= similarity_threshold
@@ -201,9 +197,7 @@ def _validate_normalized_text(
             "Qwen embeddings not available, falling back to character comparison: %s", e
         )
     except Exception as e:
-        _logger.warning(
-            "Embedding computation failed, falling back to character comparison: %s", e
-        )
+        _logger.warning("Embedding computation failed, falling back to character comparison: %s", e)
 
     # Fallback to character-level similarity
     source_chars = set(source_normalized)
@@ -246,6 +240,7 @@ def _validate_normalized_rows_by_discriminator(
     Returns:
         Tuple of (similarity_score, passed, mismatch_summary).
     """
+
     def parse_markdown_table(text: str) -> tuple[list[str], list[dict[str, str]]]:
         """Parse Markdown table into headers and rows."""
         lines = [line.strip() for line in text.strip().split("\n") if line.strip()]
@@ -450,13 +445,15 @@ def _validate_normalized_diff(
     # Check code blocks match if required
     if preserve_code_verbatim:
         if len(source_code_blocks) != len(rendered_code_blocks):
-            return 0.0, False, (
-                f"Code block count mismatch: {len(source_code_blocks)} vs {len(rendered_code_blocks)}"
+            return (
+                0.0,
+                False,
+                (
+                    f"Code block count mismatch: {len(source_code_blocks)} vs {len(rendered_code_blocks)}"
+                ),
             )
 
-        for i, (src_code, rnd_code) in enumerate(
-            zip(source_code_blocks, rendered_code_blocks)
-        ):
+        for i, (src_code, rnd_code) in enumerate(zip(source_code_blocks, rendered_code_blocks)):
             if src_code.strip() != rnd_code.strip():
                 return 0.0, False, f"Code block {i} differs"
 
@@ -516,25 +513,17 @@ def validate_artifact(
 
     # Apply appropriate comparator
     if validation_comparator == "normalized_text":
-        similarity, passed, mismatch = _validate_normalized_text(
-            source_text, rendered_text
-        )
+        similarity, passed, mismatch = _validate_normalized_text(source_text, rendered_text)
     elif validation_comparator == "normalized_rows_by_discriminator":
         similarity, passed, mismatch = _validate_normalized_rows_by_discriminator(
             source_text, rendered_text, discriminator
         )
     elif validation_comparator == "structure_and_leaf_text":
-        similarity, passed, mismatch = _validate_structure_and_leaf_text(
-            source_text, rendered_text
-        )
+        similarity, passed, mismatch = _validate_structure_and_leaf_text(source_text, rendered_text)
     elif validation_comparator == "normalized_diff":
-        similarity, passed, mismatch = _validate_normalized_diff(
-            source_text, rendered_text
-        )
+        similarity, passed, mismatch = _validate_normalized_diff(source_text, rendered_text)
     elif validation_comparator == "exact_normalized":
-        similarity, passed, mismatch = _validate_exact_normalized(
-            source_text, rendered_text
-        )
+        similarity, passed, mismatch = _validate_exact_normalized(source_text, rendered_text)
     else:
         msg = f"Unsupported validation comparator: {validation_comparator}"
         raise ValueError(msg)
@@ -586,21 +575,23 @@ def write_validation_result(
         if not file_exists:
             writer.writeheader()
 
-        writer.writerow({
-            "validation_id": result.validation_id,
-            "artifact_id": result.artifact_id,
-            "source_file": result.source_file,
-            "source_element_id": result.source_element_id,
-            "field_path": result.field_path,
-            "render_plan_id": result.render_plan_id,
-            "projection_version": result.projection_version,
-            "source_hash": result.source_hash,
-            "rendered_hash": result.rendered_hash,
-            "similarity_score": f"{result.similarity_score:.4f}",
-            "passed": str(result.passed).lower(),
-            "mismatch_summary": result.mismatch_summary,
-            "validated_at": result.validated_at,
-        })
+        writer.writerow(
+            {
+                "validation_id": result.validation_id,
+                "artifact_id": result.artifact_id,
+                "source_file": result.source_file,
+                "source_element_id": result.source_element_id,
+                "field_path": result.field_path,
+                "render_plan_id": result.render_plan_id,
+                "projection_version": result.projection_version,
+                "source_hash": result.source_hash,
+                "rendered_hash": result.rendered_hash,
+                "similarity_score": f"{result.similarity_score:.4f}",
+                "passed": str(result.passed).lower(),
+                "mismatch_summary": result.mismatch_summary,
+                "validated_at": result.validated_at,
+            }
+        )
 
     _logger.debug("Wrote validation result %s to %s", result.validation_id, validations_csv_path)
 
@@ -628,21 +619,23 @@ def load_validation_results(
         reader = csv.DictReader(f)
 
         for row in reader:
-            results.append(ValidationResult(
-                validation_id=row.get("validation_id", ""),
-                artifact_id=row.get("artifact_id", ""),
-                source_file=row.get("source_file", ""),
-                source_element_id=row.get("source_element_id", ""),
-                field_path=row.get("field_path", ""),
-                render_plan_id=row.get("render_plan_id", ""),
-                projection_version=row.get("projection_version", ""),
-                source_hash=row.get("source_hash", ""),
-                rendered_hash=row.get("rendered_hash", ""),
-                similarity_score=float(row.get("similarity_score", "0.0")),
-                passed=row.get("passed", "false").lower() == "true",
-                mismatch_summary=row.get("mismatch_summary", ""),
-                validated_at=row.get("validated_at", ""),
-            ))
+            results.append(
+                ValidationResult(
+                    validation_id=row.get("validation_id", ""),
+                    artifact_id=row.get("artifact_id", ""),
+                    source_file=row.get("source_file", ""),
+                    source_element_id=row.get("source_element_id", ""),
+                    field_path=row.get("field_path", ""),
+                    render_plan_id=row.get("render_plan_id", ""),
+                    projection_version=row.get("projection_version", ""),
+                    source_hash=row.get("source_hash", ""),
+                    rendered_hash=row.get("rendered_hash", ""),
+                    similarity_score=float(row.get("similarity_score", "0.0")),
+                    passed=row.get("passed", "false").lower() == "true",
+                    mismatch_summary=row.get("mismatch_summary", ""),
+                    validated_at=row.get("validated_at", ""),
+                )
+            )
 
     return results
 
