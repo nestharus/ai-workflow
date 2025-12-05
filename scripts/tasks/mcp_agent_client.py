@@ -215,6 +215,8 @@ class MCPClient:
                 continue
 
             header_data += byte
+            if len(header_data) > 65536:
+                raise MCPClientError("Response headers exceed 64KB limit")
 
             # Check for end of headers (double CRLF)
             if header_data.endswith(b"\r\n\r\n"):
@@ -234,6 +236,13 @@ class MCPClient:
         if content_length < 0:
             raise MCPClientError(
                 f"Missing Content-Length header in response: {header_data!r}"
+            )
+
+        # Limit body size to 100MB to prevent memory bloat
+        max_body_size = 100 * 1024 * 1024
+        if content_length > max_body_size:
+            raise MCPClientError(
+                f"Response body size {content_length} exceeds {max_body_size} byte limit"
             )
 
         # Read the body
@@ -309,7 +318,7 @@ class MCPClient:
                     raise MCPClientError("Failed to send request: partial write")
                 total += written
             self.proc.stdin.flush()
-        except (BrokenPipeError, OSError) as e:
+        except (BrokenPipeError, OSError, ValueError) as e:
             raise MCPClientError(f"Failed to send request: {e}") from e
 
         # Read response, validating that the id matches our request
@@ -424,7 +433,7 @@ def cmd_wait(
                     "stderr": output_res.get("stderr", ""),
                 }
 
-            time.sleep(poll_interval)
+            time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
 
     except MCPClientError as e:
         return {"status": "failed", "job_id": job_id, "error": str(e)}
