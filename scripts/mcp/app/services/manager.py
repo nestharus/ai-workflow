@@ -14,13 +14,42 @@ import select
 import subprocess
 import threading
 import time
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 
 class MCPError(Exception):
     """Raised when MCP communication fails."""
 
     pass
+
+
+@runtime_checkable
+class MCPClient(Protocol):
+    """Protocol for MCP client implementations.
+
+    All MCP clients (stdio, SSE, etc.) must implement this interface.
+    """
+
+    def is_alive(self) -> bool:
+        """Check if the client is connected and operational."""
+        ...
+
+    def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        """Call an MCP tool and return the result."""
+        ...
+
+    def list_tools(self, timeout: float = 30.0) -> dict[str, Any]:
+        """List available MCP tools."""
+        ...
+
+    def close(self) -> None:
+        """Close the client and release resources."""
+        ...
 
 
 class MCPStdioManager:
@@ -465,9 +494,37 @@ class MCPStdioManager:
                 raise MCPError(f"Invalid JSON-RPC result type: {type(result).__name__}")
             return result
 
+    def list_tools(self, timeout: float = 30.0) -> dict[str, Any]:
+        """List available MCP tools.
+
+        This method queries the MCP server for available tools using the
+        tools/list method.
+
+        Args:
+            timeout: Per-call timeout in seconds.
+
+        Returns:
+            Dict containing the tools list from the MCP server.
+
+        Raises:
+            MCPError: On JSON-RPC error, timeout, or subprocess failure.
+        """
+        with self._lock:
+            # Restart subprocess if it has crashed
+            if not self.is_alive():
+                self._start_subprocess()
+                self._do_initialize_unlocked()
+
+            result = self._send_request_unlocked(
+                method="tools/list",
+                params={},
+                timeout=timeout,
+            )
+            return result
+
     def close(self) -> None:
         """Terminate the MCP subprocess and clean up resources."""
         self._shutdown()
 
 
-__all__ = ["MCPError", "MCPStdioManager"]
+__all__ = ["MCPClient", "MCPError", "MCPStdioManager"]

@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 # (or another interface) explicitly when exposing the service outside localhost.
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
+DEFAULT_APP = "app.main:app"
 HEALTH_CHECK_DELAY = 5
 HEALTH_CHECK_RETRIES = 3
 HEALTH_CHECK_INTERVAL = 2
@@ -99,7 +100,14 @@ def _format_health_probe_host(host: str) -> str:
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI argument parser for the start-server script."""
     parser = argparse.ArgumentParser(
-        description="Launch the AI Workflow API server via Uvicorn with health checks."
+        description="Launch a FastAPI server via Uvicorn with health checks."
+    )
+    parser.add_argument(
+        "--app",
+        help=(
+            "ASGI application path in format 'module:app' "
+            f"(default: {DEFAULT_APP})."
+        ),
     )
     parser.add_argument(
         "--host",
@@ -254,11 +262,13 @@ def _resolve_port(args: argparse.Namespace, env: dict[str, str]) -> int:
     return port
 
 
-def _build_uvicorn_command(host: str, port: int, *, reload_enabled: bool) -> list[str]:
+def _build_uvicorn_command(
+    app_path: str, host: str, port: int, *, reload_enabled: bool
+) -> list[str]:
     bind_host = host[1:-1] if host.startswith("[") and host.endswith("]") else host
     command = [
         "uvicorn",
-        "app.main:app",
+        app_path,
         "--host",
         bind_host,
         "--port",
@@ -334,10 +344,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Entrypoint to launch uvicorn and optionally wait for health readiness."""
     args = parse_args(argv)
     env = os.environ.copy()
+    app_path = getattr(args, "app", None) or DEFAULT_APP
     host = _resolve_host(args, env)
     port = _resolve_port(args, env)
     reload_enabled = args.reload
-    command = _build_uvicorn_command(host, port, reload_enabled=reload_enabled)
+    command = _build_uvicorn_command(app_path, host, port, reload_enabled=reload_enabled)
     process = _launch_uvicorn(command, env)
 
     _install_signal_handlers(process)

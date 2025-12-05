@@ -5,7 +5,7 @@ This module provides a lightweight HTTP client that uses curl via subprocess
 to call the mcp-bridge REST API. This avoids adding httpx as a dependency.
 
 Usage:
-    from scripts.tasks.mcp_http_client import HttpMCPClient, MCPClientError
+    from scripts.mcp.client.http_client import HttpMCPClient, MCPClientError
 
     client = HttpMCPClient()  # Uses MCP_BRIDGE_URL env var or localhost:8080
 

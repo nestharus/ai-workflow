@@ -56,7 +56,7 @@ import threading
 import time
 from typing import Any
 
-from scripts.tasks.mcp_http_client import HttpMCPClient
+from scripts.mcp.client.http_client import HttpMCPClient
 
 
 class MCPClientError(Exception):

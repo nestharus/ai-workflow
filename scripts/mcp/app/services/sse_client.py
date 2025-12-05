@@ -1,0 +1,247 @@
+"""MCP SSE client for HTTP-based MCP servers.
+
+This module provides the MCPSSEClient class that handles communication
+with MCP servers using Server-Sent Events (SSE) transport, such as
+Linear's MCP server.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+import uuid
+from typing import Any
+
+import httpx
+
+
+class MCPSSEError(Exception):
+    """Raised when MCP SSE communication fails."""
+
+    pass
+
+
+class MCPSSEClient:
+    """Client for SSE-based MCP servers.
+
+    This class handles:
+    - Connecting to SSE MCP endpoints
+    - JSON-RPC request/response over HTTP POST
+    - Thread-safe request handling
+    """
+
+    def __init__(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        timeout: float = 30.0,
+    ) -> None:
+        """Initialize the SSE MCP client.
+
+        Args:
+            url: Base URL of the SSE MCP server (e.g., https://mcp.linear.app/sse).
+            headers: Optional headers to include in requests (e.g., Authorization).
+            timeout: Default timeout for requests in seconds.
+        """
+        self._url = url.rstrip("/")
+        self._headers = headers or {}
+        self._timeout = timeout
+        self._lock = threading.Lock()
+        self._request_id = 0
+        self._session_id: str | None = None
+        self._client = httpx.Client(timeout=timeout)
+        self._initialized = False
+
+    def _get_request_id(self) -> int:
+        """Get a unique request ID."""
+        self._request_id += 1
+        return self._request_id
+
+    def _initialize(self) -> None:
+        """Perform MCP initialization handshake.
+
+        Raises:
+            MCPSSEError: If initialization fails.
+        """
+        if self._initialized:
+            return
+
+        # Connect to SSE endpoint to get session
+        try:
+            # Some SSE servers require establishing a session first
+            # For Linear, the SSE endpoint handles both connection and messages
+            init_result = self._send_request(
+                method="initialize",
+                params={
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "mcp-bridge",
+                        "version": "1.0.0",
+                    },
+                },
+            )
+
+            # Send initialized notification
+            self._send_notification("notifications/initialized", {})
+            self._initialized = True
+
+        except Exception as e:
+            raise MCPSSEError(f"Failed to initialize SSE connection: {e}") from e
+
+    def _send_notification(
+        self, method: str, params: dict[str, Any] | None = None
+    ) -> None:
+        """Send a JSON-RPC notification (no response expected).
+
+        Args:
+            method: Method name.
+            params: Method parameters.
+
+        Raises:
+            MCPSSEError: If sending fails.
+        """
+        notification: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "method": method,
+        }
+        if params:
+            notification["params"] = params
+
+        try:
+            response = self._client.post(
+                f"{self._url}/message",
+                json=notification,
+                headers=self._headers,
+            )
+            # Notifications don't expect a response body
+        except httpx.HTTPError as e:
+            raise MCPSSEError(f"Failed to send notification: {e}") from e
+
+    def _send_request(
+        self,
+        method: str,
+        params: dict[str, Any],
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Send a JSON-RPC request and wait for response.
+
+        Args:
+            method: Method name.
+            params: Method parameters.
+            timeout: Optional timeout override.
+
+        Returns:
+            Result dict from response.
+
+        Raises:
+            MCPSSEError: If request fails.
+        """
+        request_id = self._get_request_id()
+        request = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params,
+        }
+
+        try:
+            # For SSE servers, we typically POST to a message endpoint
+            # and receive the response directly or via SSE
+            response = self._client.post(
+                f"{self._url}/message",
+                json=request,
+                headers=self._headers,
+                timeout=timeout or self._timeout,
+            )
+            response.raise_for_status()
+
+            result = response.json()
+
+            if "error" in result:
+                error = result["error"]
+                if isinstance(error, dict):
+                    code = error.get("code", -1)
+                    message = error.get("message", "Unknown error")
+                    raise MCPSSEError(f"MCP error {code}: {message}")
+                raise MCPSSEError(f"MCP error: {error}")
+
+            if "result" not in result:
+                raise MCPSSEError("Invalid MCP response: missing 'result'")
+
+            return result["result"]
+
+        except httpx.HTTPError as e:
+            raise MCPSSEError(f"HTTP error: {e}") from e
+        except json.JSONDecodeError as e:
+            raise MCPSSEError(f"Invalid JSON response: {e}") from e
+
+    def is_alive(self) -> bool:
+        """Check if the SSE connection is alive.
+
+        Returns:
+            True if client is initialized, False otherwise.
+        """
+        return self._initialized
+
+    def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        """Call an MCP tool and return the result.
+
+        Args:
+            name: Tool name.
+            arguments: Tool arguments dict.
+            timeout: Per-call timeout in seconds.
+
+        Returns:
+            Result dict from tool call.
+
+        Raises:
+            MCPSSEError: On error or timeout.
+        """
+        with self._lock:
+            if not self._initialized:
+                self._initialize()
+
+            result = self._send_request(
+                method="tools/call",
+                params={"name": name, "arguments": arguments},
+                timeout=timeout,
+            )
+            return result
+
+    def list_tools(self, timeout: float = 30.0) -> dict[str, Any]:
+        """List available MCP tools.
+
+        Args:
+            timeout: Per-call timeout in seconds.
+
+        Returns:
+            Dict containing the tools list.
+
+        Raises:
+            MCPSSEError: On error or timeout.
+        """
+        with self._lock:
+            if not self._initialized:
+                self._initialize()
+
+            result = self._send_request(
+                method="tools/list",
+                params={},
+                timeout=timeout,
+            )
+            return result
+
+    def close(self) -> None:
+        """Close the HTTP client."""
+        self._client.close()
+        self._initialized = False
+
+
+__all__ = ["MCPSSEClient", "MCPSSEError"]
