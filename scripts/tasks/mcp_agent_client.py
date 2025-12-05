@@ -39,8 +39,8 @@ Exit Codes:
     137 - Job was terminated via cancel
 
 Platform Support:
-    This script uses select.select() on pipes, which is not supported on Windows.
-    It is intended for use on Linux/macOS systems only.
+    This script uses select.select() on pipes, which is not supported on native Windows.
+    It works on Linux, macOS, and WSL (Windows Subsystem for Linux).
 """
 
 from __future__ import annotations
