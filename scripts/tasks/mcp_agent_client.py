@@ -48,12 +48,15 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import select
 import subprocess
 import sys
 import threading
 import time
 from typing import Any
+
+from scripts.tasks.mcp_http_client import HttpMCPClient
 
 
 class MCPClientError(Exception):
@@ -355,7 +358,26 @@ class MCPClient:
         self._shutdown()
 
 
-def cmd_start(client: MCPClient, command: str) -> dict[str, Any]:
+def get_mcp_client() -> MCPClient | HttpMCPClient:
+    """Get MCP client based on MCP_TRANSPORT environment variable.
+
+    Returns:
+        MCPClient if MCP_TRANSPORT is not set or is "stdio"
+        HttpMCPClient if MCP_TRANSPORT is "http"
+
+    Raises:
+        ValueError: If MCP_TRANSPORT is set to an unknown value
+    """
+    transport = os.environ.get("MCP_TRANSPORT", "stdio").lower()
+    if transport == "stdio":
+        return MCPClient()
+    elif transport == "http":
+        return HttpMCPClient()
+    else:
+        raise ValueError(f"Unknown MCP_TRANSPORT: {transport}. Use 'stdio' or 'http'")
+
+
+def cmd_start(client: MCPClient | HttpMCPClient, command: str) -> dict[str, Any]:
     """Start a job and return immediately.
 
     Args:
@@ -377,7 +399,7 @@ def cmd_start(client: MCPClient, command: str) -> dict[str, Any]:
 
 
 def cmd_wait(
-    client: MCPClient,
+    client: MCPClient | HttpMCPClient,
     command: str | None,
     job_id: str | None,
     max_seconds: int,
@@ -449,7 +471,7 @@ def cmd_wait(
         return {"status": "failed", "job_id": job_id, "error": str(e)}
 
 
-def cmd_list(client: MCPClient) -> dict[str, Any]:
+def cmd_list(client: MCPClient | HttpMCPClient) -> dict[str, Any]:
     """List all jobs.
 
     Args:
@@ -465,7 +487,7 @@ def cmd_list(client: MCPClient) -> dict[str, Any]:
         return {"status": "failed", "error": str(e)}
 
 
-def cmd_cancel(client: MCPClient, job_id: str) -> dict[str, Any]:
+def cmd_cancel(client: MCPClient | HttpMCPClient, job_id: str) -> dict[str, Any]:
     """Cancel a running job.
 
     Args:
@@ -559,7 +581,7 @@ def main() -> int:
 
     client = None
     try:
-        client = MCPClient()
+        client = get_mcp_client()
 
         if args.mode == "start":
             result = cmd_start(client, args.command)
@@ -586,13 +608,18 @@ def main() -> int:
         print(json.dumps(result, indent=2))
         return 1
 
+    except ValueError as e:
+        result = {"status": "failed", "error": str(e)}
+        print(json.dumps(result, indent=2))
+        return 1
+
     except KeyboardInterrupt:
         result = {"status": "failed", "error": "Interrupted by user"}
         print(json.dumps(result, indent=2))
         return 130
 
     finally:
-        if client:
+        if client and hasattr(client, "close"):
             client.close()
 
 
