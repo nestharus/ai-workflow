@@ -81,7 +81,7 @@ After all plans complete successfully:
 
 2. Create commit with descriptive message:
    ```bash
-   git commit -m "$(cat <<'EOF'
+   git commit -m "$(cat <<EOF
    <TICKET_ID>: <TITLE>
 
    Implements the plan from Linear ticket <TICKET_ID>.
@@ -91,9 +91,7 @@ After all plans complete successfully:
    - <Summary of Plan 2>
    - ...
 
-   🤖 Generated with [Claude Code](https://claude.com/claude-code)
-
-   Co-Authored-By: Claude <noreply@anthropic.com>
+   By $(git config user.name) <$(git config user.email)>
    EOF
    )"
    ```
