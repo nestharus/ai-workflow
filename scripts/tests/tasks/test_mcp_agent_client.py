@@ -60,7 +60,8 @@ class FakeMCPProcess:
         if fail_on_write:
             self.stdin.write.side_effect = BrokenPipeError("Broken pipe")
         else:
-            self.stdin.write.return_value = None
+            # Return the length of data written (for partial write loop support)
+            self.stdin.write.side_effect = lambda data: len(data)
             self.stdin.flush.return_value = None
 
         self.stderr.read.return_value = b"fake stderr"
@@ -123,8 +124,11 @@ class FakeMCPProcess:
 
 @pytest.fixture
 def mock_select() -> Any:
-    """Mock select.select to always return ready."""
-    with patch("scripts.tasks.mcp_agent_client.select.select") as mock:
+    """Mock select.select to always return ready, and mock time.sleep to not actually sleep."""
+    with (
+        patch("scripts.tasks.mcp_agent_client.select.select") as mock,
+        patch("scripts.tasks.mcp_agent_client.time.sleep"),
+    ):
         mock.return_value = ([True], [], [])
         yield mock
 

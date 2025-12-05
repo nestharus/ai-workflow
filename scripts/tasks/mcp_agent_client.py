@@ -104,21 +104,23 @@ class MCPClient:
         self._stderr_thread.start()
 
         # Wait for server to become ready (poll until startup_timeout)
+        # MCP servers are considered ready when the process is alive and accepting stdin
         deadline = time.monotonic() + startup_timeout
+        poll_interval = 0.1  # Check every 100ms
         while time.monotonic() < deadline:
+            time.sleep(min(poll_interval, deadline - time.monotonic()))
             poll_result = self.proc.poll()
             if poll_result is not None:
                 # Server exited - clean up and raise
-                self._cleanup_failed_process()
+                self._shutdown(timeout=1.0)
                 raise MCPClientError(
                     f"MCP server exited immediately with code {poll_result}: "
                     f"{bytes(self._stderr_buffer).decode(errors='replace')}"
                 )
             # Server is still running - consider it ready
-            # (MCP servers are ready when they accept stdin)
             return
         # Timeout waiting for startup
-        self._cleanup_failed_process()
+        self._shutdown(timeout=1.0)
         raise MCPClientError(
             f"MCP server did not become ready within {startup_timeout}s"
         )
@@ -140,8 +142,24 @@ class MCPClient:
                 # Pipe closed or invalid
                 break
 
-    def _cleanup_failed_process(self) -> None:
-        """Clean up process resources after startup failure."""
+    def _shutdown(self, timeout: float = 5.0) -> None:
+        """Robust shutdown: terminate/kill process, close pipes, join stderr thread.
+
+        Args:
+            timeout: Seconds to wait for graceful termination before killing.
+        """
+        # Terminate process if running
+        if self.proc.poll() is None:
+            with contextlib.suppress(OSError, ProcessLookupError):
+                self.proc.terminate()
+            try:
+                self.proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(OSError, ProcessLookupError):
+                    self.proc.kill()
+                with contextlib.suppress(OSError):
+                    self.proc.wait()
+
         # Close all pipes
         if self.proc.stdin:
             with contextlib.suppress(OSError):
@@ -152,9 +170,10 @@ class MCPClient:
         if self.proc.stderr:
             with contextlib.suppress(OSError):
                 self.proc.stderr.close()
-        # Reap the process to avoid zombies
-        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-            self.proc.wait(timeout=1)
+
+        # Join stderr drain thread (with timeout to avoid hanging)
+        if hasattr(self, "_stderr_thread") and self._stderr_thread.is_alive():
+            self._stderr_thread.join(timeout=1.0)
 
     def _read_response(self, timeout: float) -> dict[str, Any]:
         """Read a JSON-RPC response with Content-Length header.
@@ -282,7 +301,13 @@ class MCPClient:
         header = f"Content-Length: {len(body)}\r\n\r\n".encode()
 
         try:
-            self.proc.stdin.write(header + body)
+            data = header + body
+            total = 0
+            while total < len(data):
+                written = self.proc.stdin.write(data[total:])
+                if written is None or written == 0:
+                    raise MCPClientError("Failed to send request: partial write")
+                total += written
             self.proc.stdin.flush()
         except (BrokenPipeError, OSError) as e:
             raise MCPClientError(f"Failed to send request: {e}") from e
@@ -314,15 +339,7 @@ class MCPClient:
 
     def close(self) -> None:
         """Terminate MCP server subprocess."""
-        if self.proc.poll() is None:
-            with contextlib.suppress(OSError, ProcessLookupError):
-                self.proc.terminate()
-            try:
-                self.proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                with contextlib.suppress(OSError, ProcessLookupError):
-                    self.proc.kill()
-                self.proc.wait()
+        self._shutdown()
 
 
 def cmd_start(client: MCPClient, command: str) -> dict[str, Any]:
@@ -337,9 +354,13 @@ def cmd_start(client: MCPClient, command: str) -> dict[str, Any]:
     """
     try:
         result = client.call_tool("execute", {"command": command})
-        return {"status": "started", "job_id": result.get("job_id", result.get("id"))}
+        job_id = result.get("job_id", result.get("id"))
     except MCPClientError as e:
         return {"status": "failed", "error": str(e)}
+    else:
+        if not job_id:
+            return {"status": "failed", "error": "No job_id returned by server"}
+        return {"status": "started", "job_id": job_id}
 
 
 def cmd_wait(
