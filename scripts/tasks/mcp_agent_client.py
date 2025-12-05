@@ -108,7 +108,7 @@ class MCPClient:
         deadline = time.monotonic() + startup_timeout
         poll_interval = 0.1  # Check every 100ms
         while time.monotonic() < deadline:
-            time.sleep(min(poll_interval, deadline - time.monotonic()))
+            time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
             poll_result = self.proc.poll()
             if poll_result is not None:
                 # Server exited - clean up and raise
