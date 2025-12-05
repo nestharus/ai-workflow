@@ -564,6 +564,40 @@ class TestErrorEdgeCases:
             assert "poll_interval" in result["error"]
             client.close()
 
+    def test_invalid_max_seconds_negative(self, mock_select: Any) -> None:
+        """Test that negative max_seconds returns error."""
+        fake_proc = FakeMCPProcess()
+
+        with patch("subprocess.Popen", return_value=fake_proc):
+            client = MCPClient(command=["fake"])
+            result = cmd_wait(
+                client,
+                command="echo test",
+                job_id=None,
+                max_seconds=-1,
+                poll_interval=0.01,
+            )
+            assert result["status"] == "failed"
+            assert "max_seconds" in result["error"]
+            client.close()
+
+    def test_invalid_max_seconds_nan(self, mock_select: Any) -> None:
+        """Test that NaN max_seconds returns error."""
+        fake_proc = FakeMCPProcess()
+
+        with patch("subprocess.Popen", return_value=fake_proc):
+            client = MCPClient(command=["fake"])
+            result = cmd_wait(
+                client,
+                command="echo test",
+                job_id=None,
+                max_seconds=float("nan"),
+                poll_interval=0.01,
+            )
+            assert result["status"] == "failed"
+            assert "max_seconds" in result["error"]
+            client.close()
+
     def test_invalid_utf8_in_response(self, mock_select: Any) -> None:
         """Test handling of invalid UTF-8 in response body."""
         fake_proc = FakeMCPProcess()

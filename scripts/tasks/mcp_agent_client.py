@@ -411,12 +411,18 @@ def cmd_wait(
     Returns:
         Result dict with status, job_id, exit_code, stdout, stderr.
     """
-    # Validate poll_interval (handles negative and NaN)
+    # Validate inputs (handles negative and NaN)
     if not (poll_interval >= 0):
         return {
             "status": "failed",
             "job_id": job_id,
             "error": "Invalid poll_interval; must be >= 0",
+        }
+    if not (max_seconds >= 0):
+        return {
+            "status": "failed",
+            "job_id": job_id,
+            "error": "Invalid max_seconds; must be >= 0",
         }
 
     try:
