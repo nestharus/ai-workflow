@@ -37,6 +37,10 @@ Exit Codes:
     1   - Client/server error (startup failure, malformed response)
     124 - Job exceeded --max-seconds timeout
     137 - Job was terminated via cancel
+
+Platform Support:
+    This script uses select.select() on pipes, which is not supported on Windows.
+    It is intended for use on Linux/macOS systems only.
 """
 
 from __future__ import annotations
@@ -149,7 +153,7 @@ class MCPClient:
             with contextlib.suppress(OSError):
                 self.proc.stderr.close()
         # Reap the process to avoid zombies
-        with contextlib.suppress(OSError):
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
             self.proc.wait(timeout=1)
 
     def _read_response(self, timeout: float) -> dict[str, Any]:
@@ -228,9 +232,7 @@ class MCPClient:
 
             chunk = self.proc.stdout.read(content_length - len(body_data))
             if not chunk:
-                if self.proc.poll() is not None:
-                    raise MCPClientError("MCP server exited unexpectedly")
-                continue
+                raise MCPClientError("Unexpected EOF while reading response body")
             body_data += chunk
 
         try:
@@ -273,7 +275,10 @@ class MCPClient:
         }
 
         # Send request with Content-Length header
-        body = json.dumps(request).encode("utf-8")
+        try:
+            body = json.dumps(request).encode("utf-8")
+        except (TypeError, ValueError) as e:
+            raise MCPClientError(f"Failed to serialize request: {e}") from e
         header = f"Content-Length: {len(body)}\r\n\r\n".encode()
 
         try:
@@ -282,8 +287,19 @@ class MCPClient:
         except (BrokenPipeError, OSError) as e:
             raise MCPClientError(f"Failed to send request: {e}") from e
 
-        # Read response
-        response = self._read_response(timeout)
+        # Read response, validating that the id matches our request
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise MCPClientError(f"MCP call timed out after {timeout}s")
+            response = self._read_response(remaining)
+            # Skip notifications (no id) and mismatched responses
+            if "id" not in response:
+                continue
+            if response.get("id") != self._request_id:
+                continue
+            break
 
         # Validate JSON-RPC response
         if "error" in response:
