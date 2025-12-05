@@ -339,4 +339,22 @@ Examples of when to use Firecrawl:
 * Need FastAPI middleware examples? Search for "FastAPI middleware authentication 2025"
 * Library API unclear? Scrape the official documentation page
 
+## Git Commit Authorship
+
+When creating git commits, agents must NOT add themselves as authors or co-authors:
+
+* **No Co-Authored-By**: Do not add `Co-Authored-By: Claude <noreply@anthropic.com>` or
+  similar lines
+* **No Generated-By footers**: Do not add `🤖 Generated with [Claude Code]` or similar
+  attribution footers
+* **Use configured identity only**: All commits must use only the git username and email
+  configured in the repository (from `git config user.name` and `git config user.email`)
+
+The human user is the author of all commits. The agent is a tool assisting the user, not
+a co-author.
+
+**Why this matters**: Each unique author in a GitHub repository costs $30/month for a
+seat. Adding Claude as a co-author would waste money on a seat for an AI that doesn't
+need repository access.
+
 </coding_guidelines>
