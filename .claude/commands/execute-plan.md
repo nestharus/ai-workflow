@@ -1,7 +1,7 @@
 ---
 description: Execute an implementation plan in a git worktree
 argument-hint: <ticket-id>
-allowed-tools: Bash, Read, Write, Glob, Grep, mcp__linear-server__get_issue, mcp__linear-server__create_comment, mcp__linear-server__update_issue
+allowed-tools: Bash, Read, Write, Glob, Grep, mcp__linear-server__get_issue, mcp__linear-server__update_issue
 ---
 
 Execute the implementation plan for ticket `$ARGUMENTS` in a dedicated git worktree.
@@ -17,7 +17,9 @@ The worktree branch is created from the current branch and PRs back to it.
 
 1. Record the current branch: `git branch --show-current` → `<BASE_BRANCH>`
 2. Use `mcp__linear-server__get_issue` to fetch the ticket details for the title
-3. Generate branch name: `<ticket-id>-<sanitized-title>` (lowercase, hyphens, max 50 chars)
+3. Generate branch name: `<TICKET-ID>-<sanitized-title>` (preserve ticket ID casing exactly, rest lowercase with hyphens, max 50 chars total)
+   - **IMPORTANT**: The ticket ID (e.g., `NES-47`) must keep its exact casing for automatic Linear linking
+   - Example: `NES-47-rest-to-mcp-bridge` not `nes-47-rest-to-mcp-bridge`
 4. Create worktree and branch:
    ```bash
    git worktree add .worktrees/<ticket-id> -b <branch-name>
@@ -126,25 +128,16 @@ Implements [<TICKET_ID>](<LINEAR_TICKET_URL>)
 ## Linear Ticket
 
 See the implementation plan on the ticket: <LINEAR_TICKET_URL>
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
 )"
 ```
 
-### Step 6: Update Linear and Output
+### Step 6: Output Summary
 
-1. Add comment to Linear ticket with PR link using `mcp__linear-server__create_comment`:
-   ```markdown
-   ## Implementation Complete
+**Note**: The PR and branch are automatically linked to the Linear ticket when the ticket ID
+casing matches exactly. No manual linking is required.
 
-   Pull Request: <PR_URL>
-   Branch: <branch-name>
-
-   The implementation is ready for review. Please review the PR against the plan above.
-   ```
-
-2. Print to terminal:
+Print to terminal:
 
 ```
 ================================================================================
