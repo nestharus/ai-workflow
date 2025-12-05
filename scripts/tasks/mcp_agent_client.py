@@ -66,7 +66,10 @@ class MCPClientError(Exception):
 
 
 class MCPClient:
-    """Minimal MCP client for background-job server using JSON-RPC 2.0."""
+    """Minimal MCP client for background-job server using JSON-RPC 2.0.
+
+    Uses newline-delimited JSON format (FastMCP).
+    """
 
     def __init__(
         self,
@@ -98,6 +101,7 @@ class MCPClient:
 
         self._request_id = 0
         self._startup_timeout = startup_timeout
+        self._initialized = False
 
         # Start background thread to drain stderr (prevents pipe blocking)
         self._stderr_buffer = bytearray()
@@ -118,11 +122,59 @@ class MCPClient:
                     f"MCP server exited immediately with code {poll_result}: "
                     f"{bytes(self._stderr_buffer).decode(errors='replace')}"
                 )
-            # Server is still running - consider it ready
+            # Server is still running - perform MCP handshake
+            self._initialize()
             return
         # Timeout waiting for startup
         self._shutdown(timeout=1.0)
         raise MCPClientError(f"MCP server did not become ready within {startup_timeout}s")
+
+    def _initialize(self) -> None:
+        """Perform MCP protocol handshake."""
+        if self._initialized:
+            return
+
+        # Send initialize request
+        self._request_id += 1
+        request = {
+            "jsonrpc": "2.0",
+            "id": self._request_id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "mcp-agent-client", "version": "1.0.0"},
+            },
+        }
+        self._send_json(request)
+
+        # Read initialize response
+        response = self._read_response(timeout=10.0)
+        if "error" in response:
+            raise MCPClientError(f"MCP initialize failed: {response['error']}")
+
+        # Send initialized notification
+        notification = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+        }
+        self._send_json(notification)
+
+        self._initialized = True
+
+    def _send_json(self, obj: dict[str, Any]) -> None:
+        """Send newline-delimited JSON."""
+        if self.proc.stdin is None:
+            raise MCPClientError("MCP server stdin not available")
+
+        data = (json.dumps(obj) + "\n").encode("utf-8")
+        total = 0
+        while total < len(data):
+            written = self.proc.stdin.write(data[total:])
+            if written is None or written == 0:
+                raise MCPClientError("Failed to send request: partial write")
+            total += written
+        self.proc.stdin.flush()
 
     def _drain_stderr(self) -> None:
         """Background thread to drain stderr and prevent pipe blocking."""
@@ -175,7 +227,9 @@ class MCPClient:
             self._stderr_thread.join(timeout=1.0)
 
     def _read_response(self, timeout: float) -> dict[str, Any]:
-        """Read a JSON-RPC response with Content-Length header.
+        """Read a newline-delimited JSON-RPC response.
+
+        Uses newline-delimited JSON format (FastMCP).
 
         Args:
             timeout: Timeout in seconds.
@@ -190,10 +244,8 @@ class MCPClient:
             raise MCPClientError("MCP server stdout not available")
 
         deadline = time.monotonic() + timeout
-        header_data = b""
+        line_data = b""
 
-        # Read headers until we get Content-Length
-        content_length = -1
         try:
             while True:
                 remaining = deadline - time.monotonic()
@@ -214,75 +266,41 @@ class MCPClient:
                         raise MCPClientError("MCP server exited unexpectedly")
                     continue
 
-                header_data += byte
-                if len(header_data) > 65536:
-                    raise MCPClientError("Response headers exceed 64KB limit")
+                line_data += byte
 
-                # Check for end of headers (double CRLF)
-                if header_data.endswith(b"\r\n\r\n"):
-                    # Parse Content-Length from headers
-                    header_str = header_data.decode("utf-8", errors="replace")
-                    for line in header_str.split("\r\n"):
-                        if line.lower().startswith("content-length:"):
-                            try:
-                                content_length = int(line.split(":", 1)[1].strip())
-                            except ValueError:
-                                raise MCPClientError(
-                                    f"Invalid Content-Length header: {line}"
-                                ) from None
-                            break
+                # Limit line size to prevent memory exhaustion
+                max_line_size = 100 * 1024 * 1024  # 100MB
+                if len(line_data) > max_line_size:
+                    raise MCPClientError(f"Response line exceeds {max_line_size} byte limit")
+
+                # Newline marks end of JSON message
+                if byte == b"\n":
                     break
+
         except OSError as e:
-            raise MCPClientError(f"I/O error reading response headers: {e}") from e
-
-        if content_length < 0:
-            raise MCPClientError(f"Missing Content-Length header in response: {header_data!r}")
-
-        # Limit body size to 100MB to prevent memory bloat
-        max_body_size = 100 * 1024 * 1024
-        if content_length > max_body_size:
-            raise MCPClientError(
-                f"Response body size {content_length} exceeds {max_body_size} byte limit"
-            )
-
-        # Read the body
-        body_data = b""
-        try:
-            while len(body_data) < content_length:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise MCPClientError(f"MCP call timed out after {timeout}s")
-
-                ready, _, _ = select.select([self.proc.stdout], [], [], min(remaining, 0.1))
-                if not ready:
-                    if self.proc.poll() is not None:
-                        raise MCPClientError("MCP server exited unexpectedly")
-                    continue
-
-                chunk = self.proc.stdout.read(content_length - len(body_data))
-                if not chunk:
-                    raise MCPClientError("Unexpected EOF while reading response body")
-                body_data += chunk
-        except OSError as e:
-            raise MCPClientError(f"I/O error reading response body: {e}") from e
+            raise MCPClientError(f"I/O error reading response: {e}") from e
 
         try:
-            text = body_data.decode("utf-8")
+            text = line_data.decode("utf-8").strip()
+            if not text:
+                raise MCPClientError("Empty response from server")
             return json.loads(text)  # type: ignore[no-any-return]
         except UnicodeDecodeError as e:
             raise MCPClientError(
-                f"Invalid UTF-8 in response body: {e} - {body_data[:200]!r}"
+                f"Invalid UTF-8 in response: {e} - {line_data[:200]!r}"
             ) from e
         except json.JSONDecodeError as e:
-            raise MCPClientError(f"Invalid JSON response: {e} - {body_data[:200]!r}") from e
+            raise MCPClientError(f"Invalid JSON response: {e} - {line_data[:200]!r}") from e
 
     def call_tool(
         self, name: str, arguments: dict[str, Any], timeout: float = 30.0
     ) -> dict[str, Any]:
         """Call an MCP tool and return result.
 
+        Uses newline-delimited JSON format (FastMCP).
+
         Args:
-            name: Tool name (e.g., "execute", "status").
+            name: Tool name (e.g., "execute_command", "get_job_status").
             arguments: Tool arguments dict.
             timeout: Per-call timeout in seconds.
 
@@ -292,9 +310,6 @@ class MCPClient:
         Raises:
             MCPClientError: On JSON-RPC error, timeout, or unexpected process exit.
         """
-        if self.proc.stdin is None:
-            raise MCPClientError("MCP server stdin not available")
-
         self._request_id += 1
         request = {
             "jsonrpc": "2.0",
@@ -303,22 +318,8 @@ class MCPClient:
             "params": {"name": name, "arguments": arguments},
         }
 
-        # Send request with Content-Length header
         try:
-            body = json.dumps(request).encode("utf-8")
-        except (TypeError, ValueError) as e:
-            raise MCPClientError(f"Failed to serialize request: {e}") from e
-        header = f"Content-Length: {len(body)}\r\n\r\n".encode()
-
-        try:
-            data = header + body
-            total = 0
-            while total < len(data):
-                written = self.proc.stdin.write(data[total:])
-                if written is None or written == 0:
-                    raise MCPClientError("Failed to send request: partial write")
-                total += written
-            self.proc.stdin.flush()
+            self._send_json(request)
         except (BrokenPipeError, OSError, ValueError) as e:
             raise MCPClientError(f"Failed to send request: {e}") from e
 
@@ -388,8 +389,10 @@ def cmd_start(client: MCPClient | HttpMCPClient, command: str) -> dict[str, Any]
         Result dict with status and job_id.
     """
     try:
-        result = client.call_tool("execute", {"command": command})
-        job_id = result.get("job_id", result.get("id"))
+        result = client.call_tool("execute_command", {"command": command})
+        # FastMCP wraps results in structuredContent
+        structured = result.get("structuredContent", result)
+        job_id = structured.get("job_id", structured.get("id"))
     except MCPClientError as e:
         return {"status": "failed", "error": str(e)}
     else:
@@ -433,8 +436,10 @@ def cmd_wait(
 
     try:
         if command:
-            result = client.call_tool("execute", {"command": command})
-            job_id = result.get("job_id", result.get("id"))
+            result = client.call_tool("execute_command", {"command": command})
+            # FastMCP wraps results in structuredContent
+            structured = result.get("structuredContent", result)
+            job_id = structured.get("job_id", structured.get("id"))
 
         if not job_id:
             return {"status": "failed", "error": "No job_id available"}
@@ -445,24 +450,27 @@ def cmd_wait(
             if time.monotonic() > deadline:
                 # Kill job on timeout (best effort)
                 with contextlib.suppress(MCPClientError):
-                    client.call_tool("kill", {"job_id": job_id})
+                    client.call_tool("kill_job", {"job_id": job_id})
                 return {
                     "status": "timeout",
                     "job_id": job_id,
                     "error": f"Job exceeded {max_seconds}s timeout and was killed",
                 }
 
-            status_res = client.call_tool("status", {"job_id": job_id})
-            job_status = status_res.get("status", "unknown")
+            status_res = client.call_tool("get_job_status", {"job_id": job_id})
+            # FastMCP wraps results in structuredContent
+            structured = status_res.get("structuredContent", status_res)
+            job_status = structured.get("status", "unknown")
 
             if job_status in ("completed", "failed", "killed"):
-                output_res = client.call_tool("output", {"job_id": job_id})
+                output_res = client.call_tool("get_job_output", {"job_id": job_id})
+                output_structured = output_res.get("structuredContent", output_res)
                 return {
                     "status": job_status,
                     "job_id": job_id,
-                    "exit_code": status_res.get("exit_code"),
-                    "stdout": output_res.get("stdout", ""),
-                    "stderr": output_res.get("stderr", ""),
+                    "exit_code": structured.get("exit_code"),
+                    "stdout": output_structured.get("stdout", ""),
+                    "stderr": output_structured.get("stderr", ""),
                 }
 
             time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
@@ -481,8 +489,10 @@ def cmd_list(client: MCPClient | HttpMCPClient) -> dict[str, Any]:
         Result dict with status and jobs list.
     """
     try:
-        result = client.call_tool("list", {})
-        return {"status": "completed", "jobs": result.get("jobs", [])}
+        result = client.call_tool("list_jobs", {})
+        # FastMCP wraps results in structuredContent
+        structured = result.get("structuredContent", result)
+        return {"status": "completed", "jobs": structured.get("jobs", [])}
     except MCPClientError as e:
         return {"status": "failed", "error": str(e)}
 
@@ -498,7 +508,7 @@ def cmd_cancel(client: MCPClient | HttpMCPClient, job_id: str) -> dict[str, Any]
         Result dict with status.
     """
     try:
-        client.call_tool("kill", {"job_id": job_id})
+        client.call_tool("kill_job", {"job_id": job_id})
     except MCPClientError as e:
         return {"status": "failed", "job_id": job_id, "error": str(e)}
     else:

@@ -1,8 +1,8 @@
 """MCP stdio manager for communicating with MCP provider subprocesses.
 
 This module provides the MCPStdioManager class that handles spawning and
-communicating with an MCP provider subprocess using Content-Length framed
-JSON-RPC over stdio.
+communicating with an MCP provider subprocess using newline-delimited
+JSON-RPC over stdio (as used by FastMCP).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ class MCPStdioManager:
 
     This class handles:
     - Spawning the MCP subprocess on init
-    - Content-Length framed JSON-RPC communication
+    - Newline-delimited JSON-RPC communication (FastMCP format)
     - Thread-safe request/response handling
     - Subprocess crash detection and restart capability
     """
@@ -59,6 +59,160 @@ class MCPStdioManager:
         self._stderr_thread: threading.Thread | None = None
 
         self._start_subprocess()
+        self._initialize()
+
+    def _initialize(self) -> None:
+        """Send MCP initialize handshake (takes lock).
+
+        MCP protocol requires:
+        1. Client sends 'initialize' request
+        2. Server responds with capabilities
+        3. Client sends 'initialized' notification
+
+        Raises:
+            MCPError: If initialization fails.
+        """
+        with self._lock:
+            self._do_initialize_unlocked()
+
+    def _do_initialize_unlocked(self) -> None:
+        """Send MCP initialize handshake without taking lock.
+
+        Must be called while already holding self._lock.
+
+        Raises:
+            MCPError: If initialization fails.
+        """
+        # Send initialize request
+        init_result = self._send_request_unlocked(
+            method="initialize",
+            params={
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "mcp-bridge",
+                    "version": "1.0.0",
+                },
+            },
+            timeout=10.0,
+        )
+
+        # Log server info if available
+        server_info = init_result.get("serverInfo", {})
+        if server_info:
+            server_name = server_info.get("name", "unknown")
+            server_version = server_info.get("version", "unknown")
+            # Could add logging here if needed
+
+        # Send initialized notification (no response expected)
+        self._send_notification_unlocked("notifications/initialized", {})
+
+    def _send_notification_unlocked(self, method: str, params: dict[str, Any] | None = None) -> None:
+        """Send a JSON-RPC notification (no response expected).
+
+        Must be called while already holding self._lock.
+        Uses newline-delimited JSON format (FastMCP).
+
+        Args:
+            method: Method name.
+            params: Method parameters (optional for notifications).
+
+        Raises:
+            MCPError: If sending fails.
+        """
+        if self._proc is None or self._proc.stdin is None:
+            raise MCPError("MCP server not running")
+
+        notification: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "method": method,
+        }
+        if params:
+            notification["params"] = params
+
+        try:
+            # Newline-delimited JSON format
+            data = (json.dumps(notification) + "\n").encode("utf-8")
+        except (TypeError, ValueError) as e:
+            raise MCPError(f"Failed to serialize notification: {e}") from e
+
+        try:
+            total = 0
+            while total < len(data):
+                written = self._proc.stdin.write(data[total:])
+                if written is None or written == 0:
+                    raise MCPError("Failed to send notification: partial write")
+                total += written
+            self._proc.stdin.flush()
+        except (BrokenPipeError, OSError, ValueError) as e:
+            raise MCPError(f"Failed to send notification: {e}") from e
+
+    def _send_request_unlocked(
+        self,
+        method: str,
+        params: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        """Send a JSON-RPC request and wait for response.
+
+        Must be called while already holding self._lock.
+        Uses newline-delimited JSON format (FastMCP).
+
+        Args:
+            method: Method name.
+            params: Method parameters.
+            timeout: Timeout in seconds.
+
+        Returns:
+            Result dict from response.
+
+        Raises:
+            MCPError: If request fails or times out.
+        """
+        if self._proc is None or self._proc.stdin is None:
+            raise MCPError("MCP server not running")
+
+        self._request_id += 1
+        request = {
+            "jsonrpc": "2.0",
+            "id": self._request_id,
+            "method": method,
+            "params": params,
+        }
+
+        try:
+            # Newline-delimited JSON format
+            data = (json.dumps(request) + "\n").encode("utf-8")
+        except (TypeError, ValueError) as e:
+            raise MCPError(f"Failed to serialize request: {e}") from e
+
+        try:
+            total = 0
+            while total < len(data):
+                written = self._proc.stdin.write(data[total:])
+                if written is None or written == 0:
+                    raise MCPError("Failed to send request: partial write")
+                total += written
+            self._proc.stdin.flush()
+
+            # Read response
+            response = self._read_response(timeout)
+        except (BrokenPipeError, OSError, ValueError) as e:
+            raise MCPError(f"Failed to send request: {e}") from e
+
+        # Handle JSON-RPC response
+        if "error" in response:
+            error = response["error"]
+            if isinstance(error, dict):
+                code = error.get("code", -1)
+                message = error.get("message", "Unknown error")
+                raise MCPError(f"MCP error {code}: {message}")
+            raise MCPError(f"MCP error: {error}")
+
+        if "result" not in response:
+            raise MCPError("Invalid MCP response: missing 'result'")
+
+        return response["result"]
 
     def _start_subprocess(self) -> None:
         """Start the MCP subprocess.
@@ -153,7 +307,9 @@ class MCPStdioManager:
         self._proc = None
 
     def _read_response(self, timeout: float) -> dict[str, Any]:
-        """Read a JSON-RPC response with Content-Length header.
+        """Read a newline-delimited JSON-RPC response.
+
+        Uses newline-delimited JSON format (FastMCP).
 
         Args:
             timeout: Timeout in seconds.
@@ -168,9 +324,8 @@ class MCPStdioManager:
             raise MCPError("MCP server stdout not available")
 
         deadline = time.monotonic() + timeout
-        header_data = b""
+        line_data = b""
 
-        content_length = -1
         try:
             while True:
                 remaining = deadline - time.monotonic()
@@ -189,57 +344,29 @@ class MCPStdioManager:
                         raise MCPError("MCP server exited unexpectedly")
                     continue
 
-                header_data += byte
-                if len(header_data) > 65536:
-                    raise MCPError("Response headers exceed 64KB limit")
+                line_data += byte
 
-                if header_data.endswith(b"\r\n\r\n"):
-                    header_str = header_data.decode("utf-8", errors="replace")
-                    for line in header_str.split("\r\n"):
-                        if line.lower().startswith("content-length:"):
-                            try:
-                                content_length = int(line.split(":", 1)[1].strip())
-                            except ValueError:
-                                raise MCPError(f"Invalid Content-Length header: {line}") from None
-                            break
+                # Limit line size to prevent memory exhaustion
+                max_line_size = 100 * 1024 * 1024  # 100MB
+                if len(line_data) > max_line_size:
+                    raise MCPError(f"Response line exceeds {max_line_size} byte limit")
+
+                # Newline marks end of JSON message
+                if byte == b"\n":
                     break
+
         except OSError as e:
-            raise MCPError(f"I/O error reading response headers: {e}") from e
-
-        if content_length < 0:
-            raise MCPError(f"Missing Content-Length header in response: {header_data!r}")
-
-        max_body_size = 100 * 1024 * 1024
-        if content_length > max_body_size:
-            raise MCPError(f"Response body size {content_length} exceeds {max_body_size} byte limit")
-
-        body_data = b""
-        try:
-            while len(body_data) < content_length:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise MCPError(f"MCP call timed out after {timeout}s")
-
-                ready, _, _ = select.select([self._proc.stdout], [], [], min(remaining, 0.1))
-                if not ready:
-                    if self._proc.poll() is not None:
-                        raise MCPError("MCP server exited unexpectedly")
-                    continue
-
-                chunk = self._proc.stdout.read(content_length - len(body_data))
-                if not chunk:
-                    raise MCPError("Unexpected EOF while reading response body")
-                body_data += chunk
-        except OSError as e:
-            raise MCPError(f"I/O error reading response body: {e}") from e
+            raise MCPError(f"I/O error reading response: {e}") from e
 
         try:
-            text = body_data.decode("utf-8")
+            text = line_data.decode("utf-8").strip()
+            if not text:
+                raise MCPError("Empty response from server")
             return json.loads(text)  # type: ignore[no-any-return]
         except UnicodeDecodeError as e:
-            raise MCPError(f"Invalid UTF-8 in response body: {e} - {body_data[:200]!r}") from e
+            raise MCPError(f"Invalid UTF-8 in response: {e} - {line_data[:200]!r}") from e
         except json.JSONDecodeError as e:
-            raise MCPError(f"Invalid JSON response: {e} - {body_data[:200]!r}") from e
+            raise MCPError(f"Invalid JSON response: {e} - {line_data[:200]!r}") from e
 
     def is_alive(self) -> bool:
         """Check if the MCP subprocess is alive.
@@ -261,8 +388,10 @@ class MCPStdioManager:
         of concurrent requests. If the subprocess has crashed, it will be
         restarted before making the call.
 
+        Uses newline-delimited JSON format (FastMCP).
+
         Args:
-            name: Tool name (e.g., "execute", "status").
+            name: Tool name (e.g., "execute_command", "get_job_status").
             arguments: Tool arguments dict.
             timeout: Per-call timeout in seconds.
 
@@ -276,6 +405,7 @@ class MCPStdioManager:
             # Restart subprocess if it has crashed
             if not self.is_alive():
                 self._start_subprocess()
+                self._do_initialize_unlocked()
 
             if self._proc is None or self._proc.stdin is None:
                 raise MCPError("MCP server stdin not available")
@@ -290,14 +420,12 @@ class MCPStdioManager:
             }
 
             try:
-                body = json.dumps(request).encode("utf-8")
+                # Newline-delimited JSON format
+                data = (json.dumps(request) + "\n").encode("utf-8")
             except (TypeError, ValueError) as e:
                 raise MCPError(f"Failed to serialize request: {e}") from e
 
-            header = f"Content-Length: {len(body)}\r\n\r\n".encode()
-
             try:
-                data = header + body
                 total = 0
                 while total < len(data):
                     written = self._proc.stdin.write(data[total:])
@@ -314,6 +442,7 @@ class MCPStdioManager:
                 if remaining <= 0:
                     raise MCPError(f"MCP call timed out after {timeout}s")
                 response = self._read_response(remaining)
+                # Skip notifications (no id)
                 if "id" not in response:
                     continue
                 if response.get("id") != request_id:
