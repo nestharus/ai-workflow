@@ -1,0 +1,10 @@
+# This directory stores rendered artifact files.
+# Per docs/plans/fact_redesign.md lines 514-515 and 566:
+# - Rendered artifacts are named <artifact_id>.<ext>
+# - Extension determined by artifact_format MIME type:
+#   - .md for text/markdown
+#   - .mmd for text/x-mermaid
+#   - .yml for application/yaml
+# - Populated by rendering pipeline in subsequent phase (step 4 of lifecycle)
+#
+# This file ensures the directory is tracked by git.

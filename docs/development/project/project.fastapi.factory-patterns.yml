@@ -1,0 +1,419 @@
+doc_id: project-fastapi-factory-patterns
+title: FastAPI Factory Patterns
+version_hint: 2024-2025
+kind: fastapi_factory_standards
+description: >
+  FastAPI-specific patterns for application construction, lifespan management, middleware/router registration,
+  and OpenAPI customization using the create_app factory pattern.
+scope: >
+  Covers create_app pattern, lifespan context managers, resource initialization in FastAPI, exception handler
+  registration,
+  middleware configuration, router registration, OpenAPI customization, settings integration, testing factory usage, and
+  anti-patterns.
+domain:
+  - fastapi
+primary_runtime_references:
+  - path: app/core/factory.py
+    id: item.50ceff3e
+    role: FastAPI construction, lifespan wiring, middleware, router registration, and OpenAPI customization.
+  - path: app/core/settings.py
+    id: item.48cee9c8
+    role: Settings model and validation used to configure create_app.
+  - path: app/core/exceptions.py
+    id: item.7f864851
+    role: Global exception and validation handlers registered by the factory.
+  - path: app/infrastructure/surrealdb/pool.py
+    id: item.844559a7
+    role: SurrealDB pool factory used during startup.
+  - path: app/infrastructure/elasticsearch/client.py
+    id: item.4dd8488d
+    role: Elasticsearch wrapper factory used during startup.
+  - path: tests/conftest.py
+    id: item.8315d235
+    role: Test application factory usage, dependency overrides, and fixtures.
+related_pattern_docs:
+  - python/factory-patterns.toon
+  - python/settings-patterns.toon
+  - fastapi/settings-patterns.toon
+  - fastapi/middleware-patterns.toon
+  - fastapi/connection-pooling-patterns.toon
+  - fastapi/exception-patterns.toon
+sections:
+  - id: application-factory-pattern
+    index: 1
+    title: Application Factory Pattern
+    category: standard
+    summary: Using create_app(settings) as the single wiring point for FastAPI applications.
+    sample_code:
+      description: Application factory that wires FastAPI configuration and stores settings.
+      imports:
+        - fastapi.FastAPI
+        - fastapi.responses.ORJSONResponse
+        - app.core.settings.Settings
+      code: |
+        from fastapi import FastAPI
+        from fastapi.responses import ORJSONResponse
+        from app.core.settings import Settings
+        def create_app(settings: Settings) -> FastAPI:
+            """Construct and configure the FastAPI application instance."""
+            app = FastAPI(
+                title=settings.app_name,
+                version=settings.app_version,
+                description=settings.app_description,
+                docs_url="/docs",
+                redoc_url="/redoc",
+                default_response_class=ORJSONResponse,
+                lifespan=_lifespan(settings),
+            )
+            app.state.settings = settings
+            # ... router registration, middleware configuration, and exception handlers ...
+            return app
+    items:
+      - id: factory.create-app-rationale
+        rule: >
+          'Use an explicit create_app(settings: Settings) factory to construct FastAPI instances so configuration can
+          be injected at runtime and tests can create isolated apps.'
+      - id: factory.single-wiring-point
+        note: >
+          Centralize routers, middleware, exception handlers, and OpenAPI customization in create_app so the HTTP
+          surface
+          is wired from a single function.
+      - id: factory.fastapi-construction
+        pattern: >
+          Initialize FastAPI with title, version, description, docs_url, redoc_url,
+          default_response_class=ORJSONResponse,
+          and lifespan=_lifespan(settings) for consistent configuration.
+      - id: factory.store-settings-state
+        rule: >
+          Store the provided Settings instance on app.state.settings immediately after app creation for downstream
+          access.
+      - id: factory.no-global-app
+        rule: >
+          Avoid creating a global FastAPI app at import time; always use create_app so multiple instances can coexist
+          in tests and different environments.
+  - id: lifespan-management
+    index: 2
+    title: Lifespan Management
+    category: standard
+    summary: Managing startup and shutdown using FastAPI’s lifespan context manager.
+    sample_code:
+      description: Lifespan function that initializes and cleans up SurrealDB and Elasticsearch resources.
+      imports:
+        - contextlib.asynccontextmanager
+        - contextlib.AbstractAsyncContextManager
+        - collections.abc.AsyncGenerator
+        - collections.abc.Callable
+        - fastapi.FastAPI
+        - app.infrastructure.surrealdb.pool.create_surrealdb_pool
+      code: |
+        from contextlib import asynccontextmanager, AbstractAsyncContextManager
+        from collections.abc import AsyncGenerator, Callable
+        from fastapi import FastAPI
+        from app.infrastructure.surrealdb.pool import SurrealDBPool, create_surrealdb_pool
+        from app.infrastructure.elasticsearch.client import (
+            ElasticsearchWrapper,
+            create_elasticsearch_wrapper,
+        )
+        def _lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
+            @asynccontextmanager
+            async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+                surreal_pool: SurrealDBPool | None = None
+                elasticsearch_client: ElasticsearchWrapper | None = None
+                try:
+                    surreal_pool = await create_surrealdb_pool(settings)
+                    app.state.surrealdb_pool = surreal_pool
+                    logger.info("Initialized SurrealDB pool")
+                    elasticsearch_client = await create_elasticsearch_wrapper(settings)
+                    app.state.elasticsearch_client = elasticsearch_client
+                    logger.info("Initialized Elasticsearch client")
+                    yield
+                except Exception:
+                    logger.exception("Failed to initialize application resources")
+                    raise
+                finally:
+                    if elasticsearch_client is not None:
+                        try:
+                            await elasticsearch_client.close()
+                        except Exception:
+                            logger.exception("Failed to close Elasticsearch client cleanly")
+                    if surreal_pool is not None:
+                        try:
+                            await surreal_pool.close()
+                        except Exception:
+                            logger.exception("Failed to close SurrealDB pool cleanly")
+            return lifespan
+    items:
+      - id: lifespan.use-context-manager
+        rule: >
+          Use FastAPI’s lifespan context manager instead of on_event startup/shutdown hooks to manage initialization and
+          cleanup in a single async function.
+      - id: lifespan.resource-safety
+        note: >
+          Structure lifespan so that cleanup runs even if exceptions occur during startup, ensuring resources are not
+          leaked when initialization fails.
+      - id: lifespan.startup-phase
+        pattern: >
+          In the startup block, create shared resources such as SurrealDBPool and ElasticsearchWrapper via
+          create_surrealdb_pool(settings)
+          and create_elasticsearch_wrapper(settings) and attach them to app.state.
+      - id: lifespan.error-handling
+        rule: >
+          Wrap startup logic in try/except blocks that log exceptions and re-raise them so failed resource
+          initialization
+          prevents the app from serving requests.
+      - id: lifespan.shutdown-phase
+        rule: >
+          In the finally block, close Elasticsearch and SurrealDB pools if they were created, logging but swallowing
+          close
+          errors to allow a clean shutdown.
+  - id: resource-initialization
+    index: 3
+    title: Resource Initialization
+    category: standard
+    summary: Using dedicated factory functions to initialize external resources and schemas.
+    sample_code:
+      description: Factory function that builds and initializes a SurrealDB pool with schema setup.
+      imports:
+        - app.core.settings.Settings
+        - app.infrastructure.surrealdb.pool.SurrealDBPool
+      code: |
+        async def create_surrealdb_pool(settings: Settings) -> SurrealDBPool:
+            """Factory that builds and initializes a SurrealDB pool from settings."""
+            pool = SurrealDBPool(
+                dsn=settings.surrealdb_url,
+                # ... other args ...
+            )
+            await pool.init()
+            try:
+                await pool.initialize_schema()
+            except Exception:
+                await pool.close()
+                raise
+            return pool
+    items:
+      - id: resources.factory-functions
+        rule: >
+          Use dedicated factory functions such as create_surrealdb_pool() and create_elasticsearch_wrapper() to
+          initialize
+          external resources instead of building them inline in create_app.
+      - id: resources.attach-to-state
+        pattern: >
+          After factories create resources, attach them to app.state (for example app.state.surrealdb_pool,
+          app.state.elasticsearch_client,
+          app.state.cache) for access via dependency providers.
+      - id: resources.schema-index-setup
+        rule: >
+          Perform schema and index setup (initialize_schema() for SurrealDB and index initialization for Elasticsearch)
+          during startup so requests do not perform ad-hoc migrations.
+      - id: resources.cache-first-class
+        note: >
+          Treat caches such as Redis clients or in-memory caches as first-class resources created during startup and
+          closed
+          or flushed during shutdown.
+      - id: resources.error-handling
+        rule: >
+          If resource initialization or schema setup fails, close any partially created resources and raise an error so
+          the application does not run in a degraded state.
+  - id: exception-handler-registration
+    index: 4
+    title: Exception Handler Registration
+    category: standard
+    summary: Central registration of custom exception handlers using AppError contracts.
+    rules:
+      - id: exceptions.register-in-factory
+        rule: >
+          Register all custom exception handlers from create_app using app.add_exception_handler() or
+          @app.exception_handler
+          so error handling remains centralized.
+      - id: exceptions.consistent-json
+        rule: >
+          Ensure handlers serialize errors using the AppError envelope and HTTPValidationError models from
+          app/contracts/errors.py
+          so all error responses share a standard JSON format.
+      - id: exceptions.secure-sanitization
+        note: >
+          Configure handlers to avoid exposing internal details in production, returning generic messages for
+          INTERNAL_ERROR
+          while logging full stack traces.
+      - id: exceptions.ordering
+        rule: >
+          Register specific handlers such as RequestValidationError and DomainError before generic fallbacks like
+          Exception
+          so the most specific handler is chosen first.
+      - id: exceptions-updates
+        note: >
+          Keep exception registration aligned with exception-patterns.toon; add or update handlers as new DomainError
+          subclasses or error codes are introduced.
+  - id: middleware-configuration-factory
+    index: 5
+    title: Middleware Configuration
+    category: standard
+    summary: Centralizing middleware registration and ordering in the factory.
+    rules:
+      - id: middleware.centralized-config
+        rule: >
+          Configure all middleware in create_app using app.add_middleware() to control ordering and environment-driven
+          toggles from a single place.
+      - id: middleware.ordering
+        note: >
+          Follow the recommended stack ordering documented in middleware-patterns.toon (for example TrustedHost →
+          security
+          headers → GZip → logging) and adjust for CORS and proxies as needed.
+      - id: middleware.settings-driven
+        rule: >
+          Drive middleware registration from Settings fields such as allowed_hosts, CORS configuration, compression
+          toggles,
+          and proxy settings instead of hardcoding values.
+      - id: middleware.proxy-awareness
+        note: >
+          When running behind a reverse proxy, configure ProxyHeadersMiddleware or Uvicorn proxy header options in the
+          factory so client IPs and schemes are preserved correctly.
+  - id: router-registration
+    index: 6
+    title: Router Registration
+    category: standard
+    summary: Registering routers with versioned prefixes and internal endpoints.
+    rules:
+      - id: router.version-prefix
+        rule: >
+          Include the main API router under a versioned prefix such as settings.api_prefix (for example /api/v1) using
+          app.include_router(api_router, prefix=settings.api_prefix).
+      - id: router.modular-structure
+        note: >
+          Keep router definitions in separate modules and register them from create_app so the HTTP surface is modular
+          yet centrally wired.
+      - id: router.internal-endpoints
+        pattern: >
+          Register internal endpoints such as /health as separate routes on the app (for example
+          app.add_api_route("/health",
+          health_check, include_in_schema=False)).
+      - id: router.future-versioning
+        note: >
+          Use versioned prefixes to support future API versions (such as /api/v2) without breaking existing consumers.
+  - id: openapi-customization
+    index: 7
+    title: OpenAPI Customization
+    category: standard
+    summary: Customizing the OpenAPI schema to expose shared contracts and flatten definitions.
+    rules:
+      - id: openapi.custom-fn
+        rule: >
+          Override app.openapi with a custom_openapi() function that caches app.openapi_schema after the first
+          generation
+          to avoid recomputation.
+      - id: openapi.flatten-defs
+        note: >
+          Flatten nested $defs into components.schemas to improve compatibility with OpenAPI tooling and client
+          generators.
+      - id: openapi.register-error-schemas
+        rule: >
+          Ensure shared error models such as HTTPValidationError and AppError from app/contracts/errors.py are
+          registered
+          under components.schemas so routes can reference them consistently.
+      - id: openapi.align-validation-shape
+        note: >
+          Normalize validation error schemas to match the AppError-wrapped HTTPValidationError structure described in
+          api-patterns.toon and exception-patterns.toon.
+      - id: openapi-doc-quality
+        note: >
+          Treat custom OpenAPI wiring as part of the public API contract and update it whenever error or metadata
+          schemas
+          change.
+  - id: settings-integration-factory
+    index: 8
+    title: Settings Integration
+    category: standard
+    summary: Integrating the Settings model with the application factory and dependencies.
+    rules:
+      - id: settings.store-on-state
+        rule: >
+          Store the Settings instance on app.state.settings inside create_app so any component with access to Request
+          or App can read configuration.
+      - id: settings.factory-entrypoint
+        note: >
+          'Treat create_app(settings: Settings) as the canonical composition root; production startup and tests should
+          both construct apps by passing in validated Settings instances.'
+      - id: settings.dependency-access
+        pattern: >
+          'Provide a get_settings dependency that reads from request.app.state.settings so routers and services can
+          declare
+          settings: Settings = Depends(get_settings).'
+      - id: settings.env-config
+        note: >
+          Implement Settings using pydantic-settings.BaseSettings so configuration is driven by environment variables
+          rather than alternate configuration systems.
+      - id: settings.feature-flags
+        rule: >
+          Use Settings fields as feature flags (for example enable_experimental_routes) in create_app to conditionally
+          include routers, middleware, or behavior per environment.
+  - id: testing-factory-usage
+    index: 9
+    title: Testing Factory Usage
+    category: testing
+    summary: How tests leverage the factory pattern for isolation and configurability.
+    sample_code:
+      description: Pytest fixtures that provide test-specific settings and isolated FastAPI app instances.
+      imports:
+        - pytest
+        - app.core.settings.Settings
+        - app.core.factory.create_app
+      code: |
+        import pytest
+        from fastapi import FastAPI
+        from app.core.settings import Settings
+        from app.core.factory import create_app
+        @pytest.fixture
+        def test_settings() -> Settings:
+            return Settings()
+        @pytest.fixture
+        def test_app(test_settings: Settings) -> FastAPI:
+            """Create a FastAPI application instance for testing."""
+            return create_app(test_settings)
+    items:
+      - id: testing.settings-fixture
+        pattern: Define a test_settings fixture that instantiates Settings with safe defaults suitable for tests.
+      - id: testing.test-app-fixture
+        pattern: >
+          Define a test_app fixture that calls create_app(test_settings) to provide isolated FastAPI instances for
+          tests.
+      - id: testing.dependency-overrides
+        rule: >
+          Prefer FastAPI’s dependency override system (see api-testing-patterns.toon) to replace external integrations
+          while still exercising the same create_app wiring.
+      - id: testing.minimize-monkeypatch
+        note: >
+          Reserve monkeypatching for low-level edge cases; it must not be the primary mechanism for swapping
+          dependencies
+          since it can diverge from production wiring.
+      - id: testing.factory-benefits
+        note: >
+          Relying on the factory pattern allows tests to run with different configurations (for example DB URLs or pool
+          sizes) without altering global state or production code.
+  - id: factory-anti-patterns
+    index: 10
+    title: Anti-Patterns to Avoid
+    category: warning
+    summary: Factory-level mistakes that harm testability, resource safety, or configuration hygiene.
+    anti_patterns:
+      - id: anti.global-app-instance
+        anti_pattern: >
+          Defining app = FastAPI() at module load time instead of using create_app, which makes testing and
+          configuration
+          difficult.
+      - id: anti.init-outside-lifespan
+        anti_pattern: >
+          Initializing DB clients or other long-lived resources at import time or in __init__ blocks without registering
+          corresponding shutdown hooks.
+      - id: anti.missing-shutdown-cleanup
+        anti_pattern: >
+          Creating connection pools or clients during startup without closing them in the lifespan shutdown phase,
+          leading
+          to resource leaks across deploys or tests.
+      - id: anti.hardcoded-config
+        anti_pattern: >
+          Hardcoding configuration values such as DSNs, hostnames, or secrets directly in the factory instead of reading
+          them from Settings.
+      - id: anti.business-logic-in-factory
+        anti_pattern: >
+          Embedding complex business logic or workflows directly inside create_app; the factory should focus on wiring
+          and delegate behavior to dedicated modules and services.

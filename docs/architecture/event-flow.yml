@@ -1,0 +1,59 @@
+doc_id: original-architecture-event-flow
+title: Event Flow Architecture
+description: This document visualizes the end-to-end event flow from GitHub webhook to agent execution
+  and result processing.
+domain: []
+scope: general
+sections:
+  - id: sequence-diagram
+    index: 1
+    title: Sequence Diagram
+    category: workflow
+    items:
+      - id: sequence-diagram-code-1
+        diagram: |
+          sequenceDiagram
+              participant GH as GitHub
+              participant WR as Webhook Receiver
+              participant Orch as Orchestrator
+              participant Agent as Agent (via droid exec)
+              participant MCP as GitHub MCP
+
+              GH->>WR: Webhook (PR comment/new issue)
+              WR->>WR: Verify signature
+              WR->>Orch: Forward event
+              Orch->>Orch: Route to workflow
+              Orch->>Agent: Invoke via subprocess
+              Agent->>MCP: Fetch PR/issue details
+              MCP->>Agent: Return data
+              Agent->>Orch: Submit result message
+              Orch->>Orch: Process result
+  - id: flow-stages
+    index: 2
+    title: Flow Stages
+    category: workflow
+    items:
+      - id: flow-stages-webhook-reception-github
+        title: Webhook Reception
+        text: GitHub sends a webhook to the Webhook Receiver service
+      - id: flow-stages-signature-verification-th
+        title: Signature Verification
+        text: The receiver verifies the HMAC SHA256 signature
+      - id: flow-stages-event-forwarding-validate
+        title: Event Forwarding
+        text: Validated events are forwarded to the Orchestrator
+      - id: flow-stages-workflow-routing-the-orch
+        title: Workflow Routing
+        rule: The orchestrator determines which workflow should handle the event
+      - id: flow-stages-agent-invocation-the-orch
+        title: Agent Invocation
+        text: The orchestrator spawns an agent via `droid exec` subprocess
+      - id: flow-stages-github-mcp-access-the-age
+        title: GitHub MCP Access
+        text: The agent fetches additional details from GitHub using MCP
+      - id: flow-stages-result-submission-the-age
+        title: Result Submission
+        text: The agent submits its result back to the orchestrator
+      - id: flow-stages-result-processing-the-orc
+        title: Result Processing
+        text: The orchestrator processes the result and continues the workflow

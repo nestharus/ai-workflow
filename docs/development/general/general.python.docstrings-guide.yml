@@ -1,0 +1,106 @@
+doc_id: general-python-docstrings-guide
+title: Docstrings Guide
+version_hint: 2024-2025
+kind: documentation_style_guide
+description: >
+  Google-style docstring conventions and standards for documenting Python code, enforced through ruff (with pydocstyle)
+  and pymarkdown.
+scope: Use these conventions for all public modules, classes, functions, and methods.
+domain:
+  - python
+primary_runtime_references: []
+related_pattern_docs: []
+external_references:
+  - url: https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings
+    title: Google Python Style Guide - Comments and Docstrings
+sections:
+  - id: general-rules
+    index: 1
+    title: General Rules
+    category: standard
+    summary: Core conventions for writing docstrings in this project.
+    rules:
+      - id: general.triple-quotes
+        rule: Use triple double quotes (""") and keep the opening summary on one line.
+      - id: general.summary-format
+        rule: Write clear, sentence-case summaries ending with a period.
+      - id: general.type-hints
+        rule: Prefer type hints in code; avoid duplicating types in docstrings unless it aids clarity.
+      - id: general.focus
+        rule: Keep docstrings focused on behavior, side effects, and important constraints.
+      - id: general.sections
+        rule: Include argument, return, and raises sections only when they add information beyond type hints.
+  - id: recommended-structure
+    index: 2
+    title: Recommended Structure
+    category: standard
+    summary: Ordering and organization of docstring content.
+    rules:
+      - id: structure.summary-line
+        rule: Begin with a summary line.
+      - id: structure.blank-line
+        rule: Add an optional blank line when additional detail follows the summary.
+      - id: structure.section-order
+        rule: 'Order sections as: Args, Returns, Yields, Raises, Examples.'
+  - id: function-example
+    index: 3
+    title: Function Example
+    category: example
+    summary: Complete example of a properly documented function.
+    sample_code:
+      description: Example function with Args, Returns, and Raises sections.
+      language: python
+      code: |
+        def fetch_user(user_id: str, *, include_inactive: bool = False) -> User:
+            """Retrieve a user record from storage.
+            Args:
+                user_id: Identifier of the user to fetch.
+                include_inactive: When true, also allow inactive users to match.
+            Returns:
+                User: The matching user instance.
+            Raises:
+                UserNotFoundError: No user matched the provided id and filters.
+            """
+    notes:
+      - id: function-example.note
+        note: This example demonstrates a complete function docstring with summary, Args, Returns, and Raises sections.
+  - id: class-example
+    index: 4
+    title: Class Example
+    category: example
+    summary: Complete example of a properly documented class.
+    sample_code:
+      description: Example class with docstrings for the class, __init__, and methods.
+      language: python
+      code: |
+        class TaskQueue:
+            """Queue wrapper that limits concurrent tasks."""
+            def __init__(self, capacity: int) -> None:
+                """Create a queue with a maximum in-flight capacity."""
+            def acquire(self) -> None:
+                """Block until a slot is available, then reserve it."""
+    notes:
+      - id: class-example.note
+        note: This example shows class-level docstrings plus method docstrings for __init__ and public methods.
+  - id: additional-guidance
+    index: 5
+    title: Additional Guidance
+    category: guidance
+    summary: Supplementary conventions for specific scenarios.
+    rules:
+      - id: additional.modules
+        title: Modules
+        rule: Provide a brief description when the module exposes public APIs or significant setup logic.
+      - id: additional.properties
+        title: Properties
+        rule: |
+          Document behavior in the getter; setters rarely need separate docstrings unless they
+          perform non-trivial work.
+      - id: additional.async
+        title: Async functions
+        rule: Document awaited side effects and cancellation behavior if relevant.
+      - id: additional.examples
+        title: Examples
+        rule: |
+          Use fenced code blocks with the language set (```python) and keep them minimal and
+          runnable when possible.

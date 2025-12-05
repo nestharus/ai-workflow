@@ -1,0 +1,41 @@
+doc_id: original-architecture-webhook-receiver
+title: Webhook Receiver Service
+description: A standalone Webhook Receiver Service (`webhook_receiver/`) handles all incoming events
+  from GitHub. This service is separate from the orchestrator to maintain security boundaries and separation
+  of concerns.
+domain: []
+scope: project
+sections:
+  - id: signature-verification
+    index: 1
+    title: Signature Verification
+    category: standard
+    items:
+      - id: signature-verification-1
+        text: Verifies HMAC SHA256 signatures to ensure webhook payloads are authentic and have not been tampered
+          with. Rejects any requests that fail signature verification.
+  - id: event-parsing
+    index: 2
+    title: Event Parsing
+    category: standard
+    items:
+      - id: event-parsing-1
+        text: Parses PR comments, new issues, and other GitHub events into structured data. Extracts relevant
+          information for workflow routing decisions.
+  - id: event-forwarding
+    index: 3
+    title: Event Forwarding
+    category: standard
+    items:
+      - id: event-forwarding-1
+        text: Forwards validated events to the Orchestrator Service for routing. The webhook receiver does
+          not make routing decisions; it only validates and forwards events.
+  - id: no-mcp-access
+    index: 4
+    title: No MCP Access
+    category: standard
+    items:
+      - id: no-mcp-access-1
+        text: The receiver service does NOT use GitHub MCP directly. It delegates all GitHub API interactions
+          to agents via the orchestrator. This ensures that only authenticated agents with proper context
+          access GitHub resources.

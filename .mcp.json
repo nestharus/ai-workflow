@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "background-job": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["mcp-background-job"]
+    }
+  }
+}

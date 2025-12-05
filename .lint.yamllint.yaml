@@ -1,0 +1,25 @@
+# Lint script configuration for yamllint
+# Directories to exclude when searching for YAML files
+
+exclude_dirs:
+  - .venv
+  - .venv2
+  - __pycache__
+  - .mypy_cache
+  - .pytest_cache
+  - .ruff_cache
+  - .sonar
+  - .review
+  - .tasks/store  # Generated task files
+  - .tmp
+  - .worktrees
+  - .git-rewrite
+  - .idea
+  - .git
+  - .github
+  - .huggingface
+  - .cache
+  - .uv-cache
+  - node_modules
+  # Exclude timestamped YAML originals in .knowledge/originals/
+  - .knowledge

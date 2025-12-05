@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/your-org/ai-workflow/schemas/test-planner-review.schema.json",
+  "title": "Test Planner Output (Review Mode)",
+  "description": "Output contract for the test-planner agent in review mode. This structured data appears after the PLAN_REVIEW: marker when reviewing written tests against the original plan.",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["COMPLETE", "INCOMPLETE", "BLOCKED"],
+      "description": "The review status. COMPLETE: plan satisfied; INCOMPLETE: tests have gaps; BLOCKED: cannot review (e.g., missing required inputs)."
+    },
+    "gaps": {
+      "type": "array",
+      "description": "List of gaps found during review. Required when status is 'INCOMPLETE'.",
+      "items": {
+        "$ref": "#/$defs/Gap"
+      }
+    },
+    "reason": {
+      "type": "string",
+      "description": "Explanation for why the review is blocked. Required when status is 'BLOCKED'."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Optional summary message for any status."
+    }
+  },
+  "required": ["status"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "INCOMPLETE"
+          }
+        }
+      },
+      "then": {
+        "required": ["gaps"],
+        "properties": {
+          "gaps": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "BLOCKED"
+          }
+        }
+      },
+      "then": {
+        "required": ["reason"]
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "Gap": {
+      "type": "object",
+      "description": "A gap identified during review.",
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "missing_test",
+            "missing_assertion",
+            "missing_usecase_marker",
+            "wrong_tier",
+            "missing_edge_case",
+            "incomplete_setup",
+            "missing_fixture"
+          ],
+          "description": "The category of the gap."
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description of the gap."
+        },
+        "plan_reference": {
+          "type": "string",
+          "description": "Reference to the relevant part of the plan (e.g., 'Test Functions[2]')."
+        },
+        "test_file": {
+          "type": "string",
+          "description": "Path to the test file where the gap was found."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "Severity level of the gap."
+        }
+      },
+      "required": ["category", "description", "severity"],
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "status": "COMPLETE",
+      "summary": "All planned tests implemented successfully"
+    },
+    {
+      "status": "INCOMPLETE",
+      "gaps": [
+        {
+          "category": "missing_test",
+          "description": "test_get_user_profile_returns_404_for_missing_user not implemented",
+          "plan_reference": "Test Functions[2]",
+          "test_file": "tests/integration/test_user_endpoints.py",
+          "severity": "high"
+        },
+        {
+          "category": "missing_usecase_marker",
+          "description": "test_create_user missing @pytest.mark.usecase marker",
+          "plan_reference": "Test Functions[1]",
+          "test_file": "tests/integration/test_user_endpoints.py",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "status": "BLOCKED",
+      "reason": "Cannot review - test plan document is missing or malformed"
+    }
+  ]
+}

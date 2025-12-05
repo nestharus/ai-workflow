@@ -1,0 +1,33 @@
+doc_id: test-golden-keywords
+title: Golden Keywords Test Document
+version_hint: 2024-2025
+kind: test_fixture
+description: >
+  Test fixture for validating keyword extraction pipeline. Contains known technical
+  terms that must be extracted to ensure zero false negatives.
+scope: Test fixture for keyword extraction validation.
+domain:
+  - testing
+primary_runtime_references: []
+related_pattern_docs: []
+external_references: []
+sections:
+  - id: test.connection-management
+    index: 1
+    title: Connection Management
+    category: technical
+    summary: >
+      Technical documentation containing file paths, class names, and technical concepts
+      that should be extracted as keywords.
+    items:
+      - id: test.connection-management.overview
+        type: rule
+        text: |
+          Use ElasticsearchWrapper in app/infrastructure/db_connections.py for connection management.
+          The elasticsearch client handles timeout settings and connection pooling.
+          Configure the connection_pool_size parameter in the settings module.
+      - id: test.connection-management.example
+        type: example
+        text: |
+          The ConnectionManager class provides a high-level API for database connections.
+          See scripts/knowledge/candidate_extraction.py for implementation details.

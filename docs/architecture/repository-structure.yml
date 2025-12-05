@@ -1,0 +1,76 @@
+doc_id: original-architecture-repository-structure
+title: Repository Structure
+description: This document provides a comprehensive directory and file reference for the codebase.
+domain: []
+scope: project
+sections:
+  - id: application-code
+    index: 1
+    title: Application Code
+    category: standard
+    items:
+      - id: application-code-app-routes
+        text: '`app/routes/`: API endpoint routers, including `orchestrator_router.py`'
+      - id: application-code-app-services
+        text: '`app/services/`: Business logic layer, including `orchestrator_service.py` and `agent_invoker.py`'
+      - id: application-code-app-contracts
+        text: '`app/contracts/`: Pydantic models, including `orchestrator_contracts.py`'
+      - id: application-code-app-core
+        text: '`app/core/`: Core application setup including `factory.py` for app construction'
+  - id: agent-definitions
+    index: 2
+    title: Agent Definitions
+    category: standard
+    items:
+      - id: agent-definitions-factorydroids-agent
+        text: '`.factory/droids/`: Agent definitions (POML) organized by domain'
+  - id: documentation
+    index: 3
+    title: Documentation
+    category: standard
+    items:
+      - id: documentation-docs-root
+        text: '`docs/`: The Coarse Knowledge Graph (source of truth) with subdirectories for each domain'
+      - id: documentation-docs-usage
+        text: '`docs/usage/`: Documentation for using the application'
+      - id: documentation-docs-development
+        text: '`docs/development/`: Writing application code, docstrings, code style'
+      - id: documentation-docs-testing
+        text: '`docs/testing/`: Writing and running test code'
+      - id: documentation-docs-architecture
+        text: '`docs/architecture/`: Folder structure, services, endpoints, integrations'
+      - id: documentation-docs-processes
+        text: '`docs/processes/`: Development processes like git releases, code reviews'
+  - id: infrastructure
+    index: 4
+    title: Infrastructure
+    category: standard
+    items:
+      - id: infrastructure-webhook_receiver-stand
+        text: '`webhook_receiver/`: Standalone service for handling GitHub webhooks'
+      - id: infrastructure-openapi-generated-open
+        text: '`openapi/`: Generated OpenAPI schema JSON'
+  - id: testing
+    index: 5
+    title: Testing
+    category: standard
+    items:
+      - id: testing-tests-test-organizatio
+        text: '`tests/`: Test organization:'
+      - id: testing-testsunit-unit-tests
+        text: '`tests/unit/`: Unit tests'
+      - id: testing-testsintegration-integrat
+        text: '`tests/integration/`: Integration tests (in-process)'
+      - id: testing-testse2e-end-to-end-tests
+        text: '`tests/e2e/`: End-to-end tests (live server)'
+  - id: tooling
+    index: 6
+    title: Tooling
+    category: standard
+    items:
+      - id: tooling-scripts-helper-scripts
+        text: '`scripts/`: Runtime and development scripts'
+      - id: tooling-scripts-dev-folder
+        text: '`scripts/dev/`: Development tools (linting, testing, code review)'
+      - id: tooling-scripts-knowledge-folder
+        text: '`scripts/knowledge/`: Knowledge management system scripts'

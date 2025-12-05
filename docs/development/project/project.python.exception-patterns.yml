@@ -1,0 +1,264 @@
+doc_id: project-python-exception-patterns
+title: Python Exception Patterns
+version_hint: 2024-2025
+kind: python_exception_standards
+description: >
+  Framework-agnostic Python exception patterns covering exception hierarchy design, domain error modeling, error
+  handling patterns, and testing strategies independent of HTTP concerns.
+scope: >
+  Covers exception hierarchy design, domain exception patterns, exception context and messages, error handling patterns,
+  exception testing, and anti-patterns. FastAPI-specific HTTP error handling is in
+  docs/development/fastapi/exception-patterns.toon.
+domain:
+  - python
+primary_runtime_references:
+  - path: app/core/errors.py
+    id: item.7fc93622
+    role: Domain error definitions and exception hierarchy.
+related_pattern_docs:
+  - fastapi/exception-patterns.toon
+  - python/dependency-patterns.toon
+sections:
+  - id: exception-hierarchy
+    index: 1
+    title: Exception Hierarchy
+    category: standard
+    summary: Domain-level exception hierarchy that is independent of HTTP concerns.
+    sample_code:
+      description: Domain exception hierarchy with base class and specific subclasses.
+      language: python
+      code: |
+        class DomainError(Exception):
+            """Base class for all domain-specific exceptions."""
+            def __init__(self, message: str) -> None:
+                self.message = message
+                super().__init__(message)
+        class ResourceNotFoundError(DomainError):
+            """Raised when a requested resource does not exist."""
+            def __init__(self, resource_type: str, resource_id: str) -> None:
+                self.resource_type = resource_type
+                self.resource_id = resource_id
+                super().__init__(f"{resource_type} with ID {resource_id} was not found")
+        class DomainValidationError(DomainError):
+            """Raised when a domain invariant is violated."""
+            def __init__(self, message: str, field: str | None = None) -> None:
+                self.field = field
+                super().__init__(message)
+        class UnauthorizedError(DomainError):
+            """Raised when an operation is not permitted for the current context."""
+            pass
+    items:
+      - id: hierarchy.domain-error-base
+        rule: >
+          Model business and domain failures using a small DomainError-based hierarchy (DomainError as the root in
+          app/core/errors.py).
+      - id: hierarchy.common-subclasses
+        note: >
+          Use specific DomainError subclasses such as ResourceNotFoundError, DomainValidationError, and
+          UnauthorizedError
+          to express missing entities, violated invariants, and permission failures.
+      - id: hierarchy.services-raise-exceptions
+        rule: >
+          Have services and domain components raise DomainError subclasses instead of returning sentinel values like
+          None,
+          False, or magic strings.
+      - id: hierarchy.http-agnostic
+        rule: >
+          Keep domain exceptions HTTP-agnostic; they must not embed HTTP status codes, headers, or transport-specific
+          terminology.
+      - id: hierarchy.extensibility
+        note: >
+          Define additional DomainError subclasses (such as UserNotFoundError or InvalidOrderStateError) to express more
+          precise error conditions without leaking transport concerns.
+  - id: domain-exception-pattern
+    index: 2
+    title: Domain Exception Pattern
+    category: standard
+    summary: How services and routers cooperate using DomainError and global handlers.
+    sample_code:
+      description: Service raising domain exceptions instead of returning None.
+      language: python
+      code: |
+        class UserService:
+            """Service for user-related business logic."""
+            def __init__(self, user_repo: UserRepository) -> None:
+                self._user_repo = user_repo
+            async def get_user(self, user_id: str) -> User:
+                """Retrieve a user by ID.
+                Raises:
+                    UserNotFoundError: If the user does not exist.
+                """
+                user = await self._user_repo.get_by_id(user_id)
+                if user is None:
+                    raise UserNotFoundError(user_id)
+                return user
+    items:
+      - id: domain.services-raise
+        rule: >
+          In services, raise ResourceNotFoundError, DomainValidationError, or UnauthorizedError as appropriate instead
+          of returning sentinel values such as None.
+      - id: domain.explicit-raises
+        rule: >
+          Document all domain exceptions a method may raise in a Raises section of the docstring so callers know which
+          failures to handle.
+      - id: domain.no-http-coupling
+        rule: >
+          Domain exceptions must not depend on any HTTP framework; they should be pure Python exceptions that can be
+          used
+          in CLI tools, background jobs, or tests.
+      - id: domain.exception-propagation
+        pattern: >
+          Allow domain exceptions to propagate up through the call stack to the transport layer, which is responsible
+          for translating them to appropriate responses.
+      - id: domain.specific-over-generic
+        rule: >
+          Prefer specific exception types over generic ones; raise UserNotFoundError rather than ResourceNotFoundError
+          when the context is clear and the distinction matters.
+  - id: exception-context-messages
+    index: 3
+    title: Exception Context and Messages
+    category: standard
+    summary: Guidelines for exception message formatting and including context in exceptions.
+    rules:
+      - id: context.informative-messages
+        rule: >
+          Exception messages should be informative for debugging, including relevant identifiers, operation names, and
+          state that led to the error.
+      - id: context.constructor-params
+        pattern: >
+          Accept context as constructor parameters (resource_id, field_name, expected_value) and build the message from
+          them rather than requiring callers to format messages.
+      - id: context.attribute-access
+        pattern: >
+          Store context as exception attributes so handlers can access structured data (exc.resource_id, exc.field) in
+          addition to the formatted message.
+      - id: context.no-sensitive-data
+        rule: >
+          Never include passwords, tokens, or other secrets in exception messages; these may be logged or exposed in
+          error
+          responses.
+      - id: context.localization-ready
+        note: >
+          Keep exception messages technical and developer-facing; user-facing error messages should be generated by the
+          transport layer using exception attributes.
+  - id: error-handling-patterns
+    index: 4
+    title: Error Handling Patterns
+    category: standard
+    summary: Patterns for catching, wrapping, and re-raising exceptions in Python code.
+    sample_code:
+      description: Wrapping low-level exceptions in domain exceptions.
+      language: python
+      code: |
+        class OrderRepository:
+            """Repository for order persistence."""
+            async def create(self, order: Order) -> Order:
+                """Create an order in the database.
+                Raises:
+                    DuplicateOrderError: If an order with the same ID already exists.
+                    DatabaseError: If the database operation fails.
+                """
+                try:
+                    await self._db.insert("orders", order.to_dict())
+                    return order
+                except IntegrityError as e:
+                    if "duplicate key" in str(e):
+                        raise DuplicateOrderError(order.id) from e
+                    raise DatabaseError("Failed to create order") from e
+                except ConnectionError as e:
+                    raise DatabaseError("Database connection failed") from e
+    items:
+      - id: handling.wrap-low-level
+        rule: >
+          Catch low-level exceptions (database errors, network errors, I/O errors) and wrap them in domain-appropriate
+          exceptions to hide implementation details.
+      - id: handling.exception-chaining
+        pattern: >
+          Use raise DomainException() from original_exception to preserve the exception chain for debugging while
+          presenting
+          a domain-appropriate exception to callers.
+      - id: handling.specific-catches
+        rule: >
+          Catch specific exception types rather than broad except Exception blocks; only catch exceptions you can handle
+          meaningfully.
+      - id: handling.try-finally-cleanup
+        pattern: >
+          Use try/finally blocks to ensure cleanup of resources (file handles, connections) regardless of whether
+          exceptions
+          occur.
+      - id: handling.reraise-unknown
+        rule: >
+          If you catch an exception and cannot handle it appropriately, re-raise it rather than swallowing it or
+          returning
+          a generic error.
+  - id: exception-testing-patterns
+    index: 5
+    title: Exception Testing Patterns
+    category: testing
+    summary: Testing strategies for exceptions using pytest.raises and assertion patterns.
+    sample_code:
+      description: Testing exception types and attributes with pytest.raises.
+      language: python
+      code: |
+        import pytest
+        from app.core.errors import UserNotFoundError
+        from app.services.user_service import UserService
+        async def test_get_user_raises_not_found(user_service: UserService):
+            """Test that get_user raises UserNotFoundError for missing users."""
+            with pytest.raises(UserNotFoundError) as exc_info:
+                await user_service.get_user("nonexistent-id")
+            assert exc_info.value.resource_id == "nonexistent-id"
+            assert "nonexistent-id" in str(exc_info.value)
+        async def test_exception_propagation(user_service: UserService):
+            """Test that domain exceptions propagate through service methods."""
+            with pytest.raises(UserNotFoundError):
+                await user_service.update_user("nonexistent-id", {"name": "New Name"})
+    items:
+      - id: testing.pytest-raises
+        pattern: Use pytest.raises(ExceptionType) as a context manager to assert that code raises expected exceptions.
+      - id: testing.exception-attributes
+        rule: >
+          Assert on exception attributes (exc_info.value.resource_id, exc_info.value.field) to verify exceptions carry
+          correct context.
+      - id: testing.message-content
+        note: >
+          Assert that exception messages contain expected content using in operator or string matching when message
+          format
+          is part of the contract.
+      - id: testing.propagation
+        rule: >
+          Write tests that verify exceptions propagate correctly through the call stack without being inadvertently
+          caught
+          or transformed.
+      - id: testing.edge-cases
+        note: >
+          Include tests for edge cases such as empty inputs, boundary values, and concurrent operations that may raise
+          exceptions.
+  - id: python-exception-anti-patterns
+    index: 6
+    title: Anti-Patterns to Avoid
+    category: warning
+    summary: Exception handling practices that harm debugging, security, or code quality.
+    anti_patterns:
+      - id: python.anti.broad-except
+        anti_pattern: >
+          Using broad except Exception blocks without re-raising or logging appropriately, which hides failures and
+          makes
+          debugging difficult.
+      - id: python.anti.swallowed-exceptions
+        anti_pattern: Swallowing exceptions by catching them and doing nothing, which masks errors and leads to silent failures.
+      - id: anti.sentinel-values
+        anti_pattern: >
+          Returning sentinel values (None, -1, empty string) instead of raising exceptions to indicate error conditions.
+      - id: anti.string-exceptions
+        anti_pattern: >
+          Using strings or generic Exception with string messages instead of typed exception classes, losing type safety
+          and structured error handling.
+      - id: anti.exposed-internals
+        anti_pattern: >
+          Including stack traces, SQL statements, internal paths, or other implementation details in exception messages
+          that may be exposed to users.
+      - id: anti.exception-control-flow
+        anti_pattern: >
+          Using exceptions for normal control flow rather than exceptional conditions, which harms performance and code
+          readability.

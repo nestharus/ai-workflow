@@ -1,0 +1,19 @@
+# Configuration for YAML documentation schema linter
+# See: docs/development/general/general.yaml.schema-guidelines.yml
+
+# Directories to search for documentation YAML files
+targets:
+  - docs/
+  - scripts/docs/
+  - tests/docs/
+
+# Directories to exclude from linting
+exclude_dirs:
+  - .tasks/store  # Generated task files
+  - .tmp
+  - .worktrees
+  - .git-rewrite
+  - .venv
+  - __pycache__
+  - node_modules
+  - to_adapt
