@@ -1,0 +1,49 @@
+render_plan_id: table.discriminator-grouped.v1
+render_engine: text_llm
+artifact_kind: table/discriminator-grouped
+
+inputs:
+  use_structural_fieldfacts: true
+  use_semantic_facts: false
+
+determinism:
+  ordering:
+    - discriminator_field_value
+    - field_path
+
+steps:
+  - id: gather
+    instruction: >
+      Collect FieldFacts grouped by discriminator field (e.g., http_method for
+      method defaults table). Each row corresponds to one discriminator value.
+      Columns are determined by unique field_paths across all rows.
+
+  - id: normalize
+    instruction: >
+      Normalize terminology to canonical forms. Preserve discriminator values
+      exactly as they appear in source (case-sensitive for identifiers like
+      HTTP methods).
+
+  - id: order
+    instruction: >
+      Sort rows by discriminator field value (alphabetical or semantic ordering
+      depending on discriminator type). Within each row, order columns by
+      field_path for deterministic output.
+
+  - id: render
+    instruction: >
+      Render Markdown table with discriminator as first column. Header row uses
+      field_path names converted to human-readable labels. Each data row represents
+      one discriminator value with corresponding field values. Empty cells for
+      missing values.
+
+  - id: self_check
+    instruction: >
+      Verify all rows present (one per discriminator value). Verify no duplicate
+      rows. Verify all columns have headers. Flag any data loss or unexpected
+      additions.
+
+notes: >
+  Example from general.rest.api-patterns.yml http_method_defaults table. Validation
+  uses normalized_rows_by_discriminator comparator which parses tables and compares
+  row sets by discriminator field.

@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: project-lint
+        name: Run project lint pipeline (ruff + mypy)
+        entry: uv run lint
+        language: system
+        pass_filenames: false
+        always_run: true

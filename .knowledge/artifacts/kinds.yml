@@ -1,0 +1,161 @@
+# Artifact Kind Registry
+#
+# Per docs/plans/fact_redesign.md lines 341-479, this registry defines schema-stable,
+# data-driven artifact kinds for classifying and validating artifact types in YAML
+# documentation.
+#
+# The system treats the registry schema as stable while the set of kinds is open-ended
+# and grows by adding new registry entries that conform to the schema.
+#
+# Required fields per entry:
+#   - kind_id: stable identifier (e.g., diagram/mermaid.sequence)
+#   - content_form: textual payload shape description
+#   - structure_pattern: deterministic matching rules (root_path, sibling_constraints, content_sniff)
+#   - extraction_contract: contributors + semantic extraction rules
+#   - rendering_contract: render_plan_id, output_mime, validation comparator
+#
+# Optional metadata fields:
+#   - default_format, allowed_formats
+#   - aliases, supersedes, deprecation_note
+#   - examples, notes
+#   - modality (enum: text|image|audio|video|other, defaults to text)
+#   - extraction_mode (enum: full|incremental|query_only, defaults to full)
+
+kinds:
+  # -----------------------------------------------------------------------------
+  # 1. Discriminator-grouped tables
+  # Example: docs/development/general/general.rest.api-patterns.yml lines 61-94
+  # -----------------------------------------------------------------------------
+  - kind_id: table/discriminator-grouped
+    content_form: structured list-of-dict row tables
+    structure_pattern:
+      root_path: sections[*].http_method_defaults
+      discriminator_field: method
+      required_fields:
+        - method
+        - usage
+        - success_status
+    extraction_contract:
+      contributors:
+        - field_path: http_method_defaults[*]
+      group_by: http_method_defaults::method
+      semantic_extraction: optional
+      notes: >
+        Group by discriminator field (method); treat each row as one semantic
+        constraint unit for rendering and validation.
+    rendering_contract:
+      render_plan_id: table.discriminator-grouped.v1
+      output_mime: text/markdown
+      validation:
+        comparator: normalized_rows_by_discriminator
+        discriminator: method
+    examples:
+      - source_file: docs/development/general/general.rest.api-patterns.yml
+        element_id: http-methods-and-status-codes
+        field_path: http_method_defaults
+        notes: HTTP method defaults table with GET, POST, PUT, PATCH, DELETE rows
+
+  # -----------------------------------------------------------------------------
+  # 2. Prose-plus-code blocks
+  # Example: docs/development/general/general.python.docstrings-guide.yml lines 58-71
+  # -----------------------------------------------------------------------------
+  - kind_id: prose/code-block
+    content_form: structured object with prose + code fields
+    structure_pattern:
+      root_path: sections[*].sample_code
+      required_fields:
+        - description
+        - language
+        - code
+    extraction_contract:
+      contributors:
+        - field_path: description
+        - field_path: language
+        - field_path: code
+      semantic_extraction: optional
+      notes: >
+        Contributors include prose description and code block; optional
+        sentence/line semantic facts with provenance back to the block.
+    rendering_contract:
+      render_plan_id: prose.code-block.v1
+      output_mime: text/markdown
+      validation:
+        comparator: normalized_diff
+        preserve_code_verbatim: true
+    examples:
+      - source_file: docs/development/general/general.python.docstrings-guide.yml
+        element_id: function-example
+        field_path: sample_code
+        notes: Example function docstring with Args, Returns, Raises sections
+
+  # -----------------------------------------------------------------------------
+  # 3. Nested hierarchies with containment
+  # Example: docs/development/MODULE-DEFINITIONS.yml (entire document)
+  # -----------------------------------------------------------------------------
+  - kind_id: schema/nested-hierarchy
+    content_form: structured YAML tree with nested id-bearing objects
+    structure_pattern:
+      root_path: sections[*].items
+      nested_id_detection: true
+      notes: >
+        Roots align to section/item hierarchies; child elements discovered
+        via slicing + $ref replacement. Detects nested IDs at any depth.
+    extraction_contract:
+      contributors:
+        - field_path: items[*]
+          recursive: true
+      preserve_containment_edges: true
+      semantic_extraction: optional
+      notes: >
+        Preserve containment edges via $ref; do not inline child internals
+        into parent contributors.
+    rendering_contract:
+      render_plan_id: schema.nested-hierarchy.v1
+      output_mime: text/yaml
+      validation:
+        comparator: structure_and_leaf_text
+        validate_containment: true
+    examples:
+      - source_file: docs/development/MODULE-DEFINITIONS.yml
+        element_id: general-scope
+        field_path: items
+        notes: >
+          Nested hierarchy with general-scope containing sub-items with their
+          own IDs (general-scope-resthttp-protocol-rules, etc.)
+
+  # -----------------------------------------------------------------------------
+  # 4. Mermaid diagrams stored as text
+  # Example: docs/architecture/event-flow.yml lines 14-32
+  # -----------------------------------------------------------------------------
+  - kind_id: diagram/mermaid.sequence
+    content_form: text_blob
+    structure_pattern:
+      root_path: sections[*].items[*].text
+      sibling_constraints:
+        - key: type
+          equals: code
+      content_sniff:
+        starts_with_any:
+          - sequenceDiagram
+          - "sequenceDiagram\n"
+    extraction_contract:
+      contributors:
+        - field_path: text
+      semantic_extraction: optional
+      notes: >
+        Contributors include the text blob; optional keyword/entity mentions
+        for linking to other documentation elements.
+    rendering_contract:
+      render_plan_id: diagram.mermaid.sequence.v1
+      output_mime: text/x-mermaid
+      validation:
+        comparator: normalized_text
+        normalization:
+          - trim_trailing_ws
+          - normalize_newlines
+    modality: text
+    examples:
+      - source_file: docs/architecture/event-flow.yml
+        element_id: sequence-diagram-code-1
+        field_path: text
+        notes: Mermaid sequence diagram showing GitHub webhook event flow

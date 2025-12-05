@@ -1,0 +1,365 @@
+doc_id: project-fastapi-dependency-patterns
+title: FastAPI Dependency Injection Patterns
+version_hint: 2024-2025
+kind: fastapi_dependency_standards
+description: >
+  FastAPI-specific dependency injection patterns using Depends(), Annotated type aliases, yield-based dependencies,
+  and app.dependency_overrides for testability.
+scope: >
+  Covers FastAPI Depends(), Annotated type aliases, centralized dependency providers, database session dependencies,
+  router-level dependencies, and testing with overrides. Python DI concepts are in
+  docs/development/python/dependency-patterns.toon.
+domain:
+  - fastapi
+primary_runtime_references:
+  - path: app/api/v1/dependencies.py
+    id: item.4b3a3f0c
+    role: Centralized dependency providers and type aliases for versioned APIs.
+  - path: app/core/dependencies.py
+    id: item.c977a132
+    role: Framework-agnostic providers such as get_settings.
+  - path: app/infrastructure/db_connections.py
+    id: item.0aaca244
+    role: Connection factories and SurrealDB/Elasticsearch wrappers used by dependencies.
+  - path: app/core/factory.py
+    id: item.5484cd1e
+    role: Application startup wiring that populates app.state for dependency providers.
+related_pattern_docs:
+  - python/dependency-patterns.toon
+  - fastapi/api-patterns.toon
+  - fastapi/router-patterns.toon
+  - fastapi/service-patterns.toon
+  - fastapi/factory-patterns.toon
+  - fastapi/settings-patterns.toon
+sections:
+  - id: di-fundamentals
+    index: 1
+    title: Dependency Injection Fundamentals
+    category: standard
+    summary: Core FastAPI DI concepts and how dependency trees are built per request.
+    sample_code:
+      description: Basic dependency that normalizes common query parameters and injects them into a route.
+      imports:
+        - fastapi.FastAPI
+        - fastapi.Depends
+        - typing.Optional
+      code: |
+        from typing import Optional
+        from fastapi import Depends, FastAPI
+        app = FastAPI()
+        def common_parameters(q: Optional[str] = None, skip: int = 0, limit: int = 100) -> dict:
+            return {"q": q, "skip": skip, "limit": limit}
+        @app.get("/items/")
+        async def read_items(commons: dict = Depends(common_parameters)):
+            return commons
+    items:
+      - id: fundamentals.depends-usage
+        rule: >
+          Declare dependencies in path operation signatures using fastapi.Depends() so FastAPI can resolve and inject
+          them automatically for each request.
+      - id: fundamentals.composition
+        note: >
+          Treat dependencies as composable building blocks; dependency functions and classes may themselves declare
+          dependencies,
+          forming a DAG.
+      - id: fundamentals.async-support
+        note: Dependencies can be async def or plain def and FastAPI handles both styles transparently.
+      - id: fundamentals.request-cache
+        rule: >
+          Rely on FastAPI’s per-request dependency cache, which ensures each dependency is resolved at most once per
+          request
+          unless use_cache=False is specified.
+      - id: fundamentals.common-parameters-example
+        pattern: >
+          Use small helper dependencies such as common_parameters to share query parameter handling across endpoints.
+      - id: fundamentals.http-surface
+        note: >
+          Design dependencies around HTTP concerns at the router boundary (for example pagination, authentication,
+          headers)
+          and separate them from pure domain services.
+  - id: annotated-type-aliases
+    index: 2
+    title: Annotated Type Aliases (2024 Best Practice)
+    category: standard
+    summary: Using Annotated and Depends to define reusable dependency aliases.
+    sample_code:
+      description: Using Annotated type aliases for shared query and pagination dependencies.
+      imports:
+        - typing.Annotated
+        - fastapi.Depends
+        - fastapi.FastAPI
+        - app.contracts.pagination.Pagination
+        - typing.Optional
+      code: |
+        from typing import Annotated, Optional
+        from fastapi import Depends, FastAPI
+        from app.contracts.pagination import Pagination
+        app = FastAPI()
+        def common_parameters(q: Optional[str] = None, skip: int = 0, limit: int = 100) -> dict:
+            return {"q": q, "skip": skip, "limit": limit}
+        def common_pagination_params(
+            q: Optional[str] = None,
+            page: int = 1,
+            size: int = 50,
+        ) -> Pagination:
+            return Pagination(q=q, page=page, size=size)
+        CommonsDep = Annotated[dict, Depends(common_parameters)]
+        PageParams = Annotated[Pagination, Depends(common_pagination_params)]
+        @app.get("/items/")
+        async def read_items(commons: CommonsDep, page: PageParams):
+            ...
+    items:
+      - id: annotated.pattern
+        rule: >
+          Use typing.Annotated with Depends to define reusable dependency type aliases such as CommonsDep and
+          PageParams.
+      - id: annotated.example-pagination
+        note: >
+          Wrap pagination logic in a dependency like common_pagination_params that returns a Pagination value object and
+          expose it as a PageParams alias.
+      - id: annotated.benefits-dry
+        note: Type aliases reduce repetition and keep route signatures concise while centralizing dependency wiring.
+      - id: annotated.ide-support
+        note: >
+          Annotated aliases provide better IDE autocompletion and static checking because handlers see strongly typed
+          parameters rather than raw Depends expressions.
+      - id: annotated.storage-location
+        rule: >
+          Place shared dependency aliases next to their providers in app/api/v1/dependencies.py so routers import them
+          from a single versioned module.
+  - id: centralized-dependency-providers
+    index: 3
+    title: Centralized Dependency Providers
+    category: standard
+    summary: Organizing dependency providers and type aliases in app/api/v1/dependencies.py.
+    sample_code:
+      description: Centralized settings, pool, and service providers in app/api/v1/dependencies.py.
+      imports:
+        - typing.Annotated
+        - fastapi.Depends
+        - fastapi.Request
+        - app.core.settings.Settings
+        - app.core.dependencies.get_settings
+        - app.infrastructure.db_connections.SurrealDBPool
+        - app.infrastructure.db_connections.ElasticsearchWrapper
+        - app.services.orchestrator_service.OrchestratorService
+      code: |
+        from typing import Annotated
+        from fastapi import Depends, Request
+        from app.core.dependencies import get_settings
+        from app.core.settings import Settings
+        from app.infrastructure.db_connections import ElasticsearchWrapper, SurrealDBPool
+        from app.services.orchestrator_service import OrchestratorService
+        SettingsDep = Annotated[Settings, Depends(get_settings)]
+        def get_surrealdb_pool(request: Request) -> SurrealDBPool:
+            return request.app.state.surrealdb_pool
+        def get_elasticsearch_client(request: Request) -> ElasticsearchWrapper:
+            return request.app.state.elasticsearch_client
+        def get_orchestrator_service(
+            settings: SettingsDep,
+            pool: Annotated[SurrealDBPool, Depends(get_surrealdb_pool)],
+            search: Annotated[ElasticsearchWrapper, Depends(get_elasticsearch_client)],
+        ) -> OrchestratorService:
+            return OrchestratorService(settings=settings, db_pool=pool, search=search)
+    items:
+      - id: providers.central-file
+        rule: >
+          Centralize reusable dependency providers for a given API version in app/api/v1/dependencies.py rather than
+          defining
+          them inline in routers.
+      - id: providers.layers
+        note: >
+          Organize providers into configuration (settings), infrastructure (database pools, search clients), and
+          services
+          (domain services built on repositories and infrastructure).
+      - id: providers.lower-level
+        note: >
+          Expose framework-agnostic providers such as get_settings in app/core/dependencies.py and connection factories
+          in app/infrastructure/db_connections.py, and build router-facing providers on top of them.
+      - id: providers.router-import-surface
+        rule: >
+          Treat app/api/v1/dependencies.py as the DI surface imported by routers so they do not access app.state
+          directly.
+      - id: providers.app-state
+        note: >
+          Infrastructure providers typically read from request.app.state (for example surrealdb_pool and
+          elasticsearch_client)
+          to stay aligned with the application factory.
+  - id: database-session-dependencies
+    index: 4
+    title: Database Session Dependencies
+    category: standard
+    summary: Yield-based dependencies for acquiring and releasing database connections.
+    sample_code:
+      description: Yield-based dependency for acquiring a SurrealDB session.
+      imports:
+        - collections.abc.AsyncGenerator
+        - app.infrastructure.db_connections.SurrealDBPool
+        - surrealdb.Surreal
+      code: |
+        from collections.abc import AsyncGenerator
+        from app.infrastructure.db_connections import SurrealDBPool
+        from surrealdb import Surreal
+        async def get_db_session(pool: SurrealDBPool) -> AsyncGenerator[Surreal, None]:
+            async with pool.acquire() as conn:
+                yield conn
+    items:
+      - id: db-session.yield-pattern
+        rule: >
+          Implement database session dependencies as async generators that yield a session (for example a Surreal
+          connection)
+          and ensure cleanup after the yield.
+      - id: db-session.pool-acquire
+        pattern: >
+          Acquire connections from SurrealDBPool via async with pool.acquire() inside the dependency so sessions are
+          request-scoped
+          while the pool is shared.
+      - id: db-session.exception-safety
+        note: >
+          The async context manager used in get_db_session ensures connections are returned to the pool even when
+          downstream
+          code raises exceptions.
+      - id: db-session.thin-dependency
+        rule: >
+          Keep get_db_session thin; it should only acquire and release connections, leaving query logic and transactions
+          to repositories and services.
+      - id: db-session.fastapi-yield
+        note: >
+          FastAPI automatically handles yield-based dependencies, running code after yield during response finalization
+          to ensure cleanup.
+  - id: settings-dependency
+    index: 5
+    title: Settings Dependency
+    category: standard
+    summary: Patterns for injecting and overriding the Settings model.
+    rules:
+      - id: settings.lru-cache
+        rule: >
+          Implement get_settings in app/core/dependencies.py as an @lru_cache-decorated function that builds a single
+          Settings instance from environment variables.
+      - id: settings.route-usage
+        pattern: >
+          Inject Settings into routes using Annotated[Settings, Depends(get_settings)] so handlers do not construct
+          Settings
+          directly.
+      - id: settings.test-overrides
+        rule: >
+          Override get_settings via app.dependency_overrides in tests to supply test-specific configuration and clear
+          overrides after each test.
+      - id: settings.no-globals
+        rule: >
+          Avoid importing or mutating a global Settings instance; rely on the cached dependency everywhere configuration
+          is needed.
+      - id: settings.debugging
+        note: >
+          Prefer toggling behavior through Settings fields such as include_error_body rather than patching module-level
+          constants.
+  - id: router-level-dependencies
+    index: 6
+    title: Router-Level Dependencies
+    category: standard
+    summary: Applying cross-cutting concerns at the APIRouter level.
+    rules:
+      - id: router-level.cross-cutting
+        pattern: >
+          Attach shared concerns such as authentication, rate limiting, or auditing at the APIRouter level via
+          dependencies=[Depends(...)]
+          instead of repeating them on each route.
+      - id: router-level.execution-order
+        note: >
+          Router-level dependencies run before route-specific dependencies, ensuring that cross-cutting checks execute
+          consistently for all endpoints in the router.
+      - id: router-level.security
+        rule: >
+          Use Security() instead of Depends() for security schemes that carry scopes (for example OAuth2) while still
+          attaching them at the router level.
+      - id: router-level.api-keys
+        rule: >
+          Wire API key–based dependencies (for example APIKeyHeader or APIKeyQuery) at the router level when they guard
+          entire groups of endpoints.
+  - id: service-dependencies
+    index: 7
+    title: Service Dependencies
+    category: standard
+    summary: Service layer patterns and how services are injected into routers.
+    rules:
+      - id: service.factory-functions
+        pattern: >
+          Define factory dependencies such as get_user_service that assemble service instances from lower-level
+          dependencies
+          like DB sessions and Settings.
+      - id: service.router-usage
+        note: >
+          'In routers, depend on services via Annotated types (service: Annotated[UserService,
+          Depends(get_user_service)])
+          and call service methods directly.'
+      - id: service.layer-pattern
+        rule: >
+          Adopt the Service Layer pattern where services encapsulate domain workflows and are injected into routers
+          instead
+          of being instantiated inside route handlers.
+      - id: service.domain-errors
+        rule: >
+          Expect services to raise domain-specific exceptions (for example TicketNotFoundError or
+          InvalidTransitionError)
+          and avoid fastapi.HTTPException in service methods.
+      - id: service.testability
+        note: >
+          Override service factories with mocks or fakes in tests via app.dependency_overrides to test routers without
+          modifying production code.
+  - id: testing-dependency-overrides
+    index: 8
+    title: Testing with Dependency Overrides
+    category: testing
+    summary: Testing strategies based on create_app and app.dependency_overrides.
+    sample_code:
+      description: Test fixture using app.dependency_overrides to replace dependencies.
+      imports:
+        - pytest
+        - fastapi.FastAPI
+        - app.core.dependencies.get_settings
+        - app.core.settings.Settings
+      code: |
+        import pytest
+        from fastapi import FastAPI
+        from httpx import AsyncClient, ASGITransport
+        from app.core.factory import create_app
+        from app.core.settings import Settings
+        from app.core.dependencies import get_settings
+        @pytest.fixture
+        def test_settings() -> Settings:
+            return Settings()
+        @pytest.fixture
+        def test_app(test_settings: Settings) -> FastAPI:
+            app = create_app(test_settings)
+            app.dependency_overrides[get_settings] = lambda: test_settings
+            return app
+        @pytest.fixture
+        async def async_client(test_app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
+            async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
+                yield client
+    items:
+      - id: testing.factory-app
+        rule: >
+          Construct FastAPI apps in tests using create_app with explicit Settings instances instead of importing an app
+          from app.main.
+      - id: testing.override-deps
+        rule: >
+          Use app.dependency_overrides to replace dependencies such as get_db_session, get_settings, or service
+          factories
+          with test doubles.
+      - id: testing.override-example
+        note: >
+          Implement overrides as async dependencies that yield test resources (for example test_db_pool.acquire()) and
+          clear app.dependency_overrides after each test.
+      - id: testing.conftest-composition-root
+        note: >
+          Centralize common test wiring in tests/conftest.py, including fixtures like test_settings, test_app,
+          async_client,
+          live_server, and api_client.
+      - id: testing.integration-vs-e2e
+        note: >
+          Use async_client plus dependency overrides for in-process integration tests and live_server plus api_client
+          (with real backends) for end-to-end tests.
+      - id: testing.no-global-state
+        rule: Avoid mutating global state in tests; rely on factory-created apps and dependency overrides instead.

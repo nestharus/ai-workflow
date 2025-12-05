@@ -1,0 +1,31 @@
+You will be given a very unrefined prompt containing many interleaved requirements. Do **not** create an implementation plan. Do **not** add assumptions about my repo/system. Your job is only to **unmangle and restructure** what I said.
+
+Produce three sections:
+
+1. **Topics (Unmangled)**
+
+   * Extract and list all distinct topics/concerns present in my text.
+   * Phrase them as short topic titles.
+
+2. **Organized Requirements (Same content, reordered)**
+
+   * Group the original statements under those topics.
+   * Preserve the original intent and constraints.
+   * If something is ambiguous/mangled, keep it but label it **Ambiguous/Needs research** (do not resolve it).
+
+3. **Planner-Ready Prompt Pack (self-contained prompts)**
+
+   * For each topic, write a standalone prompt that I can hand to a planning agent.
+   * Each prompt must include *all necessary context* from the wall of text relevant to that topic, even if it duplicates other prompts.
+   * Avoid references like “the workflows above” or “as discussed earlier.” Everything must be explicit inside each prompt.
+   * Do not prescribe repo-specific steps; the planner will research the repo to ground the plan.
+
+Formatting rules:
+
+* Use clear headings.
+* Keep wording tight.
+* Prefer duplication over cross-references.
+* Do not invent agents, tools, file paths, thresholds, or mechanisms beyond what I stated.
+
+Now transform the following wall of text accordingly:
+

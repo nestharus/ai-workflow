@@ -1,0 +1,5 @@
+failure-threshold: error
+trusted-registries:
+  - ghcr.io
+format: json
+# For local interactive runs, pass --format tty explicitly if desired.

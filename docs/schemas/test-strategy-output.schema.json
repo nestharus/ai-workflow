@@ -1,0 +1,436 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/your-org/ai-workflow/schemas/test-strategy-output.schema.json",
+  "title": "Test Strategy Output (Generate Mode)",
+  "description": "Output contract for the test-strategy agent in generate mode. This structured data appears after the STRATEGY: marker.",
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "Brief 2-3 sentence summary of the testing strategy."
+    },
+    "tier_assignments": {
+      "type": "array",
+      "description": "List of tier assignments for each target file.",
+      "items": {
+        "$ref": "#/$defs/TierAssignment"
+      },
+      "minItems": 1
+    },
+    "testing_patterns": {
+      "type": "object",
+      "description": "Recommended testing patterns, fixtures, mocking strategies, and assertion approaches.",
+      "properties": {
+        "fixtures_required": {
+          "type": "array",
+          "description": "List of pytest fixtures needed for testing.",
+          "items": {
+            "$ref": "#/$defs/Fixture"
+          }
+        },
+        "mocking_strategies": {
+          "type": "array",
+          "description": "Strategies for mocking external dependencies.",
+          "items": {
+            "$ref": "#/$defs/MockingStrategy"
+          }
+        },
+        "assertion_patterns": {
+          "type": "array",
+          "description": "Recommended assertion patterns for validating test outcomes.",
+          "items": {
+            "$ref": "#/$defs/AssertionPattern"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "use_cases": {
+      "type": "object",
+      "description": "Use case definitions for integration and e2e tests.",
+      "properties": {
+        "new": {
+          "type": "array",
+          "description": "New use cases to be implemented.",
+          "items": {
+            "$ref": "#/$defs/UseCase"
+          }
+        },
+        "existing_applicable": {
+          "type": "array",
+          "description": "Existing use cases that apply to the target files.",
+          "items": {
+            "$ref": "#/$defs/ExistingUseCase"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "edge_cases": {
+      "type": "array",
+      "description": "Edge cases and error scenarios that require test coverage.",
+      "items": {
+        "$ref": "#/$defs/EdgeCase"
+      }
+    },
+    "test_file_mapping": {
+      "type": "array",
+      "description": "Mapping between source files and their corresponding test files.",
+      "items": {
+        "$ref": "#/$defs/TestFileMapping"
+      },
+      "minItems": 1
+    },
+    "guidance_for_planner": {
+      "type": "array",
+      "description": "Explicit guidance items for the test-planner agent.",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": ["summary", "tier_assignments", "test_file_mapping"],
+  "additionalProperties": false,
+  "$defs": {
+    "TierAssignment": {
+      "type": "object",
+      "description": "Test tier assignment for a specific source file.",
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Path to the source file."
+        },
+        "tier": {
+          "$ref": "#/$defs/TestTier"
+        },
+        "coverage_type": {
+          "$ref": "#/$defs/CoverageType"
+        },
+        "coverage_target": {
+          "type": "number",
+          "description": "Target coverage: percentage (0-100) for line_branch, count for use_case.",
+          "minimum": 0
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Justification for the tier assignment."
+        },
+        "functions": {
+          "type": "array",
+          "description": "List of functions in the file with their test requirements.",
+          "items": {
+            "$ref": "#/$defs/FunctionTestRequirement"
+          }
+        }
+      },
+      "required": ["file", "tier", "coverage_type", "coverage_target", "rationale"],
+      "additionalProperties": false
+    },
+    "TestTier": {
+      "type": "string",
+      "enum": ["unit", "component", "integration", "e2e"],
+      "description": "The test tier level. unit: pure functions, utilities, isolated logic; component: service layer public APIs; integration: API endpoints with mocked external deps; e2e: full stack scenarios requiring Docker/real services."
+    },
+    "CoverageType": {
+      "type": "string",
+      "enum": ["line_branch", "use_case"],
+      "description": "The type of coverage metric. line_branch: per-function line and branch % (target 80%, applies to unit/component/scripts); use_case: use-case ID coverage (target 100%, applies to integration/e2e)."
+    },
+    "FunctionTestRequirement": {
+      "type": "object",
+      "description": "Test requirements for a specific function.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The function name."
+        },
+        "test_type": {
+          "$ref": "#/$defs/CoverageType"
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "Priority level for testing this function."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Additional notes or considerations for testing this function."
+        }
+      },
+      "required": ["name", "test_type", "priority"],
+      "additionalProperties": false
+    },
+    "Fixture": {
+      "type": "object",
+      "description": "A pytest fixture required for testing.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The fixture name."
+        },
+        "exists": {
+          "type": "boolean",
+          "description": "Whether the fixture already exists in the codebase."
+        },
+        "path": {
+          "type": "string",
+          "description": "Path to the file containing the fixture (if it exists)."
+        },
+        "creation_notes": {
+          "type": "string",
+          "description": "Notes on how to create the fixture (if it doesn't exist)."
+        }
+      },
+      "required": ["name", "exists"],
+      "additionalProperties": false
+    },
+    "MockingStrategy": {
+      "type": "object",
+      "description": "Strategy for mocking an external dependency.",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "The fully qualified name of the dependency to mock."
+        },
+        "approach": {
+          "type": "string",
+          "description": "The mocking approach (e.g., 'dependency_injection', 'monkeypatch', 'unittest.mock')."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Additional implementation notes for the mocking strategy."
+        }
+      },
+      "required": ["target", "approach"],
+      "additionalProperties": false
+    },
+    "AssertionPattern": {
+      "type": "object",
+      "description": "Recommended assertion pattern for test validation.",
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "description": "Name or identifier for the assertion pattern."
+        },
+        "description": {
+          "type": "string",
+          "description": "Explanation of how to use this assertion pattern."
+        }
+      },
+      "required": ["pattern", "description"],
+      "additionalProperties": false
+    },
+    "UseCase": {
+      "type": "object",
+      "description": "A new use case to be implemented for integration/e2e testing.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the use case (e.g., 'UC-USER-001').",
+          "pattern": "^UC-[A-Z][A-Z0-9_-]*-[0-9]+$"
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "The API endpoint path."
+        },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+          "description": "HTTP method for the endpoint."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of the use case."
+        },
+        "test_tier": {
+          "$ref": "#/$defs/TestTier"
+        }
+      },
+      "required": ["id", "endpoint", "method", "description", "test_tier"],
+      "additionalProperties": false
+    },
+    "ExistingUseCase": {
+      "type": "object",
+      "description": "Reference to an existing use case that applies to the target files.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The existing use case ID.",
+          "pattern": "^UC-[A-Z][A-Z0-9_-]*-[0-9]+$"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Notes on how this existing use case relates to the target files."
+        }
+      },
+      "required": ["id", "notes"],
+      "additionalProperties": false
+    },
+    "EdgeCase": {
+      "type": "object",
+      "description": "An edge case or error scenario requiring test coverage.",
+      "properties": {
+        "scenario": {
+          "type": "string",
+          "description": "Description of the edge case scenario."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "Severity level of the edge case."
+        },
+        "test_approach": {
+          "type": "string",
+          "description": "Recommended approach for testing this edge case."
+        }
+      },
+      "required": ["scenario", "severity", "test_approach"],
+      "additionalProperties": false
+    },
+    "TestFileMapping": {
+      "type": "object",
+      "description": "Mapping between a source file and its test files.",
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Path to the source file."
+        },
+        "tests": {
+          "type": "array",
+          "description": "List of test files that cover this source file.",
+          "items": {
+            "$ref": "#/$defs/TestFile"
+          },
+          "minItems": 1
+        }
+      },
+      "required": ["source", "tests"],
+      "additionalProperties": false
+    },
+    "TestFile": {
+      "type": "object",
+      "description": "A test file and its metadata.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the test file."
+        },
+        "operation": {
+          "type": "string",
+          "enum": ["NEW", "MODIFY", "DELETE"],
+          "description": "The operation to perform on the test file."
+        },
+        "tier": {
+          "$ref": "#/$defs/TestTier"
+        }
+      },
+      "required": ["path", "operation", "tier"],
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "summary": "User service requires comprehensive unit testing for business logic validation and integration testing for API endpoints. Email verification adds new edge cases requiring parametrized tests.",
+      "tier_assignments": [
+        {
+          "file": "app/services/user_service.py",
+          "tier": "unit",
+          "coverage_type": "line_branch",
+          "coverage_target": 80,
+          "rationale": "Service layer with complex business logic and multiple edge cases",
+          "functions": [
+            {
+              "name": "create_user",
+              "test_type": "line_branch",
+              "priority": "high",
+              "notes": "Complex branching requires parametrized tests for email validation"
+            },
+            {
+              "name": "delete_user",
+              "test_type": "line_branch",
+              "priority": "medium",
+              "notes": "Standard CRUD operation with error handling"
+            }
+          ]
+        }
+      ],
+      "testing_patterns": {
+        "fixtures_required": [
+          {
+            "name": "user_factory",
+            "exists": true,
+            "path": "tests/conftest.py"
+          },
+          {
+            "name": "mock_email_service",
+            "exists": false,
+            "creation_notes": "Mock SMTP client for email verification"
+          }
+        ],
+        "mocking_strategies": [
+          {
+            "target": "app.infrastructure.email.EmailClient",
+            "approach": "dependency_injection",
+            "notes": "Inject mock via constructor"
+          }
+        ],
+        "assertion_patterns": [
+          {
+            "pattern": "response_schema_validation",
+            "description": "Use pydantic model_validate"
+          }
+        ]
+      },
+      "use_cases": {
+        "new": [
+          {
+            "id": "UC-USER-001",
+            "endpoint": "/api/v1/users",
+            "method": "POST",
+            "description": "Create user succeeds",
+            "test_tier": "integration"
+          }
+        ],
+        "existing_applicable": [
+          {
+            "id": "UC-AUTH-003",
+            "notes": "Existing auth flow covers token validation"
+          }
+        ]
+      },
+      "edge_cases": [
+        {
+          "scenario": "Duplicate email registration",
+          "severity": "high",
+          "test_approach": "Expect 409 Conflict response"
+        },
+        {
+          "scenario": "Empty username",
+          "severity": "medium",
+          "test_approach": "Expect 422 Validation error"
+        }
+      ],
+      "test_file_mapping": [
+        {
+          "source": "app/services/user_service.py",
+          "tests": [
+            {
+              "path": "tests/unit/test_user_service.py",
+              "operation": "MODIFY",
+              "tier": "unit"
+            },
+            {
+              "path": "tests/integration/test_user_endpoints.py",
+              "operation": "NEW",
+              "tier": "integration"
+            }
+          ]
+        }
+      ],
+      "guidance_for_planner": [
+        "Use parametrized tests for validation edge cases",
+        "Mock EmailClient at service layer, not repository"
+      ]
+    }
+  ]
+}

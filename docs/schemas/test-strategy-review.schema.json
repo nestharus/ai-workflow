@@ -1,0 +1,122 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/your-org/ai-workflow/schemas/test-strategy-review.schema.json",
+  "title": "Test Strategy Output (Review Mode)",
+  "description": "Output contract for the test-strategy agent in review mode. This structured data appears after the STRATEGY: marker when reviewing a proposed plan against a strategy.",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["APPROVED", "FEEDBACK", "BLOCKED"],
+      "description": "The review status. APPROVED: plan aligns with strategy; FEEDBACK: plan needs improvements; BLOCKED: cannot review (e.g., missing required inputs)."
+    },
+    "issues": {
+      "type": "array",
+      "description": "List of issues found during review. Required when status is 'FEEDBACK'.",
+      "items": {
+        "$ref": "#/$defs/Issue"
+      }
+    },
+    "reason": {
+      "type": "string",
+      "description": "Explanation for why the review is blocked. Required when status is 'BLOCKED'."
+    }
+  },
+  "required": ["status"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "FEEDBACK"
+          }
+        }
+      },
+      "then": {
+        "required": ["issues"],
+        "properties": {
+          "issues": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "BLOCKED"
+          }
+        }
+      },
+      "then": {
+        "required": ["reason"]
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "Issue": {
+      "type": "object",
+      "description": "An issue identified during review.",
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "missing_tier",
+            "wrong_coverage_type",
+            "missing_edge_case",
+            "pattern_mismatch",
+            "insufficient_coverage",
+            "wrong_tier_assignment",
+            "missing_use_case",
+            "incomplete_mocking",
+            "missing_fixture"
+          ],
+          "description": "The category of the issue."
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description of the issue."
+        },
+        "strategy_reference": {
+          "type": "string",
+          "description": "Reference to the relevant part of the strategy (e.g., 'tier_assignments[0].functions[1]')."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "Severity level of the issue."
+        }
+      },
+      "required": ["category", "description", "severity"],
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "status": "APPROVED"
+    },
+    {
+      "status": "FEEDBACK",
+      "issues": [
+        {
+          "category": "missing_tier",
+          "description": "Integration tests missing for user deletion",
+          "strategy_reference": "tier_assignments[0].functions[1]",
+          "severity": "high"
+        },
+        {
+          "category": "missing_edge_case",
+          "description": "Plan does not include tests for duplicate email scenario",
+          "strategy_reference": "edge_cases[0]",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "status": "BLOCKED",
+      "reason": "Cannot review - strategy document is missing or malformed"
+    }
+  ]
+}

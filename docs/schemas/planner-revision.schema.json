@@ -1,0 +1,142 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/your-org/ai-workflow/schemas/planner-revision.schema.json",
+  "title": "Planner Revision Output",
+  "description": "Output contract for planner agents when revising plans in response to strategy review feedback. This schema complements strategy-review-output.schema.json and follows the same if/then conditional pattern for status-dependent field requirements. This structured data appears after a revision marker (e.g., REVISION:) when a planner incorporates review feedback.",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["REVISED", "UNCHANGED", "BLOCKED"],
+      "description": "The revision status. REVISED: plan has been updated to address feedback; UNCHANGED: planner believes no changes are needed (disagrees with feedback); BLOCKED: cannot revise (e.g., conflicting requirements)."
+    },
+    "addressed_issues": {
+      "type": "array",
+      "description": "List of issue IDs from the review feedback that were addressed in this revision.",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z]+-[0-9]+-[0-9]+$"
+      }
+    },
+    "unaddressed_issues": {
+      "type": "array",
+      "description": "List of issues from the review feedback that were not addressed, with explanations.",
+      "items": {
+        "$ref": "#/$defs/UnaddressedIssue"
+      }
+    },
+    "revision_summary": {
+      "type": "string",
+      "description": "Summary of what changed in this revision. Required when status is 'REVISED'."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Explanation for why no changes were made or why revision cannot proceed. Required when status is 'UNCHANGED' or 'BLOCKED'."
+    }
+  },
+  "required": ["status"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "REVISED"
+          }
+        }
+      },
+      "then": {
+        "required": ["revision_summary", "addressed_issues"],
+        "properties": {
+          "addressed_issues": {
+            "minItems": 1
+          }
+        }
+      },
+      "description": "When REVISED, revision_summary and addressed_issues (with at least one issue) are required."
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "BLOCKED"
+          }
+        }
+      },
+      "then": {
+        "required": ["reason"]
+      },
+      "description": "When BLOCKED, reason is required explaining why revision cannot proceed."
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "UNCHANGED"
+          }
+        }
+      },
+      "then": {
+        "required": ["reason"]
+      },
+      "description": "When UNCHANGED, reason is required explaining why no changes were made."
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "UnaddressedIssue": {
+      "type": "object",
+      "description": "An issue from the review feedback that was not addressed, with explanation.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The issue ID from the review feedback.",
+          "pattern": "^[A-Z]+-[0-9]+-[0-9]+$"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Explanation for why this issue was not addressed."
+        }
+      },
+      "required": ["id", "reason"],
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "status": "REVISED",
+      "addressed_issues": ["SR-1-001", "SR-1-002"],
+      "unaddressed_issues": [
+        {
+          "id": "SR-1-003",
+          "reason": "This is a strategy-level decision that needs to be resolved in the strategy document first"
+        }
+      ],
+      "revision_summary": "Added error handling step with retry logic (SR-1-001). Enhanced schema with field validation patterns (SR-1-002). Updated success criteria to be more specific and testable."
+    },
+    {
+      "status": "REVISED",
+      "addressed_issues": ["SR-2-001", "SR-2-002", "SR-2-003"],
+      "unaddressed_issues": [],
+      "revision_summary": "Incorporated all feedback: added missing dependency analysis step, clarified deliverables with acceptance criteria, and added resource allocation section."
+    },
+    {
+      "status": "UNCHANGED",
+      "addressed_issues": [],
+      "unaddressed_issues": [
+        {
+          "id": "SR-1-001",
+          "reason": "The suggested approach conflicts with existing architectural constraints documented in ADR-023"
+        },
+        {
+          "id": "SR-1-002",
+          "reason": "This requirement is already implicitly covered in Plan 3, step 4"
+        }
+      ],
+      "reason": "All raised issues either conflict with documented constraints or are already addressed in the plan. No changes needed."
+    },
+    {
+      "status": "BLOCKED",
+      "reason": "Cannot revise - feedback contains conflicting requirements: SR-1-001 requires synchronous processing while SR-1-003 mandates async approach"
+    }
+  ]
+}

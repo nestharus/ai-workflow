@@ -1,0 +1,51 @@
+render_plan_id: prose.paragraph.v1
+render_engine: text_llm
+artifact_kind: prose/paragraph
+
+inputs:
+  use_structural_fieldfacts: true
+  use_semantic_facts: true
+
+determinism:
+  ordering:
+    - role_priority
+    - group_id
+    - field_path
+
+steps:
+  - id: gather
+    instruction: >
+      Collect contributor facts from manifest. For structural FieldFacts, include
+      field_path, value, and containing element context. For semantic facts, include
+      fact text and source attribution. Inline $ref pointers as references to preserve
+      provenance while flattening structure.
+
+  - id: normalize
+    instruction: >
+      Normalize terminology to canonical keywords using keyword variant system.
+      Replace synonyms with canonical forms. Preserve technical terms and proper nouns
+      unchanged.
+
+  - id: order
+    instruction: >
+      Order facts by role_priority (constraints first, then descriptive prose, then
+      references/examples), then by group_id for logical grouping, then by field_path
+      for deterministic tie-breaking within groups.
+
+  - id: render
+    instruction: >
+      Render exactly one paragraph from ordered facts. Every fact must map to exactly
+      one statement. No extra claims beyond contributor facts. No missing facts from
+      contributors. Use natural prose flow with appropriate transitions between
+      statements.
+
+  - id: self_check
+    instruction: >
+      Verify every statement in rendered paragraph maps to exactly one contributor
+      fact. Flag any orphan statements (no source fact) or missing facts (not
+      represented in output). Return validation result for feedback loop.
+
+notes: >
+  Implements validate-by-comparison loop for prose artifacts per fact_redesign.md
+  lines 938-946. Validation uses normalized_text comparator with semantic similarity
+  scoring.

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Run Claude Code with all permissions skipped
+claude --dangerously-skip-permissions "$@"

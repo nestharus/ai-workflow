@@ -1,0 +1,50 @@
+# Configuration for markdown file restriction linter
+# Enforces that only README.md and AGENTS.md are allowed as markdown files
+# in root, app/**, docs/**, scripts/**, and tests/** directories.
+# All other documentation must be in YAML format.
+
+# Directories to scan for markdown files
+restricted_dirs:
+  - .
+  - app
+  - docs
+  - scripts
+  - tests
+
+# Markdown files that are explicitly allowed (paths relative to repo root)
+allowed_files:
+  - README.md
+  - AGENTS.md
+
+# Directories to exclude from scanning
+exclude_dirs:
+  - .venv
+  - node_modules
+  - __pycache__
+  - .git
+  - .github
+  - .claude
+  - .huggingface
+  - .opencode
+  - .factory
+  - .knowledge
+  - .serena
+  - .tasks/store  # Generated task files
+  - .tmp
+  - .worktrees
+  - .git-rewrite
+  - to_adapt
+  - build
+  - dist
+  - .mypy_cache
+  - .pytest_cache
+  - .ruff_cache
+  - .sonar
+  - .review
+  - openapi
+  - .idea
+  - htmlcov
+  - .coverage
+  - .uv-cache
+  - .cache
+  - out
