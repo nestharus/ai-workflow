@@ -51,6 +51,7 @@ class FakeMCPProcess:
         self._fail_on_write = fail_on_write
         self._fail_mid_read = fail_mid_read
         self._poll_count = 0
+        self._current_buffer = b""  # Buffer for byte-by-byte reading
 
         self.stdin = MagicMock()
         self.stdout = MagicMock()
@@ -74,15 +75,24 @@ class FakeMCPProcess:
             if self._fail_mid_read:
                 return b""
 
-            if self._response_index >= len(self.responses):
-                return b""
+            # If buffer is empty, load next response
+            if not self._current_buffer:
+                if self._response_index >= len(self.responses):
+                    return b""
+                response = self.responses[self._response_index]
+                body = json.dumps(response).encode("utf-8")
+                header = f"Content-Length: {len(body)}\r\n\r\n".encode()
+                self._current_buffer = header + body
+                self._response_index += 1
 
-            response = self.responses[self._response_index]
-            body = json.dumps(response).encode("utf-8")
-            header = f"Content-Length: {len(body)}\r\n\r\n".encode()
-            full_response = header + body
-            self._response_index += 1
-            return full_response[:size] if size > 0 else full_response
+            # Return requested amount from buffer
+            if size <= 0:
+                result = self._current_buffer
+                self._current_buffer = b""
+                return result
+            result = self._current_buffer[:size]
+            self._current_buffer = self._current_buffer[size:]
+            return result
 
         self.stdout.read.side_effect = read_func
         self.stdout.fileno.return_value = 3
@@ -92,6 +102,10 @@ class FakeMCPProcess:
         self._poll_count += 1
         if self._fail_on_start and self._poll_count == 1:
             return 1
+        # Allow poll_result to change after initial startup
+        # Return None for first few polls to allow startup to succeed
+        if self._poll_result is not None and self._poll_count <= 2:
+            return None
         return self._poll_result
 
     def terminate(self) -> None:
@@ -267,16 +281,23 @@ class TestCmdWait:
             responses=[execute_response, *running_responses, kill_response]
         )
 
+        # Use a counter-based mock that returns steadily increasing time
+        # This handles all the time.monotonic() calls in _read_response loops
+        call_count = [0]
+        def mock_monotonic_fn() -> float:
+            call_count[0] += 1
+            # Start at 100, increase by 0.05 each call
+            # After 20+ calls (1 second worth), it should trigger timeout
+            return 100.0 + (call_count[0] * 0.05)
+
         with (
             patch("subprocess.Popen", return_value=fake_proc),
-            patch("time.time") as mock_time,
+            patch(
+                "scripts.tasks.mcp_agent_client.time.monotonic",
+                side_effect=mock_monotonic_fn,
+            ),
+            patch("scripts.tasks.mcp_agent_client.time.sleep"),
         ):
-            # Simulate time passing to trigger timeout
-            mock_time.side_effect = [
-                0,  # Start time
-                0.5,  # First poll
-                1.5,  # Second poll - timeout
-            ]
             client = MCPClient(command=["fake"])
             result = cmd_wait(
                 client,
@@ -464,8 +485,22 @@ class TestErrorEdgeCases:
     def test_malformed_json_response(self, mock_select: Any) -> None:
         """Test handling of server returning invalid JSON."""
         fake_proc = FakeMCPProcess()
-        # Override stdout.read to return invalid JSON
-        fake_proc.stdout.read.side_effect = lambda size=-1: b"Content-Length: 5\r\n\r\n{bad"
+        # Override stdout.read to return invalid JSON in a buffered way
+        malformed_response = b"Content-Length: 4\r\n\r\n{bad"
+        buffer = [malformed_response]  # Use list as mutable container
+
+        def read_malformed(size: int = -1) -> bytes:
+            if not buffer[0]:
+                return b""
+            if size <= 0:
+                result = buffer[0]
+                buffer[0] = b""
+                return result
+            result = buffer[0][:size]
+            buffer[0] = buffer[0][size:]
+            return result
+
+        fake_proc.stdout.read.side_effect = read_malformed
 
         with patch("subprocess.Popen", return_value=fake_proc):
             client = MCPClient(command=["fake"])
@@ -487,6 +522,68 @@ class TestErrorEdgeCases:
                 with pytest.raises(
                     MCPClientError, match="Invalid JSON-RPC response: missing 'result'"
                 ):
+                    client.call_tool("execute", {"command": "test"})
+            finally:
+                client.close()
+
+    def test_invalid_poll_interval_negative(self, mock_select: Any) -> None:
+        """Test that negative poll_interval returns error."""
+        fake_proc = FakeMCPProcess()
+
+        with patch("subprocess.Popen", return_value=fake_proc):
+            client = MCPClient(command=["fake"])
+            result = cmd_wait(
+                client,
+                command="echo test",
+                job_id=None,
+                max_seconds=60,
+                poll_interval=-1.0,
+            )
+            assert result["status"] == "failed"
+            assert "poll_interval" in result["error"]
+            client.close()
+
+    def test_invalid_poll_interval_nan(self, mock_select: Any) -> None:
+        """Test that NaN poll_interval returns error."""
+        fake_proc = FakeMCPProcess()
+
+        with patch("subprocess.Popen", return_value=fake_proc):
+            client = MCPClient(command=["fake"])
+            result = cmd_wait(
+                client,
+                command="echo test",
+                job_id=None,
+                max_seconds=60,
+                poll_interval=float("nan"),
+            )
+            assert result["status"] == "failed"
+            assert "poll_interval" in result["error"]
+            client.close()
+
+    def test_invalid_utf8_in_response(self, mock_select: Any) -> None:
+        """Test handling of invalid UTF-8 in response body."""
+        fake_proc = FakeMCPProcess()
+        # Override stdout.read to return invalid UTF-8 in a buffered way
+        invalid_utf8_response = b"Content-Length: 4\r\n\r\n\xff\xfe\xfd\xfc"
+        buffer = [invalid_utf8_response]  # Use list as mutable container
+
+        def read_invalid_utf8(size: int = -1) -> bytes:
+            if not buffer[0]:
+                return b""
+            if size <= 0:
+                result = buffer[0]
+                buffer[0] = b""
+                return result
+            result = buffer[0][:size]
+            buffer[0] = buffer[0][size:]
+            return result
+
+        fake_proc.stdout.read.side_effect = read_invalid_utf8
+
+        with patch("subprocess.Popen", return_value=fake_proc):
+            client = MCPClient(command=["fake"])
+            try:
+                with pytest.raises(MCPClientError, match="Invalid UTF-8"):
                     client.call_tool("execute", {"command": "test"})
             finally:
                 client.close()

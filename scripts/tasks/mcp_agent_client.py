@@ -47,6 +47,7 @@ import json
 import select
 import subprocess
 import sys
+import threading
 import time
 from typing import Any
 
@@ -91,17 +92,65 @@ class MCPClient:
         self._request_id = 0
         self._startup_timeout = startup_timeout
 
-        # Give the server a moment to start
-        time.sleep(0.1)
+        # Start background thread to drain stderr (prevents pipe blocking)
+        self._stderr_buffer = bytearray()
+        self._stderr_thread = threading.Thread(
+            target=self._drain_stderr, daemon=True
+        )
+        self._stderr_thread.start()
 
-        # Validate server started (check process is alive)
-        if self.proc.poll() is not None:
-            stderr = b""
-            if self.proc.stderr:
-                stderr = self.proc.stderr.read()
-            raise MCPClientError(
-                f"MCP server exited immediately: {stderr.decode(errors='replace')}"
-            )
+        # Wait for server to become ready (poll until startup_timeout)
+        deadline = time.monotonic() + startup_timeout
+        while time.monotonic() < deadline:
+            poll_result = self.proc.poll()
+            if poll_result is not None:
+                # Server exited - clean up and raise
+                self._cleanup_failed_process()
+                raise MCPClientError(
+                    f"MCP server exited immediately with code {poll_result}: "
+                    f"{bytes(self._stderr_buffer).decode(errors='replace')}"
+                )
+            # Server is still running - consider it ready
+            # (MCP servers are ready when they accept stdin)
+            return
+        # Timeout waiting for startup
+        self._cleanup_failed_process()
+        raise MCPClientError(
+            f"MCP server did not become ready within {startup_timeout}s"
+        )
+
+    def _drain_stderr(self) -> None:
+        """Background thread to drain stderr and prevent pipe blocking."""
+        if self.proc.stderr is None:
+            return
+        while True:
+            try:
+                chunk = self.proc.stderr.read(1024)
+                if not chunk:
+                    break
+                self._stderr_buffer.extend(chunk)
+                # Keep only last 64KB
+                if len(self._stderr_buffer) > 65536:
+                    del self._stderr_buffer[:-65536]
+            except (OSError, ValueError):
+                # Pipe closed or invalid
+                break
+
+    def _cleanup_failed_process(self) -> None:
+        """Clean up process resources after startup failure."""
+        # Close all pipes
+        if self.proc.stdin:
+            with contextlib.suppress(OSError):
+                self.proc.stdin.close()
+        if self.proc.stdout:
+            with contextlib.suppress(OSError):
+                self.proc.stdout.close()
+        if self.proc.stderr:
+            with contextlib.suppress(OSError):
+                self.proc.stderr.close()
+        # Reap the process to avoid zombies
+        with contextlib.suppress(OSError):
+            self.proc.wait(timeout=1)
 
     def _read_response(self, timeout: float) -> dict[str, Any]:
         """Read a JSON-RPC response with Content-Length header.
@@ -118,13 +167,13 @@ class MCPClient:
         if self.proc.stdout is None:
             raise MCPClientError("MCP server stdout not available")
 
-        deadline = time.time() + timeout
+        deadline = time.monotonic() + timeout
         header_data = b""
 
         # Read headers until we get Content-Length
         content_length = -1
         while True:
-            remaining = deadline - time.time()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise MCPClientError(f"MCP call timed out after {timeout}s")
 
@@ -167,7 +216,7 @@ class MCPClient:
         # Read the body
         body_data = b""
         while len(body_data) < content_length:
-            remaining = deadline - time.time()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise MCPClientError(f"MCP call timed out after {timeout}s")
 
@@ -185,7 +234,12 @@ class MCPClient:
             body_data += chunk
 
         try:
-            return json.loads(body_data.decode("utf-8"))
+            text = body_data.decode("utf-8")
+            return json.loads(text)
+        except UnicodeDecodeError as e:
+            raise MCPClientError(
+                f"Invalid UTF-8 in response body: {e} - {body_data[:200]!r}"
+            ) from e
         except json.JSONDecodeError as e:
             raise MCPClientError(
                 f"Invalid JSON response: {e} - {body_data[:200]!r}"
@@ -245,11 +299,13 @@ class MCPClient:
     def close(self) -> None:
         """Terminate MCP server subprocess."""
         if self.proc.poll() is None:
-            self.proc.terminate()
+            with contextlib.suppress(OSError, ProcessLookupError):
+                self.proc.terminate()
             try:
                 self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                self.proc.kill()
+                with contextlib.suppress(OSError, ProcessLookupError):
+                    self.proc.kill()
                 self.proc.wait()
 
 
@@ -289,6 +345,14 @@ def cmd_wait(
     Returns:
         Result dict with status, job_id, exit_code, stdout, stderr.
     """
+    # Validate poll_interval (handles negative and NaN)
+    if not (poll_interval >= 0):
+        return {
+            "status": "failed",
+            "job_id": job_id,
+            "error": "Invalid poll_interval; must be >= 0",
+        }
+
     try:
         if command:
             result = client.call_tool("execute", {"command": command})
@@ -297,10 +361,10 @@ def cmd_wait(
         if not job_id:
             return {"status": "failed", "error": "No job_id available"}
 
-        deadline = time.time() + max_seconds
+        deadline = time.monotonic() + max_seconds
 
         while True:
-            if time.time() > deadline:
+            if time.monotonic() > deadline:
                 # Kill job on timeout (best effort)
                 with contextlib.suppress(MCPClientError):
                     client.call_tool("kill", {"job_id": job_id})
