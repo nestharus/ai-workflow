@@ -30,6 +30,31 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # MCP Bridge Service (NES-47)
+  # REST-to-MCP bridge that exposes MCP tools via HTTP.
+  # Local development only - must not be exposed to untrusted networks.
+  # For production, place behind an authenticated TLS-terminating proxy.
+  mcp-bridge:
+    build:
+      context: ./scripts/mcp
+      dockerfile: Dockerfile
+    container_name: ai-workflow-mcp-bridge
+    # Bind to localhost only for security (local development)
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - PYTHONUNBUFFERED=1
+      # MCP_COMMAND defaults to "uvx mcp-background-job" in the bridge
+      # Override with MCP_CONFIG_PATH to use a config file instead
+      # - MCP_CONFIG_PATH=/app/config/.mcp.yml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+
   surrealdb:
     # Using -dev image which includes shell utilities needed for healthcheck
     image: surrealdb/surrealdb:v2.3.10-dev

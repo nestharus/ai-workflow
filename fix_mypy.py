@@ -22,15 +22,15 @@ def get_mypy_errors():
 def fix_dict_type_args(content: str) -> str:
     """Fix Missing type parameters for generic type \"dict\" errors."""
     # Replace dict() with dict[str, Any]() in function calls
-    content = re.sub(r'\bdict\(\)', 'dict[str, Any]()', content)
+    content = re.sub(r"\bdict\(\)", "dict[str, Any]()", content)
 
     # Replace = dict with = dict[str, Any] for return type annotations
     # But be careful not to replace dict[...] patterns
-    content = re.sub(r':\s*dict\s*=', ': dict[str, Any] =', content)
+    content = re.sub(r":\s*dict\s*=", ": dict[str, Any] =", content)
 
     # Replace -> dict with -> dict[str, Any] for return type annotations
-    content = re.sub(r'->\s*dict\s*:', '-> dict[str, Any]:', content)
-    content = re.sub(r'->\s*dict\s*$', '-> dict[str, Any]', content, flags=re.MULTILINE)
+    content = re.sub(r"->\s*dict\s*:", "-> dict[str, Any]:", content)
+    content = re.sub(r"->\s*dict\s*$", "-> dict[str, Any]", content, flags=re.MULTILINE)
 
     return content
 
@@ -38,34 +38,29 @@ def fix_dict_type_args(content: str) -> str:
 def fix_list_type_args(content: str) -> str:
     """Fix Missing type parameters for generic type \"list\" errors."""
     # Replace = list with = list[Any] for assignments
-    content = re.sub(r':\s*list\s*=', ': list[Any] =', content)
+    content = re.sub(r":\s*list\s*=", ": list[Any] =", content)
 
     # Replace -> list with -> list[Any] for return type annotations
-    content = re.sub(r'->\s*list\s*:', '-> list[Any]:', content)
-    content = re.sub(r'->\s*list\s*$', '-> list[Any]', content, flags=re.MULTILINE)
+    content = re.sub(r"->\s*list\s*:", "-> list[Any]:", content)
+    content = re.sub(r"->\s*list\s*$", "-> list[Any]", content, flags=re.MULTILINE)
 
     return content
 
 
 def add_any_import_if_needed(content: str) -> str:
     """Add 'Any' import if we used it but it's not imported."""
-    if 'dict[str, Any]' in content or 'list[Any]' in content:
+    if "dict[str, Any]" in content or "list[Any]" in content:
         # Check if Any is already imported
-        if not re.search(r'from typing import.*\bAny\b', content):
+        if not re.search(r"from typing import.*\bAny\b", content):
             # Find the typing import line and add Any
             def add_any_to_import(match):
                 imports = match.group(1)
-                if 'Any' not in imports:
+                if "Any" not in imports:
                     # Add Any to the import list
                     return f"from typing import {imports}, Any"
                 return match.group(0)
 
-            content = re.sub(
-                r'from typing import ([^;\n]+)',
-                add_any_to_import,
-                content,
-                count=1
-            )
+            content = re.sub(r"from typing import ([^;\n]+)", add_any_to_import, content, count=1)
 
     return content
 
@@ -91,9 +86,12 @@ def main():
 
     # Extract files with type-arg errors
     files_to_fix = set()
-    for line in errors.split('\n'):
-        if '[type-arg]' in line and ('Missing type parameters for generic type "dict"' in line or 'Missing type parameters for generic type "list"' in line):
-            match = re.match(r'^([^:]+):', line)
+    for line in errors.split("\n"):
+        if "[type-arg]" in line and (
+            'Missing type parameters for generic type "dict"' in line
+            or 'Missing type parameters for generic type "list"' in line
+        ):
+            match = re.match(r"^(.+?):\d+:", line)
             if match:
                 file_path = REPO_ROOT / match.group(1)
                 if file_path.exists():
@@ -110,5 +108,5 @@ def main():
     print(f"\nFixed {fixed_count} files")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

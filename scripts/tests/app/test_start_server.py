@@ -231,7 +231,7 @@ class TestBuildUvicornCommand:
 
     def test_basic_command(self) -> None:
         """Should build basic uvicorn command."""
-        cmd = _build_uvicorn_command("127.0.0.1", 8000, reload_enabled=False)
+        cmd = _build_uvicorn_command("app.main:app", "127.0.0.1", 8000, reload_enabled=False)
 
         assert "uvicorn" in cmd
         assert "app.main:app" in cmd
@@ -242,13 +242,13 @@ class TestBuildUvicornCommand:
 
     def test_includes_reload_flag(self) -> None:
         """Should include --reload when enabled."""
-        cmd = _build_uvicorn_command("127.0.0.1", 8000, reload_enabled=True)
+        cmd = _build_uvicorn_command("app.main:app", "127.0.0.1", 8000, reload_enabled=True)
 
         assert "--reload" in cmd
 
     def test_strips_brackets_from_ipv6(self) -> None:
         """Should strip brackets from IPv6 for uvicorn bind."""
-        cmd = _build_uvicorn_command("[::1]", 8000, reload_enabled=False)
+        cmd = _build_uvicorn_command("app.main:app", "[::1]", 8000, reload_enabled=False)
 
         assert "::1" in cmd
         assert "[::1]" not in cmd
