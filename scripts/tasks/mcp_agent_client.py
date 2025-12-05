@@ -195,43 +195,48 @@ class MCPClient:
 
         # Read headers until we get Content-Length
         content_length = -1
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise MCPClientError(f"MCP call timed out after {timeout}s")
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise MCPClientError(f"MCP call timed out after {timeout}s")
 
-            # Check if data is available
-            ready, _, _ = select.select([self.proc.stdout], [], [], min(remaining, 0.1))
-            if not ready:
-                # Check if process died
-                if self.proc.poll() is not None:
-                    raise MCPClientError("MCP server exited unexpectedly")
-                continue
+                # Check if data is available
+                ready, _, _ = select.select(
+                    [self.proc.stdout], [], [], min(remaining, 0.1)
+                )
+                if not ready:
+                    # Check if process died
+                    if self.proc.poll() is not None:
+                        raise MCPClientError("MCP server exited unexpectedly")
+                    continue
 
-            byte = self.proc.stdout.read(1)
-            if not byte:
-                if self.proc.poll() is not None:
-                    raise MCPClientError("MCP server exited unexpectedly")
-                continue
+                byte = self.proc.stdout.read(1)
+                if not byte:
+                    if self.proc.poll() is not None:
+                        raise MCPClientError("MCP server exited unexpectedly")
+                    continue
 
-            header_data += byte
-            if len(header_data) > 65536:
-                raise MCPClientError("Response headers exceed 64KB limit")
+                header_data += byte
+                if len(header_data) > 65536:
+                    raise MCPClientError("Response headers exceed 64KB limit")
 
-            # Check for end of headers (double CRLF)
-            if header_data.endswith(b"\r\n\r\n"):
-                # Parse Content-Length from headers
-                header_str = header_data.decode("utf-8", errors="replace")
-                for line in header_str.split("\r\n"):
-                    if line.lower().startswith("content-length:"):
-                        try:
-                            content_length = int(line.split(":", 1)[1].strip())
-                        except ValueError:
-                            raise MCPClientError(
-                                f"Invalid Content-Length header: {line}"
-                            ) from None
-                        break
-                break
+                # Check for end of headers (double CRLF)
+                if header_data.endswith(b"\r\n\r\n"):
+                    # Parse Content-Length from headers
+                    header_str = header_data.decode("utf-8", errors="replace")
+                    for line in header_str.split("\r\n"):
+                        if line.lower().startswith("content-length:"):
+                            try:
+                                content_length = int(line.split(":", 1)[1].strip())
+                            except ValueError:
+                                raise MCPClientError(
+                                    f"Invalid Content-Length header: {line}"
+                                ) from None
+                            break
+                    break
+        except OSError as e:
+            raise MCPClientError(f"I/O error reading response headers: {e}") from e
 
         if content_length < 0:
             raise MCPClientError(
@@ -247,21 +252,26 @@ class MCPClient:
 
         # Read the body
         body_data = b""
-        while len(body_data) < content_length:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise MCPClientError(f"MCP call timed out after {timeout}s")
+        try:
+            while len(body_data) < content_length:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise MCPClientError(f"MCP call timed out after {timeout}s")
 
-            ready, _, _ = select.select([self.proc.stdout], [], [], min(remaining, 0.1))
-            if not ready:
-                if self.proc.poll() is not None:
-                    raise MCPClientError("MCP server exited unexpectedly")
-                continue
+                ready, _, _ = select.select(
+                    [self.proc.stdout], [], [], min(remaining, 0.1)
+                )
+                if not ready:
+                    if self.proc.poll() is not None:
+                        raise MCPClientError("MCP server exited unexpectedly")
+                    continue
 
-            chunk = self.proc.stdout.read(content_length - len(body_data))
-            if not chunk:
-                raise MCPClientError("Unexpected EOF while reading response body")
-            body_data += chunk
+                chunk = self.proc.stdout.read(content_length - len(body_data))
+                if not chunk:
+                    raise MCPClientError("Unexpected EOF while reading response body")
+                body_data += chunk
+        except OSError as e:
+            raise MCPClientError(f"I/O error reading response body: {e}") from e
 
         try:
             text = body_data.decode("utf-8")
@@ -337,14 +347,24 @@ class MCPClient:
 
         # Validate JSON-RPC response
         if "error" in response:
-            code = response["error"].get("code", -1)
-            message = response["error"].get("message", "Unknown error")
+            error = response["error"]
+            if not isinstance(error, dict):
+                raise MCPClientError(
+                    f"Invalid JSON-RPC error type: {type(error).__name__}"
+                )
+            code = error.get("code", -1)
+            message = error.get("message", "Unknown error")
             raise MCPClientError(f"JSON-RPC error {code}: {message}")
 
         if "result" not in response:
             raise MCPClientError("Invalid JSON-RPC response: missing 'result'")
 
-        return response["result"]
+        result = response["result"]
+        if not isinstance(result, dict):
+            raise MCPClientError(
+                f"Invalid JSON-RPC result type: {type(result).__name__}"
+            )
+        return result
 
     def close(self) -> None:
         """Terminate MCP server subprocess."""
