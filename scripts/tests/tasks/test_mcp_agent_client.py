@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from scripts.tasks.mcp_agent_client import (
+from scripts.dev.mcp_agent_client import (
     MCPClient,
     MCPClientError,
     cmd_cancel,
@@ -27,6 +27,17 @@ from scripts.tasks.mcp_agent_client import (
 class FakeMCPProcess:
     """Fake subprocess for testing MCP client."""
 
+    # Standard MCP initialize response - auto-prepended to all response lists
+    INIT_RESPONSE = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "serverInfo": {"name": "fake-mcp", "version": "1.0.0"},
+        },
+    }
+
     def __init__(
         self,
         responses: list[dict[str, Any]] | None = None,
@@ -34,17 +45,23 @@ class FakeMCPProcess:
         fail_on_start: bool = False,
         fail_on_write: bool = False,
         fail_mid_read: bool = False,
+        skip_init_response: bool = False,
     ) -> None:
         """Initialize fake process.
 
         Args:
-            responses: List of JSON-RPC responses to return.
+            responses: List of JSON-RPC responses to return (after init response).
             poll_result: Return value for poll() (None = running, int = exit code).
             fail_on_start: If True, poll() returns 1 immediately.
             fail_on_write: If True, stdin.write() raises BrokenPipeError.
             fail_mid_read: If True, stdout returns empty mid-read.
+            skip_init_response: If True, don't prepend the init response.
         """
-        self.responses = responses or []
+        # Prepend init response unless skipped
+        if skip_init_response:
+            self.responses = responses or []
+        else:
+            self.responses = [self.INIT_RESPONSE] + (responses or [])
         self._response_index = 0
         self._poll_result = poll_result
         self._fail_on_start = fail_on_start
@@ -64,13 +81,14 @@ class FakeMCPProcess:
             self.stdin.write.side_effect = lambda data: len(data)
             self.stdin.flush.return_value = None
 
-        self.stderr.read.return_value = b"fake stderr"
+        # Return empty to stop stderr drain thread after first read
+        self.stderr.read.return_value = b""
 
         # Set up stdout.read() to return response data
         self._setup_stdout_read()
 
     def _setup_stdout_read(self) -> None:
-        """Set up stdout.read() to return response data."""
+        """Set up stdout.read() to return response data in JSONL format."""
 
         def read_func(size: int = -1) -> bytes:
             if self._fail_mid_read:
@@ -81,9 +99,8 @@ class FakeMCPProcess:
                 if self._response_index >= len(self.responses):
                     return b""
                 response = self.responses[self._response_index]
-                body = json.dumps(response).encode("utf-8")
-                header = f"Content-Length: {len(body)}\r\n\r\n".encode()
-                self._current_buffer = header + body
+                # Use JSONL format (newline-delimited JSON)
+                self._current_buffer = json.dumps(response).encode("utf-8") + b"\n"
                 self._response_index += 1
 
             # Return requested amount from buffer
@@ -123,14 +140,16 @@ class FakeMCPProcess:
 
 
 @pytest.fixture
-def mock_select() -> Any:
+def mock_select(mocker: Any) -> Any:
     """Mock select.select to always return ready, and mock time.sleep to not actually sleep."""
-    with (
-        patch("scripts.tasks.mcp_agent_client.select.select") as mock,
-        patch("scripts.tasks.mcp_agent_client.time.sleep"),
-    ):
-        mock.return_value = ([True], [], [])
-        yield mock
+    mock = mocker.patch("scripts.dev.mcp_agent_client.select.select")
+    mocker.patch("scripts.dev.mcp_agent_client.time.sleep")
+    mock.return_value = ([True], [], [])
+    return mock
+
+
+# Patch target for subprocess.Popen - must patch where it's used, not where it's defined
+POPEN_PATCH_TARGET = "scripts.dev.mcp_agent_client.subprocess.Popen"
 
 
 class TestMCPClient:
@@ -139,7 +158,7 @@ class TestMCPClient:
     def test_client_init_success(self, mock_select: Any) -> None:
         """Test successful client initialization."""
         fake_proc = FakeMCPProcess()
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake", "command"])
             assert client.proc is fake_proc  # type: ignore[comparison-overlap]
             client.close()
@@ -147,7 +166,7 @@ class TestMCPClient:
     def test_client_init_os_error(self, mock_select: Any) -> None:
         """Test client initialization with OS error."""
         with (
-            patch("subprocess.Popen", side_effect=OSError("Command not found")),
+            patch(POPEN_PATCH_TARGET, side_effect=OSError("Command not found")),
             pytest.raises(MCPClientError, match="Failed to start MCP server"),
         ):
             MCPClient(command=["nonexistent"])
@@ -156,17 +175,18 @@ class TestMCPClient:
         """Test client initialization when server exits immediately."""
         fake_proc = FakeMCPProcess(fail_on_start=True)
         with (
-            patch("subprocess.Popen", return_value=fake_proc),
+            patch(POPEN_PATCH_TARGET, return_value=fake_proc),
             pytest.raises(MCPClientError, match="MCP server exited immediately"),
         ):
             MCPClient(command=["fake"])
 
     def test_call_tool_success(self, mock_select: Any) -> None:
         """Test successful tool call."""
-        response = {"jsonrpc": "2.0", "id": 1, "result": {"job_id": "test-123"}}
+        # Response id=2 because init uses id=1
+        response = {"jsonrpc": "2.0", "id": 2, "result": {"job_id": "test-123"}}
         fake_proc = FakeMCPProcess(responses=[response])
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             result = client.call_tool("execute", {"command": "test"})
             assert result == {"job_id": "test-123"}
@@ -174,14 +194,15 @@ class TestMCPClient:
 
     def test_call_tool_json_rpc_error(self, mock_select: Any) -> None:
         """Test tool call with JSON-RPC error response."""
+        # Response id=2 because init uses id=1
         response = {
             "jsonrpc": "2.0",
-            "id": 1,
+            "id": 2,
             "error": {"code": -32600, "message": "Invalid request"},
         }
         fake_proc = FakeMCPProcess(responses=[response])
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             try:
                 with pytest.raises(MCPClientError, match="JSON-RPC error -32600"):
@@ -191,9 +212,23 @@ class TestMCPClient:
 
     def test_call_tool_broken_pipe(self, mock_select: Any) -> None:
         """Test tool call with broken pipe on send."""
-        fake_proc = FakeMCPProcess(fail_on_write=True)
+        # Create a proc that succeeds during init but fails on subsequent writes
+        fake_proc = FakeMCPProcess()
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        # Track call count to fail only after init
+        call_count = [0]
+        original_write = fake_proc.stdin.write.side_effect
+
+        def write_with_failure(data: bytes) -> int:
+            call_count[0] += 1
+            # Allow first 2 writes (init request and notification) to succeed
+            if call_count[0] <= 2:
+                return len(data)
+            raise BrokenPipeError("Broken pipe")
+
+        fake_proc.stdin.write.side_effect = write_with_failure
+
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             try:
                 with pytest.raises(MCPClientError, match="Failed to send request"):
@@ -204,7 +239,7 @@ class TestMCPClient:
     def test_close_terminates_running_process(self, mock_select: Any) -> None:
         """Test that close() terminates a running process."""
         fake_proc = FakeMCPProcess()
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             client.close()
             # Process should have been terminated
@@ -215,10 +250,11 @@ class TestCmdStart:
 
     def test_start_returns_job_id(self, mock_select: Any) -> None:
         """Test that start mode returns job_id immediately."""
-        response = {"jsonrpc": "2.0", "id": 1, "result": {"job_id": "abc-123"}}
+        # Response id=2 because init uses id=1
+        response = {"jsonrpc": "2.0", "id": 2, "result": {"job_id": "abc-123"}}
         fake_proc = FakeMCPProcess(responses=[response])
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             result = cmd_start(client, "echo hello")
             assert result["status"] == "started"
@@ -227,9 +263,22 @@ class TestCmdStart:
 
     def test_start_handles_error(self, mock_select: Any) -> None:
         """Test that start mode handles errors gracefully."""
-        fake_proc = FakeMCPProcess(fail_on_write=True)
+        # Create proc that succeeds during init but fails on subsequent writes
+        fake_proc = FakeMCPProcess()
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        # Track call count to fail only after init
+        call_count = [0]
+
+        def write_with_failure(data: bytes) -> int:
+            call_count[0] += 1
+            # Allow first 2 writes (init request and notification) to succeed
+            if call_count[0] <= 2:
+                return len(data)
+            raise BrokenPipeError("Broken pipe")
+
+        fake_proc.stdin.write.side_effect = write_with_failure
+
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             result = cmd_start(client, "echo hello")
             assert result["status"] == "failed"
@@ -242,20 +291,21 @@ class TestCmdWait:
 
     def test_wait_polls_until_complete(self, mock_select: Any) -> None:
         """Test that wait mode polls and returns final result."""
-        execute_response = {"jsonrpc": "2.0", "id": 1, "result": {"job_id": "job-1"}}
+        # Response IDs: init=1, execute=2, status=3, output=4
+        execute_response = {"jsonrpc": "2.0", "id": 2, "result": {"job_id": "job-1"}}
         status_response = {
             "jsonrpc": "2.0",
-            "id": 2,
+            "id": 3,
             "result": {"status": "completed", "exit_code": 0},
         }
         output_response = {
             "jsonrpc": "2.0",
-            "id": 3,
+            "id": 4,
             "result": {"stdout": "hello world", "stderr": ""},
         }
         fake_proc = FakeMCPProcess(responses=[execute_response, status_response, output_response])
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             result = cmd_wait(
                 client,
@@ -271,39 +321,72 @@ class TestCmdWait:
 
     def test_wait_handles_timeout(self, mock_select: Any) -> None:
         """Test that wait mode returns timeout status when max_seconds exceeded."""
-        execute_response = {"jsonrpc": "2.0", "id": 1, "result": {"job_id": "job-1"}}
-        # Return "running" status repeatedly
+        # Response IDs: init=1, execute=2, status=3,4,5..., kill=N
+        execute_response = {"jsonrpc": "2.0", "id": 2, "result": {"job_id": "job-1"}}
+        # Return "running" status repeatedly (starting at id=3)
         running_responses = [
-            {"jsonrpc": "2.0", "id": i, "result": {"status": "running"}} for i in range(2, 102)
+            {"jsonrpc": "2.0", "id": i, "result": {"status": "running"}} for i in range(3, 103)
         ]
         # Add kill response at the end
-        kill_response = {"jsonrpc": "2.0", "id": 102, "result": {}}
+        kill_response = {"jsonrpc": "2.0", "id": 103, "result": {}}
         fake_proc = FakeMCPProcess(responses=[execute_response, *running_responses, kill_response])
 
-        # Use a counter-based mock that returns steadily increasing time
-        # This handles all the time.monotonic() calls in _read_response loops
+        # Track response count to know when init and execute are done
+        # Init response is at index 0, execute response is at index 1
+        response_count = [0]
+        original_setup = fake_proc._setup_stdout_read
+
+        def patched_setup() -> None:
+            original_read_func = None
+
+            def read_func(size: int = -1) -> bytes:
+                # Read from buffer or get new response
+                if not fake_proc._current_buffer:
+                    if fake_proc._response_index >= len(fake_proc.responses):
+                        return b""
+                    response = fake_proc.responses[fake_proc._response_index]
+                    fake_proc._current_buffer = json.dumps(response).encode("utf-8") + b"\n"
+                    fake_proc._response_index += 1
+                    response_count[0] = fake_proc._response_index
+
+                if size <= 0:
+                    result = fake_proc._current_buffer
+                    fake_proc._current_buffer = b""
+                    return result
+                result = fake_proc._current_buffer[:size]
+                fake_proc._current_buffer = fake_proc._current_buffer[size:]
+                return result
+
+            fake_proc.stdout.read.side_effect = read_func
+
+        patched_setup()
+
+        # Time mock that advances slowly until execute is done, then faster
         call_count = [0]
 
         def mock_monotonic_fn() -> float:
             call_count[0] += 1
-            # Start at 100, increase by 0.05 each call
-            # After 20+ calls (1 second worth), it should trigger timeout
-            return 100.0 + (call_count[0] * 0.05)
+            # Response 0=init, 1=execute, 2+=status polling
+            if response_count[0] <= 2:
+                # During init and execute, time advances slowly
+                return 100.0 + (call_count[0] * 0.001)
+            # During status polling, time advances faster to trigger timeout
+            return 100.0 + (call_count[0] * 0.2)
 
         with (
-            patch("subprocess.Popen", return_value=fake_proc),
+            patch(POPEN_PATCH_TARGET, return_value=fake_proc),
             patch(
-                "scripts.tasks.mcp_agent_client.time.monotonic",
+                "scripts.dev.mcp_agent_client.time.monotonic",
                 side_effect=mock_monotonic_fn,
             ),
-            patch("scripts.tasks.mcp_agent_client.time.sleep"),
+            patch("scripts.dev.mcp_agent_client.time.sleep"),
         ):
             client = MCPClient(command=["fake"])
             result = cmd_wait(
                 client,
                 command="sleep 100",
                 job_id=None,
-                max_seconds=1,
+                max_seconds=10,  # Timeout during polling
                 poll_interval=0.01,
             )
             assert result["status"] == "timeout"
@@ -312,19 +395,20 @@ class TestCmdWait:
 
     def test_wait_with_existing_job_id(self, mock_select: Any) -> None:
         """Test waiting on an existing job by ID."""
+        # Response IDs: init=1, status=2, output=3
         status_response = {
             "jsonrpc": "2.0",
-            "id": 1,
+            "id": 2,
             "result": {"status": "completed", "exit_code": 0},
         }
         output_response = {
             "jsonrpc": "2.0",
-            "id": 2,
+            "id": 3,
             "result": {"stdout": "done", "stderr": ""},
         }
         fake_proc = FakeMCPProcess(responses=[status_response, output_response])
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             result = cmd_wait(
                 client,
@@ -339,11 +423,11 @@ class TestCmdWait:
 
     def test_wait_no_job_id(self, mock_select: Any) -> None:
         """Test wait mode fails gracefully when no job_id available."""
-        # Response without job_id
-        execute_response = {"jsonrpc": "2.0", "id": 1, "result": {}}
+        # Response without job_id (id=2 because init uses id=1)
+        execute_response = {"jsonrpc": "2.0", "id": 2, "result": {}}
         fake_proc = FakeMCPProcess(responses=[execute_response])
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             result = cmd_wait(
                 client,
@@ -362,9 +446,10 @@ class TestCmdList:
 
     def test_list_returns_all_jobs(self, mock_select: Any) -> None:
         """Test that list mode shows all jobs and their statuses."""
+        # Response id=2 because init uses id=1
         response = {
             "jsonrpc": "2.0",
-            "id": 1,
+            "id": 2,
             "result": {
                 "jobs": [
                     {"id": "job-1", "status": "running"},
@@ -374,7 +459,7 @@ class TestCmdList:
         }
         fake_proc = FakeMCPProcess(responses=[response])
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             result = cmd_list(client)
             assert result["status"] == "completed"
@@ -387,10 +472,11 @@ class TestCmdCancel:
 
     def test_cancel_kills_job(self, mock_select: Any) -> None:
         """Test that cancel mode terminates job."""
-        response = {"jsonrpc": "2.0", "id": 1, "result": {}}
+        # Response id=2 because init uses id=1
+        response = {"jsonrpc": "2.0", "id": 2, "result": {}}
         fake_proc = FakeMCPProcess(responses=[response])
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             result = cmd_cancel(client, "job-to-kill")
             assert result["status"] == "killed"
@@ -437,10 +523,11 @@ class TestJSONOutputFormat:
 
     def test_json_output_format(self, mock_select: Any) -> None:
         """Test that output is valid JSON matching expected schema."""
-        response = {"jsonrpc": "2.0", "id": 1, "result": {"job_id": "test-job"}}
+        # Response id=2 because init uses id=1
+        response = {"jsonrpc": "2.0", "id": 2, "result": {"job_id": "test-job"}}
         fake_proc = FakeMCPProcess(responses=[response])
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             result = cmd_start(client, "echo test")
 
@@ -467,7 +554,7 @@ class TestErrorEdgeCases:
         """Test handling of server startup failure (command not found)."""
         with (
             patch(
-                "subprocess.Popen",
+                POPEN_PATCH_TARGET,
                 side_effect=FileNotFoundError("[Errno 2] No such file or directory"),
             ),
             pytest.raises(MCPClientError, match="Failed to start MCP server"),
@@ -479,7 +566,7 @@ class TestErrorEdgeCases:
         # Server exits after first response
         fake_proc = FakeMCPProcess(poll_result=1)  # Exited with code 1
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             # The server appears running initially but poll_result=1 makes it look exited
             # This should trigger the unexpected exit handling
@@ -488,24 +575,33 @@ class TestErrorEdgeCases:
     def test_malformed_json_response(self, mock_select: Any) -> None:
         """Test handling of server returning invalid JSON."""
         fake_proc = FakeMCPProcess()
-        # Override stdout.read to return invalid JSON in a buffered way
-        malformed_response = b"Content-Length: 4\r\n\r\n{bad"
-        buffer = [malformed_response]  # Use list as mutable container
 
-        def read_malformed(size: int = -1) -> bytes:
-            if not buffer[0]:
-                return b""
+        # Create a response sequence: valid init response, then malformed JSON
+        init_response = json.dumps(FakeMCPProcess.INIT_RESPONSE).encode("utf-8") + b"\n"
+        malformed_response = b"{bad\n"
+        responses = [init_response, malformed_response]
+        response_index = [0]
+        current_buffer = [b""]
+
+        def read_with_malformed(size: int = -1) -> bytes:
+            # Load next response if buffer empty
+            if not current_buffer[0]:
+                if response_index[0] >= len(responses):
+                    return b""
+                current_buffer[0] = responses[response_index[0]]
+                response_index[0] += 1
+
             if size <= 0:
-                result = buffer[0]
-                buffer[0] = b""
+                result = current_buffer[0]
+                current_buffer[0] = b""
                 return result
-            result = buffer[0][:size]
-            buffer[0] = buffer[0][size:]
+            result = current_buffer[0][:size]
+            current_buffer[0] = current_buffer[0][size:]
             return result
 
-        fake_proc.stdout.read.side_effect = read_malformed
+        fake_proc.stdout.read.side_effect = read_with_malformed
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             try:
                 with pytest.raises(MCPClientError, match="Invalid JSON response"):
@@ -515,11 +611,11 @@ class TestErrorEdgeCases:
 
     def test_missing_result_in_response(self, mock_select: Any) -> None:
         """Test handling of response missing 'result' field."""
-        # Response with neither result nor error
-        response = {"jsonrpc": "2.0", "id": 1}
+        # Response with neither result nor error (id=2 because init uses id=1)
+        response = {"jsonrpc": "2.0", "id": 2}
         fake_proc = FakeMCPProcess(responses=[response])
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             try:
                 with pytest.raises(
@@ -533,7 +629,7 @@ class TestErrorEdgeCases:
         """Test that negative poll_interval returns error."""
         fake_proc = FakeMCPProcess()
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             result = cmd_wait(
                 client,
@@ -550,7 +646,7 @@ class TestErrorEdgeCases:
         """Test that NaN poll_interval returns error."""
         fake_proc = FakeMCPProcess()
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             result = cmd_wait(
                 client,
@@ -567,7 +663,7 @@ class TestErrorEdgeCases:
         """Test that negative max_seconds returns error."""
         fake_proc = FakeMCPProcess()
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             result = cmd_wait(
                 client,
@@ -580,46 +676,58 @@ class TestErrorEdgeCases:
             assert "max_seconds" in result["error"]
             client.close()
 
-    def test_invalid_max_seconds_nan(self, mock_select: Any) -> None:
-        """Test that NaN max_seconds returns error."""
-        fake_proc = FakeMCPProcess()
+    def test_invalid_max_seconds_zero(self, mock_select: Any) -> None:
+        """Test that zero max_seconds with no immediate result times out."""
+        # This test verifies that max_seconds=0 immediately times out
+        # Response IDs: init=1, execute=2
+        execute_response = {"jsonrpc": "2.0", "id": 2, "result": {"job_id": "job-1"}}
+        # No status response - job will timeout immediately
+        kill_response = {"jsonrpc": "2.0", "id": 3, "result": {}}
+        fake_proc = FakeMCPProcess(responses=[execute_response, kill_response])
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
-            # Test with invalid max_seconds value (NaN converted to int)
-            invalid_max_seconds: int = int(float("nan"))  # Intentionally invalid for testing
             result = cmd_wait(
                 client,
                 command="echo test",
                 job_id=None,
-                max_seconds=invalid_max_seconds,
+                max_seconds=0,
                 poll_interval=0.01,
             )
-            assert result["status"] == "failed"
-            assert "max_seconds" in result["error"]
+            # With max_seconds=0, it should timeout immediately
+            assert result["status"] == "timeout"
             client.close()
 
     def test_invalid_utf8_in_response(self, mock_select: Any) -> None:
         """Test handling of invalid UTF-8 in response body."""
         fake_proc = FakeMCPProcess()
-        # Override stdout.read to return invalid UTF-8 in a buffered way
-        invalid_utf8_response = b"Content-Length: 4\r\n\r\n\xff\xfe\xfd\xfc"
-        buffer = [invalid_utf8_response]  # Use list as mutable container
 
-        def read_invalid_utf8(size: int = -1) -> bytes:
-            if not buffer[0]:
-                return b""
+        # Create a response sequence: valid init response, then invalid UTF-8
+        init_response = json.dumps(FakeMCPProcess.INIT_RESPONSE).encode("utf-8") + b"\n"
+        invalid_utf8_response = b"\xff\xfe\xfd\xfc\n"
+        responses = [init_response, invalid_utf8_response]
+        response_index = [0]
+        current_buffer = [b""]
+
+        def read_with_invalid_utf8(size: int = -1) -> bytes:
+            # Load next response if buffer empty
+            if not current_buffer[0]:
+                if response_index[0] >= len(responses):
+                    return b""
+                current_buffer[0] = responses[response_index[0]]
+                response_index[0] += 1
+
             if size <= 0:
-                result = buffer[0]
-                buffer[0] = b""
+                result = current_buffer[0]
+                current_buffer[0] = b""
                 return result
-            result = buffer[0][:size]
-            buffer[0] = buffer[0][size:]
+            result = current_buffer[0][:size]
+            current_buffer[0] = current_buffer[0][size:]
             return result
 
-        fake_proc.stdout.read.side_effect = read_invalid_utf8
+        fake_proc.stdout.read.side_effect = read_with_invalid_utf8
 
-        with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
             client = MCPClient(command=["fake"])
             try:
                 with pytest.raises(MCPClientError, match="Invalid UTF-8"):

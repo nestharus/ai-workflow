@@ -1,0 +1,77 @@
+doc_id: architecture-mcp-bridge
+title: MCP Bridge Architecture
+description: REST-to-MCP bridge server providing HTTP access to MCP STDIO providers. The bridge
+  is transport-only; tool-specific normalization happens in client layers.
+domain: []
+scope: project
+sections:
+  - id: overview
+    index: 1
+    title: Overview
+    category: standard
+    items:
+      - id: overview-1
+        text: The MCP bridge is a FastAPI service that translates HTTP requests to MCP JSON-RPC
+          calls over STDIO. It runs in a Docker container alongside persistent MCP provider
+          subprocesses.
+      - id: overview-2
+        text: Primary use case is exposing mcp-background-job as an HTTP service so jobs persist
+          independently of WSL shell lifetime and timeouts (NES-52).
+  - id: layering
+    index: 2
+    title: Architectural Layering
+    category: standard
+    items:
+      - id: layering-1
+        text: "Bridge layer (scripts/mcp/): Transport-only. Translates HTTP to MCP JSON-RPC,
+          returns provider-native payloads unchanged (wrapped in result envelope), provides
+          stable error envelopes and HTTP status mapping, enforces timeouts and serialized
+          STDIO access."
+      - id: layering-2
+        text: "Client layer (scripts/dev/mcp_agent_client.py): Tool-specific normalization.
+          Handles background-job normalization (ensuring job_id, status/exit_code, default
+          stdout/stderr). Provides separation of transport concerns from business logic."
+      - id: layering-3
+        text: "HTTP-only consumers: Should use FastMCP tool names (execute_command, get_job_status,
+          etc.), expect provider-native payloads (e.g., id instead of job_id), and implement
+          their own normalization if needed."
+  - id: request-flow
+    index: 3
+    title: Request Flow
+    category: standard
+    items:
+      - id: request-flow-1
+        text: "WSL/scripts send HTTP POST to bridge. Bridge acquires provider lock, sends
+          JSON-RPC request over STDIO, reads response, releases lock, returns HTTP response
+          with result envelope."
+      - id: request-flow-2
+        text: Provider process is persistent, allowing execute then status/output across
+          multiple HTTP calls without subprocess lifecycle issues.
+  - id: error-handling
+    index: 4
+    title: Error Handling
+    category: standard
+    items:
+      - id: error-handling-1
+        text: "Bridge provides stable error envelope: {error: {type, message, details}}. Error
+          types include BAD_REQUEST, JSONRPC_ERROR, TIMEOUT, PROVIDER_CRASHED, BUSY, INTERNAL."
+      - id: error-handling-2
+        text: HTTP status mapping is consistent. 400 for bad requests, 502 for JSON-RPC errors,
+          503 for busy/crashed, 504 for timeouts, 500 for internal errors.
+  - id: files
+    index: 5
+    title: Key Files
+    category: standard
+    items:
+      - id: files-1
+        text: "scripts/mcp/app/api/routes.py: HTTP endpoints (POST /mcp/{server}/call, GET
+          /mcp/servers, GET /health)."
+      - id: files-2
+        text: "scripts/mcp/app/services/manager.py: MCPStdioManager handles provider lifecycle,
+          STDIO communication, JSON-RPC framing."
+      - id: files-3
+        text: "scripts/mcp/client/http_client.py: HttpMCPClient for Python consumers of the
+          bridge."
+      - id: files-4
+        text: "scripts/dev/mcp_agent_client.py: Higher-level client with background-job
+          normalization and timeout enforcement."
