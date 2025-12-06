@@ -109,7 +109,7 @@ class TestFormatHealthProbeHost:
 
     def test_normalizes_all_interfaces_ipv4(self) -> None:
         """Should normalize 0.0.0.0 to 127.0.0.1."""
-        assert _format_health_probe_host("0.0.0.0") == "127.0.0.1"  # noqa: S104
+        assert _format_health_probe_host("0.0.0.0") == "127.0.0.1"
 
     def test_normalizes_all_interfaces_ipv6(self) -> None:
         """Should normalize :: to ::1."""
@@ -265,8 +265,8 @@ class TestBuildParser:
     def test_has_host_argument(self) -> None:
         """Should have --host argument."""
         parser = build_parser()
-        args = parser.parse_args(["--host", "0.0.0.0"])  # noqa: S104
-        assert args.host == "0.0.0.0"  # noqa: S104
+        args = parser.parse_args(["--host", "0.0.0.0"])
+        assert args.host == "0.0.0.0"
 
     def test_has_port_argument(self) -> None:
         """Should have --port argument."""

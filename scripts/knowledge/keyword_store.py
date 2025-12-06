@@ -157,7 +157,7 @@ def group_keywords_by_element(
 
 
 def _find_element_by_id(
-    data: Any,  # noqa: ANN401
+    data: Any,
     target_id: str,
 ) -> dict[str, Any] | None:
     """Recursively find a YAML element by its 'id' field.

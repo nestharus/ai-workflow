@@ -229,7 +229,8 @@ sections:
           status_code: status.HTTP_200_OK
           summary: Get item by ID
           description: Retrieves full item details including inventory status.
-          responses: '200: {"description": "Item retrieved successfully"}, 400: VALIDATION_ERROR_RESPONSE, 403: {"description":
+          responses: |
+            '200: {"description": "Item retrieved successfully"}, 400: VALIDATION_ERROR_RESPONSE, 403: {"description":
             "Not authorized to view this item"}, 404: {"description": "Item not found"}'
     rules:
       - id: openapi.summary
@@ -276,7 +277,8 @@ sections:
       - id: anti.direct-db
         anti_pattern: Direct DB access; avoid db.execute(...) in routers; use a service.
       - id: anti.manual-json
-        anti_pattern: Manual JSON response; avoid returning dictionaries or JSONResponse manually unless absolutely necessary.
+        anti_pattern: |
+          Manual JSON response; avoid returning dictionaries or JSONResponse manually unless absolutely necessary.
       - id: anti.missing-response-model
         anti_pattern: Missing response model; always define the return schema via response_model.
       - id: anti.inconsistent-docs
@@ -284,7 +286,8 @@ sections:
           Inconsistent documentation or error schemas; do not omit summary, description, or error responses, and do not
           handcraft unique error shapes per route.
       - id: anti.bypass-error-handling
-        anti_pattern: Bypassing global error handling; do not raise HTTP errors directly from services or infrastructure layers.
+        anti_pattern: |
+          Bypassing global error handling; do not raise HTTP errors directly from services or infrastructure layers.
       - id: anti.blocking-code
         anti_pattern: >
           Blocking code; do not use sync I/O methods in async def handlers or mix heavy synchronous work into async

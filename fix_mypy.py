@@ -2,16 +2,21 @@
 """Script to automatically fix common mypy errors."""
 
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent
 
 
-def get_mypy_errors():
+def get_mypy_errors() -> str:
     """Get all mypy errors as a list."""
-    result = subprocess.run(
-        ["uv", "run", "lint", "mypy"],
+    uv_path = shutil.which("uv")
+    if not uv_path:
+        msg = "uv command not found in PATH"
+        raise RuntimeError(msg) from None
+    result = subprocess.run(  # noqa: S603
+        [uv_path, "run", "lint", "mypy"],
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,
@@ -20,7 +25,7 @@ def get_mypy_errors():
 
 
 def fix_dict_type_args(content: str) -> str:
-    """Fix Missing type parameters for generic type \"dict\" errors."""
+    r"""Fix Missing type parameters for generic type "dict" errors."""
     # Replace dict() with dict[str, Any]() in function calls
     content = re.sub(r"\bdict\(\)", "dict[str, Any]()", content)
 
@@ -36,7 +41,7 @@ def fix_dict_type_args(content: str) -> str:
 
 
 def fix_list_type_args(content: str) -> str:
-    """Fix Missing type parameters for generic type \"list\" errors."""
+    r"""Fix Missing type parameters for generic type "list" errors."""
     # Replace = list with = list[Any] for assignments
     content = re.sub(r":\s*list\s*=", ": list[Any] =", content)
 
@@ -49,18 +54,18 @@ def fix_list_type_args(content: str) -> str:
 
 def add_any_import_if_needed(content: str) -> str:
     """Add 'Any' import if we used it but it's not imported."""
-    if "dict[str, Any]" in content or "list[Any]" in content:
-        # Check if Any is already imported
-        if not re.search(r"from typing import.*\bAny\b", content):
-            # Find the typing import line and add Any
-            def add_any_to_import(match):
-                imports = match.group(1)
-                if "Any" not in imports:
-                    # Add Any to the import list
-                    return f"from typing import {imports}, Any"
-                return match.group(0)
+    if ("dict[str, Any]" in content or "list[Any]" in content) and not re.search(
+        r"from typing import.*\bAny\b", content
+    ):
+        # Find the typing import line and add Any
+        def add_any_to_import(match: re.Match[str]) -> str:
+            imports = match.group(1)
+            if "Any" not in imports:
+                # Add Any to the import list
+                return f"from typing import {imports}, Any"
+            return match.group(0)
 
-            content = re.sub(r"from typing import ([^;\n]+)", add_any_to_import, content, count=1)
+        content = re.sub(r"from typing import ([^;\n]+)", add_any_to_import, content, count=1)
 
     return content
 
@@ -80,7 +85,7 @@ def process_file(file_path: Path) -> bool:
     return False
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     errors = get_mypy_errors()
 

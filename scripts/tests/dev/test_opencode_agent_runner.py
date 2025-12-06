@@ -52,7 +52,7 @@ class TestRunAgent:
         mock_result.stderr = ""
 
         with patch("subprocess.run", return_value=mock_result):
-            exit_code, output = run_agent("test-agent", "test prompt")
+            exit_code, _output = run_agent("test-agent", "test prompt")
 
         assert exit_code == 0
         captured = capsys.readouterr()
@@ -66,7 +66,7 @@ class TestRunAgent:
         mock_result.stderr = "Error message"
 
         with patch("subprocess.run", return_value=mock_result):
-            exit_code, output = run_agent("test-agent", "test prompt")
+            exit_code, _output = run_agent("test-agent", "test prompt")
 
         assert exit_code == 1
         captured = capsys.readouterr()
@@ -100,7 +100,7 @@ class TestRunAgent:
         mock_result.stderr = ""
 
         with patch("subprocess.run", return_value=mock_result):
-            exit_code, output = run_agent("test-agent", "test prompt")
+            exit_code, _output = run_agent("test-agent", "test prompt")
 
         assert exit_code == 0
 
@@ -112,7 +112,7 @@ class TestRunAgent:
         mock_result.stderr = "some stderr"
 
         with patch("subprocess.run", return_value=mock_result):
-            exit_code, output = run_agent("test-agent", "test prompt")
+            exit_code, _output = run_agent("test-agent", "test prompt")
 
         assert exit_code == 0
         captured = capsys.readouterr()

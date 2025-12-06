@@ -1,6 +1,7 @@
 """Unit tests for artifact_renderer module."""
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pyfakefs.fake_filesystem import FakeFilesystem
@@ -27,7 +28,7 @@ from scripts.knowledge.artifact_renderer import (
 
 
 @pytest.fixture
-def sample_manifest() -> dict:
+def sample_manifest() -> dict[str, Any]:
     """Create a sample artifact manifest for testing."""
     return {
         "artifact_id": "abc123def456789012345678901234567890123456789012345678901234",
@@ -77,7 +78,7 @@ def sample_manifest() -> dict:
 
 
 @pytest.fixture
-def sample_render_plan() -> dict:
+def sample_render_plan() -> dict[str, Any]:
     """Create a sample render plan for testing."""
     return {
         "render_plan_id": "prose.paragraph.v1",

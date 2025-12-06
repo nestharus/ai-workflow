@@ -21,7 +21,7 @@ class _MockSettings:
         self.surrealdb_namespace = "test_ns"
         self.surrealdb_database = "test_db"
         self.surrealdb_user = "root"
-        self.surrealdb_pass = "root"  # noqa: S105 - test credentials
+        self.surrealdb_pass = "root"
         self.surrealdb_pool_size = 2
         self.embedding_dimension = 768
 
@@ -36,7 +36,7 @@ class TestSurrealDBPool:
             namespace="test_ns",
             database="test_db",
             user="root",
-            password="root",  # noqa: S106 - test credentials
+            password="root",
             size=3,
             embedding_dimension=512,
             acquire_timeout=5.0,
@@ -45,7 +45,7 @@ class TestSurrealDBPool:
         assert pool._namespace == "test_ns"
         assert pool._database == "test_db"
         assert pool._user == "root"
-        assert pool._password == "root"  # noqa: S105 - test credentials
+        assert pool._password == "root"
         assert pool._size == 3
         assert pool._embedding_dimension == 512
         assert pool._acquire_timeout == 5.0
@@ -63,7 +63,7 @@ class TestSurrealDBPool:
                 namespace="test_ns",
                 database="test_db",
                 user="root",
-                password="root",  # noqa: S106 - test credentials
+                password="root",
                 size=2,
             )
             await pool.init()
@@ -88,7 +88,7 @@ class TestSurrealDBPool:
                 namespace="test_ns",
                 database="test_db",
                 user="root",
-                password="root",  # noqa: S106 - test credentials
+                password="root",
                 size=1,
             )
             await pool.init()
@@ -108,7 +108,7 @@ class TestSurrealDBPool:
                 namespace="test_ns",
                 database="test_db",
                 user="root",
-                password="root",  # noqa: S106 - test credentials
+                password="root",
                 size=2,
             )
             await pool.init()
@@ -126,7 +126,7 @@ class TestSurrealDBPool:
             namespace="test_ns",
             database="test_db",
             user="root",
-            password="root",  # noqa: S106 - test credentials
+            password="root",
         )
         with pytest.raises(SurrealDBPoolNotInitializedError):
             async with pool.acquire():
@@ -144,7 +144,7 @@ class TestSurrealDBPool:
                 namespace="test_ns",
                 database="test_db",
                 user="root",
-                password="root",  # noqa: S106 - test credentials
+                password="root",
                 size=1,
             )
             await pool.init()
@@ -170,7 +170,7 @@ class TestSurrealDBPool:
                 namespace="test_ns",
                 database="test_db",
                 user="root",
-                password="root",  # noqa: S106 - test credentials
+                password="root",
                 size=1,
             )
             await pool.init()
@@ -194,7 +194,7 @@ class TestSurrealDBPool:
                 namespace="test_ns",
                 database="test_db",
                 user="root",
-                password="root",  # noqa: S106 - test credentials
+                password="root",
                 size=1,
             )
             await pool.init()
@@ -212,7 +212,7 @@ class TestSurrealDBPool:
             namespace="test_ns",
             database="test_db",
             user="root",
-            password="root",  # noqa: S106 - test credentials
+            password="root",
         )
         result = await pool.health_check()
         assert result is False
@@ -231,7 +231,7 @@ class TestSurrealDBPool:
                 namespace="test_ns",
                 database="test_db",
                 user="root",
-                password="root",  # noqa: S106 - test credentials
+                password="root",
                 size=1,
             )
             # Manually set as initialized for testing
@@ -254,7 +254,7 @@ class TestSurrealDBPoolSchemaOperations:
             namespace="my_namespace",
             database="my_database",
             user="root",
-            password="root",  # noqa: S106 - test credentials
+            password="root",
         )
         schema = pool._schema_version_definitions()
         assert "my_namespace" in schema
@@ -268,7 +268,7 @@ class TestSurrealDBPoolSchemaOperations:
             namespace="test_ns",
             database="test_db",
             user="root",
-            password="root",  # noqa: S106 - test credentials
+            password="root",
         )
         record_id = pool._schema_version_record_id()
         assert record_id == "test_ns_test_db"
@@ -317,7 +317,7 @@ class TestSurrealDBPoolSchemaOperations:
                 namespace="test_ns",
                 database="test_db",
                 user="root",
-                password="root",  # noqa: S106 - test credentials
+                password="root",
                 size=1,
             )
             await pool.init()
@@ -345,7 +345,7 @@ class TestSurrealDBPoolSchemaOperations:
                 namespace="test_ns",
                 database="test_db",
                 user="root",
-                password="root",  # noqa: S106 - test credentials
+                password="root",
                 size=1,
             )
             await pool.init()
@@ -373,7 +373,7 @@ class TestSurrealDBPoolSchemaOperations:
                 namespace="test_ns",
                 database="test_db",
                 user="root",
-                password="root",  # noqa: S106 - test credentials
+                password="root",
                 size=1,
             )
             await pool.init()

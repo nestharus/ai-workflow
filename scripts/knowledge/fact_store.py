@@ -450,7 +450,7 @@ def ensure_fact_yaml_exists(yaml_path: Path) -> None:
     """
     yaml_path.parent.mkdir(parents=True, exist_ok=True)
     if not yaml_path.exists():
-        initial_content = {"facts": []}
+        initial_content: dict[str, list[Any]] = {"facts": []}
         content = yaml.dump(
             initial_content,
             default_flow_style=False,
@@ -478,16 +478,19 @@ def store_fact_to_yaml(yaml_path: Path, fact_record: FactStoreRecord) -> int:
         print(f"Warning: Failed to parse {yaml_path}: {exc}", file=sys.stderr)
         return 0
 
-    if "facts" not in data or not isinstance(data["facts"], list):
-        data["facts"] = []
+    if not isinstance(data, dict) or "facts" not in data or not isinstance(data["facts"], list):
+        data = {"facts": []}
+
+    # Type narrowing: data is now dict with facts: list
+    facts_list: list[dict[str, object]] = data["facts"]  # type: ignore[assignment]
 
     # Check for duplicate fact_id
-    existing_ids = {fact.get("fact_id") for fact in data["facts"]}
+    existing_ids = {fact.get("fact_id") for fact in facts_list}
     if fact_record["fact_id"] in existing_ids:
         return 1  # Already exists, success
 
     # Append the new fact
-    data["facts"].append(dict(fact_record))
+    facts_list.append(dict(fact_record))
 
     try:
         content = yaml.dump(
@@ -513,7 +516,7 @@ def ensure_structural_facts_yaml_exists(yaml_path: Path) -> None:
     """
     yaml_path.parent.mkdir(parents=True, exist_ok=True)
     if not yaml_path.exists():
-        initial_content = {"facts": [], "structural_facts": []}
+        initial_content: dict[str, Any] = {"facts": [], "structural_facts": []}
         content = yaml.dump(
             initial_content,
             default_flow_style=False,
@@ -558,8 +561,14 @@ def store_structural_facts(
         print(f"Warning: Failed to parse {yaml_path}: {exc}", file=sys.stderr)
         return (0, len(field_facts))
 
-    if "structural_facts" not in data or not isinstance(data["structural_facts"], list):
+    # Ensure data is a dict with structural_facts list
+    if not isinstance(data, dict):
+        data = {"structural_facts": []}
+    elif "structural_facts" not in data or not isinstance(data["structural_facts"], list):
         data["structural_facts"] = []
+
+    # Type narrowing: extract the list with proper typing
+    structural_facts: list[dict[str, object]] = data["structural_facts"]  # type: ignore[assignment]
 
     success_count = 0
     extracted_at = utc_timestamp()
@@ -572,7 +581,7 @@ def store_structural_facts(
         existing_key = f"{field_fact.element_id}:{field_fact.field_path}:{serialized_value}"
         existing_keys = {
             f"{f.get('element_id')}:{f.get('field_path')}:{f.get('value', '')}"
-            for f in data["structural_facts"]
+            for f in structural_facts
             if isinstance(f, dict)
         }
         if existing_key in existing_keys:
@@ -580,7 +589,7 @@ def store_structural_facts(
             continue
 
         record = fieldfact_to_structural_record(field_fact, domains, pattern, fact_id, extracted_at)
-        data["structural_facts"].append(dict(record))
+        structural_facts.append(dict(record))
         success_count += 1
 
     try:
@@ -758,7 +767,7 @@ def determine_primary_domain(domains: list[str]) -> str:
     return domains[0]
 
 
-def _serialize_value(value: Any) -> str:  # noqa: ANN401
+def _serialize_value(value: Any) -> str:
     """Serialize a FieldFact value to string representation.
 
     Handles various value types including $ref dicts, lists, and objects.
@@ -915,11 +924,16 @@ def query_facts_from_yaml(
         except (ValueError, TypeError, yaml.YAMLError, FileNotFoundError):
             continue
 
+        if not isinstance(data, dict):
+            continue
+
         facts = data.get("facts", [])
         if not isinstance(facts, list):
             continue
 
         for fact in facts:
+            if not isinstance(fact, dict):
+                continue
             # Filter by entity within file
             if entity and fact.get("entity") != entity:
                 continue
@@ -945,11 +959,16 @@ def get_fact_by_id(facts_dir: Path, fact_id: str) -> dict[str, Any] | None:
         except (ValueError, TypeError, yaml.YAMLError, FileNotFoundError):
             continue
 
+        if not isinstance(data, dict):
+            continue
+
         facts = data.get("facts", [])
         if not isinstance(facts, list):
             continue
 
         for fact in facts:
+            if not isinstance(fact, dict):
+                continue
             if fact.get("fact_id") == fact_id:
                 return fact
 
@@ -1000,11 +1019,16 @@ def query_structural_facts(
         except (ValueError, TypeError, yaml.YAMLError, FileNotFoundError):
             continue
 
+        if not isinstance(data, dict):
+            continue
+
         structural_facts = data.get("structural_facts", [])
         if not isinstance(structural_facts, list):
             continue
 
         for fact in structural_facts:
+            if not isinstance(fact, dict):
+                continue
             # Filter by element_id
             if element_id and fact.get("element_id") != element_id:
                 continue
@@ -1057,6 +1081,10 @@ def export_facts_to_jsonl(
         try:
             data = parse_yaml_file(fact_file)
         except (ValueError, TypeError, yaml.YAMLError, FileNotFoundError):
+            continue
+
+        # Skip non-dict data (e.g., if file contains only a list)
+        if not isinstance(data, dict):
             continue
 
         # Process semantic facts
@@ -1155,6 +1183,10 @@ def export_facts_to_jsonl(
             except (ValueError, TypeError, yaml.YAMLError, FileNotFoundError):
                 continue
 
+            # Skip non-dict data
+            if not isinstance(data, dict):
+                continue
+
             structural_facts = data.get("structural_facts", [])
             if isinstance(structural_facts, list):
                 for fact in structural_facts:
@@ -1227,14 +1259,14 @@ def get_entity_id_from_variants(variants_csv: Path, entity: str) -> str | None:
     try:
         result = duckdb.execute(query, [str(variants_csv), entity, entity]).fetchone()
         if result:
-            return result[0]
+            return str(result[0])
     except duckdb.Error:
         pass
     return None
 
 
 def _find_element_by_id(
-    data: Any,  # noqa: ANN401
+    data: Any,
     target_id: str,
 ) -> dict[str, Any] | None:
     """Recursively find a YAML element by its 'id' field.

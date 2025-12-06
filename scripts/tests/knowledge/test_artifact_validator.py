@@ -1,6 +1,7 @@
 """Unit tests for artifact_validator module."""
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pyfakefs.fake_filesystem import FakeFilesystem
@@ -22,7 +23,7 @@ from scripts.knowledge.artifact_validator import (
 
 
 @pytest.fixture
-def sample_manifest() -> dict:
+def sample_manifest() -> dict[str, Any]:
     """Create a sample artifact manifest for testing."""
     return {
         "artifact_id": "abc123def456789012345678901234567890123456789012345678901234",

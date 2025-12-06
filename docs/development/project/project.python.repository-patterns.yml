@@ -326,7 +326,8 @@ sections:
     summary: Common pitfalls that undermine repository layer design.
     anti_patterns:
       - id: anti.commit-transactions
-        anti_pattern: Repositories that commit or roll back transactions instead of delegating transaction control to services.
+        anti_pattern: |
+          Repositories that commit or roll back transactions instead of delegating transaction control to services.
       - id: anti.business-rules
         anti_pattern: Repositories that implement business rules, workflows, or cross-aggregate orchestration.
       - id: anti.raw-responses
@@ -334,8 +335,11 @@ sections:
           Repositories that return ORM models or raw driver responses (SurrealDB records, Elasticsearch hit structures)
           instead of domain models or DTOs.
       - id: anti.global-instances
-        anti_pattern: Global or module-level repository instances that bypass dependency injection and make testing difficult.
+        anti_pattern: |
+          Global or module-level repository instances that bypass dependency injection and make testing difficult.
       - id: anti.god-repositories
-        anti_pattern: Single god repositories that handle unrelated aggregates instead of focused, per-entity repositories.
+        anti_pattern: |
+          Single god repositories that handle unrelated aggregates instead of focused, per-entity repositories.
       - id: anti.over-generic
-        anti_pattern: Over-generic repositories whose type parameters and behavior are difficult to understand at call sites.
+        anti_pattern: |
+          Over-generic repositories whose type parameters and behavior are difficult to understand at call sites.

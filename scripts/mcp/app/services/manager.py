@@ -1,4 +1,4 @@
-"""MCP stdio manager for communicating with MCP provider subprocesses.
+r"""MCP stdio manager for communicating with MCP provider subprocesses.
 
 This module provides the MCPStdioManager class that handles spawning and
 communicating with an MCP provider subprocess using newline-delimited
@@ -16,9 +16,9 @@ Protocol Framing Decision (NES-47 Deviation):
     - Compatible with existing MCP clients
 
     The initialize/initialized handshake remains the same:
-    1. Client sends {"jsonrpc":"2.0","id":1,"method":"initialize","params":{...}}\\n
-    2. Server responds with {"jsonrpc":"2.0","id":1,"result":{...}}\\n
-    3. Client sends {"jsonrpc":"2.0","method":"notifications/initialized"}\\n
+    1. Client sends {"jsonrpc":"2.0","id":1,"method":"initialize","params":{...}}\n
+    2. Server responds with {"jsonrpc":"2.0","id":1,"result":{...}}\n
+    3. Client sends {"jsonrpc":"2.0","method":"notifications/initialized"}\n
 """
 
 from __future__ import annotations
@@ -195,8 +195,8 @@ class MCPStdioManager:
         # Log server info if available
         server_info = init_result.get("serverInfo", {})
         if server_info:
-            server_name = server_info.get("name", "unknown")
-            server_version = server_info.get("version", "unknown")
+            _server_name = server_info.get("name", "unknown")
+            _server_version = server_info.get("version", "unknown")
             # Could add logging here if needed
 
         # Send initialized notification (no response expected)
@@ -300,8 +300,9 @@ class MCPStdioManager:
                     raise MCPTimeoutError(f"MCP call timed out after {timeout}s")
                 response = self._read_response(remaining)
                 if not isinstance(response, dict):
+                    response_type = type(response).__name__
                     raise MCPError(
-                        f"Invalid JSON-RPC response type: expected object, got {type(response).__name__}"
+                        f"Invalid JSON-RPC response type: expected object, got {response_type}"
                     )
                 if "id" not in response:
                     continue
@@ -593,8 +594,9 @@ class MCPStdioManager:
                         raise MCPTimeoutError(f"MCP call timed out after {timeout}s")
                     response = self._read_response(remaining)
                     if not isinstance(response, dict):
+                        response_type = type(response).__name__
                         raise MCPError(
-                            f"Invalid JSON-RPC response type: expected object, got {type(response).__name__}"
+                            f"Invalid JSON-RPC response type: expected object, got {response_type}"
                         )
                     # Skip notifications (no id)
                     if "id" not in response:
@@ -615,7 +617,7 @@ class MCPStdioManager:
                         raise
                     raise MCPProviderCrashedError(
                         "Provider crashed and was restarted. Existing job IDs are no longer valid."
-                    )
+                    ) from None
                 raise  # Re-raise original error if server is still alive
 
             if "error" in response:
@@ -684,7 +686,6 @@ class MCPStdioManager:
                     params={},
                     timeout=timeout,
                 )
-                return result
             except MCPError:
                 # Check if server crashed during request
                 if not self.is_alive():
@@ -698,8 +699,10 @@ class MCPStdioManager:
                         raise
                     raise MCPProviderCrashedError(
                         "Provider crashed and was restarted. Existing job IDs are no longer valid."
-                    )
+                    ) from None
                 raise  # Re-raise original error if server is still alive
+            else:
+                return result
         finally:
             self._lock.release()
 

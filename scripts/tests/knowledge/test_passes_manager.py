@@ -64,7 +64,7 @@ class TestAppendPass:
         """Should create CSV and append pass record."""
         csv_path = tmp_path / "passes.csv"
         record = PassRecord(
-            pass_id="pass-001",  # noqa: S106 - test data, not a password
+            pass_id="pass-001",
             artifact_id="artifact-123",
             entity_id="entity-456",
             entity_mention="create_app",
@@ -91,7 +91,7 @@ class TestAppendPass:
         csv_path = tmp_path / "passes.csv"
 
         record1 = PassRecord(
-            pass_id="pass-001",  # noqa: S106 - test data, not a password
+            pass_id="pass-001",
             artifact_id="artifact-1",
             entity_id="ent-1",
             entity_mention="entity1",
@@ -107,7 +107,7 @@ class TestAppendPass:
         )
 
         record2 = PassRecord(
-            pass_id="pass-002",  # noqa: S106 - test data, not a password
+            pass_id="pass-002",
             artifact_id="artifact-1",
             entity_id="ent-2",
             entity_mention="entity2",
@@ -152,7 +152,7 @@ class TestQueryPasses:
         ensure_passes_csv_exists(csv_path)
 
         record1 = PassRecord(
-            pass_id="pass-001",  # noqa: S106 - test data, not a password
+            pass_id="pass-001",
             artifact_id="artifact-A",
             entity_id="ent-1",
             entity_mention="entity1",
@@ -167,7 +167,7 @@ class TestQueryPasses:
             created_at="2024-01-01T00:00:00Z",
         )
         record2 = PassRecord(
-            pass_id="pass-002",  # noqa: S106 - test data, not a password
+            pass_id="pass-002",
             artifact_id="artifact-B",
             entity_id="ent-2",
             entity_mention="entity2",
@@ -196,7 +196,7 @@ class TestQueryPasses:
         ensure_passes_csv_exists(csv_path)
 
         record = PassRecord(
-            pass_id="pass-001",  # noqa: S106 - test data, not a password
+            pass_id="pass-001",
             artifact_id="artifact-1",
             entity_id="target-entity",
             entity_mention="entity",
@@ -260,7 +260,7 @@ class TestGetPassById:
         ensure_passes_csv_exists(csv_path)
 
         record = PassRecord(
-            pass_id="existing-pass",  # noqa: S106 - test data, not a password
+            pass_id="existing-pass",
             artifact_id="artifact-1",
             entity_id="entity-1",
             entity_mention="mention",
@@ -286,7 +286,7 @@ class TestGetPassById:
         ensure_passes_csv_exists(csv_path)
 
         record = PassRecord(
-            pass_id="target-pass",  # noqa: S106 - test data, not a password
+            pass_id="target-pass",
             artifact_id="artifact-123",
             entity_id="entity-456",
             entity_mention="create_app",
@@ -305,7 +305,7 @@ class TestGetPassById:
         result = get_pass_by_id(csv_path, "target-pass")
 
         assert result is not None
-        assert result["pass_id"] == "target-pass"  # noqa: S105 - test data, not a password
+        assert result["pass_id"] == "target-pass"
         assert result["artifact_id"] == "artifact-123"
 
 

@@ -1,6 +1,9 @@
 """Integration tests for render_artifacts CLI script."""
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -16,7 +19,7 @@ from scripts.knowledge.render_artifacts import (
 
 
 @pytest.fixture
-def sample_manifest() -> dict:
+def sample_manifest() -> dict[str, Any]:
     """Create a sample artifact manifest for testing."""
     return {
         "artifact_id": "abc123def456789012345678901234567890123456789012345678901234",
@@ -40,7 +43,7 @@ def sample_manifest() -> dict:
 
 
 @pytest.fixture
-def sample_render_plan() -> dict:
+def sample_render_plan() -> dict[str, Any]:
     """Create a sample render plan for testing."""
     return {
         "render_plan_id": "prose.paragraph.v1",
@@ -167,9 +170,11 @@ class TestFilterManifests:
         result = _filter_manifests(manifests, None, "diagram/*", None)
         assert len(result) == 0
 
-    def test_filter_by_source_file(self, sample_manifest: dict) -> None:
+    def test_filter_by_source_file(self, sample_manifest: dict[str, Any]) -> None:
         """Verify filtering by source_file."""
-        manifests = [sample_manifest]
+        from scripts.knowledge.render_artifacts import ArtifactManifest
+
+        manifests = [cast("ArtifactManifest", sample_manifest)]
 
         result = _filter_manifests(manifests, None, None, "docs/test.yml")
         assert len(result) == 1

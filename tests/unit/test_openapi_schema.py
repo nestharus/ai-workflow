@@ -30,7 +30,7 @@ def _mock_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
 def _build_settings() -> Settings:
     return Settings(
         surrealdb_user="UserAa1!OpenApi",
-        surrealdb_pass="PassAa1!OpenApi",  # noqa: S106 - safe test credential
+        surrealdb_pass="PassAa1!OpenApi",
     )
 
 

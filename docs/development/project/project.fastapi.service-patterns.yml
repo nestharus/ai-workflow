@@ -185,7 +185,8 @@ sections:
           Override service factory functions via app.dependency_overrides[get_service] = lambda to inject mocks without
           modifying production code.
       - id: testing.mock-services
-        pattern: Use unittest.mock.AsyncMock for async service methods; configure return values and side effects as needed.
+        pattern: |
+          Use unittest.mock.AsyncMock for async service methods; configure return values and side effects as needed.
       - id: testing.fixture-composition
         note: Compose fixtures (test_settings → mock_service → test_app → async_client) for consistent test setup.
       - id: testing.clear-overrides

@@ -119,7 +119,8 @@ sections:
           app.state.elasticsearch_client,
           and app.state.http_client.
       - id: state.attach-after-init
-        pattern: Attach resources to app.state immediately after successful initialization so dependencies can access them.
+        pattern: |
+          Attach resources to app.state immediately after successful initialization so dependencies can access them.
       - id: state.type-safety
         note: >
           Access app.state attributes with awareness that they are dynamically attached; type checkers may not verify
@@ -211,7 +212,8 @@ sections:
           httpx.Timeout
           for connect, read, and write timeouts.
       - id: http.dependency-injection
-        pattern: Inject the shared AsyncClient into services via dependencies rather than creating new clients per request.
+        pattern: |
+          Inject the shared AsyncClient into services via dependencies rather than creating new clients per request.
       - id: http.shutdown
         rule: Close the shared AsyncClient during lifespan shutdown to release network resources cleanly.
   - id: fastapi-testing-fixtures

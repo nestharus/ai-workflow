@@ -253,7 +253,7 @@ class TestExtractNamedEntities:
         doc = MockDoc()
         text = "Python and the FastAPI framework."
 
-        result = extract_named_entities(doc, text)  # type: ignore[arg-type]
+        result = extract_named_entities(doc, text)
 
         assert len(result) == 2
         assert result[0][0] == "Python"
@@ -282,7 +282,7 @@ class TestExtractNounChunks:
         doc = MockDoc()
         text = "Describes the framework and uses a method for processing."
 
-        result = extract_noun_chunks(doc, text)  # type: ignore[arg-type]
+        result = extract_noun_chunks(doc, text)
 
         assert len(result) == 2
         assert result[0][0] == "the framework"

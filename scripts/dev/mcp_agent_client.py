@@ -139,10 +139,11 @@ class MCPClient:
             # Server is still running - perform MCP handshake
             try:
                 self._initialize()
-                return
             except Exception:
                 self._shutdown(timeout=1.0)
                 raise
+            else:
+                return
         # Timeout waiting for startup
         self._shutdown(timeout=1.0)
         raise MCPClientError(f"MCP server did not become ready within {startup_timeout}s")
@@ -521,7 +522,11 @@ def cmd_wait(
             # Use `or` to handle null structuredContent
             structured = status_res.get("structuredContent") or status_res
             if not isinstance(structured, dict):
-                return {"status": "failed", "job_id": job_id, "error": "Invalid response format from server"}
+                return {
+                    "status": "failed",
+                    "job_id": job_id,
+                    "error": "Invalid response format from server",
+                }
             job_status = structured.get("status", "unknown")
 
             if job_status in ("completed", "failed", "killed"):
@@ -538,7 +543,11 @@ def cmd_wait(
                 # Use `or` to handle null structuredContent
                 output_structured = output_res.get("structuredContent") or output_res
                 if not isinstance(output_structured, dict):
-                    return {"status": "failed", "job_id": job_id, "error": "Invalid response format from server"}
+                    return {
+                        "status": "failed",
+                        "job_id": job_id,
+                        "error": "Invalid response format from server",
+                    }
                 return {
                     "status": job_status,
                     "job_id": job_id,

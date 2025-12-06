@@ -1,6 +1,6 @@
 """MCP Bridge request/response schemas."""
 
-from app.contracts.schemas import (
+from .schemas import (
     ErrorResponse,
     HealthResponse,
     MCPCallRequest,

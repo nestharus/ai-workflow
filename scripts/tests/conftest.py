@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 # numpy.random.seed() directly without constraining the seed value.
 # This patch applies modulo 2**32 to prevent ValueError.
 try:
-    import thinc.util as _thinc_util
+    import thinc.util as _thinc_util  # type: ignore[import-not-found]
 
     _original_fix_random_seed = _thinc_util.fix_random_seed
 

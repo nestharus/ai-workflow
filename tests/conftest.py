@@ -86,7 +86,7 @@ def test_settings() -> Settings:
     # Test-only credentials that satisfy complexity requirements; never used in production
     return Settings(
         surrealdb_user="TestUser12!Abc#",
-        surrealdb_pass="TestPass12!Xyz$",  # noqa: S106
+        surrealdb_pass="TestPass12!Xyz$",
     )
 
 
@@ -163,7 +163,7 @@ def _docker_run(
     args: list[str], *, check: bool = False, **kwargs: object
 ) -> subprocess.CompletedProcess:
     command = [_docker_exe(), *args]
-    return subprocess.run(command, check=check, **kwargs)  # noqa: S603
+    return subprocess.run(command, check=check, **kwargs)
 
 
 @pytest.fixture(scope="session")

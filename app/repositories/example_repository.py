@@ -108,6 +108,7 @@ class ExampleRepository(ExampleRepositoryProtocol):
             The ProcessedMessage if found, otherwise None.
         """
         csv_path = self._duckdb_client.get_csv_path(PROCESSED_MESSAGES_CSV)
+        # S608: csv_path validated by get_csv_path() which prevents path traversal
         sql = f"SELECT * FROM read_csv_auto('{csv_path}') WHERE id = $id"  # noqa: S608
         results = await self._duckdb_client.query(sql, {"id": id})
 
@@ -128,10 +129,12 @@ class ExampleRepository(ExampleRepositoryProtocol):
         """
         csv_path = self._duckdb_client.get_csv_path(PROCESSED_MESSAGES_CSV)
 
+        # S608: csv_path validated by get_csv_path() which prevents path traversal
         count_sql = f"SELECT COUNT(*) as total FROM read_csv_auto('{csv_path}')"  # noqa: S608
         count_result = await self._duckdb_client.query(count_sql)
         total = count_result[0]["total"] if count_result else 0
 
+        # S608: csv_path validated by get_csv_path() which prevents path traversal
         data_sql = (
             f"SELECT * FROM read_csv_auto('{csv_path}') "  # noqa: S608
             f"ORDER BY processed_at DESC LIMIT {limit} OFFSET {offset}"

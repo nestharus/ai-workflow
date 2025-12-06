@@ -32,9 +32,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 
 import duckdb
 import numpy as np
-import torch
 import yaml
-from transformers import AutoModel, AutoTokenizer
 
 from scripts.dev.utils import REPO_ROOT
 from scripts.knowledge.compare_yaml_docs import parse_yaml_file
@@ -177,6 +175,8 @@ def load_qwen_embedding_model(
     Returns:
         Tuple of (model, tokenizer).
     """
+    from transformers import AutoModel, AutoTokenizer
+
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
     model.eval()
@@ -203,6 +203,8 @@ def embed_keywords(
     Returns:
         NumPy array of shape (len(keywords), embedding_dim).
     """
+    import torch
+
     all_embeddings = []
 
     for i in range(0, len(keywords), batch_size):
@@ -244,7 +246,8 @@ def compute_cosine_similarity(embeddings: np.ndarray) -> np.ndarray:
     norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
     normalized = embeddings / np.maximum(norms, 1e-9)
     # Cosine similarity = dot product of normalized vectors
-    return np.dot(normalized, normalized.T)
+    result: np.ndarray = np.dot(normalized, normalized.T)
+    return result
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -415,7 +418,7 @@ def parse_apply_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def _find_element_by_id(
-    data: Any,  # noqa: ANN401
+    data: Any,
     target_id: str,
 ) -> dict[str, Any] | None:
     """Recursively find a YAML element by its 'id' field.
@@ -473,7 +476,7 @@ def apply_variants_to_yaml_file(
 
     modified = False
 
-    def process_element(elem: Any) -> None:  # noqa: ANN401
+    def process_element(elem: Any) -> None:
         """Recursively process elements to replace keywords."""
         nonlocal modified, replacements
 

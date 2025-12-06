@@ -57,6 +57,9 @@ from scripts.knowledge.render_plan_manager import (
     load_render_plan,
 )
 
+# Re-export ArtifactManifest for test access via render_artifacts.ArtifactManifest
+__all__ = ["ArtifactManifest"]
+
 # Module-level logger
 _logger = logging.getLogger(__name__)
 

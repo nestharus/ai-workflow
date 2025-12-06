@@ -74,6 +74,9 @@ from scripts.knowledge.variant_resolver import (
     load_qwen_embedding_model,
 )
 
+# Re-export fact_extraction for test access via fact_isolation.fact_extraction
+__all__ = ["fact_extraction"]
+
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
@@ -380,7 +383,7 @@ def write_isolation_records(csv_path: Path, records: list[IterativeMovementRecor
         conn.close()
 
 
-def _create_args_namespace(**kwargs: Any) -> argparse.Namespace:  # noqa: ANN401
+def _create_args_namespace(**kwargs: Any) -> argparse.Namespace:
     """Create an argparse.Namespace with the specified keyword arguments.
 
     Args:

@@ -109,8 +109,8 @@ class TestTierConfig:
 
 
 # Import modules after dataclass definitions to avoid circular imports
-from scripts.dev.test_runner import coverage_db  # noqa: E402
-from scripts.dev.test_runner.redundant_test_detector import (  # noqa: E402
+from scripts.dev.test_runner import coverage_db
+from scripts.dev.test_runner.redundant_test_detector import (
     RedundantTestResult,
     detect_redundant_tests,
 )

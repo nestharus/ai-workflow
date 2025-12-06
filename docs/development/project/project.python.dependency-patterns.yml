@@ -240,9 +240,11 @@ sections:
           Failing to use yield-based dependencies for resources that need cleanup, which leads to leaked connections or
           resources.
       - id: anti.circular-deps
-        anti_pattern: Introducing circular dependencies between providers or modules, indicating poor separation of concerns.
+        anti_pattern: |
+          Introducing circular dependencies between providers or modules, indicating poor separation of concerns.
       - id: anti.circular-deps-classes
-        anti_pattern: Introducing circular dependencies between classes or modules, indicating poor separation of concerns.
+        anti_pattern: |
+          Introducing circular dependencies between classes or modules, indicating poor separation of concerns.
       - id: anti.over-nesting
         anti_pattern: >
           Creating extremely deep or tangled dependency chains that are hard to reason about; prefer clearer

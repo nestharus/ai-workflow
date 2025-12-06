@@ -175,13 +175,14 @@ def _docker_available() -> bool:
         return False
     try:
         result = subprocess.run(
-            ["docker", "info"],
+            [docker_path, "info"],
             capture_output=True,
             timeout=10,
         )
-        return result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
         return False
+    else:
+        return result.returncode == 0
 
 
 # Skip all tests if Docker is not available
@@ -269,11 +270,16 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
     project_root = Path(__file__).parent.parent.parent.parent
     dockerfile_context = project_root / "scripts" / "mcp"
 
+    # Get full docker path to avoid S607 security warning
+    docker_path = shutil.which("docker")
+    if not docker_path:
+        pytest.skip("Docker not available")
+
     try:
         # Build the Docker image
         build_result = subprocess.run(
             [
-                "docker",
+                docker_path,
                 "build",
                 "-t",
                 "mcp-bridge-test:latest",
@@ -292,7 +298,7 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
         # Mount the config file and the echo server script
         run_result = subprocess.run(
             [
-                "docker",
+                docker_path,
                 "run",
                 "-d",
                 "--name",
@@ -334,12 +340,12 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
         if not healthy:
             # Get container logs for debugging
             logs_result = subprocess.run(
-                ["docker", "logs", container_name],
+                [docker_path, "logs", container_name],
                 capture_output=True,
                 text=True,
             )
             # Stop and remove container
-            subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+            subprocess.run([docker_path, "rm", "-f", container_name], capture_output=True)
             config_path.unlink(missing_ok=True)
             pytest.skip(
                 f"Container did not become healthy within {timeout}s. "
@@ -351,7 +357,7 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
     finally:
         # Cleanup: stop and remove container
         subprocess.run(
-            ["docker", "rm", "-f", container_name],
+            [docker_path, "rm", "-f", container_name],
             capture_output=True,
         )
         config_path.unlink(missing_ok=True)

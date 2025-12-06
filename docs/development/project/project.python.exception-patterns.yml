@@ -246,7 +246,8 @@ sections:
           makes
           debugging difficult.
       - id: python.anti.swallowed-exceptions
-        anti_pattern: Swallowing exceptions by catching them and doing nothing, which masks errors and leads to silent failures.
+        anti_pattern: |
+          Swallowing exceptions by catching them and doing nothing, which masks errors and leads to silent failures.
       - id: anti.sentinel-values
         anti_pattern: >
           Returning sentinel values (None, -1, empty string) instead of raising exceptions to indicate error conditions.

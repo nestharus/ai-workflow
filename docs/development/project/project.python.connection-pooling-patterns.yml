@@ -283,7 +283,8 @@ sections:
       - id: anti.per-request-pools
         anti_pattern: Creating connection pools or HTTP clients inside route handlers or per-request code paths.
       - id: anti.bypassing-pool
-        anti_pattern: Opening new database or HTTP connections for every operation instead of reusing pool-managed connections.
+        anti_pattern: |
+          Opening new database or HTTP connections for every operation instead of reusing pool-managed connections.
       - id: anti.oversized-pools
         anti_pattern: >
           Configuring excessively large pool sizes without regard for backend limits, which can starve other services

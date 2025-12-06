@@ -8,7 +8,7 @@ This module tests the MCP agent client script including:
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,7 +28,7 @@ class FakeMCPProcess:
     """Fake subprocess for testing MCP client."""
 
     # Standard MCP initialize response - auto-prepended to all response lists
-    INIT_RESPONSE = {
+    INIT_RESPONSE: ClassVar[dict[str, Any]] = {
         "jsonrpc": "2.0",
         "id": 1,
         "result": {
@@ -217,7 +217,6 @@ class TestMCPClient:
 
         # Track call count to fail only after init
         call_count = [0]
-        original_write = fake_proc.stdin.write.side_effect
 
         def write_with_failure(data: bytes) -> int:
             call_count[0] += 1
@@ -334,11 +333,8 @@ class TestCmdWait:
         # Track response count to know when init and execute are done
         # Init response is at index 0, execute response is at index 1
         response_count = [0]
-        original_setup = fake_proc._setup_stdout_read
 
         def patched_setup() -> None:
-            original_read_func = None
-
             def read_func(size: int = -1) -> bytes:
                 # Read from buffer or get new response
                 if not fake_proc._current_buffer:

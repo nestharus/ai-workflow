@@ -18,10 +18,11 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 
 # Add the scripts/mcp directory to Python path so we can import the bridge modules
 # This is necessary because scripts/mcp is a separate subproject with its own app/ folder
@@ -51,8 +52,10 @@ from app.services.manager import (  # type: ignore[import-not-found]
     MCPStdioManager,
     MCPTimeoutError,
 )
-from client.http_client import HttpMCPClient, MCPClientError  # type: ignore[import-not-found]
-from fastapi.testclient import TestClient
+from client.http_client import (  # type: ignore[import-not-found]
+    HttpMCPClient,
+    MCPClientError,
+)
 
 # ============================================================================
 # MCPStdioManager Tests
@@ -62,7 +65,7 @@ from fastapi.testclient import TestClient
 class FakeMCPProcess:
     """Fake subprocess for testing MCPStdioManager."""
 
-    INIT_RESPONSE = {
+    INIT_RESPONSE: ClassVar[dict[str, Any]] = {
         "jsonrpc": "2.0",
         "id": 1,
         "result": {
@@ -228,15 +231,6 @@ class TestMCPStdioManager:
     def test_call_tool_timeout(self, mock_select: Any) -> None:
         """Test timeout raises MCPTimeoutError."""
         # Set up responses: init succeeds, then tool call never returns
-        init_response = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "serverInfo": {"name": "fake-mcp", "version": "1.0.0"},
-            },
-        }
         fake_proc = FakeMCPProcess(responses=[])  # Only init response
 
         # Track init completion
@@ -244,7 +238,6 @@ class TestMCPStdioManager:
         call_count = [0]
 
         # Make select return not ready after init (causes timeout loop)
-        original_select = mock_select.return_value
 
         def select_func(*args: Any, **kwargs: Any) -> tuple[list[Any], list[Any], list[Any]]:
             call_count[0] += 1
@@ -294,7 +287,7 @@ class TestMCPStdioManager:
             def poll_crashed() -> int:
                 return 1  # Process exited with error
 
-            fake_proc1.poll = poll_crashed
+            fake_proc1.poll = poll_crashed  # type: ignore[method-assign]
 
             # Call tool should detect crash, restart, and raise MCPProviderCrashedError
             with pytest.raises(MCPProviderCrashedError, match="crashed and was restarted"):
@@ -307,7 +300,8 @@ class TestMCPStdioManager:
         This tests the scenario where the provider crashes DURING _read_response
         (after init and after sending the request), not before the call.
         """
-        # Responses for initialization (proc1 uses id=1, proc2 uses id=3 due to _request_id persistence)
+        # Responses for initialization
+        # (proc1 uses id=1, proc2 uses id=3 due to _request_id persistence)
         init_response_id1 = FakeMCPProcess.INIT_RESPONSE  # id=1 for first process
         init_response_id3 = {
             "jsonrpc": "2.0",
@@ -327,7 +321,6 @@ class TestMCPStdioManager:
         fake_proc2 = FakeMCPProcess(responses=[])  # Will override read
 
         procs = [fake_proc1, fake_proc2]
-        proc_idx = [0]
 
         # State for tracking tool call start (only affects proc1)
         proc1_state = {"tool_call_started": False}
@@ -363,7 +356,7 @@ class TestMCPStdioManager:
                 return 1  # Crashed
             return None
 
-        fake_proc1.poll = poll_func_proc1
+        fake_proc1.poll = poll_func_proc1  # type: ignore[method-assign]
 
         # Set up proc2 with correct init response (id=3)
         proc2_buffer = [b""]
@@ -903,7 +896,7 @@ class TestSchemas:
 
     def test_error_envelope_structure(self) -> None:
         """Test ErrorEnvelope has correct structure."""
-        from app.contracts.schemas import ErrorDetail  # type: ignore[import-not-found]
+        from app.contracts.schemas import ErrorDetail
 
         envelope = ErrorEnvelope(
             error=ErrorDetail(

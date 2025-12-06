@@ -13,8 +13,10 @@ sections:
     items:
       - id: system-description-1
         text: |
-          This project implements an automated AI workflow system using a 5-role skeleton across four domains: Product, UX,
-          UI, and Technical. The architecture separates concerns between workflow orchestration and external event handling
+          This project implements an automated AI workflow system using a 5-role skeleton across four domains: Product,
+          UX,
+          UI, and Technical. The architecture separates concerns between workflow orchestration and external event
+          handling
           through two core services.
   - id: core-components
     index: 2

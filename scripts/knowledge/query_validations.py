@@ -32,6 +32,7 @@ import logging
 import sys
 from io import StringIO
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -254,7 +255,7 @@ def _format_csv(validations: list[ValidationResult]) -> str:
     return buffer.getvalue()
 
 
-def _compute_stats(validations: list[ValidationResult]) -> dict:
+def _compute_stats(validations: list[ValidationResult]) -> dict[str, Any]:
     """Compute aggregate statistics from validations.
 
     Args:
@@ -263,7 +264,7 @@ def _compute_stats(validations: list[ValidationResult]) -> dict:
     Returns:
         Dictionary of statistics.
     """
-    stats: dict = {
+    stats: dict[str, Any] = {
         "total": len(validations),
         "passed": 0,
         "failed": 0,
@@ -334,7 +335,7 @@ def _compute_stats(validations: list[ValidationResult]) -> dict:
     return stats
 
 
-def _format_stats(stats: dict) -> str:
+def _format_stats(stats: dict[str, Any]) -> str:
     """Format statistics for display.
 
     Args:

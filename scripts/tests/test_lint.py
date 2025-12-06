@@ -723,10 +723,11 @@ class TestRunMarkdownRestriction:
         from scripts.dev import lint_markdown_restriction
 
         with Patcher(modules_to_reload=[lint_markdown_restriction]) as patcher:
-            patcher.fs.create_dir("/fake/repo")
-            patcher.fs.create_file("/fake/repo/README.md", contents="# README")
-            patcher.fs.create_file("/fake/repo/AGENTS.md", contents="# AGENTS")
-            patcher.fs.create_file(
+            fs = patcher.fs
+            fs.create_dir("/fake/repo")
+            fs.create_file("/fake/repo/README.md", contents="# README")
+            fs.create_file("/fake/repo/AGENTS.md", contents="# AGENTS")
+            fs.create_file(
                 "/fake/repo/.lint.markdown-restriction.yaml",
                 contents=(
                     "restricted_dirs:\n  - .\nallowed_files:\n"
@@ -756,11 +757,12 @@ class TestRunMarkdownRestriction:
         from scripts.dev import lint_markdown_restriction
 
         with Patcher(modules_to_reload=[lint_markdown_restriction]) as patcher:
-            patcher.fs.create_dir("/fake/repo")
-            patcher.fs.create_dir("/fake/repo/docs")
-            patcher.fs.create_file("/fake/repo/README.md", contents="# README")
-            patcher.fs.create_file("/fake/repo/docs/guide.md", contents="# Guide")
-            patcher.fs.create_file(
+            fs = patcher.fs
+            fs.create_dir("/fake/repo")
+            fs.create_dir("/fake/repo/docs")
+            fs.create_file("/fake/repo/README.md", contents="# README")
+            fs.create_file("/fake/repo/docs/guide.md", contents="# Guide")
+            fs.create_file(
                 "/fake/repo/.lint.markdown-restriction.yaml",
                 contents=(
                     "restricted_dirs:\n  - .\n  - docs\nallowed_files:\n"
@@ -791,12 +793,13 @@ class TestRunMarkdownRestriction:
         from scripts.dev import lint_markdown_restriction
 
         with Patcher(modules_to_reload=[lint_markdown_restriction]) as patcher:
-            patcher.fs.create_dir("/fake/repo")
-            patcher.fs.create_dir("/fake/repo/docs")
-            patcher.fs.create_dir("/fake/repo/excluded")
-            patcher.fs.create_file("/fake/repo/README.md", contents="# README")
-            patcher.fs.create_file("/fake/repo/excluded/guide.md", contents="# Guide")
-            patcher.fs.create_file(
+            fs = patcher.fs
+            fs.create_dir("/fake/repo")
+            fs.create_dir("/fake/repo/docs")
+            fs.create_dir("/fake/repo/excluded")
+            fs.create_file("/fake/repo/README.md", contents="# README")
+            fs.create_file("/fake/repo/excluded/guide.md", contents="# Guide")
+            fs.create_file(
                 "/fake/repo/.lint.markdown-restriction.yaml",
                 contents=(
                     "restricted_dirs:\n  - .\n  - excluded\nallowed_files:\n"

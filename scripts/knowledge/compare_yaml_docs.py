@@ -205,7 +205,7 @@ class FieldFact:
 METADATA_KEYS = frozenset({"doc_id", "id", "version_hint", "kind", "index", "category", "domain"})
 
 
-def _determine_value_kind(value: Any) -> ValueKind:  # noqa: ANN401
+def _determine_value_kind(value: Any) -> ValueKind:
     """Determine the value_kind for a given value.
 
     Classifies values into one of the ValueKind enum values based on their type.
@@ -396,7 +396,7 @@ def _check_sibling_constraints(
 
 
 def _check_content_sniff(
-    value: Any,  # noqa: ANN401
+    value: Any,
     content_sniff: dict[str, Any],
 ) -> bool:
     """Check if value content matches sniffing rules.
@@ -451,7 +451,7 @@ def _is_artifact_root(
     value_kind: ValueKind,
     field_path: str,
     parent_data: dict[str, Any] | None = None,
-    value: Any = None,  # noqa: ANN401
+    value: Any = None,
     registry_cache: list[dict[str, Any]] | None = None,
 ) -> ArtifactMatch | None:
     """Determine if a field is an artifact root using the Artifact Kind Registry.
@@ -807,7 +807,7 @@ def _assign_role(
     value_kind: ValueKind,
     field_path: str,
     parent_data: dict[str, Any] | None = None,
-    value: Any = None,  # noqa: ANN401
+    value: Any = None,
     registry_cache: list[dict[str, Any]] | None = None,
 ) -> RoleAssignment:
     """Assign a semantic role to a field based on deterministic rules.
@@ -941,12 +941,12 @@ def _iter_field_facts(
     """
     facts: list[FieldFact] = []
 
-    def _is_scalar(value: Any) -> bool:  # noqa: ANN401
+    def _is_scalar(value: Any) -> bool:
         """Check if value is a scalar (not dict or list)."""
         return isinstance(value, (str, int, float, bool)) or value is None
 
     def _walk(
-        node: Any,  # noqa: ANN401
+        node: Any,
         path: str,
         container_dict: dict[str, Any] | None = None,
     ) -> None:
@@ -1264,7 +1264,7 @@ def _index_elements(
 
 
 def extract_field_facts(
-    data: Any,  # noqa: ANN401
+    data: Any,
     source_file: str = "",
 ) -> dict[str, list[FieldFact]]:
     """Extract FieldFacts from parsed YAML data.
@@ -1309,7 +1309,7 @@ def extract_field_facts(
     return result
 
 
-def _is_element(obj: Any) -> bool:  # noqa: ANN401
+def _is_element(obj: Any) -> bool:
     """Check if a value is an element (dict with string id field).
 
     Args:
@@ -1322,12 +1322,12 @@ def _is_element(obj: Any) -> bool:  # noqa: ANN401
 
 
 def _slice_element(
-    data: Any,  # noqa: ANN401
+    data: Any,
     parent_id: str,
     field_path_prefix: str,
     source_file: str,
     containment_edges: list[ContainmentEdge],
-) -> Any:  # noqa: ANN401
+) -> Any:
     """Recursively slice an element, replacing nested ID-bearing dicts with refs.
 
     Traverses the data structure and replaces any nested dict that has its own
@@ -1451,7 +1451,7 @@ class CompareResult(TypedDict):
 
 
 def _validate_yaml_result(
-    result: Any,  # noqa: ANN401
+    result: Any,
     file_path: Path,
 ) -> YamlStructure:
     """Validate that the parsed YAML result is a dict or list.
@@ -1564,7 +1564,7 @@ def extract_ids_and_objects(
     return result, all_edges
 
 
-def _format_value_for_text(value: Any) -> str:  # noqa: ANN401
+def _format_value_for_text(value: Any) -> str:
     """Format a value for text projection output.
 
     Args:

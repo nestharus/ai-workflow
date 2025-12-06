@@ -86,7 +86,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def _validate_yaml_result(
-    result: Any,  # noqa: ANN401
+    result: Any,
     file_path: Path,
 ) -> dict[str, Any] | list[Any]:
     """Validate that the parsed YAML result is a dict or list.
@@ -141,7 +141,7 @@ def parse_yaml_file(file_path: Path) -> dict[str, Any] | list[Any]:
 
 
 def _search_structure(
-    data: Any,  # noqa: ANN401
+    data: Any,
     search_id: str,
     exact: bool,
     file_path: Path,

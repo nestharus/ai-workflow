@@ -370,7 +370,7 @@ class TestPersistPass:
         )
 
         persist_pass(
-            pass_id="pass_001",  # noqa: S106 - test data, not a password
+            pass_id="pass_001",
             artifact_id="artifact_123",
             entity_id="entity_1",
             entity_mention="create_app",
@@ -694,7 +694,7 @@ class TestPersistPassAndAuditWrites:
         )
 
         persist_pass(
-            pass_id="pass_001",  # noqa: S106 - test data, not a password
+            pass_id="pass_001",
             artifact_id="artifact_123",
             entity_id="entity_1",
             entity_mention="test",

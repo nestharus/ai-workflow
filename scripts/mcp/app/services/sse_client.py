@@ -73,7 +73,7 @@ class MCPSSEClient:
         try:
             # Some SSE servers require establishing a session first
             # For Linear, the SSE endpoint handles both connection and messages
-            init_result = self._send_request(
+            _init_result = self._send_request(
                 method="initialize",
                 params={
                     "protocolVersion": "2024-11-05",
@@ -178,7 +178,13 @@ class MCPSSEClient:
             if "result" not in result:
                 raise MCPSSEError("Invalid MCP response: missing 'result'")
 
-            return result["result"]
+            response_result = result["result"]
+            if not isinstance(response_result, dict):
+                result_type = type(response_result).__name__
+                raise MCPSSEError(
+                    f"Invalid MCP response: expected result object, got {result_type}"
+                )
+            return response_result
 
         except httpx.HTTPError as e:
             raise MCPSSEError(f"HTTP error: {e}") from e

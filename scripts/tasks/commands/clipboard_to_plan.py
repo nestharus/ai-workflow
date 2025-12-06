@@ -42,14 +42,14 @@ def decode_output(data: bytes) -> str:
 
 def get_clipboard_macos() -> str:
     """Get clipboard content on macOS using pbpaste."""
-    result = subprocess.run(["pbpaste"], capture_output=True, check=True)  # noqa: S607 - trusted system executable
+    result = subprocess.run(["pbpaste"], capture_output=True, check=True)
     return decode_output(result.stdout)
 
 
 def get_clipboard_windows() -> str:
     """Get clipboard content on native Windows using PowerShell."""
     result = subprocess.run(
-        ["powershell", "-command", "Get-Clipboard"],  # noqa: S607 - trusted system executable
+        ["powershell", "-command", "Get-Clipboard"],
         capture_output=True,
         check=True,
     )
@@ -59,7 +59,7 @@ def get_clipboard_windows() -> str:
 def get_clipboard_wsl() -> str:
     """Get clipboard content in WSL using PowerShell.exe."""
     result = subprocess.run(
-        ["powershell.exe", "-command", "Get-Clipboard"],  # noqa: S607 - trusted system executable
+        ["powershell.exe", "-command", "Get-Clipboard"],
         capture_output=True,
         check=True,
     )
@@ -70,7 +70,7 @@ def get_clipboard_linux() -> str:
     """Get clipboard content on Linux using xclip or xsel."""
     if shutil.which("xclip"):
         result = subprocess.run(
-            ["xclip", "-selection", "clipboard", "-o"],  # noqa: S607 - trusted system executable
+            ["xclip", "-selection", "clipboard", "-o"],
             capture_output=True,
             check=True,
         )
@@ -78,7 +78,7 @@ def get_clipboard_linux() -> str:
 
     if shutil.which("xsel"):
         result = subprocess.run(
-            ["xsel", "--clipboard", "--output"],  # noqa: S607 - trusted system executable
+            ["xsel", "--clipboard", "--output"],
             capture_output=True,
             check=True,
         )

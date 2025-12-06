@@ -155,8 +155,10 @@ System prompt"""
             _load_agent_from_path(agent_file)
 
 
-def _load_agent_from_path(agent_path: Path) -> tuple[dict, str]:
+def _load_agent_from_path(agent_path: Path) -> tuple[dict[str, str], str]:
     """Helper to load agent directly from a path for testing."""
+    from typing import Any
+
     import yaml
 
     content = agent_path.read_text(encoding="utf-8")
@@ -165,7 +167,7 @@ def _load_agent_from_path(agent_path: Path) -> tuple[dict, str]:
         raise ValueError("Invalid frontmatter in agent file")
 
     try:
-        frontmatter = yaml.safe_load(parts[1])
+        frontmatter: Any = yaml.safe_load(parts[1])
     except Exception as exc:
         raise ValueError("Invalid YAML frontmatter") from exc
 
@@ -187,9 +189,8 @@ class TestBuildCommand:
         """Should build command with required options."""
         frontmatter = {"tools": "Read, Write", "model": "haiku"}
         system_prompt = "You are a test agent."
-        prompt = "Do something"
 
-        command = build_command(frontmatter, system_prompt, prompt)
+        command = build_command(frontmatter, system_prompt)
 
         assert command[0] == "claude"
         assert "-p" in command
@@ -200,8 +201,6 @@ class TestBuildCommand:
         assert "--allowedTools" in command
         assert "Read" in command
         assert "Write" in command
-        assert "--prompt" in command
-        assert prompt in command
 
     def test_includes_disallowed_tools(self) -> None:
         """Should include disallowedTools when present in frontmatter."""
@@ -211,9 +210,8 @@ class TestBuildCommand:
             "disallowedTools": "Bash, Write",
         }
         system_prompt = "System"
-        prompt = "Test"
 
-        command = build_command(frontmatter, system_prompt, prompt)
+        command = build_command(frontmatter, system_prompt)
 
         assert "--disallowedTools" in command
         assert "Bash" in command
@@ -223,7 +221,7 @@ class TestBuildCommand:
         """Should handle empty tools field."""
         frontmatter = {"tools": "", "model": "haiku"}
 
-        command = build_command(frontmatter, "System", "Test")
+        command = build_command(frontmatter, "System")
 
         assert "--allowedTools" in command
 
@@ -231,7 +229,7 @@ class TestBuildCommand:
         """Should not include disallowedTools flag when not in frontmatter."""
         frontmatter = {"tools": "Read", "model": "haiku"}
 
-        command = build_command(frontmatter, "System", "Test")
+        command = build_command(frontmatter, "System")
 
         assert "--disallowedTools" not in command
 
@@ -247,9 +245,10 @@ class TestRunCommand:
         mock_result.stderr = ""
 
         with patch("subprocess.run", return_value=mock_result):
-            result = run_command(["claude", "-p"])
+            exit_code, output = run_command(["claude", "-p"])
 
-        assert result == 0
+        assert exit_code == 0
+        assert output == "Success output"
         captured = capsys.readouterr()
         assert "Success output" in captured.out
 
@@ -261,9 +260,10 @@ class TestRunCommand:
         mock_result.stderr = "Error message"
 
         with patch("subprocess.run", return_value=mock_result):
-            result = run_command(["claude", "-p"])
+            exit_code, output = run_command(["claude", "-p"])
 
-        assert result == 1
+        assert exit_code == 1
+        assert output == ""
         captured = capsys.readouterr()
         assert "Error message" in captured.err
 
@@ -275,9 +275,10 @@ class TestRunCommand:
         mock_result.stderr = ""
 
         with patch("subprocess.run", return_value=mock_result):
-            result = run_command(["claude", "-p"])
+            exit_code, output = run_command(["claude", "-p"])
 
-        assert result == 0
+        assert exit_code == 0
+        assert output == ""
 
 
 class TestMain:

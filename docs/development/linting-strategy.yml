@@ -1,0 +1,211 @@
+doc_id: linting-strategy
+title: Linting Strategy - Strict Production Typing
+version_hint: 2024-2025
+kind: guideline
+scope: |
+  All Python code in app/, scripts/, tests/, and scripts/tests/ directories.
+  Defines the linting and type checking strategy for production vs test code.
+description: |
+  This project enforces strict linting with minimal, explicitly-documented exceptions.
+  Mypy uses `strict = True` with zero `# type: ignore` comments or suppressions in
+  production code. Ruff applies minimal per-file ignores only where technically required
+  for runtime type introspection. Tests are excluded from mypy entirely.
+domain:
+  - python
+  - linting
+  - mypy
+  - ruff
+
+sections:
+  - id: mypy-strategy
+    index: 1
+    title: Mypy Type Checking Strategy
+    category: standard
+    summary: How mypy is configured for production and test code.
+    items:
+      - id: mypy-production-rules
+        title: Production Code
+        text: |
+          Production code in `app/` and `scripts/` (non-test) directories uses
+          `strict = True` with zero suppressions or ignore comments.
+        rules:
+          - All functions must have complete type annotations
+          - No `# type: ignore` comments allowed
+          - No per-file or per-module suppressions in mypy.ini
+          - External libraries with missing stubs use ignore_missing_imports per-module
+
+      - id: mypy-test-exclusion
+        title: Test Code Exclusion
+        text: |
+          Test directories are completely excluded from mypy via the exclude regex
+          in mypy.ini. This provides maximum flexibility for test patterns.
+        excluded_paths:
+          - tests/
+          - scripts/tests/
+        rationale:
+          - Tests prioritize flexibility for fixtures, mocks, and dynamic patterns
+          - Type errors in tests are caught by pytest at runtime
+          - Matches industry practice (FastAPI, Pydantic repos exclude tests)
+          - Eliminates need for 11+ suppressed error codes in test sections
+        important: |
+          Only tests under `tests/` and `scripts/tests/` are excluded from mypy.
+          Any test-like code outside these directories is treated as production code
+          and must pass strict type checking. All pytest test modules must live under
+          `tests/` or `scripts/tests/` to align with this exclusion policy.
+
+  - id: ruff-strategy
+    index: 2
+    title: Ruff Linting Strategy
+    category: standard
+    summary: How ruff is configured for production and test code.
+    items:
+      - id: ruff-unified-rules
+        title: Unified Rules with Per-File Ignores
+        text: |
+          Ruff applies the same base rules across all code, with minimal, explicitly-
+          documented per-file ignores for production paths that require runtime type
+          introspection, and broader ignores for test directories.
+
+      - id: ruff-production-ignores
+        title: Production Per-File Ignores
+        text: |
+          Production code uses minimal per-file ignores only where technically required.
+          These are sanctioned exceptions for runtime type introspection patterns.
+        ignores:
+          - path: "**/__init__.py"
+            codes: ["D104"]
+            reason: Skip missing docstrings in __init__.py files
+          - path: "app/contracts/**/*.py"
+            codes: ["TCH003"]
+            reason: Contracts require types at runtime for Pydantic validation
+          - path: "app/schemas/**/*.py"
+            codes: ["TCH003"]
+            reason: Schemas require types at runtime for Pydantic validation
+          - path: "app/api/**/*.py"
+            codes: ["TC001"]
+            reason: API routes need typing imports outside TYPE_CHECKING for FastAPI
+          - path: "scripts/**/*.py"
+            codes:
+              - TRY003
+              - TRY300
+              - TRY301
+              - TCH003
+              - TC002
+              - TC001
+              - S101
+              - S104
+              - S310
+              - S603
+              - S607
+              - S608
+              - S314
+            reason: |
+              Scripts have relaxed rules for CLI tools:
+              - S101/S104/S310: Allow assert, bind-all, and URL audits
+              - S603/S607: Subprocess calls to trusted executables (git, uv, pbpaste)
+              - S608: SQL string formatting for DuckDB queries
+              - S314: XML parsing for junit reports
+              - TRY003/TRY300/TRY301: Exception handling patterns
+              - TCH003/TC002/TC001: Runtime type imports for CLI tools
+          - path: "scripts/knowledge/**/*.py, scripts/mcp/**/*.py, scripts/tasks/**/*.py"
+            codes: ["ANN401"]
+            reason: Allow Any type annotations in generic helper functions
+          - path: "scripts/dev/test_runner/test_coverage.py"
+            codes: ["E402"]
+            reason: Allow late imports after dataclass definitions to avoid circular imports
+          - path: "scripts/dev/huggingface_agent_runner.py"
+            codes: ["F401"]
+            reason: Allow unused torch import (required side effect before transformers)
+
+      - id: ruff-test-ignores
+        title: Test Per-File Ignores
+        text: |
+          Test directories have broader ignores to allow common test patterns.
+        paths:
+          - tests/**/*.py
+          - scripts/tests/**/*.py
+        codes:
+          - S101: Allow assert statements
+          - S104: Allow binding to all interfaces (0.0.0.0 in tests)
+          - S105: Allow hardcoded passwords in test fixtures
+          - S106: Allow hardcoded passwords in function arguments
+          - S108: Allow insecure temp file usage in tests
+          - S603: Allow subprocess without shell=True
+          - S608: Allow SQL with string formatting (test queries)
+          - D: Skip docstring requirements
+          - TCH003, TC001, TC002: Allow runtime type imports
+          - TRY003: Allow inline exception messages
+          - ANN401: Allow Any type annotations
+          - E402: Allow late imports (scripts/tests only, after sys.path manipulation)
+
+  - id: enforcement
+    index: 3
+    title: Enforcement
+    category: workflow
+    summary: How linting rules are enforced.
+    items:
+      - id: enforcement-commands
+        title: Validation Commands
+        commands:
+          - command: uv run lint
+            description: Run full lint suite (fails on any prod errors)
+          - command: uv run lint mypy
+            description: Run only mypy type checking
+          - command: uv run lint ruff
+            description: Run only ruff linting and formatting
+
+      - id: enforcement-ci
+        title: CI Enforcement
+        text: |
+          The `uv run lint` command is run in CI pipelines. Any type error or
+          lint violation in production code fails the build. Test flexibility
+          does not compromise production code quality.
+
+      - id: enforcement-periodic-validation
+        title: Periodic Config Validation
+        text: |
+          To maintain the zero-ignore policy, periodic reviews should confirm:
+        checks:
+          - No `# type: ignore` comments in production code (app/, scripts/ non-test)
+          - No new mypy suppressions added to mypy.ini beyond ignore_missing_imports
+          - Per-file ignores in pyproject.toml remain minimal and documented
+        validation_command: |
+          # Check for type: ignore in production code
+          grep -r "# type: ignore" app/ scripts/ --include="*.py" \
+            --exclude-dir=tests --exclude-dir=scripts/tests || echo "No ignores found"
+
+      - id: enforcement-helper-scripts
+        title: Helper Scripts
+        text: |
+          The `fix_mypy.py` script fixes common type-arg errors by adding proper
+          type parameters (e.g., `dict[str, Any]`), NOT by adding `# type: ignore`
+          comments. This aligns with the zero-ignore policy by fixing underlying
+          issues rather than suppressing them.
+
+  - id: rationale
+    index: 4
+    title: Design Rationale
+    category: explanation
+    summary: Why tests are excluded from mypy.
+    items:
+      - id: rationale-test-flexibility
+        title: Test Flexibility
+        text: |
+          Tests often use patterns that conflict with strict typing. Pytest fixtures
+          with dynamic types, mock objects, parameterized tests, and test utilities
+          frequently require type annotations that would be overly complex or
+          impossible to express correctly.
+
+      - id: rationale-production-strictness
+        title: Production Strictness
+        text: |
+          Production code benefits most from strict type checking because it runs in
+          production environments where type errors have real consequences. Tests
+          catch their own type errors at runtime via pytest.
+
+      - id: rationale-industry-practice
+        title: Industry Practice
+        text: |
+          Major Python projects including FastAPI, Pydantic, and similar frameworks
+          exclude test directories from strict mypy checking. This is a well-established
+          pattern that balances type safety with test maintainability.

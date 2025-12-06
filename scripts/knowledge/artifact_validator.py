@@ -165,14 +165,14 @@ def _validate_normalized_text(
             load_qwen_embedding_model,
         )
 
-        model, tokenizer = load_qwen_embedding_model()
+        model, tokenizer = load_qwen_embedding_model("Qwen/Qwen3-Embedding-0.6B")
 
         # Embed source and rendered texts
         embeddings = embed_keywords([source_normalized, rendered_normalized], model, tokenizer)
 
         # Compute cosine similarity (single value for 2 texts)
-        similarity_matrix = compute_cosine_similarity(embeddings[:1], embeddings[1:])
-        similarity = float(similarity_matrix[0, 0])
+        similarity_matrix = compute_cosine_similarity(embeddings)
+        similarity = float(similarity_matrix[0, 1])
 
         passed = similarity >= similarity_threshold
 
@@ -191,16 +191,14 @@ def _validate_normalized_text(
             passed,
         )
 
+        return similarity, passed, mismatch_summary
+
     except ImportError as e:
         _logger.warning(
             "Qwen embeddings not available, falling back to character comparison: %s", e
         )
-        similarity, passed, mismatch_summary = None, None, None
     except Exception as e:
         _logger.warning("Embedding computation failed, falling back to character comparison: %s", e)
-        similarity, passed, mismatch_summary = None, None, None
-    else:
-        return similarity, passed, mismatch_summary
 
     # Fallback to character-level similarity
     source_chars = set(source_normalized)
@@ -338,7 +336,7 @@ def _validate_structure_and_leaf_text(
             differences.append(f"{path}: type mismatch ({type(s).__name__} vs {type(r).__name__})")
             return differences
 
-        if isinstance(s, dict):
+        if isinstance(s, dict) and isinstance(r, dict):
             s_keys = set(s.keys())
             r_keys = set(r.keys())
             missing = s_keys - r_keys
@@ -353,7 +351,7 @@ def _validate_structure_and_leaf_text(
                 key_path = f"{path}.{key}" if path else key
                 differences.extend(compare_structure(s[key], r[key], key_path))
 
-        elif isinstance(s, list):
+        elif isinstance(s, list) and isinstance(r, list):
             if len(s) != len(r):
                 differences.append(f"{path}: length mismatch ({len(s)} vs {len(r)})")
             else:

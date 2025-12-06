@@ -221,7 +221,7 @@ def create_artifact_manifest(artifact: Artifact, output_dir: Path) -> Path:
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         yaml_content = yaml.safe_dump(
-            dict(manifest),  # type: ignore[arg-type]
+            dict(manifest),
             default_flow_style=False,
             sort_keys=False,
             allow_unicode=True,
@@ -295,7 +295,7 @@ def load_artifact_manifest(artifact_id: str, artifacts_dir: Path) -> ArtifactMan
     if "rendered" not in data:
         data["rendered"] = _create_empty_rendered()
 
-    return ArtifactManifest(**data)  # type: ignore[typeddict-item]
+    return ArtifactManifest(**data)  # type: ignore[typeddict-item, no-any-return]
 
 
 def update_artifact_manifest(
@@ -573,7 +573,7 @@ def execute_artifact_lifecycle(
     try:
         from scripts.knowledge.artifact_fact_extractor import extract_artifact_facts
 
-        extract_artifact_facts(manifest, knowledge_path)
+        extract_artifact_facts(artifact_id, knowledge_path)
         _logger.info("Extracted semantic facts for artifact: %s", artifact_id)
     except ImportError:
         _logger.debug("artifact_fact_extractor not available, skipping fact extraction")

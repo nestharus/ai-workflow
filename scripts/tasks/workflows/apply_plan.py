@@ -91,7 +91,7 @@ def _update_status(
     status_path: Path,
     status_data: dict[str, Any],
     task_file: str,
-    **updates: Any,  # noqa: ANN401
+    **updates: Any,
 ) -> None:
     for task in status_data.get("tasks", []):
         if task.get("task_file") == task_file:
@@ -122,7 +122,7 @@ def _run_opencode_agent(agent: str, prompt: str) -> subprocess.CompletedProcess[
 
 def _create_changes_files(task_dir: Path) -> list[str]:
     names_result = subprocess.run(
-        ["git", "diff", "--name-only"],  # noqa: S607 - trusted executable
+        ["git", "diff", "--name-only"],
         capture_output=True,
         text=True,
         cwd=PROJECT_ROOT,
@@ -132,7 +132,7 @@ def _create_changes_files(task_dir: Path) -> list[str]:
     changes_files: list[str] = []
     for name in [n for n in names_result.stdout.splitlines() if n.strip()]:
         diff_result = subprocess.run(
-            ["git", "diff", "--", name],  # noqa: S607 - trusted executable
+            ["git", "diff", "--", name],
             capture_output=True,
             text=True,
             cwd=PROJECT_ROOT,

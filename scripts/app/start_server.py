@@ -66,7 +66,7 @@ class HealthUrlSchemeError(ValueError):
 def _format_health_probe_host(host: str) -> str:
     """Return a host suitable for health-check URLs, normalizing wildcards."""
     hostname = host.strip() or "localhost"
-    if hostname == "0.0.0.0":  # noqa: S104
+    if hostname == "0.0.0.0":
         hostname = "127.0.0.1"
     elif hostname in {"::", "[::]"}:
         hostname = "::1"
@@ -170,7 +170,7 @@ def _request_health_payload(url: str) -> dict[str, Any]:
     if not url.startswith(("http://", "https://")):
         raise HealthUrlSchemeError()
 
-    with urllib.request.urlopen(url, timeout=3) as response:  # noqa: S310
+    with urllib.request.urlopen(url, timeout=3) as response:
         if response.status != 200:
             raise HealthCheckStatusError(response.status)
         payload = json.loads(response.read().decode("utf-8"))

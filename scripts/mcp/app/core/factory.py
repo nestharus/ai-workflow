@@ -7,17 +7,18 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from app.api.routes import create_router
-from app.core.config import (
+from fastapi import FastAPI
+
+from ..api.routes import create_router
+from ..services.manager import MCPClient, MCPError, MCPStdioManager
+from ..services.sse_client import MCPSSEClient, MCPSSEError
+from .config import (
     ConfigError,
     MCPConfig,
     SSEServerConfig,
     StdioServerConfig,
     load_config,
 )
-from app.services.manager import MCPClient, MCPError, MCPStdioManager
-from app.services.sse_client import MCPSSEClient, MCPSSEError
-from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +96,8 @@ def create_app() -> FastAPI:
                     client = _create_client(name, server_config)
                     state.clients[name] = client
                     logger.info(f"MCP server '{name}' initialized successfully")
-                except (MCPError, MCPSSEError, ConfigError) as e:
-                    logger.error(f"Failed to initialize server '{name}': {e}")
+                except (MCPError, MCPSSEError, ConfigError):
+                    logger.exception(f"Failed to initialize server '{name}'")
 
             logger.info(f"MCP Bridge started with {len(state.clients)} server(s)")
             yield
@@ -106,8 +107,8 @@ def create_app() -> FastAPI:
                 try:
                     logger.info(f"Shutting down MCP server '{name}'...")
                     client.close()
-                except Exception as e:
-                    logger.error(f"Error closing client '{name}': {e}")
+                except Exception:
+                    logger.exception(f"Error closing client '{name}'")
 
             state.clients.clear()
             state.config = None

@@ -134,7 +134,7 @@ class TestDuckDBClient:
         await client.init()
         try:
             csv_path = client.get_csv_path("test_data.csv")
-            result = await client.query(f"SELECT * FROM read_csv_auto('{csv_path}')")  # noqa: S608 - parameterized path
+            result = await client.query(f"SELECT * FROM read_csv_auto('{csv_path}')")
             assert len(result) == 2
             assert result[0]["id"] == 1
             assert result[0]["name"] == "foo"

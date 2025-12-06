@@ -106,7 +106,9 @@ sections:
       - id: responsibilities.repositories-abstraction
         rule: Repository protocols (typing.Protocol) enable substitution with fakes or mocks for service unit testing.
       - id: responsibilities.contracts
-        rule: 'Contracts/DTOs Layer: Define data structures and validation rules shared across layers using Pydantic models.'
+        rule: |
+          'Contracts/DTOs Layer: Define data structures and validation rules shared across layers using Pydantic
+          models.'
       - id: responsibilities.contracts-validation
         rule: >
           Use strict Pydantic configuration (ConfigDict with extra="forbid") to reject unknown fields and enforce data
@@ -176,7 +178,8 @@ sections:
           testing
           harder.
       - id: anti.logic-in-handlers
-        anti_pattern: Business logic in handlers violates separation of concerns and makes logic harder to reuse and test.
+        anti_pattern: |
+          Business logic in handlers violates separation of concerns and makes logic harder to reuse and test.
       - id: anti.transport-in-services
         anti_pattern: >
           HTTP or transport concerns in services or repositories couples them to specific frameworks and prevents reuse.

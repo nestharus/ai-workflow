@@ -249,8 +249,8 @@ def _assert_non_target_preservation(
     new_text: str,
     spans: list[SpanInput],
     rewrites: list[RewriteResult],
-    qwen_model: Any | None = None,  # noqa: ANN401
-    qwen_tokenizer: Any | None = None,  # noqa: ANN401
+    qwen_model: Any | None = None,
+    qwen_tokenizer: Any | None = None,
     threshold: float = 0.8,
 ) -> None:
     """Assert non-target preservation invariant.
@@ -378,7 +378,7 @@ def load_artifact_text(manifest: dict[str, Any], knowledge_path: Path) -> str:
             raise ArtifactExtractionError(f"Source file not found: {source_path}")
 
         try:
-            content = source_path.read_text(encoding="utf-8")
+            content: str = source_path.read_text(encoding="utf-8")
 
             # If source_element_id is specified, extract that element
             if "source_element_id" in manifest:
@@ -402,7 +402,7 @@ def load_artifact_text(manifest: dict[str, Any], knowledge_path: Path) -> str:
     raise ArtifactExtractionError("Manifest must contain inline_text or source_file")
 
 
-def _find_element_by_id(data: Any, target_id: str) -> dict[str, Any] | None:  # noqa: ANN401
+def _find_element_by_id(data: Any, target_id: str) -> dict[str, Any] | None:
     """Recursively find a YAML element by its 'id' field.
 
     Args:
@@ -754,8 +754,8 @@ def extract_artifact_facts(
                     anchor_facts=[],  # Will be determined by Organizer
                 )
             )
-            # Store chunk_id in span metadata for later reference
-            span["chunk_id"] = chunk_id
+            # Store chunk_id in span metadata for later reference (runtime dict)
+            span["chunk_id"] = chunk_id  # type: ignore[typeddict-unknown-key]
 
         # Sanitization Phase
         print("Sanitization phase...")
@@ -788,13 +788,15 @@ def extract_artifact_facts(
         # Apply rewrites
         for rewrite in rewrites:
             if rewrite["success"]:
-                span = next(
+                matched_span = next(
                     (s for s in span_inputs if s["span_id"] == rewrite["span_id"]),
                     None,
                 )
-                if span:
-                    state_text = apply_rewrite(state_text, span, rewrite["replacement_text"])
-                    facts_this_pass.extend(span.get("target_facts", []))
+                if matched_span is not None:
+                    state_text = apply_rewrite(
+                        state_text, matched_span, rewrite["replacement_text"]
+                    )
+                    facts_this_pass.extend(matched_span.get("target_facts", []))
 
         # Compute new hash
         state_hash = _compute_hash(state_text)

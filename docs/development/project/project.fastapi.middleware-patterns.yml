@@ -32,7 +32,8 @@ sections:
     summary: >
       Explains ASGI middleware semantics, stack behavior, and why middleware is the correct place for cross-cutting
       concerns.
-    asgi_context: FastAPI is built on Starlette and the ASGI specification, so any ASGI-compatible middleware can be used.
+    asgi_context: |
+      FastAPI is built on Starlette and the ASGI specification, so any ASGI-compatible middleware can be used.
     rules:
       - id: mw.role-cross-cutting
         rule: >
@@ -449,7 +450,8 @@ sections:
           confusing
           logging and metrics.
       - id: anti.hardcoded-config
-        anti_pattern: Hardcoding middleware configuration inside the factory or middleware classes instead of using Settings.
+        anti_pattern: |
+          Hardcoding middleware configuration inside the factory or middleware classes instead of using Settings.
       - id: anti.body-modification
         anti_pattern: >
           Modifying request or response bodies in middleware without preserving streaming semantics, content-type, and

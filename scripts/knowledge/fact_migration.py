@@ -57,6 +57,9 @@ from scripts.knowledge.migration_manager import (
     CSV_COLUMNS as MIGRATION_CSV_COLUMNS,
 )
 
+# Re-export fact_extraction for test access via fact_migration.fact_extraction
+__all__ = ["fact_extraction"]
+
 # Extended CSV columns for fact migration tasks
 FACT_MIGRATION_CSV_COLUMNS = [
     *MIGRATION_CSV_COLUMNS,
@@ -123,7 +126,7 @@ def read_yaml_element_text(yaml_path: Path, element_id: str) -> str | None:
 
 
 def _find_element_by_id(
-    data: Any,  # noqa: ANN401
+    data: Any,
     target_id: str,
 ) -> dict[str, Any] | None:
     """Recursively find a YAML element by its 'id' field.
@@ -403,10 +406,13 @@ def count_stored_facts(facts_dir: Path, fact_ids: list[str]) -> int:
     for fact_file in fact_files:
         try:
             data = parse_yaml_file(fact_file)
+            # Skip non-dict data
+            if not isinstance(data, dict):
+                continue
             facts = data.get("facts", [])
             if isinstance(facts, list):
                 for fact in facts:
-                    if fact.get("fact_id") in fact_ids:
+                    if isinstance(fact, dict) and fact.get("fact_id") in fact_ids:
                         stored_count += 1
         except (ValueError, TypeError, yaml.YAMLError, FileNotFoundError):
             continue
@@ -431,7 +437,7 @@ def count_tracked_movements(csv_path: Path, fact_ids: list[str]) -> int:
     return sum(1 for m in movements if m.get("fact_id") in fact_ids)
 
 
-def _create_args_namespace(**kwargs: Any) -> argparse.Namespace:  # noqa: ANN401
+def _create_args_namespace(**kwargs: Any) -> argparse.Namespace:
     """Create an argparse.Namespace with the specified keyword arguments.
 
     Args:

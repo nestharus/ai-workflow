@@ -534,7 +534,8 @@ sections:
     category: standard
     items:
   - id: related-documentation-1-api-patterns
-    text: '[API Testing Patterns](api-testing-patterns.md) - Fixture composition, dependency overrides, assertion patterns'
+    text: |
+      '[API Testing Patterns](api-testing-patterns.md) - Fixture composition, dependency overrides, assertion patterns'
   - id: related-documentation-1-workflow
     text: '[Testing Workflow](testing-workflow.md) - Test execution commands and tier descriptions'
   - id: related-documentation-1-use-cases

@@ -272,7 +272,7 @@ def _invoke_huggingface_agent(
 
     try:
         result = subprocess.run(
-            [  # noqa: S607 - trusted executable from project tooling
+            [
                 "uv",
                 "run",
                 "agent.huggingface",
@@ -363,8 +363,8 @@ def invoke_hunter(
     state_text: str,
     target_entity: str | None = None,
     mode: Literal["entities", "facts"] = "entities",
-    model: Any | None = None,  # noqa: ANN401 - Deprecated, ignored
-    tokenizer: Any | None = None,  # noqa: ANN401 - Deprecated, ignored
+    model: Any | None = None,
+    tokenizer: Any | None = None,
     model_name: str = "mistralai/Ministral-3B-Instruct-2412",  # Deprecated, ignored
     knowledge_path: Path | None = None,
     timeout: int = 120,

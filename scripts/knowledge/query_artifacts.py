@@ -175,9 +175,9 @@ def _format_json(
     Returns:
         Formatted JSON string.
     """
-    output: list[dict] = []
+    output: list[dict[str, Any]] = []
     for m in manifests:
-        item: dict = dict(m)
+        item: dict[str, Any] = dict(m)
         if not show_contributors:
             item.pop("contributors", None)
         if not show_validation and "rendered" in item:
@@ -201,9 +201,9 @@ def _format_yaml(
     Returns:
         Formatted YAML string.
     """
-    output: list[dict] = []
+    output: list[dict[str, Any]] = []
     for m in manifests:
-        item: dict = dict(m)
+        item: dict[str, Any] = dict(m)
         if not show_contributors:
             item.pop("contributors", None)
         if not show_validation and "rendered" in item:
@@ -332,7 +332,7 @@ def _compute_stats(manifests: list[ArtifactManifest]) -> dict[str, Any]:
     return stats
 
 
-def _format_stats(stats: dict) -> str:
+def _format_stats(stats: dict[str, Any]) -> str:
     """Format statistics for display.
 
     Args:

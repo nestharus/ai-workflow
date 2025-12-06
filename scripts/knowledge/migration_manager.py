@@ -397,7 +397,7 @@ def validate_migration(
 
     try:
         result = subprocess.run(
-            [  # noqa: S607
+            [
                 "uv",
                 "run",
                 "compare-yml-docs",

@@ -186,13 +186,66 @@ ignore = []
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "D", "TCH003", "TC001", "TC002", "TRY003", "ANN401"]
-"scripts/tests/**/*.py" = ["S101", "D", "TCH003", "TC001", "TC002", "TRY003", "ANN401"]
+# Tests: Allow test-specific patterns
+"tests/**/*.py" = [
+    "S101",      # Allow assert statements
+    "S104",      # Allow binding to all interfaces (0.0.0.0)
+    "S105",      # Allow hardcoded passwords in test fixtures
+    "S106",      # Allow hardcoded passwords in function args
+    "S108",      # Allow insecure temp file usage
+    "S603",      # Allow subprocess without shell=True
+    "S608",      # Allow SQL with string formatting (test queries)
+    "D",         # Skip docstring requirements
+    "TCH003", "TC001", "TC002",  # Allow runtime type imports
+    "TRY003",    # Allow inline exception messages
+    "ANN401",    # Allow Any type annotations
+]
+"scripts/tests/**/*.py" = [
+    "S101",      # Allow assert statements
+    "S104",      # Allow binding to all interfaces
+    "S105",      # Allow hardcoded passwords in test fixtures
+    "S106",      # Allow hardcoded passwords in function args
+    "S108",      # Allow insecure temp file usage
+    "S603",      # Allow subprocess without shell=True
+    "S608",      # Allow SQL with string formatting
+    "D",         # Skip docstring requirements
+    "TCH003", "TC001", "TC002",  # Allow runtime type imports
+    "TRY003",    # Allow inline exception messages
+    "ANN401",    # Allow Any type annotations
+    "E402",      # Allow late imports (after sys.path manipulation)
+]
+
+# Production: Minimal ignores for technical requirements
 "**/__init__.py" = ["D104"]
 "app/contracts/**/*.py" = ["TCH003"]
 "app/schemas/**/*.py" = ["TCH003"]
 "app/api/**/*.py" = ["TC001"]
-"scripts/**/*.py" = ["TRY003", "TCH003", "TC002", "TC001", "S608", "S603"]
+
+# Scripts: Relaxed rules for CLI tools (base rules for all scripts)
+"scripts/**/*.py" = [
+    "TRY003",    # Allow inline exception messages
+    "TRY300",    # Allow return in try block
+    "TRY301",    # Allow raise in try block
+    "TCH003", "TC002", "TC001",  # Allow runtime type imports
+    "S101",      # Allow assert statements
+    "S104",      # Allow binding to all interfaces
+    "S310",      # Allow URL open audits
+    "S603",      # Allow subprocess without shell=True
+    "S607",      # Allow partial executable paths (git, uv, etc.)
+    "S608",      # Allow SQL with string formatting (DuckDB queries)
+    "S314",      # Allow XML parsing (junit reports)
+]
+
+# Scripts: ANN401 for modules with generic helper functions using Any
+"scripts/knowledge/**/*.py" = ["ANN401"]
+"scripts/mcp/**/*.py" = ["ANN401"]
+"scripts/tasks/**/*.py" = ["ANN401"]
+
+# Scripts: E402 for modules with late imports after sys.path manipulation
+"scripts/dev/test_runner/test_coverage.py" = ["E402"]
+
+# Scripts: F401 for modules with import side effects
+"scripts/dev/huggingface_agent_runner.py" = ["F401"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "scripts/tests"]

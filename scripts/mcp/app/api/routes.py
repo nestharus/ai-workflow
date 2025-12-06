@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
-from app.contracts.schemas import (
+from fastapi import APIRouter, Path, status
+from fastapi.responses import JSONResponse
+
+from ..contracts.schemas import (
     ErrorDetail,
     ErrorEnvelope,
     ErrorType,
@@ -15,16 +19,17 @@ from app.contracts.schemas import (
     ServerInfo,
     ServersResponse,
 )
-from app.services.manager import (
+from ..services.manager import (
     MCPBusyError,
     MCPClient,
     MCPError,
     MCPProviderCrashedError,
     MCPTimeoutError,
 )
-from app.services.sse_client import MCPSSEError
-from fastapi import APIRouter, Path, status
-from fastapi.responses import JSONResponse
+from ..services.sse_client import MCPSSEError
+
+if TYPE_CHECKING:
+    from ..core.config import MCPConfig
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +103,8 @@ def _get_default_client(clients: dict[str, MCPClient]) -> MCPClient | JSONRespon
 
 
 def create_router(
-    get_config: Any,
-    get_clients: Any,
+    get_config: Callable[[], MCPConfig | None],
+    get_clients: Callable[[], dict[str, MCPClient]],
 ) -> APIRouter:
     """Create API router with injected dependencies.
 
@@ -167,7 +172,6 @@ def create_router(
 
         try:
             result = client.list_tools()
-            return result
         except (MCPError, MCPSSEError) as e:
             logger.exception(f"MCP communication error with server '{server}'")
             return _create_error_response(
@@ -175,6 +179,8 @@ def create_router(
                 message=str(e),
                 http_status=status.HTTP_502_BAD_GATEWAY,
             )
+        else:
+            return result
 
     @api_router.get(
         "/mcp/{server}/tools/{tool_name}",
@@ -209,7 +215,7 @@ def create_router(
             tools = result.get("tools", [])
             for tool in tools:
                 if tool.get("name") == tool_name:
-                    return tool
+                    return tool  # type: ignore[no-any-return]
             return _create_error_response(
                 error_type=ErrorType.NOT_FOUND,
                 message=f"Tool '{tool_name}' not found on server '{server}'",
@@ -282,7 +288,7 @@ def create_router(
                 details={"retry_after_ms": e.retry_after_ms},
             )
         except MCPProviderCrashedError as e:
-            logger.error(f"Provider crashed for server '{server}': {e}")
+            logger.exception(f"Provider crashed for server '{server}'")
             return _create_error_response(
                 error_type=ErrorType.PROVIDER_CRASHED,
                 message=str(e),
@@ -363,7 +369,7 @@ def create_router(
                 details={"retry_after_ms": e.retry_after_ms},
             )
         except MCPProviderCrashedError as e:
-            logger.error(f"Provider crashed: {e}")
+            logger.exception("Provider crashed")
             return _create_error_response(
                 error_type=ErrorType.PROVIDER_CRASHED,
                 message=str(e),
@@ -419,7 +425,6 @@ def create_router(
 
         try:
             result = client.list_tools()
-            return result
         except (MCPError, MCPSSEError) as e:
             logger.exception("MCP communication error")
             return _create_error_response(
@@ -427,6 +432,8 @@ def create_router(
                 message=str(e),
                 http_status=status.HTTP_502_BAD_GATEWAY,
             )
+        else:
+            return result
 
     @api_router.get(
         "/health",

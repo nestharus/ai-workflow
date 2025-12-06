@@ -58,7 +58,7 @@ class TestSaveResidueSnapshot:
             "artifact-123",
             "Intermediate state text",
             "intermediate",
-            pass_id="pass-001",  # noqa: S106 - test data, not a password
+            pass_id="pass-001",
             knowledge_path=knowledge_path,
         )
 
@@ -165,14 +165,14 @@ class TestLoadResidueSnapshot:
             "artifact-123",
             "Intermediate state",
             "intermediate",
-            pass_id="pass-002",  # noqa: S106 - test data, not a password
+            pass_id="pass-002",
             knowledge_path=knowledge_path,
         )
 
         result = load_residue_snapshot(
             "artifact-123",
             "intermediate",
-            pass_id="pass-002",  # noqa: S106 - test data, not a password
+            pass_id="pass-002",
             knowledge_path=knowledge_path,
         )
 
@@ -223,7 +223,7 @@ class TestListResidueSnapshots:
             "artifact-123",
             "intermediate",
             "intermediate",
-            pass_id="pass-001",  # noqa: S106 - test data, not a password
+            pass_id="pass-001",
             knowledge_path=knowledge_path,
         )
 
@@ -257,7 +257,7 @@ class TestListResidueSnapshots:
             "artifact-123",
             "b",
             "intermediate",
-            pass_id="pass-001",  # noqa: S106 - test data, not a password
+            pass_id="pass-001",
             knowledge_path=knowledge_path,
         )
 
@@ -310,14 +310,14 @@ class TestDeleteResidueSnapshot:
             "artifact-123",
             "text",
             "intermediate",
-            pass_id="pass-001",  # noqa: S106 - test data, not a password
+            pass_id="pass-001",
             knowledge_path=knowledge_path,
         )
 
         result = delete_residue_snapshot(
             "artifact-123",
             "intermediate",
-            pass_id="pass-001",  # noqa: S106 - test data, not a password
+            pass_id="pass-001",
             knowledge_path=knowledge_path,
         )
 
@@ -337,7 +337,7 @@ class TestClearArtifactSnapshots:
             "artifact-123",
             "intermediate",
             "intermediate",
-            pass_id="pass-001",  # noqa: S106 - test data, not a password
+            pass_id="pass-001",
             knowledge_path=knowledge_path,
         )
 
@@ -412,7 +412,7 @@ class TestGetSnapshotMetadata:
             "artifact-123",
             "intermediate text",
             "intermediate",
-            pass_id="pass-001",  # noqa: S106 - test data, not a password
+            pass_id="pass-001",
             knowledge_path=knowledge_path,
         )
 

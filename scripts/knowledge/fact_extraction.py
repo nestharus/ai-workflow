@@ -69,7 +69,7 @@ import sys
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import duckdb
 
@@ -230,7 +230,7 @@ def append_fact_batch(csv_path: Path, records: list[FactRecord]) -> None:
         insert_sql = f"INSERT INTO facts VALUES ({placeholders})"
         for record in records:
             # Use empty string for missing extended columns
-            values = [record.get(col, "") for col in CSV_COLUMNS]  # type: ignore[literal-required]
+            values = [record.get(col, "") for col in CSV_COLUMNS]
             conn.execute(insert_sql, values)
         conn.execute(f"COPY facts TO '{csv_path}' (HEADER, DELIMITER ',')")
     finally:
@@ -342,7 +342,7 @@ class FactExtractorError(Exception):
     """Error raised when the fact-extractor sub-agent fails."""
 
 
-def invoke_fact_extractor(sentence: str, entity: str) -> dict:
+def invoke_fact_extractor(sentence: str, entity: str) -> dict[str, Any]:
     """Invoke the fact-extractor sub-agent via subprocess.
 
     This function invokes the Claude sub-agent (using haiku model for cost-efficiency)
@@ -364,7 +364,7 @@ def invoke_fact_extractor(sentence: str, entity: str) -> dict:
     prompt = f'Extract facts about entity "{entity}" from sentence: "{sentence}"'
 
     # Invoke the sub-agent using claude CLI with haiku model for cost-efficiency
-    def _invoke_agent() -> subprocess.CompletedProcess:
+    def _invoke_agent() -> subprocess.CompletedProcess[str]:
         """Invoke the fact-extractor agent via Claude CLI."""
         claude_path = shutil.which("claude")
         if not claude_path:
@@ -414,7 +414,7 @@ def invoke_fact_extractor(sentence: str, entity: str) -> dict:
     json_str = stdout[json_start:json_end]
 
     try:
-        parsed = json.loads(json_str)
+        parsed: dict[str, Any] = json.loads(json_str)
     except json.JSONDecodeError as e:
         raise FactExtractorError(f"Invalid JSON in sub-agent output: {e}") from e
 
@@ -432,7 +432,7 @@ def extract_facts_inline(
     entity: str,
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizer,
-) -> dict:
+) -> dict[str, Any]:
     """Extract facts about an entity from a sentence (inline implementation).
 
     This is a best-effort fallback implementation when the sub-agent is not available.
@@ -667,6 +667,8 @@ def extract_facts_main(args: argparse.Namespace) -> int:
     else:
         # Sub-agent succeeded: re-validate results using Qwen embeddings
         print("Re-validating sub-agent results with Qwen embeddings...")
+        # result is guaranteed non-None here because sub-agent succeeded (no exception)
+        assert result is not None
         facts = result.get("facts", [])
         residual = result.get("residual_sentence", "")
         fact_texts = [str(f.get("fact", "")) for f in facts]
@@ -690,7 +692,8 @@ def extract_facts_main(args: argparse.Namespace) -> int:
         }
         result["extraction_complete"] = entity_absent
 
-    # Display results
+    # Display results - result is guaranteed to be set by now
+    assert result is not None
     facts = result.get("facts", [])
     residual = result.get("residual_sentence", "")
     validation = result.get("validation", {})

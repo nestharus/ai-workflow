@@ -59,7 +59,7 @@ def parse_junit_xml(xml_path: Path) -> tuple[list[TestResult], TestSummary]:
         msg = f"JUnit XML file not found: {xml_path}"
         raise FileNotFoundError(msg)
 
-    tree = ET.parse(xml_path)  # noqa: S314
+    tree = ET.parse(xml_path)
     root = tree.getroot()
 
     # Handle both <testsuites> and <testsuite> root elements

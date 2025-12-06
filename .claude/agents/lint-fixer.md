@@ -1,6 +1,6 @@
 ---
 name: lint-fixer
-description: Resolves and fixes lint errors iteratively until all issues are resolved. Use proactively when lint errors are detected.
+description: Resolves and fixes lint errors and warnings iteratively until all issues are resolved. Use proactively when lint errors or warnings are detected.
 tools: Read, Edit, Bash, Grep, Glob, TodoWrite
 model: haiku
 ---
@@ -20,7 +20,6 @@ violations for unfixable linters.
 - `hadolint` - Dockerfile linting
 - `pymarkdown` - Markdown validation
 - `yamllint` - YAML validation
-- `yamldocs` - YAML documentation schema validation (doc_id files)
 - `checkov` - OpenAPI schema security scans
 
 ## Workflow
@@ -41,7 +40,6 @@ Run through ALL linter phases, fixing what you can and collecting what you canno
    uv run lint hadolint          # Fix until clean
    uv run lint pymarkdown        # Fix until clean
    uv run lint yamllint          # Fix until clean
-   uv run lint yamldocs          # Fix until clean
    uv run lint checkov           # Fix until clean
    ```
 
@@ -60,10 +58,54 @@ Examples:
 - **Allowed**: Fixing YAML indentation in `.yamllint.yaml`
 - **NOT allowed**: Adding a directory to `exclude_dirs` in `.lint.*.yaml`
 - **NOT allowed**: Changing `max: 120` to `max: 200` in line-length rules
-- **NOT allowed**: Adding `# noqa` or `# type: ignore` comments to silence warnings
 
 Your job is to fix CODE to comply with lint rules, NOT to change rules or exclude files.
 If you cannot fix a lint error without changing configuration, report it as a remaining issue.
+
+## CRITICAL: No Random Suppressions
+
+**NEVER** add `# noqa`, `# type: ignore`, or similar suppression comments to silence warnings
+unless the suppression is explicitly justified by the project's linting strategy.
+
+### When Suppressions Are FORBIDDEN
+
+Do NOT add suppressions for:
+- Code that can be refactored to comply with the rule
+- Errors that indicate actual bugs or issues
+- Rules that are intentionally enforced for code quality
+- Any rule without a clear, documented justification
+
+### When Suppressions MAY Be Appropriate
+
+The project uses **per-file ignores** in `pyproject.toml` for systematic patterns. Individual
+inline suppressions are only appropriate for:
+
+1. **Production code S608** (SQL injection) - ONLY when the SQL path is validated by
+   `get_csv_path()` which prevents path traversal. Must include explanatory comment:
+   ```python
+   # S608: csv_path validated by get_csv_path() which prevents path traversal
+   sql = f"SELECT * FROM read_csv_auto('{csv_path}')"  # noqa: S608
+   ```
+
+2. **Root-level scripts** (not under `scripts/`) that need subprocess calls:
+   ```python
+   result = subprocess.run(...)  # noqa: S603
+   ```
+
+3. **Genuine edge cases** where the rule doesn't apply and no per-file ignore exists.
+
+### What To Do Instead
+
+1. **Check per-file ignores first** - Read `pyproject.toml` `[tool.ruff.lint.per-file-ignores]`
+   to see if the file path already has the rule ignored.
+2. **Fix the code** - Refactor to comply with the rule rather than suppressing it.
+3. **Report as unfixable** - If you cannot fix without a suppression, report it to the caller
+   with explanation. The caller can decide whether to add a per-file ignore or inline suppression.
+
+### Reference
+
+See `docs/development/linting-strategy.yml` for the full linting strategy and approved
+per-file ignores.
 
 ## Guidelines
 
@@ -72,33 +114,9 @@ If you cannot fix a lint error without changing configuration, report it as a re
 - For Markdown lint violations: Adjust doc text (wrap long lines, align bullet markers) to satisfy rules
 - Allow up to 2 hours for lint command; do not stop it early
 
-## YAML Schema Guidelines
-
-See `docs/development/general/general.yaml.schema-guidelines.yml` for the YAML schema standard.
-
-### Document-level schema (yamldocs linter)
-
-The yamldocs linter validates YAML documentation files (identified by having `doc_id` at root).
-A file is a documentation file if and only if it has a `doc_id` field at root level.
-
-**Document root requirements:**
-- `doc_id` - required, unique identifier for the document
-- `title` - required, human-readable title
-- `sections` - required, list of section objects
-
-**Section requirements:**
-- Root elements of `sections` list MUST have an `id` field
-- Child element IDs are optional (no lint error if missing)
-
-### Fixing yamldocs errors
-
-- **missing_required_field**: Add the missing field (`doc_id`, `title`, or `sections`)
-- **missing_section_id**: Add an `id` field to the section using kebab-case
-- **invalid_type**: Ensure `sections` is a list, not a scalar or dict
-
 ## YAML Formatting Rules
 
-When fixing yamllint errors, you MUST follow these rules:
+When fixing yamllint errors or warnings, you MUST follow these rules:
 
 ### NEVER convert block scalars to quoted strings
 

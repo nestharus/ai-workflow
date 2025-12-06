@@ -198,7 +198,7 @@ def invoke_sub_agent(
 
     try:
         result = subprocess.run(
-            [  # noqa: S607 - trusted executable from project tooling
+            [
                 "claude",
                 "--agent",
                 agent_name,
@@ -241,7 +241,7 @@ def invoke_sub_agent(
     json_str = stdout[json_start:json_end]
 
     try:
-        parsed = json.loads(json_str)
+        parsed: dict[str, Any] = json.loads(json_str)
     except json.JSONDecodeError as e:
         _log_interaction(log_dir, agent_name, prompt_json, stdout, None)
         raise SurgeonError(f"Invalid JSON in {agent_name} output: {e}") from e

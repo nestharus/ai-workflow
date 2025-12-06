@@ -78,7 +78,8 @@ class HttpMCPClient:
 
         try:
             if timeout <= 0:
-                raise ValueError("timeout must be > 0")
+                msg = "timeout must be > 0"
+                raise ValueError(msg)
             max_time_str = str(int(timeout + 1))
         except (TypeError, ValueError, OverflowError) as e:
             raise MCPClientError(f"Invalid timeout: {timeout}") from e

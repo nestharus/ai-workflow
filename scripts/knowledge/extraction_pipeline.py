@@ -103,7 +103,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _create_args_namespace(**kwargs: Any) -> argparse.Namespace:  # noqa: ANN401
+def _create_args_namespace(**kwargs: Any) -> argparse.Namespace:
     """Create an argparse.Namespace with the specified keyword arguments.
 
     Args:

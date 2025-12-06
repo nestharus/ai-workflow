@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 if TYPE_CHECKING:
-    from transformers import PreTrainedModel, PreTrainedTokenizer  # type: ignore[import-not-found]
+    from transformers import PreTrainedModel, PreTrainedTokenizer
 
     from scripts.dev.agent_runner import AgentRunner
 
@@ -109,8 +109,10 @@ def load_model(model_name: str) -> tuple[PreTrainedModel, PreTrainedTokenizer]:
         RuntimeError: If model loading fails.
     """
     try:
-        import torch  # noqa: F401 - torch must be imported before transformers
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import (
+            AutoModelForCausalLM,
+            AutoTokenizer,
+        )
 
         logger.info("Loading model: %s", model_name)
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)

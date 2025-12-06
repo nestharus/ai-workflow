@@ -51,7 +51,7 @@ class StdioServerConfig:
 
     def get_full_command(self) -> str:
         """Get the full command string for spawning the process."""
-        parts = [self.command] + self.args
+        parts = [self.command, *self.args]
         return " ".join(parts)
 
 
@@ -170,7 +170,9 @@ def _parse_server_config(name: str, config: dict[str, Any]) -> ServerConfig:
         if not command:
             raise ConfigError(f"Server '{name}' missing required 'command' field")
         if not isinstance(command, str):
-            raise ConfigError(f"Server '{name}': 'command' must be a string, got {type(command).__name__}")
+            raise ConfigError(
+                f"Server '{name}': 'command' must be a string, got {type(command).__name__}"
+            )
 
         args = config.get("args", [])
         if isinstance(args, str):
@@ -288,15 +290,19 @@ def _load_yaml_or_json(path: Path) -> dict[str, Any]:
             content = f.read()
 
         if suffix in (".yml", ".yaml"):
-            return yaml.safe_load(content) or {}
+            loaded = yaml.safe_load(content)
+            return loaded if isinstance(loaded, dict) else {}
         if suffix == ".json":
-            return json.loads(content)
+            loaded = json.loads(content)
+            return loaded if isinstance(loaded, dict) else {}
 
         # Try YAML first, fall back to JSON
         try:
-            return yaml.safe_load(content) or {}
+            loaded = yaml.safe_load(content)
+            return loaded if isinstance(loaded, dict) else {}
         except yaml.YAMLError:
-            return json.loads(content)
+            loaded = json.loads(content)
+            return loaded if isinstance(loaded, dict) else {}
 
     except yaml.YAMLError as e:
         raise ConfigError(f"Invalid YAML in config file: {e}") from e
@@ -368,9 +374,10 @@ def load_config(config_path: str | Path | None = None) -> MCPConfig:
         if not path.exists():
             return MCPConfig()
     else:
-        path = _find_config_file()
-        if path is None:
+        found_path = _find_config_file()
+        if found_path is None:
             return MCPConfig()
+        path = found_path
 
     # Load config
     raw_config = _load_yaml_or_json(path)

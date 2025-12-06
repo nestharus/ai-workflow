@@ -49,6 +49,29 @@ class DuckDBClient:
         """Return the configured CSV data directory path."""
         return self._csv_data_path
 
+    def _validate_csv_filename(self, filename: str) -> None:
+        """Validate that filename is safe and doesn't contain path traversal.
+
+        Args:
+            filename: CSV filename to validate.
+
+        Raises:
+            ValueError: If filename contains path traversal or invalid characters.
+        """
+        if not filename:
+            msg = "CSV filename cannot be empty"
+            raise ValueError(msg)
+
+        # Reject path traversal attempts
+        if ".." in filename or "/" in filename or "\\" in filename:
+            msg = f"Invalid CSV filename (path traversal detected): {filename}"
+            raise ValueError(msg)
+
+        # Ensure .csv extension
+        if not filename.endswith(".csv"):
+            msg = f"CSV filename must end with .csv: {filename}"
+            raise ValueError(msg)
+
     def _ensure_initialized(self) -> None:
         """Raise if the client has not been initialized."""
         if not self._initialized:
@@ -136,10 +159,15 @@ class DuckDBClient:
 
         Args:
             filename: Name of the CSV file (e.g., 'processed_messages.csv').
+                Must be a simple filename without path components.
 
         Returns:
             Full path to the CSV file as a string suitable for SQL queries.
+
+        Raises:
+            ValueError: If filename contains path traversal or invalid characters.
         """
+        self._validate_csv_filename(filename)
         return str(self._csv_data_path / filename)
 
 

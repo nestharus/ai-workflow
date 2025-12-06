@@ -342,7 +342,7 @@ def validate_structure_pattern_determinism(
 
 
 def _resolve_element_and_field(
-    data: Any,  # noqa: ANN401
+    data: Any,
     source_file: str,
     element_id: str,
     field_path: str | None,

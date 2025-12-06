@@ -129,7 +129,7 @@ def _gather_contributor_facts(
 
     if inputs.get("use_structural_fieldfacts", True):
         for structural in manifest.get("contributors", {}).get("structural", []):
-            role = structural.get("role", "constraint")
+            role = str(structural.get("role", "constraint"))
             fact = {
                 "type": "structural",
                 "element_id": structural.get("element_id", ""),
@@ -145,7 +145,7 @@ def _gather_contributor_facts(
 
     if inputs.get("use_semantic_facts", True):
         for semantic in manifest.get("contributors", {}).get("semantic", []):
-            role = semantic.get("role", "constraint")
+            role = str(semantic.get("role", "constraint"))
             fact = {
                 "type": "semantic",
                 "element_id": semantic.get("element_id", ""),
@@ -193,7 +193,9 @@ def _normalize_terminology(
             # Import here to avoid circular imports
             from scripts.knowledge.variant_resolver import apply_variant_decisions
 
-            keyword_variant_mapping = apply_variant_decisions(knowledge_path)
+            keywords_csv = knowledge_path / "keywords.csv"
+            variants_csv = knowledge_path / "variant_candidates.csv"
+            keyword_variant_mapping = apply_variant_decisions(keywords_csv, variants_csv)
         except (ImportError, FileNotFoundError, ValueError) as e:
             _logger.debug("Could not load variant mapping, returning facts unchanged: %s", e)
             return facts
@@ -256,7 +258,7 @@ def _order_facts(
     if not ordering_rules:
         return facts
 
-    def sort_key(fact: dict[str, Any]) -> tuple:
+    def sort_key(fact: dict[str, Any]) -> tuple[str, ...]:
         return tuple(str(fact.get(key, "")) for key in ordering_rules)
 
     ordered = sorted(facts, key=sort_key)
@@ -325,7 +327,7 @@ Preserve the semantic content of all facts accurately.
 """
 
     # Try Claude CLI invocation
-    def _invoke_claude() -> subprocess.CompletedProcess:
+    def _invoke_claude() -> subprocess.CompletedProcess[str]:
         """Invoke Claude CLI."""
         claude_path = shutil.which("claude")
         if not claude_path:
@@ -342,7 +344,7 @@ Preserve the semantic content of all facts accurately.
         result = _invoke_claude()
 
         if result.returncode == 0 and result.stdout.strip():
-            rendered_text = result.stdout.strip()
+            rendered_text: str = result.stdout.strip()
             _logger.info(
                 "Successfully rendered artifact via Claude CLI: %d chars",
                 len(rendered_text),
@@ -523,14 +525,18 @@ def _self_check(
             load_qwen_embedding_model,
         )
 
-        model, tokenizer = load_qwen_embedding_model()
+        model, tokenizer = load_qwen_embedding_model("Qwen/Qwen3-Embedding-0.6B")
 
-        # Embed statements and facts
-        statement_embeddings = embed_keywords(statements, model, tokenizer)
-        fact_embeddings = embed_keywords(fact_texts, model, tokenizer)
+        # Embed statements and facts together for cross-similarity
+        all_texts = statements + fact_texts
+        all_embeddings = embed_keywords(all_texts, model, tokenizer)
 
-        # Compute similarity matrix
-        similarity_matrix = compute_cosine_similarity(statement_embeddings, fact_embeddings)
+        # Compute full pairwise similarity matrix
+        full_matrix = compute_cosine_similarity(all_embeddings)
+
+        # Extract cross-similarity submatrix (statements x facts)
+        n_statements = len(statements)
+        similarity_matrix = full_matrix[:n_statements, n_statements:]
 
         # Check that each fact has at least one matching statement
         missing_facts = []
@@ -720,11 +726,11 @@ def render_artifact(
     if not steps:
         # Default pipeline if no steps specified
         steps = [
-            {"id": "gather"},
-            {"id": "normalize"},
-            {"id": "order"},
-            {"id": "render"},
-            {"id": "self_check"},
+            {"id": "gather", "instruction": "Gather contributor facts"},
+            {"id": "normalize", "instruction": "Normalize facts to standard form"},
+            {"id": "order", "instruction": "Order facts by determinism rules"},
+            {"id": "render", "instruction": "Render final artifact text"},
+            {"id": "self_check", "instruction": "Validate rendered output"},
         ]
 
     # Execute steps in order

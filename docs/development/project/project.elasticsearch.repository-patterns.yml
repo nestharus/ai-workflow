@@ -99,7 +99,8 @@ sections:
           inside
           repositories.
       - id: conn.wrapper-methods
-        pattern: Use wrapper methods (search, index, bulk, create_index) which handle async-to-thread execution internally.
+        pattern: |
+          Use wrapper methods (search, index, bulk, create_index) which handle async-to-thread execution internally.
       - id: conn.async-execution
         note: >
           The wrapper uses anyio.to_thread.run_sync to execute blocking Elasticsearch client calls without blocking the

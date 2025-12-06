@@ -39,14 +39,14 @@ issues: []
             return_value=mock_result,
         ):
             result = await run_strategy_planner_review_loop(
-                strategy_path="/tmp/strategy.md",  # noqa: S108 - test temp path
-                plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
                 max_iterations=5,
             )
 
         assert result.status == "approved"
         assert result.iterations == 1
-        assert result.final_plan_path == "/tmp/plan.md"  # noqa: S108 - test temp path
+        assert result.final_plan_path == "/tmp/plan.md"
         assert len(result.history) == 1
         assert result.history[0].review_status == "APPROVED"
         assert result.history[0].review_issues == []
@@ -89,8 +89,8 @@ issues: []
             side_effect=[feedback_result, revised_result, approved_result],
         ):
             result = await run_strategy_planner_review_loop(
-                strategy_path="/tmp/strategy.md",  # noqa: S108 - test temp path
-                plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
                 max_iterations=5,
             )
 
@@ -141,8 +141,8 @@ revision_summary: Added tests
             side_effect=[feedback_result, revised_result] * 5,  # 5 iterations
         ):
             result = await run_strategy_planner_review_loop(
-                strategy_path="/tmp/strategy.md",  # noqa: S108 - test temp path
-                plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
                 max_iterations=5,
             )
 
@@ -182,8 +182,8 @@ revision_summary: Made changes
             side_effect=[feedback_result, revised_result] * 2,  # 2 iterations
         ):
             result = await run_strategy_planner_review_loop(
-                strategy_path="/tmp/strategy.md",  # noqa: S108 - test temp path
-                plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
                 max_iterations=2,
             )
 
@@ -208,8 +208,8 @@ reason: Cannot review - strategy document is malformed
             return_value=mock_result,
         ):
             result = await run_strategy_planner_review_loop(
-                strategy_path="/tmp/strategy.md",  # noqa: S108 - test temp path
-                plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
                 max_iterations=5,
             )
 
@@ -245,8 +245,8 @@ reason: Cannot proceed due to conflicting requirements
             side_effect=[feedback_result, blocked_result],
         ):
             result = await run_strategy_planner_review_loop(
-                strategy_path="/tmp/strategy.md",  # noqa: S108 - test temp path
-                plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
                 max_iterations=5,
             )
 
@@ -292,8 +292,8 @@ reason: Unrecoverable error detected
             side_effect=[feedback1, revised1, blocked],
         ):
             result = await run_strategy_planner_review_loop(
-                strategy_path="/tmp/strategy.md",  # noqa: S108 - test temp path
-                plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
                 max_iterations=5,
             )
 
@@ -333,8 +333,8 @@ reason: The feedback conflicts with existing constraints
             side_effect=[feedback_result, unchanged_result],
         ):
             result = await run_strategy_planner_review_loop(
-                strategy_path="/tmp/strategy.md",  # noqa: S108 - test temp path
-                plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
                 max_iterations=5,
             )
 
@@ -392,8 +392,8 @@ reason: The feedback conflicts with design decisions
             side_effect=[feedback1, revised1, feedback2, unchanged],
         ):
             result = await run_strategy_planner_review_loop(
-                strategy_path="/tmp/strategy.md",  # noqa: S108 - test temp path
-                plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
                 max_iterations=5,
             )
 
@@ -448,8 +448,8 @@ issues: []
             side_effect=[feedback_result, revised_result, approved_result],
         ):
             result = await run_strategy_planner_review_loop(
-                strategy_path="/tmp/strategy.md",  # noqa: S108 - test temp path
-                plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
                 max_iterations=5,
             )
 
@@ -530,8 +530,8 @@ issues: []
             side_effect=[feedback1, revised1, feedback2, revised2, approved],
         ):
             result = await run_strategy_planner_review_loop(
-                strategy_path="/tmp/strategy.md",  # noqa: S108 - test temp path
-                plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
                 max_iterations=5,
             )
 
@@ -611,8 +611,8 @@ reason: Cannot address this issue due to constraints
             side_effect=[feedback_result, revised_result, feedback2, unchanged],
         ):
             result = await run_strategy_planner_review_loop(
-                strategy_path="/tmp/strategy.md",  # noqa: S108 - test temp path
-                plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
                 max_iterations=5,
             )
 
@@ -675,8 +675,8 @@ reason: Cannot make further changes
             side_effect=[feedback_result, revised_result, feedback2, unchanged],
         ):
             result = await run_strategy_planner_review_loop(
-                strategy_path="/tmp/strategy.md",  # noqa: S108 - test temp path
-                plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
                 max_iterations=5,
             )
 
@@ -745,7 +745,7 @@ class TestReviewLoopResultDataclass:
         result = ReviewLoopResult(
             status="approved",
             iterations=1,
-            final_plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+            final_plan_path="/tmp/plan.md",
             history=[
                 ReviewIteration(
                     iteration_number=1,
@@ -755,7 +755,7 @@ class TestReviewLoopResultDataclass:
         )
         assert result.status == "approved"
         assert result.iterations == 1
-        assert result.final_plan_path == "/tmp/plan.md"  # noqa: S108 - test temp path
+        assert result.final_plan_path == "/tmp/plan.md"
         assert len(result.history) == 1
 
     def test_creates_timeout_result(self) -> None:
@@ -763,7 +763,7 @@ class TestReviewLoopResultDataclass:
         result = ReviewLoopResult(
             status="timeout",
             iterations=5,
-            final_plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+            final_plan_path="/tmp/plan.md",
             history=[
                 ReviewIteration(iteration_number=i, review_status="FEEDBACK") for i in range(1, 6)
             ],
@@ -777,7 +777,7 @@ class TestReviewLoopResultDataclass:
         result = ReviewLoopResult(
             status="blocked",
             iterations=1,
-            final_plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+            final_plan_path="/tmp/plan.md",
             history=[
                 ReviewIteration(
                     iteration_number=1,
@@ -793,7 +793,7 @@ class TestReviewLoopResultDataclass:
         result = ReviewLoopResult(
             status="stalemate",
             iterations=2,
-            final_plan_path="/tmp/plan.md",  # noqa: S108 - test temp path
+            final_plan_path="/tmp/plan.md",
             history=[
                 ReviewIteration(
                     iteration_number=1,
