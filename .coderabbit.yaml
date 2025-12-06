@@ -63,11 +63,11 @@ reviews:
     - "!.git-rewrite/**"
   tools:
     ruff:
-      enabled: true
+      enabled: false
     gitleaks:
       enabled: true
   finishing_touches:
     docstrings:
-      enabled: true
+      enabled: false
     unit_tests:
       enabled: false
