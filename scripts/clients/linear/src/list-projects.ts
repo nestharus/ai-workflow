@@ -13,6 +13,14 @@ program
 
 const options = program.opts();
 
+/**
+ * Fetches Linear projects, applies CLI-specified filters, and sends a structured response.
+ *
+ * Constructs a fetch filter (including archived projects when requested), retrieves projects,
+ * resolves each project's teams and lead, filters out projects that don't belong to a specified team
+ * (when `--team` is provided), and responds with an object containing `projects` and `totalCount`.
+ * On failure, responds with an error using the `LIST_PROJECTS_FAILED` code.
+ */
 async function main() {
   try {
     const client = getLinearClient();

@@ -20,6 +20,17 @@ program
 
 const options = program.opts();
 
+/**
+ * Create a new Linear issue from the parsed CLI options and emit a structured response.
+ *
+ * Builds a create payload from command-line options, validates the `priority` range (0–4),
+ * calls the Linear client's `createIssue`, and responds with either a success payload
+ * containing `id`, `identifier`, `title`, `url`, and `branchName`, or an error.
+ *
+ * Possible error responses:
+ * - `INVALID_PRIORITY` when provided priority is not between 0 and 4.
+ * - `CREATE_ISSUE_FAILED` when the API call fails or no issue is returned.
+ */
 async function main() {
   try {
     const client = getLinearClient();

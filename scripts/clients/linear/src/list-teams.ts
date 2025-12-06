@@ -12,6 +12,13 @@ program
 
 const options = program.opts();
 
+/**
+ * Fetches teams from the Linear client and sends a structured response.
+ *
+ * Fetches a list of teams (optionally including archived teams), maps each team to a plain object
+ * containing selected fields (id, name, key, description, createdAt, updatedAt, archivedAt, private, timezone),
+ * and sends the result via `respond`. On error, sends an error payload with code `LIST_TEAMS_FAILED`.
+ */
 async function main() {
   try {
     const client = getLinearClient();

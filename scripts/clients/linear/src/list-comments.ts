@@ -12,6 +12,12 @@ program
 
 const options = program.opts();
 
+/**
+ * Fetches comments for a Linear issue by ID, enriches each comment with its author data when available, and sends a structured response.
+ *
+ * On success, sends a success payload containing `issueId`, `issueIdentifier`, `comments` (each with `id`, `body`, `createdAt`, `updatedAt`, and optional `user` with `id`, `name`, `email`), and `totalCount`.  
+ * If the issue cannot be found, sends an `ISSUE_NOT_FOUND` error. If an unexpected error occurs, sends a `LIST_COMMENTS_FAILED` error with the error message.
+ */
 async function main() {
   try {
     const client = getLinearClient();

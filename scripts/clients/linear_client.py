@@ -30,13 +30,14 @@ class LinearClient:
     """Python wrapper for Linear TypeScript CLI scripts."""
 
     def __init__(self, api_key: str | None = None) -> None:
-        """Initialize client with API key from argument or LINEAR_API_KEY env var.
-
-        Args:
-            api_key: Linear API key. If not provided, uses LINEAR_API_KEY env var.
-
+        """
+        Initialize the LinearClient with an API key taken from the provided argument or the LINEAR_API_KEY environment variable.
+        
+        Parameters:
+            api_key (str | None): Linear API key to use; if None, the LINEAR_API_KEY environment variable is used.
+        
         Raises:
-            LinearClientError: If no API key is provided or found in environment
+            LinearClientError: If no API key is available or the expected linear scripts directory is missing.
         """
         self._api_key = api_key or os.environ.get("LINEAR_API_KEY")
         if not self._api_key:
@@ -54,17 +55,18 @@ class LinearClient:
             )
 
     def _run_script(self, script_name: str, args: list[str]) -> dict[str, Any]:
-        """Run a TypeScript script and return parsed JSON response.
-
-        Args:
-            script_name: Name of the script file (without .js extension)
-            args: Command-line arguments to pass to the script
-
+        """
+        Run a compiled Linear TypeScript script and return its parsed JSON data.
+        
+        Parameters:
+        	script_name (str): Script filename without the `.js` extension (expected under the client's `dist` directory).
+        	args (list[str]): Command-line arguments to pass to the script.
+        
         Returns:
-            Parsed JSON response data
-
+        	dict[str, Any]: The `data` object extracted from the script's JSON response, or an empty dict if `data` is absent.
+        
         Raises:
-            LinearClientError: If the script fails or returns an error
+        	LinearClientError: If the script file is not found, the script output cannot be parsed as JSON, or the script response indicates an error.
         """
         script_path = self._scripts_dir / "dist" / f"{script_name}.js"
         if not script_path.exists():
@@ -263,27 +265,28 @@ class LinearClient:
         return self._run_script("create-comment", ["--issue-id", issue_id, "--body", body])
 
     def list_projects(self) -> list[dict[str, Any]]:
-        """List all projects in the workspace.
-
+        """
+        List all projects in the workspace.
+        
         Returns:
-            List of project dictionaries, each containing:
-            - id: str
-            - name: str
-            - description: str | None
-            - url: str
-            - slugId: str
-            - startedAt: str | None
-            - completedAt: str | None
-            - targetDate: str | None
-            - createdAt: str
-            - updatedAt: str
-            - archivedAt: str | None
-            - lead: dict | None
-            - state: str | None
-            - teams: list[dict]
-
+            A list of project dictionaries with the following keys:
+            - id (str)
+            - name (str)
+            - description (str | None)
+            - url (str)
+            - slugId (str)
+            - startedAt (str | None)
+            - completedAt (str | None)
+            - targetDate (str | None)
+            - createdAt (str)
+            - updatedAt (str)
+            - archivedAt (str | None)
+            - lead (dict | None)
+            - state (str | None)
+            - teams (list[dict])
+        
         Raises:
-            LinearClientError: If the operation fails
+            LinearClientError: If the operation fails.
         """
         data = self._run_script("list-projects", [])
         return cast(list[dict[str, Any]], data.get("projects", []))

@@ -20,6 +20,14 @@ program
 
 const options = program.opts();
 
+/**
+ * Update an existing Linear issue using the parsed CLI options and emit a standardized response.
+ *
+ * Validates that provided priority is between 0 and 4 and requires at least one updatable field.
+ * On success, emits a success response containing the issue's `id`, `identifier`, `title`, `url`, and `updatedAt`.
+ * On validation failure or if the update fails, emits an error response with an appropriate error code
+ * (`INVALID_PRIORITY`, `NO_UPDATES`, or `UPDATE_ISSUE_FAILED`).
+ */
 async function main() {
   try {
     const client = getLinearClient();

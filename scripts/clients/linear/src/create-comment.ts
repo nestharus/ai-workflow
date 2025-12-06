@@ -13,6 +13,14 @@ program
 
 const options = program.opts();
 
+/**
+ * Create a comment on a Linear issue using CLI-provided options and emit a structured response.
+ *
+ * Attempts to create a comment using `options.issueId` and `options.body`. On success emits a success
+ * response containing `id`, `body`, `createdAt`, `issueId`, and `user` (an object with `id`, `name`,
+ * and `email`, or `null` if unavailable). On failure emits an error response with code
+ * `CREATE_COMMENT_FAILED` and an explanatory message.
+ */
 async function main() {
   try {
     const client = getLinearClient();

@@ -547,6 +547,15 @@ class TestLinearClientErrorHandling:
         original_exists = Path.exists
 
         def mock_exists(self: Path) -> bool:
+            """
+            Simulate Path.exists so that any path containing "get-issue.js" is reported missing while other paths use the original existence check.
+            
+            Parameters:
+                self (Path): The path to check.
+            
+            Returns:
+                bool: `False` if the path string contains "get-issue.js", otherwise the result of the original Path.exists for `self`.
+            """
             if "get-issue.js" in str(self):
                 return False
             return original_exists(self)

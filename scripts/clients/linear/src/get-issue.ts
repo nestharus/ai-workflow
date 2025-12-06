@@ -12,6 +12,16 @@ program
 
 const options = program.opts();
 
+/**
+ * Fetches a Linear issue by the configured CLI option and emits a structured response.
+ *
+ * On success, calls `respond` with a success payload containing core issue fields
+ * (id, identifier, title, description, priority, estimate, url, branchName, timestamps, due date),
+ * selected nested relations (team, assignee, state, project, parent) and computed counts
+ * (`commentCount`, `childrenCount`). If the issue is not found, calls `respond` with
+ * error code `ISSUE_NOT_FOUND`. If an unexpected error occurs, calls `respond` with
+ * error code `GET_ISSUE_FAILED` and the error message.
+ */
 async function main() {
   try {
     const client = getLinearClient();
