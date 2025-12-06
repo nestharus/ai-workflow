@@ -30,25 +30,32 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # MCP Bridge Service (NES-47)
-  # REST-to-MCP bridge that exposes MCP tools via HTTP.
+  # MCP Bridge Service (NES-47, NES-68)
+  # REST-to-MCP bridge that exposes MCP tools via Unix socket.
   # Local development only - must not be exposed to untrusted networks.
   # For production, place behind an authenticated TLS-terminating proxy.
+  #
+  # SOCKET MODE: The bridge listens exclusively on a Unix socket inside the
+  # container (/tmp/mcp-bridge.sock) and is NOT published to the host by default.
+  # Other services in this compose file do not currently depend on the MCP bridge.
+  # For manual host access, mount the socket volume to a host path:
+  #   docker run -v /tmp/mcp-sockets:/tmp ai-workflow/mcp-bridge:dev
   mcp-bridge:
     build:
       context: ./scripts/mcp
       dockerfile: Dockerfile
     container_name: ai-workflow-mcp-bridge
-    # Bind to localhost only for security (local development)
-    ports:
-      - "127.0.0.1:8080:8080"
+    # Mount socket directory for Unix socket communication
+    volumes:
+      - mcp_socket:/tmp
     environment:
       - PYTHONUNBUFFERED=1
+      - MCP_BRIDGE_SOCKET=/tmp/mcp-bridge.sock
       # MCP_COMMAND defaults to "uvx mcp-background-job" in the bridge
       # Override with MCP_CONFIG_PATH to use a config file instead
       # - MCP_CONFIG_PATH=/app/config/.mcp.yml
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "--unix-socket", "/tmp/mcp-bridge.sock", "http://localhost/health"]
       interval: 30s
       timeout: 3s
       start_period: 5s
@@ -108,3 +115,4 @@ services:
 volumes:
   surrealdb_data:
   elasticsearch_data:
+  mcp_socket:  # Named volume for Unix socket IPC

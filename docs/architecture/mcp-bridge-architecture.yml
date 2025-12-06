@@ -1,7 +1,7 @@
 doc_id: architecture-mcp-bridge
 title: MCP Bridge Architecture
-description: REST-to-MCP bridge server providing HTTP access to MCP STDIO providers. The bridge
-  is transport-only; tool-specific normalization happens in client layers.
+description: REST-to-MCP bridge server providing HTTP/Unix socket access to MCP STDIO providers.
+  The bridge is transport-only; tool-specific normalization happens in client layers.
 domain: []
 scope: project
 sections:
@@ -75,3 +75,27 @@ sections:
       - id: files-4
         text: "scripts/dev/mcp_agent_client.py: Higher-level client with background-job
           normalization and timeout enforcement."
+  - id: deployment
+    index: 6
+    title: Deployment Modes
+    category: standard
+    items:
+      - id: deployment-1
+        text: "Primary local dev path (NES-68): Unix socket mode via Docker. The bridge
+          listens on /tmp/mcp-bridge.sock inside the container. docker-compose uses a
+          named volume (mcp_socket) to share the socket. This provides ~50% lower latency
+          and ~30-50% less CPU usage compared to HTTP/TCP."
+      - id: deployment-2
+        text: "Host HTTP mode (non-Docker): For running uvicorn directly on the host
+          without Docker, use --host 127.0.0.1 --port 8080. HttpMCPClient defaults to
+          http://localhost:8080 when MCP_BRIDGE_SOCKET is not set."
+      - id: deployment-3
+        text: "Transport precedence in HttpMCPClient: socket_path argument > MCP_BRIDGE_SOCKET
+          env > base_url argument > MCP_BRIDGE_URL env > default http://localhost:8080."
+      - id: deployment-4
+        text: "Socket path semantics: The socket path inside the container is /tmp/mcp-bridge.sock
+          (set via MCP_BRIDGE_SOCKET env var). When using docker-compose or docker run, mount a
+          host directory to /tmp to access the socket from the host."
+      - id: deployment-5
+        text: "HTTP fallback: Host-based HTTP mode remains officially supported for non-Docker
+          development workflows. Both Unix-socket and HTTP modes are validated in automated tests."

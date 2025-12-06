@@ -1,22 +1,31 @@
-# MCP Bridge Dockerfile (NES-47)
+# MCP Bridge Dockerfile (NES-47, NES-68)
 #
-# REST-to-MCP bridge server that exposes MCP tools via HTTP.
+# REST-to-MCP bridge server that exposes MCP tools via Unix socket.
 # Image name: ai-workflow/mcp-bridge:dev (or use docker-compose)
+#
+# SOCKET PATH SEMANTICS:
+#   The socket path inside the container is /tmp/mcp-bridge.sock (set via
+#   MCP_BRIDGE_SOCKET env var). When using docker-compose or docker run,
+#   mount a host directory to /tmp to access the socket from the host.
+#   Example: docker run -v /tmp/mcp-sockets:/tmp ...
+#   The socket will be available at /tmp/mcp-sockets/mcp-bridge.sock on host.
 #
 # SECURITY NOTE:
 #   This image is intended for LOCAL DEVELOPMENT ONLY.
 #   - Must NOT be exposed to untrusted networks without authentication
-#   - For non-local deployments, place behind an authenticated TLS-terminating proxy
-#   - Default uvicorn host is 0.0.0.0 (required for Docker networking)
-#   - docker-compose.yml binds port to 127.0.0.1 for local-only access
+#   - Unix socket provides inherent network isolation
+#   - For production, implement proper authentication
 #
 # Build:
 #   docker build -t ai-workflow/mcp-bridge:dev -f scripts/mcp/Dockerfile scripts/mcp/
 #
-# Run:
-#   docker run -p 127.0.0.1:8080:8080 ai-workflow/mcp-bridge:dev
-#   # Or with custom port:
-#   docker run -e MCP_BRIDGE_PORT=9090 -p 127.0.0.1:9090:9090 ai-workflow/mcp-bridge:dev
+# Run (Unix socket - recommended for Docker):
+#   mkdir -p /tmp/mcp-sockets
+#   docker run -v /tmp/mcp-sockets:/tmp ai-workflow/mcp-bridge:dev
+#   # Socket available at /tmp/mcp-sockets/mcp-bridge.sock
+#
+# Run (HTTP mode - for host-based uvicorn without Docker):
+#   uvicorn app.main:app --host 127.0.0.1 --port 8080
 #
 # Or use docker-compose (recommended):
 #   docker-compose up mcp-bridge
@@ -44,8 +53,12 @@ COPY --from=uv /uv /usr/local/bin/uv
 # Copy dependency file
 COPY pyproject.toml ./pyproject.toml
 
-# Install dependencies
-RUN uv sync --frozen --no-cache --no-dev || uv pip install --no-cache -r pyproject.toml
+# Install dependencies using uv sync.
+# Fails fast if dependencies cannot be resolved (no fallback).
+# --frozen ensures lockfile is not modified
+# --no-cache prevents caching to keep image size down
+# --no-dev excludes development dependencies
+RUN uv sync --frozen --no-cache --no-dev
 
 # Copy application code (new structure)
 COPY app ./app
@@ -84,20 +97,21 @@ COPY --from=builder --chown=appuser:appuser /app/client /app/client
 # Set path to use virtual environment
 ENV PATH="/app/.venv/bin:$PATH"
 
+# DEV IMAGE ONLY: Ensure socket directory is writable by appuser for arbitrary
+# host-mounted socket directories. Do NOT copy this pattern to production images.
+RUN chmod 1777 /tmp
+
 # Switch to non-root user
 USER appuser
 
-# Configurable port (default: 8080 for backward compatibility)
-ENV MCP_BRIDGE_PORT=8080
+# Socket path for Unix domain socket communication
+ENV MCP_BRIDGE_SOCKET=/tmp/mcp-bridge.sock
 
-# Expose port
-EXPOSE ${MCP_BRIDGE_PORT}
-
-# Add healthcheck
+# Add healthcheck using Unix socket
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${MCP_BRIDGE_PORT}/health || exit 1
+    CMD curl -f --unix-socket ${MCP_BRIDGE_SOCKET} http://localhost/health || exit 1
 
-# Start the application using the app module path
-# Shell form required for MCP_BRIDGE_PORT variable expansion (acceptable for local dev image)
+# Start the application using Unix socket
+# Shell form required for MCP_BRIDGE_SOCKET variable expansion (acceptable for local dev image)
 # hadolint ignore=DL3025
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${MCP_BRIDGE_PORT}
+CMD uvicorn app.main:app --uds ${MCP_BRIDGE_SOCKET}

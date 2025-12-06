@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from typing import Any
 
 import httpx
@@ -27,6 +28,7 @@ class MCPSSEClient:
     - Connecting to SSE MCP endpoints
     - JSON-RPC request/response over HTTP POST
     - Thread-safe request handling
+    - Health tracking for real remote liveness detection
     """
 
     def __init__(
@@ -50,6 +52,12 @@ class MCPSSEClient:
         self._session_id: str | None = None
         self._client = httpx.Client(timeout=timeout)
         self._initialized = False
+
+        # Health tracking for real remote liveness detection
+        self._last_success_time: float | None = None
+        self._consecutive_failures = 0
+        self._max_consecutive_failures = 3  # Threshold for marking unhealthy
+        self._max_staleness_seconds = 300.0  # 5 minutes
 
     def _get_request_id(self) -> int:
         """Get a unique request ID."""
@@ -88,8 +96,12 @@ class MCPSSEClient:
             # Send initialized notification
             self._send_notification("notifications/initialized", {})
             self._initialized = True
+            self._last_success_time = time.time()
+            self._consecutive_failures = 0
 
         except Exception as e:
+            self._initialized = False
+            self._consecutive_failures += 1
             raise MCPSSEError(f"Failed to initialize SSE connection: {e}") from e
 
     def _send_notification(self, method: str, params: dict[str, Any] | None = None) -> None:
@@ -163,11 +175,13 @@ class MCPSSEClient:
             result = response.json()
 
             if not isinstance(result, dict):
+                self._consecutive_failures += 1
                 raise MCPSSEError(
                     f"Invalid MCP response: expected JSON object, got {type(result).__name__}"
                 )
 
             if "error" in result:
+                self._consecutive_failures += 1
                 error = result["error"]
                 if isinstance(error, dict):
                     code = error.get("code", -1)
@@ -176,30 +190,61 @@ class MCPSSEClient:
                 raise MCPSSEError(f"MCP error: {error}")
 
             if "result" not in result:
+                self._consecutive_failures += 1
                 raise MCPSSEError("Invalid MCP response: missing 'result'")
 
             response_result = result["result"]
             if not isinstance(response_result, dict):
+                self._consecutive_failures += 1
                 result_type = type(response_result).__name__
                 raise MCPSSEError(
                     f"Invalid MCP response: expected result object, got {result_type}"
                 )
+
+            # Success - update health tracking
+            self._last_success_time = time.time()
+            self._consecutive_failures = 0
             return response_result
 
         except httpx.HTTPError as e:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self._max_consecutive_failures:
+                self._initialized = False
             raise MCPSSEError(f"HTTP error: {e}") from e
         except json.JSONDecodeError as e:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self._max_consecutive_failures:
+                self._initialized = False
             raise MCPSSEError(f"Invalid JSON response: {e}") from e
         except (TypeError, ValueError) as e:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self._max_consecutive_failures:
+                self._initialized = False
             raise MCPSSEError(f"Failed to serialize request: {e}") from e
 
     def is_alive(self) -> bool:
         """Check if the SSE connection is alive.
 
+        Returns True if:
+        - Client is initialized AND
+        - Has had at least one successful request AND
+        - Consecutive failures are below threshold AND
+        - Last success was within the staleness window
+
+        This reflects real remote liveness rather than just local initialization state.
+
         Returns:
-            True if client is initialized, False otherwise.
+            True if client appears healthy, False otherwise.
         """
-        return self._initialized
+        if not self._initialized:
+            return False
+        if self._last_success_time is None:
+            return False
+        if self._consecutive_failures >= self._max_consecutive_failures:
+            return False
+
+        # Consider stale if no successful requests in last 5 minutes
+        return time.time() - self._last_success_time <= self._max_staleness_seconds
 
     def call_tool(
         self,
@@ -255,10 +300,12 @@ class MCPSSEClient:
             return result
 
     def close(self) -> None:
-        """Close the HTTP client."""
+        """Close the HTTP client and reset health tracking."""
         with self._lock:
             self._client.close()
             self._initialized = False
+            self._last_success_time = None
+            self._consecutive_failures = 0
 
 
 __all__ = ["MCPSSEClient", "MCPSSEError"]
