@@ -579,73 +579,6 @@ mcpServers:
 class TestHttpMCPClient:
     """Tests for HttpMCPClient class."""
 
-    def test_call_tool_extracts_result(self) -> None:
-        """Test call_tool extracts result from envelope."""
-        # Mock curl to return successful response
-        response = {"result": {"job_id": "test-123"}}
-
-        def run_mock(
-            cmd: list[str], input: str | None = None, **kwargs: Any
-        ) -> subprocess.CompletedProcess[str]:
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout=json.dumps(response), stderr=""
-            )
-
-        with patch("subprocess.run", side_effect=run_mock):
-            client = HttpMCPClient("http://localhost:8080")
-            result = client.call_tool("execute", {"command": "test"})
-            assert result == {"job_id": "test-123"}
-
-    def test_call_tool_parses_error_envelope(self) -> None:
-        """Test call_tool parses error envelope and raises MCPClientError."""
-        error_response = {
-            "error": {
-                "type": "JSONRPC_ERROR",
-                "message": "Unknown tool",
-                "details": None,
-            }
-        }
-
-        def run_mock(
-            cmd: list[str], input: str | None = None, **kwargs: Any
-        ) -> subprocess.CompletedProcess[str]:
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=22, stdout=json.dumps(error_response), stderr=""
-            )
-
-        with patch("subprocess.run", side_effect=run_mock):
-            client = HttpMCPClient("http://localhost:8080")
-            with pytest.raises(MCPClientError, match=r"\[JSONRPC_ERROR\] Unknown tool"):
-                client.call_tool("bad_tool", {})
-
-    def test_call_tool_connection_refused(self) -> None:
-        """Test connection refused raises MCPClientError."""
-
-        def run_mock(
-            cmd: list[str], input: str | None = None, **kwargs: Any
-        ) -> subprocess.CompletedProcess[str]:
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=7, stdout="", stderr="Connection refused"
-            )
-
-        with patch("subprocess.run", side_effect=run_mock):
-            client = HttpMCPClient("http://localhost:8080")
-            with pytest.raises(MCPClientError, match="Cannot connect"):
-                client.call_tool("execute", {})
-
-    def test_call_tool_timeout(self) -> None:
-        """Test timeout raises MCPClientError."""
-
-        def run_mock(
-            cmd: list[str], input: str | None = None, **kwargs: Any
-        ) -> subprocess.CompletedProcess[str]:
-            return subprocess.CompletedProcess(args=cmd, returncode=28, stdout="", stderr="")
-
-        with patch("subprocess.run", side_effect=run_mock):
-            client = HttpMCPClient("http://localhost:8080")
-            with pytest.raises(MCPClientError, match="timed out"):
-                client.call_tool("execute", {})
-
     def test_health_check_uses_devnull(self) -> None:
         """Test health_check uses os.devnull for cross-platform compatibility."""
         captured_cmd: list[str] = []
@@ -1164,6 +1097,34 @@ class TestHttpMCPClient:
             client.call_server_tool("my-server", "execute", {})
             assert "http://localhost:8080/mcp/my-server/call" in captured_cmd
 
+    def test_call_server_tool_timeout_field_name(self) -> None:
+        """Test call_server_tool uses canonical 'timeout_seconds' field in JSON body."""
+        captured_payload: list[str] = []
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            if input:
+                captured_payload.append(input)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout='{"result": {}}', stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            client.call_server_tool("my-server", "execute", {"arg": "value"}, timeout=45.0)
+
+            # Verify exactly one payload was captured
+            assert len(captured_payload) == 1
+            payload = json.loads(captured_payload[0])
+
+            # Verify canonical field name 'timeout_seconds' is used (not 'timeout')
+            assert "timeout_seconds" in payload
+            assert "timeout" not in payload
+            assert payload["timeout_seconds"] == 45.0
+            assert payload["tool"] == "execute"
+            assert payload["arguments"] == {"arg": "value"}
+
     def test_call_server_tool_empty_server(self) -> None:
         """Test call_server_tool raises MCPClientError for empty server string."""
         client = HttpMCPClient("http://localhost:8080")
@@ -1245,94 +1206,6 @@ class TestAPIRoutes:
     def client(self, app: Any) -> TestClient:
         """Create test client."""
         return TestClient(app)
-
-    def test_mcp_call_success_returns_result_envelope(
-        self, client: TestClient, mock_clients: dict[str, Any]
-    ) -> None:
-        """Test /mcp/call returns result in envelope."""
-        response = client.post(
-            "/mcp/call",
-            json={"tool": "execute", "arguments": {"command": "test"}},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "result" in data
-        assert data["result"] == {"job_id": "test-123"}
-
-    def test_mcp_call_timeout_seconds_alias(
-        self, client: TestClient, mock_clients: dict[str, Any]
-    ) -> None:
-        """Test /mcp/call accepts both 'timeout' and 'timeout_seconds'."""
-        # Test with 'timeout' (alias)
-        response = client.post(
-            "/mcp/call",
-            json={"tool": "execute", "arguments": {}, "timeout": 60},
-        )
-        assert response.status_code == 200
-
-        # Verify timeout was passed to call_tool
-        mock_clients["default"].call_tool.assert_called_with(
-            name="execute", arguments={}, timeout=60
-        )
-
-    def test_mcp_call_busy_returns_503(
-        self, client: TestClient, mock_clients: dict[str, Any]
-    ) -> None:
-        """Test BUSY error returns 503 with error envelope."""
-        mock_clients["default"].call_tool.side_effect = MCPBusyError(
-            "Provider busy", retry_after_ms=1000
-        )
-
-        response = client.post(
-            "/mcp/call",
-            json={"tool": "execute", "arguments": {}},
-        )
-        assert response.status_code == 503
-        data = response.json()
-        assert data["error"]["type"] == "BUSY"
-        assert data["error"]["details"]["retry_after_ms"] == 1000
-
-    def test_mcp_call_timeout_returns_504(
-        self, client: TestClient, mock_clients: dict[str, Any]
-    ) -> None:
-        """Test TIMEOUT error returns 504 with error envelope."""
-        mock_clients["default"].call_tool.side_effect = MCPTimeoutError("Timed out")
-
-        response = client.post(
-            "/mcp/call",
-            json={"tool": "execute", "arguments": {}},
-        )
-        assert response.status_code == 504
-        data = response.json()
-        assert data["error"]["type"] == "TIMEOUT"
-
-    def test_mcp_call_provider_crashed_returns_503(
-        self, client: TestClient, mock_clients: dict[str, Any]
-    ) -> None:
-        """Test PROVIDER_CRASHED error returns 503 with error envelope."""
-        mock_clients["default"].call_tool.side_effect = MCPProviderCrashedError("Provider crashed")
-
-        response = client.post(
-            "/mcp/call",
-            json={"tool": "execute", "arguments": {}},
-        )
-        assert response.status_code == 503
-        data = response.json()
-        assert data["error"]["type"] == "PROVIDER_CRASHED"
-
-    def test_mcp_call_jsonrpc_error_returns_502(
-        self, client: TestClient, mock_clients: dict[str, Any]
-    ) -> None:
-        """Test JSON-RPC error returns 502 with error envelope."""
-        mock_clients["default"].call_tool.side_effect = MCPError("Unknown tool")
-
-        response = client.post(
-            "/mcp/call",
-            json={"tool": "bad_tool", "arguments": {}},
-        )
-        assert response.status_code == 502
-        data = response.json()
-        assert data["error"]["type"] == "JSONRPC_ERROR"
 
     def test_health_check_ok(self, client: TestClient, mock_clients: dict[str, Any]) -> None:
         """Test /health returns ok when provider is running."""

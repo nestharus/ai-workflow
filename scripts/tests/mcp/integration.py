@@ -488,25 +488,6 @@ class TestMCPBridgeIntegration:
         assert echoed_args["count"] == test_args["count"]
         assert echoed_args["tags"] == test_args["tags"]
 
-    def test_call_tool_legacy_endpoint(self, http_client: httpx.Client) -> None:
-        """Test POST /mcp/call (legacy) also works."""
-        response = http_client.post(
-            "/mcp/call",
-            json={
-                "tool": "echo_tool",
-                "arguments": {"message": "legacy test"},
-            },
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert "result" in data
-
-        # Verify echo
-        content = data["result"]["content"]
-        echo_text = content[0]["text"]
-        assert "legacy test" in echo_text
-
     def test_health_check(self, http_client: httpx.Client) -> None:
         """Test GET /health returns ok status."""
         response = http_client.get("/health")

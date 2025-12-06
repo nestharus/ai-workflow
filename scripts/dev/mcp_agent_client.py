@@ -414,6 +414,41 @@ def get_mcp_client() -> MCPClient | HttpMCPClient:
         raise ValueError(f"Unknown MCP_TRANSPORT: {transport}. Use 'stdio' or 'http'")
 
 
+# Default server name for HTTP transport (configurable via MCP_SERVER env var)
+_MCP_SERVER = os.environ.get("MCP_SERVER", "background-job")
+
+
+def call_mcp_tool(
+    client: MCPClient | HttpMCPClient,
+    name: str,
+    arguments: dict[str, Any],
+    timeout: float = 30.0,
+) -> dict[str, Any]:
+    """Call an MCP tool using the appropriate client method.
+
+    For stdio transport (MCPClient), calls call_tool() directly.
+    For HTTP transport (HttpMCPClient), calls call_server_tool() with the
+    server name from MCP_SERVER env var (defaults to 'background-job').
+
+    Args:
+        client: MCP client instance.
+        name: Tool name.
+        arguments: Tool arguments.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        Result dict from tool call.
+
+    Raises:
+        MCPClientError or HttpMCPClientError: On communication failure.
+    """
+    if isinstance(client, HttpMCPClient):
+        return client.call_server_tool(
+            server=_MCP_SERVER, name=name, arguments=arguments, timeout=timeout
+        )
+    return client.call_tool(name=name, arguments=arguments, timeout=timeout)
+
+
 def cmd_start(client: MCPClient | HttpMCPClient, command: str) -> dict[str, Any]:
     """Start a job and return immediately.
 
@@ -425,7 +460,7 @@ def cmd_start(client: MCPClient | HttpMCPClient, command: str) -> dict[str, Any]
         Result dict with status and job_id.
     """
     try:
-        result = client.call_tool("execute_command", {"command": command})
+        result = call_mcp_tool(client, "execute_command", {"command": command})
         # FastMCP wraps results in structuredContent
         # Use `or` to handle null structuredContent
         structured = result.get("structuredContent") or result
@@ -493,7 +528,7 @@ def cmd_wait(
                     "job_id": job_id,
                     "error": f"Job exceeded {max_seconds}s timeout before starting",
                 }
-            result = client.call_tool("execute_command", {"command": command}, timeout=remaining)
+            result = call_mcp_tool(client, "execute_command", {"command": command}, remaining)
             # FastMCP wraps results in structuredContent
             # Use `or` to handle null structuredContent
             structured = result.get("structuredContent") or result
@@ -510,14 +545,14 @@ def cmd_wait(
             if remaining <= 0:
                 # Kill job on timeout (best effort, with very short timeout)
                 with contextlib.suppress(MCPClientError, HttpMCPClientError):
-                    client.call_tool("kill_job", {"job_id": job_id}, timeout=1.0)
+                    call_mcp_tool(client, "kill_job", {"job_id": job_id}, 1.0)
                 return {
                     "status": "timeout",
                     "job_id": job_id,
                     "error": f"Job exceeded {max_seconds}s timeout and was killed",
                 }
 
-            status_res = client.call_tool("get_job_status", {"job_id": job_id}, timeout=remaining)
+            status_res = call_mcp_tool(client, "get_job_status", {"job_id": job_id}, remaining)
             # FastMCP wraps results in structuredContent
             # Use `or` to handle null structuredContent
             structured = status_res.get("structuredContent") or status_res
@@ -537,9 +572,7 @@ def cmd_wait(
                         "job_id": job_id,
                         "error": f"Job exceeded {max_seconds}s timeout while fetching output",
                     }
-                output_res = client.call_tool(
-                    "get_job_output", {"job_id": job_id}, timeout=remaining
-                )
+                output_res = call_mcp_tool(client, "get_job_output", {"job_id": job_id}, remaining)
                 # Use `or` to handle null structuredContent
                 output_structured = output_res.get("structuredContent") or output_res
                 if not isinstance(output_structured, dict):
@@ -580,7 +613,7 @@ def cmd_list(client: MCPClient | HttpMCPClient) -> dict[str, Any]:
         Result dict with status and jobs list.
     """
     try:
-        result = client.call_tool("list_jobs", {})
+        result = call_mcp_tool(client, "list_jobs", {})
         # FastMCP wraps results in structuredContent
         # Use `or` to handle null structuredContent
         structured = result.get("structuredContent") or result
@@ -602,7 +635,7 @@ def cmd_cancel(client: MCPClient | HttpMCPClient, job_id: str) -> dict[str, Any]
         Result dict with status.
     """
     try:
-        client.call_tool("kill_job", {"job_id": job_id})
+        call_mcp_tool(client, "kill_job", {"job_id": job_id})
     except (MCPClientError, HttpMCPClientError) as e:
         return {"status": "failed", "job_id": job_id, "error": str(e)}
     else:
