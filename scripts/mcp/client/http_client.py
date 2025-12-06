@@ -4,13 +4,7 @@
 This module provides a lightweight HTTP client that uses curl via subprocess
 to call the mcp-bridge REST API. This avoids adding httpx as a dependency.
 
-The client supports two usage patterns:
-
-1. **Legacy single-server usage:**
-   - `call_tool()` calls the default server at `/mcp/call`
-   - `health_check()` checks overall bridge health at `/health` (not per-server health)
-
-2. **Multi-server usage pattern:**
+The client supports the multi-server usage pattern:
    - Discover servers with `list_servers()` → returns `{"servers": [...]}`
      including per-server `healthy` field
    - Per-server health can be inferred from the `healthy` field in
@@ -20,14 +14,12 @@ The client supports two usage patterns:
      tool dict
    - Call tools via `call_server_tool(server, name, arguments, timeout)` →
      returns unwrapped result dict
+   - Check overall bridge health with `health_check()` → returns True if healthy
 
 Usage:
     from scripts.mcp.client.http_client import HttpMCPClient, MCPClientError
 
     client = HttpMCPClient()  # Uses MCP_BRIDGE_URL env var or localhost:8080
-
-    # Legacy: Call default server
-    result = client.call_tool("execute", {"command": "echo hello"})
 
     # Check overall bridge health
     if client.health_check():
@@ -194,43 +186,6 @@ class HttpMCPClient:
 
         return response
 
-    def call_tool(
-        self,
-        name: str,
-        arguments: dict[str, Any],
-        timeout: float = 30.0,
-    ) -> dict[str, Any]:
-        """Call an MCP tool via the bridge.
-
-        Args:
-            name: Tool name (e.g., "execute", "status", "output", "kill", "list")
-            arguments: Tool arguments dict
-            timeout: Request timeout in seconds
-
-        Returns:
-            Result dict from MCP tool call
-
-        Raises:
-            MCPClientError: On connection failure, HTTP error, or timeout
-        """
-        url = f"{self.base_url}/mcp/call"
-        payload = {"tool": name, "arguments": arguments, "timeout": timeout}
-
-        response = self._request_json("POST", url, payload, timeout)
-
-        # Extract result from envelope per NES-47 specification
-        # Success format: { "result": {...} }
-        if "result" in response:
-            result_dict = response["result"]
-            if not isinstance(result_dict, dict):
-                raise MCPClientError(
-                    f"Invalid result type: expected dict, got {type(result_dict).__name__}"
-                )
-            return result_dict
-
-        # Fallback: return response as-is for backward compatibility
-        return response
-
     def list_servers(self) -> dict[str, Any]:
         """List all MCP servers.
 
@@ -300,9 +255,9 @@ class HttpMCPClient:
         """Call a specific tool on a server.
 
         The timeout parameter controls both the server-side timeout and curl
-        behavior. Following the same pattern as call_tool(), curl's --max-time
-        is set to timeout + 1 second as a buffer, and the subprocess timeout
-        is set to timeout + 5 seconds to allow for process overhead.
+        behavior. Curl's --max-time is set to timeout + 1 second as a buffer,
+        and the subprocess timeout is set to timeout + 5 seconds to allow for
+        process overhead.
 
         Args:
             server: Name of the server.
@@ -321,7 +276,8 @@ class HttpMCPClient:
         if not isinstance(name, str) or not name:
             raise MCPClientError("name parameter must be a non-empty string")
         url = f"{self.base_url}/mcp/{server}/call"
-        payload = {"tool": name, "arguments": arguments, "timeout": timeout}
+        # Use canonical field name 'timeout_seconds' per MCPCallRequest schema
+        payload = {"tool": name, "arguments": arguments, "timeout_seconds": timeout}
 
         response = self._request_json("POST", url, payload, timeout)
 
