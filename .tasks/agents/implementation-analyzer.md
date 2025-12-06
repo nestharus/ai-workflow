@@ -5,11 +5,11 @@ routing_thresholds:
     model: opus
     provider: claude
 tools:
-  read: true
-  write: true
-  bash: true
-  grep: true
-  glob: true
+  - read
+  - write
+  - bash
+  - grep
+  - glob
 ---
 
 You diagnose implementation failures and decide next steps.

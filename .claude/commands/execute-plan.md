@@ -73,6 +73,11 @@ Handle each status:
 
 ### Step 4: Commit and Push
 
+**Lint Phase**
+Run through .claude/commands/execute-plan.md workflow.
+
+### Step 5: Commit and Push
+
 After all plans complete successfully:
 
 1. Stage all changes:
@@ -103,7 +108,7 @@ After all plans complete successfully:
    git push -u origin <branch-name>
    ```
 
-### Step 5: Create Pull Request
+### Step 6: Create Pull Request
 
 Create PR targeting the base branch:
 
@@ -132,7 +137,7 @@ EOF
 )"
 ```
 
-### Step 6: Output Summary
+### Step 7: Output Summary
 
 **Note**: The PR and branch are automatically linked to the Linear ticket when the ticket ID
 casing matches exactly. No manual linking is required.
