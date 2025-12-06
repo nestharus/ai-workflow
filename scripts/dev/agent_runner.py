@@ -279,7 +279,12 @@ class AgentRunner(ABC):
             agent_config["provider"] = provider
 
         # Select runner class based on effective provider
-        effective_provider = agent_config["provider"]
+        effective_provider = agent_config.get("provider")
+        if effective_provider is None:
+            raise ValueError(
+                "No provider selected after routing. Add a catch-all 'routing_thresholds' entry "
+                "or specify default 'model' and 'provider' in frontmatter."
+            )
 
         if effective_provider == "claude":
             from scripts.dev.claude_agent_runner import ClaudeRunner

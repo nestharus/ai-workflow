@@ -64,7 +64,7 @@ fi
 # Create cache directory
 if [ ! -d "$CACHE_DIR" ]; then
     echo "Creating cache directory: $CACHE_DIR"
-    mkdir -p "$CACHE_DIR"
+    mkdir -p "$CACHE_DIR" || { echo "Error: Failed to create cache directory at $CACHE_DIR"; exit 1; }
 fi
 
 # Verify Docker availability before running the scanner

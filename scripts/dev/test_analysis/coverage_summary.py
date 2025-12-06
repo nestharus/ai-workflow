@@ -149,11 +149,10 @@ def generate_summary(db_path: Path) -> dict[str, Any]:
 
     # Get run metadata
     try:
-        conn = get_db_connection(db_path)
-        cursor = conn.execute("SELECT generated_at FROM cc_run_metadata WHERE id = 1")
-        row = cursor.fetchone()
-        generated_at = row["generated_at"] if row else "Unknown"
-        conn.close()
+        with get_db_connection(db_path) as conn:
+            cursor = conn.execute("SELECT generated_at FROM cc_run_metadata WHERE id = 1")
+            row = cursor.fetchone()
+            generated_at = row["generated_at"] if row else "Unknown"
     except Exception:
         generated_at = "Unknown"
 

@@ -87,6 +87,8 @@ def _run_scripts() -> int:
     """
     # Load configuration
     config = _load_yaml_config(LINT_SCRIPTS_CONFIG)
+    if not isinstance(config, dict):
+        config = {}
     prefix_rules: dict[str, str] = config.get("prefix_rules", {})
 
     if not prefix_rules:

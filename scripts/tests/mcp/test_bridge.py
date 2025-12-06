@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any, ClassVar
 from unittest.mock import MagicMock, patch
@@ -1462,3 +1463,92 @@ class TestSchemas:
         data = resp.model_dump()
         assert "result" in data
         assert data["result"]["job_id"] == "test-123"
+
+
+# ============================================================================
+# MCPSSEClient Tests
+# ============================================================================
+
+
+class TestMCPSSEClientLiveness:
+    """Tests for MCPSSEClient.is_alive() liveness detection."""
+
+    def test_is_alive_returns_false_before_initialization(self) -> None:
+        """Test is_alive returns False before client is initialized."""
+        from app.services.sse_client import MCPSSEClient
+
+        client = MCPSSEClient(url="https://example.com/sse")
+        assert client.is_alive() is False
+
+    def test_is_alive_returns_true_after_successful_request(self) -> None:
+        """Test is_alive returns True after a successful request."""
+        from app.services.sse_client import MCPSSEClient
+
+        client = MCPSSEClient(url="https://example.com/sse")
+
+        # Simulate successful initialization state
+        client._initialized = True
+        client._last_success_time = time.time()
+        client._consecutive_failures = 0
+
+        assert client.is_alive() is True
+
+    def test_is_alive_returns_false_after_max_failures(self) -> None:
+        """Test is_alive returns False after exceeding failure threshold."""
+        from app.services.sse_client import MCPSSEClient
+
+        client = MCPSSEClient(url="https://example.com/sse")
+
+        # Simulate initialized but many failures
+        client._initialized = True
+        client._last_success_time = time.time()
+        client._consecutive_failures = client._max_consecutive_failures
+
+        assert client.is_alive() is False
+
+    def test_is_alive_returns_false_when_stale(self) -> None:
+        """Test is_alive returns False when last success is too old."""
+        from app.services.sse_client import MCPSSEClient
+
+        client = MCPSSEClient(url="https://example.com/sse")
+
+        # Simulate initialized but stale (success was 6 minutes ago)
+        client._initialized = True
+        client._last_success_time = time.time() - 360.0  # 6 minutes ago
+        client._consecutive_failures = 0
+
+        assert client.is_alive() is False
+
+    def test_is_alive_returns_false_when_no_success_time(self) -> None:
+        """Test is_alive returns False when no successful request has been made."""
+        from app.services.sse_client import MCPSSEClient
+
+        client = MCPSSEClient(url="https://example.com/sse")
+
+        # Simulate initialized but no successful request
+        client._initialized = True
+        client._last_success_time = None
+        client._consecutive_failures = 0
+
+        assert client.is_alive() is False
+
+    def test_close_resets_health_tracking(self) -> None:
+        """Test close() resets all health tracking fields."""
+        from app.services.sse_client import MCPSSEClient
+
+        client = MCPSSEClient(url="https://example.com/sse")
+
+        # Simulate a healthy state
+        client._initialized = True
+        client._last_success_time = time.time()
+        client._consecutive_failures = 0
+
+        assert client.is_alive() is True
+
+        client.close()
+
+        # All health fields should be reset
+        assert client._initialized is False
+        assert client._last_success_time is None
+        assert client._consecutive_failures == 0
+        assert client.is_alive() is False

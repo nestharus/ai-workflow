@@ -1,8 +1,11 @@
+---
 name: test-debugger
 description: Debugs and fixes failing tests after implementation
 model: opus
 tools: Read, Edit, Bash, Grep, Glob
 ---
+
+# Test Debugger
 
 You fix test failures reported by the implementor.
 

@@ -612,7 +612,7 @@ def get_usecase_coverage(db_path: Path) -> dict[str, Any]:
         cursor = conn.execute("""
             SELECT
                 COUNT(*) as total,
-                SUM(CASE WHEN cuc.covered = 1 THEN 1 ELSE 0 END) as covered
+                COALESCE(SUM(CASE WHEN cuc.covered = 1 THEN 1 ELSE 0 END), 0) as covered
             FROM cc_usecase cu
             LEFT JOIN cc_usecase_coverage cuc ON cu.usecase_id = cuc.usecase_id
         """)
@@ -626,7 +626,7 @@ def get_usecase_coverage(db_path: Path) -> dict[str, Any]:
             SELECT
                 cu.test_tier,
                 COUNT(*) as total,
-                SUM(CASE WHEN cuc.covered = 1 THEN 1 ELSE 0 END) as covered
+                COALESCE(SUM(CASE WHEN cuc.covered = 1 THEN 1 ELSE 0 END), 0) as covered
             FROM cc_usecase cu
             LEFT JOIN cc_usecase_coverage cuc ON cu.usecase_id = cuc.usecase_id
             GROUP BY cu.test_tier

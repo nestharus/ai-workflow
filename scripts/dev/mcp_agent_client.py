@@ -294,6 +294,9 @@ class MCPClient:
                     raise MCPClientError(f"MCP call timed out after {timeout}s")
 
                 # Check if data is available
+                # NOTE: select.select on pipes only works on Unix; this script is designed
+                # for WSL/Linux development environments. Native Windows would require
+                # a threading-based reader or WaitForSingleObject/PeekNamedPipe.
                 ready, _, _ = select.select([self.proc.stdout], [], [], min(remaining, 0.1))
                 if not ready:
                     # Check if process died
@@ -318,7 +321,7 @@ class MCPClient:
                 if byte == b"\n":
                     break
 
-        except OSError as e:
+        except (OSError, ValueError) as e:
             raise MCPClientError(f"I/O error reading response: {e}") from e
 
         try:
