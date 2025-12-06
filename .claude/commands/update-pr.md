@@ -96,9 +96,11 @@ pr_number: {{pr_number}}
 ")
 ```
 
+Delete the tmp folder for the PR comments that was created.
+
 ## Important Rules
 
 - Follow co-author rules in AGENTS.md (no AI co-authors)
 - Only resolve threads that meet the thumbs-up criteria
 - Never defer - implement or challenge, don't postpone
-- Run tests before pushing
+- Run tests and lint-fixer before pushing
