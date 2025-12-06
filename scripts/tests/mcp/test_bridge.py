@@ -661,6 +661,549 @@ class TestHttpMCPClient:
             # Check that os.devnull was used (not hardcoded /dev/null)
             assert os.devnull in captured_cmd
 
+    # ========================================================================
+    # Tests for list_servers()
+    # ========================================================================
+
+    def test_list_servers_success(self) -> None:
+        """Test list_servers returns dict on success."""
+        response = {"servers": [{"name": "test-server"}]}
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=json.dumps(response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            result = client.list_servers()
+            assert result == response
+
+    def test_list_servers_connection_refused(self) -> None:
+        """Test list_servers raises MCPClientError with 'Cannot connect' on curl exit 7."""
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=7, stdout="", stderr="Connection refused"
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match="Cannot connect"):
+                client.list_servers()
+
+    def test_list_servers_timeout(self) -> None:
+        """Test list_servers raises MCPClientError with 'timed out' on curl exit 28."""
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(args=cmd, returncode=28, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match="timed out"):
+                client.list_servers()
+
+    def test_list_servers_error_envelope(self) -> None:
+        """Test list_servers parses error envelope and raises MCPClientError."""
+        error_response = {
+            "error": {
+                "type": "SERVER_ERROR",
+                "message": "Internal server error",
+                "details": None,
+            }
+        }
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=22, stdout=json.dumps(error_response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match=r"\[SERVER_ERROR\] Internal server error"):
+                client.list_servers()
+
+    def test_list_servers_malformed_json(self) -> None:
+        """Test list_servers raises MCPClientError with 'Invalid JSON response'."""
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="{bad json", stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match="Invalid JSON response"):
+                client.list_servers()
+
+    def test_list_servers_non_dict_response(self) -> None:
+        """Test list_servers raises MCPClientError with 'Invalid response type'."""
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="[]", stderr="")
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match="Invalid response type"):
+                client.list_servers()
+
+    def test_list_servers_url_construction(self) -> None:
+        """Test list_servers constructs correct URL path /mcp/servers."""
+        captured_cmd: list[str] = []
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            captured_cmd.extend(cmd)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout='{"servers": []}', stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            client.list_servers()
+            assert "http://localhost:8080/mcp/servers" in captured_cmd
+
+    # ========================================================================
+    # Tests for list_server_tools(server)
+    # ========================================================================
+
+    def test_list_server_tools_success(self) -> None:
+        """Test list_server_tools returns dict on success."""
+        response = {"tools": [{"name": "test-tool"}]}
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=json.dumps(response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            result = client.list_server_tools("test-server")
+            assert result == response
+
+    def test_list_server_tools_server_not_found(self) -> None:
+        """Test list_server_tools raises MCPClientError on 404 with NOT_FOUND type."""
+        error_response = {
+            "error": {
+                "type": "NOT_FOUND",
+                "message": "Server not found",
+                "details": None,
+            }
+        }
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=22, stdout=json.dumps(error_response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match=r"\[NOT_FOUND\]"):
+                client.list_server_tools("unknown-server")
+
+    def test_list_server_tools_mcp_error(self) -> None:
+        """Test list_server_tools raises MCPClientError on 502 with JSONRPC_ERROR type."""
+        error_response = {
+            "error": {
+                "type": "JSONRPC_ERROR",
+                "message": "MCP protocol error",
+                "details": None,
+            }
+        }
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=22, stdout=json.dumps(error_response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match=r"\[JSONRPC_ERROR\]"):
+                client.list_server_tools("test-server")
+
+    def test_list_server_tools_url_construction(self) -> None:
+        """Test list_server_tools constructs correct URL path /mcp/{server}/tools."""
+        captured_cmd: list[str] = []
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            captured_cmd.extend(cmd)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout='{"tools": []}', stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            client.list_server_tools("my-server")
+            assert "http://localhost:8080/mcp/my-server/tools" in captured_cmd
+
+    def test_list_server_tools_empty_server(self) -> None:
+        """Test list_server_tools raises MCPClientError for empty server string."""
+        client = HttpMCPClient("http://localhost:8080")
+        with pytest.raises(MCPClientError, match="server parameter must be a non-empty string"):
+            client.list_server_tools("")
+
+    # ========================================================================
+    # Tests for get_server_tool(server, tool_name)
+    # ========================================================================
+
+    def test_get_server_tool_success(self) -> None:
+        """Test get_server_tool returns tool object on success."""
+        response = {"name": "test-tool", "description": "A test tool"}
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=json.dumps(response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            result = client.get_server_tool("test-server", "test-tool")
+            assert result == response
+
+    def test_get_server_tool_tool_not_found(self) -> None:
+        """Test get_server_tool raises MCPClientError on 404 for unknown tool."""
+        error_response = {
+            "error": {
+                "type": "NOT_FOUND",
+                "message": "Tool not found",
+                "details": None,
+            }
+        }
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=22, stdout=json.dumps(error_response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match=r"\[NOT_FOUND\]"):
+                client.get_server_tool("test-server", "unknown-tool")
+
+    def test_get_server_tool_server_not_found(self) -> None:
+        """Test get_server_tool raises MCPClientError on 404 for unknown server."""
+        error_response = {
+            "error": {
+                "type": "NOT_FOUND",
+                "message": "Server not found",
+                "details": None,
+            }
+        }
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=22, stdout=json.dumps(error_response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match=r"\[NOT_FOUND\]"):
+                client.get_server_tool("unknown-server", "test-tool")
+
+    def test_get_server_tool_url_construction(self) -> None:
+        """Test get_server_tool constructs correct URL path /mcp/{server}/tools/{tool_name}."""
+        captured_cmd: list[str] = []
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            captured_cmd.extend(cmd)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout='{"name": "tool"}', stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            client.get_server_tool("my-server", "my-tool")
+            assert "http://localhost:8080/mcp/my-server/tools/my-tool" in captured_cmd
+
+    def test_get_server_tool_empty_server(self) -> None:
+        """Test get_server_tool raises MCPClientError for empty server string."""
+        client = HttpMCPClient("http://localhost:8080")
+        with pytest.raises(MCPClientError, match="server parameter must be a non-empty string"):
+            client.get_server_tool("", "test-tool")
+
+    def test_get_server_tool_empty_tool_name(self) -> None:
+        """Test get_server_tool raises MCPClientError for empty tool_name string."""
+        client = HttpMCPClient("http://localhost:8080")
+        with pytest.raises(MCPClientError, match="tool_name parameter must be a non-empty string"):
+            client.get_server_tool("test-server", "")
+
+    # ========================================================================
+    # Tests for call_server_tool(server, name, arguments, timeout)
+    # ========================================================================
+
+    def test_call_server_tool_success(self) -> None:
+        """Test call_server_tool returns result dict on success."""
+        response = {"result": {"job_id": "test-123"}}
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=json.dumps(response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            result = client.call_server_tool("test-server", "execute", {"command": "test"})
+            assert result == {"job_id": "test-123"}
+
+    def test_call_server_tool_extracts_result(self) -> None:
+        """Test call_server_tool extracts result from envelope."""
+        response = {"result": {"status": "ok", "data": "value"}}
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=json.dumps(response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            result = client.call_server_tool("test-server", "execute", {})
+            assert result == {"status": "ok", "data": "value"}
+            assert "result" not in result
+
+    def test_call_server_tool_no_result_key_fallback(self) -> None:
+        """Test call_server_tool fallback when 'result' key is missing."""
+        response = {"status": "ok", "data": "value"}
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=json.dumps(response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            result = client.call_server_tool("test-server", "execute", {})
+            assert result == response
+
+    def test_call_server_tool_server_not_found(self) -> None:
+        """Test call_server_tool raises MCPClientError on 404 with NOT_FOUND type."""
+        error_response = {
+            "error": {
+                "type": "NOT_FOUND",
+                "message": "Server not found",
+                "details": None,
+            }
+        }
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=22, stdout=json.dumps(error_response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match=r"\[NOT_FOUND\]"):
+                client.call_server_tool("unknown-server", "execute", {})
+
+    def test_call_server_tool_timeout_504(self) -> None:
+        """Test call_server_tool raises MCPClientError on 504 with TIMEOUT type."""
+        error_response = {
+            "error": {
+                "type": "TIMEOUT",
+                "message": "Request timed out",
+                "details": None,
+            }
+        }
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=22, stdout=json.dumps(error_response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match=r"\[TIMEOUT\]"):
+                client.call_server_tool("test-server", "execute", {})
+
+    def test_call_server_tool_busy_503(self) -> None:
+        """Test call_server_tool raises MCPClientError on 503 with BUSY type."""
+        error_response = {
+            "error": {
+                "type": "BUSY",
+                "message": "Server busy",
+                "details": {"retry_after_ms": 1000},
+            }
+        }
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=22, stdout=json.dumps(error_response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match=r"\[BUSY\]"):
+                client.call_server_tool("test-server", "execute", {})
+
+    def test_call_server_tool_jsonrpc_error_502(self) -> None:
+        """Test call_server_tool raises MCPClientError on 502 with JSONRPC_ERROR type."""
+        error_response = {
+            "error": {
+                "type": "JSONRPC_ERROR",
+                "message": "MCP protocol error",
+                "details": None,
+            }
+        }
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=22, stdout=json.dumps(error_response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match=r"\[JSONRPC_ERROR\]"):
+                client.call_server_tool("test-server", "execute", {})
+
+    def test_call_server_tool_bad_request_400(self) -> None:
+        """Test call_server_tool raises MCPClientError on 400 with BAD_REQUEST type."""
+        error_response = {
+            "error": {
+                "type": "BAD_REQUEST",
+                "message": "Invalid arguments",
+                "details": None,
+            }
+        }
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=22, stdout=json.dumps(error_response), stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match=r"\[BAD_REQUEST\]"):
+                client.call_server_tool("test-server", "execute", {})
+
+    def test_call_server_tool_connection_refused(self) -> None:
+        """Test call_server_tool raises MCPClientError on curl exit code 7."""
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=7, stdout="", stderr="Connection refused"
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match="Cannot connect"):
+                client.call_server_tool("test-server", "execute", {})
+
+    def test_call_server_tool_curl_timeout(self) -> None:
+        """Test call_server_tool raises MCPClientError on curl exit code 28."""
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(args=cmd, returncode=28, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            with pytest.raises(MCPClientError, match="timed out"):
+                client.call_server_tool("test-server", "execute", {})
+
+    def test_call_server_tool_url_construction(self) -> None:
+        """Test call_server_tool constructs correct URL path /mcp/{server}/call."""
+        captured_cmd: list[str] = []
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            captured_cmd.extend(cmd)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout='{"result": {}}', stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            client.call_server_tool("my-server", "execute", {})
+            assert "http://localhost:8080/mcp/my-server/call" in captured_cmd
+
+    def test_call_server_tool_empty_server(self) -> None:
+        """Test call_server_tool raises MCPClientError for empty server string."""
+        client = HttpMCPClient("http://localhost:8080")
+        with pytest.raises(MCPClientError, match="server parameter must be a non-empty string"):
+            client.call_server_tool("", "execute", {})
+
+    def test_call_server_tool_empty_name(self) -> None:
+        """Test call_server_tool raises MCPClientError for empty name string."""
+        client = HttpMCPClient("http://localhost:8080")
+        with pytest.raises(MCPClientError, match="name parameter must be a non-empty string"):
+            client.call_server_tool("test-server", "", {})
+
+    # ========================================================================
+    # Tests for _request_json() helper (indirect via public methods)
+    # ========================================================================
+
+    def test_request_json_curl_command_construction(self) -> None:
+        """Test _request_json constructs curl command with correct URL and --max-time."""
+        captured_cmd: list[str] = []
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            captured_cmd.extend(cmd)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout='{"servers": []}', stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            client.list_servers()
+            # Verify curl command includes expected flags
+            assert "curl" in captured_cmd
+            assert "-sS" in captured_cmd
+            assert "--fail-with-body" in captured_cmd
+            assert "--max-time" in captured_cmd
+            # Verify timeout value (list_servers uses 5.0s timeout, so max-time should be 6)
+            max_time_idx = captured_cmd.index("--max-time")
+            assert captured_cmd[max_time_idx + 1] == "6"
+
 
 # ============================================================================
 # API Routes Tests (using TestClient)

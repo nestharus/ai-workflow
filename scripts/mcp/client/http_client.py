@@ -4,16 +4,42 @@
 This module provides a lightweight HTTP client that uses curl via subprocess
 to call the mcp-bridge REST API. This avoids adding httpx as a dependency.
 
+The client supports two usage patterns:
+
+1. **Legacy single-server usage:**
+   - `call_tool()` calls the default server at `/mcp/call`
+   - `health_check()` checks overall bridge health at `/health` (not per-server health)
+
+2. **Multi-server usage pattern:**
+   - Discover servers with `list_servers()` → returns `{"servers": [...]}`
+     including per-server `healthy` field
+   - Per-server health can be inferred from the `healthy` field in
+     `list_servers()` response
+   - Inspect tools via `list_server_tools(server)` → returns `{"tools": [...]}`
+   - Get specific tool info via `get_server_tool(server, tool_name)` → returns
+     tool dict
+   - Call tools via `call_server_tool(server, name, arguments, timeout)` →
+     returns unwrapped result dict
+
 Usage:
     from scripts.mcp.client.http_client import HttpMCPClient, MCPClientError
 
     client = HttpMCPClient()  # Uses MCP_BRIDGE_URL env var or localhost:8080
 
-    # Check if bridge is healthy
+    # Legacy: Call default server
+    result = client.call_tool("execute", {"command": "echo hello"})
+
+    # Check overall bridge health
     if client.health_check():
-        # Call an MCP tool
-        result = client.call_tool("execute", {"command": "echo hello"})
-        print(result)
+        print("Bridge is healthy")
+
+    # Multi-server: Discover and call specific server
+    servers = client.list_servers()
+    for server in servers["servers"]:
+        if server["healthy"]:  # Per-server health from list_servers()
+            tools = client.list_server_tools(server["name"])
+            # ...
+    result = client.call_server_tool("background-job", "execute", {"command": "ls"})
 """
 
 from __future__ import annotations
@@ -49,6 +75,125 @@ class HttpMCPClient:
             raise MCPClientError(f"Invalid base_url: scheme without host: {base_url}")
         self.base_url = base_url
 
+    def _request_json(
+        self,
+        method: str,
+        url: str,
+        payload: dict[str, Any] | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        try:
+            if timeout <= 0:
+                msg = "timeout must be > 0"
+                raise ValueError(msg)
+            max_time_str = str(int(timeout + 1))
+        except (TypeError, ValueError, OverflowError) as e:
+            raise MCPClientError(f"Invalid timeout: {timeout}") from e
+
+        # Build curl command
+        cmd = [
+            "curl",
+            "-sS",
+            "--fail-with-body",
+            "--max-time",
+            max_time_str,
+        ]
+
+        payload_json = None
+        if method == "POST":
+            if payload is None:
+                raise MCPClientError("POST request requires payload")
+            try:
+                payload_json = json.dumps(payload)
+            except (TypeError, ValueError) as e:
+                raise MCPClientError(f"Failed to serialize request: {e}") from e
+
+            cmd.extend(
+                [
+                    "-X",
+                    "POST",
+                    url,
+                    "-H",
+                    "Content-Type: application/json",
+                    "--data-binary",
+                    "@-",
+                ]
+            )
+        else:
+            cmd.append(url)
+
+        try:
+            result = subprocess.run(
+                cmd,
+                input=payload_json,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=timeout + 5,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise MCPClientError(f"Request timed out after {timeout}s") from e
+        except OSError as e:
+            raise MCPClientError(f"Failed to run curl: {e}") from e
+        except UnicodeError as e:
+            raise MCPClientError(f"Invalid UTF-8 in response: {e}") from e
+
+        # Handle curl exit codes
+        if result.returncode == 7:
+            raise MCPClientError(
+                f"Cannot connect to mcp-bridge at {self.base_url}. "
+                "Docker environment not running. Run: "
+                "docker-compose -f docker-compose.dev.yml up -d"
+            )
+        elif result.returncode == 28:
+            raise MCPClientError(f"Request timed out after {timeout}s")
+        elif result.returncode == 22:
+            # HTTP error (from --fail-with-body), try to parse response body for details
+            stdout = result.stdout.strip() if result.stdout else ""
+            if stdout:
+                try:
+                    error_response = json.loads(stdout)
+                    if isinstance(error_response, dict) and "error" in error_response:
+                        error = error_response["error"]
+                        if isinstance(error, dict):
+                            error_type = error.get("type", "UNKNOWN")
+                            message = error.get("message", str(error))
+                            raise MCPClientError(f"[{error_type}] {message}")
+                        raise MCPClientError(f"Server error: {error}")
+                except json.JSONDecodeError:
+                    pass
+            error_msg = result.stderr.strip() if result.stderr else "HTTP error"
+            raise MCPClientError(f"HTTP request failed: {error_msg}")
+        elif result.returncode != 0:
+            error_msg = result.stderr.strip() if result.stderr else f"exit code {result.returncode}"
+            raise MCPClientError(f"curl failed: {error_msg}")
+
+        # Parse response JSON
+        stdout = result.stdout.strip()
+        if not stdout:
+            raise MCPClientError("Empty response from server")
+
+        try:
+            response = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            raise MCPClientError(f"Invalid JSON response: {e} - {stdout[:200]}") from e
+
+        if not isinstance(response, dict):
+            raise MCPClientError(
+                f"Invalid response type: expected JSON object, got {type(response).__name__}"
+            )
+
+        # Check for error envelope per NES-47 specification
+        if "error" in response:
+            error = response["error"]
+            if isinstance(error, dict):
+                error_type = error.get("type", "UNKNOWN")
+                message = error.get("message", str(error))
+                raise MCPClientError(f"[{error_type}] {message}")
+            raise MCPClientError(f"Server error: {error}")
+
+        return response
+
     def call_tool(
         self,
         name: str,
@@ -71,117 +216,7 @@ class HttpMCPClient:
         url = f"{self.base_url}/mcp/call"
         payload = {"tool": name, "arguments": arguments, "timeout": timeout}
 
-        try:
-            payload_json = json.dumps(payload)
-        except (TypeError, ValueError) as e:
-            raise MCPClientError(f"Failed to serialize request: {e}") from e
-
-        try:
-            if timeout <= 0:
-                msg = "timeout must be > 0"
-                raise ValueError(msg)
-            max_time_str = str(int(timeout + 1))
-        except (TypeError, ValueError, OverflowError) as e:
-            raise MCPClientError(f"Invalid timeout: {timeout}") from e
-
-        # Build curl command
-        # -s: silent mode (no progress)
-        # -S: show errors even in silent mode
-        # -X POST: HTTP POST method
-        # -H: Content-Type header
-        # --data-binary @-: read data from stdin (avoids shell quoting issues)
-        # --max-time: timeout in seconds
-        # --fail-with-body: return error exit code for 4xx/5xx but still output body
-        cmd = [
-            "curl",
-            "-sS",
-            "--fail-with-body",
-            "-X",
-            "POST",
-            url,
-            "-H",
-            "Content-Type: application/json",
-            "--data-binary",
-            "@-",
-            "--max-time",
-            max_time_str,  # Add 1 second buffer for curl
-        ]
-
-        try:
-            result = subprocess.run(
-                cmd,
-                input=payload_json,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=timeout + 5,  # Extra buffer for subprocess timeout
-            )
-        except subprocess.TimeoutExpired as e:
-            raise MCPClientError(f"Request timed out after {timeout}s") from e
-        except OSError as e:
-            raise MCPClientError(f"Failed to run curl: {e}") from e
-        except UnicodeError as e:
-            raise MCPClientError(f"Invalid UTF-8 in response: {e}") from e
-
-        # Handle curl exit codes
-        if result.returncode == 7:
-            # Connection refused
-            raise MCPClientError(
-                f"Cannot connect to mcp-bridge at {self.base_url}. "
-                "Docker environment not running. Run: "
-                "docker-compose -f docker-compose.dev.yml up -d"
-            )
-        elif result.returncode == 28:
-            # Timeout
-            raise MCPClientError(f"Request timed out after {timeout}s")
-        elif result.returncode == 22:
-            # HTTP error (from --fail-with-body), try to parse response body for details
-            stdout = result.stdout.strip() if result.stdout else ""
-            if stdout:
-                try:
-                    error_response = json.loads(stdout)
-                    if isinstance(error_response, dict) and "error" in error_response:
-                        error = error_response["error"]
-                        if isinstance(error, dict):
-                            # Parse error envelope per NES-47 spec
-                            error_type = error.get("type", "UNKNOWN")
-                            message = error.get("message", str(error))
-                            raise MCPClientError(f"[{error_type}] {message}")
-                        raise MCPClientError(f"Server error: {error}")
-                except json.JSONDecodeError:
-                    pass
-            error_msg = result.stderr.strip() if result.stderr else "HTTP error"
-            raise MCPClientError(f"HTTP request failed: {error_msg}")
-        elif result.returncode != 0:
-            # Other curl error
-            error_msg = result.stderr.strip() if result.stderr else f"exit code {result.returncode}"
-            raise MCPClientError(f"curl failed: {error_msg}")
-
-        # Parse response JSON
-        stdout = result.stdout.strip()
-        if not stdout:
-            raise MCPClientError("Empty response from server")
-
-        try:
-            response = json.loads(stdout)
-        except json.JSONDecodeError as e:
-            raise MCPClientError(f"Invalid JSON response: {e} - {stdout[:200]}") from e
-
-        # Validate response is a dict
-        if not isinstance(response, dict):
-            raise MCPClientError(
-                f"Invalid response type: expected JSON object, got {type(response).__name__}"
-            )
-
-        # Check for error envelope per NES-47 specification
-        # Error format: { "error": { "type": "...", "message": "...", "details": {...} } }
-        if "error" in response:
-            error = response["error"]
-            if isinstance(error, dict):
-                error_type = error.get("type", "UNKNOWN")
-                message = error.get("message", str(error))
-                raise MCPClientError(f"[{error_type}] {message}")
-            raise MCPClientError(f"Server error: {error}")
+        response = self._request_json("POST", url, payload, timeout)
 
         # Extract result from envelope per NES-47 specification
         # Success format: { "result": {...} }
@@ -194,6 +229,110 @@ class HttpMCPClient:
             return result_dict
 
         # Fallback: return response as-is for backward compatibility
+        return response
+
+    def list_servers(self) -> dict[str, Any]:
+        """List all MCP servers.
+
+        Uses a 5-second timeout since this endpoint queries the local in-memory
+        server registry and does not require MCP communication.
+
+        Returns:
+            Dict with servers list and health status for each server.
+
+        Raises:
+            MCPClientError: On connection failure, HTTP error, or timeout
+        """
+        url = f"{self.base_url}/mcp/servers"
+        response = self._request_json("GET", url, payload=None, timeout=5.0)
+        return response
+
+    def list_server_tools(self, server: str) -> dict[str, Any]:
+        """List tools available on a specific server.
+
+        Uses a 10-second timeout to allow for MCP server communication.
+
+        Args:
+            server: Name of the server.
+
+        Returns:
+            Dict with list of available tools on the server.
+
+        Raises:
+            MCPClientError: If server is invalid or on connection failure
+        """
+        if not isinstance(server, str) or not server:
+            raise MCPClientError("server parameter must be a non-empty string")
+        url = f"{self.base_url}/mcp/{server}/tools"
+        response = self._request_json("GET", url, payload=None, timeout=10.0)
+        return response
+
+    def get_server_tool(self, server: str, tool_name: str) -> dict[str, Any]:
+        """Get information about a specific tool on a server.
+
+        Uses a 10-second timeout to allow for MCP server communication.
+
+        Args:
+            server: Name of the server.
+            tool_name: Name of the tool.
+
+        Returns:
+            Dict with tool information.
+
+        Raises:
+            MCPClientError: If parameters are invalid or on connection failure
+        """
+        if not isinstance(server, str) or not server:
+            raise MCPClientError("server parameter must be a non-empty string")
+        if not isinstance(tool_name, str) or not tool_name:
+            raise MCPClientError("tool_name parameter must be a non-empty string")
+        url = f"{self.base_url}/mcp/{server}/tools/{tool_name}"
+        response = self._request_json("GET", url, payload=None, timeout=10.0)
+        return response
+
+    def call_server_tool(
+        self,
+        server: str,
+        name: str,
+        arguments: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        """Call a specific tool on a server.
+
+        The timeout parameter controls both the server-side timeout and curl
+        behavior. Following the same pattern as call_tool(), curl's --max-time
+        is set to timeout + 1 second as a buffer, and the subprocess timeout
+        is set to timeout + 5 seconds to allow for process overhead.
+
+        Args:
+            server: Name of the server.
+            name: Tool name.
+            arguments: Tool arguments dict.
+            timeout: Request timeout in seconds (default 30.0).
+
+        Returns:
+            Result dict from the tool call.
+
+        Raises:
+            MCPClientError: If parameters are invalid or on connection failure
+        """
+        if not isinstance(server, str) or not server:
+            raise MCPClientError("server parameter must be a non-empty string")
+        if not isinstance(name, str) or not name:
+            raise MCPClientError("name parameter must be a non-empty string")
+        url = f"{self.base_url}/mcp/{server}/call"
+        payload = {"tool": name, "arguments": arguments, "timeout": timeout}
+
+        response = self._request_json("POST", url, payload, timeout)
+
+        if "result" in response:
+            result_dict = response["result"]
+            if not isinstance(result_dict, dict):
+                raise MCPClientError(
+                    f"Invalid result type: expected dict, got {type(result_dict).__name__}"
+                )
+            return result_dict
+
         return response
 
     def health_check(self) -> bool:
