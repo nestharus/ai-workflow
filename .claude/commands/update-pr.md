@@ -71,6 +71,8 @@ After all threads processed, run tests in the worktree:
 cd {{worktree}} && uv run pytest
 ```
 
+Next run lint-fixer sub-agent.
+
 ### 7. Commit and Push
 
 If tests pass and changes were made, call pr-agent:
