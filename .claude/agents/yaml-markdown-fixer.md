@@ -167,8 +167,15 @@ When splitting a collapsed list into separate items, generate IDs like this:
 Report these for human review - do NOT fix automatically:
 
 1. **Heredocs with markdown**: `type: code` items containing `<<EOF` that create `.md` files
-2. **Items that seem to be list headers**: Like `text: 'Excludes:'` followed by list items
+2. **Standalone label items with unclear relationships**: Labels like `text: 'Purpose:'` or
+   `text: 'Notes:'` where the relationship to following items isn't structurally obvious.
+   NOTE: The specific pattern of `Includes:`/`Excludes:` pairs followed by flat items is a
+   CLEAR case (see above) and should be fixed automatically. Only report when the label is
+   standalone without a clear pairing or when following items don't obviously belong under it.
 3. **Nested lists**: Markdown lists with sub-items that have complex structure
+
+**Precedence rule**: If a pattern matches both CLEAR and AMBIGUOUS descriptions, treat as
+AMBIGUOUS and report for human review.
 
 ## Input Modes
 

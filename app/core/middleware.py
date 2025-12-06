@@ -231,6 +231,10 @@ class RateLimitingMiddleware:
         window_seconds: int = 60,
     ) -> None:
         """Store downstream app and rate limit configuration."""
+        if requests_per_window <= 0:
+            raise ValueError("requests_per_window must be a positive integer")
+        if window_seconds <= 0:
+            raise ValueError("window_seconds must be a positive integer")
         self.app = app
         self.requests_per_window = requests_per_window
         self.window_seconds = window_seconds
@@ -244,7 +248,7 @@ class RateLimitingMiddleware:
             return
 
         client_ip = self._get_client_ip(scope)
-        current_time = time.time()
+        current_time = time.monotonic()
 
         if self._is_rate_limited(client_ip, current_time):
             await self._send_rate_limit_response(send)

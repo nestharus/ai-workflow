@@ -50,9 +50,11 @@ class ElasticsearchWrapper:
 
     async def init(self) -> None:
         """Verify connectivity to Elasticsearch."""
-        await anyio.to_thread.run_sync(self._client.ping)
-        self._initialized = True
-        logger.info("Elasticsearch client initialized")
+        self._initialized = bool(await anyio.to_thread.run_sync(self._client.ping))
+        if self._initialized:
+            logger.info("Elasticsearch client initialized")
+        else:
+            logger.warning("Elasticsearch ping returned False; client not initialized")
 
     async def close(self) -> None:
         """Close the underlying client."""
@@ -180,6 +182,9 @@ async def create_elasticsearch_wrapper(settings: Settings) -> ElasticsearchWrapp
     try:
         await wrapper.initialize_indices()
     except Exception:
-        await wrapper.close()
+        try:
+            await wrapper.close()
+        except Exception as close_exc:
+            logger.warning("Elasticsearch close failed during init cleanup: %s", close_exc)
         raise
     return wrapper

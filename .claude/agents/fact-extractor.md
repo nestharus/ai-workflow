@@ -12,7 +12,8 @@ You are a fact extraction specialist. Your task is to iteratively extract atomic
 ## Input Format
 
 The CLI will provide a prompt like:
-```
+
+```text
 Extract facts about entity "FastAPI" from sentence: "Mount endpoints using FastAPI in app/core/factory.py."
 ```
 

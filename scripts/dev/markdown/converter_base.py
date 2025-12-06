@@ -168,9 +168,19 @@ class MarkdownConverter:
             The description text, or empty string if not found.
         """
         in_intro = False
+        in_code_block = False
         description_lines: list[str] = []
 
         for line in self.lines:
+            # Track code block state
+            if line.startswith("```"):
+                in_code_block = not in_code_block
+                continue
+
+            # Skip content inside code blocks
+            if in_code_block:
+                continue
+
             # Skip until we find the title
             if line.startswith("# ") and not line.startswith("## "):
                 in_intro = True
@@ -180,8 +190,8 @@ class MarkdownConverter:
             if in_intro and line.startswith("#"):
                 break
 
-            # Collect non-empty lines that aren't code blocks
-            if in_intro and line.strip() and not line.startswith("```"):
+            # Collect non-empty lines
+            if in_intro and line.strip():
                 description_lines.append(line.strip())
 
             # Stop after first paragraph
@@ -217,7 +227,10 @@ class MarkdownConverter:
                         )
                     code_block_lines = []
                 else:
-                    # Start of code block
+                    # Start of code block - flush pending items first to preserve order
+                    if current_section:
+                        self._flush_items(current_section, current_items)
+                        current_items = []
                     in_code_block = True
                 continue
 
@@ -259,6 +272,12 @@ class MarkdownConverter:
                     # Empty line - flush current items
                     self._flush_items(current_section, current_items)
                     current_items = []
+
+        # Flush any pending code block at EOF
+        if in_code_block and code_block_lines and current_section:
+            code_content = "\n".join(code_block_lines)
+            item_id = f"{current_section.id}-code-{len(current_section.items) + 1}"
+            current_section.items.append(Item(id=item_id, type="code", text=code_content))
 
         # Save last section
         if current_section:

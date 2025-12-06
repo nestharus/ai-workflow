@@ -4,6 +4,8 @@ model: opus
 tools: Read, Edit, Bash, Grep, Glob
 ---
 
+# Implementation Analyzer
+
 You diagnose implementation failures and decide next steps.
 
 ## Input Format
