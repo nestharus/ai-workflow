@@ -1,7 +1,7 @@
 ---
 description: Execute an implementation plan in a git worktree
 argument-hint: <ticket-id>
-allowed-tools: Bash, Read, Write, Glob, Grep, mcp__linear-server__get_issue, mcp__linear-server__update_issue
+allowed-tools: Bash, Read, Write, Glob, Grep
 ---
 
 Execute the implementation plan for ticket `$ARGUMENTS` in a dedicated git worktree.
@@ -16,7 +16,16 @@ The worktree branch is created from the current branch and PRs back to it.
 ### Step 1: Setup Git Worktree
 
 1. Record the current branch: `git branch --show-current` → `<BASE_BRANCH>`
-2. Use `mcp__linear-server__get_issue` to fetch the ticket details for the title
+2. Fetch the ticket details using the Linear client:
+```bash
+uv run python -c "
+from scripts.clients.linear_client import LinearClient
+import json
+client = LinearClient()
+issue = client.get_issue('$ARGUMENTS')
+print(json.dumps(issue, indent=2))
+"
+```
 3. Generate branch name: `<TICKET-ID>-<sanitized-title>` (preserve ticket ID casing exactly, rest lowercase with hyphens, max 50 chars total)
    - **IMPORTANT**: The ticket ID (e.g., `NES-47`) must keep its exact casing for automatic Linear linking
    - Example: `NES-47-rest-to-mcp-bridge` not `nes-47-rest-to-mcp-bridge`

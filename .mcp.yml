@@ -21,14 +21,3 @@ mcpServers:
       - firecrawl-mcp
     env:
       FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY}
-
-  # Linear project management server (with OAuth)
-  # Uses mcp-remote to handle OAuth authentication
-  # On first use, a browser window will open for Linear OAuth login
-  linear:
-    type: stdio
-    command: npx
-    args:
-      - "-y"
-      - mcp-remote
-      - https://mcp.linear.app/sse

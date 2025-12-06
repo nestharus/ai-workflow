@@ -1,7 +1,7 @@
 ---
 description: Update an existing implementation plan with additional requirements
 argument-hint: <ticket-id> <additional requirements>
-allowed-tools: Bash, Read, Write, Glob, Grep, mcp__linear-server__get_issue, mcp__linear-server__create_comment, mcp__linear-server__update_issue, mcp__linear-server__list_comments
+allowed-tools: Bash, Read, Write, Glob, Grep
 ---
 
 Update the implementation plan for ticket `$ARGUMENTS`.
@@ -12,9 +12,27 @@ Parse arguments: first token is ticket ID, rest is the update prompt.
 
 ### Step 1: Fetch Existing Context
 
-1. Use `mcp__linear-server__get_issue` to fetch the ticket details
+1. Fetch the ticket details using the Linear client:
+```bash
+uv run python -c "
+from scripts.clients.linear_client import LinearClient
+import json
+client = LinearClient()
+issue = client.get_issue('<TICKET_ID>')
+print(json.dumps(issue, indent=2))
+"
+```
 2. Parse the existing plan from the ticket description (after the `---` separator)
-3. Use `mcp__linear-server__list_comments` to get any review feedback from the ticket
+3. Get any review feedback from the ticket using the Linear client:
+```bash
+uv run python -c "
+from scripts.clients.linear_client import LinearClient
+import json
+client = LinearClient()
+comments = client.list_comments('<TICKET_ID>')
+print(json.dumps(comments, indent=2))
+"
+```
 
 ### Step 2: Run Planner Agent with Update Context
 
@@ -49,22 +67,43 @@ Handle each status:
 
 ### Step 3: Update Linear Ticket
 
-Update the ticket description using `mcp__linear-server__update_issue`:
-1. Keep the original ticket description (before the `---` separator)
-2. Add a `---` separator
-3. Add `# Implementation Plan` header
-4. Add the full updated plan content in markdown format
+Update the ticket description using the Linear client:
+```bash
+uv run python -c "
+from scripts.clients.linear_client import LinearClient
+client = LinearClient()
+client.update_issue(
+    issue_id='<TICKET_ID>',
+    description='''<ORIGINAL_DESCRIPTION>
+
+---
+
+# Implementation Plan
+
+<UPDATED_PLAN_CONTENT>'''
+)
+print('Ticket description updated with revised plan')
+"
+```
 
 ### Step 4: Add Update Comment
 
-Add a comment on the ticket using `mcp__linear-server__create_comment` with:
-```markdown
-## Plan Updated
+Add a comment on the ticket using the Linear client:
+```bash
+uv run python -c "
+from scripts.clients.linear_client import LinearClient
+client = LinearClient()
+client.create_comment(
+    issue_id='<TICKET_ID>',
+    body='''## Plan Updated
 
 Changes incorporated:
 <SUMMARY_OF_UPDATE_REQUEST>
 
-The implementation plan in the ticket description has been updated.
+The implementation plan in the ticket description has been updated.'''
+)
+print('Update comment added to ticket')
+"
 ```
 
 ### Step 5: Output Confirmation

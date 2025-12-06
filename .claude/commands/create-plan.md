@@ -1,7 +1,7 @@
 ---
 description: Create an implementation plan from a Linear ticket (or create ticket from prompt)
 argument-hint: [<ticket-id> | <description of work>]
-allowed-tools: Bash, Read, Write, Glob, Grep, mcp__linear-server__get_issue, mcp__linear-server__create_issue, mcp__linear-server__create_comment, mcp__linear-server__update_issue, mcp__linear-server__list_projects, mcp__linear-server__list_teams
+allowed-tools: Bash, Read, Write, Glob, Grep
 ---
 
 Create an implementation plan. If `$ARGUMENTS` is a ticket ID (e.g., `NES-123`), fetch that ticket. Otherwise, create a new ticket using the arguments as a description.
@@ -18,10 +18,28 @@ the ticket description is updated to include the full plan content below a `---`
 Check if `$ARGUMENTS` looks like a ticket ID (format: `XXX-NNN` where XXX is letters and NNN is numbers):
 
 **If ticket ID provided:**
-- Use `mcp__linear-server__get_issue` to fetch the ticket
+Fetch the ticket using the Linear client:
+```bash
+uv run python -c "
+from scripts.clients.linear_client import LinearClient
+import json
+client = LinearClient()
+issue = client.get_issue('$ARGUMENTS')
+print(json.dumps(issue, indent=2))
+"
+```
 
 **If no ticket ID (description provided instead):**
-1. Use `mcp__linear-server__list_projects` to get available projects
+1. Get available projects using the Linear client:
+```bash
+uv run python -c "
+from scripts.clients.linear_client import LinearClient
+import json
+client = LinearClient()
+projects = client.list_projects()
+print(json.dumps(projects, indent=2))
+"
+```
 2. Analyze the description to determine the most appropriate project:
    - "AI Workflow Application Phase N" - for app development work
    - "Task System" - for task/agent system work
@@ -30,13 +48,32 @@ Check if `$ARGUMENTS` looks like a ticket ID (format: `XXX-NNN` where XXX is let
    - "GitHub CI" - for CI/CD work
    - "Knowledge System" - for knowledge/fact extraction work
    - Default to "Task System" if unclear
-3. Use `mcp__linear-server__list_teams` to get team ID (use "Neshq")
-4. Create ticket with `mcp__linear-server__create_issue`:
-   - `title`: Extract a concise title from the description (first sentence or main topic)
-   - `description`: Full description from `$ARGUMENTS`
-   - `team`: "Neshq"
-   - `project`: Selected project name
-5. Capture the created ticket ID
+3. Get team ID using the Linear client (use "Neshq"):
+```bash
+uv run python -c "
+from scripts.clients.linear_client import LinearClient
+import json
+client = LinearClient()
+teams = client.list_teams()
+print(json.dumps(teams, indent=2))
+"
+```
+4. Create ticket using the Linear client:
+```bash
+uv run python -c "
+from scripts.clients.linear_client import LinearClient
+import json
+client = LinearClient()
+issue = client.create_issue(
+    title='<EXTRACTED_TITLE>',
+    description='$ARGUMENTS',
+    team='Neshq',
+    project='<SELECTED_PROJECT>'
+)
+print(json.dumps(issue, indent=2))
+"
+```
+5. Capture the created ticket ID from the response
 
 ### Step 2: Run Planner Agent
 
@@ -62,11 +99,24 @@ Handle each status:
 
 ### Step 3: Update Linear Ticket
 
-Update the ticket description using `mcp__linear-server__update_issue` to append the plan content:
-1. Keep the original ticket description
-2. Add a `---` separator
-3. Add `# Implementation Plan` header
-4. Add the full plan content in markdown format
+Update the ticket description using the Linear client to append the plan content:
+```bash
+uv run python -c "
+from scripts.clients.linear_client import LinearClient
+client = LinearClient()
+client.update_issue(
+    issue_id='<TICKET_ID>',
+    description='''<ORIGINAL_DESCRIPTION>
+
+---
+
+# Implementation Plan
+
+<PLAN_CONTENT>'''
+)
+print('Ticket description updated with plan')
+"
+```
 
 The plan becomes part of the ticket description and is visible directly on the ticket.
 
