@@ -15,6 +15,8 @@
 #
 # Run:
 #   docker run -p 127.0.0.1:8080:8080 ai-workflow/mcp-bridge:dev
+#   # Or with custom port:
+#   docker run -e MCP_BRIDGE_PORT=9090 -p 127.0.0.1:9090:9090 ai-workflow/mcp-bridge:dev
 #
 # Or use docker-compose (recommended):
 #   docker-compose up mcp-bridge
@@ -85,12 +87,17 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Switch to non-root user
 USER appuser
 
+# Configurable port (default: 8080 for backward compatibility)
+ENV MCP_BRIDGE_PORT=8080
+
 # Expose port
-EXPOSE 8080
+EXPOSE ${MCP_BRIDGE_PORT}
 
 # Add healthcheck
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:${MCP_BRIDGE_PORT}/health || exit 1
 
 # Start the application using the app module path
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Shell form required for MCP_BRIDGE_PORT variable expansion (acceptable for local dev image)
+# hadolint ignore=DL3025
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${MCP_BRIDGE_PORT}
