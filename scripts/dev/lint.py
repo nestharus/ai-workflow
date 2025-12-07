@@ -23,12 +23,15 @@ LINTER_NAMES = [
     "yamllint",
     "yamldocs",
     "checkov",
+    "trivy",
 ]
 OPENAPI_SCHEMA = REPO_ROOT / "openapi" / "openapi.json"
 CHECKOV_CONFIG = REPO_ROOT / ".checkov.yaml"
 HADOLINT_CONFIG = REPO_ROOT / ".hadolint.yaml"
 UV_CLI_REQUIRED = "uv CLI required to run lint"
 HADOLINT_CLI_REQUIRED = "hadolint CLI required to run lint"
+TRIVY_CLI_REQUIRED = "trivy CLI required to run lint"
+DOCKER_CLI_REQUIRED = "docker CLI required for trivy image scanning"
 
 # Lint script config file paths
 LINT_SCRIPTS_CONFIG = REPO_ROOT / ".lint.scripts.yaml"
@@ -37,6 +40,7 @@ LINT_PYMARKDOWN_CONFIG = REPO_ROOT / ".lint.pymarkdown.yaml"
 LINT_YAMLLINT_CONFIG = REPO_ROOT / ".lint.yamllint.yaml"
 LINT_YAMLDOCS_CONFIG = REPO_ROOT / ".lint.yamldocs.yaml"
 LINT_MARKDOWN_RESTRICTION_CONFIG = REPO_ROOT / ".lint.markdown-restriction.yaml"
+LINT_TRIVY_CONFIG = REPO_ROOT / ".lint.trivy.yaml"
 
 
 def _load_yaml_config(config_path: Path) -> dict[str, Any]:
@@ -65,6 +69,20 @@ def _hadolint() -> str:
     if hadolint_exe is None:
         raise RuntimeError(HADOLINT_CLI_REQUIRED)
     return hadolint_exe
+
+
+def _trivy() -> str:
+    trivy_exe = shutil.which("trivy")
+    if trivy_exe is None:
+        raise RuntimeError(TRIVY_CLI_REQUIRED)
+    return trivy_exe
+
+
+def _docker() -> str:
+    docker_exe = shutil.which("docker")
+    if docker_exe is None:
+        raise RuntimeError(DOCKER_CLI_REQUIRED)
+    return docker_exe
 
 
 def _run_checked(command: list[str]) -> None:
@@ -422,12 +440,129 @@ def _run_checkov() -> int:
     return 0
 
 
+def _run_trivy_fs(trivy_exe: str, config: dict[str, Any]) -> int:
+    """Run Trivy filesystem scan on uv.lock.
+
+    Args:
+        trivy_exe: Path to trivy executable.
+        config: Configuration dictionary from .lint.trivy.yaml.
+
+    Returns:
+        0 if scan passes, 1 if vulnerabilities found or errors occur.
+    """
+    fs_target = config.get("fs_target", "uv.lock")
+    lockfile_path = REPO_ROOT / fs_target
+    skip_if_missing = config.get("skip_fs_if_no_lockfile", False)
+
+    if not lockfile_path.exists():
+        if skip_if_missing:
+            print(f"Warning: {fs_target} not found, skipping filesystem scan")
+            return 0
+        else:
+            print(f"Error: {fs_target} not found", file=sys.stderr)
+            return 1
+
+    # Run trivy fs scan from REPO_ROOT
+    result = subprocess.call(
+        [trivy_exe, "fs", "--config", ".trivy.yaml", str(fs_target)],
+        cwd=str(REPO_ROOT),
+    )
+    return result
+
+
+def _run_trivy_image(trivy_exe: str, config: dict[str, Any]) -> int:
+    """Run Trivy image scan on temporary Docker image.
+
+    Args:
+        trivy_exe: Path to trivy executable.
+        config: Configuration dictionary from .lint.trivy.yaml.
+
+    Returns:
+        0 if scan passes, 1 if vulnerabilities found or errors occur.
+    """
+    docker_exe = _docker()  # Raises if docker not installed
+    temp_image_name = config.get("temp_image_name", "ai-workflow-trivy-temp")
+    skip_if_no_dockerfile = config.get("skip_image_if_no_dockerfile", True)
+
+    dockerfile_path = REPO_ROOT / "Dockerfile"
+    if not dockerfile_path.exists():
+        if skip_if_no_dockerfile:
+            print("Warning: Dockerfile not found, skipping image scan")
+            return 0
+        else:
+            print("Error: Dockerfile not found", file=sys.stderr)
+            return 1
+
+    # Build temp image
+    print(f"Building temporary image: {temp_image_name}")
+    build_result = subprocess.call(
+        [docker_exe, "build", "-t", temp_image_name, "."],
+        cwd=str(REPO_ROOT),
+    )
+
+    if build_result != 0:
+        print("Error: Docker build failed", file=sys.stderr)
+        return build_result
+
+    # Run trivy image scan in try/finally to ensure cleanup
+    try:
+        print(f"Scanning image: {temp_image_name}")
+        scan_result = subprocess.call(
+            [trivy_exe, "image", "--config", ".trivy.yaml", temp_image_name],
+            cwd=str(REPO_ROOT),
+        )
+        return scan_result
+    finally:
+        # Clean up temp image
+        print(f"Removing temporary image: {temp_image_name}")
+        cleanup_result = subprocess.call(
+            [docker_exe, "rmi", temp_image_name],
+            cwd=str(REPO_ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if cleanup_result != 0:
+            print(
+                f"Warning: Failed to remove temporary image {temp_image_name}",
+                file=sys.stderr,
+            )
+
+
+def _run_trivy() -> int:
+    """Run Trivy security scans for filesystem and Docker image.
+
+    Runs two scan modes:
+    1. Filesystem scan: Scans uv.lock for Python dependency vulnerabilities
+    2. Image scan: Builds temporary Docker image and scans for vulnerabilities
+
+    Note: The filesystem scan runs first. If it fails (vulnerabilities found
+    or errors), the function returns immediately and the image scan is skipped.
+    This short-circuit behavior avoids running Docker operations when dependency
+    vulnerabilities already need attention.
+
+    Returns:
+        0 if all scans pass, 1 if vulnerabilities found or errors occur.
+    """
+    trivy_exe = _trivy()  # Raises if trivy not installed
+    config = _load_yaml_config(LINT_TRIVY_CONFIG)
+
+    # Filesystem scan (runs first, short-circuits on failure)
+    fs_result = _run_trivy_fs(trivy_exe, config)
+    if fs_result != 0:
+        return fs_result
+
+    # Image scan (only runs if filesystem scan passes)
+    image_result = _run_trivy_image(trivy_exe, config)
+    return image_result
+
+
 # Map linter names to their runner functions (no file filtering support)
 LINTER_RUNNERS_NO_FILES: dict[str, Callable[[], int | None]] = {
     "scripts": _run_scripts,
     "markdown-restriction": _run_markdown_restriction,
     "yamldocs": _run_yamldocs,
     "checkov": _run_checkov,
+    "trivy": _run_trivy,
 }
 
 # Map linter names to their runner functions (with file filtering support)
