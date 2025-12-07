@@ -6,7 +6,7 @@ Usage:
     uv run pr post-reply --pr <number> --thread-file <file> --body <text>
     uv run pr resolve-thread --thread-file <file>
     uv run pr deferred-comment --thread-file <file> --body <text>
-    uv run pr request-review --pr <number> [--threads-dir <path>]
+    uv run pr request-review --pr <number> [--threads-dir <path>] [--has-code-changes]
     uv run pr get-pr <ticket-id>
     uv run pr get-changed-files --pr <number>
     uv run pr set-ticket-done --ticket <id>
@@ -660,24 +660,34 @@ def deferred_comment_command(thread_file: Path, body: str) -> int:
     return 0
 
 
-def request_review_command(pr_number: int, threads_dir: Path | None = None) -> int:
+def request_review_command(
+    pr_number: int,
+    threads_dir: Path | None = None,
+    *,
+    has_code_changes: bool = False,
+) -> int:
     """Request a CodeRabbit review on a PR, posting any deferred replies first.
 
     If threads_dir is provided, scans for thread files with deferred_reply fields
     and posts those replies before requesting the CodeRabbit review.
 
+    Skips the CodeRabbit review request if no deferred replies were posted AND
+    no code changes were made (has_code_changes=False).
+
     Args:
         pr_number: PR number to request review on.
         threads_dir: Optional directory containing thread JSON files with deferred
             replies.
+        has_code_changes: Whether code changes were made. If True, requests
+            CodeRabbit review even if no deferred replies exist.
 
     Returns:
         Exit code (0 for success).
     """
     # Post any deferred replies first
+    replies_posted = 0
     if threads_dir and threads_dir.is_dir():
         thread_files = sorted(threads_dir.glob("thread_*.json"))
-        replies_posted = 0
         for thread_file in thread_files:
             thread_data = _read_thread_file(thread_file)
             deferred_reply = thread_data.get("deferred_reply")
@@ -713,6 +723,11 @@ def request_review_command(pr_number: int, threads_dir: Path | None = None) -> i
 
         if replies_posted > 0:
             print(f"Posted {replies_posted} deferred reply(ies)")
+
+    # Skip CodeRabbit review if no deferred replies AND no code changes
+    if replies_posted == 0 and not has_code_changes:
+        print("No deferred replies and no code changes, skipping CodeRabbit review")
+        return 0
 
     _run_gh_command(
         [
@@ -1307,6 +1322,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="Directory containing thread files with deferred replies",
     )
+    review_parser.add_argument(
+        "--has-code-changes",
+        action="store_true",
+        help="Indicate code changes were made (requests review even without deferred replies)",
+    )
 
     # open-pr command
     open_parser = subparsers.add_parser(
@@ -1448,7 +1468,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "deferred-comment":
         return deferred_comment_command(args.thread_file, args.body)
     if args.command == "request-review":
-        return request_review_command(args.pr, args.threads_dir)
+        return request_review_command(
+            args.pr, args.threads_dir, has_code_changes=args.has_code_changes
+        )
     if args.command == "open-pr":
         return open_pr_command(args.worktree, args.title, args.body, args.branch)
     if args.command == "get-pr":

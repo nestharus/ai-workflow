@@ -77,9 +77,21 @@ No additional action needed from the orchestrator - the handler already:
 
 Continue to next thread.
 
-### 6. Run Test Debugger
+### 6. Check for Code Changes
 
-After ALL threads are processed, run the test-debugger sub-agent against the worktree:
+After all threads are processed, check if any code changes were made:
+
+```bash
+cd {{worktree}} && git status --porcelain
+```
+
+If the output is empty (no changes), skip steps 7-9 and go directly to step 11 (Output Summary).
+
+### 7. Run Test Debugger
+
+**Skip this step if no code changes were made (step 6 output was empty).**
+
+Run the test-debugger sub-agent against the worktree:
 
 ```
 Task(subagent_type="test-debugger", prompt="
@@ -92,7 +104,9 @@ This will:
 - Debug and fix any failures
 - Report the final test status
 
-### 7. Run Lint Fixer
+### 8. Run Lint Fixer
+
+**Skip this step if no code changes were made (step 6 output was empty).**
 
 After tests pass, run the lint-fixer sub-agent against the worktree in changed-only mode:
 
@@ -102,7 +116,9 @@ Task(subagent_type="lint-fixer", prompt="--worktree {{worktree}} --changed-only"
 
 This only lints files that were modified, which is faster and appropriate for PR updates.
 
-### 8. Commit and Push
+### 9. Commit and Push
+
+**Skip this step if no code changes were made (step 6 output was empty).**
 
 If tests pass and changes were made:
 
@@ -110,17 +126,23 @@ If tests pass and changes were made:
 uv run pr commit-push --worktree {{worktree}} --message "Address PR review feedback"
 ```
 
-### 9. Request CodeRabbit Review
+### 10. Request CodeRabbit Review
 
-After push, request review (this also posts any deferred replies):
+Post any deferred replies and request CodeRabbit review. The command automatically skips the review request if there are no deferred replies AND no code changes.
 
+If code changes were made (step 6 output was non-empty):
+```bash
+uv run pr request-review --pr {{pr_number}} --threads-dir {{tmp_folder}} --has-code-changes
+```
+
+If no code changes were made:
 ```bash
 uv run pr request-review --pr {{pr_number}} --threads-dir {{tmp_folder}}
 ```
 
 Delete the tmp folder for the PR comments that was created.
 
-### 10. Output Summary
+### 11. Output Summary
 
 Get commit information:
 ```bash
