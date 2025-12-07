@@ -1,7 +1,11 @@
+# Execute Implementation Plan in Git Worktree
+
 ---
+
 description: Execute an implementation plan in a git worktree
-argument-hint: <ticket-id>
+argument-hint: "`ticket-id`"
 allowed-tools: Bash, Read, Write, Glob, Grep
+
 ---
 
 Execute the implementation plan for ticket `$ARGUMENTS` in a dedicated git worktree.
@@ -16,18 +20,29 @@ The worktree branch is created from the current branch and PRs back to it.
 ### Step 1: Setup Git Worktree
 
 1. Record the current branch: `git branch --show-current` → `<BASE_BRANCH>`
+
 2. Fetch the ticket details using the Linear CLI:
-```bash
-uv run linear get-issue $ARGUMENTS
-```
-3. Generate branch name: `<TICKET-ID>-<sanitized-title>` (preserve ticket ID casing exactly, rest lowercase with hyphens, max 50 chars total)
-   - **IMPORTANT**: The ticket ID (e.g., `NES-47`) must keep its exact casing for automatic Linear linking
-   - Example: `NES-47-rest-to-mcp-bridge` not `nes-47-rest-to-mcp-bridge`
-4. Create worktree and branch:
+
    ```bash
-   git worktree add .worktrees/<branch-name> -b <branch-name>
+   uv run linear get-issue $ARGUMENTS
    ```
-5. Change to worktree directory for all subsequent operations
+
+3. Extract `branchName` from the JSON response - use this value exactly as provided by Linear
+   * **IMPORTANT**: Do NOT modify or regenerate the branch name - Linear provides the correct format
+   * The `branchName` field preserves ticket ID casing for automatic Linear linking
+
+4. Check if branch exists on remote:
+
+   ```bash
+   git fetch origin
+   git ls-remote --heads origin <branchName>
+   ```
+
+5. Create worktree:
+   * If branch exists on remote: `git worktree add .worktrees/<branchName> <branchName>`
+   * If branch does not exist: `git worktree add .worktrees/<branchName> -b <branchName>`
+
+6. Change to worktree directory for all subsequent operations
 
 ### Step 2: Load Plan
 
@@ -40,8 +55,9 @@ uv run linear get-issue $ARGUMENTS
 For each Plan in sequence:
 
 **Implementation Phase (use `timeout: 600000`):**
+
 ```bash
-cd .worktrees/<branch-name> && uv run agent.mcp wait --command "uv run agent.tasks --agent implementor --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
+cd .worktrees/<branchName> && uv run agent.mcp wait --command "uv run agent.tasks --agent implementor --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
 ```
 
 Where `<PLAN_CONTENT>` is the specific plan section from the ticket description.
@@ -50,36 +66,37 @@ The `agent.mcp wait` command handles all polling internally and returns a final 
 No re-running is required in the normal case.
 
 Handle each status:
-- `"status": "completed"` → Check implementor output:
-  - `SUCCESS` → proceed to review
-  - `TESTS: [...]` → run test-debugger, then retry
-  - `FAIL: ...` → analyze failure, may need human intervention
-- `"status": "failed"` → Check `error` field and `stderr` for details
-- `"status": "timeout"` → Job exceeded time limit. Options:
+* `"status": "completed"` → Check implementor output:
+  * `SUCCESS` → proceed to review
+  * `TESTS: [...]` → run test-debugger, then retry
+  * `FAIL: ...` → analyze failure, may need human intervention
+* `"status": "failed"` → Check `error` field and `stderr` for details
+* `"status": "timeout"` → Job exceeded time limit. Options:
   1. Increase `--max-seconds` and re-run if more time is needed
   2. Check agent logs for stuck processes
   3. Manually intervene if the task is inherently too long
-- `"status": "killed"` → Job was externally terminated
+* `"status": "killed"` → Job was externally terminated
 
 **Review Phase (use `timeout: 600000`):**
+
 ```bash
-cd .worktrees/<branch-name> && uv run agent.mcp wait --command "uv run agent.tasks --agent reviewer --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
+cd .worktrees/<branchName> && uv run agent.mcp wait --command "uv run agent.tasks --agent reviewer --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
 ```
 
 Handle each status:
-- `"status": "completed"` → Check reviewer output:
-  - `REVIEW: PASS` → proceed to next plan
-  - `REVIEW: FAIL - ...` → re-run implementor with feedback, then re-review
-- `"status": "failed"` → Check `error` field and `stderr` for details
-- `"status": "timeout"` → Job exceeded time limit (see options above)
-- `"status": "killed"` → Job was externally terminated
+* `"status": "completed"` → Check reviewer output:
+  * `REVIEW: PASS` → proceed to next plan
+  * `REVIEW: FAIL - ...` → re-run implementor with feedback, then re-review
+* `"status": "failed"` → Check `error` field and `stderr` for details
+* `"status": "timeout"` → Job exceeded time limit (see options above)
+* `"status": "killed"` → Job was externally terminated
 
 ### Step 4: Lint Phase
 
 Run the lint-fixer sub-agent against the worktree in changed-only mode:
 
-```
-Task(subagent_type="lint-fixer", prompt="--worktree .worktrees/<branch-name> --changed-only")
+```yaml
+Task(subagent_type="lint-fixer", prompt="--worktree .worktrees/<branchName> --changed-only")
 ```
 
 This only lints files that were modified, which is faster and appropriate for new implementations.
@@ -89,12 +106,14 @@ This only lints files that were modified, which is faster and appropriate for ne
 After all plans complete successfully:
 
 1. Stage all changes:
+
    ```bash
-   cd .worktrees/<branch-name>
+   cd .worktrees/<branchName>
    git add -A
    ```
 
 2. Create commit with descriptive message:
+
    ```bash
    git commit -m "$(cat <<EOF
    <TICKET_ID>: <TITLE>
@@ -112,38 +131,41 @@ After all plans complete successfully:
    ```
 
 3. Push branch:
+
    ```bash
-   git push -u origin <branch-name>
+   git push -u origin <branchName>
    ```
 
 ### Step 6: Create Pull Request
 
 Create PR targeting the base branch:
 
-```bash
-gh pr create --base <BASE_BRANCH> --title "<TICKET_ID>: <TITLE>" --body "$(cat <<'EOF'
-## Summary
+1. Use the following command:
 
-Implements [<TICKET_ID>](<LINEAR_TICKET_URL>)
+   ```bash
+   gh pr create --base <BASE_BRANCH> --title "<TICKET_ID>: <TITLE>" --body "$(cat <<'EOF'
+   ## Summary
 
-<PLAN_OVERVIEW>
+   Implements [<TICKET_ID>](<LINEAR_TICKET_URL>)
 
-## Changes
+   <PLAN_OVERVIEW>
 
-- <Summary of changes from each plan>
+   ## Changes
 
-## Test Plan
+   * <Summary of changes from each plan>
 
-- [ ] All tests pass
-- [ ] Implementation reviewed against plan
-- [ ] Success criteria met
+   ## Test Plan
 
-## Linear Ticket
+   * [ ] All tests pass
+   * [ ] Implementation reviewed against plan
+   * [ ] Success criteria met
 
-See the implementation plan on the ticket: <LINEAR_TICKET_URL>
-EOF
-)"
-```
+   ## Linear Ticket
+
+   See the implementation plan on the ticket: <LINEAR_TICKET_URL>
+   EOF
+   )"
+   ```
 
 ### Step 7: Output Summary
 
@@ -151,8 +173,9 @@ EOF
 casing matches exactly. No manual linking is required.
 
 Get commit information:
+
 ```bash
-cd .worktrees/<branch-name>
+cd .worktrees/<branchName>
 # Current branch commit (HEAD of PR branch)
 git rev-parse HEAD
 # Target branch commit (what PR merges into)
@@ -161,7 +184,7 @@ git rev-parse origin/<BASE_BRANCH>
 
 Print to terminal:
 
-```
+```text
 ================================================================================
 IMPLEMENTATION COMPLETE - REVIEW REQUESTED
 ================================================================================
@@ -171,7 +194,7 @@ Linear Ticket: <LINEAR_TICKET_URL>
 Pull Request: <PR_URL>
 
 References:
-  worktree_directory: .worktrees/<branch-name>
+  worktree_directory: .worktrees/<branchName>
   current_branch_commit: <CURRENT_SHA>   # HEAD of PR branch (latest changes)
   pr_target_branch_commit: <TARGET_SHA>  # HEAD of target branch (merge base)
 
@@ -186,27 +209,27 @@ Commands:
   Open <LINEAR_TICKET_URL>
 
   # Read implementation files
-  cd .worktrees/<branch-name>
+  cd .worktrees/<branchName>
 
   # See latest commit details
-  cd .worktrees/<branch-name> && git log -1
+  cd .worktrees/<branchName> && git log -1
 
   # Diff all PR changes against target branch
-  cd .worktrees/<branch-name> && git diff <pr_target_branch_commit>...<current_branch_commit>
+  cd .worktrees/<branchName> && git diff <pr_target_branch_commit>...<current_branch_commit>
 ================================================================================
 ```
 
 ## Error Handling
 
-- If ticket fetch fails, report the error and stop
-- If plan not found in ticket description, suggest running /create-plan first
-- If worktree creation fails (branch exists), offer to reuse or clean up
-- If any agent fails, save progress and report what completed vs what failed
-- If PR creation fails, report the error but keep the branch pushed
+* If ticket fetch fails, report the error and stop
+* If plan not found in ticket description, suggest running /create-plan first
+* If worktree creation fails (branch exists), offer to reuse or clean up
+* If any agent fails, save progress and report what completed vs what failed
+* If PR creation fails, report the error but keep the branch pushed
 
 ## Notes
 
-- The worktree isolates work from your main working directory
-- You can switch back to main repo anytime: `cd <original-path>`
-- Multiple execute-plan commands can run in parallel for different tickets
-- Clean up worktrees after PR merge: `git worktree remove .worktrees/<branch-name>`
+* The worktree isolates work from your main working directory
+* You can switch back to main repo anytime: `cd <original-path>`
+* Multiple execute-plan commands can run in parallel for different tickets
+* Clean up worktrees after PR merge: `git worktree remove .worktrees/<branchName>`
