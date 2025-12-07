@@ -65,13 +65,17 @@ Wait for each pr-comment-handler to complete before starting the next one. This 
 
 ### 5. Handle Responses
 
-After each pr-comment-handler completes:
+After each pr-comment-handler completes, it returns one of:
 
-- If `action: reply`: Post the reply:
-  ```bash
-  uv run pr post-reply --pr {{pr_number}} --thread-file {{thread_file}} --body "{{reply_body}}"
-  ```
-- If `action: implement`: Changes and test updates already made, continue to next thread
+- `action: resolve` - Thread was resolved (discussion concluded with agreement)
+- `action: implement` - Changes were made (and optionally a deferred reply stored)
+
+No additional action needed from the orchestrator - the handler already:
+- Resolved the thread if appropriate
+- Made code changes if needed
+- Stored any deferred replies for later posting
+
+Continue to next thread.
 
 ### 6. Run Test Debugger
 
@@ -108,10 +112,10 @@ uv run pr commit-push --worktree {{worktree}} --message "Address PR review feedb
 
 ### 9. Request CodeRabbit Review
 
-After push:
+After push, request review (this also posts any deferred replies):
 
 ```bash
-uv run pr request-review --pr {{pr_number}}
+uv run pr request-review --pr {{pr_number}} --threads-dir {{tmp_folder}}
 ```
 
 Delete the tmp folder for the PR comments that was created.
