@@ -5,7 +5,7 @@ This script acts as an MCP client to the background-job server, providing modes 
 starting, waiting on, listing, and cancelling background jobs. It replaces poll_agents.py
 with a more robust solution that handles all polling in Python.
 
-Architecture Note (NES-47 Layering):
+Architecture Note (Layering):
     This client implements the **normalization layer** for background-job tool results.
     The MCP bridge (scripts/mcp/) is transport-only and returns provider-native payloads.
     This client normalizes those payloads to provide consistent response shapes:

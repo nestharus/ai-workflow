@@ -16,7 +16,7 @@ sections:
           subprocesses.
       - id: overview-2
         text: Primary use case is exposing mcp-background-job as an HTTP service so jobs persist
-          independently of WSL shell lifetime and timeouts (NES-52).
+          independently of WSL shell lifetime and timeouts.
   - id: layering
     index: 2
     title: Architectural Layering
@@ -84,7 +84,7 @@ sections:
     category: standard
     items:
       - id: deployment-1
-        text: "Primary local dev path (NES-68): Unix socket mode via Docker. The bridge
+        text: "Primary local dev path: Unix socket mode via Docker. The bridge
           listens on /tmp/mcp-bridge.sock inside the container. docker-compose uses a
           named volume (mcp_socket) to share the socket. This provides ~50% lower latency
           and ~30-50% less CPU usage compared to HTTP/TCP."
@@ -122,7 +122,7 @@ sections:
         text: "Metrics collected: min/median/mean/p90/p99/max latency in milliseconds,
           throughput in requests per second, success rate percentage."
       - id: performance-5
-        text: "Threshold assertions (NES-68): Use --min-latency-improvement and
+        text: "Threshold assertions: Use --min-latency-improvement and
           --min-throughput-improvement flags with --compare to enforce minimum
           performance improvements. The script exits non-zero if thresholds are
           not met. Example: --compare --min-latency-improvement 30 requires at
@@ -130,5 +130,5 @@ sections:
       - id: performance-6
         text: "Diagnostic use: This benchmark script is intended for manual validation
           of performance claims and is NOT enforced in CI. Developers should run
-          it after making transport-related changes to verify NES-68 targets are
+          it after making transport-related changes to verify targets are
           maintained. Results vary by system configuration and workload."

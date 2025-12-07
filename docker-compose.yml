@@ -30,7 +30,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # MCP Bridge Service (NES-47, NES-68)
+  # MCP Bridge Service
   # REST-to-MCP bridge that exposes MCP tools via Unix socket.
   # Local development only - must not be exposed to untrusted networks.
   # For production, place behind an authenticated TLS-terminating proxy.

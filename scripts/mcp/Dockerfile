@@ -1,4 +1,4 @@
-# MCP Bridge Dockerfile (NES-47, NES-68)
+# MCP Bridge Dockerfile
 #
 # REST-to-MCP bridge server that exposes MCP tools via Unix socket.
 # Image name: ai-workflow/mcp-bridge:dev (or use docker-compose)

@@ -40,7 +40,7 @@ def _create_error_response(
     http_status: int,
     details: dict[str, Any] | None = None,
 ) -> JSONResponse:
-    """Create a standardized error response per NES-47 specification.
+    """Create a standardized error response.
 
     Args:
         error_type: The error type enum value.
@@ -304,7 +304,7 @@ def create_router(
         response_model=HealthResponse,
         summary="Health check",
         description="Check if the MCP bridge is ready (at least one server is alive). "
-        "Per NES-47: returns status='ok' and provider='running' when healthy, "
+        "returns status='ok' and provider='running' when healthy, "
         "or status='degraded' and provider='down' when unhealthy.",
         responses={
             status.HTTP_200_OK: {

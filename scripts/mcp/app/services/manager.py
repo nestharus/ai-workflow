@@ -4,8 +4,8 @@ This module provides the MCPStdioManager class that handles spawning and
 communicating with an MCP provider subprocess using newline-delimited
 JSON-RPC over stdio (as used by FastMCP).
 
-Protocol Framing Decision (NES-47 Deviation):
-    The original NES-47 ticket specified Content-Length framing for JSON-RPC
+Protocol Framing Decision:
+    The original specified Content-Length framing for JSON-RPC
     messages (similar to LSP). However, this implementation uses newline-delimited
     JSON (JSONL) instead, which is the format used by FastMCP and mcp-background-job.
 
@@ -502,7 +502,7 @@ class MCPStdioManager:
         """
         return self._proc is not None and self._proc.poll() is None
 
-    # Default lock acquire timeout for BUSY backpressure (1 second per NES-47 spec)
+    # Default lock acquire timeout for BUSY backpressure (1 second)
     LOCK_ACQUIRE_TIMEOUT = 1.0
 
     def call_tool(

@@ -34,12 +34,12 @@ Output:
     - Optional side-by-side comparison of transport modes
     - Exit code 1 if thresholds are specified and not met
 
-Threshold Checking (NES-68):
+Threshold Checking:
     When using --compare with --min-latency-improvement and/or --min-throughput-improvement,
     the script will compute the percentage improvement of Unix socket over HTTP and exit
     with code 1 if the measured improvement is below the specified threshold.
 
-    This is useful for validating NES-68 performance targets:
+    This is useful for validating performance targets:
     - Target latency improvement: ~30-50% (use --min-latency-improvement 30)
     - Target throughput improvement: varies by workload
 

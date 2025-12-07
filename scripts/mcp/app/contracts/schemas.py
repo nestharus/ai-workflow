@@ -54,7 +54,7 @@ class ErrorDetail(BaseModel):
 
 
 class ErrorEnvelope(BaseModel):
-    """Error response envelope per NES-47 specification."""
+    """Error response envelope."""
 
     error: ErrorDetail = Field(..., description="Error information")
 
@@ -67,7 +67,7 @@ class ErrorResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """Response body for the /health endpoint per NES-47 specification."""
+    """Response body for the /health endpoint."""
 
     status: str = Field(..., description="Health status: 'ok' or 'degraded'")
     provider: str = Field(default="running", description="Provider status: 'running' or 'down'")

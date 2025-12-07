@@ -211,3 +211,4 @@ Or with a reply explaining the approach:
 4. **BE SPECIFIC** - In replies, explain exactly why you disagree or need clarification
 5. **BE RESPECTFUL** - Even when challenging, maintain professional tone
 6. **RESOLVE WHEN APPROPRIATE** - If discussion concluded, resolve instead of implementing
+7. **NO TICKET/PR SPEC REFERENCES** - Never add code comments referencing specs in Linear tickets or PR descriptions. These become outdated immediately. If a spec is needed, add it to `docs/` and reference that documentation instead

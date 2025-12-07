@@ -236,7 +236,7 @@ class HttpMCPClient:
                 f"Invalid response type: expected JSON object, got {type(response).__name__}"
             )
 
-        # Check for error envelope per NES-47 specification
+        # Check for error envelope
         if "error" in response:
             error = response["error"]
             if isinstance(error, dict):

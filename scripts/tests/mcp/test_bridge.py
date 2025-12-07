@@ -5,8 +5,6 @@ This module tests the MCP bridge server including:
 - API Routes: HTTP contract, error envelopes, result wrapping
 - Config: YAML/JSON loading, environment variable substitution
 - HttpMCPClient: Result extraction, error parsing
-
-Per NES-47 ticket requirements.
 """
 
 from __future__ import annotations
@@ -1167,7 +1165,7 @@ class TestHttpMCPClient:
             assert captured_cmd[max_time_idx + 1] == "6"
 
     # ========================================================================
-    # Tests for Unix socket mode (NES-68)
+    # Tests for Unix socket mode
     # ========================================================================
 
     def test_init_with_socket_path_argument(self) -> None:
@@ -1451,7 +1449,7 @@ class TestSchemas:
         assert data["error"]["details"]["code"] == -32600
 
     def test_health_response_structure(self) -> None:
-        """Test HealthResponse has correct structure per NES-47."""
+        """Test HealthResponse has correct structure"""
         resp = HealthResponse(status="ok", provider="running")
         data = resp.model_dump()
         assert data["status"] == "ok"
