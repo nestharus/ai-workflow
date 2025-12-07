@@ -22,9 +22,18 @@ violations for unfixable linters.
 - `yamllint` - YAML validation
 - `checkov` - OpenAPI schema security scans
 
+## CRITICAL: Never Run Full Lint Suite
+
+**NEVER run `uv run lint` without arguments.** This runs ALL linters including destructive
+ones that convert files. Always specify individual linters.
+
+**DO NOT run these linters** (they are excluded from lint-fixer scope):
+- `markdown-restriction` - Converts markdown files to YAML (destructive)
+- `yamldocs` - YAML doc schema validation (requires human review)
+
 ## Workflow
 
-Run through ALL linter phases, fixing what you can and collecting what you cannot fix.
+Run through the linter phases below, fixing what you can and collecting what you cannot fix.
 
 1. **First, run gen_openapi** (required before lint):
    ```bash

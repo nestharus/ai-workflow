@@ -30,22 +30,21 @@ Based on Linear data:
 
 ### 3. Fetch Unresolved Threads
 
-Run pr-agent with operation `fetch-threads`:
-
-```
-Task(subagent_type="pr-agent", prompt="
-Operation: fetch-threads
-ticket_id: {{ticket_id}}
-tmp_folder: {{tmp_folder}}
-worktree: {{worktree}}
-branch: {{branch}}
-pr_number: {{pr_number}}
-")
+```bash
+uv run pr fetch-threads --pr {{pr_number}} --output-dir {{tmp_folder}}
 ```
 
-### 4. Process Each Thread
+This automatically:
+- Fetches all unresolved threads from the PR
+- Filters to only threads with line numbers (file-specific comments)
+- Auto-resolves threads where the first author gave a thumbs-up reaction
+- Formats and saves remaining threads as JSON files (`thread_0.json`, `thread_1.json`, etc.)
 
-List files in `{{tmp_folder}}` and for each thread file:
+### 4. Process Each Thread (SEQUENTIAL)
+
+**CRITICAL: Process threads ONE AT A TIME. Do NOT run pr-comment-handler agents in parallel.**
+
+List files in `{{tmp_folder}}` and for each thread file, process sequentially:
 
 ```
 Task(subagent_type="pr-comment-handler", prompt="
@@ -55,45 +54,54 @@ branch: {{branch}}
 ")
 ```
 
+Wait for each pr-comment-handler to complete before starting the next one. This ensures:
+- Changes from one thread don't conflict with another
+- Test updates are applied incrementally
+- Each handler sees the current state of the codebase
+
 ### 5. Handle Responses
 
-For each pr-comment-handler response:
+After each pr-comment-handler completes:
 
-- If `action: resolve`: Call pr-agent with `resolve-thread` operation
-- If `action: reply`: Call pr-agent with `post-reply` operation
-- If `action: implement`: Changes already made, continue to next thread
+- If `action: reply`: Post the reply:
+  ```bash
+  uv run pr post-reply --pr {{pr_number}} --thread-file {{thread_file}} --body "{{reply_body}}"
+  ```
+- If `action: implement`: Changes and test updates already made, continue to next thread
 
-### 6. Run Tests
+### 6. Run Test Debugger
 
-After all threads processed, run tests in the worktree:
+After ALL threads are processed, run the test-debugger sub-agent against the worktree:
+
+```
+Task(subagent_type="test-debugger", prompt="
+worktree: {{worktree}}
+")
+```
+
+This will:
+- Run all tests in the worktree
+- Debug and fix any failures
+- Report the final test status
+
+### 7. Run Lint Fixer
+
+After tests pass, run the lint-fixer sub-agent against the worktree.
+
+### 8. Commit and Push
+
+If tests pass and changes were made:
 
 ```bash
-cd {{worktree}} && uv run pytest
+uv run pr commit-push --worktree {{worktree}} --message "Address PR review feedback"
 ```
 
-Next run lint-fixer sub-agent against the worktree.
+### 9. Request CodeRabbit Review
 
-### 7. Commit and Push
+After push:
 
-If tests pass and changes were made, call pr-agent:
-
-```
-Task(subagent_type="pr-agent", prompt="
-Operation: commit-push
-worktree: {{worktree}}
-commit_message: Address PR review feedback
-")
-```
-
-### 8. Request CodeRabbit Review
-
-After push, call pr-agent:
-
-```
-Task(subagent_type="pr-agent", prompt="
-Operation: request-review
-pr_number: {{pr_number}}
-")
+```bash
+uv run pr request-review --pr {{pr_number}}
 ```
 
 Delete the tmp folder for the PR comments that was created.
@@ -101,7 +109,6 @@ Delete the tmp folder for the PR comments that was created.
 ## Important Rules
 
 - Follow co-author rules in AGENTS.md (no AI co-authors)
-- Only resolve threads that meet the thumbs-up criteria
 - Never defer - implement or challenge, don't postpone
-- Run tests in worktree and lint-fixer sub-agent against worktree before pushing
+- Run test-debugger and lint-fixer sub-agents against worktree before pushing
 - DO NOT RUN LINTING DIRECTLY. USE THE SUB-AGENT.

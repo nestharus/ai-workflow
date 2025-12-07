@@ -77,6 +77,8 @@ lint = "scripts.dev.lint:main"
 "agent.opencode" = "scripts.dev.opencode_agent_runner:main"
 "agent.tasks" = "scripts.dev.tasks_agent_runner:main"
 "agent.mcp" = "scripts.dev.mcp_agent_client:main"
+# GitHub PR operations
+"pr" = "scripts.dev.github_client:main"
 # Review scripts
 "review.coderabbit" = "scripts.dev.review.coderabbit_review:main"
 "review.sonar" = "scripts.dev.review.sonar_review:main"

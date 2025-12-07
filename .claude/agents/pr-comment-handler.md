@@ -23,15 +23,11 @@ The thread file contains:
 
 ## Decision Framework
 
-For each thread, analyze and decide:
+For each thread, analyze and decide between challenging or implementing.
 
-### 1. Can This Thread Be Resolved?
+Note: Threads with thumbs-up from the original author are auto-resolved by `fetch-threads` and won't reach this agent.
 
-Check if there is a reply to the unresolved conversation by a user OTHER than the original author (`first_author`) AND that reply has a thumbs up emoji reaction (`THUMBS_UP`) from the original author.
-
-If YES: Output `action: resolve` with the thread_id.
-
-### 2. Should You Challenge the Comment?
+### 1. Should You Challenge the Comment?
 
 Challenge (reply asking for clarification) when:
 
@@ -46,7 +42,7 @@ Challenge (reply asking for clarification) when:
 
 If challenging: Output `action: reply` with your reply text.
 
-### 3. Should You Implement?
+### 2. Should You Implement?
 
 Implement when:
 - The comment request is clear
@@ -69,40 +65,40 @@ When implementing:
 
 1. Work in the worktree directory: `{{worktree}}`
 2. Make the requested changes
-3. Ensure the changes don't break existing functionality
-4. Run relevant tests if applicable
+3. **Update tests** - If your implementation changes behavior, update existing tests to match
+4. **Add tests** - If the change adds new functionality, add tests covering it
+5. Run the specific tests for files you changed (see below)
+
+### Test Updates Are Required
+
+When you modify implementation code, you MUST also:
+- Update any tests that now have incorrect expectations
+- Add test cases for new code paths or behaviors
+- Run the specific tests for files you changed to verify they pass
+
+### Running Tests for Your Changes
+
+Run only the tests relevant to the files you modified:
+
+```bash
+# For app/ changes - run specific test file
+cd {{worktree}} && uv run pytest tests/unit/path/to/test_file.py -v
+
+# For scripts/ changes - run specific test file
+cd {{worktree}} && uv run pytest scripts/tests/path/to/test_file.py -v
+```
+
+Do NOT run the full test suite - only run tests for the specific files you changed.
 
 ## Output Format
 
-Return a JSON object:
-
-```json
-{
-  "action": "resolve|reply|implement",
-  "thread_id": "...",
-  "comment_id": "...",
-  "reply_body": "...",
-  "implementation_summary": "...",
-  "reasoning": "..."
-}
-```
-
-### For `resolve`:
-```json
-{
-  "action": "resolve",
-  "thread_id": "PRR_...",
-  "reasoning": "User X replied and original author Y gave thumbs up"
-}
-```
+Return a JSON object with action and details. The orchestrator tracks which thread file you processed.
 
 ### For `reply`:
 ```json
 {
   "action": "reply",
-  "comment_id": 12345678,
-  "reply_body": "Your reply text here...",
-  "reasoning": "Why you're challenging this"
+  "body": "Your reply text here..."
 }
 ```
 
@@ -110,9 +106,7 @@ Return a JSON object:
 ```json
 {
   "action": "implement",
-  "thread_id": "PRR_...",
-  "implementation_summary": "Changed X to Y in file Z",
-  "reasoning": "The comment requested..."
+  "summary": "Changed X to Y in file Z"
 }
 ```
 

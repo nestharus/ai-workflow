@@ -37,8 +37,8 @@ import duckdb
 from scripts.dev.utils import REPO_ROOT
 
 if TYPE_CHECKING:
-    import torch  # type: ignore[import-not-found]
-    from transformers import (  # type: ignore[import-not-found]
+    import torch
+    from transformers import (
         AutoModelForSequenceClassification,
         AutoTokenizer,
     )

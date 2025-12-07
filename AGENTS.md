@@ -79,45 +79,7 @@ detailed missing line/branch information. Analysis tools (`coverage-summary`,
 
 ## Linting
 
-Runs a comprehensive suite of static analysis and security tools.
-
-* **Usage**: `uv run lint [LINTER ...]`
-* **Arguments**: Specify one or more linter names to run only those linters. If no
-  arguments are provided, all linters run in order.
-* **Available Linters** (in execution order):
-  1. `scripts`: Validates pyproject.toml script entry point naming conventions
-  2. `markdown-restriction`: Enforces that only `./README.md` and `./AGENTS.md` are
-     allowed as markdown files in root, app/**, docs/**, scripts/**, and tests/**
-     directories. All other documentation must be in YAML format following the schema
-     defined in `docs/development/general/general.yaml.schema-guidelines.yml`
-  3. `ruff`: Auto-formats code (`ruff format .`) and fixes linting issues
-     (`ruff check --fix .`)
-  4. `mypy`: Type checking
-  5. `hadolint`: Lints Dockerfiles
-  6. `pymarkdown`: Validates Markdown files
-  7. `yamllint`: Validates all `.yml` and `.yaml` files for syntax and style per the
-     configuration in `.yamllint.yaml`
-  8. `yamldocs`: Validates YAML documentation files (identified by `doc_id` at root)
-     follow the schema defined in `general.yaml.schema-guidelines.yml`
-  9. `checkov`: Scans the generated `openapi/openapi.json` against policies in
-     `.checkov.yaml`
-* **Examples**:
-  * `uv run lint` - Run all linters
-  * `uv run lint ruff` - Run only ruff (format and check)
-  * `uv run lint mypy yamllint` - Run mypy and yamllint
-  * `uv run lint markdown-restriction` - Run only markdown restriction linter
-* **Prerequisite**: Run `uv run app.api.generate` first to generate the schema for Checkov
-* **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
-  invoked via `uv run`
-* **Markdown lint expectation**: The lint job runs `pymarkdown` with the repo config
-  `.pymarkdown.json` and excludes listed paths in `scripts/lint.py`. When it flags
-  documentation, adjust the doc text (e.g., wrap long lines, align bullet markers) to
-  satisfy the reported rules; do not silence rules or change the lint configuration.
-  Rerun `uv run lint` until it passes.
-* **TCH003 handling**: Reintroduce `TYPE_CHECKING` gates where runtime inspection is not
-  needed. For files that feed runtime type introspection (e.g., `app/contracts/**`,
-  `app/schemas/**`), keep imports loaded at runtime and rely on the scoped TCH003 ignore
-  already configured.
+Use the `lint-fixer` sub-agent to fix lint errors: `Task(subagent_type="lint-fixer", prompt="Fix all linting violations")`
 
 For docstring linter errors, see `docs/development/python/python.docstrings-guide.yml`.
 
@@ -191,15 +153,15 @@ These agents are defined in `.claude/agents/` and can be invoked manually via th
 Task tool during interactive Claude Code sessions. They are NOT called
 programmatically from `.tasks` orchestration workflows.
 
-**Important**: All sub-agents contain their own instructions. Always pass an empty
-string (`""`) for the prompt parameter to avoid overriding their built-in workflows.
+**Important**: Most sub-agents contain their own instructions. Pass an empty
+string (`""`) for the prompt parameter unless otherwise specified below.
 
 #### lint-fixer
 
 Resolves and fixes lint errors iteratively until all issues pass.
 
-* **Invocation**: `Task(subagent_type="lint-fixer", prompt="")`
-* **Prompt**: `""` (empty string required)
+* **Invocation**: `Task(subagent_type="lint-fixer", prompt="Fix all linting violations")`
+* **Prompt**: `"Fix all linting violations"` (required to trigger workflow)
 * **Use case**: Manual invocation when you need to fix lint errors interactively
 
 #### test-fixer

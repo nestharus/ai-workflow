@@ -20,6 +20,14 @@ HSTS_HEADER_VALUE = "max-age=31536000; includeSubDomains"
 REQUEST_ID_HEADER = "X-Request-ID"
 
 
+class InvalidRateLimitConfig(ValueError):
+    """Raised when rate limiting configuration is invalid."""
+
+    def __init__(self, param_name: str) -> None:
+        """Initialize with parameter name."""
+        super().__init__(f"{param_name} must be a positive integer")
+
+
 class SecurityHeadersMiddleware:
     """Attach standard security headers to all HTTP responses."""
 
@@ -232,9 +240,9 @@ class RateLimitingMiddleware:
     ) -> None:
         """Store downstream app and rate limit configuration."""
         if requests_per_window <= 0:
-            raise ValueError("requests_per_window must be a positive integer")
+            raise InvalidRateLimitConfig("requests_per_window")
         if window_seconds <= 0:
-            raise ValueError("window_seconds must be a positive integer")
+            raise InvalidRateLimitConfig("window_seconds")
         self.app = app
         self.requests_per_window = requests_per_window
         self.window_seconds = window_seconds
