@@ -85,19 +85,32 @@ class LinearClient:
         )
         try:
             with urllib.request.urlopen(req, timeout=30) as response:
-                response_body = response.read().decode("utf-8")
+                raw = response.read()
+                try:
+                    response_body = raw.decode("utf-8")
+                except UnicodeDecodeError as e:
+                    raise LinearAPIError(f"Linear API returned non-UTF-8 response: {e}") from e
         except urllib.error.HTTPError as e:
             raise LinearAPIError(f"Linear API HTTP error: {e.code} {e.reason}") from e
         except urllib.error.URLError as e:
             raise LinearAPIError(f"Linear API request failed: {e.reason}") from e
 
         try:
-            result: dict[str, Any] = json.loads(response_body)
+            result_raw: Any = json.loads(response_body)
+            if not isinstance(result_raw, dict):
+                raise LinearAPIError("Linear API returned non-object JSON response")
+            result: dict[str, Any] = result_raw
         except json.JSONDecodeError as e:
             raise LinearAPIError(f"Linear API returned malformed JSON: {e}") from e
 
         if "errors" in result:
-            raise LinearAPIError(f"Linear API error: {result['errors']}")
+            error_messages = [
+                message
+                for err in result["errors"]
+                if isinstance(err, dict) and (message := err.get("message"))
+            ]
+            joined_messages = "; ".join(error_messages) if error_messages else "Unknown error"
+            raise LinearAPIError(f"Linear API error: {joined_messages}")
 
         return result
 
@@ -151,9 +164,12 @@ query($ticketId: String!, $after: String) {
             all_attachments.extend(nodes)
 
             page_info = attachments.get("pageInfo", {})
+            next_cursor = page_info.get("endCursor")
             if not page_info.get("hasNextPage"):
                 break
-            cursor = page_info.get("endCursor")
+            if not next_cursor or next_cursor == cursor:
+                raise LinearAPIError("Pagination did not advance: missing or repeated endCursor")
+            cursor = next_cursor
 
         return all_attachments
 
@@ -272,9 +288,10 @@ mutation($issueId: String!, $stateId: String!) {
         """Resolve a team identifier to a team UUID.
 
         Attempts to resolve the team identifier in the following order:
-        1. If the string matches UUID pattern, return as-is
-        2. Search teams by key (case-insensitive)
-        3. Search teams by name (case-insensitive)
+        1. Early reject empty/whitespace-only or excessively long strings
+        2. If the string matches UUID pattern, return as-is
+        3. Search teams by key (case-insensitive)
+        4. Search teams by name (case-insensitive)
 
         Args:
             team: Team identifier - can be a UUID, team key, or team name.
@@ -282,17 +299,22 @@ mutation($issueId: String!, $stateId: String!) {
         Returns:
             The team UUID if found, None otherwise.
         """
+        # Early reject empty/whitespace-only or excessively long strings
+        trimmed = team.strip()
+        if not trimmed or len(trimmed) > 100:
+            return None
+
         # UUID pattern: 8-4-4-4-12 hex characters
         uuid_pattern = re.compile(
             r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
             r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         )
-        if uuid_pattern.match(team):
-            return team
+        if uuid_pattern.match(trimmed):
+            return trimmed
 
         # Fetch all teams and search by key, then by name (case-insensitive)
         teams = self.list_teams(include_archived=True)
-        team_lower = team.lower()
+        team_lower = trimmed.lower()
 
         # First, search by key (case-insensitive)
         for t in teams:
@@ -364,9 +386,12 @@ query($includeArchived: Boolean!, $after: String) {
             all_teams.extend(nodes)
 
             page_info = teams_data.get("pageInfo", {})
+            next_cursor = page_info.get("endCursor")
             if not page_info.get("hasNextPage"):
                 break
-            cursor = page_info.get("endCursor")
+            if not next_cursor or next_cursor == cursor:
+                raise LinearAPIError("Pagination did not advance: missing or repeated endCursor")
+            cursor = next_cursor
 
         return all_teams
 
@@ -706,9 +731,12 @@ query($includeArchived: Boolean!, $after: String) {
             all_projects.extend(nodes)
 
             page_info = projects_data.get("pageInfo", {})
+            next_cursor = page_info.get("endCursor")
             if not page_info.get("hasNextPage"):
                 break
-            cursor = page_info.get("endCursor")
+            if not next_cursor or next_cursor == cursor:
+                raise LinearAPIError("Pagination did not advance: missing or repeated endCursor")
+            cursor = next_cursor
 
         return all_projects
 
@@ -844,7 +872,7 @@ query IssueComments($id: String!, $after: String) {
                 issue_uuid = issue.get("id")
                 issue_identifier = issue.get("identifier")
 
-            comments_data = issue.get("comments", {})
+            comments_data = issue.get("comments") or {}
             nodes = comments_data.get("nodes", [])
 
             for node in nodes:
@@ -867,9 +895,12 @@ query IssueComments($id: String!, $after: String) {
                 )
 
             page_info = comments_data.get("pageInfo", {})
+            next_cursor = page_info.get("endCursor")
             if not page_info.get("hasNextPage"):
                 break
-            cursor = page_info.get("endCursor")
+            if not next_cursor or next_cursor == cursor:
+                raise LinearAPIError("Pagination did not advance: missing or repeated endCursor")
+            cursor = next_cursor
 
         return {
             "issueId": issue_uuid,
