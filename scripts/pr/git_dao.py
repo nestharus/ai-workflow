@@ -216,6 +216,23 @@ def rebase(worktree: Path, base_branch: str) -> tuple[bool, bool, str]:
     return True, False, ""
 
 
+def get_repo_root() -> Path | None:
+    """Get the root directory of the git repository.
+
+    Returns:
+        Path to the repo root, or None if not in a git repo.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return Path(result.stdout.strip())
+
+
 def remove_worktree(worktree: Path) -> tuple[bool, str]:
     """Remove a git worktree.
 
@@ -225,8 +242,10 @@ def remove_worktree(worktree: Path) -> tuple[bool, str]:
     Returns:
         Tuple of (success, error_message).
     """
+    repo_root = get_repo_root()
     result = subprocess.run(
         ["git", "worktree", "remove", str(worktree)],
+        cwd=repo_root,
         capture_output=True,
         text=True,
         check=False,

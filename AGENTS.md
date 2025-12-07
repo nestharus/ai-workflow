@@ -173,7 +173,7 @@ Resolves and fixes lint errors iteratively until all issues pass.
   * `--changed-only`: Only lint files that have been changed (uncommitted or last commit)
 * **Use cases**:
   * Workflow use (recommended): `Task(subagent_type="lint-fixer", prompt="--changed-only")`
-  * With worktree: `Task(subagent_type="lint-fixer", prompt="--worktree .worktrees/NES-123 --changed-only")`
+  * With worktree: `Task(subagent_type="lint-fixer", prompt="--worktree .worktrees/NES-123-add-feature --changed-only")`
   * Full lint (via `/lint-fix` command only): `Task(subagent_type="lint-fixer", prompt="")`
 
 #### test-fixer

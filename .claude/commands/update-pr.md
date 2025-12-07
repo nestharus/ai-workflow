@@ -45,8 +45,8 @@ Based on ticket info:
 - `ticket_id`: (from step 1)
 - `branch`: (from `branch_name` in JSON)
 - `repo_root`: (from git command above)
-- `worktree`: `{{repo_root}}/.worktrees/{{ticket_id}}`
-- `tmp_folder`: `{{repo_root}}/.tmp/pr-threads/{{ticket_id}}`
+- `worktree`: `{{repo_root}}/.worktrees/{{branch}}`
+- `tmp_folder`: `{{repo_root}}/.tmp/pr-threads/{{branch}}`
 - `pr_number`: (from `pr_number` in JSON)
 - `pr_url`: (from `pr_url` in JSON)
 - `base_branch`: (from `base_branch` in JSON)

@@ -25,7 +25,7 @@ uv run linear get-issue $ARGUMENTS
    - Example: `NES-47-rest-to-mcp-bridge` not `nes-47-rest-to-mcp-bridge`
 4. Create worktree and branch:
    ```bash
-   git worktree add .worktrees/<ticket-id> -b <branch-name>
+   git worktree add .worktrees/<branch-name> -b <branch-name>
    ```
 5. Change to worktree directory for all subsequent operations
 
@@ -41,7 +41,7 @@ For each Plan in sequence:
 
 **Implementation Phase (use `timeout: 600000`):**
 ```bash
-cd .worktrees/<ticket-id> && uv run agent.mcp wait --command "uv run agent.tasks --agent implementor --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
+cd .worktrees/<branch-name> && uv run agent.mcp wait --command "uv run agent.tasks --agent implementor --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
 ```
 
 Where `<PLAN_CONTENT>` is the specific plan section from the ticket description.
@@ -63,7 +63,7 @@ Handle each status:
 
 **Review Phase (use `timeout: 600000`):**
 ```bash
-cd .worktrees/<ticket-id> && uv run agent.mcp wait --command "uv run agent.tasks --agent reviewer --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
+cd .worktrees/<branch-name> && uv run agent.mcp wait --command "uv run agent.tasks --agent reviewer --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
 ```
 
 Handle each status:
@@ -79,7 +79,7 @@ Handle each status:
 Run the lint-fixer sub-agent against the worktree in changed-only mode:
 
 ```
-Task(subagent_type="lint-fixer", prompt="--worktree .worktrees/<ticket-id> --changed-only")
+Task(subagent_type="lint-fixer", prompt="--worktree .worktrees/<branch-name> --changed-only")
 ```
 
 This only lints files that were modified, which is faster and appropriate for new implementations.
@@ -90,7 +90,7 @@ After all plans complete successfully:
 
 1. Stage all changes:
    ```bash
-   cd .worktrees/<ticket-id>
+   cd .worktrees/<branch-name>
    git add -A
    ```
 
@@ -152,7 +152,7 @@ casing matches exactly. No manual linking is required.
 
 Get commit information:
 ```bash
-cd .worktrees/<ticket-id>
+cd .worktrees/<branch-name>
 # Current branch commit (HEAD of PR branch)
 git rev-parse HEAD
 # Target branch commit (what PR merges into)
@@ -171,7 +171,7 @@ Linear Ticket: <LINEAR_TICKET_URL>
 Pull Request: <PR_URL>
 
 References:
-  worktree_directory: .worktrees/<ticket-id>
+  worktree_directory: .worktrees/<branch-name>
   current_branch_commit: <CURRENT_SHA>   # HEAD of PR branch (latest changes)
   pr_target_branch_commit: <TARGET_SHA>  # HEAD of target branch (merge base)
 
@@ -186,13 +186,13 @@ Commands:
   Open <LINEAR_TICKET_URL>
 
   # Read implementation files
-  cd .worktrees/<ticket-id>
+  cd .worktrees/<branch-name>
 
   # See latest commit details
-  cd .worktrees/<ticket-id> && git log -1
+  cd .worktrees/<branch-name> && git log -1
 
   # Diff all PR changes against target branch
-  cd .worktrees/<ticket-id> && git diff <pr_target_branch_commit>...<current_branch_commit>
+  cd .worktrees/<branch-name> && git diff <pr_target_branch_commit>...<current_branch_commit>
 ================================================================================
 ```
 
@@ -209,4 +209,4 @@ Commands:
 - The worktree isolates work from your main working directory
 - You can switch back to main repo anytime: `cd <original-path>`
 - Multiple execute-plan commands can run in parallel for different tickets
-- Clean up worktrees after PR merge: `git worktree remove .worktrees/<ticket-id>`
+- Clean up worktrees after PR merge: `git worktree remove .worktrees/<branch-name>`
