@@ -4,6 +4,17 @@
 This module provides a lightweight HTTP client that uses curl via subprocess
 to call the mcp-bridge REST API. This avoids adding httpx as a dependency.
 
+Transport Mode Precedence:
+    1. socket_path constructor argument (highest priority)
+    2. MCP_BRIDGE_SOCKET environment variable
+    3. base_url constructor argument
+    4. MCP_BRIDGE_URL environment variable
+    5. Default: http://localhost:8080 (lowest priority)
+
+When using Unix socket mode (options 1-2), a dummy base URL (http://localhost)
+is used for curl's URL argument since --unix-socket requires a URL but ignores
+the host portion.
+
 The client supports the multi-server usage pattern:
    - Discover servers with `list_servers()` → returns `{"servers": [...]}`
      including per-server `healthy` field
@@ -17,9 +28,15 @@ The client supports the multi-server usage pattern:
    - Check overall bridge health with `health_check()` → returns True if healthy
 
 Usage:
+    # HTTP mode (default, for non-Docker host usage):
     from scripts.mcp.client.http_client import HttpMCPClient, MCPClientError
+    client = HttpMCPClient()  # Uses MCP_BRIDGE_URL or http://localhost:8080
 
-    client = HttpMCPClient()  # Uses MCP_BRIDGE_URL env var or localhost:8080
+    # Unix socket mode (preferred for Docker):
+    client = HttpMCPClient(socket_path="/tmp/mcp-bridge.sock")
+    # Or via environment:
+    # export MCP_BRIDGE_SOCKET=/tmp/mcp-bridge.sock
+    # client = HttpMCPClient()
 
     # Check overall bridge health
     if client.health_check():
@@ -51,21 +68,52 @@ class MCPClientError(Exception):
 class HttpMCPClient:
     """HTTP client for MCP bridge server using curl subprocess."""
 
-    def __init__(self, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        socket_path: str | None = None,
+    ) -> None:
         """Initialize client.
 
+        Transport mode is determined by precedence (highest to lowest):
+        1. socket_path argument
+        2. MCP_BRIDGE_SOCKET env var
+        3. base_url argument
+        4. MCP_BRIDGE_URL env var
+        5. Default http://localhost:8080
+
+        When socket_path is set (directly or via env), base_url is ignored
+        and a dummy URL (http://localhost) is used for curl compatibility.
+
         Args:
-            base_url: Bridge server URL. Defaults to MCP_BRIDGE_URL env var
-                      or http://localhost:8080
+            base_url: Bridge server URL. Only used if socket_path is not set.
+                      Defaults to MCP_BRIDGE_URL env var or http://localhost:8080.
+            socket_path: Path to Unix socket. Takes precedence over base_url.
+                        Defaults to MCP_BRIDGE_SOCKET env var if set.
         """
-        if base_url is None:
-            base_url = os.environ.get("MCP_BRIDGE_URL", "http://localhost:8080")
-        base_url = base_url.strip().rstrip("/")
-        if not base_url:
-            raise MCPClientError("Invalid base_url: empty or missing host")
-        if base_url.endswith("://"):
-            raise MCPClientError(f"Invalid base_url: scheme without host: {base_url}")
-        self.base_url = base_url
+        # Precedence: socket_path arg > MCP_BRIDGE_SOCKET env > base_url arg >
+        # MCP_BRIDGE_URL env > default
+        if socket_path is not None and not isinstance(socket_path, str):
+            raise MCPClientError("socket_path must be a string path")
+        if base_url is not None and not isinstance(base_url, str):
+            raise MCPClientError("base_url must be a string URL")
+        env_socket = os.environ.get("MCP_BRIDGE_SOCKET", "")
+        p = (socket_path if socket_path is not None else env_socket).strip()
+        self.socket_path = p or None
+
+        if self.socket_path:
+            # Unix socket mode - base_url becomes dummy hostname for curl
+            self.base_url = "http://localhost"
+        else:
+            # HTTP mode - resolve and validate base_url
+            if base_url is None:
+                base_url = os.environ.get("MCP_BRIDGE_URL", "http://localhost:8080")
+            base_url = base_url.strip().rstrip("/")
+            if not base_url:
+                raise MCPClientError("Invalid base_url: empty or missing host")
+            if base_url.endswith("://"):
+                raise MCPClientError(f"Invalid base_url: scheme without host: {base_url}")
+            self.base_url = base_url
 
     def _request_json(
         self,
@@ -90,6 +138,10 @@ class HttpMCPClient:
             "--max-time",
             max_time_str,
         ]
+
+        # Add Unix socket option if configured
+        if self.socket_path:
+            cmd.extend(["--unix-socket", self.socket_path])
 
         payload_json = None
         if method == "POST":
@@ -132,11 +184,18 @@ class HttpMCPClient:
 
         # Handle curl exit codes
         if result.returncode == 7:
-            raise MCPClientError(
-                f"Cannot connect to mcp-bridge at {self.base_url}. "
-                "Docker environment not running. Run: "
-                "docker-compose -f docker-compose.dev.yml up -d"
-            )
+            if self.socket_path:
+                raise MCPClientError(
+                    f"Cannot connect to mcp-bridge at {self.socket_path}. "
+                    "Socket not available. Ensure mcp-bridge container is running "
+                    "and socket is mounted."
+                )
+            else:
+                raise MCPClientError(
+                    f"Cannot connect to mcp-bridge at {self.base_url}. "
+                    "Ensure the MCP bridge is running. "
+                    "If using Docker, run: docker compose up mcp-bridge"
+                )
         elif result.returncode == 28:
             raise MCPClientError(f"Request timed out after {timeout}s")
         elif result.returncode == 22:
@@ -310,8 +369,13 @@ class HttpMCPClient:
             "%{http_code}",
             "--max-time",
             "5",
-            url,
         ]
+
+        # Add Unix socket option if configured
+        if self.socket_path:
+            cmd.extend(["--unix-socket", self.socket_path])
+
+        cmd.append(url)
 
         try:
             result = subprocess.run(

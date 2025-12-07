@@ -240,7 +240,7 @@ convention = "google"
 
 # Scripts: ANN401 for modules with generic helper functions using Any
 "scripts/knowledge/**/*.py" = ["ANN401"]
-"scripts/mcp/**/*.py" = ["ANN401"]
+"scripts/mcp/**/*.py" = ["ANN401", "E402", "S108"]  # E402 for late imports after sys.path; S108 for socket paths
 "scripts/tasks/**/*.py" = ["ANN401"]
 
 # Scripts: E402 for modules with late imports after sys.path manipulation

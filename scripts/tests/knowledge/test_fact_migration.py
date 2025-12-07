@@ -321,11 +321,11 @@ class TestParseClassificationJson:
             parse_classification_json(json_path)
 
     def test_raises_for_non_object(self, tmp_path: Path) -> None:
-        """Should raise ValueError when JSON is not an object."""
+        """Should raise TypeError when JSON is not an object."""
         json_path = tmp_path / "array.json"
         json_path.write_text('["array", "not", "object"]')
 
-        with pytest.raises(ValueError, match="must be an object"):
+        with pytest.raises(TypeError, match="must be an object"):
             parse_classification_json(json_path)
 
     def test_raises_for_missing_required_key(self, tmp_path: Path) -> None:
@@ -366,10 +366,10 @@ class TestNormalizeClassifications:
             normalize_classifications(data)
 
     def test_raises_for_non_list(self) -> None:
-        """Should raise ValueError when classifications is not a list."""
+        """Should raise TypeError when classifications is not a list."""
         data = {"classifications": "not a list"}
 
-        with pytest.raises(ValueError, match="must be a list"):
+        with pytest.raises(TypeError, match="must be a list"):
             normalize_classifications(data)
 
     def test_raises_for_empty_list(self) -> None:
@@ -380,10 +380,10 @@ class TestNormalizeClassifications:
             normalize_classifications(data)
 
     def test_raises_for_non_dict_item(self) -> None:
-        """Should raise ValueError when item is not a dict."""
+        """Should raise TypeError when item is not a dict."""
         data = {"classifications": ["not a dict"]}
 
-        with pytest.raises(ValueError, match="must be an object"):
+        with pytest.raises(TypeError, match="must be an object"):
             normalize_classifications(data)
 
     def test_raises_for_missing_fact_id(self) -> None:

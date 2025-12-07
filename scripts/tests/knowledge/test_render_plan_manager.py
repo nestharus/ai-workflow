@@ -156,11 +156,11 @@ class TestLoadRenderPlan:
             load_render_plan("bad-plan", render_plans_dir)
 
     def test_raises_for_non_dict(self, fs: FakeFilesystem, render_plans_dir: Path) -> None:
-        """Verify ValueError raised for non-dict content."""
+        """Verify TypeError raised for non-dict content."""
         plan_path = render_plans_dir / "array-plan.yml"
         fs.create_file(plan_path, contents="- item1\n- item2")
 
-        with pytest.raises(ValueError, match="must be a dict"):
+        with pytest.raises(TypeError, match="must be a dict"):
             load_render_plan("array-plan", render_plans_dir)
 
     def test_raises_for_invalid_schema(self, fs: FakeFilesystem, render_plans_dir: Path) -> None:
@@ -224,6 +224,30 @@ class TestListRenderPlans:
 
         plans = list_render_plans(render_plans_dir)
 
+        assert len(plans) == 1
+        assert plans[0]["render_plan_id"] == "prose.paragraph.v1"
+
+    def test_skips_unreadable_entries(
+        self,
+        fs: FakeFilesystem,
+        render_plans_dir: Path,
+        sample_render_plan_dict: dict[str, Any],
+    ) -> None:
+        """Verify unreadable entries (directories, permission errors) are skipped."""
+        # Create valid plan
+        valid_path = render_plans_dir / "valid.yml"
+        fs.create_file(
+            valid_path,
+            contents=yaml.safe_dump(sample_render_plan_dict),
+        )
+
+        # Create a directory with .yml extension (will cause IsADirectoryError)
+        dir_path = render_plans_dir / "directory.yml"
+        fs.create_dir(dir_path)
+
+        plans = list_render_plans(render_plans_dir)
+
+        # Should only return the valid plan, skipping the directory
         assert len(plans) == 1
         assert plans[0]["render_plan_id"] == "prose.paragraph.v1"
 
@@ -291,4 +315,45 @@ class TestGetRenderPlanById:
     def test_returns_none_for_missing(self, fs: FakeFilesystem, render_plans_dir: Path) -> None:
         """Verify None returned for missing plan."""
         plan = get_render_plan_by_id("nonexistent", render_plans_dir)
+        assert plan is None
+
+
+class TestPathTraversalProtection:
+    """Tests for path traversal attack prevention."""
+
+    def test_rejects_relative_parent_traversal(
+        self, fs: FakeFilesystem, render_plans_dir: Path
+    ) -> None:
+        """Verify path traversal using '../' is rejected."""
+        with pytest.raises(ValueError, match="path traversal"):
+            load_render_plan("../../../etc/passwd", render_plans_dir)
+
+    def test_rejects_nested_traversal(self, fs: FakeFilesystem, render_plans_dir: Path) -> None:
+        """Verify nested path traversal is rejected."""
+        with pytest.raises(ValueError, match="path traversal"):
+            load_render_plan("subdir/../../../secret", render_plans_dir)
+
+    def test_allows_valid_render_plan_ids(
+        self,
+        fs: FakeFilesystem,
+        render_plans_dir: Path,
+        sample_render_plan_dict: dict[str, Any],
+    ) -> None:
+        """Verify valid render plan IDs with dots and dashes work."""
+        plan_path = render_plans_dir / "prose.paragraph.v1.yml"
+        fs.create_file(
+            plan_path,
+            contents=yaml.safe_dump(sample_render_plan_dict),
+        )
+
+        # Should not raise
+        plan = load_render_plan("prose.paragraph.v1", render_plans_dir)
+        assert plan["render_plan_id"] == "prose.paragraph.v1"
+
+    def test_get_by_id_returns_none_for_traversal(
+        self, fs: FakeFilesystem, render_plans_dir: Path
+    ) -> None:
+        """Verify get_render_plan_by_id handles traversal gracefully."""
+        # get_render_plan_by_id should catch the ValueError and return None
+        plan = get_render_plan_by_id("../../../etc/passwd", render_plans_dir)
         assert plan is None

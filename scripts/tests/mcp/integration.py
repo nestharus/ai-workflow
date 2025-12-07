@@ -2,7 +2,7 @@
 
 These tests serve as automated QA for the MCP bridge, replacing manual testing.
 They start a real Docker container with the MCP bridge and a simple echo MCP server,
-then verify the full request flow works end-to-end.
+then verify the full request flow works end-to-end using Unix socket communication.
 
 Usage:
     uv run python -m pytest scripts/tests/mcp/integration.py -v
@@ -11,8 +11,8 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import shutil
-import socket
 import subprocess
 import tempfile
 import textwrap
@@ -161,13 +161,6 @@ ECHO_MCP_SERVER_SCRIPT = textwrap.dedent('''
 # ============================================================================
 
 
-def _find_free_port() -> int:
-    """Find a free port on localhost."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 def _docker_available() -> bool:
     """Check if Docker is available."""
     docker_path = shutil.which("docker")
@@ -237,20 +230,23 @@ mcpServers:
 
 
 @pytest.fixture(scope="module")
-def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[str]:
-    """Start the MCP bridge Docker container and return its base URL.
+def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[tuple[str, str]]:
+    """Start the MCP bridge Docker container and return socket path and dummy base URL.
 
-    This fixture:
-    1. Creates a temp config file
-    2. Builds the Docker image
-    3. Runs the container with the config and echo server mounted
-    4. Waits for health check
-    5. Yields the base URL
-    6. Cleans up on teardown
+    Returns:
+        Tuple of (socket_path, base_url) where base_url is always "http://localhost"
+
+    Failure Diagnostics:
+        This fixture distinguishes between three failure conditions:
+        (a) Docker image build failure - skip with build error details
+        (b) Container process crash/healthcheck failure - skip with container logs
+        (c) Host-side Unix-socket/HTTPX connectivity issues - skip with transport error
     """
-    port = _find_free_port()
-    base_url = f"http://127.0.0.1:{port}"
-    container_name = f"mcp-bridge-test-{port}"
+    # Create temp directory for socket
+    socket_dir = tempfile.mkdtemp(prefix="mcp_socket_")
+    socket_path = os.path.join(socket_dir, "mcp-bridge.sock")
+    container_name = f"mcp-bridge-test-{os.getpid()}"
+    base_url = "http://localhost"
 
     # Create temp config file
     with tempfile.NamedTemporaryFile(
@@ -273,10 +269,11 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
     # Get full docker path to avoid S607 security warning
     docker_path = shutil.which("docker")
     if not docker_path:
+        shutil.rmtree(socket_dir, ignore_errors=True)
         pytest.skip("Docker not available")
 
     try:
-        # Build the Docker image
+        # Build - capture and classify build failures (condition a)
         build_result = subprocess.run(
             [
                 docker_path,
@@ -292,10 +289,18 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
             timeout=300,
         )
         if build_result.returncode != 0:
-            pytest.skip(f"Docker build failed: {build_result.stderr}")
+            shutil.rmtree(socket_dir, ignore_errors=True)
+            config_path.unlink(missing_ok=True)
+            # Truncate build logs to avoid overwhelming CI output (max 2000 chars)
+            build_stderr = build_result.stderr[:2000] + (
+                "..." if len(build_result.stderr) > 2000 else ""
+            )
+            pytest.skip(
+                f"[DOCKER BUILD FAILURE] Exit code: {build_result.returncode}. "
+                f"Error: {build_stderr}"
+            )
 
-        # Run the container
-        # Mount the config file and the echo server script
+        # Run the container - no port mapping, volume mount for socket
         run_result = subprocess.run(
             [
                 docker_path,
@@ -303,14 +308,16 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
                 "-d",
                 "--name",
                 container_name,
-                "-p",
-                f"127.0.0.1:{port}:8080",
+                "-v",
+                f"{socket_dir}:/tmp:rw",  # Mount socket directory
                 "-v",
                 f"{config_path}:/app/config/.mcp.yml:ro",
                 "-v",
                 f"{echo_server_script}:/app/echo_server.py:ro",
                 "-e",
                 "MCP_CONFIG_PATH=/app/config/.mcp.yml",
+                "-e",
+                "MCP_BRIDGE_SOCKET=/tmp/mcp-bridge.sock",
                 "mcp-bridge-test:latest",
             ],
             capture_output=True,
@@ -318,55 +325,118 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
             timeout=30,
         )
         if run_result.returncode != 0:
-            pytest.skip(f"Docker run failed: {run_result.stderr}")
+            shutil.rmtree(socket_dir, ignore_errors=True)
+            config_path.unlink(missing_ok=True)
+            pytest.skip(
+                f"[CONTAINER START FAILURE] Exit code: {run_result.returncode}. "
+                f"Error: {run_result.stderr[:1000]}"
+            )
 
-        # Wait for the container to be healthy
+        # Wait for socket file to exist and become healthy
         start_time = time.time()
-        timeout = 60.0
+        timeout_secs = 60.0
         healthy = False
+        last_error_classification: str | None = None
 
-        while time.time() - start_time < timeout:
-            try:
-                response = httpx.get(f"{base_url}/health", timeout=5.0)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get("status") == "ok":
-                        healthy = True
-                        break
-            except (httpx.RequestError, httpx.HTTPStatusError):
-                pass
+        while time.time() - start_time < timeout_secs:
+            # Check container health first (condition b)
+            inspect_result = subprocess.run(
+                [docker_path, "inspect", "--format", "{{.State.Status}}", container_name],
+                capture_output=True,
+                text=True,
+            )
+            container_status = inspect_result.stdout.strip()
+            if container_status == "exited":
+                logs_result = subprocess.run(
+                    [docker_path, "logs", container_name], capture_output=True, text=True
+                )
+                logs_truncated = logs_result.stdout[:2000] + (
+                    "..." if len(logs_result.stdout) > 2000 else ""
+                )
+                subprocess.run([docker_path, "rm", "-f", container_name], capture_output=True)
+                shutil.rmtree(socket_dir, ignore_errors=True)
+                config_path.unlink(missing_ok=True)
+                pytest.skip(
+                    f"[CONTAINER CRASH] Container exited unexpectedly. Logs: {logs_truncated}"
+                )
+
+            # Check socket file exists (condition c)
+            if os.path.exists(socket_path):
+                try:
+                    # Use httpx with Unix socket transport
+                    transport = httpx.HTTPTransport(uds=socket_path)
+                    with httpx.Client(transport=transport, timeout=5.0) as client:
+                        response = client.get(f"{base_url}/health")
+                        if response.status_code == 200:
+                            data = response.json()
+                            if data.get("status") == "ok":
+                                healthy = True
+                                break
+                        else:
+                            last_error_classification = (
+                                f"[NON-200 STATUS] HTTP {response.status_code}"
+                            )
+                except httpx.TimeoutException as e:
+                    last_error_classification = (
+                        f"[HTTPX TIMEOUT] {type(e).__name__}: {str(e)[:200]}"
+                    )
+                except httpx.TransportError as e:
+                    last_error_classification = (
+                        f"[TRANSPORT ERROR] {type(e).__name__}: {str(e)[:200]}"
+                    )
+                except httpx.RequestError as e:
+                    last_error_classification = (
+                        f"[REQUEST ERROR] {type(e).__name__}: {str(e)[:200]}"
+                    )
+                except OSError as e:
+                    # Permission or socket errors
+                    last_error_classification = f"[OS ERROR] errno={e.errno}, {str(e)[:200]}"
+            else:
+                last_error_classification = "[SOCKET NOT FOUND] Socket file does not exist yet"
+
             time.sleep(1.0)
 
         if not healthy:
-            # Get container logs for debugging
+            # Log informative message about socket status with truncated details
+            socket_exists = os.path.exists(socket_path)
             logs_result = subprocess.run(
                 [docker_path, "logs", container_name],
                 capture_output=True,
                 text=True,
             )
-            # Stop and remove container
+            logs_truncated = logs_result.stdout[:2000] + (
+                "..." if len(logs_result.stdout) > 2000 else ""
+            )
             subprocess.run([docker_path, "rm", "-f", container_name], capture_output=True)
+            shutil.rmtree(socket_dir, ignore_errors=True)
             config_path.unlink(missing_ok=True)
             pytest.skip(
-                f"Container did not become healthy within {timeout}s. "
-                f"Logs: {logs_result.stdout}\n{logs_result.stderr}"
+                f"[HEALTHCHECK FAILURE] Container did not become healthy within "
+                f"{timeout_secs}s. Socket exists: {socket_exists}, Path: {socket_path}. "
+                f"Last error: {last_error_classification}. Container logs: {logs_truncated}"
             )
 
-        yield base_url
+        yield socket_path, base_url
 
     finally:
         # Cleanup: stop and remove container
-        subprocess.run(
-            [docker_path, "rm", "-f", container_name],
-            capture_output=True,
-        )
+        subprocess.run([docker_path, "rm", "-f", container_name], capture_output=True)
         config_path.unlink(missing_ok=True)
+
+        # Unconditionally remove socket directory and warn if cleanup fails
+        shutil.rmtree(socket_dir, ignore_errors=True)
+        if os.path.exists(socket_dir):
+            import warnings
+
+            warnings.warn(f"Socket directory not cleaned up: {socket_dir}", stacklevel=2)
 
 
 @pytest.fixture
-def http_client(mcp_bridge_container: str) -> Iterator[httpx.Client]:
-    """Create an HTTP client for the MCP bridge."""
-    with httpx.Client(base_url=mcp_bridge_container, timeout=30.0) as client:
+def http_client(mcp_bridge_container: tuple[str, str]) -> Iterator[httpx.Client]:
+    """Create an HTTP client for the MCP bridge using Unix socket."""
+    socket_path, base_url = mcp_bridge_container
+    transport = httpx.HTTPTransport(uds=socket_path)
+    with httpx.Client(transport=transport, base_url=base_url, timeout=30.0) as client:
         yield client
 
 
@@ -379,7 +449,7 @@ class TestMCPBridgeIntegration:
     """Integration tests for the MCP Bridge.
 
     These tests verify the full request flow from HTTP client through
-    the bridge to the MCP server and back.
+    the bridge to the MCP server and back using Unix socket transport.
     """
 
     def test_list_servers(self, http_client: httpx.Client) -> None:

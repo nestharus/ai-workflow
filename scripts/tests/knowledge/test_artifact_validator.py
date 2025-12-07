@@ -124,7 +124,8 @@ class TestValidateNormalizedText:
 
         # Mock embeddings with high similarity between similar texts
         mock_embeddings = np.array([[0.9, 0.1], [0.85, 0.15]])
-        mock_similarity = np.array([[0.92]])
+        # Return a 2x2 similarity matrix since we're comparing 2 texts
+        mock_similarity = np.array([[1.0, 0.92], [0.92, 1.0]])
 
         # Patch at the source module (variant_resolver) where the functions are defined
         with (
@@ -170,7 +171,8 @@ class TestValidateNormalizedText:
 
         # Mock embeddings with high similarity
         mock_embeddings = np.array([[0.9, 0.1], [0.85, 0.15]])
-        mock_similarity = np.array([[0.95]])
+        # Return a 2x2 similarity matrix since we're comparing 2 texts
+        mock_similarity = np.array([[1.0, 0.95], [0.95, 1.0]])
 
         # Patch at the source module (variant_resolver) where the functions are defined
         with (
@@ -565,7 +567,7 @@ class TestValidateArtifact:
     def test_validates_artifact_successfully(
         self,
         fs: FakeFilesystem,
-        sample_manifest: dict,
+        sample_manifest: dict[str, Any],
     ) -> None:
         """Verify artifact validation works."""
         # Create rendered file
@@ -586,7 +588,7 @@ class TestValidateArtifact:
         assert result.rendered_hash
 
     def test_raises_for_missing_rendered_file(
-        self, fs: FakeFilesystem, sample_manifest: dict
+        self, fs: FakeFilesystem, sample_manifest: dict[str, Any]
     ) -> None:
         """Verify FileNotFoundError raised for missing rendered file."""
         with pytest.raises(FileNotFoundError, match="Rendered artifact not found"):
@@ -598,7 +600,7 @@ class TestValidateArtifact:
             )
 
     def test_raises_for_unsupported_comparator(
-        self, fs: FakeFilesystem, sample_manifest: dict
+        self, fs: FakeFilesystem, sample_manifest: dict[str, Any]
     ) -> None:
         """Verify ValueError raised for unsupported comparator."""
         rendered_path = Path("/fake/rendered/abc123.md")

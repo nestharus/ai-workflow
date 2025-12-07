@@ -1,7 +1,7 @@
 doc_id: architecture-mcp-bridge
 title: MCP Bridge Architecture
-description: REST-to-MCP bridge server providing HTTP access to MCP STDIO providers. The bridge
-  is transport-only; tool-specific normalization happens in client layers.
+description: REST-to-MCP bridge server providing HTTP/Unix socket access to MCP STDIO providers.
+  The bridge is transport-only; tool-specific normalization happens in client layers.
 domain: []
 scope: project
 sections:
@@ -75,3 +75,60 @@ sections:
       - id: files-4
         text: "scripts/dev/mcp_agent_client.py: Higher-level client with background-job
           normalization and timeout enforcement."
+      - id: files-5
+        text: "scripts/mcp/benchmark_bridge_transport.py: Benchmark script for measuring
+          transport latency and throughput. Supports Unix socket vs HTTP comparison."
+  - id: deployment
+    index: 6
+    title: Deployment Modes
+    category: standard
+    items:
+      - id: deployment-1
+        text: "Primary local dev path (NES-68): Unix socket mode via Docker. The bridge
+          listens on /tmp/mcp-bridge.sock inside the container. docker-compose uses a
+          named volume (mcp_socket) to share the socket. This provides ~50% lower latency
+          and ~30-50% less CPU usage compared to HTTP/TCP."
+      - id: deployment-2
+        text: "Host HTTP mode (non-Docker): For running uvicorn directly on the host
+          without Docker, use --host 127.0.0.1 --port 8080. HttpMCPClient defaults to
+          http://localhost:8080 when MCP_BRIDGE_SOCKET is not set."
+      - id: deployment-3
+        text: "Transport precedence in HttpMCPClient: socket_path argument > MCP_BRIDGE_SOCKET
+          env > base_url argument > MCP_BRIDGE_URL env > default http://localhost:8080."
+      - id: deployment-4
+        text: "Socket path semantics: The socket path inside the container is /tmp/mcp-bridge.sock
+          (set via MCP_BRIDGE_SOCKET env var). When using docker-compose or docker run, mount a
+          host directory to /tmp to access the socket from the host."
+      - id: deployment-5
+        text: "HTTP fallback: Host-based HTTP mode remains officially supported for non-Docker
+          development workflows. Both Unix-socket and HTTP modes are validated in automated tests."
+  - id: performance
+    index: 7
+    title: Performance and Benchmarking
+    category: standard
+    items:
+      - id: performance-1
+        text: "Benchmark script: scripts/mcp/benchmark_bridge_transport.py provides repeatable
+          latency and throughput measurements. Run with --compare to see Unix socket vs HTTP
+          side-by-side. Use this to validate performance claims after changes."
+      - id: performance-2
+        text: "Expected improvements (Unix socket vs HTTP/TCP): ~30-50% lower median latency,
+          reduced CPU overhead from avoiding TCP stack processing. Actual results vary by
+          workload and system configuration."
+      - id: performance-3
+        text: "To run benchmarks: Ensure mcp-bridge is running (docker-compose up mcp-bridge),
+          then run: python scripts/mcp/benchmark_bridge_transport.py --compare --iterations 100"
+      - id: performance-4
+        text: "Metrics collected: min/median/mean/p90/p99/max latency in milliseconds,
+          throughput in requests per second, success rate percentage."
+      - id: performance-5
+        text: "Threshold assertions (NES-68): Use --min-latency-improvement and
+          --min-throughput-improvement flags with --compare to enforce minimum
+          performance improvements. The script exits non-zero if thresholds are
+          not met. Example: --compare --min-latency-improvement 30 requires at
+          least 30% latency reduction for socket vs HTTP."
+      - id: performance-6
+        text: "Diagnostic use: This benchmark script is intended for manual validation
+          of performance claims and is NOT enforced in CI. Developers should run
+          it after making transport-related changes to verify NES-68 targets are
+          maintained. Results vary by system configuration and workload."

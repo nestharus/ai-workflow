@@ -5,16 +5,23 @@ This package contains:
 - client/ - MCP HTTP client for communicating with the bridge
 
 Usage:
-    # Start the bridge server
-    uvicorn scripts.mcp.app.main:app --host 0.0.0.0 --port 8080
+    # Start the bridge server (HTTP mode for host-based development):
+    uvicorn scripts.mcp.app.main:app --host 127.0.0.1 --port 8080
 
-    # Or use the generic start script
-    uv run app.start --app scripts.mcp.app.main:app --port 8080
+    # Or use docker-compose (Unix socket mode, preferred for Docker):
+    docker-compose up mcp-bridge
+    # Socket will be at the mcp_socket volume inside /tmp
 
-    # Use the HTTP client (multi-server pattern)
+    # Use the HTTP client - HTTP mode (for non-Docker host usage):
     from scripts.mcp.client import HttpMCPClient
     client = HttpMCPClient("http://localhost:8080")
+
+    # Use the HTTP client - Unix socket mode (preferred for Docker):
+    from scripts.mcp.client import HttpMCPClient
+    client = HttpMCPClient(socket_path="/path/to/mcp-bridge.sock")
+    # Or via environment: export MCP_BRIDGE_SOCKET=/path/to/mcp-bridge.sock
+
+    # Multi-server pattern (works in both modes):
     servers = client.list_servers()  # Discover available servers
-    # Server name must match an entry in the MCP config (e.g., "background-job")
     result = client.call_server_tool("background-job", "execute", {"command": "ls"})
 """

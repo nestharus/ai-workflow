@@ -86,8 +86,17 @@ def _get_render_plan_path(render_plan_id: str, render_plans_dir: Path) -> Path:
 
     Returns:
         Path to the render plan YAML file.
+
+    Raises:
+        ValueError: If render_plan_id contains path traversal (e.g., '../').
     """
-    return render_plans_dir / f"{render_plan_id}.yml"
+    base = render_plans_dir.resolve()
+    candidate = (base / f"{render_plan_id}.yml").resolve()
+    try:
+        candidate.relative_to(base)
+    except ValueError as exc:
+        raise ValueError(f"Invalid render_plan_id: path traversal outside {base}") from exc
+    return candidate
 
 
 def validate_render_plan_schema(plan_dict: dict[str, Any]) -> list[str]:
@@ -167,6 +176,7 @@ def load_render_plan(render_plan_id: str, render_plans_dir: Path) -> RenderPlan:
     Raises:
         FileNotFoundError: If the render plan file doesn't exist.
         ValueError: If the render plan YAML is invalid or missing required fields.
+        TypeError: If the render plan content is not a dict.
     """
     plan_path = _get_render_plan_path(render_plan_id, render_plans_dir)
 
@@ -214,7 +224,7 @@ def list_render_plans(render_plans_dir: Path) -> list[RenderPlan]:
             render_plan_id = plan_path.stem
             plan = load_render_plan(render_plan_id, render_plans_dir)
             plans.append(plan)
-        except (FileNotFoundError, ValueError) as exc:
+        except (FileNotFoundError, ValueError, TypeError, OSError) as exc:
             _logger.warning("Skipping invalid render plan %s: %s", plan_path, exc)
             continue
 
@@ -270,6 +280,6 @@ def get_render_plan_by_id(
         return load_render_plan(render_plan_id, render_plans_dir)
     except FileNotFoundError:
         return None
-    except ValueError as exc:
+    except (ValueError, TypeError) as exc:
         _logger.warning("Invalid render plan %s: %s", render_plan_id, exc)
         return None

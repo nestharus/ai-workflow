@@ -47,17 +47,22 @@ def load_config(config_path: Path) -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def _is_path_excluded(path: Path, exclude_paths: set[Path]) -> bool:
+def _is_path_excluded(path: Path, exclude_paths: set[Path], exclude_names: set[str]) -> bool:
     """Check if a path is under any excluded directory.
 
     Args:
         path: The file path to check.
         exclude_paths: Set of excluded directory paths (absolute).
+        exclude_names: Set of directory names to exclude anywhere in path.
 
     Returns:
         True if the path is under an excluded directory.
     """
-    return any(excluded in path.parents for excluded in exclude_paths)
+    # Check if any parent directory matches excluded paths
+    if any(excluded in path.parents for excluded in exclude_paths):
+        return True
+    # Check if any parent directory name matches excluded directory names
+    return any(parent.name in exclude_names for parent in path.parents)
 
 
 def find_markdown_files(
@@ -68,7 +73,13 @@ def find_markdown_files(
 
     Args:
         restricted_dirs: List of directories to scan for markdown files.
-        exclude_dirs: Set of directory paths to exclude from scanning.
+        exclude_dirs: Set of directory entries to exclude from scanning. Each entry
+            is matched in two ways:
+            - As a relative directory path under REPO_ROOT (e.g., ".tasks/store"
+              excludes only that specific directory).
+            - As a bare directory name matched anywhere in the path ancestry
+              (e.g., "node_modules" excludes any directory named "node_modules"
+              regardless of its location in the tree).
 
     Returns:
         Sorted list of markdown file paths.
@@ -88,7 +99,7 @@ def find_markdown_files(
                 continue
 
             # Check if file is under any excluded directory
-            if _is_path_excluded(md_file, exclude_paths):
+            if _is_path_excluded(md_file, exclude_paths, exclude_dirs):
                 continue
 
             markdown_files.append(md_file)

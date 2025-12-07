@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any, ClassVar
 from unittest.mock import MagicMock, patch
@@ -1165,6 +1166,129 @@ class TestHttpMCPClient:
             max_time_idx = captured_cmd.index("--max-time")
             assert captured_cmd[max_time_idx + 1] == "6"
 
+    # ========================================================================
+    # Tests for Unix socket mode (NES-68)
+    # ========================================================================
+
+    def test_init_with_socket_path_argument(self) -> None:
+        """Test HttpMCPClient initialization with socket_path argument."""
+        client = HttpMCPClient(socket_path="/tmp/test.sock")
+        assert client.socket_path == "/tmp/test.sock"
+        assert client.base_url == "http://localhost"
+
+    def test_init_with_socket_env_var(self) -> None:
+        """Test HttpMCPClient initialization with MCP_BRIDGE_SOCKET env var."""
+        with patch.dict(os.environ, {"MCP_BRIDGE_SOCKET": "/tmp/env.sock"}):
+            client = HttpMCPClient()
+            assert client.socket_path == "/tmp/env.sock"
+            assert client.base_url == "http://localhost"
+
+    def test_socket_path_takes_precedence_over_base_url(self) -> None:
+        """Test socket_path takes precedence over base_url argument."""
+        client = HttpMCPClient(base_url="http://example.com:9000", socket_path="/tmp/test.sock")
+        assert client.socket_path == "/tmp/test.sock"
+        assert client.base_url == "http://localhost"
+
+    def test_socket_env_takes_precedence_over_url_env(self) -> None:
+        """Test MCP_BRIDGE_SOCKET takes precedence over MCP_BRIDGE_URL."""
+        with patch.dict(
+            os.environ,
+            {"MCP_BRIDGE_SOCKET": "/tmp/env.sock", "MCP_BRIDGE_URL": "http://example.com:9000"},
+        ):
+            client = HttpMCPClient()
+            assert client.socket_path == "/tmp/env.sock"
+            assert client.base_url == "http://localhost"
+
+    def test_request_json_includes_unix_socket_flag(self) -> None:
+        """Test _request_json includes --unix-socket flag when socket_path is set."""
+        captured_cmd: list[str] = []
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            captured_cmd.extend(cmd)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout='{"servers": []}', stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient(socket_path="/tmp/test.sock")
+            client.list_servers()
+
+            assert "--unix-socket" in captured_cmd
+            socket_idx = captured_cmd.index("--unix-socket")
+            assert captured_cmd[socket_idx + 1] == "/tmp/test.sock"
+
+    def test_request_json_uses_dummy_base_url_in_socket_mode(self) -> None:
+        """Test dummy base URL (http://localhost) is used in socket mode."""
+        captured_cmd: list[str] = []
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            captured_cmd.extend(cmd)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout='{"servers": []}', stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient(socket_path="/tmp/test.sock")
+            client.list_servers()
+
+            assert "http://localhost/mcp/servers" in captured_cmd
+
+    def test_connection_error_mentions_socket_path(self) -> None:
+        """Test error message for returncode 7 mentions socket path in socket mode."""
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=7, stdout="", stderr="Connection refused"
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient(socket_path="/tmp/test.sock")
+            with pytest.raises(MCPClientError) as exc_info:
+                client.list_servers()
+
+            assert "/tmp/test.sock" in str(exc_info.value)
+            assert "Socket not available" in str(exc_info.value)
+
+    def test_health_check_uses_unix_socket(self) -> None:
+        """Test health_check includes --unix-socket when socket_path is set."""
+        captured_cmd: list[str] = []
+
+        def run_mock(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            captured_cmd.extend(cmd)
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="200", stderr="")
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient(socket_path="/tmp/test.sock")
+            result = client.health_check()
+
+            assert result is True
+            assert "--unix-socket" in captured_cmd
+            assert "/tmp/test.sock" in captured_cmd
+
+    def test_http_mode_without_socket_env(self) -> None:
+        """Test HTTP mode works when no MCP_BRIDGE_SOCKET is set."""
+        # Ensure no socket env var is set by using an empty override
+        env_without_socket = {k: v for k, v in os.environ.items() if k != "MCP_BRIDGE_SOCKET"}
+        with patch.dict(os.environ, env_without_socket, clear=True):
+            client = HttpMCPClient(base_url="http://localhost:8080")
+            assert client.socket_path is None
+            assert client.base_url == "http://localhost:8080"
+
+    def test_http_mode_uses_mcp_bridge_url_env(self) -> None:
+        """Test HTTP mode uses MCP_BRIDGE_URL when no socket is configured."""
+        env_with_url = {"MCP_BRIDGE_URL": "http://custom:9000"}
+        # Clear MCP_BRIDGE_SOCKET if it exists
+        with patch.dict(os.environ, env_with_url, clear=True):
+            client = HttpMCPClient()
+            assert client.socket_path is None
+            assert client.base_url == "http://custom:9000"
+
 
 # ============================================================================
 # API Routes Tests (using TestClient)
@@ -1339,3 +1463,127 @@ class TestSchemas:
         data = resp.model_dump()
         assert "result" in data
         assert data["result"]["job_id"] == "test-123"
+
+
+# ============================================================================
+# MCPSSEClient Tests
+# ============================================================================
+
+
+class TestMCPSSEClientLiveness:
+    """Tests for MCPSSEClient.is_alive() liveness detection."""
+
+    def test_is_alive_returns_false_before_initialization(self) -> None:
+        """Test is_alive returns False before client is initialized."""
+        from app.services.sse_client import MCPSSEClient  # type: ignore[import-not-found]
+
+        client = MCPSSEClient(url="https://example.com/sse")
+        assert client.is_alive() is False
+
+    def test_is_alive_returns_true_after_successful_request(self) -> None:
+        """Test is_alive returns True after a successful request."""
+        from app.services.sse_client import MCPSSEClient
+
+        client = MCPSSEClient(url="https://example.com/sse")
+
+        # Simulate successful initialization state
+        client._initialized = True
+        client._last_success_time = time.monotonic()
+        client._consecutive_failures = 0
+
+        assert client.is_alive() is True
+
+    def test_is_alive_returns_false_after_max_failures(self) -> None:
+        """Test is_alive returns False after exceeding failure threshold."""
+        from app.services.sse_client import MCPSSEClient
+
+        client = MCPSSEClient(url="https://example.com/sse")
+
+        # Simulate initialized but many failures
+        client._initialized = True
+        client._last_success_time = time.monotonic()
+        client._consecutive_failures = client._max_consecutive_failures
+
+        assert client.is_alive() is False
+
+    def test_is_alive_returns_false_when_stale(self) -> None:
+        """Test is_alive returns False when last success is too old."""
+        from app.services.sse_client import MCPSSEClient
+
+        client = MCPSSEClient(url="https://example.com/sse")
+
+        # Simulate initialized but stale (success was 6 minutes ago)
+        client._initialized = True
+        client._last_success_time = time.monotonic() - 360.0  # 6 minutes ago
+        client._consecutive_failures = 0
+
+        assert client.is_alive() is False
+
+    def test_is_alive_returns_false_when_no_success_time(self) -> None:
+        """Test is_alive returns False when no successful request has been made."""
+        from app.services.sse_client import MCPSSEClient
+
+        client = MCPSSEClient(url="https://example.com/sse")
+
+        # Simulate initialized but no successful request
+        client._initialized = True
+        client._last_success_time = None
+        client._consecutive_failures = 0
+
+        assert client.is_alive() is False
+
+    def test_close_resets_health_tracking(self) -> None:
+        """Test close() resets all health tracking fields."""
+        from app.services.sse_client import MCPSSEClient
+
+        client = MCPSSEClient(url="https://example.com/sse")
+
+        # Simulate a healthy state
+        client._initialized = True
+        client._last_success_time = time.monotonic()
+        client._consecutive_failures = 0
+
+        assert client.is_alive() is True
+
+        client.close()
+
+        # All health fields should be reset
+        assert client._initialized is False
+        assert client._last_success_time is None
+        assert client._consecutive_failures == 0
+        assert client.is_alive() is False
+
+    def test_configurable_health_thresholds(self) -> None:
+        """Test max_consecutive_failures and max_staleness_seconds are configurable."""
+        from app.services.sse_client import MCPSSEClient
+
+        # Test custom max_consecutive_failures
+        client = MCPSSEClient(
+            url="https://example.com/sse",
+            max_consecutive_failures=5,
+            max_staleness_seconds=600.0,
+        )
+        assert client._max_consecutive_failures == 5
+        assert client._max_staleness_seconds == 600.0
+
+        # Simulate initialized state with 4 failures (should still be alive with threshold of 5)
+        client._initialized = True
+        client._last_success_time = time.monotonic()
+        client._consecutive_failures = 4
+
+        assert client.is_alive() is True  # 4 < 5, still alive
+
+        # Now 5 failures should make it unhealthy
+        client._consecutive_failures = 5
+        assert client.is_alive() is False
+
+        client.close()
+
+    def test_default_health_threshold_values(self) -> None:
+        """Test default values for health thresholds."""
+        from app.services.sse_client import MCPSSEClient
+
+        client = MCPSSEClient(url="https://example.com/sse")
+        assert client._max_consecutive_failures == 3
+        assert client._max_staleness_seconds == 300.0
+        client.close()

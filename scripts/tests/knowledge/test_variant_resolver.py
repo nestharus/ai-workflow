@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
 from scripts.knowledge.variant_resolver import (
     VARIANT_COLUMNS,
@@ -389,6 +390,7 @@ class TestEmbedKeywords:
 
     def test_returns_correct_shape(self) -> None:
         """Should return embeddings with correct shape."""
+        torch = pytest.importorskip("torch")
         from scripts.knowledge.variant_resolver import embed_keywords
 
         mock_model = MagicMock()
@@ -397,8 +399,6 @@ class TestEmbedKeywords:
         mock_output = MagicMock()
         mock_output.last_hidden_state = MagicMock()
         mock_output.last_hidden_state.size.return_value = (2, 5, 768)
-
-        import torch
 
         mock_output.last_hidden_state = torch.rand(2, 5, 768)
         mock_model.return_value = mock_output

@@ -13,7 +13,8 @@ from scripts.dev import lint
 from scripts.dev.lint import (
     LINT_MARKDOWN_RESTRICTION_CONFIG,
     LINTER_NAMES,
-    LINTER_RUNNERS,
+    LINTER_RUNNERS_NO_FILES,
+    LINTER_RUNNERS_WITH_FILES,
     InvalidCommandError,
     _hadolint,
     _load_yaml_config,
@@ -378,11 +379,24 @@ class TestLinterConstants:
         ]
         assert expected == LINTER_NAMES
 
+    def test_linter_runners_no_key_overlap(self) -> None:
+        """Should have no overlapping keys between NO_FILES and WITH_FILES runners."""
+        no_files_keys = set(LINTER_RUNNERS_NO_FILES.keys())
+        with_files_keys = set(LINTER_RUNNERS_WITH_FILES.keys())
+        overlap = no_files_keys & with_files_keys
+        assert not overlap, f"Overlapping linter runner keys: {overlap}"
+
     def test_linter_runners_has_all_linters(self) -> None:
-        """Should have runner for each linter name."""
+        """Should have runner for each linter name and no orphaned entries."""
+        all_runners = {**LINTER_RUNNERS_NO_FILES, **LINTER_RUNNERS_WITH_FILES}
+        # Check each linter name has a callable runner
         for name in LINTER_NAMES:
-            assert name in LINTER_RUNNERS
-            assert callable(LINTER_RUNNERS[name])
+            assert name in all_runners
+            assert callable(all_runners[name])
+        # Check no orphaned runner entries (keys not in LINTER_NAMES)
+        assert set(all_runners.keys()) == set(LINTER_NAMES), (
+            f"Orphaned runner keys: {set(all_runners.keys()) - set(LINTER_NAMES)}"
+        )
 
     def test_markdown_restriction_config_path(self) -> None:
         """Should have config path for markdown restriction linter."""
@@ -724,6 +738,7 @@ class TestRunMarkdownRestriction:
 
         with Patcher(modules_to_reload=[lint_markdown_restriction]) as patcher:
             fs = patcher.fs
+            assert fs is not None
             fs.create_dir("/fake/repo")
             fs.create_file("/fake/repo/README.md", contents="# README")
             fs.create_file("/fake/repo/AGENTS.md", contents="# AGENTS")
@@ -758,6 +773,7 @@ class TestRunMarkdownRestriction:
 
         with Patcher(modules_to_reload=[lint_markdown_restriction]) as patcher:
             fs = patcher.fs
+            assert fs is not None
             fs.create_dir("/fake/repo")
             fs.create_dir("/fake/repo/docs")
             fs.create_file("/fake/repo/README.md", contents="# README")
@@ -794,6 +810,7 @@ class TestRunMarkdownRestriction:
 
         with Patcher(modules_to_reload=[lint_markdown_restriction]) as patcher:
             fs = patcher.fs
+            assert fs is not None
             fs.create_dir("/fake/repo")
             fs.create_dir("/fake/repo/docs")
             fs.create_dir("/fake/repo/excluded")
