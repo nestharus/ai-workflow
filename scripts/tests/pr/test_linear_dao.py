@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
+from collections.abc import Generator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -1696,6 +1697,15 @@ class TestSetTicketState:
 class TestBackwardsCompatibleFunctions:
     """Tests for backwards-compatible module-level functions."""
 
+    @pytest.fixture(autouse=True)
+    def reset_default_client(self) -> Generator[None]:
+        """Reset the default client before and after each test."""
+        import scripts.pr.linear_dao as linear_dao_module
+
+        linear_dao_module._default_client = None
+        yield
+        linear_dao_module._default_client = None
+
     def test_get_linear_api_key_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_get_linear_api_key returns key from environment."""
         monkeypatch.setenv("LINEAR_API_KEY", "env-key-value")
@@ -1712,11 +1722,6 @@ class TestBackwardsCompatibleFunctions:
         """_get_default_client creates and caches a LinearClient instance."""
         monkeypatch.setenv("LINEAR_API_KEY", "test-key")
 
-        # Clear any existing cached client
-        import scripts.pr.linear_dao as linear_dao_module
-
-        linear_dao_module._default_client = None
-
         client = _get_default_client()
         assert isinstance(client, LinearClient)
 
@@ -1724,16 +1729,9 @@ class TestBackwardsCompatibleFunctions:
         client2 = _get_default_client()
         assert client is client2
 
-        # Clean up
-        linear_dao_module._default_client = None
-
     def test_run_linear_graphql_delegates_to_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_run_linear_graphql delegates to default client."""
         monkeypatch.setenv("LINEAR_API_KEY", "test-key")
-
-        import scripts.pr.linear_dao as linear_dao_module
-
-        linear_dao_module._default_client = None
 
         mock_response = make_mock_response({"data": {"viewer": {"id": "123"}}})
 
@@ -1742,15 +1740,9 @@ class TestBackwardsCompatibleFunctions:
 
         assert result["data"]["viewer"]["id"] == "123"
 
-        linear_dao_module._default_client = None
-
     def test_fetch_github_attachments_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """fetch_github_attachments free function delegates to default client."""
         monkeypatch.setenv("LINEAR_API_KEY", "test-key")
-
-        import scripts.pr.linear_dao as linear_dao_module
-
-        linear_dao_module._default_client = None
 
         mock_response = make_mock_response(
             {
@@ -1771,15 +1763,9 @@ class TestBackwardsCompatibleFunctions:
         assert len(attachments) == 1
         assert attachments[0]["url"] == "https://github.com/pr/1"
 
-        linear_dao_module._default_client = None
-
     def test_get_ticket_info_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """get_ticket_info free function delegates to default client."""
         monkeypatch.setenv("LINEAR_API_KEY", "test-key")
-
-        import scripts.pr.linear_dao as linear_dao_module
-
-        linear_dao_module._default_client = None
 
         mock_response = make_mock_response(
             {
@@ -1801,15 +1787,9 @@ class TestBackwardsCompatibleFunctions:
 
         assert info["identifier"] == "NES-1"
 
-        linear_dao_module._default_client = None
-
     def test_get_done_state_id_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """get_done_state_id free function delegates to default client."""
         monkeypatch.setenv("LINEAR_API_KEY", "test-key")
-
-        import scripts.pr.linear_dao as linear_dao_module
-
-        linear_dao_module._default_client = None
 
         mock_response = make_mock_response(
             {
@@ -1828,15 +1808,9 @@ class TestBackwardsCompatibleFunctions:
 
         assert state_id == "done-id"
 
-        linear_dao_module._default_client = None
-
     def test_set_ticket_state_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """set_ticket_state free function delegates to default client."""
         monkeypatch.setenv("LINEAR_API_KEY", "test-key")
-
-        import scripts.pr.linear_dao as linear_dao_module
-
-        linear_dao_module._default_client = None
 
         mock_response = make_mock_response(
             {
@@ -1853,5 +1827,3 @@ class TestBackwardsCompatibleFunctions:
             result = set_ticket_state("issue-uuid", "state-uuid")
 
         assert result is True
-
-        linear_dao_module._default_client = None
