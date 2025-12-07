@@ -103,4 +103,5 @@ Delete the tmp folder for the PR comments that was created.
 - Follow co-author rules in AGENTS.md (no AI co-authors)
 - Only resolve threads that meet the thumbs-up criteria
 - Never defer - implement or challenge, don't postpone
-- Run tests and lint-fixer before pushing
+- Run tests in worktree and lint-fixer sub-agent against worktree before pushing
+- DO NOT RUN LINTING DIRECTLY. USE THE SUB-AGENT.
