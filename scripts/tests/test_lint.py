@@ -670,6 +670,32 @@ class TestRunActionlint:
         captured = capsys.readouterr()
         assert "No GitHub Actions workflow files to check" in captured.out
 
+    def test_empty_files_list_does_not_scan_workflows_dir(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should print message and return when files is an empty list.
+
+        This tests the distinction between files=None (scan all) and files=[]
+        (explicit empty list means no files to check).
+        """
+        fs.create_dir("/fake/repo/.github/workflows")
+        fs.create_file("/fake/repo/.github/workflows/ci.yml", contents="name: CI")
+        fs.create_file("/fake/repo/.lint.actionlint.yaml", contents="ignore: []\nexclude_dirs: []")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_ACTIONLINT_CONFIG", Path("/fake/repo/.lint.actionlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/actionlint"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            # Pass empty list - should NOT scan workflows dir
+            _run_actionlint(files=[])
+
+        captured = capsys.readouterr()
+        assert "No GitHub Actions workflow files to check" in captured.out
+        # Verify actionlint was NOT called (unlike files=None which would scan)
+        mock_check.assert_not_called()
+
     def test_propagates_subprocess_error(self, fs: FakeFilesystem) -> None:
         """Should propagate CalledProcessError from subprocess."""
         fs.create_dir("/fake/repo/.github/workflows")
@@ -1059,6 +1085,7 @@ class TestMain:
             "/fake/repo/.lint.markdown-restriction.yaml",
             contents="restrictions: []\nexclude_dirs: []",
         )
+        fs.create_file("/fake/repo/.lint.actionlint.yaml", contents="ignore: []\nexclude_dirs: []")
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
@@ -1075,6 +1102,11 @@ class TestMain:
                 lint,
                 "LINT_MARKDOWN_RESTRICTION_CONFIG",
                 Path("/fake/repo/.lint.markdown-restriction.yaml"),
+            ),
+            patch.object(
+                lint,
+                "LINT_ACTIONLINT_CONFIG",
+                Path("/fake/repo/.lint.actionlint.yaml"),
             ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
@@ -1121,6 +1153,7 @@ class TestMain:
             "/fake/repo/.lint.markdown-restriction.yaml",
             contents="restrictions: []\nexclude_dirs: []",
         )
+        fs.create_file("/fake/repo/.lint.actionlint.yaml", contents="ignore: []\nexclude_dirs: []")
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
@@ -1139,6 +1172,11 @@ class TestMain:
                 lint,
                 "LINT_MARKDOWN_RESTRICTION_CONFIG",
                 Path("/fake/repo/.lint.markdown-restriction.yaml"),
+            ),
+            patch.object(
+                lint,
+                "LINT_ACTIONLINT_CONFIG",
+                Path("/fake/repo/.lint.actionlint.yaml"),
             ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
@@ -1171,6 +1209,7 @@ class TestMain:
             "/fake/repo/.lint.markdown-restriction.yaml",
             contents="restrictions: []\nexclude_dirs: []",
         )
+        fs.create_file("/fake/repo/.lint.actionlint.yaml", contents="ignore: []\nexclude_dirs: []")
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
@@ -1189,6 +1228,11 @@ class TestMain:
                 lint,
                 "LINT_MARKDOWN_RESTRICTION_CONFIG",
                 Path("/fake/repo/.lint.markdown-restriction.yaml"),
+            ),
+            patch.object(
+                lint,
+                "LINT_ACTIONLINT_CONFIG",
+                Path("/fake/repo/.lint.actionlint.yaml"),
             ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
