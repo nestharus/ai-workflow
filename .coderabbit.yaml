@@ -66,6 +66,8 @@ reviews:
       enabled: false
     gitleaks:
       enabled: true
+    actionlint:
+      enabled: false  # Disabled - using local actionlint via lint.py
   finishing_touches:
     docstrings:
       enabled: false

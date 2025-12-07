@@ -11,14 +11,17 @@ import pytest
 
 from scripts.dev import lint
 from scripts.dev.lint import (
+    LINT_ACTIONLINT_CONFIG,
     LINT_MARKDOWN_RESTRICTION_CONFIG,
     LINTER_NAMES,
     LINTER_RUNNERS_NO_FILES,
     LINTER_RUNNERS_WITH_FILES,
     InvalidCommandError,
+    _actionlint,
     _hadolint,
     _load_yaml_config,
     _parse_args,
+    _run_actionlint,
     _run_checked,
     _run_checkov,
     _run_hadolint,
@@ -78,6 +81,23 @@ class TestHadolint:
             with pytest.raises(RuntimeError) as exc_info:
                 _hadolint()
             assert "hadolint CLI required" in str(exc_info.value)
+
+
+class TestActionlint:
+    """Tests for _actionlint function."""
+
+    def test_returns_actionlint_path_when_found(self) -> None:
+        """Should return actionlint executable path when available."""
+        with patch("shutil.which", return_value="/usr/bin/actionlint"):
+            result = _actionlint()
+            assert result == "/usr/bin/actionlint"
+
+    def test_raises_when_not_found(self) -> None:
+        """Should raise RuntimeError when actionlint not found."""
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(RuntimeError) as exc_info:
+                _actionlint()
+            assert "actionlint CLI required" in str(exc_info.value)
 
 
 class TestRunChecked:
@@ -374,6 +394,7 @@ class TestLinterConstants:
             "hadolint",
             "pymarkdown",
             "yamllint",
+            "actionlint",
             "yamldocs",
             "checkov",
         ]
@@ -408,6 +429,15 @@ class TestLinterConstants:
         md_restriction_index = LINTER_NAMES.index("markdown-restriction")
         ruff_index = LINTER_NAMES.index("ruff")
         assert scripts_index < md_restriction_index < ruff_index
+
+    def test_actionlint_in_with_files_runners(self) -> None:
+        """Should have actionlint in LINTER_RUNNERS_WITH_FILES."""
+        assert "actionlint" in LINTER_RUNNERS_WITH_FILES
+        assert "actionlint" not in LINTER_RUNNERS_NO_FILES
+
+    def test_actionlint_config_path(self) -> None:
+        """Should have config path for actionlint linter."""
+        assert LINT_ACTIONLINT_CONFIG.name == ".lint.actionlint.yaml"
 
 
 class TestParseArgs:
@@ -533,6 +563,128 @@ class TestRunHadolint:
         dockerfile_args = [arg for arg in call_args if "Dockerfile" in arg]
         assert len(dockerfile_args) == 1
         assert "excluded" not in dockerfile_args[0]
+
+
+class TestRunActionlint:
+    """Tests for _run_actionlint function."""
+
+    def test_prints_message_when_no_workflows_dir(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should print message when .github/workflows/ doesn't exist."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/.lint.actionlint.yaml", contents="ignore: []\nexclude_dirs: []")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_ACTIONLINT_CONFIG", Path("/fake/repo/.lint.actionlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/actionlint"),
+        ):
+            _run_actionlint()
+
+        captured = capsys.readouterr()
+        assert "No .github/workflows/ directory found" in captured.out
+
+    def test_runs_actionlint_on_workflows(self, fs: FakeFilesystem) -> None:
+        """Should run actionlint on workflow files."""
+        fs.create_dir("/fake/repo/.github/workflows")
+        fs.create_file("/fake/repo/.github/workflows/ci.yml", contents="name: CI")
+        fs.create_file("/fake/repo/.lint.actionlint.yaml", contents="ignore: []\nexclude_dirs: []")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_ACTIONLINT_CONFIG", Path("/fake/repo/.lint.actionlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/actionlint"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_actionlint()
+
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+        assert call_args[0] == "/usr/bin/actionlint"
+
+    def test_applies_ignore_patterns_from_config(self, fs: FakeFilesystem) -> None:
+        """Should apply ignore patterns from configuration."""
+        fs.create_dir("/fake/repo/.github/workflows")
+        fs.create_file("/fake/repo/.github/workflows/ci.yml", contents="name: CI")
+        fs.create_file(
+            "/fake/repo/.lint.actionlint.yaml",
+            contents=(
+                "ignore:\n  - 'SC2086:'\n  - 'label \"self-hosted\" is unknown'\nexclude_dirs: []"
+            ),
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_ACTIONLINT_CONFIG", Path("/fake/repo/.lint.actionlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/actionlint"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_actionlint()
+
+        call_args = mock_check.call_args[0][0]
+        assert "-ignore" in call_args
+        assert "SC2086:" in call_args
+
+    def test_excludes_directories_from_config(self, fs: FakeFilesystem) -> None:
+        """Should exclude directories specified in config."""
+        fs.create_dir("/fake/repo/.github/workflows")
+        fs.create_dir("/fake/repo/.github/workflows/excluded")
+        fs.create_file("/fake/repo/.github/workflows/ci.yml", contents="name: CI")
+        fs.create_file("/fake/repo/.github/workflows/excluded/test.yml", contents="name: Test")
+        fs.create_file(
+            "/fake/repo/.lint.actionlint.yaml",
+            contents="ignore: []\nexclude_dirs:\n  - .github/workflows/excluded",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_ACTIONLINT_CONFIG", Path("/fake/repo/.lint.actionlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/actionlint"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_actionlint()
+
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+        # Only ci.yml should be included, not the one in excluded/
+        workflow_args = [arg for arg in call_args if arg.endswith(".yml")]
+        assert len(workflow_args) == 1
+        assert "excluded" not in workflow_args[0]
+
+    def test_filters_workflow_files_when_files_specified(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should filter to only workflow files when files specified."""
+        fs.create_dir("/fake/repo/.github/workflows")
+        fs.create_file("/fake/repo/.lint.actionlint.yaml", contents="ignore: []\nexclude_dirs: []")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_ACTIONLINT_CONFIG", Path("/fake/repo/.lint.actionlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/actionlint"),
+        ):
+            # Pass non-workflow files
+            _run_actionlint(files=["src/main.py", "config.yml"])
+
+        captured = capsys.readouterr()
+        assert "No GitHub Actions workflow files to check" in captured.out
+
+    def test_propagates_subprocess_error(self, fs: FakeFilesystem) -> None:
+        """Should propagate CalledProcessError from subprocess."""
+        fs.create_dir("/fake/repo/.github/workflows")
+        fs.create_file("/fake/repo/.github/workflows/ci.yml", contents="name: CI")
+        fs.create_file("/fake/repo/.lint.actionlint.yaml", contents="ignore: []\nexclude_dirs: []")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_ACTIONLINT_CONFIG", Path("/fake/repo/.lint.actionlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/actionlint"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            mock_check.side_effect = subprocess.CalledProcessError(1, ["actionlint"])
+            with pytest.raises(subprocess.CalledProcessError):
+                _run_actionlint()
 
 
 class TestRunPymarkdown:
