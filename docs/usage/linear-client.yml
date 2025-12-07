@@ -53,6 +53,30 @@ two_client_distinction:
         backend: Node.js (TypeScript CLI)
         use_case: Richer automation scenarios requiring full Linear SDK
 
+  decision_guide:
+    title: Quick Decision Checklist
+    summary: |
+      Use these rules of thumb to quickly determine which client to use:
+    rules:
+      - rule: "No Node.js available? Use stdlib client."
+        explanation: |
+          If your environment cannot run Node.js (e.g., minimal containers,
+          restricted CI), use scripts/pr/linear_dao.py
+      - rule: "Simple PR tooling or merge scripts? Use stdlib client."
+        explanation: |
+          For straightforward automation like updating ticket states or adding
+          comments during PR workflows, the stdlib client is simpler and faster
+      - rule: "CI/CD pipeline with minimal dependencies? Use stdlib client."
+        explanation: |
+          Reduces build times and avoids Node.js installation steps in
+          CI environments
+      - rule: "Need advanced SDK features or rich type information? Use Node client."
+        explanation: |
+          When you need the full Linear SDK capabilities, pagination abstractions,
+          or TypeScript type safety, use scripts/clients/linear_client.py
+      - rule: "Already have Node.js toolchain in your project? Use Node client."
+        explanation: If your project already uses Node.js and TypeScript, the Node client integrates more naturally
+
   when_to_use:
     stdlib_client:
       import: from scripts.pr.linear_dao import LinearClient

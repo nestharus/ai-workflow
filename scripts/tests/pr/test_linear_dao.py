@@ -115,7 +115,10 @@ class TestLinearClientRunGraphQL:
             assert "Unauthorized" in str(exc_info.value)
 
     def test_graphql_errors_raise_error(self) -> None:
-        """GraphQL responses containing errors array raise LinearAPIError."""
+        """GraphQL responses containing errors array raise LinearAPIError.
+
+        Extracted messages should be properly formatted.
+        """
         client = LinearClient(api_key="test-key")
 
         mock_response = make_mock_response({"errors": [{"message": "Field 'foo' doesn't exist"}]})
@@ -124,8 +127,65 @@ class TestLinearClientRunGraphQL:
             with pytest.raises(LinearAPIError) as exc_info:
                 client._run_graphql("query { foo }")
 
-            assert "Linear API error" in str(exc_info.value)
-            assert "Field 'foo' doesn't exist" in str(exc_info.value)
+            error_str = str(exc_info.value)
+            assert error_str == "Linear API error: Field 'foo' doesn't exist"
+
+    def test_graphql_multiple_errors_joined(self) -> None:
+        """Multiple GraphQL errors are joined with semicolons."""
+        client = LinearClient(api_key="test-key")
+
+        mock_response = make_mock_response(
+            {
+                "errors": [
+                    {"message": "First error"},
+                    {"message": "Second error"},
+                    {"message": "Third error"},
+                ]
+            }
+        )
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            with pytest.raises(LinearAPIError) as exc_info:
+                client._run_graphql("query { foo }")
+
+            error_str = str(exc_info.value)
+            assert error_str == "Linear API error: First error; Second error; Third error"
+
+    def test_graphql_errors_without_message_field(self) -> None:
+        """GraphQL errors without message field fall back to Unknown error."""
+        client = LinearClient(api_key="test-key")
+
+        mock_response = make_mock_response(
+            {"errors": [{"code": "SOME_ERROR_CODE", "extensions": {"foo": "bar"}}]}
+        )
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            with pytest.raises(LinearAPIError) as exc_info:
+                client._run_graphql("query { foo }")
+
+            error_str = str(exc_info.value)
+            assert error_str == "Linear API error: Unknown error"
+
+    def test_graphql_errors_mixed_with_and_without_message(self) -> None:
+        """GraphQL errors with mixed message/no-message are handled correctly."""
+        client = LinearClient(api_key="test-key")
+
+        mock_response = make_mock_response(
+            {
+                "errors": [
+                    {"message": "Valid error message"},
+                    {"code": "NO_MESSAGE"},
+                    {"message": "Another valid message"},
+                ]
+            }
+        )
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            with pytest.raises(LinearAPIError) as exc_info:
+                client._run_graphql("query { foo }")
+
+            error_str = str(exc_info.value)
+            assert error_str == "Linear API error: Valid error message; Another valid message"
 
     def test_malformed_json_raises_error(self) -> None:
         """Malformed JSON responses raise LinearAPIError."""
@@ -141,6 +201,68 @@ class TestLinearClientRunGraphQL:
                 client._run_graphql("query { viewer { id } }")
 
             assert "Linear API returned malformed JSON" in str(exc_info.value)
+
+    def test_non_object_json_raises_error(self) -> None:
+        """Non-object JSON responses (arrays, strings, etc.) raise LinearAPIError."""
+        client = LinearClient(api_key="test-key")
+
+        # Test with array response
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'["item1", "item2"]'
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = lambda s, *args: None
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            with pytest.raises(LinearAPIError) as exc_info:
+                client._run_graphql("query { viewer { id } }")
+
+            assert "Linear API returned non-object JSON response" in str(exc_info.value)
+
+    def test_string_json_raises_error(self) -> None:
+        """String JSON responses raise LinearAPIError."""
+        client = LinearClient(api_key="test-key")
+
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'"just a string"'
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = lambda s, *args: None
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            with pytest.raises(LinearAPIError) as exc_info:
+                client._run_graphql("query { viewer { id } }")
+
+            assert "Linear API returned non-object JSON response" in str(exc_info.value)
+
+    def test_null_json_raises_error(self) -> None:
+        """Null JSON responses raise LinearAPIError."""
+        client = LinearClient(api_key="test-key")
+
+        mock_response = MagicMock()
+        mock_response.read.return_value = b"null"
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = lambda s, *args: None
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            with pytest.raises(LinearAPIError) as exc_info:
+                client._run_graphql("query { viewer { id } }")
+
+            assert "Linear API returned non-object JSON response" in str(exc_info.value)
+
+    def test_non_utf8_response_raises_error(self) -> None:
+        """Non-UTF-8 response bytes raise LinearAPIError."""
+        client = LinearClient(api_key="test-key")
+
+        # Invalid UTF-8 sequence: 0x80 is a continuation byte without a leading byte
+        mock_response = MagicMock()
+        mock_response.read.return_value = b"\x80\x81\x82 invalid utf-8"
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = lambda s, *args: None
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            with pytest.raises(LinearAPIError) as exc_info:
+                client._run_graphql("query { viewer { id } }")
+
+            assert "Linear API returned non-UTF-8 response" in str(exc_info.value)
 
     def test_api_key_not_in_error_messages(self) -> None:
         """API key is not leaked in error messages."""
@@ -295,6 +417,66 @@ class TestResolveTeamId:
         with patch.object(client, "list_teams", return_value=mock_teams):
             result = client._resolve_team_id("nonexistent")
             assert result is None
+
+    def test_empty_string_returns_none_without_api_call(self) -> None:
+        """Empty string returns None without calling list_teams."""
+        client = LinearClient(api_key="test-key")
+
+        with patch.object(client, "list_teams") as mock_list:
+            result = client._resolve_team_id("")
+
+        assert result is None
+        mock_list.assert_not_called()
+
+    def test_whitespace_only_returns_none_without_api_call(self) -> None:
+        """Whitespace-only string returns None without calling list_teams."""
+        client = LinearClient(api_key="test-key")
+
+        with patch.object(client, "list_teams") as mock_list:
+            # Test various whitespace strings
+            for whitespace in ["   ", "\t", "\n", "  \t\n  "]:
+                result = client._resolve_team_id(whitespace)
+                assert result is None
+
+        mock_list.assert_not_called()
+
+    def test_excessively_long_string_returns_none_without_api_call(self) -> None:
+        """String over 100 characters returns None without calling list_teams."""
+        client = LinearClient(api_key="test-key")
+
+        long_string = "a" * 101
+
+        with patch.object(client, "list_teams") as mock_list:
+            result = client._resolve_team_id(long_string)
+
+        assert result is None
+        mock_list.assert_not_called()
+
+    def test_string_exactly_100_chars_is_allowed(self) -> None:
+        """String of exactly 100 characters is still processed (calls list_teams)."""
+        client = LinearClient(api_key="test-key")
+
+        string_100 = "a" * 100
+        mock_teams: list[dict[str, Any]] = []
+
+        with patch.object(client, "list_teams", return_value=mock_teams) as mock_list:
+            result = client._resolve_team_id(string_100)
+
+        # Should return None because no matching team, but list_teams should be called
+        assert result is None
+        mock_list.assert_called_once()
+
+    def test_uuid_with_surrounding_whitespace_is_trimmed(self) -> None:
+        """UUID with surrounding whitespace is trimmed and returned."""
+        client = LinearClient(api_key="test-key")
+        uuid = "12345678-1234-1234-1234-123456789012"
+        padded_uuid = f"  {uuid}  "
+
+        with patch.object(client, "list_teams") as mock_list:
+            result = client._resolve_team_id(padded_uuid)
+
+        assert result == uuid
+        mock_list.assert_not_called()
 
 
 # ============================================================================
@@ -1222,6 +1404,66 @@ class TestListComments:
         assert result["totalCount"] == 2
         assert result["comments"][0]["id"] == "comment-1"
         assert result["comments"][1]["id"] == "comment-2"
+
+    def test_list_comments_pagination_stall_raises_error(self) -> None:
+        """Pagination stall (repeated cursor) raises LinearAPIError."""
+        client = LinearClient(api_key="test-key")
+
+        # API returns hasNextPage=True but same endCursor, which would cause infinite loop
+        stalled_response = make_mock_response(
+            {
+                "data": {
+                    "issue": {
+                        "id": "issue-uuid",
+                        "identifier": "NES-123",
+                        "comments": {
+                            "pageInfo": {"hasNextPage": True, "endCursor": "same-cursor"},
+                            "nodes": [
+                                {
+                                    "id": "c1",
+                                    "body": "Comment",
+                                    "createdAt": "c",
+                                    "updatedAt": "u",
+                                    "user": None,
+                                }
+                            ],
+                        },
+                    }
+                }
+            }
+        )
+
+        # Second response also returns same cursor - would cause infinite loop
+        with patch("urllib.request.urlopen", side_effect=[stalled_response, stalled_response]):
+            with pytest.raises(LinearAPIError) as exc_info:
+                client.list_comments("NES-123")
+
+            assert "Pagination did not advance" in str(exc_info.value)
+
+    def test_list_comments_null_comments_field(self) -> None:
+        """Handle API returning null for comments field without AttributeError."""
+        client = LinearClient(api_key="test-key")
+
+        # API returns null instead of comments object
+        mock_response = make_mock_response(
+            {
+                "data": {
+                    "issue": {
+                        "id": "issue-uuid",
+                        "identifier": "NES-123",
+                        "comments": None,  # null from API
+                    }
+                }
+            }
+        )
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            result = client.list_comments("NES-123")
+
+        assert result["issueId"] == "issue-uuid"
+        assert result["issueIdentifier"] == "NES-123"
+        assert result["totalCount"] == 0
+        assert result["comments"] == []
 
 
 # ============================================================================
