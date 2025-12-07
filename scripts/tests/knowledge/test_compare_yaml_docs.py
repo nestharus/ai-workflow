@@ -925,6 +925,10 @@ class TestDetermineValueKind:
 class TestAssignRole:
     """Tests for _assign_role helper function."""
 
+    def setup_method(self) -> None:
+        """Clear registry cache before each test to ensure test isolation."""
+        _clear_artifact_registry_cache()
+
     def test_ref_value_kind_returns_entity_ref(self) -> None:
         """Should return 'entity_ref' when value_kind is 'ref'."""
         result = _assign_role("child", "ref", "items[0].child", None)
@@ -956,8 +960,7 @@ class TestAssignRole:
 
     def test_artifact_root_returns_none_without_registry(self) -> None:
         """Should return None when no registry is available."""
-        # Clear cache and provide empty registry
-        _clear_artifact_registry_cache()
+        # Provide empty registry
         result = _is_artifact_root(
             "text", "scalar-str", "items[0].text", None, None, registry_cache=[]
         )

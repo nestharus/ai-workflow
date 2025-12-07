@@ -195,6 +195,11 @@ Additional concatenation tools (`concat_app`, `concat_docs`, `concat_scripts`, `
 `concat_tools`) are available for codebase analysis. See `AGENTS.md` for detailed usage of review
 tools.
 
+### MCP Bridge
+
+Detailed deployment and configuration information for the MCP bridge is documented in
+[`docs/architecture/mcp-bridge-architecture.yml`](docs/architecture/mcp-bridge-architecture.yml).
+
 ## Keyword Extraction Pipeline Tests
 
 The keyword extraction pipeline has comprehensive test coverage in `scripts/tests/knowledge/`:

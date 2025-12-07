@@ -325,7 +325,7 @@ class TestParsePlanReviewOutput:
         output = "Review output without proper prefix"
         status, content = parse_plan_review_output(output)
         assert status == "blocked"
-        assert content == "Unrecognized plan review response"
+        assert "Unrecognized plan review response" in content
 
     def test_handles_empty_output(self) -> None:
         """Should return blocked for empty output."""

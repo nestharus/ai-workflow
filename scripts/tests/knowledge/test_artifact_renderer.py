@@ -1,11 +1,14 @@
 """Unit tests for artifact_renderer module."""
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pyfakefs.fake_filesystem import FakeFilesystem
 
+from scripts.knowledge.artifact_manager import ArtifactManifest
 from scripts.knowledge.artifact_renderer import (
     ROLE_PRIORITY_MAP,
     _derive_role_priority,
@@ -25,78 +28,85 @@ from scripts.knowledge.artifact_renderer import (
     get_output_extension,
     render_artifact,
 )
+from scripts.knowledge.render_plan_manager import RenderPlan
 
 
 @pytest.fixture
-def sample_manifest() -> dict[str, Any]:
+def sample_manifest() -> ArtifactManifest:
     """Create a sample artifact manifest for testing."""
-    return {
-        "artifact_id": "abc123def456789012345678901234567890123456789012345678901234",
-        "artifact_kind": "prose/paragraph",
-        "artifact_format": "text/markdown",
-        "source": {
-            "source_file": "docs/test.yml",
-            "source_element_id": "test-element-1",
-            "field_path": "description",
-            "source_locator": "inline",
-            "source_uri": None,
+    return cast(
+        "ArtifactManifest",
+        {
+            "artifact_id": "abc123def456789012345678901234567890123456789012345678901234",
+            "artifact_kind": "prose/paragraph",
+            "artifact_format": "text/markdown",
+            "source": {
+                "source_file": "docs/test.yml",
+                "source_element_id": "test-element-1",
+                "field_path": "description",
+                "source_locator": "inline",
+                "source_uri": None,
+            },
+            "render_plan_id": "prose.paragraph.v1",
+            "projection_version": "fieldfacts.v2",
+            "modality": "text",
+            "extraction_mode": "full",
+            "contributors": {
+                "structural": [
+                    {
+                        "element_id": "elem-1",
+                        "field_path": "field.one",
+                        "fact_id": "fact-1",
+                        "role": "constraint",
+                        "group_key": "grp-a",
+                        "group_id": "g1",
+                    },
+                    {
+                        "element_id": "elem-2",
+                        "field_path": "field.two",
+                        "fact_id": "fact-2",
+                        "role": "metadata",
+                        "role_priority": 2,
+                    },
+                ],
+                "semantic": [
+                    {
+                        "element_id": "elem-3",
+                        "field_path": "field.three",
+                        "fact_id": "fact-3",
+                        "role": "entity_ref",
+                    },
+                ],
+            },
+            "entities": [],
+            "rendered": {"path": "", "validation": {}},
         },
-        "render_plan_id": "prose.paragraph.v1",
-        "projection_version": "fieldfacts.v2",
-        "modality": "text",
-        "extraction_mode": "full",
-        "contributors": {
-            "structural": [
-                {
-                    "element_id": "elem-1",
-                    "field_path": "field.one",
-                    "fact_id": "fact-1",
-                    "role": "constraint",
-                    "group_key": "grp-a",
-                    "group_id": "g1",
-                },
-                {
-                    "element_id": "elem-2",
-                    "field_path": "field.two",
-                    "fact_id": "fact-2",
-                    "role": "metadata",
-                    "role_priority": 2,
-                },
-            ],
-            "semantic": [
-                {
-                    "element_id": "elem-3",
-                    "field_path": "field.three",
-                    "fact_id": "fact-3",
-                    "role": "entity_ref",
-                },
-            ],
-        },
-        "entities": [],
-        "rendered": {"path": "", "validation": {}},
-    }
+    )
 
 
 @pytest.fixture
-def sample_render_plan() -> dict[str, Any]:
+def sample_render_plan() -> RenderPlan:
     """Create a sample render plan for testing."""
-    return {
-        "render_plan_id": "prose.paragraph.v1",
-        "render_engine": "text_llm",
-        "artifact_kind": "prose/paragraph",
-        "inputs": {
-            "use_structural_fieldfacts": True,
-            "use_semantic_facts": True,
+    return cast(
+        "RenderPlan",
+        {
+            "render_plan_id": "prose.paragraph.v1",
+            "render_engine": "text_llm",
+            "artifact_kind": "prose/paragraph",
+            "inputs": {
+                "use_structural_fieldfacts": True,
+                "use_semantic_facts": True,
+            },
+            "determinism": {
+                "ordering": ["field_path"],
+            },
+            "steps": [
+                {"id": "gather", "instruction": "Collect contributor facts."},
+                {"id": "render", "instruction": "Render paragraph."},
+            ],
+            "notes": "Test render plan",
         },
-        "determinism": {
-            "ordering": ["field_path"],
-        },
-        "steps": [
-            {"id": "gather", "instruction": "Collect contributor facts."},
-            {"id": "render", "instruction": "Render paragraph."},
-        ],
-        "notes": "Test render plan",
-    }
+    )
 
 
 @pytest.fixture
@@ -113,6 +123,24 @@ def rendered_dir(fs: FakeFilesystem) -> Path:
     rendered_path = Path("/fake/.knowledge/artifacts/rendered")
     fs.create_dir(rendered_path)
     return rendered_path
+
+
+@pytest.fixture
+def mock_claude_cli() -> Iterator[MagicMock]:
+    """Set up mocks for successful Claude CLI invocation.
+
+    Yields a mock_run object that can be used for assertions.
+    """
+    mock_run = MagicMock()
+    mock_run.return_value.returncode = 0
+    mock_run.return_value.stdout = "Rendered content from LLM"
+    mock_run.return_value.stderr = ""
+
+    with (
+        patch("scripts.knowledge.artifact_renderer.shutil.which", return_value="/usr/bin/claude"),
+        patch("scripts.knowledge.artifact_renderer.subprocess.run", mock_run),
+    ):
+        yield mock_run
 
 
 class TestGetOutputExtension:
@@ -153,7 +181,7 @@ class TestGatherContributorFacts:
     """Tests for _gather_contributor_facts function."""
 
     def test_gathers_structural_facts(
-        self, sample_manifest: dict, sample_render_plan: dict
+        self, sample_manifest: ArtifactManifest, sample_render_plan: RenderPlan
     ) -> None:
         """Verify structural facts are gathered."""
         facts = _gather_contributor_facts(sample_manifest, sample_render_plan)
@@ -161,14 +189,18 @@ class TestGatherContributorFacts:
         structural_facts = [f for f in facts if f["type"] == "structural"]
         assert len(structural_facts) == 2
 
-    def test_gathers_semantic_facts(self, sample_manifest: dict, sample_render_plan: dict) -> None:
+    def test_gathers_semantic_facts(
+        self, sample_manifest: ArtifactManifest, sample_render_plan: RenderPlan
+    ) -> None:
         """Verify semantic facts are gathered."""
         facts = _gather_contributor_facts(sample_manifest, sample_render_plan)
 
         semantic_facts = [f for f in facts if f["type"] == "semantic"]
         assert len(semantic_facts) == 1
 
-    def test_respects_input_flags(self, sample_manifest: dict, sample_render_plan: dict) -> None:
+    def test_respects_input_flags(
+        self, sample_manifest: ArtifactManifest, sample_render_plan: RenderPlan
+    ) -> None:
         """Verify input flags control which facts are gathered."""
         # Disable semantic facts
         sample_render_plan["inputs"]["use_semantic_facts"] = False
@@ -177,19 +209,22 @@ class TestGatherContributorFacts:
 
         assert all(f["type"] == "structural" for f in facts)
 
-    def test_handles_empty_contributors(self, sample_render_plan: dict) -> None:
+    def test_handles_empty_contributors(self, sample_render_plan: RenderPlan) -> None:
         """Verify empty contributors is handled."""
-        manifest = {
-            "artifact_id": "test",
-            "contributors": {"structural": [], "semantic": []},
-        }
+        manifest = cast(
+            "ArtifactManifest",
+            {
+                "artifact_id": "test",
+                "contributors": {"structural": [], "semantic": []},
+            },
+        )
 
         facts = _gather_contributor_facts(manifest, sample_render_plan)
 
         assert facts == []
 
     def test_includes_ordering_fields(
-        self, sample_manifest: dict, sample_render_plan: dict
+        self, sample_manifest: ArtifactManifest, sample_render_plan: RenderPlan
     ) -> None:
         """Verify facts include role, role_priority, group_key, group_id fields."""
         facts = _gather_contributor_facts(sample_manifest, sample_render_plan)
@@ -211,17 +246,20 @@ class TestGatherContributorFacts:
         assert semantic_fact["role"] == "entity_ref"
         assert semantic_fact["role_priority"] == 3  # Derived from entity_ref role
 
-    def test_defaults_missing_ordering_fields(self, sample_render_plan: dict) -> None:
+    def test_defaults_missing_ordering_fields(self, sample_render_plan: RenderPlan) -> None:
         """Verify missing ordering fields get default values."""
-        manifest = {
-            "artifact_id": "test",
-            "contributors": {
-                "structural": [
-                    {"element_id": "elem-1", "field_path": "test"},
-                ],
-                "semantic": [],
+        manifest = cast(
+            "ArtifactManifest",
+            {
+                "artifact_id": "test",
+                "contributors": {
+                    "structural": [
+                        {"element_id": "elem-1", "field_path": "test"},
+                    ],
+                    "semantic": [],
+                },
             },
-        }
+        )
 
         facts = _gather_contributor_facts(manifest, sample_render_plan)
 
@@ -413,7 +451,7 @@ class TestRolePriorityMap:
 class TestRenderWithLlm:
     """Tests for _render_with_llm function."""
 
-    def test_calls_claude_cli(self, sample_render_plan: dict) -> None:
+    def test_calls_claude_cli(self, sample_render_plan: RenderPlan) -> None:
         """Verify Claude CLI is invoked with correct arguments."""
         from unittest.mock import patch
 
@@ -421,7 +459,12 @@ class TestRenderWithLlm:
             {"type": "structural", "field_path": "test.field"},
         ]
 
-        with patch("subprocess.run") as mock_run:
+        with (
+            patch(
+                "scripts.knowledge.artifact_renderer.shutil.which", return_value="/usr/bin/claude"
+            ),
+            patch("scripts.knowledge.artifact_renderer.subprocess.run") as mock_run,
+        ):
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "Rendered content from LLM"
             mock_run.return_value.stderr = ""
@@ -431,11 +474,11 @@ class TestRenderWithLlm:
             assert result == "Rendered content from LLM"
             assert mock_run.called
             call_args = mock_run.call_args[0][0]
-            assert call_args[0] == "claude"
+            assert "claude" in call_args[0]
             assert "--model" in call_args
             assert "haiku" in call_args
 
-    def test_falls_back_to_source_text_on_failure(self, sample_render_plan: dict) -> None:
+    def test_falls_back_to_source_text_on_failure(self, sample_render_plan: RenderPlan) -> None:
         """Verify fallback to source text when CLI fails."""
         from unittest.mock import patch
 
@@ -452,7 +495,7 @@ class TestRenderWithLlm:
 
             assert result == "Original source text"
 
-    def test_falls_back_on_timeout(self, sample_render_plan: dict) -> None:
+    def test_falls_back_on_timeout(self, sample_render_plan: RenderPlan) -> None:
         """Verify fallback to source text on timeout."""
         import subprocess
         from unittest.mock import patch
@@ -468,7 +511,7 @@ class TestRenderWithLlm:
 
             assert result == "Fallback text"
 
-    def test_minimal_placeholder_when_no_source(self, sample_render_plan: dict) -> None:
+    def test_minimal_placeholder_when_no_source(self, sample_render_plan: RenderPlan) -> None:
         """Verify minimal placeholder when CLI fails and no source text."""
         from unittest.mock import patch
 
@@ -489,7 +532,7 @@ class TestRenderNone:
         self,
         fs: FakeFilesystem,
         artifacts_dir: Path,
-        sample_manifest: dict,
+        sample_manifest: ArtifactManifest,
     ) -> None:
         """Verify source text is returned."""
         # Create source file
@@ -506,7 +549,7 @@ class TestRenderNone:
         self,
         fs: FakeFilesystem,
         artifacts_dir: Path,
-        sample_manifest: dict,
+        sample_manifest: ArtifactManifest,
     ) -> None:
         """Verify empty string returned for missing source file."""
         result = _render_none(sample_manifest, artifacts_dir)
@@ -517,10 +560,13 @@ class TestRenderNone:
         self, fs: FakeFilesystem, artifacts_dir: Path
     ) -> None:
         """Verify empty string returned when no source_file."""
-        manifest = {
-            "artifact_id": "test",
-            "source": {"source_file": ""},
-        }
+        manifest = cast(
+            "ArtifactManifest",
+            {
+                "artifact_id": "test",
+                "source": {"source_file": ""},
+            },
+        )
 
         result = _render_none(manifest, artifacts_dir)
 
@@ -607,7 +653,7 @@ class TestStepHandlers:
     """Tests for individual step handler functions."""
 
     def test_step_gather_collects_facts(
-        self, sample_manifest: dict, sample_render_plan: dict
+        self, sample_manifest: ArtifactManifest, sample_render_plan: RenderPlan
     ) -> None:
         """Verify _step_gather collects contributor facts."""
         ctx = {"manifest": sample_manifest, "render_plan": sample_render_plan}
@@ -630,7 +676,7 @@ class TestStepHandlers:
             assert "normalized_facts" in result
             assert result["normalized_facts"] == ctx["facts"]
 
-    def test_step_order_orders_facts(self, sample_render_plan: dict) -> None:
+    def test_step_order_orders_facts(self, sample_render_plan: RenderPlan) -> None:
         """Verify _step_order orders facts by determinism rules."""
         ctx = {
             "render_plan": sample_render_plan,
@@ -646,7 +692,7 @@ class TestStepHandlers:
         assert result["ordered_facts"][0]["field_path"] == "a"
         assert result["ordered_facts"][1]["field_path"] == "z"
 
-    def test_step_render_renders_with_llm(self, sample_render_plan: dict) -> None:
+    def test_step_render_renders_with_llm(self, sample_render_plan: RenderPlan) -> None:
         """Verify _step_render renders with text_llm engine."""
         from unittest.mock import patch
 
@@ -690,36 +736,30 @@ class TestRenderArtifact:
         fs: FakeFilesystem,
         artifacts_dir: Path,
         rendered_dir: Path,
-        sample_manifest: dict,
-        sample_render_plan: dict,
+        sample_manifest: ArtifactManifest,
+        sample_render_plan: RenderPlan,
+        mock_claude_cli: MagicMock,
     ) -> None:
         """Verify artifact is rendered with text_llm engine."""
-        from unittest.mock import patch
+        result = render_artifact(
+            sample_manifest,
+            sample_render_plan,
+            artifacts_dir,
+            rendered_dir,
+        )
 
-        with patch("scripts.knowledge.artifact_renderer.subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = "Rendered content from LLM"
-            mock_run.return_value.stderr = ""
-
-            result = render_artifact(
-                sample_manifest,
-                sample_render_plan,
-                artifacts_dir,
-                rendered_dir,
-            )
-
-            assert result.exists()
-            assert result.suffix == ".md"
-            content = result.read_text()
-            assert content == "Rendered content from LLM"
+        assert result.exists()
+        assert result.suffix == ".md"
+        content = result.read_text()
+        assert content == "Rendered content from LLM"
 
     def test_renders_none_engine_artifact(
         self,
         fs: FakeFilesystem,
         artifacts_dir: Path,
         rendered_dir: Path,
-        sample_manifest: dict,
-        sample_render_plan: dict,
+        sample_manifest: ArtifactManifest,
+        sample_render_plan: RenderPlan,
     ) -> None:
         """Verify artifact is rendered with none engine."""
         # Create source file
@@ -742,8 +782,8 @@ class TestRenderArtifact:
         self,
         fs: FakeFilesystem,
         artifacts_dir: Path,
-        sample_manifest: dict,
-        sample_render_plan: dict,
+        sample_manifest: ArtifactManifest,
+        sample_render_plan: RenderPlan,
     ) -> None:
         """Verify output directory is created if not exists."""
         from unittest.mock import patch
@@ -771,11 +811,11 @@ class TestRenderArtifact:
         fs: FakeFilesystem,
         artifacts_dir: Path,
         rendered_dir: Path,
-        sample_manifest: dict,
-        sample_render_plan: dict,
+        sample_manifest: ArtifactManifest,
+        sample_render_plan: RenderPlan,
     ) -> None:
         """Verify ValueError raised for unsupported engine."""
-        sample_render_plan["render_engine"] = "unsupported"
+        sample_render_plan["render_engine"] = "unsupported"  # type: ignore[typeddict-item]
 
         with pytest.raises(ValueError, match="Unsupported render_engine"):
             render_artifact(
@@ -790,8 +830,8 @@ class TestRenderArtifact:
         fs: FakeFilesystem,
         artifacts_dir: Path,
         rendered_dir: Path,
-        sample_manifest: dict,
-        sample_render_plan: dict,
+        sample_manifest: ArtifactManifest,
+        sample_render_plan: RenderPlan,
     ) -> None:
         """Verify correct file extension is used based on format."""
         from unittest.mock import patch
@@ -817,12 +857,11 @@ class TestRenderArtifact:
         fs: FakeFilesystem,
         artifacts_dir: Path,
         rendered_dir: Path,
-        sample_manifest: dict,
-        sample_render_plan: dict,
+        sample_manifest: ArtifactManifest,
+        sample_render_plan: RenderPlan,
+        mock_claude_cli: MagicMock,
     ) -> None:
         """Verify render_artifact interprets custom steps from render plan."""
-        from unittest.mock import patch
-
         # Define custom steps (skip normalize step)
         sample_render_plan["steps"] = [
             {"id": "gather", "instruction": "Collect facts"},
@@ -830,46 +869,38 @@ class TestRenderArtifact:
             {"id": "render", "instruction": "Render artifact"},
         ]
 
-        with patch("scripts.knowledge.artifact_renderer.subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = "Rendered content from LLM"
-            mock_run.return_value.stderr = ""
+        result = render_artifact(
+            sample_manifest,
+            sample_render_plan,
+            artifacts_dir,
+            rendered_dir,
+        )
 
-            result = render_artifact(
-                sample_manifest,
-                sample_render_plan,
-                artifacts_dir,
-                rendered_dir,
-            )
-
-            assert result.exists()
-            content = result.read_text()
-            assert content == "Rendered content from LLM"
+        assert result.exists()
+        content = result.read_text()
+        assert content == "Rendered content from LLM"
 
     def test_uses_default_steps_when_none_specified(
         self,
         fs: FakeFilesystem,
         artifacts_dir: Path,
         rendered_dir: Path,
-        sample_manifest: dict,
-        sample_render_plan: dict,
+        sample_manifest: ArtifactManifest,
+        sample_render_plan: RenderPlan,
+        mock_claude_cli: MagicMock,
     ) -> None:
         """Verify default steps used when render plan has no steps."""
-        from unittest.mock import patch
+        from unittest.mock import MagicMock, patch
 
         # Remove steps from render plan
-        del sample_render_plan["steps"]
+        del sample_render_plan["steps"]  # type: ignore[misc]
 
-        # Mock both subprocess.run for LLM rendering and apply_variant_decisions
-        # for the normalize step in the default pipeline
-        with (
-            patch("scripts.knowledge.artifact_renderer.subprocess.run") as mock_run,
-            patch("scripts.knowledge.variant_resolver.apply_variant_decisions", return_value={}),
-        ):
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = "Rendered content from LLM"
-            mock_run.return_value.stderr = ""
+        # Create a mock for the normalize function that needs variant_resolver
+        # _normalize_terminology(facts, keyword_variant_mapping=None, knowledge_path=None)
+        mock_normalize = MagicMock(side_effect=lambda facts, *args, **kwargs: facts)
 
+        # Mock _normalize_terminology to avoid importing variant_resolver during test
+        with patch("scripts.knowledge.artifact_renderer._normalize_terminology", mock_normalize):
             result = render_artifact(
                 sample_manifest,
                 sample_render_plan,
@@ -880,22 +911,24 @@ class TestRenderArtifact:
             assert result.exists()
             content = result.read_text()
             assert content == "Rendered content from LLM"
+            # Verify that the default pipeline runs the normalize step
+            mock_normalize.assert_called_once()
 
     def test_skips_unrecognized_steps(
         self,
         fs: FakeFilesystem,
         artifacts_dir: Path,
         rendered_dir: Path,
-        sample_manifest: dict,
-        sample_render_plan: dict,
+        sample_manifest: ArtifactManifest,
+        sample_render_plan: RenderPlan,
     ) -> None:
         """Verify unrecognized steps are skipped gracefully."""
         from unittest.mock import patch
 
         sample_render_plan["steps"] = [
-            {"id": "gather"},
-            {"id": "unknown_step"},  # Should be skipped
-            {"id": "render"},
+            {"id": "gather", "instruction": "Gather facts"},
+            {"id": "unknown_step", "instruction": "Unknown"},  # Should be skipped
+            {"id": "render", "instruction": "Render"},
         ]
 
         with patch("scripts.knowledge.artifact_renderer.subprocess.run") as mock_run:

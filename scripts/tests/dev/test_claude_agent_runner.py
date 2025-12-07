@@ -109,7 +109,7 @@ System prompt"""
             _load_agent_from_path(agent_file)
 
     def test_raises_for_non_dict_frontmatter(self, tmp_path: Path) -> None:
-        """Should raise ValueError when frontmatter is not a dict."""
+        """Should raise TypeError when frontmatter is not a dict."""
         agent_file = tmp_path / "test-agent.md"
         agent_file.write_text(
             """---
@@ -121,7 +121,7 @@ System prompt"""
 System prompt"""
         )
 
-        with pytest.raises(ValueError, match="Invalid frontmatter"):
+        with pytest.raises(TypeError, match="Invalid frontmatter"):
             _load_agent_from_path(agent_file)
 
     def test_raises_for_missing_tools_field(self, tmp_path: Path) -> None:
@@ -199,8 +199,10 @@ class TestBuildCommand:
         assert "--system-prompt" in command
         assert system_prompt in command
         assert "--allowedTools" in command
-        assert "Read" in command
-        assert "Write" in command
+        # Tools are joined as comma-separated string
+        tools_idx = command.index("--allowedTools") + 1
+        assert "Read" in command[tools_idx]
+        assert "Write" in command[tools_idx]
 
     def test_includes_disallowed_tools(self) -> None:
         """Should include disallowedTools when present in frontmatter."""
@@ -214,16 +216,19 @@ class TestBuildCommand:
         command = build_command(frontmatter, system_prompt)
 
         assert "--disallowedTools" in command
-        assert "Bash" in command
-        assert "Write" in command
+        # Disallowed tools are joined as comma-separated string
+        disallowed_idx = command.index("--disallowedTools") + 1
+        assert "Bash" in command[disallowed_idx]
+        assert "Write" in command[disallowed_idx]
 
     def test_handles_empty_tools(self) -> None:
-        """Should handle empty tools field."""
+        """Should handle empty tools field by not including --allowedTools."""
         frontmatter = {"tools": "", "model": "haiku"}
 
         command = build_command(frontmatter, "System")
 
-        assert "--allowedTools" in command
+        # Empty tools list should not add --allowedTools flag
+        assert "--allowedTools" not in command
 
     def test_handles_missing_disallowed_tools(self) -> None:
         """Should not include disallowedTools flag when not in frontmatter."""

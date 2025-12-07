@@ -188,7 +188,7 @@ def _render_manifest(
     if render_plan_id:
         try:
             render_plan = load_render_plan(render_plan_id, render_plans_dir)
-        except (FileNotFoundError, ValueError) as exc:
+        except (FileNotFoundError, ValueError, TypeError) as exc:
             _logger.warning(
                 "Failed to load render plan '%s' for artifact %s: %s",
                 render_plan_id,

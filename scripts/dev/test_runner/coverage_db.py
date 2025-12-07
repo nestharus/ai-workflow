@@ -777,6 +777,7 @@ def get_tier_config(db_path: Path, tier: str) -> dict[str, Any]:
         Dictionary with tier configuration details
     """
     conn = _get_connection(db_path)
+    result: dict[str, Any] = {}
     try:
         cursor = conn.execute(
             """
@@ -791,7 +792,6 @@ def get_tier_config(db_path: Path, tier: str) -> dict[str, Any]:
             (tier,),
         )
         row = cursor.fetchone()
-        result = {}
         if row:
             result = dict(row)
             # Parse JSON field

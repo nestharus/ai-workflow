@@ -16,7 +16,13 @@ allowed_files:
   - README.md
   - AGENTS.md
 
-# Directories to exclude from scanning
+# Directories to exclude from scanning.
+# Each entry is matched in two ways:
+#   1. As a relative path under repo root (e.g., ".tasks/store" excludes only
+#      that specific directory).
+#   2. As a bare directory name matched anywhere in the path ancestry
+#      (e.g., "node_modules" excludes any directory named "node_modules"
+#      regardless of where it appears in the tree).
 exclude_dirs:
   - .venv
   - node_modules

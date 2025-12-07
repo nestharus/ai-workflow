@@ -92,7 +92,7 @@ System prompt"""
             _load_agent_from_path(agent_file)
 
     def test_raises_for_non_dict_frontmatter(self, tmp_path: Path) -> None:
-        """Should raise ValueError when frontmatter is not a dict."""
+        """Should raise TypeError when frontmatter is not a dict."""
         agent_file = tmp_path / "test-agent.md"
         agent_file.write_text(
             """---
@@ -104,7 +104,7 @@ System prompt"""
 System prompt"""
         )
 
-        with pytest.raises(ValueError, match="Invalid frontmatter"):
+        with pytest.raises(TypeError, match="Invalid frontmatter"):
             _load_agent_from_path(agent_file)
 
     def test_raises_for_missing_model_field(self, tmp_path: Path) -> None:
