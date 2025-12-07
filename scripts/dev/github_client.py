@@ -303,6 +303,9 @@ def fetch_unresolved_threads(pr_number: int) -> list[dict[str, Any]]:
           isResolved
           path
           line
+          startLine
+          originalLine
+          originalStartLine
           comments(first: 20) {{
             nodes {{
               id
@@ -370,9 +373,14 @@ def _thread_has_line_number(thread: dict[str, Any]) -> bool:
         thread: Thread dictionary.
 
     Returns:
-        True if the thread has a line number.
+        True if the thread has a line number (new or original side, single or multi-line).
     """
-    return thread.get("line") is not None
+    return (
+        thread.get("line") is not None
+        or thread.get("startLine") is not None
+        or thread.get("originalLine") is not None
+        or thread.get("originalStartLine") is not None
+    )
 
 
 def _format_thread_for_agent(thread: dict[str, Any], index: int) -> dict[str, Any]:
@@ -412,6 +420,9 @@ def _format_thread_for_agent(thread: dict[str, Any], index: int) -> dict[str, An
         "thread_id": thread.get("id"),
         "path": thread.get("path"),
         "line": thread.get("line"),
+        "start_line": thread.get("startLine"),
+        "original_line": thread.get("originalLine"),
+        "original_start_line": thread.get("originalStartLine"),
         "first_author": first_author,
         "comments": formatted_comments,
     }
