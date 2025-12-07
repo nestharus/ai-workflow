@@ -280,6 +280,6 @@ def get_render_plan_by_id(
         return load_render_plan(render_plan_id, render_plans_dir)
     except FileNotFoundError:
         return None
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, OSError) as exc:
         _logger.warning("Invalid render plan %s: %s", render_plan_id, exc)
         return None

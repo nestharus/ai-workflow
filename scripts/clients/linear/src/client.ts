@@ -70,9 +70,13 @@ export function error(code: string, message: string): ErrorResponse {
 }
 
 /**
- * Helper to output response and exit with appropriate code
+ * Helper to output response and exit with appropriate code.
+ * Uses process.stdout.write with a callback to ensure the JSON output
+ * is fully flushed before exiting, preventing dropped buffered stdout.
  */
-export function respond<T>(response: Response<T>): never {
-  console.log(JSON.stringify(response, null, 2));
-  process.exit(response.ok ? 0 : 1);
+export function respond<T>(response: Response<T>): void {
+  const data = JSON.stringify(response, null, 2) + "\n";
+  process.stdout.write(data, () => {
+    process.exit(response.ok ? 0 : 1);
+  });
 }

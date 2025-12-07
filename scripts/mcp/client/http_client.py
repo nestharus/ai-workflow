@@ -95,17 +95,19 @@ class HttpMCPClient:
         # MCP_BRIDGE_URL env > default
         if socket_path is not None and not isinstance(socket_path, str):
             raise MCPClientError("socket_path must be a string path")
-        if base_url is not None and not isinstance(base_url, str):
-            raise MCPClientError("base_url must be a string URL")
+
+        # Resolve socket path first (arg > env)
         env_socket = os.environ.get("MCP_BRIDGE_SOCKET", "")
         p = (socket_path if socket_path is not None else env_socket).strip()
         self.socket_path = p or None
 
         if self.socket_path:
-            # Unix socket mode - base_url becomes dummy hostname for curl
+            # Unix socket mode - base_url is ignored, use dummy hostname for curl
             self.base_url = "http://localhost"
         else:
-            # HTTP mode - resolve and validate base_url
+            # HTTP mode - validate and resolve base_url
+            if base_url is not None and not isinstance(base_url, str):
+                raise MCPClientError("base_url must be a string URL")
             if base_url is None:
                 base_url = os.environ.get("MCP_BRIDGE_URL", "http://localhost:8080")
             base_url = base_url.strip().rstrip("/")

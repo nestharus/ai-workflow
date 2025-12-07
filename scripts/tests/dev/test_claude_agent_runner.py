@@ -257,6 +257,46 @@ class TestBuildCommand:
 
         assert "--disallowedTools" not in command
 
+    def test_handles_tools_as_list(self) -> None:
+        """Should handle tools field as a YAML list."""
+        frontmatter = {"tools": ["Read", "Edit", "Bash"], "model": "haiku"}
+
+        command = build_command(frontmatter, "System")
+
+        assert "--allowedTools" in command
+        tools_index = command.index("--allowedTools") + 1
+        tools_arg = command[tools_index]
+        tools_list = [t.strip() for t in tools_arg.split(",")]
+        assert set(tools_list) == {"Read", "Edit", "Bash"}
+
+    def test_handles_disallowed_tools_as_list(self) -> None:
+        """Should handle disallowedTools field as a YAML list."""
+        frontmatter = {
+            "tools": "Read",
+            "model": "haiku",
+            "disallowedTools": ["Bash", "Write"],
+        }
+
+        command = build_command(frontmatter, "System")
+
+        assert "--disallowedTools" in command
+        disallowed_index = command.index("--disallowedTools") + 1
+        disallowed_arg = command[disallowed_index]
+        disallowed_list = [t.strip() for t in disallowed_arg.split(",")]
+        assert set(disallowed_list) == {"Bash", "Write"}
+
+    def test_handles_tools_list_with_whitespace(self) -> None:
+        """Should trim whitespace from list items."""
+        frontmatter = {"tools": ["  Read  ", " Edit ", ""], "model": "haiku"}
+
+        command = build_command(frontmatter, "System")
+
+        assert "--allowedTools" in command
+        tools_index = command.index("--allowedTools") + 1
+        tools_arg = command[tools_index]
+        tools_list = [t.strip() for t in tools_arg.split(",")]
+        assert set(tools_list) == {"Read", "Edit"}
+
 
 class TestRunCommand:
     """Tests for run_command function."""
