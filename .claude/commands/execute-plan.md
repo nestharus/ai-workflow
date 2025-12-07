@@ -71,10 +71,15 @@ Handle each status:
 - `"status": "timeout"` → Job exceeded time limit (see options above)
 - `"status": "killed"` → Job was externally terminated
 
-### Step 4: Commit and Push
+### Step 4: Lint Phase
 
-**Lint Phase**
-Run through .claude/commands/execute-plan.md workflow.
+Run the lint-fixer sub-agent against the worktree in changed-only mode:
+
+```
+Task(subagent_type="lint-fixer", prompt="--worktree .worktrees/<ticket-id> --changed-only")
+```
+
+This only lints files that were modified, which is faster and appropriate for new implementations.
 
 ### Step 5: Commit and Push
 
@@ -142,6 +147,15 @@ EOF
 **Note**: The PR and branch are automatically linked to the Linear ticket when the ticket ID
 casing matches exactly. No manual linking is required.
 
+Get commit information:
+```bash
+cd .worktrees/<ticket-id>
+# Current branch commit (HEAD of PR branch)
+git rev-parse HEAD
+# Target branch commit (what PR merges into)
+git rev-parse origin/<BASE_BRANCH>
+```
+
 Print to terminal:
 
 ```
@@ -150,19 +164,32 @@ IMPLEMENTATION COMPLETE - REVIEW REQUESTED
 ================================================================================
 
 Ticket: <TICKET_ID> - <TITLE>
-Branch: <branch-name>
-Worktree: .worktrees/<ticket-id>
+Linear Ticket: <LINEAR_TICKET_URL>
 Pull Request: <PR_URL>
 
-Review Process:
-1. Go to the Linear ticket: <LINEAR_TICKET_URL>
-2. Review the implementation plan in the comments
-3. Go to the Pull Request: <PR_URL>
-4. Review the code changes against the plan
-5. Approve or request changes on the PR
+References:
+  worktree_directory: .worktrees/<ticket-id>
+  current_branch_commit: <CURRENT_SHA>   # HEAD of PR branch (latest changes)
+  pr_target_branch_commit: <TARGET_SHA>  # HEAD of target branch (merge base)
 
-To clean up the worktree after merge:
-  git worktree remove .worktrees/<ticket-id>
+Review Process:
+1. Read ticket description for the implementation plan
+2. Read worktree files for complete implementation understanding
+3. Look at current commit to see the latest changes
+4. Diff branch against pr_target_branch_commit for all changes
+
+Commands:
+  # View implementation plan
+  Open <LINEAR_TICKET_URL>
+
+  # Read implementation files
+  cd .worktrees/<ticket-id>
+
+  # See latest commit details
+  cd .worktrees/<ticket-id> && git log -1
+
+  # Diff all PR changes against target branch
+  cd .worktrees/<ticket-id> && git diff <pr_target_branch_commit>...<current_branch_commit>
 ================================================================================
 ```
 

@@ -1,6 +1,6 @@
 ---
 description: Update a PR by handling unresolved review threads
-allowed-tools: Task, Read, Glob, Bash, mcp__linear__get_issue
+allowed-tools: Task, Read, Glob, Bash
 ---
 
 # Update PR Command
@@ -9,24 +9,28 @@ Handle unresolved PR review threads for ticket: $ARGUMENTS
 
 ## Workflow
 
-### 1. Get Ticket Information from Linear
+### 1. Get PR Information
 
-Use the Linear MCP to fetch the ticket details:
-- Ticket ID: `$ARGUMENTS`
-- Get: branch name, PR URL, ticket URL
+```bash
+uv run pr get-pr $ARGUMENTS
+```
 
-Extract the PR number from the PR URL.
+This returns JSON with:
+- `branch_name`: Git branch name
+- `pr_number`: PR number
+- `pr_url`: PR URL
+- `base_branch`: Target branch the PR will merge into
 
 ### 2. Set Up Variables
 
-Based on Linear data:
+Based on ticket info:
 - `ticket_id`: $ARGUMENTS
-- `branch`: (from Linear issue git branch name)
+- `branch`: (from `branch_name` in JSON)
 - `worktree`: `.worktrees/$ARGUMENTS`
 - `tmp_folder`: `.tmp/pr-threads/$ARGUMENTS`
-- `pr_number`: (extracted from PR URL)
-- `pr_url`: (from Linear attachments)
-- `ticket_url`: Linear ticket URL
+- `pr_number`: (from `pr_number` in JSON)
+- `pr_url`: (from `pr_url` in JSON)
+- `base_branch`: (from `base_branch` in JSON)
 
 ### 3. Fetch Unresolved Threads
 
@@ -86,7 +90,13 @@ This will:
 
 ### 7. Run Lint Fixer
 
-After tests pass, run the lint-fixer sub-agent against the worktree.
+After tests pass, run the lint-fixer sub-agent against the worktree in changed-only mode:
+
+```
+Task(subagent_type="lint-fixer", prompt="--worktree {{worktree}} --changed-only")
+```
+
+This only lints files that were modified, which is faster and appropriate for PR updates.
 
 ### 8. Commit and Push
 
@@ -105,6 +115,51 @@ uv run pr request-review --pr {{pr_number}}
 ```
 
 Delete the tmp folder for the PR comments that was created.
+
+### 10. Output Summary
+
+Get commit information:
+```bash
+cd {{worktree}}
+# Current branch commit (HEAD of PR branch)
+git rev-parse HEAD
+# Target branch commit (what PR merges into)
+git rev-parse origin/{{base_branch}}
+```
+
+Print to terminal:
+
+```
+================================================================================
+PR UPDATE COMPLETE - REVIEW REQUESTED
+================================================================================
+
+Ticket: {{ticket_id}}
+Linear Ticket: https://linear.app/issue/{{ticket_id}}
+Pull Request: {{pr_url}}
+
+References:
+  worktree_directory: {{worktree}}
+  current_branch_commit: <CURRENT_SHA>   # HEAD of PR branch (latest changes)
+  pr_target_branch_commit: <TARGET_SHA>  # HEAD of target branch (merge base)
+
+Review Process:
+1. Read ticket description for the implementation plan
+2. Read worktree files for complete implementation understanding
+3. Look at current commit to see the latest changes
+4. Diff branch against pr_target_branch_commit for all changes
+
+Commands:
+  # Read implementation files
+  cd {{worktree}}
+
+  # See latest commit details
+  cd {{worktree}} && git log -1
+
+  # Diff all PR changes against target branch
+  cd {{worktree}} && git diff <pr_target_branch_commit>...<current_branch_commit>
+================================================================================
+```
 
 ## Important Rules
 

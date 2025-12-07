@@ -156,29 +156,61 @@ def _run_scripts() -> int:
     return 0
 
 
-def _run_ruff() -> None:
-    """Run ruff format and check."""
+def _run_ruff(files: list[str] | None = None) -> None:
+    """Run ruff format and check.
+
+    Args:
+        files: Optional list of files to lint. If None, lints entire repo.
+    """
     uv_exe = _uv()
-    _run_checked([uv_exe, "run", "ruff", "format", "."])
-    _run_checked([uv_exe, "run", "ruff", "check", "--fix", "."])
+    targets = files if files else ["."]
+    # Filter to only Python files if files are specified
+    if files:
+        py_files = [f for f in files if f.endswith(".py")]
+        if not py_files:
+            print("No Python files to lint with ruff")
+            return
+        targets = py_files
+    _run_checked([uv_exe, "run", "ruff", "format", *targets])
+    _run_checked([uv_exe, "run", "ruff", "check", "--fix", *targets])
 
 
-def _run_mypy() -> None:
-    """Run mypy type checking."""
+def _run_mypy(files: list[str] | None = None) -> None:
+    """Run mypy type checking.
+
+    Args:
+        files: Optional list of files to check. If None, checks entire repo.
+    """
     uv_exe = _uv()
-    _run_checked([uv_exe, "run", "mypy"])
+    if files:
+        py_files = [f for f in files if f.endswith(".py")]
+        if not py_files:
+            print("No Python files to check with mypy")
+            return
+        _run_checked([uv_exe, "run", "mypy", *py_files])
+    else:
+        _run_checked([uv_exe, "run", "mypy"])
 
 
-def _run_hadolint() -> None:
-    """Run hadolint on Dockerfiles."""
+def _run_hadolint(files: list[str] | None = None) -> None:
+    """Run hadolint on Dockerfiles.
+
+    Args:
+        files: Optional list of files to check. If None, checks all Dockerfiles.
+    """
     hadolint_exe = _hadolint()
     config = _load_yaml_config(LINT_HADOLINT_CONFIG)
     exclude_dirs = {REPO_ROOT / d for d in config.get("exclude_dirs", [])}
-    dockerfiles = [
-        path
-        for path in REPO_ROOT.rglob("Dockerfile")
-        if path.is_file() and not any(excluded in path.parents for excluded in exclude_dirs)
-    ]
+
+    if files:
+        # Filter to only Dockerfile files
+        dockerfiles = [Path(f) for f in files if Path(f).name == "Dockerfile"]
+    else:
+        dockerfiles = [
+            path
+            for path in REPO_ROOT.rglob("Dockerfile")
+            if path.is_file() and not any(excluded in path.parents for excluded in exclude_dirs)
+        ]
     if not dockerfiles:
         print("No Dockerfiles found for hadolint scan")
     else:
@@ -192,22 +224,43 @@ def _run_hadolint() -> None:
         )
 
 
-def _run_pymarkdown() -> None:
-    """Run pymarkdown on Markdown files."""
+def _run_pymarkdown(files: list[str] | None = None) -> None:
+    """Run pymarkdown on Markdown files.
+
+    Args:
+        files: Optional list of files to check. If None, checks configured targets.
+    """
     uv_exe = _uv()
     config = _load_yaml_config(LINT_PYMARKDOWN_CONFIG)
-    targets = config.get("targets", [])
     excludes = config.get("excludes", [])
-    pymarkdown_cmd = [
-        uv_exe,
-        "run",
-        "pymarkdown",
-        "-c",
-        str(REPO_ROOT / ".pymarkdown.json"),
-        "scan",
-        "-r",
-        *targets,
-    ]
+
+    if files:
+        md_files = [f for f in files if f.endswith(".md")]
+        if not md_files:
+            print("No Markdown files to check with pymarkdown")
+            return
+        targets = md_files
+        pymarkdown_cmd = [
+            uv_exe,
+            "run",
+            "pymarkdown",
+            "-c",
+            str(REPO_ROOT / ".pymarkdown.json"),
+            "scan",
+            *targets,
+        ]
+    else:
+        targets = config.get("targets", [])
+        pymarkdown_cmd = [
+            uv_exe,
+            "run",
+            "pymarkdown",
+            "-c",
+            str(REPO_ROOT / ".pymarkdown.json"),
+            "scan",
+            "-r",
+            *targets,
+        ]
     for pattern in excludes:
         pymarkdown_cmd.extend(["-e", pattern])
     _run_checked(pymarkdown_cmd)
@@ -226,21 +279,32 @@ def _is_path_excluded(path: Path, exclude_paths: set[Path]) -> bool:
     return any(excluded in path.parents for excluded in exclude_paths)
 
 
-def _run_yamllint() -> None:
-    """Run yamllint on YAML files."""
+def _run_yamllint(files: list[str] | None = None) -> None:
+    """Run yamllint on YAML files.
+
+    Args:
+        files: Optional list of files to check. If None, checks all YAML files.
+    """
     uv_exe = _uv()
     config = _load_yaml_config(LINT_YAMLLINT_CONFIG)
     exclude_dirs = {REPO_ROOT / d for d in config.get("exclude_dirs", [])}
-    yaml_files = [
-        str(path)
-        for path in REPO_ROOT.rglob("*.yml")
-        if path.is_file() and not _is_path_excluded(path, exclude_dirs)
-    ]
-    yaml_files.extend(
-        str(path)
-        for path in REPO_ROOT.rglob("*.yaml")
-        if path.is_file() and not _is_path_excluded(path, exclude_dirs)
-    )
+
+    if files:
+        yaml_files = [f for f in files if f.endswith(".yml") or f.endswith(".yaml")]
+        if not yaml_files:
+            print("No YAML files to check with yamllint")
+            return
+    else:
+        yaml_files = [
+            str(path)
+            for path in REPO_ROOT.rglob("*.yml")
+            if path.is_file() and not _is_path_excluded(path, exclude_dirs)
+        ]
+        yaml_files.extend(
+            str(path)
+            for path in REPO_ROOT.rglob("*.yaml")
+            if path.is_file() and not _is_path_excluded(path, exclude_dirs)
+        )
     if yaml_files:
         yamllint_config = str(REPO_ROOT / ".yamllint.yaml")
         _run_checked([uv_exe, "run", "yamllint", "-c", yamllint_config, *yaml_files])
@@ -350,17 +414,21 @@ def _run_checkov() -> int:
     return 0
 
 
-# Map linter names to their runner functions
-LINTER_RUNNERS: dict[str, Callable[[], int | None]] = {
+# Map linter names to their runner functions (no file filtering support)
+LINTER_RUNNERS_NO_FILES: dict[str, Callable[[], int | None]] = {
     "scripts": _run_scripts,
     "markdown-restriction": _run_markdown_restriction,
+    "yamldocs": _run_yamldocs,
+    "checkov": _run_checkov,
+}
+
+# Map linter names to their runner functions (with file filtering support)
+LINTER_RUNNERS_WITH_FILES: dict[str, Callable[[list[str] | None], int | None]] = {
     "ruff": _run_ruff,
     "mypy": _run_mypy,
     "hadolint": _run_hadolint,
     "pymarkdown": _run_pymarkdown,
     "yamllint": _run_yamllint,
-    "yamldocs": _run_yamldocs,
-    "checkov": _run_checkov,
 }
 
 
@@ -378,12 +446,19 @@ def _parse_args() -> argparse.Namespace:
         help=f"Linter(s) to run. Options: {', '.join(LINTER_NAMES)}. "
         "If omitted, all linters run in order.",
     )
+    parser.add_argument(
+        "--files",
+        nargs="+",
+        metavar="FILE",
+        help="Only lint the specified files. Paths should be relative to repo root.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     """Execute linting steps and return a process exit code."""
     args = _parse_args()
+    files: list[str] | None = args.files
 
     # Determine which linters to run (preserve order from LINTER_NAMES)
     if args.linters:
@@ -391,13 +466,35 @@ def main() -> int:
     else:
         linters_to_run = LINTER_NAMES
 
+    # If files are specified but only non-file-filtering linters are requested,
+    # warn the user
+    if files:
+        file_filtering_linters = set(LINTER_RUNNERS_WITH_FILES.keys())
+        requested_filterable = [l for l in linters_to_run if l in file_filtering_linters]
+        if not requested_filterable:
+            print(
+                "Warning: --files specified but no file-filtering linters requested. "
+                f"File filtering is supported by: {', '.join(file_filtering_linters)}",
+                file=sys.stderr,
+            )
+
     try:
         for linter in linters_to_run:
             print(f"\n{'=' * 60}")
             print(f"Running: {linter}")
             print("=" * 60)
-            runner = LINTER_RUNNERS[linter]
-            result = runner()
+
+            # Check if linter supports file filtering
+            if linter in LINTER_RUNNERS_WITH_FILES:
+                runner = LINTER_RUNNERS_WITH_FILES[linter]
+                result = runner(files)
+            elif linter in LINTER_RUNNERS_NO_FILES:
+                runner_no_files = LINTER_RUNNERS_NO_FILES[linter]
+                result = runner_no_files()
+            else:
+                print(f"Unknown linter: {linter}", file=sys.stderr)
+                return 1
+
             # checkov returns int for missing schema case
             if result == 1:
                 return 1

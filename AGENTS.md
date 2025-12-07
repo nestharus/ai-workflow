@@ -79,7 +79,14 @@ detailed missing line/branch information. Analysis tools (`coverage-summary`,
 
 ## Linting
 
-Use the `lint-fixer` sub-agent to fix lint errors: `Task(subagent_type="lint-fixer", prompt="Fix all linting violations")`
+Use the `lint-fixer` sub-agent to fix lint errors.
+
+**For workflows and commands** (update-pr, execute-plan, etc.), use changed-only mode:
+```
+Task(subagent_type="lint-fixer", prompt="--changed-only")
+```
+
+**For full project linting**, use the `/lint-fix` slash command (does NOT use changed-only mode).
 
 For docstring linter errors, see `docs/development/python/python.docstrings-guide.yml`.
 
@@ -160,9 +167,14 @@ string (`""`) for the prompt parameter unless otherwise specified below.
 
 Resolves and fixes lint errors iteratively until all issues pass.
 
-* **Invocation**: `Task(subagent_type="lint-fixer", prompt="Fix all linting violations")`
-* **Prompt**: `"Fix all linting violations"` (required to trigger workflow)
-* **Use case**: Manual invocation when you need to fix lint errors interactively
+* **Invocation**: `Task(subagent_type="lint-fixer", prompt="<args>")`
+* **Arguments**:
+  * `--worktree <path>`: Run linting from a specific git worktree directory
+  * `--changed-only`: Only lint files that have been changed (uncommitted or last commit)
+* **Use cases**:
+  * Workflow use (recommended): `Task(subagent_type="lint-fixer", prompt="--changed-only")`
+  * With worktree: `Task(subagent_type="lint-fixer", prompt="--worktree .worktrees/NES-123 --changed-only")`
+  * Full lint (via `/lint-fix` command only): `Task(subagent_type="lint-fixer", prompt="")`
 
 #### test-fixer
 

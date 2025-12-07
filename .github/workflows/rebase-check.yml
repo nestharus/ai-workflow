@@ -1,0 +1,52 @@
+name: Rebase Check
+
+"on":
+  pull_request:
+    branches: [init]
+
+jobs:
+  rebase-check:
+    name: Check if rebase is required
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if PR branch is rebased on target
+        run: |
+          # Get the target branch (base)
+          TARGET_BRANCH="${{ github.base_ref }}"
+          PR_BRANCH="${{ github.head_ref }}"
+
+          echo "Target branch: $TARGET_BRANCH"
+          echo "PR branch: $PR_BRANCH"
+
+          # Fetch all branches
+          git fetch origin $TARGET_BRANCH
+          git fetch origin $PR_BRANCH
+
+          # Get the merge base (common ancestor)
+          MERGE_BASE=$(git merge-base origin/$TARGET_BRANCH origin/$PR_BRANCH)
+          TARGET_HEAD=$(git rev-parse origin/$TARGET_BRANCH)
+
+          echo "Merge base: $MERGE_BASE"
+          echo "Target HEAD: $TARGET_HEAD"
+
+          # If the merge base is not the same as target HEAD, the PR needs a rebase
+          if [ "$MERGE_BASE" != "$TARGET_HEAD" ]; then
+            echo ""
+            echo "::error::PR branch is not rebased on the latest $TARGET_BRANCH"
+            echo ""
+            echo "The target branch ($TARGET_BRANCH) has commits that are not in this PR."
+            echo "Please rebase your branch on the latest $TARGET_BRANCH:"
+            echo ""
+            echo "  git fetch origin $TARGET_BRANCH"
+            echo "  git rebase origin/$TARGET_BRANCH"
+            echo "  git push --force-with-lease"
+            echo ""
+            exit 1
+          fi
+
+          echo "PR branch is up-to-date with $TARGET_BRANCH"
