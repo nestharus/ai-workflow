@@ -712,6 +712,38 @@ class TestRunActionlint:
             with pytest.raises(subprocess.CalledProcessError):
                 _run_actionlint()
 
+    def test_excludes_relative_paths_when_files_specified(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should exclude files from relative paths using normalized absolute path comparison."""
+        fs.create_dir("/fake/repo/.github/workflows")
+        fs.create_dir("/fake/repo/.github/workflows/excluded")
+        fs.create_file("/fake/repo/.github/workflows/ci.yml", contents="name: CI")
+        fs.create_file("/fake/repo/.github/workflows/excluded/test.yml", contents="name: Test")
+        fs.create_file(
+            "/fake/repo/.lint.actionlint.yaml",
+            contents="ignore: []\nexclude_dirs:\n  - .github/workflows/excluded",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_ACTIONLINT_CONFIG", Path("/fake/repo/.lint.actionlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/actionlint"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            # Pass relative paths (as would come from --files argument)
+            _run_actionlint(
+                files=[".github/workflows/ci.yml", ".github/workflows/excluded/test.yml"]
+            )
+
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+        # Only ci.yml should be included, not the one in excluded/
+        workflow_args = [arg for arg in call_args if arg.endswith(".yml")]
+        assert len(workflow_args) == 1
+        assert "ci.yml" in workflow_args[0]
+        assert "excluded" not in workflow_args[0]
+
 
 class TestRunPymarkdown:
     """Tests for _run_pymarkdown function."""
