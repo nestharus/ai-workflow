@@ -135,7 +135,7 @@ uv run pr deferred-comment --thread-file {{thread_file}} --body "Your reply text
 ```
 
 This stores the reply in the thread file. The reply will be posted automatically when the
-`request-review` command runs after all threads are processed.
+`post-deferred-replies` command runs after all threads are processed.
 
 ## Output Format
 

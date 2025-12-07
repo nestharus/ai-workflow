@@ -126,23 +126,29 @@ If tests pass and changes were made:
 uv run pr commit-push --worktree {{worktree}} --message "Address PR review feedback"
 ```
 
-### 10. Request CodeRabbit Review
+### 10. Post Deferred Replies
 
-Post any deferred replies and request CodeRabbit review. The command automatically skips the review request if there are no deferred replies AND no code changes.
+Post any deferred replies stored in thread files:
 
-If code changes were made (step 6 output was non-empty):
 ```bash
-uv run pr request-review --pr {{pr_number}} --threads-dir {{tmp_folder}} --has-code-changes
+uv run pr post-deferred-replies --pr {{pr_number}} --threads-dir {{tmp_folder}}
 ```
 
-If no code changes were made:
+### 11. Request CodeRabbit Review
+
+**Skip this step if no code changes were made (step 6 output was empty).**
+
+Only request CodeRabbit review if there were code changes:
+
 ```bash
-uv run pr request-review --pr {{pr_number}} --threads-dir {{tmp_folder}}
+uv run pr request-review --pr {{pr_number}}
 ```
+
+### 12. Cleanup
 
 Delete the tmp folder for the PR comments that was created.
 
-### 11. Output Summary
+### 13. Output Summary
 
 Get commit information:
 ```bash
