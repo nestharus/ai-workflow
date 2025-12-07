@@ -6,6 +6,7 @@ Usage:
     uv run pr post-reply --pr <number> --thread-file <file> --body <text>
     uv run pr resolve-thread --thread-file <file>
     uv run pr deferred-comment --thread-file <file> --body <text>
+    uv run pr import-local-tasks --output-dir <path> <body_file1> <body_file2> ...
     uv run pr post-deferred-replies --pr <number> --threads-dir <path>
     uv run pr request-review --pr <number>
     uv run pr get-pr <ticket-id>
@@ -661,6 +662,51 @@ def deferred_comment_command(thread_file: Path, body: str) -> int:
     return 0
 
 
+def import_local_tasks_command(output_dir: Path, body_files: list[Path]) -> int:
+    """Import local task body files into JSON task files.
+
+    Reads each body file, creates a local_N.json file with the correct format,
+    then deletes the body file.
+
+    Args:
+        output_dir: Directory to write the local task JSON files to.
+        body_files: List of paths to body files (plain text with task content).
+
+    Returns:
+        Exit code (0 for success).
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for index, body_file in enumerate(body_files):
+        if not body_file.is_file():
+            print(f"Warning: Body file not found: {body_file}", file=sys.stderr)
+            continue
+
+        body = body_file.read_text(encoding="utf-8").strip()
+
+        task_data = {
+            "index": index,
+            "origin": "LOCAL",
+            "content": body,
+            "comments": [
+                {
+                    "body": body,
+                    "author": "local",
+                }
+            ],
+        }
+        task_file = output_dir / f"local_{index}.json"
+        task_file.write_text(json.dumps(task_data, indent=2), encoding="utf-8")
+        print(f"Created: {task_file}")
+
+        # Delete the body file after import
+        body_file.unlink()
+        print(f"Deleted: {body_file}")
+
+    print(f"\nImported {len(body_files)} local task(s)")
+    return 0
+
+
 def post_deferred_replies_command(pr_number: int, threads_dir: Path) -> int:
     """Post deferred replies from thread files to a PR.
 
@@ -1307,6 +1353,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Reply body text to store",
     )
 
+    # import-local-tasks command
+    import_tasks_parser = subparsers.add_parser(
+        "import-local-tasks",
+        help="Import local task body files into JSON task files",
+    )
+    import_tasks_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Directory to write the local task JSON files to",
+    )
+    import_tasks_parser.add_argument(
+        "body_files",
+        nargs="+",
+        type=Path,
+        help="Paths to body files (plain text with task content)",
+    )
+
     # post-deferred-replies command
     post_replies_parser = subparsers.add_parser(
         "post-deferred-replies",
@@ -1476,6 +1540,8 @@ def main(argv: list[str] | None = None) -> int:
         return resolve_thread_command(args.thread_file)
     if args.command == "deferred-comment":
         return deferred_comment_command(args.thread_file, args.body)
+    if args.command == "import-local-tasks":
+        return import_local_tasks_command(args.output_dir, args.body_files)
     if args.command == "post-deferred-replies":
         return post_deferred_replies_command(args.pr, args.threads_dir)
     if args.command == "request-review":

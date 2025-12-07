@@ -45,31 +45,54 @@ Based on ticket info:
 - `pr_url`: (from `pr_url` in JSON)
 - `base_branch`: (from `base_branch` in JSON)
 
-### 4. Parse and Save Local Tasks
+### 4. Import Local Tasks
 
-If `local_tasks_text` is not empty, parse it into individual tasks and save each as a JSON file.
+If `local_tasks_text` is not empty:
 
-**Parsing rules:**
-- Tasks are separated by `---` on its own line or by `## Comment N:` headers
-- Each task should be saved as `{{tmp_folder}}/local_N.json` (starting from 0)
-- The format is flexible - extract the task content as-is
+**Step 4a: Write to tmp file**
 
-**Local task JSON format:**
-```json
-{
-  "index": 0,
-  "origin": "LOCAL",
-  "content": "## Comment 1: Fix the bug...\n\nFull task text here...",
-  "comments": [
-    {
-      "body": "## Comment 1: Fix the bug...\n\nFull task text here...",
-      "author": "local"
-    }
-  ]
-}
+Write the full `local_tasks_text` to a temporary file:
+```
+{{tmp_folder}}/local_tasks_raw.txt
 ```
 
-Create the `{{tmp_folder}}` directory if it doesn't exist before saving files.
+**Step 4b: Split into body files**
+
+Identify the pattern that separates tasks (e.g., `---` on its own line, or `## Comment N:` headers).
+Run an inline Python script to split the file into individual body files:
+
+```python
+import re
+from pathlib import Path
+
+raw_file = Path("{{tmp_folder}}/local_tasks_raw.txt")
+text = raw_file.read_text()
+
+# Split by the identified pattern (adjust regex as needed)
+# Example for --- separator:
+parts = re.split(r"\n---+\n", text.strip())
+# Example for ## Comment N: headers:
+# parts = re.split(r"(?=## Comment \d+:)", text.strip())
+
+parts = [p.strip() for p in parts if p.strip()]
+
+for i, body in enumerate(parts):
+    body_file = Path(f"{{tmp_folder}}/body_{i}.txt")
+    body_file.write_text(body)
+
+# Delete the raw file
+raw_file.unlink()
+```
+
+**Step 4c: Import body files**
+
+Pass the body files to the github client to create the local task JSON files:
+
+```bash
+uv run pr import-local-tasks --output-dir {{tmp_folder}} {{tmp_folder}}/body_0.txt {{tmp_folder}}/body_1.txt ...
+```
+
+This creates `local_0.json`, `local_1.json`, etc. and deletes the body files.
 
 ### 5. Fetch Unresolved Threads
 
