@@ -124,10 +124,11 @@ class TestValidateNormalizedText:
 
         # Mock embeddings with high similarity between similar texts
         mock_embeddings = np.array([[0.9, 0.1], [0.85, 0.15]])
-        # Return a 2x2 similarity matrix since we're comparing 2 texts
+        # Return 2x2 similarity matrix (symmetric, diagonal=1.0, off-diagonal=0.92)
         mock_similarity = np.array([[1.0, 0.92], [0.92, 1.0]])
 
-        # Patch at the source module (variant_resolver) where the functions are defined
+        # Patch using the function import path (where from-import binds the name)
+        # Since the import happens inside the function, we need to patch where it's defined
         with (
             patch(
                 "scripts.knowledge.variant_resolver.load_qwen_embedding_model",
@@ -171,7 +172,7 @@ class TestValidateNormalizedText:
 
         # Mock embeddings with high similarity
         mock_embeddings = np.array([[0.9, 0.1], [0.85, 0.15]])
-        # Return a 2x2 similarity matrix since we're comparing 2 texts
+        # Return 2x2 similarity matrix (symmetric, diagonal=1.0, off-diagonal=0.95)
         mock_similarity = np.array([[1.0, 0.95], [0.95, 1.0]])
 
         # Patch at the source module (variant_resolver) where the functions are defined

@@ -92,6 +92,8 @@ coverage-summary = "scripts.dev.test_analysis.coverage_summary:main"
 coverage-files = "scripts.dev.test_analysis.coverage_files:main"
 coverage-file = "scripts.dev.test_analysis.coverage_file:main"
 coverage-functions = "scripts.dev.test_analysis.coverage_functions:main"
+# Client scripts
+"linear" = "scripts.clients.linear_cli:main"
 # Knowledge scripts
 "knowledge.compare-yml-docs" = "scripts.knowledge.compare_yaml_docs:main"
 "knowledge.grep-yml-ids" = "scripts.knowledge.grep_yml_ids:main"
@@ -164,6 +166,8 @@ exclude = [
     ".worktrees/",
     ".git-rewrite/",
     "LICENSE",
+    "scripts/clients/linear/node_modules/",
+    "scripts/clients/linear/dist/",
 ]
 
 [tool.ruff.lint]
@@ -269,7 +273,9 @@ omit = [
     "scripts/tests/*",
     "*/__pycache__/*",
     "*/site-packages/*",
-    "*/.venv/*"
+    "*/.venv/*",
+    "scripts/clients/linear/node_modules/*",
+    "scripts/clients/linear/dist/*",
 ]
 
 [tool.coverage.report]

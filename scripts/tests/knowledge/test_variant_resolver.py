@@ -390,7 +390,12 @@ class TestEmbedKeywords:
 
     def test_returns_correct_shape(self) -> None:
         """Should return embeddings with correct shape."""
-        torch = pytest.importorskip("torch")
+        # Skip if torch is not available - avoid pytest.importorskip which segfaults on Python 3.14
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("torch not installed")
+
         from scripts.knowledge.variant_resolver import embed_keywords
 
         mock_model = MagicMock()

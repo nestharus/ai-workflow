@@ -440,3 +440,22 @@ class TestExcludedDirectories:
         relative_paths = [f.relative_to(Path("/fake/repo")).as_posix() for f in files]
         assert "README.md" in relative_paths
         assert "docs/.venv/nested.md" not in relative_paths
+
+    def test_filename_matching_excluded_dir_not_excluded(self, fs: FakeFilesystem) -> None:
+        """Should not exclude files whose name matches an excluded directory name.
+
+        The exclusion logic only checks parent directory names, not filenames.
+        A file named 'node_modules.md' should NOT be excluded just because
+        'node_modules' is in exclude_dirs.
+        """
+        fs.create_dir("/fake/repo/docs")
+        fs.create_file("/fake/repo/docs/node_modules.md", contents="# Node modules guide")
+        fs.create_file("/fake/repo/README.md", contents="# README")
+
+        with patch.object(lint_markdown_restriction, "REPO_ROOT", Path("/fake/repo")):
+            files = find_markdown_files([".", "docs"], {"node_modules"})
+
+        relative_paths = [f.relative_to(Path("/fake/repo")).as_posix() for f in files]
+        assert "README.md" in relative_paths
+        # File named 'node_modules.md' should NOT be excluded
+        assert "docs/node_modules.md" in relative_paths

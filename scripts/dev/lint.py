@@ -187,7 +187,15 @@ def _run_mypy(files: list[str] | None = None) -> None:
         if not py_files:
             print("No Python files to check with mypy")
             return
-        _run_checked([uv_exe, "run", "mypy", *py_files])
+        # Filter out common test directories to avoid unnecessary mypy runs.
+        # This is a performance optimization; mypy applies its full exclude rules regardless.
+        filtered_files = [
+            f for f in py_files if not (f.startswith("tests/") or f.startswith("scripts/tests/"))
+        ]
+        if not filtered_files:
+            print("All Python files are excluded from mypy checking")
+            return
+        _run_checked([uv_exe, "run", "mypy", *filtered_files])
     else:
         _run_checked([uv_exe, "run", "mypy"])
 
@@ -470,7 +478,9 @@ def main() -> int:
     # warn the user
     if files:
         file_filtering_linters = set(LINTER_RUNNERS_WITH_FILES.keys())
-        requested_filterable = [l for l in linters_to_run if l in file_filtering_linters]
+        requested_filterable = [
+            linter for linter in linters_to_run if linter in file_filtering_linters
+        ]
         if not requested_filterable:
             print(
                 "Warning: --files specified but no file-filtering linters requested. "

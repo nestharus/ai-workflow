@@ -199,10 +199,11 @@ class TestBuildCommand:
         assert "--system-prompt" in command
         assert system_prompt in command
         assert "--allowedTools" in command
-        # Tools are joined as comma-separated string
-        tools_idx = command.index("--allowedTools") + 1
-        assert "Read" in command[tools_idx]
-        assert "Write" in command[tools_idx]
+        # Tools are joined with comma in a single argument
+        tools_index = command.index("--allowedTools") + 1
+        tools_arg = command[tools_index]
+        tools_list = [t.strip() for t in tools_arg.split(",")]
+        assert set(tools_list) == {"Read", "Write"}
 
     def test_includes_disallowed_tools(self) -> None:
         """Should include disallowedTools when present in frontmatter."""
@@ -216,18 +217,36 @@ class TestBuildCommand:
         command = build_command(frontmatter, system_prompt)
 
         assert "--disallowedTools" in command
-        # Disallowed tools are joined as comma-separated string
-        disallowed_idx = command.index("--disallowedTools") + 1
-        assert "Bash" in command[disallowed_idx]
-        assert "Write" in command[disallowed_idx]
+        # Disallowed tools are joined with comma in a single argument
+        disallowed_index = command.index("--disallowedTools") + 1
+        disallowed_arg = command[disallowed_index]
+        disallowed_list = [t.strip() for t in disallowed_arg.split(",")]
+        assert set(disallowed_list) == {"Bash", "Write"}
 
     def test_handles_empty_tools(self) -> None:
-        """Should handle empty tools field by not including --allowedTools."""
+        """Should handle empty tools field - no allowedTools when empty."""
         frontmatter = {"tools": "", "model": "haiku"}
 
         command = build_command(frontmatter, "System")
 
-        # Empty tools list should not add --allowedTools flag
+        # When tools is empty string, no allowedTools flag is added
+        assert "--allowedTools" not in command
+
+    def test_handles_none_tools(self) -> None:
+        """Should handle None tools field appropriately."""
+        frontmatter = {"tools": None, "model": "haiku"}
+
+        command = build_command(frontmatter, "System")
+
+        assert "--allowedTools" not in command
+
+    def test_handles_whitespace_only_tools(self) -> None:
+        """Should handle whitespace-only tools field."""
+        frontmatter = {"tools": "   ", "model": "haiku"}
+
+        command = build_command(frontmatter, "System")
+
+        # Whitespace-only should be treated as empty tools
         assert "--allowedTools" not in command
 
     def test_handles_missing_disallowed_tools(self) -> None:

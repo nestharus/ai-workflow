@@ -87,16 +87,20 @@ def build_command(frontmatter: dict[str, Any], system_prompt: str) -> list[str]:
     """
     tools_field = frontmatter.get("tools", "")
 
-    # Handle both string format ("Read, Write") and dict format ({write: true, bash: true})
-    if isinstance(tools_field, dict):
+    # Handle None, string format ("Read, Write"), and dict format ({write: true, bash: true})
+    if tools_field is None:
+        tools_list = []
+    elif isinstance(tools_field, dict):
         tools_list = [tool for tool, enabled in tools_field.items() if enabled]
     else:
         tools_list = [tool.strip() for tool in str(tools_field).split(",") if tool.strip()]
 
     disallowed_field = frontmatter.get("disallowedTools", "")
 
-    # Handle both string format and dict format for disallowed tools
-    if isinstance(disallowed_field, dict):
+    # Handle None, string format, and dict format for disallowed tools
+    if disallowed_field is None:
+        disallowed_tools_list = []
+    elif isinstance(disallowed_field, dict):
         disallowed_tools_list = [tool for tool, disabled in disallowed_field.items() if disabled]
     else:
         disallowed_tools_list = [
