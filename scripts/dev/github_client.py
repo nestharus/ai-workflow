@@ -665,7 +665,8 @@ def post_deferred_replies_command(pr_number: int, threads_dir: Path) -> int:
     """Post deferred replies from thread files to a PR.
 
     Scans thread files in the directory for deferred_reply fields and posts
-    those replies to the corresponding PR comments.
+    those replies to the corresponding PR comments. Skips LOCAL origin tasks
+    (they don't have GitHub threads to post to).
 
     Args:
         pr_number: PR number to post replies on.
@@ -678,6 +679,9 @@ def post_deferred_replies_command(pr_number: int, threads_dir: Path) -> int:
         print(f"Threads directory not found: {threads_dir}", file=sys.stderr)
         return 1
 
+    # Only process thread_*.json files (GitHub threads)
+    # local_*.json files have deferred replies too, but those go to terminal output
+    # instead of being posted to GitHub (handled by the orchestrator)
     thread_files = sorted(threads_dir.glob("thread_*.json"))
     replies_posted = 0
     for thread_file in thread_files:
