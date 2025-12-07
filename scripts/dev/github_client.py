@@ -176,19 +176,31 @@ def get_linear_ticket_info(ticket_id: str) -> dict[str, Any]:
     if not issue:
         raise LinearAPIError(f"Ticket not found: {ticket_id}")
 
-    # Find PR URL from attachments (GitHub PR attachments have github.com in URL)
+    # Find the first open PR from attachments (GitHub PR attachments have github.com in URL)
     pr_url = None
     pr_number = None
     attachments = issue.get("attachments", {}).get("nodes", [])
+
+    # Collect all PR candidates from attachments
+    pr_candidates: list[tuple[str, int]] = []
     for attachment in attachments:
         url = attachment.get("url", "")
         if "github.com" in url and "/pull/" in url:
-            pr_url = url
-            # Extract PR number from URL
             match = re.search(r"/pull/(\d+)", url)
             if match:
-                pr_number = int(match.group(1))
-            break
+                pr_candidates.append((url, int(match.group(1))))
+
+    # Find the first open PR by checking state via GitHub API
+    for url, number in pr_candidates:
+        try:
+            pr_info = get_pr_info(number)
+            if pr_info.get("state") == "OPEN":
+                pr_url = url
+                pr_number = number
+                break
+        except GraphQLError:
+            # If we can't fetch PR info, skip this candidate
+            continue
 
     return {
         "id": issue.get("id"),
