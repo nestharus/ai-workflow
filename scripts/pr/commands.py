@@ -119,6 +119,44 @@ def _read_thread_file(thread_file: Path) -> dict[str, Any]:
     return data
 
 
+def _get_open_prs_for_ticket(
+    ticket_id: str, exclude_pr: int | None = None
+) -> list[dict[str, Any]]:
+    """Get list of open PRs for a Linear ticket.
+
+    Args:
+        ticket_id: Linear ticket ID (e.g., "NES-123").
+        exclude_pr: Optional PR number to exclude from results.
+
+    Returns:
+        List of dicts with 'url' and 'number' for each open PR.
+    """
+    attachments = linear_dao.fetch_github_attachments(ticket_id)
+
+    # Extract PR candidates from attachments
+    pr_candidates: list[tuple[str, int]] = []
+    for attachment in attachments:
+        url = attachment.get("url", "")
+        if "/pull/" in url:
+            match = re.search(r"/pull/(\d+)", url)
+            if match:
+                pr_candidates.append((url, int(match.group(1))))
+
+    # Filter to only open PRs
+    open_prs: list[dict[str, Any]] = []
+    for url, number in pr_candidates:
+        if exclude_pr is not None and number == exclude_pr:
+            continue
+        try:
+            gh_pr_info = github_dao.get_pr_info(number)
+            if gh_pr_info.get("state") == "OPEN":
+                open_prs.append({"url": url, "number": number})
+        except github_dao.GraphQLError:
+            continue
+
+    return open_prs
+
+
 def fetch_threads_command(pr_number: int, output_dir: Path) -> int:
     """Fetch threads, filter, format, resolve thumbs-up threads, and save to files.
 
@@ -702,30 +740,46 @@ def merge_workflow_command(
             errors.append(f"Stash pop had conflicts: {err}")
             print(f"Warning: {errors[-1]} - manual resolution required", file=sys.stderr)
 
-    # Step 5: Mark ticket as Done
-    print(f"Step 5: Marking {ticket_id} as Done...")
+    # Step 5: Check for remaining open PRs and conditionally mark done
+    print(f"Step 5: Checking for remaining open PRs for {ticket_id}...")
+    remaining_prs: list[dict[str, Any]] = []
     try:
-        info = linear_dao.get_ticket_info(ticket_id)
-        team_id = info.get("team_id")
-        if team_id:
-            done_state_id = linear_dao.get_done_state_id(team_id)
-            issue_uuid = info.get("id")
-            if issue_uuid:
-                success = linear_dao.set_ticket_state(issue_uuid, done_state_id)
-                if success:
-                    print(f"Marked {ticket_id} as Done")
+        remaining_prs = _get_open_prs_for_ticket(ticket_id, exclude_pr=pr_number)
+    except linear_dao.LinearAPIError as e:
+        errors.append(f"Error checking remaining PRs: {e}")
+        print(f"Warning: {errors[-1]}", file=sys.stderr)
+
+    if remaining_prs:
+        # Report remaining PRs instead of marking done
+        next_pr = remaining_prs[0]
+        print(f"Ticket {ticket_id} has {len(remaining_prs)} remaining open PR(s)")
+        print(f"Next open PR: #{next_pr['number']} - {next_pr['url']}")
+        print("Skipping mark as Done (ticket still has open PRs)")
+    else:
+        # No remaining PRs, mark as Done
+        print(f"No remaining open PRs. Marking {ticket_id} as Done...")
+        try:
+            info = linear_dao.get_ticket_info(ticket_id)
+            team_id = info.get("team_id")
+            if team_id:
+                done_state_id = linear_dao.get_done_state_id(team_id)
+                issue_uuid = info.get("id")
+                if issue_uuid:
+                    success = linear_dao.set_ticket_state(issue_uuid, done_state_id)
+                    if success:
+                        print(f"Marked {ticket_id} as Done")
+                    else:
+                        errors.append(f"Failed to mark {ticket_id} as Done")
+                        print(f"Warning: {errors[-1]}", file=sys.stderr)
                 else:
-                    errors.append(f"Failed to mark {ticket_id} as Done")
+                    errors.append(f"Could not get issue UUID for {ticket_id}")
                     print(f"Warning: {errors[-1]}", file=sys.stderr)
             else:
-                errors.append(f"Could not get issue UUID for {ticket_id}")
+                errors.append(f"Could not get team ID for {ticket_id}")
                 print(f"Warning: {errors[-1]}", file=sys.stderr)
-        else:
-            errors.append(f"Could not get team ID for {ticket_id}")
+        except linear_dao.LinearAPIError as e:
+            errors.append(f"Linear API error: {e}")
             print(f"Warning: {errors[-1]}", file=sys.stderr)
-    except linear_dao.LinearAPIError as e:
-        errors.append(f"Linear API error: {e}")
-        print(f"Warning: {errors[-1]}", file=sys.stderr)
 
     # Summary
     print("\n" + "=" * 60)

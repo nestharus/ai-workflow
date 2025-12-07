@@ -60,7 +60,7 @@ cd {{worktree}} && git push --force-with-lease
 
 ### 5. Complete Merge Workflow
 
-Execute the full merge workflow (merge PR, cleanup, sync, mark done):
+Execute the full merge workflow (merge PR, cleanup, sync, conditionally mark done):
 
 ```bash
 uv run pr merge --ticket $ARGUMENTS --pr {{pr_number}} --worktree {{worktree}} --branch {{branch_name}} --base-branch {{base_branch}}
@@ -71,7 +71,9 @@ This command performs:
 2. Remove git worktree
 3. Delete local branch
 4. Sync target branch (fetch, stash, checkout, pull, stash pop)
-5. Mark Linear ticket as Done
+5. Check for remaining open PRs:
+   - If **no remaining open PRs**: Mark Linear ticket as Done
+   - If **remaining open PRs exist**: Report the next open PR and skip marking done
 
 **Note**: The remote branch auto-deletes after merge (configured in GitHub). Do NOT manually delete the remote branch.
 
