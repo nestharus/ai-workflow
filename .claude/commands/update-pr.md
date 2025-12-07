@@ -36,11 +36,17 @@ This returns JSON with:
 
 ### 3. Set Up Variables
 
+First, get the repository root (where `.worktrees` lives):
+```bash
+git rev-parse --show-toplevel
+```
+
 Based on ticket info:
 - `ticket_id`: (from step 1)
 - `branch`: (from `branch_name` in JSON)
-- `worktree`: `.worktrees/{{ticket_id}}`
-- `tmp_folder`: `.tmp/pr-threads/{{ticket_id}}`
+- `repo_root`: (from git command above)
+- `worktree`: `{{repo_root}}/.worktrees/{{ticket_id}}`
+- `tmp_folder`: `{{repo_root}}/.tmp/pr-threads/{{ticket_id}}`
 - `pr_number`: (from `pr_number` in JSON)
 - `pr_url`: (from `pr_url` in JSON)
 - `base_branch`: (from `base_branch` in JSON)
