@@ -776,6 +776,7 @@ def get_tier_config(db_path: Path, tier: str) -> dict[str, Any]:
     Returns:
         Dictionary with tier configuration details
     """
+    result: dict[str, Any] = {}
     conn = _get_connection(db_path)
     result: dict[str, Any] = {}
     try:

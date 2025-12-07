@@ -10,9 +10,6 @@ tools:
   bash: true
   mcp__firecrawl__firecrawl_search: true
   mcp__firecrawl__firecrawl_scrape: true
-  mcp__linear-server__get_issue: true
-  mcp__linear-server__create_comment: true
-  mcp__linear-server__update_issue: true
 ---
 
 You are the test strategy specialist. Your purpose is to analyze implementation plans and code to produce comprehensive testing strategies.

@@ -35,7 +35,8 @@ exclude_dirs:
   - .factory
   - .knowledge
   - .serena
-  - .tasks/store  # Generated task files
+  - .tasks  # Generated task files (all subdirectories)
+  - store  # Generated task store (top-level directory)
   - .tmp
   - .worktrees
   - .git-rewrite
