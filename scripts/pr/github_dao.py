@@ -392,9 +392,7 @@ def merge_pr(pr_number: int, squash: bool = True, auto: bool = False) -> bool:
     return result.returncode == 0
 
 
-def create_pr(
-    worktree_path: str, title: str, body: str, head_branch: str
-) -> tuple[bool, str]:
+def create_pr(worktree_path: str, title: str, body: str, head_branch: str) -> tuple[bool, str]:
     """Create a new PR.
 
     Args:

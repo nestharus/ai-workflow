@@ -105,7 +105,9 @@ def build_command(frontmatter: dict[str, Any], system_prompt: str) -> list[str]:
     elif isinstance(disallowed_field, dict):
         disallowed_tools_list = [tool for tool, disabled in disallowed_field.items() if disabled]
     elif isinstance(disallowed_field, list):
-        disallowed_tools_list = [str(tool).strip() for tool in disallowed_field if str(tool).strip()]
+        disallowed_tools_list = [
+            str(tool).strip() for tool in disallowed_field if str(tool).strip()
+        ]
     else:
         disallowed_tools_list = [
             tool.strip() for tool in str(disallowed_field).split(",") if tool.strip()

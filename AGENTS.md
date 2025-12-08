@@ -82,7 +82,8 @@ detailed missing line/branch information. Analysis tools (`coverage-summary`,
 Use the `lint-fixer` sub-agent to fix lint errors.
 
 **For workflows and commands** (update-pr, execute-plan, etc.), use changed-only mode:
-```
+
+```python
 Task(subagent_type="lint-fixer", prompt="--changed-only")
 ```
 

@@ -41,10 +41,12 @@ def get_status(worktree: Path) -> str:
         worktree: Path to the git worktree.
 
     Returns:
-        Porcelain status output, or empty string if git unavailable.
+        Porcelain status output, or empty string if git unavailable or error.
     """
     result = _run_git(["git", "status", "--porcelain"], cwd=worktree)
     if result is None:
+        return ""
+    if result.returncode != 0:
         return ""
     return result.stdout.strip()
 
@@ -278,6 +280,8 @@ def stash() -> bool:
     result = _run_git(["git", "stash"])
     if result is None:
         return False
+    if result.returncode != 0:
+        return False
     return "No local changes" not in result.stdout
 
 
@@ -355,7 +359,12 @@ def branch_exists_remote(branch_name: str) -> bool:
     result = _run_git(["git", "ls-remote", "--heads", "origin", branch_name])
     if result is None:
         return False
-    return bool(result.stdout.strip())
+    if result.returncode != 0:
+        return False
+    # Check for exact match (output format: "<sha>\trefs/heads/<branch>")
+    # git ls-remote does pattern matching, so "foo" would also match "foobar"
+    expected_ref = f"refs/heads/{branch_name}"
+    return any(f"\t{expected_ref}" in line for line in result.stdout.strip().splitlines())
 
 
 def branch_exists(branch_name: str) -> bool:
@@ -440,6 +449,7 @@ def worktree_exists(worktree_path: Path) -> bool:
     for line in result.stdout.splitlines():
         if line.startswith("worktree "):
             worktree_dir = line[9:]  # len("worktree ") == 9
-            if Path(worktree_dir).resolve() == Path(abs_path):
+            # Use casefold() for case-insensitive comparison on Windows
+            if str(Path(worktree_dir).resolve()).casefold() == abs_path.casefold():
                 return True
     return False
