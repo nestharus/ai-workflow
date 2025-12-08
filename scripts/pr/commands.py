@@ -14,22 +14,32 @@ from typing import Any
 from scripts.pr import git_dao, github_dao, linear_dao
 
 
-def _find_available_branch_name(base_name: str) -> str:
+def _find_available_branch_name(base_name: str, max_length: int = 50) -> str:
     """Find an available branch name, adding a counter if needed.
 
     Args:
         base_name: The base branch name to start with.
+        max_length: Maximum length for the branch name. When adding a counter
+            suffix, the base name is truncated to ensure the total length
+            stays within this limit.
 
     Returns:
         An available branch name (base_name, base_name-2, base_name-3, etc.).
     """
+    # Truncate base_name if it exceeds max_length
+    if len(base_name) > max_length:
+        base_name = base_name[:max_length]
+
     if not git_dao.branch_exists(base_name):
         return base_name
 
     # Try with counter starting at 2
     counter = 2
     while True:
-        candidate = f"{base_name}-{counter}"
+        suffix = f"-{counter}"
+        # Truncate base to ensure total length stays within max_length
+        truncated_base = base_name[: max_length - len(suffix)]
+        candidate = f"{truncated_base}{suffix}"
         if not git_dao.branch_exists(candidate):
             return candidate
         counter += 1
