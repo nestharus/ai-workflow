@@ -525,16 +525,15 @@ def _looks_like_pr_id(identifier: str) -> int | None:
 def _looks_like_ticket_id(identifier: str) -> bool:
     """Check if identifier looks like a Linear ticket ID (e.g., NES-87).
 
+    Ticket IDs have format: LETTERS-NUMBER (e.g., NES-87, PROJ-123).
+
     Args:
         identifier: String to check.
 
     Returns:
-        True if it matches the ticket ID pattern (alphanumeric-numeric).
+        True if it matches the ticket ID pattern (letters-digits).
     """
-    parts = identifier.split("-")
-    if len(parts) != 2:
-        return False
-    return parts[0].isalnum() and parts[1].isdigit()
+    return bool(re.match(r"^[A-Za-z]+-\d+$", identifier))
 
 
 def get_pr_command(identifier: str | None = None) -> int:
@@ -592,6 +591,14 @@ def get_pr_command(identifier: str | None = None) -> int:
             gh_pr_info = github_dao.get_pr_info(pr_id)
             branch_name = gh_pr_info.get("head_branch")
             base_branch = gh_pr_info.get("base_branch")
+
+            if not branch_name:
+                print(
+                    f"Error: Could not determine head branch for PR #{pr_id}",
+                    file=sys.stderr,
+                )
+                return 1
+
             pr_number = pr_id
             pr_url = (
                 f"https://github.com/{github_dao.REPO_OWNER}/{github_dao.REPO_NAME}/pull/{pr_id}"
@@ -1107,8 +1114,7 @@ def checkout_worktree_command(identifier: str) -> int:
         Exit code (0 for success).
     """
     # Determine if identifier is a ticket ID or branch name
-    # Ticket IDs have format: LETTERS-NUMBER (e.g., NES-87, PROJ-123)
-    is_ticket_id = bool(re.match(r"^[A-Za-z]+-\d+$", identifier))
+    is_ticket_id = _looks_like_ticket_id(identifier)
 
     if is_ticket_id:
         # Fetch branch name from Linear

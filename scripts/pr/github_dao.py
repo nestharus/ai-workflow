@@ -72,7 +72,10 @@ def run_graphql_query(query: str) -> dict[str, Any]:
         Parsed JSON response.
     """
     output = run_gh_command(["api", "graphql", "-f", f"query={query}"])
-    result: dict[str, Any] = json.loads(output)
+    try:
+        result: dict[str, Any] = json.loads(output)
+    except json.JSONDecodeError as e:
+        raise GraphQLError(f"Invalid JSON from gh: {e}") from e
     return result
 
 
@@ -86,7 +89,10 @@ def run_graphql_mutation(mutation: str) -> dict[str, Any]:
         Parsed JSON response.
     """
     output = run_gh_command(["api", "graphql", "-f", f"query={mutation}"])
-    result: dict[str, Any] = json.loads(output)
+    try:
+        result: dict[str, Any] = json.loads(output)
+    except json.JSONDecodeError as e:
+        raise GraphQLError(f"Invalid JSON from gh: {e}") from e
     return result
 
 
@@ -334,7 +340,10 @@ def get_pr_changed_files(pr_number: int) -> list[str]:
     output = run_gh_command(
         ["api", f"repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/files", "--paginate"]
     )
-    files_data = json.loads(output)
+    try:
+        files_data = json.loads(output)
+    except json.JSONDecodeError as e:
+        raise GraphQLError(f"Invalid JSON from gh: {e}") from e
     return [f.get("filename", "") for f in files_data if f.get("filename")]
 
 
@@ -440,7 +449,10 @@ def get_pr_for_branch(branch_name: str) -> dict[str, Any] | None:
         ]
     )
 
-    prs = json.loads(output)
+    try:
+        prs = json.loads(output)
+    except json.JSONDecodeError as e:
+        raise GraphQLError(f"Invalid JSON from gh: {e}") from e
     if not prs:
         return None
 
