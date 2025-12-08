@@ -16,6 +16,53 @@ from scripts.pr import git_dao, github_dao, linear_dao
 MAX_BRANCH_NAME_LENGTH = 50
 
 
+def _get_expected_branch_name(linear_branch_name: str) -> str:
+    """Get the expected branch name from a Linear branch name.
+
+    Truncates the branch name to MAX_BRANCH_NAME_LENGTH characters to match
+    what _find_available_branch_name would produce when creating a new branch.
+
+    Args:
+        linear_branch_name: The branch name from Linear (may exceed 50 chars).
+
+    Returns:
+        The truncated branch name (max 50 characters).
+    """
+    if len(linear_branch_name) > MAX_BRANCH_NAME_LENGTH:
+        return linear_branch_name[:MAX_BRANCH_NAME_LENGTH]
+    return linear_branch_name
+
+
+def _find_existing_branch_for_ticket(linear_branch_name: str) -> str | None:
+    """Find an existing branch that matches the expected pattern for a ticket.
+
+    Searches for branches matching the expected name or with counter suffixes
+    (-2, -3, etc.). Returns the first existing branch found.
+
+    Args:
+        linear_branch_name: The branch name from Linear (may exceed 50 chars).
+
+    Returns:
+        The existing branch name if found, None otherwise.
+    """
+    expected_base = _get_expected_branch_name(linear_branch_name)
+
+    # Check if the base expected branch exists
+    if git_dao.branch_exists(expected_base):
+        return expected_base
+
+    # Check for counter suffixes (-2, -3, etc.)
+    for counter in range(2, 101):
+        suffix = f"-{counter}"
+        # Truncate base to ensure total length stays within max_length
+        truncated_base = expected_base[: MAX_BRANCH_NAME_LENGTH - len(suffix)]
+        candidate = f"{truncated_base}{suffix}"
+        if git_dao.branch_exists(candidate):
+            return candidate
+
+    return None
+
+
 def _find_available_branch_name(base_name: str, max_length: int = MAX_BRANCH_NAME_LENGTH) -> str:
     """Find an available branch name, adding a counter if needed.
 
@@ -616,9 +663,9 @@ def get_pr_command(identifier: str | None = None) -> int:
         elif _looks_like_ticket_id(identifier):
             # Ticket ID: get branch from Linear
             info = linear_dao.get_ticket_info(identifier)
-            branch_name = info.get("branch_name")
+            linear_branch_name = info.get("branch_name")
 
-            if not branch_name:
+            if not linear_branch_name:
                 print(
                     f"Error: No branch name configured for ticket {identifier}",
                     file=sys.stderr,
@@ -640,15 +687,26 @@ def get_pr_command(identifier: str | None = None) -> int:
                         pr_candidates.append((url, int(match.group(1))))
 
             # Find the first open PR by checking state via GitHub API
+            # Also get the actual branch name from GitHub if PR exists
+            branch_name = None
             for url, number in pr_candidates:
                 try:
                     gh_pr_info = github_dao.get_pr_info(number)
                     if gh_pr_info.get("state") == "OPEN":
                         pr_url = url
                         pr_number = number
+                        # Use branch name from GitHub PR (most accurate)
+                        branch_name = gh_pr_info.get("head_branch")
                         break
                 except github_dao.GraphQLError:
                     continue
+
+            # If no open PR found, find existing branch or use expected truncated name
+            if not branch_name:
+                branch_name = _find_existing_branch_for_ticket(linear_branch_name)
+                if not branch_name:
+                    # Fall back to expected truncated name for worktree path
+                    branch_name = _get_expected_branch_name(linear_branch_name)
 
             worktree_path = f".worktrees/{branch_name}"
 
@@ -1123,14 +1181,39 @@ def checkout_worktree_command(identifier: str) -> int:
     # Determine if identifier is a ticket ID or branch name
     is_ticket_id = _looks_like_ticket_id(identifier)
 
+    # Fetch origin to get latest remote refs before looking up branches
+    print("Fetching origin...", file=sys.stderr)
+    success, err = git_dao.fetch_origin()
+    if not success:
+        print(f"Error fetching origin: {err}", file=sys.stderr)
+        return 1
+
     if is_ticket_id:
-        # Fetch branch name from Linear
+        # Fetch branch name from Linear and find existing branch
         try:
             info = linear_dao.get_ticket_info(identifier)
-            branch_name = info.get("branch_name")
-            if not branch_name:
+            linear_branch_name = info.get("branch_name")
+            if not linear_branch_name:
                 print(
                     f"Error: No branch name found for ticket {identifier}",
+                    file=sys.stderr,
+                )
+                return 1
+
+            # Find the actual existing branch (may be truncated or have counter suffix)
+            branch_name = _find_existing_branch_for_ticket(linear_branch_name)
+            if not branch_name:
+                expected = _get_expected_branch_name(linear_branch_name)
+                print(
+                    f"Error: No existing branch found for ticket {identifier}.",
+                    file=sys.stderr,
+                )
+                print(
+                    f"Expected branch pattern: '{expected}' (or with -2, -3, etc. suffix)",
+                    file=sys.stderr,
+                )
+                print(
+                    "Use 'uv run pr setup-worktree' or '/execute-plan' to create a new branch.",
                     file=sys.stderr,
                 )
                 return 1
@@ -1140,14 +1223,7 @@ def checkout_worktree_command(identifier: str) -> int:
     else:
         branch_name = identifier
 
-    # Fetch origin to get latest remote refs
-    print("Fetching origin...", file=sys.stderr)
-    success, err = git_dao.fetch_origin()
-    if not success:
-        print(f"Error fetching origin: {err}", file=sys.stderr)
-        return 1
-
-    # Check if branch exists
+    # Check if branch exists locally or only on remote
     exists_local = git_dao.branch_exists_local(branch_name)
     exists_remote = git_dao.branch_exists_remote(branch_name)
 
