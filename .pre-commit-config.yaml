@@ -1,4 +1,34 @@
 repos:
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: |
+          (?x)^(
+            \.venv.*|
+            node_modules/.*|
+            uv\.lock|
+            htmlcov/.*|
+            \.coverage.*|
+            openapi/.*|
+            \.review/.*|
+            \.tmp/.*|
+            \.worktrees/.*|
+            \.tasks/store/.*|
+            \.huggingface/.*|
+            \.serena/.*|
+            \.mypy_cache/.*|
+            \.pytest_cache/.*|
+            \.ruff_cache/.*|
+            scripts/clients/linear/node_modules/.*|
+            scripts/clients/linear/dist/.*|
+            \.git-rewrite/.*|
+            to_adapt/.*|
+            \.idea/.*|
+            build/.*|
+            dist/.*
+          )$
   - repo: local
     hooks:
       - id: project-lint
