@@ -87,8 +87,6 @@ class TestLinearClientGetIssue:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -115,8 +113,6 @@ class TestLinearClientGetIssue:
             "error": {"code": "NOT_FOUND", "message": "Issue not found"},
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -132,8 +128,6 @@ class TestLinearClientGetIssue:
         self, mocker: MockerFixture, mock_script_paths: MagicMock
     ) -> None:
         """Raise error when JSON parsing fails."""
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = "Invalid JSON"
         mock_run.return_value.stderr = "JSON parse error"
@@ -165,8 +159,6 @@ class TestLinearClientCreateIssue:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -202,8 +194,6 @@ class TestLinearClientCreateIssue:
             "error": {"code": "INVALID_INPUT", "message": "Team is required"},
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -229,8 +219,6 @@ class TestLinearClientCreateIssue:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -266,8 +254,6 @@ class TestLinearClientUpdateIssue:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -306,8 +292,6 @@ class TestLinearClientUpdateIssue:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -334,8 +318,6 @@ class TestLinearClientUpdateIssue:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -378,8 +360,6 @@ class TestLinearClientComments:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -396,8 +376,6 @@ class TestLinearClientComments:
         """Return empty list when no comments exist."""
         mock_response = {"ok": True, "data": {"comments": []}}
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -423,8 +401,6 @@ class TestLinearClientComments:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -480,8 +456,6 @@ class TestLinearClientListProjects:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -497,8 +471,6 @@ class TestLinearClientListProjects:
         """Return empty list when no projects exist."""
         mock_response = {"ok": True, "data": {"projects": []}}
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -545,8 +517,6 @@ class TestLinearClientListTeams:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -562,8 +532,6 @@ class TestLinearClientListTeams:
         """Return empty list when no teams exist."""
         mock_response = {"ok": True, "data": {"teams": []}}
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -594,8 +562,6 @@ class TestLinearClientErrorHandling:
         self, mocker: MockerFixture, mock_script_paths: MagicMock
     ) -> None:
         """Raise NODE_NOT_FOUND error when Node.js is not installed."""
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         # Mock subprocess.run to raise FileNotFoundError (simulating node not found)
         mock_run = mocker.patch("subprocess.run")
         mock_run.side_effect = FileNotFoundError("node not found")
@@ -609,8 +575,6 @@ class TestLinearClientErrorHandling:
 
     def test_subprocess_os_error(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
         """Raise SUBPROCESS_ERROR on OSError from subprocess.run."""
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         # Mock subprocess.run to raise OSError
         mock_run = mocker.patch("subprocess.run")
         mock_run.side_effect = OSError("Permission denied")
@@ -626,8 +590,6 @@ class TestLinearClientErrorHandling:
         self, mocker: MockerFixture, mock_script_paths: MagicMock
     ) -> None:
         """Handle subprocess execution failures gracefully."""
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = ""
         mock_run.return_value.stderr = "Node.js error"
@@ -643,8 +605,6 @@ class TestLinearClientErrorHandling:
         self, mocker: MockerFixture, mock_script_paths: MagicMock
     ) -> None:
         """Handle malformed JSON responses."""
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = '{"ok": true, invalid json'
         mock_run.return_value.stderr = ""
@@ -668,8 +628,6 @@ class TestLinearClientErrorHandling:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -708,8 +666,6 @@ class TestLinearClientErrorHandling:
             "error": {},  # Missing code and message
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -725,8 +681,6 @@ class TestLinearClientErrorHandling:
         """Handle empty data in successful response."""
         mock_response = {"ok": True}  # Missing data field
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
