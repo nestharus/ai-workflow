@@ -352,3 +352,51 @@ def pull() -> tuple[bool, str]:
     if result.returncode != 0:
         return False, result.stderr
     return True, ""
+
+
+def branch_exists_local(branch_name: str) -> bool:
+    """Check if a branch exists locally.
+
+    Args:
+        branch_name: Name of the branch to check.
+
+    Returns:
+        True if the branch exists locally.
+    """
+    result = subprocess.run(
+        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def branch_exists_remote(branch_name: str) -> bool:
+    """Check if a branch exists on the remote.
+
+    Args:
+        branch_name: Name of the branch to check.
+
+    Returns:
+        True if the branch exists on the remote.
+    """
+    result = subprocess.run(
+        ["git", "ls-remote", "--heads", "origin", branch_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return bool(result.stdout.strip())
+
+
+def branch_exists(branch_name: str) -> bool:
+    """Check if a branch exists locally or on the remote.
+
+    Args:
+        branch_name: Name of the branch to check.
+
+    Returns:
+        True if the branch exists locally or on the remote.
+    """
+    return branch_exists_local(branch_name) or branch_exists_remote(branch_name)

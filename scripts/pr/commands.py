@@ -13,6 +13,95 @@ from typing import Any
 
 from scripts.pr import git_dao, github_dao, linear_dao
 
+# Maximum length for branch names (git has limits, and long names are unwieldy)
+MAX_BRANCH_LENGTH = 60
+
+
+def _sanitize_title_for_branch(title: str) -> str:
+    """Sanitize a ticket title for use in a git branch name.
+
+    Args:
+        title: The ticket title to sanitize.
+
+    Returns:
+        A sanitized string suitable for branch names.
+    """
+    # Convert to lowercase
+    sanitized = title.lower()
+
+    # Replace spaces and underscores with hyphens
+    sanitized = re.sub(r"[\s_]+", "-", sanitized)
+
+    # Remove any characters that aren't alphanumeric or hyphens
+    sanitized = re.sub(r"[^a-z0-9-]", "", sanitized)
+
+    # Collapse multiple hyphens into one
+    sanitized = re.sub(r"-+", "-", sanitized)
+
+    # Remove leading/trailing hyphens
+    sanitized = sanitized.strip("-")
+
+    return sanitized
+
+
+def _generate_branch_name(ticket_id: str, title: str, max_length: int) -> str:
+    """Generate a branch name from ticket ID and title.
+
+    Args:
+        ticket_id: The ticket identifier (e.g., "NES-87").
+        title: The ticket title.
+        max_length: Maximum length for the branch name.
+
+    Returns:
+        A branch name in the format "<TICKET-ID>-<sanitized-title>".
+    """
+    sanitized_title = _sanitize_title_for_branch(title)
+
+    # Start with ticket ID (preserving case)
+    branch_name = ticket_id
+
+    # Calculate remaining space for the title (minus 1 for the hyphen)
+    remaining_space = max_length - len(ticket_id) - 1
+
+    if remaining_space > 0 and sanitized_title:
+        # Truncate title if needed, but try to end on a word boundary
+        if len(sanitized_title) > remaining_space:
+            # Find the last hyphen within the limit
+            truncated = sanitized_title[:remaining_space]
+            last_hyphen = truncated.rfind("-")
+            if last_hyphen > 0:
+                truncated = truncated[:last_hyphen]
+            sanitized_title = truncated.rstrip("-")
+
+        branch_name = f"{ticket_id}-{sanitized_title}"
+
+    return branch_name
+
+
+def _find_available_branch_name(base_name: str) -> str:
+    """Find an available branch name, adding a counter if needed.
+
+    Args:
+        base_name: The base branch name to start with.
+
+    Returns:
+        An available branch name (base_name, base_name-2, base_name-3, etc.).
+    """
+    if not git_dao.branch_exists(base_name):
+        return base_name
+
+    # Try with counter starting at 2
+    counter = 2
+    while True:
+        candidate = f"{base_name}-{counter}"
+        if not git_dao.branch_exists(candidate):
+            return candidate
+        counter += 1
+
+        # Safety limit to prevent infinite loops
+        if counter > 100:
+            raise RuntimeError(f"Could not find available branch name for {base_name}")
+
 
 def _has_thumbs_up_from_author(thread: dict[str, Any]) -> bool:
     """Check if the thread has a thumbs-up reaction from the first author.
@@ -119,9 +208,7 @@ def _read_thread_file(thread_file: Path) -> dict[str, Any]:
     return data
 
 
-def _get_open_prs_for_ticket(
-    ticket_id: str, exclude_pr: int | None = None
-) -> list[dict[str, Any]]:
+def _get_open_prs_for_ticket(ticket_id: str, exclude_pr: int | None = None) -> list[dict[str, Any]]:
     """Get list of open PRs for a Linear ticket.
 
     Args:
@@ -796,3 +883,38 @@ def merge_workflow_command(
     print("=" * 60)
 
     return 0
+
+
+def generate_branch_command(ticket_id: str) -> int:
+    """Generate a branch name for a Linear ticket.
+
+    Creates a branch name from the ticket ID and title. If the branch already
+    exists (locally or on remote), appends a counter (-2, -3, etc.).
+
+    Args:
+        ticket_id: Linear ticket ID (e.g., "NES-87").
+
+    Returns:
+        Exit code (0 for success).
+    """
+    try:
+        info = linear_dao.get_ticket_info(ticket_id)
+        identifier = info.get("identifier", ticket_id)
+        title = info.get("title", "")
+
+        if not title:
+            print(f"Error: No title found for ticket {ticket_id}", file=sys.stderr)
+            return 1
+
+        # Generate base branch name
+        base_branch_name = _generate_branch_name(identifier, title, MAX_BRANCH_LENGTH)
+
+        # Find available branch name (adds counter if needed)
+        branch_name = _find_available_branch_name(base_branch_name)
+
+        # Output just the branch name (for easy capture by scripts)
+        print(branch_name)
+        return 0
+    except linear_dao.LinearAPIError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1

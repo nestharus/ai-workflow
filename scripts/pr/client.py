@@ -15,6 +15,7 @@ Usage:
     uv run pr merge-pr --pr <number>
     uv run pr squash-rebase --worktree <path> --base-branch <branch>
     uv run pr merge --ticket <id> --pr <n> --worktree <path> --branch <name> --base-branch <b>
+    uv run pr generate-branch <ticket-id>
 """
 
 from __future__ import annotations
@@ -290,6 +291,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Target branch to sync",
     )
 
+    # generate-branch command
+    generate_branch_parser = subparsers.add_parser(
+        "generate-branch",
+        help="Generate a branch name for a Linear ticket",
+    )
+    generate_branch_parser.add_argument(
+        "ticket_id",
+        help="Linear ticket ID (e.g., NES-87)",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -333,6 +344,8 @@ def main(argv: list[str] | None = None) -> int:
             args.branch,
             args.base_branch,
         )
+    if args.command == "generate-branch":
+        return commands.generate_branch_command(args.ticket_id)
 
     return 1
 

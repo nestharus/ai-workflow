@@ -27,9 +27,16 @@ The worktree branch is created from the current branch and PRs back to it.
    uv run linear get-issue $ARGUMENTS
    ```
 
-3. Extract `branchName` from the JSON response - use this value exactly as provided by Linear
-   * **IMPORTANT**: Do NOT modify or regenerate the branch name - Linear provides the correct format
-   * The `branchName` field preserves ticket ID casing for automatic Linear linking
+3. Generate the branch name using the PR client:
+
+   ```bash
+   uv run pr generate-branch $ARGUMENTS
+   ```
+
+   * This generates a branch name from the ticket ID and title (e.g., `NES-87-git-worktrees-not-created-with-exact`)
+   * If the branch already exists, it automatically adds a counter (e.g., `NES-87-...-2`)
+   * The branch name preserves ticket ID casing for automatic Linear linking
+   * Store the output as `<branchName>`
 
 4. Check if branch exists on remote:
 
