@@ -367,8 +367,12 @@ def branch_exists_remote(branch_name: str) -> bool:
         return False
     # Check for exact match (output format: "<sha>\trefs/heads/<branch>")
     # git ls-remote does pattern matching, so "foo" would also match "foobar"
+    # Using partition to split on tab and compare ref field exactly
     expected_ref = f"refs/heads/{branch_name}"
-    return any(f"\t{expected_ref}" in line for line in result.stdout.strip().splitlines())
+    return any(
+        ref == expected_ref
+        for _, _, ref in (line.partition("\t") for line in result.stdout.strip().splitlines())
+    )
 
 
 def branch_exists(branch_name: str) -> bool:
