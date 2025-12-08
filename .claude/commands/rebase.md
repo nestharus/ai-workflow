@@ -21,6 +21,8 @@ This returns JSON with:
 
 * `branch_name`: Git branch name (may contain slashes, e.g., `mrasolomon/nes-87-...`)
 * `worktree_path`: Path to the worktree (e.g., `.worktrees/mrasolomon/nes-87-...`)
+* `working_directory`: Where to run commands - either `.` (repo root) or the worktree path
+* `is_worktree`: Boolean - `true` if working in worktree, `false` if on current branch
 * `pr_number`: PR number
 * `pr_url`: PR URL
 * `base_branch`: Target branch the PR will merge into (e.g., `main`, `develop`)
@@ -28,7 +30,7 @@ This returns JSON with:
 Set up variables:
 
 * `ticket_id`: $ARGUMENTS
-* `worktree`: `{{worktree_path}}` (from `worktree_path` in JSON)
+* `working_dir`: `{{working_directory}}` (from `working_directory` in JSON)
 * `base_branch`: The target branch from the PR info (NOT hardcoded to `main`)
 
 ### 2. Gather Merge Context (Before Squash)
@@ -36,13 +38,13 @@ Set up variables:
 Before squashing, gather context needed for conflict resolution:
 
 ```bash
-cd {{worktree}} && git fetch origin {{base_branch}}
+cd {{working_dir}} && git fetch origin {{base_branch}}
 ```
 
 Find the merge-base (original base commit before branches diverged):
 
 ```bash
-cd {{worktree}} && git merge-base origin/{{base_branch}} HEAD
+cd {{working_dir}} && git merge-base origin/{{base_branch}} HEAD
 ```
 
 Store this as `base_commit`.
@@ -50,7 +52,7 @@ Store this as `base_commit`.
 Find commits added to target branch since the base:
 
 ```bash
-cd {{worktree}} && git log --oneline {{base_commit}}..origin/{{base_branch}}
+cd {{working_dir}} && git log --oneline {{base_commit}}..origin/{{base_branch}}
 ```
 
 Store these commit SHAs as `target_commits` (list from oldest to newest).
@@ -60,7 +62,7 @@ Store these commit SHAs as `target_commits` (list from oldest to newest).
 Squash all commits and rebase onto the target branch:
 
 ```bash
-uv run pr squash-rebase --worktree {{worktree}} --base-branch {{base_branch}}
+uv run pr squash-rebase --worktree {{working_dir}} --base-branch {{base_branch}}
 ```
 
 This command:
@@ -80,13 +82,13 @@ When conflicts occur during rebase:
 1. Get the list of conflicted files:
 
    ```bash
-   cd {{worktree}} && git status --porcelain | grep "^UU" | cut -c4-
+   cd {{working_dir}} && git status --porcelain | grep "^UU" | cut -c4-
    ```
 
 2. Get the source commit SHA (the squashed commit being rebased):
 
    ```bash
-   cd {{worktree}} && git rev-parse HEAD
+   cd {{working_dir}} && git rev-parse HEAD
    ```
 
    Store as `source_commit`.
@@ -102,7 +104,7 @@ When conflicts occur during rebase:
    ```json
    {
      "file_path": "<relative path to conflicted file>",
-     "worktree": "{{worktree}}",
+     "worktree": "{{working_dir}}",
      "base_commit": "{{base_commit}}",
      "target_branch": "origin/{{base_branch}}",
      "target_commits": ["<sha1>", "<sha2>", ...],
@@ -113,7 +115,7 @@ When conflicts occur during rebase:
 4. After all files are resolved, continue the rebase:
 
    ```bash
-   cd {{worktree}} && git rebase --continue
+   cd {{working_dir}} && git rebase --continue
    ```
 
 5. If more conflicts appear, repeat step 4.
@@ -123,7 +125,7 @@ When conflicts occur during rebase:
 After successful rebase:
 
 ```bash
-cd {{worktree}} && git push --force-with-lease
+cd {{working_dir}} && git push --force-with-lease
 ```
 
 ## Important Rules

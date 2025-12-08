@@ -461,3 +461,37 @@ def worktree_exists(worktree_path: Path) -> bool:
             if str(Path(worktree_dir).resolve()).casefold() == abs_path.casefold():
                 return True
     return False
+
+
+def create_worktree_tracking(worktree_path: Path, branch_name: str) -> tuple[bool, str]:
+    """Create a git worktree tracking a remote branch.
+
+    Creates a new local branch that tracks the remote branch of the same name.
+    This is used when the branch only exists on the remote.
+
+    Args:
+        worktree_path: Path where the worktree should be created.
+        branch_name: Name of the remote branch to track.
+
+    Returns:
+        Tuple of (success, error_message).
+    """
+    # git worktree add --track -b <branch_name> <worktree_path> origin/<branch_name>
+    cmd = [
+        "git",
+        "worktree",
+        "add",
+        "--track",
+        "-b",
+        branch_name,
+        "--",
+        str(worktree_path),
+        f"origin/{branch_name}",
+    ]
+
+    result = _run_git(cmd)
+    if result is None:
+        return False, "git not available"
+    if result.returncode != 0:
+        return False, result.stderr
+    return True, ""

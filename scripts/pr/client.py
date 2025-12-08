@@ -14,8 +14,10 @@ Usage:
     uv run pr set-ticket-done --ticket <id>
     uv run pr merge-pr --pr <number>
     uv run pr squash-rebase --worktree <path> --base-branch <branch>
-    uv run pr merge --ticket <id> --pr <n> --worktree <path> --branch <name> --base-branch <b>
+    uv run pr merge --ticket <id> --pr <n> --working-dir <path> --branch <name>
+        --base-branch <b> [--is-worktree]
     uv run pr setup-worktree <ticket-id>
+    uv run pr checkout <ticket-id-or-branch>
 """
 
 from __future__ import annotations
@@ -280,10 +282,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="PR number to merge",
     )
     merge_workflow_parser.add_argument(
-        "--worktree",
+        "--working-dir",
         type=Path,
         required=True,
-        help="Path to the git worktree",
+        help="Path to the working directory (worktree or repo root)",
     )
     merge_workflow_parser.add_argument(
         "--branch",
@@ -295,6 +297,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help="Target branch to sync",
     )
+    merge_workflow_parser.add_argument(
+        "--is-worktree",
+        action="store_true",
+        help="If set, remove worktree and delete branch after merge",
+    )
 
     # setup-worktree command
     setup_worktree_parser = subparsers.add_parser(
@@ -304,6 +311,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     setup_worktree_parser.add_argument(
         "ticket_id",
         help="Linear ticket ID (e.g., NES-87)",
+    )
+
+    # checkout command
+    checkout_parser = subparsers.add_parser(
+        "checkout",
+        help="Checkout an existing branch into a worktree",
+    )
+    checkout_parser.add_argument(
+        "identifier",
+        help="Linear ticket ID (e.g., NES-87) or branch name",
     )
 
     return parser.parse_args(argv)
@@ -347,12 +364,15 @@ def main(argv: list[str] | None = None) -> int:
         return commands.merge_workflow_command(
             args.ticket,
             args.pr,
-            args.worktree,
+            args.working_dir,
             args.branch,
             args.base_branch,
+            is_worktree=args.is_worktree,
         )
     if args.command == "setup-worktree":
         return commands.setup_worktree_command(args.ticket_id)
+    if args.command == "checkout":
+        return commands.checkout_worktree_command(args.identifier)
 
     return 1
 

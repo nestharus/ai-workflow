@@ -281,7 +281,9 @@ def commit_push_command(worktree: Path, message: str, *, set_upstream: bool = Fa
     git_dao.stage_all(worktree)
 
     # Commit
-    git_dao.commit(worktree, message)
+    if not git_dao.commit(worktree, message):
+        print("Error committing", file=sys.stderr)
+        return 1
 
     # Push
     success, err = git_dao.push(worktree, set_upstream=set_upstream)
@@ -503,6 +505,11 @@ def open_pr_command(worktree: Path, title: str, body: str, branch: str) -> int:
 def get_pr_command(ticket_id: str) -> int:
     """Get PR info for a Linear ticket: branch name, PR number, PR URL, base branch.
 
+    Also determines the working directory based on whether the current branch
+    matches the ticket's branch:
+    - If current branch matches → working_directory is "." (repo root), is_worktree=False
+    - If current branch differs → working_directory is worktree_path, is_worktree=True
+
     Args:
         ticket_id: Linear ticket ID (e.g., "NES-123").
 
@@ -538,9 +545,18 @@ def get_pr_command(ticket_id: str) -> int:
                 continue
 
         branch_name = info.get("branch_name")
+        worktree_path = f".worktrees/{branch_name}" if branch_name else None
+
+        # Determine working directory based on current branch
+        current_branch = git_dao.get_current_branch()
+        is_worktree = current_branch != branch_name
+        working_directory = worktree_path if is_worktree else "."
+
         pr_info: dict[str, Any] = {
             "branch_name": branch_name,
-            "worktree_path": f".worktrees/{branch_name}" if branch_name else None,
+            "worktree_path": worktree_path,
+            "working_directory": working_directory,
+            "is_worktree": is_worktree,
             "pr_number": pr_number,
             "pr_url": pr_url,
             "base_branch": None,
@@ -705,18 +721,21 @@ def squash_rebase_command(worktree: Path, base_branch: str) -> int:
 def merge_workflow_command(
     ticket_id: str,
     pr_number: int,
-    worktree: Path,
+    working_dir: Path,
     branch_name: str,
     base_branch: str,
+    *,
+    is_worktree: bool = True,
 ) -> int:
     """Complete merge workflow: merge PR, cleanup, sync, mark done.
 
     Args:
         ticket_id: Linear ticket ID (e.g., "NES-123").
         pr_number: PR number to merge.
-        worktree: Path to the git worktree.
+        working_dir: Path to the working directory (worktree or repo root).
         branch_name: Name of the branch to delete.
         base_branch: Target branch to sync.
+        is_worktree: If True, remove worktree and delete branch. If False, skip cleanup.
 
     Returns:
         Exit code (0 for success).
@@ -731,26 +750,30 @@ def merge_workflow_command(
         return 1
     print(f"PR #{pr_number} merged successfully")
 
-    # Step 2: Remove worktree
-    print(f"Step 2: Removing worktree {worktree}...")
-    if worktree.is_dir():
-        success, err = git_dao.remove_worktree(worktree)
+    # Step 2: Remove worktree (only if working in a worktree)
+    if is_worktree:
+        print(f"Step 2: Removing worktree {working_dir}...")
+        if working_dir.is_dir():
+            success, err = git_dao.remove_worktree(working_dir)
+            if not success:
+                errors.append(f"Failed to remove worktree: {err}")
+                print(f"Warning: {errors[-1]}", file=sys.stderr)
+            else:
+                print("Worktree removed successfully")
+        else:
+            print(f"Worktree not found at {working_dir}, skipping removal")
+
+        # Step 3: Delete local branch (only if working in a worktree)
+        print(f"Step 3: Deleting local branch {branch_name}...")
+        success, err = git_dao.delete_branch(branch_name)
         if not success:
-            errors.append(f"Failed to remove worktree: {err}")
+            errors.append(f"Failed to delete branch: {err}")
             print(f"Warning: {errors[-1]}", file=sys.stderr)
         else:
-            print("Worktree removed successfully")
+            print("Local branch deleted successfully")
     else:
-        print(f"Worktree not found at {worktree}, skipping removal")
-
-    # Step 3: Delete local branch
-    print(f"Step 3: Deleting local branch {branch_name}...")
-    success, err = git_dao.delete_branch(branch_name)
-    if not success:
-        errors.append(f"Failed to delete branch: {err}")
-        print(f"Warning: {errors[-1]}", file=sys.stderr)
-    else:
-        print("Local branch deleted successfully")
+        print("Step 2: Skipping worktree removal (working on current branch)")
+        print("Step 3: Skipping branch deletion (working on current branch)")
 
     # Step 4: Sync target branch
     print(f"Step 4: Syncing {base_branch}...")
@@ -930,3 +953,120 @@ def setup_worktree_command(ticket_id: str) -> int:
     except linear_dao.LinearAPIError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+
+
+def checkout_worktree_command(identifier: str) -> int:
+    """Checkout an existing branch into a worktree.
+
+    Takes either a Linear ticket ID (e.g., "NES-87") or a branch name. If the
+    identifier looks like a ticket ID (contains a dash with letters before it),
+    fetches the branch name from Linear. Otherwise, uses the identifier as the
+    branch name directly.
+
+    Unlike setup_worktree_command, this command:
+    - Does NOT create a new branch (only checks out existing branches)
+    - Errors if the branch doesn't exist locally or on remote
+    - If the branch exists only on remote, creates a local tracking branch
+
+    Args:
+        identifier: Linear ticket ID (e.g., "NES-87") or branch name.
+
+    Returns:
+        Exit code (0 for success).
+    """
+    # Determine if identifier is a ticket ID or branch name
+    # Ticket IDs have format: LETTERS-NUMBER (e.g., NES-87, PROJ-123)
+    is_ticket_id = bool(re.match(r"^[A-Za-z]+-\d+$", identifier))
+
+    if is_ticket_id:
+        # Fetch branch name from Linear
+        try:
+            info = linear_dao.get_ticket_info(identifier)
+            branch_name = info.get("branch_name")
+            if not branch_name:
+                print(
+                    f"Error: No branch name found for ticket {identifier}",
+                    file=sys.stderr,
+                )
+                return 1
+        except linear_dao.LinearAPIError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+    else:
+        branch_name = identifier
+
+    # Fetch origin to get latest remote refs
+    print("Fetching origin...", file=sys.stderr)
+    success, err = git_dao.fetch_origin()
+    if not success:
+        print(f"Error fetching origin: {err}", file=sys.stderr)
+        return 1
+
+    # Check if branch exists
+    exists_local = git_dao.branch_exists_local(branch_name)
+    exists_remote = git_dao.branch_exists_remote(branch_name)
+
+    if not exists_local and not exists_remote:
+        print(
+            f"Error: Branch '{branch_name}' does not exist locally or on remote.",
+            file=sys.stderr,
+        )
+        print(
+            "Use 'uv run pr setup-worktree' or '/execute-plan' to create a new branch.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Worktree path: .worktrees/<branch_name>
+    worktree_path = Path(".worktrees") / branch_name
+
+    # Check if worktree already exists at this path
+    if git_dao.worktree_exists(worktree_path):
+        print(
+            json.dumps(
+                {
+                    "status": "exists",
+                    "worktree_path": str(worktree_path),
+                    "branch_name": branch_name,
+                    "branch_created": False,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    # Create worktree for existing branch (not creating a new branch)
+    if exists_local:
+        # Branch exists locally, just checkout
+        print(
+            f"Creating worktree at {worktree_path} (existing local branch: {branch_name})...",
+            file=sys.stderr,
+        )
+        success, err = git_dao.create_worktree(worktree_path, branch_name, create_branch=False)
+    else:
+        # Branch only exists on remote, create local tracking branch
+        print(
+            f"Creating worktree at {worktree_path} (tracking remote branch: {branch_name})...",
+            file=sys.stderr,
+        )
+        # Use git worktree add with remote tracking
+        success, err = git_dao.create_worktree_tracking(worktree_path, branch_name)
+
+    if not success:
+        print(f"Error creating worktree: {err}", file=sys.stderr)
+        return 1
+
+    # Output result as JSON
+    print(
+        json.dumps(
+            {
+                "status": "created",
+                "worktree_path": str(worktree_path),
+                "branch_name": branch_name,
+                "branch_created": False,
+                "tracked_remote": not exists_local,
+            },
+            indent=2,
+        )
+    )
+    return 0

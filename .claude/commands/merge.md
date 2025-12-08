@@ -23,6 +23,8 @@ This returns JSON with:
 
 * `branch_name`: Git branch name (may contain slashes, e.g., `mrasolomon/nes-87-...`)
 * `worktree_path`: Path to the worktree (e.g., `.worktrees/mrasolomon/nes-87-...`)
+* `working_directory`: Where to run commands - either `.` (repo root) or the worktree path
+* `is_worktree`: Boolean - `true` if working in worktree, `false` if on current branch
 * `pr_number`: PR number
 * `pr_url`: PR URL
 * `base_branch`: Target branch the PR will merge into (e.g., `main`, `develop`)
@@ -30,7 +32,8 @@ This returns JSON with:
 Set up variables:
 
 * `ticket_id`: $ARGUMENTS
-* `worktree`: `{{worktree_path}}` (from `worktree_path` in JSON)
+* `working_dir`: `{{working_directory}}` (from `working_directory` in JSON)
+* `is_worktree`: `{{is_worktree}}` (from `is_worktree` in JSON)
 * `base_branch`: The target branch from the PR info (NOT hardcoded to `main`)
 
 ### 2. Complete Merge Workflow
@@ -38,16 +41,17 @@ Set up variables:
 Execute the full merge workflow (merge PR, cleanup, sync, conditionally mark done):
 
 ```bash
-uv run pr merge --ticket $ARGUMENTS --pr {{pr_number}} --worktree {{worktree}} --branch {{branch_name}} --base-branch {{base_branch}}
+uv run pr merge --ticket $ARGUMENTS --pr {{pr_number}} --working-dir {{working_dir}} --branch {{branch_name}} --base-branch {{base_branch}} {{#if is_worktree}}--is-worktree{{/if}}
 ```
 
 This command performs:
 
 1. Merge the PR (squash merge)
-2. Remove git worktree
-3. Delete local branch
-4. Sync target branch (fetch, stash, checkout, pull, stash pop)
-5. Check for remaining open PRs:
+2. **If `--is-worktree` flag is passed**:
+   * Remove git worktree
+   * Delete local branch
+3. Sync target branch (fetch, stash, checkout, pull, stash pop)
+4. Check for remaining open PRs:
    * If **no remaining open PRs**: Mark Linear ticket as Done
    * If **remaining open PRs exist**: Report the next open PR and skip marking done
 

@@ -35,6 +35,8 @@ This returns JSON with:
 
 * `branch_name`: Git branch name (may contain slashes, e.g., `mrasolomon/nes-87-...`)
 * `worktree_path`: Path to the worktree (e.g., `.worktrees/mrasolomon/nes-87-...`)
+* `working_directory`: Where to run commands - either `.` (repo root) or the worktree path
+* `is_worktree`: Boolean - `true` if working in worktree, `false` if on current branch
 * `pr_number`: PR number
 * `pr_url`: PR URL
 * `base_branch`: Target branch the PR will merge into
@@ -52,7 +54,7 @@ Based on ticket info:
 * `ticket_id`: (from step 1)
 * `branch`: (from `branch_name` in JSON)
 * `repo_root`: (from git command above)
-* `worktree`: `{{repo_root}}/{{worktree_path}}` (from `worktree_path` in JSON, e.g., `.worktrees/mrasolomon/nes-87-...`)
+* `working_dir`: `{{repo_root}}/{{working_directory}}` (from `working_directory` in JSON - either `.` or worktree path)
 * `tmp_folder`: `{{repo_root}}/.tmp/pr-threads/{{ticket_id}}`
 * `pr_number`: (from `pr_number` in JSON)
 * `pr_url`: (from `pr_url` in JSON)
@@ -130,7 +132,7 @@ List all files in `{{tmp_folder}}` matching `thread_*.json` and `local_*.json`. 
 ```python
 Task(subagent_type="pr-comment-handler", prompt="
 thread_file: {{tmp_folder}}/thread_N.json (or local_N.json)
-worktree: {{worktree}}
+worktree: {{working_dir}}
 branch: {{branch}}
 ")
 ```
@@ -164,7 +166,7 @@ Continue to next task.
 After all tasks are processed, check if any code changes were made:
 
 ```bash
-cd {{worktree}} && git status --porcelain
+cd {{working_dir}} && git status --porcelain
 ```
 
 If the output is empty (no changes), skip steps 9-11 and go directly to step 14 (Output Summary).
@@ -173,17 +175,17 @@ If the output is empty (no changes), skip steps 9-11 and go directly to step 14 
 
 **Skip this step if no code changes were made (step 8 output was empty).**
 
-Run the test-debugger sub-agent against the worktree:
+Run the test-debugger sub-agent against the working directory:
 
 ```python
 Task(subagent_type="test-debugger", prompt="
-worktree: {{worktree}}
+worktree: {{working_dir}}
 ")
 ```
 
 This will:
 
-* Run all tests in the worktree
+* Run all tests in the working directory
 * Debug and fix any failures
 * Report the final test status
 
@@ -191,10 +193,10 @@ This will:
 
 **Skip this step if no code changes were made (step 8 output was empty).**
 
-After tests pass, run the lint-fixer sub-agent against the worktree in changed-only mode:
+After tests pass, run the lint-fixer sub-agent against the working directory in changed-only mode:
 
 ```python
-Task(subagent_type="lint-fixer", prompt="--worktree {{worktree}} --changed-only")
+Task(subagent_type="lint-fixer", prompt="--worktree {{working_dir}} --changed-only")
 ```
 
 This only lints files that were modified, which is faster and appropriate for PR updates.
@@ -206,7 +208,7 @@ This only lints files that were modified, which is faster and appropriate for PR
 If tests pass and changes were made:
 
 ```bash
-uv run pr commit-push --worktree {{worktree}} --message "Address PR review feedback"
+uv run pr commit-push --worktree {{working_dir}} --message "Address PR review feedback"
 ```
 
 ### 12. Post Deferred Replies (GitHub only)
@@ -241,7 +243,7 @@ Delete the tmp folder for the PR comments that was created.
 Get commit information:
 
 ```bash
-cd {{worktree}}
+cd {{working_dir}}
 # Current branch commit (HEAD of PR branch)
 git rev-parse HEAD
 # Target branch commit (what PR merges into)
@@ -260,25 +262,25 @@ Linear Ticket: https://linear.app/issue/{{ticket_id}}
 Pull Request: {{pr_url}}
 
 References:
-  worktree_directory: {{worktree}}
+  working_directory: {{working_dir}}
   current_branch_commit: <CURRENT_SHA>   # HEAD of PR branch (latest)
   pr_target_branch_commit: <TARGET_SHA>  # HEAD of target branch
 
 Review Process:
 1. Read ticket description for the implementation plan
-2. Read worktree files for complete implementation understanding
+2. Read files in working directory for complete implementation understanding
 3. Look at current commit to see the latest changes
 4. Diff branch against pr_target_branch_commit for all changes
 
 Commands:
   # Read implementation files
-  cd {{worktree}}
+  cd {{working_dir}}
 
   # See latest commit details
-  cd {{worktree}} && git log -1
+  cd {{working_dir}} && git log -1
 
   # Diff all PR changes against target branch
-  cd {{worktree}} && git diff <pr_target_branch_commit>...<current_branch_commit>
+  cd {{working_dir}} && git diff <pr_target_branch_commit>...<current_branch_commit>
 
 {{#if local_task_responses}}
 --------------------------------------------------------------------------------
@@ -302,5 +304,5 @@ LOCAL TASK RESPONSES
 
 * Follow co-author rules in AGENTS.md (no AI co-authors)
 * Never defer - implement or challenge, don't postpone
-* Run test-debugger and lint-fixer sub-agents against worktree before pushing
+* Run test-debugger and lint-fixer sub-agents against working directory before pushing
 * DO NOT RUN LINTING DIRECTLY. USE THE SUB-AGENT.

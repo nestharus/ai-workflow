@@ -1,0 +1,91 @@
+# Checkout Branch into Worktree
+
+---
+
+description: Checkout an existing branch into a git worktree
+argument-hint: "`ticket-id` or `branch-name`"
+allowed-tools: Bash, Read
+
+---
+
+Checkout an existing branch for: $ARGUMENTS
+
+This command creates a worktree for an existing branch. Unlike `/execute-plan`, it does NOT create
+new branches - it only works with branches that already exist locally or on the remote.
+
+## Workflow
+
+### Step 1: Checkout into Worktree
+
+Run the checkout command:
+
+```bash
+uv run pr checkout $ARGUMENTS
+```
+
+This command:
+
+1. Accepts either a Linear ticket ID (e.g., `NES-87`) or a branch name directly
+2. If given a ticket ID, fetches the `branchName` from Linear
+3. Checks if the branch exists locally or on the remote
+4. If neither exists, returns an error (use `/execute-plan` for new branches)
+5. Creates a worktree at `.worktrees/<branch_name>` for the existing branch
+
+The command outputs JSON with the worktree details:
+
+```json
+{
+  "status": "created",           // or "exists" if worktree already exists
+  "worktree_path": ".worktrees/<branch_name>",
+  "branch_name": "<branch_name>",
+  "branch_created": false,       // always false (no new branches created)
+  "tracked_remote": true         // true if tracking remote, false if local existed
+}
+```
+
+### Step 2: Output Summary
+
+Print to terminal:
+
+```text
+================================================================================
+WORKTREE READY
+================================================================================
+
+Branch: {{branch_name}}
+Worktree: {{worktree_path}}
+
+Commands:
+  # Switch to worktree
+  cd {{worktree_path}}
+
+  # Check status
+  cd {{worktree_path}} && git status
+
+  # View recent commits
+  cd {{worktree_path}} && git log --oneline -5
+================================================================================
+```
+
+## Use Cases
+
+* **Resume work on an existing PR**: Checkout a branch that already has a PR open
+* **Collaborate on a branch**: Checkout someone else's branch to review or contribute
+* **Work on a branch from another machine**: Checkout a branch that exists on the remote
+
+## Error Cases
+
+* **Branch does not exist**: If the branch doesn't exist locally or on remote, the command
+  will fail with an error message suggesting to use `/execute-plan` to create a new branch.
+
+* **Worktree already exists**: If a worktree already exists for this branch, the command
+  will report the existing worktree path without creating a new one.
+
+## Comparison with /execute-plan
+
+| Feature | /checkout | /execute-plan |
+|---------|-----------|---------------|
+| Creates new branches | No | Yes |
+| Works with existing branches | Yes | No |
+| Requires ticket with plan | No | Yes |
+| Creates PR | No | Yes |
