@@ -1,0 +1,135 @@
+doc_id: project-security-trivy-scanning
+title: Trivy Security Scanning Integration
+version_hint: 2024-2025
+kind: security_tooling
+description: >
+  Trivy integration for vulnerability scanning of Docker images and Python dependencies,
+  with configuration for local development and CI pipelines.
+scope: >
+  Covers Trivy installation, configuration, usage via the lint pipeline, understanding
+  scan output, and handling detected vulnerabilities in Python dependencies and Docker images.
+domain:
+  - security
+  - python
+  - docker
+primary_runtime_references:
+  - path: scripts/dev/lint.py
+    id: trivy-lint-runner
+    role: Lint script runner that orchestrates Trivy scans
+  - path: .trivy.yaml
+    id: trivy-config
+    role: Main Trivy configuration file
+related_pattern_docs:
+  - project/project.python.dependency-patterns.yml
+sections:
+  - id: installation
+    index: 1
+    title: Installation
+    category: prerequisite
+    summary: Installing Trivy as an external binary dependency.
+    items:
+      - id: install.external-binary
+        note: >
+          Trivy is a standalone Go binary, not a Python package. It must be installed
+          separately from the Python environment.
+      - id: install.minimum-version
+        rule: >
+          Minimum supported version is Trivy v0.50.0 or later, which includes native
+          support for scanning uv.lock files.
+      - id: install.macos
+        pattern: "Install via Homebrew: `brew install trivy`"
+      - id: install.linux
+        pattern: >
+          Install via package manager or download from GitHub releases:
+          https://github.com/aquasecurity/trivy/releases
+      - id: install.windows
+        pattern: "Install via Chocolatey: `choco install trivy` or download from GitHub releases."
+      - id: install.docker
+        pattern: >
+          Trivy can also run via Docker: `docker run aquasecurity/trivy` (not recommended
+          for lint pipeline integration).
+  - id: usage
+    index: 2
+    title: Usage via Lint Pipeline
+    category: standard
+    summary: Running Trivy scans through the lint command.
+    rules:
+      - id: usage.default-command
+        rule: >
+          Run `uv run lint trivy` to execute both filesystem (uv.lock) and Docker image scans.
+      - id: usage.full-lint
+        rule: >
+          Running `uv run lint` without arguments includes Trivy in the full lint suite.
+      - id: usage.scan-order-and-short-circuit
+        rule: >
+          The filesystem scan (uv.lock) runs first. If it fails (vulnerabilities found or
+          errors occur), the function returns immediately and the Docker image scan is skipped.
+          Users who need image scan results even when dependency vulnerabilities are present
+          can run Trivy commands directly: `trivy image --config .trivy.yaml <image-name>`.
+      - id: usage.fs-scan-behavior
+        note: >
+          Filesystem scan targets `uv.lock` by default. Dev dependencies are excluded
+          from the default scan. Use `trivy fs --include-dev-deps uv.lock` directly for
+          comprehensive dependency checks.
+      - id: usage.image-scan-behavior
+        note: >
+          Image scan builds a temporary Docker image without a tag, using --iidfile
+          to capture the unique image ID. The runner then invokes Trivy with this
+          image ID (logs show a truncated 12-character ID like `sha256:abc123...`)
+          and removes the image via the stored ID on cleanup. This approach avoids
+          clobbering existing tags and ensures only the temporary image is removed.
+      - id: usage.graceful-degradation
+        note: >
+          If Trivy is not installed, `uv run lint trivy` fails with a clear error message.
+          The default `uv run lint` also fails when Trivy is missing (no graceful skip).
+  - id: configuration
+    index: 3
+    title: Configuration
+    category: standard
+    summary: Understanding and modifying Trivy configuration.
+    rules:
+      - id: config.main-file
+        rule: >
+          `.trivy.yaml` at repository root configures Trivy behavior including severity
+          thresholds, exit codes, and scanner selection.
+      - id: config.severity-threshold
+        note: >
+          Default configuration fails on HIGH and CRITICAL severity vulnerabilities.
+          MEDIUM and LOW severities are reported but do not cause failure.
+      - id: config.scanners
+        note: >
+          Only the `vuln` scanner is enabled by default. Secret and misconfiguration
+          scanners are disabled to focus on dependency vulnerabilities.
+      - id: config.lint-file
+        note: >
+          `.lint.trivy.yaml` configures lint script behavior with the following options:
+          `fs_target` (default: uv.lock), `enable_fs_scan`/`enable_image_scan` (enable
+          or disable scan modes), `skip_image_if_no_dockerfile` (skip image scan when
+          Dockerfile is missing instead of failing), and `skip_fs_if_no_lockfile` (skip
+          filesystem scan when lockfile is missing instead of failing).
+      - id: config.exit-code
+        rule: >
+          Exit code 1 is returned when vulnerabilities meeting the severity threshold are found.
+          Exit code 0 indicates no vulnerabilities at the configured threshold.
+  - id: vulnerability-handling
+    index: 4
+    title: Handling Detected Vulnerabilities
+    category: standard
+    summary: Workflow for addressing vulnerabilities found by Trivy.
+    rules:
+      - id: vuln.review-output
+        rule: >
+          Review Trivy output to understand the vulnerability: CVE ID, affected package,
+          fixed version, and severity.
+      - id: vuln.update-dependency
+        pattern: >
+          For Python dependency vulnerabilities, update the affected package in pyproject.toml
+          and regenerate uv.lock with `uv lock`.
+      - id: vuln.update-base-image
+        pattern: >
+          For Docker image vulnerabilities in the base image, update the FROM directive
+          to a newer, patched version.
+      - id: vuln.ignore-false-positives
+        note: >
+          If a vulnerability is a false positive or not applicable, document the rationale
+          and consider using Trivy's ignore file (.trivyignore) for suppression.

@@ -1,0 +1,175 @@
+doc_id: usage-actionlint
+title: GitHub Actions Workflow Linting with actionlint
+version_hint: 2025
+kind: usage_guide
+scope: Developers working with GitHub Actions workflow files
+description: |
+  Guide for using actionlint to validate GitHub Actions workflow files.
+  Actionlint is the exclusive linter for workflow files since .github is
+  excluded from yamllint in .lint.yamllint.yaml.
+domain:
+  - github-actions
+  - linting
+  - ci-cd
+primary_runtime_references:
+  - path: scripts/dev/lint.py
+    description: Main lint script with _run_actionlint() implementation
+  - path: .lint.actionlint.yaml
+    description: Configuration file for actionlint exclusions and ignore patterns
+external_references:
+  - url: https://github.com/rhysd/actionlint
+    title: actionlint GitHub repository
+  - url: https://rhysd.github.io/actionlint/
+    title: actionlint Online Playground
+
+sections:
+  - id: overview
+    index: 1
+    title: Overview
+    category: introduction
+    summary: What actionlint does and why it's used for workflow files.
+    items:
+      - id: overview-purpose
+        text: |
+          actionlint is a static checker for GitHub Actions workflow files. It validates
+          syntax, checks for deprecated actions, verifies action inputs/outputs, and
+          identifies security issues like script injection.
+
+      - id: overview-exclusive-linter
+        text: |
+          Actionlint is the exclusive YAML linter for GitHub Actions workflows in this
+          project. The `.github` directory is excluded from yamllint (see .lint.yamllint.yaml),
+          so workflow YAML syntax and structure are enforced solely through actionlint.
+
+  - id: installation
+    index: 2
+    title: Installation
+    category: setup
+    summary: How to install the actionlint binary.
+    items:
+      - id: installation-macos
+        title: macOS (Homebrew)
+        command: brew install actionlint
+
+      - id: installation-go
+        title: Go Install
+        command: go install github.com/rhysd/actionlint/cmd/actionlint@latest
+
+      - id: installation-download
+        title: Direct Download
+        text: Download from https://github.com/rhysd/actionlint/releases
+
+  - id: usage
+    index: 3
+    title: Usage
+    category: usage
+    summary: How to run actionlint locally and in CI.
+    items:
+      - id: usage-full-suite
+        title: Run as part of full lint suite
+        command: uv run lint
+
+      - id: usage-actionlint-only
+        title: Run actionlint only
+        command: uv run lint actionlint
+
+      - id: usage-direct
+        title: Run directly
+        command: actionlint .github/workflows/
+
+  - id: configuration
+    index: 4
+    title: Configuration
+    category: configuration
+    summary: How to configure actionlint exclusions and ignore patterns.
+    items:
+      - id: configuration-file
+        title: Configuration File
+        text: |
+          Configuration is stored in `.lint.actionlint.yaml`:
+
+          ```yaml
+          # Directories to exclude when searching for workflow files
+          exclude_dirs:
+            - .github/workflows/vendor
+
+          # Patterns to ignore (passed as -ignore flags)
+          ignore:
+            - "SC2086:"  # Ignore specific shellcheck warning
+            - 'label "self-hosted" is unknown'  # Custom runner labels
+          ```
+
+      - id: configuration-exclude-dirs
+        title: Directory Exclusions
+        text: |
+          The `exclude_dirs` field supports directory-level exclusions, consistent with
+          `.lint.yamllint.yaml` and `.lint.hadolint.yaml`. Paths are relative to REPO_ROOT.
+
+  - id: common-issues
+    index: 5
+    title: Common Issues and Fixes
+    category: troubleshooting
+    summary: Solutions for frequently encountered actionlint errors.
+    items:
+      - id: issue-unknown-runner
+        title: Unknown runner label
+        error: 'label "custom-runner" is unknown'
+        fix: Add to ignore list in .lint.actionlint.yaml or define custom runner labels
+
+      - id: issue-script-injection
+        title: Script injection warning
+        error: '"github.event.head_commit.message" is potentially untrusted'
+        fix: |
+          Pass through environment variable instead of inline:
+          ```yaml
+          env:
+            MESSAGE: ${{ github.event.head_commit.message }}
+          run: echo "$MESSAGE"
+          ```
+
+      - id: issue-invalid-input
+        title: Invalid action input
+        error: 'input "node_version" is not defined in action'
+        fix: Use correct input name (e.g., "node-version" not "node_version")
+
+      - id: issue-deprecated-command
+        title: Deprecated workflow commands
+        error: '"set-output" workflow command is deprecated'
+        fix: Use `$GITHUB_OUTPUT` environment file instead
+
+  - id: error-handling
+    index: 6
+    title: Error Handling
+    category: troubleshooting
+    summary: Expected behavior when actionlint encounters errors.
+    items:
+      - id: error-binary-not-found
+        title: Binary Not Found
+        text: |
+          When actionlint binary is not found, `uv run lint actionlint` will print:
+          "actionlint CLI required to run lint" and exit with code 1.
+
+      - id: error-lint-failures
+        title: Lint Failures
+        text: |
+          When actionlint detects workflow issues, it exits with non-zero status.
+          This propagates to `uv run lint` which also exits non-zero, causing
+          CI and pre-commit runs to fail.
+
+  - id: resources
+    index: 7
+    title: Resources
+    category: reference
+    summary: External documentation and tools.
+    items:
+      - id: resources-github
+        title: GitHub Repository
+        url: https://github.com/rhysd/actionlint
+
+      - id: resources-playground
+        title: Online Playground
+        url: https://rhysd.github.io/actionlint/
+
+      - id: resources-checks
+        title: Full Checks Documentation
+        url: https://github.com/rhysd/actionlint/blob/main/docs/checks.md

@@ -1,0 +1,14 @@
+# Trivy security scanner configuration
+# See: https://aquasecurity.github.io/trivy/latest/docs/references/configuration/config-file/
+
+severity:
+  - HIGH
+  - CRITICAL
+
+exit-code: 1
+
+scanners:
+  - vuln
+
+# Do not include dev dependencies by default for security scanning
+# Run with --include-dev-deps flag for comprehensive checks

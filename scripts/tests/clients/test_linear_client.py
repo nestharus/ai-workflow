@@ -6,11 +6,32 @@ subprocess execution, JSON parsing, and error handling without making actual API
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
 
 from scripts.clients.linear_client import LinearClient, LinearClientError
+
+
+@pytest.fixture
+def mock_script_paths(mocker: MockerFixture) -> MagicMock:
+    """Mock Path.exists() to return True for linear client script paths.
+
+    This fixture ensures tests don't depend on the actual dist/ directory
+    being built from TypeScript sources. The dist/ directory is gitignored
+    and only exists after running npm build locally.
+    """
+    original_exists = Path.exists
+
+    def patched_exists(self: Path) -> bool:
+        # Allow script path checks to pass for linear client
+        path_str = str(self)
+        if "scripts/clients/linear" in path_str:
+            return True
+        return original_exists(self)
+
+    return mocker.patch.object(Path, "exists", patched_exists)
 
 
 class TestLinearClientInit:
@@ -49,7 +70,7 @@ class TestLinearClientInit:
 class TestLinearClientGetIssue:
     """Test the get_issue method."""
 
-    def test_get_issue_success(self, mocker: MockerFixture) -> None:
+    def test_get_issue_success(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
         """Successfully fetch issue details."""
         mock_response = {
             "ok": True,
@@ -66,8 +87,6 @@ class TestLinearClientGetIssue:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -87,15 +106,13 @@ class TestLinearClientGetIssue:
         assert "NES-24" in cmd
         assert mock_run.call_args[1]["env"]["LINEAR_API_KEY"] == "test_key"
 
-    def test_get_issue_not_found(self, mocker: MockerFixture) -> None:
+    def test_get_issue_not_found(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
         """Raise error when issue is not found."""
         mock_response = {
             "ok": False,
             "error": {"code": "NOT_FOUND", "message": "Issue not found"},
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -107,10 +124,10 @@ class TestLinearClientGetIssue:
         assert exc_info.value.code == "NOT_FOUND"
         assert exc_info.value.message == "Issue not found"
 
-    def test_get_issue_parse_error(self, mocker: MockerFixture) -> None:
+    def test_get_issue_parse_error(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Raise error when JSON parsing fails."""
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = "Invalid JSON"
         mock_run.return_value.stderr = "JSON parse error"
@@ -127,7 +144,9 @@ class TestLinearClientGetIssue:
 class TestLinearClientCreateIssue:
     """Test the create_issue method."""
 
-    def test_create_issue_success(self, mocker: MockerFixture) -> None:
+    def test_create_issue_success(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Successfully create a new issue."""
         mock_response = {
             "ok": True,
@@ -140,8 +159,6 @@ class TestLinearClientCreateIssue:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -168,15 +185,15 @@ class TestLinearClientCreateIssue:
         assert "--priority" in cmd
         assert "2" in cmd
 
-    def test_create_issue_empty_team(self, mocker: MockerFixture) -> None:
+    def test_create_issue_empty_team(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Raise error when team is an empty string."""
         mock_response = {
             "ok": False,
             "error": {"code": "INVALID_INPUT", "message": "Team is required"},
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -187,7 +204,9 @@ class TestLinearClientCreateIssue:
             # The actual validation happens in TypeScript, so we simulate the error
             client.create_issue(team="", title="Test")
 
-    def test_create_issue_without_optional_params(self, mocker: MockerFixture) -> None:
+    def test_create_issue_without_optional_params(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Create issue with only required parameters."""
         mock_response = {
             "ok": True,
@@ -200,8 +219,6 @@ class TestLinearClientCreateIssue:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -222,7 +239,9 @@ class TestLinearClientCreateIssue:
 class TestLinearClientUpdateIssue:
     """Test the update_issue method."""
 
-    def test_update_issue_success(self, mocker: MockerFixture) -> None:
+    def test_update_issue_success(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Successfully update an existing issue."""
         mock_response = {
             "ok": True,
@@ -235,8 +254,6 @@ class TestLinearClientUpdateIssue:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -260,7 +277,9 @@ class TestLinearClientUpdateIssue:
         assert "--priority" in cmd
         assert "1" in cmd
 
-    def test_update_issue_partial_update(self, mocker: MockerFixture) -> None:
+    def test_update_issue_partial_update(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Update only some fields of an issue."""
         mock_response = {
             "ok": True,
@@ -273,8 +292,6 @@ class TestLinearClientUpdateIssue:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -289,7 +306,9 @@ class TestLinearClientUpdateIssue:
         assert "--title" not in cmd
         assert "--description" not in cmd
 
-    def test_update_issue_no_updates_error(self, mocker: MockerFixture) -> None:
+    def test_update_issue_no_updates_error(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Raise NO_UPDATES error when no updatable fields are provided."""
         mock_response = {
             "ok": False,
@@ -299,8 +318,6 @@ class TestLinearClientUpdateIssue:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -317,7 +334,9 @@ class TestLinearClientUpdateIssue:
 class TestLinearClientComments:
     """Test comment-related methods."""
 
-    def test_list_comments_success(self, mocker: MockerFixture) -> None:
+    def test_list_comments_success(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Successfully list comments on an issue."""
         mock_response = {
             "ok": True,
@@ -341,8 +360,6 @@ class TestLinearClientComments:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -355,12 +372,10 @@ class TestLinearClientComments:
         assert comments[1]["body"] == "Second comment"
         assert comments[0]["user"]["name"] == "Test User"
 
-    def test_list_comments_empty(self, mocker: MockerFixture) -> None:
+    def test_list_comments_empty(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
         """Return empty list when no comments exist."""
         mock_response = {"ok": True, "data": {"comments": []}}
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -371,7 +386,9 @@ class TestLinearClientComments:
         assert len(comments) == 0
         assert isinstance(comments, list)
 
-    def test_create_comment_success(self, mocker: MockerFixture) -> None:
+    def test_create_comment_success(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Successfully create a comment on an issue."""
         mock_response = {
             "ok": True,
@@ -384,8 +401,6 @@ class TestLinearClientComments:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -407,7 +422,9 @@ class TestLinearClientComments:
 class TestLinearClientListProjects:
     """Test the list_projects method."""
 
-    def test_list_projects_success(self, mocker: MockerFixture) -> None:
+    def test_list_projects_success(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Successfully list all projects."""
         mock_response = {
             "ok": True,
@@ -439,8 +456,6 @@ class TestLinearClientListProjects:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -452,12 +467,10 @@ class TestLinearClientListProjects:
         assert projects[0]["name"] == "Project Alpha"
         assert projects[1]["name"] == "Project Beta"
 
-    def test_list_projects_empty(self, mocker: MockerFixture) -> None:
+    def test_list_projects_empty(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
         """Return empty list when no projects exist."""
         mock_response = {"ok": True, "data": {"projects": []}}
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -472,7 +485,7 @@ class TestLinearClientListProjects:
 class TestLinearClientListTeams:
     """Test the list_teams method."""
 
-    def test_list_teams_success(self, mocker: MockerFixture) -> None:
+    def test_list_teams_success(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
         """Successfully list all teams."""
         mock_response = {
             "ok": True,
@@ -504,8 +517,6 @@ class TestLinearClientListTeams:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -517,12 +528,10 @@ class TestLinearClientListTeams:
         assert teams[0]["key"] == "ENG"
         assert teams[1]["key"] == "NES"
 
-    def test_list_teams_empty(self, mocker: MockerFixture) -> None:
+    def test_list_teams_empty(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
         """Return empty list when no teams exist."""
         mock_response = {"ok": True, "data": {"teams": []}}
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -549,10 +558,10 @@ class TestLinearClientErrorHandling:
 
         assert exc_info.value.code == "SCRIPTS_NOT_FOUND"
 
-    def test_node_not_found_error(self, mocker: MockerFixture) -> None:
+    def test_node_not_found_error(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Raise NODE_NOT_FOUND error when Node.js is not installed."""
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         # Mock subprocess.run to raise FileNotFoundError (simulating node not found)
         mock_run = mocker.patch("subprocess.run")
         mock_run.side_effect = FileNotFoundError("node not found")
@@ -564,10 +573,8 @@ class TestLinearClientErrorHandling:
         assert exc_info.value.code == "NODE_NOT_FOUND"
         assert "Node.js" in exc_info.value.message
 
-    def test_subprocess_os_error(self, mocker: MockerFixture) -> None:
+    def test_subprocess_os_error(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
         """Raise SUBPROCESS_ERROR on OSError from subprocess.run."""
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         # Mock subprocess.run to raise OSError
         mock_run = mocker.patch("subprocess.run")
         mock_run.side_effect = OSError("Permission denied")
@@ -579,10 +586,10 @@ class TestLinearClientErrorHandling:
         assert exc_info.value.code == "SUBPROCESS_ERROR"
         assert "Permission denied" in exc_info.value.message
 
-    def test_subprocess_failure_handling(self, mocker: MockerFixture) -> None:
+    def test_subprocess_failure_handling(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Handle subprocess execution failures gracefully."""
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = ""
         mock_run.return_value.stderr = "Node.js error"
@@ -594,10 +601,10 @@ class TestLinearClientErrorHandling:
 
         assert exc_info.value.code == "PARSE_ERROR"
 
-    def test_invalid_json_handling(self, mocker: MockerFixture) -> None:
+    def test_invalid_json_handling(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Handle malformed JSON responses."""
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = '{"ok": true, invalid json'
         mock_run.return_value.stderr = ""
@@ -609,7 +616,9 @@ class TestLinearClientErrorHandling:
 
         assert exc_info.value.code == "PARSE_ERROR"
 
-    def test_api_key_not_in_error_messages(self, mocker: MockerFixture) -> None:
+    def test_api_key_not_in_error_messages(
+        self, mocker: MockerFixture, mock_script_paths: MagicMock
+    ) -> None:
         """Ensure API key is not leaked in error messages."""
         mock_response = {
             "ok": False,
@@ -619,8 +628,6 @@ class TestLinearClientErrorHandling:
             },
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -652,15 +659,13 @@ class TestLinearClientErrorHandling:
         assert exc_info.value.code == "SCRIPT_NOT_FOUND"
         assert "get-issue.js" in exc_info.value.message
 
-    def test_unknown_error_code(self, mocker: MockerFixture) -> None:
+    def test_unknown_error_code(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
         """Handle unknown error codes from the API."""
         mock_response = {
             "ok": False,
             "error": {},  # Missing code and message
         }
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
@@ -672,12 +677,10 @@ class TestLinearClientErrorHandling:
         assert exc_info.value.code == "UNKNOWN_ERROR"
         assert "Unknown error occurred" in exc_info.value.message
 
-    def test_empty_response_data(self, mocker: MockerFixture) -> None:
+    def test_empty_response_data(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
         """Handle empty data in successful response."""
         mock_response = {"ok": True}  # Missing data field
 
-        # Mock Path.exists to bypass file existence checks
-        mocker.patch.object(Path, "exists", return_value=True)
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value.stdout = json.dumps(mock_response)
         mock_run.return_value.returncode = 0
