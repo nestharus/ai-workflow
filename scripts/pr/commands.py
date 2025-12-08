@@ -13,8 +13,10 @@ from typing import Any
 
 from scripts.pr import git_dao, github_dao, linear_dao
 
+MAX_BRANCH_NAME_LENGTH = 50
 
-def _find_available_branch_name(base_name: str, max_length: int = 50) -> str:
+
+def _find_available_branch_name(base_name: str, max_length: int = MAX_BRANCH_NAME_LENGTH) -> str:
     """Find an available branch name, adding a counter if needed.
 
     Args:
@@ -278,7 +280,9 @@ def commit_push_command(worktree: Path, message: str, *, set_upstream: bool = Fa
         return 0
 
     # Stage all changes
-    git_dao.stage_all(worktree)
+    if not git_dao.stage_all(worktree):
+        print("Error staging", file=sys.stderr)
+        return 1
 
     # Commit
     if not git_dao.commit(worktree, message):
@@ -605,6 +609,14 @@ def get_pr_command(identifier: str | None = None) -> int:
         elif _looks_like_ticket_id(identifier):
             # Ticket ID: get branch from Linear
             info = linear_dao.get_ticket_info(identifier)
+            branch_name = info.get("branch_name")
+
+            if not branch_name:
+                print(
+                    f"Error: No branch name configured for ticket {identifier}",
+                    file=sys.stderr,
+                )
+                return 1
 
             # Fetch GitHub attachments to find PR
             attachments = linear_dao.fetch_github_attachments(identifier)
@@ -631,8 +643,7 @@ def get_pr_command(identifier: str | None = None) -> int:
                 except github_dao.GraphQLError:
                     continue
 
-            branch_name = info.get("branch_name")
-            worktree_path = f".worktrees/{branch_name}" if branch_name else None
+            worktree_path = f".worktrees/{branch_name}"
 
             # Determine working directory based on current branch and worktree status
             if current_branch == branch_name:
@@ -642,7 +653,7 @@ def get_pr_command(identifier: str | None = None) -> int:
             else:
                 # We're on a different branch, need to use the worktree
                 is_worktree = True
-                working_directory = worktree_path if worktree_path else "."
+                working_directory = worktree_path
 
             # If we have a PR number, fetch the base branch from GitHub
             base_branch = None
@@ -1193,7 +1204,9 @@ def checkout_worktree_command(identifier: str) -> int:
     return 0
 
 
-def _is_valid_branch_name(branch_name: str, expected_base: str, max_length: int = 50) -> bool:
+def _is_valid_branch_name(
+    branch_name: str, expected_base: str, max_length: int = MAX_BRANCH_NAME_LENGTH
+) -> bool:
     """Check if a branch name matches the expected pattern.
 
     A branch name is valid if it matches either:
@@ -1270,9 +1283,8 @@ def get_expected_branch_name_command(ticket_id: str) -> int:
             return 1
 
         # Truncate to max length (matching _find_available_branch_name behavior)
-        max_length = 50
-        if len(branch_name) > max_length:
-            branch_name = branch_name[:max_length]
+        if len(branch_name) > MAX_BRANCH_NAME_LENGTH:
+            branch_name = branch_name[:MAX_BRANCH_NAME_LENGTH]
 
         print(
             json.dumps(
@@ -1432,7 +1444,7 @@ def extract_ticket_id_command(branch_name: str | None = None) -> int:
             json.dumps(
                 {
                     "branch_name": branch_name,
-                    "ticket_id": None,
+                    "ticket_id": ticket_id,
                     "valid": False,
                     "reason": f"Ticket {ticket_id} not found in Linear",
                 },
