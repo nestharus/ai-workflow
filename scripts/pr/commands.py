@@ -13,70 +13,6 @@ from typing import Any
 
 from scripts.pr import git_dao, github_dao, linear_dao
 
-# Maximum length for branch names (git has limits, and long names are unwieldy)
-MAX_BRANCH_LENGTH = 60
-
-
-def _sanitize_title_for_branch(title: str) -> str:
-    """Sanitize a ticket title for use in a git branch name.
-
-    Args:
-        title: The ticket title to sanitize.
-
-    Returns:
-        A sanitized string suitable for branch names.
-    """
-    # Convert to lowercase
-    sanitized = title.lower()
-
-    # Replace spaces and underscores with hyphens
-    sanitized = re.sub(r"[\s_]+", "-", sanitized)
-
-    # Remove any characters that aren't alphanumeric or hyphens
-    sanitized = re.sub(r"[^a-z0-9-]", "", sanitized)
-
-    # Collapse multiple hyphens into one
-    sanitized = re.sub(r"-+", "-", sanitized)
-
-    # Remove leading/trailing hyphens
-    sanitized = sanitized.strip("-")
-
-    return sanitized
-
-
-def _generate_branch_name(ticket_id: str, title: str, max_length: int) -> str:
-    """Generate a branch name from ticket ID and title.
-
-    Args:
-        ticket_id: The ticket identifier (e.g., "NES-87").
-        title: The ticket title.
-        max_length: Maximum length for the branch name.
-
-    Returns:
-        A branch name in the format "<TICKET-ID>-<sanitized-title>".
-    """
-    sanitized_title = _sanitize_title_for_branch(title)
-
-    # Start with ticket ID (preserving case)
-    branch_name = ticket_id
-
-    # Calculate remaining space for the title (minus 1 for the hyphen)
-    remaining_space = max_length - len(ticket_id) - 1
-
-    if remaining_space > 0 and sanitized_title:
-        # Truncate title if needed, but try to end on a word boundary
-        if len(sanitized_title) > remaining_space:
-            # Find the last hyphen within the limit
-            truncated = sanitized_title[:remaining_space]
-            last_hyphen = truncated.rfind("-")
-            if last_hyphen > 0:
-                truncated = truncated[:last_hyphen]
-            sanitized_title = truncated.rstrip("-")
-
-        branch_name = f"{ticket_id}-{sanitized_title}".rstrip("-")
-
-    return branch_name
-
 
 def _find_available_branch_name(base_name: str) -> str:
     """Find an available branch name, adding a counter if needed.
@@ -891,46 +827,15 @@ def merge_workflow_command(
     return 0
 
 
-def generate_branch_command(ticket_id: str) -> int:
-    """Generate a branch name for a Linear ticket.
-
-    Creates a branch name from the ticket ID and title. If the branch already
-    exists (locally or on remote), appends a counter (-2, -3, etc.).
-
-    Args:
-        ticket_id: Linear ticket ID (e.g., "NES-87").
-
-    Returns:
-        Exit code (0 for success).
-    """
-    try:
-        info = linear_dao.get_ticket_info(ticket_id)
-        identifier = info.get("identifier") or ticket_id
-        title = info.get("title", "")
-
-        if not title:
-            print(f"Error: No title found for ticket {ticket_id}", file=sys.stderr)
-            return 1
-
-        # Generate base branch name
-        base_branch_name = _generate_branch_name(identifier, title, MAX_BRANCH_LENGTH)
-
-        # Find available branch name (adds counter if needed)
-        branch_name = _find_available_branch_name(base_branch_name)
-
-        # Output just the branch name (for easy capture by scripts)
-        print(branch_name)
-        return 0
-    except linear_dao.LinearAPIError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-
-
 def setup_worktree_command(ticket_id: str) -> int:
     """Setup a git worktree for a Linear ticket.
 
-    Gets the branch name from Linear, fetches origin, checks if the branch
-    exists on remote, and creates the worktree appropriately.
+    Gets the branch name from Linear, finds an available branch name (adding
+    a counter if needed), and creates a new worktree with that branch.
+
+    This command ALWAYS creates a new branch. If the branch name from Linear
+    already exists (locally or on remote), a counter is appended (e.g.,
+    branch-name-2, branch-name-3).
 
     Args:
         ticket_id: Linear ticket ID (e.g., "NES-87").
@@ -941,9 +846,9 @@ def setup_worktree_command(ticket_id: str) -> int:
     try:
         # Get ticket info including branchName from Linear
         info = linear_dao.get_ticket_info(ticket_id)
-        branch_name = info.get("branch_name")
+        base_branch_name = info.get("branch_name")
 
-        if not branch_name:
+        if not base_branch_name:
             print(f"Error: No branch name found for ticket {ticket_id}", file=sys.stderr)
             return 1
 
@@ -953,11 +858,22 @@ def setup_worktree_command(ticket_id: str) -> int:
             print("Error: Could not determine current branch", file=sys.stderr)
             return 1
 
+        # Fetch origin to get latest remote refs before checking branch existence
+        print("Fetching origin...", file=sys.stderr)
+        success, err = git_dao.fetch_origin()
+        if not success:
+            print(f"Error fetching origin: {err}", file=sys.stderr)
+            return 1
+
+        # Find an available branch name (adds counter if needed)
+        # This always creates a new branch, never reuses an existing one
+        branch_name = _find_available_branch_name(base_branch_name)
+
         # Worktree path: .worktrees/<branch_name>
         # Note: branch names with slashes create nested directories
         worktree_path = Path(".worktrees") / branch_name
 
-        # Check if worktree already exists
+        # Check if worktree already exists at this path
         if git_dao.worktree_exists(worktree_path):
             print(
                 json.dumps(
@@ -972,27 +888,13 @@ def setup_worktree_command(ticket_id: str) -> int:
             )
             return 0
 
-        # Fetch origin to get latest remote refs
-        print("Fetching origin...", file=sys.stderr)
-        success, err = git_dao.fetch_origin()
-        if not success:
-            print(f"Error fetching origin: {err}", file=sys.stderr)
-            return 1
-
-        # Check if branch exists on remote
-        branch_exists_remote = git_dao.branch_exists_remote(branch_name)
-
-        # Create worktree
-        # If branch exists on remote, checkout existing branch
-        # If not, create new branch with -b flag
-        create_branch = not branch_exists_remote
+        # Create worktree with new branch
         print(
-            f"Creating worktree at {worktree_path} "
-            f"({'new branch' if create_branch else 'existing branch'})...",
+            f"Creating worktree at {worktree_path} (new branch: {branch_name})...",
             file=sys.stderr,
         )
 
-        success, err = git_dao.create_worktree(worktree_path, branch_name, create_branch)
+        success, err = git_dao.create_worktree(worktree_path, branch_name, create_branch=True)
         if not success:
             print(f"Error creating worktree: {err}", file=sys.stderr)
             return 1
@@ -1005,7 +907,7 @@ def setup_worktree_command(ticket_id: str) -> int:
                     "worktree_path": str(worktree_path),
                     "branch_name": branch_name,
                     "base_branch": base_branch,
-                    "branch_created": create_branch,
+                    "branch_created": True,
                 },
                 indent=2,
             )

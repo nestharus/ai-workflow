@@ -29,19 +29,22 @@ This command:
 1. Fetches the `branchName` from Linear for the ticket
 2. Records the current branch as `<BASE_BRANCH>` for PR targeting
 3. Fetches from origin to get latest remote refs
-4. Checks if the branch exists on remote
-5. Creates the worktree at `.worktrees/<branchName>`:
-   * If branch exists on remote: checks out the existing branch
-   * If branch does not exist: creates a new branch with `-b` flag
+4. Finds an available branch name:
+   * If the branch name from Linear doesn't exist: uses it as-is
+   * If the branch name already exists (locally or remote): appends a counter (`-2`, `-3`, etc.)
+5. Creates a new worktree at `.worktrees/<branchName>` with a new branch
+
+**Important**: This command ALWAYS creates a new branch. It never checks out an existing branch.
+If you need to work on an existing branch, use `git worktree add` directly.
 
 The command outputs JSON with the worktree details:
 ```json
 {
-  "status": "created",        // or "exists" if worktree already exists
+  "status": "created",        // or "exists" if worktree already exists at that path
   "worktree_path": ".worktrees/<branchName>",
   "branch_name": "<branchName>",
   "base_branch": "<BASE_BRANCH>",
-  "branch_created": true      // false if checking out existing branch
+  "branch_created": true      // always true (new branch is always created)
 }
 ```
 
