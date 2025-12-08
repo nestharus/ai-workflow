@@ -18,6 +18,8 @@ Usage:
         --base-branch <b> [--is-worktree]
     uv run pr setup-worktree <ticket-id>
     uv run pr checkout <ticket-id-or-branch>
+    uv run pr get-expected-branch-name <ticket-id>
+    uv run pr is-valid-branch-name --ticket <id> --branch <name>
 """
 
 from __future__ import annotations
@@ -323,6 +325,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Linear ticket ID (e.g., NES-87) or branch name",
     )
 
+    # get-expected-branch-name command
+    expected_branch_parser = subparsers.add_parser(
+        "get-expected-branch-name",
+        help="Get the expected branch name for a Linear ticket",
+    )
+    expected_branch_parser.add_argument(
+        "ticket_id",
+        help="Linear ticket ID (e.g., NES-87)",
+    )
+
+    # is-valid-branch-name command
+    valid_branch_parser = subparsers.add_parser(
+        "is-valid-branch-name",
+        help="Check if a branch name matches the expected pattern for a ticket",
+    )
+    valid_branch_parser.add_argument(
+        "--ticket",
+        required=True,
+        help="Linear ticket ID (e.g., NES-87)",
+    )
+    valid_branch_parser.add_argument(
+        "--branch",
+        required=True,
+        help="Branch name to validate",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -373,6 +401,10 @@ def main(argv: list[str] | None = None) -> int:
         return commands.setup_worktree_command(args.ticket_id)
     if args.command == "checkout":
         return commands.checkout_worktree_command(args.identifier)
+    if args.command == "get-expected-branch-name":
+        return commands.get_expected_branch_name_command(args.ticket_id)
+    if args.command == "is-valid-branch-name":
+        return commands.is_valid_branch_name_command(args.ticket, args.branch)
 
     return 1
 

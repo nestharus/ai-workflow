@@ -1070,3 +1070,139 @@ def checkout_worktree_command(identifier: str) -> int:
         )
     )
     return 0
+
+
+def _is_valid_branch_name(branch_name: str, expected_base: str, max_length: int = 50) -> bool:
+    """Check if a branch name matches the expected pattern.
+
+    A branch name is valid if it matches either:
+    1. The expected base name (truncated to max_length if needed)
+    2. The pattern <truncated_base>-N where N is a counter >= 2
+
+    Args:
+        branch_name: The branch name to validate.
+        expected_base: The expected base branch name from Linear.
+        max_length: Maximum length for branch names (default 50).
+
+    Returns:
+        True if the branch name is valid, False otherwise.
+    """
+    # Truncate expected base if it exceeds max_length
+    if len(expected_base) > max_length:
+        truncated_base = expected_base[:max_length]
+    else:
+        truncated_base = expected_base
+
+    # Check for exact match
+    if branch_name == truncated_base:
+        return True
+
+    # Check for pattern with counter suffix: <base>-N or <truncated_base>-N
+    # The counter suffix requires the base to be truncated to fit within max_length
+    pattern = r"^(.+)-(\d+)$"
+    match = re.match(pattern, branch_name)
+    if not match:
+        return False
+
+    base_part = match.group(1)
+    counter_str = match.group(2)
+
+    # Counter must be >= 2 (per _find_available_branch_name logic)
+    try:
+        counter = int(counter_str)
+        if counter < 2:
+            return False
+    except ValueError:
+        return False
+
+    # The base part should match a truncated version of expected_base
+    # The truncation accounts for the suffix length
+    suffix_len = len(f"-{counter_str}")
+    max_base_len = max_length - suffix_len
+    expected_truncated = expected_base[:max_base_len]
+
+    return base_part == expected_truncated
+
+
+def get_expected_branch_name_command(ticket_id: str) -> int:
+    """Get the expected branch name for a Linear ticket.
+
+    This returns the base branch name from Linear (before any counter suffixes
+    are added). The name is truncated to 50 characters if needed.
+
+    Args:
+        ticket_id: Linear ticket ID (e.g., "NES-87").
+
+    Returns:
+        Exit code (0 for success).
+    """
+    try:
+        info = linear_dao.get_ticket_info(ticket_id)
+        branch_name = info.get("branch_name")
+
+        if not branch_name:
+            print(f"Error: No branch name found for ticket {ticket_id}", file=sys.stderr)
+            return 1
+
+        # Truncate to max length (matching _find_available_branch_name behavior)
+        max_length = 50
+        if len(branch_name) > max_length:
+            branch_name = branch_name[:max_length]
+
+        print(
+            json.dumps(
+                {
+                    "ticket_id": ticket_id,
+                    "expected_branch_name": branch_name,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    except linear_dao.LinearAPIError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def is_valid_branch_name_command(ticket_id: str, branch_name: str) -> int:
+    """Check if a branch name matches the expected pattern for a ticket.
+
+    A branch name is valid if it matches either:
+    1. The expected branch name from Linear (truncated to 50 chars)
+    2. The pattern <expected_branch>-N where N >= 2 (for counter suffixes)
+
+    Args:
+        ticket_id: Linear ticket ID (e.g., "NES-87").
+        branch_name: Branch name to validate.
+
+    Returns:
+        Exit code (0 for valid, 1 for invalid or error).
+    """
+    try:
+        info = linear_dao.get_ticket_info(ticket_id)
+        expected_base = info.get("branch_name")
+
+        if not expected_base:
+            print(f"Error: No branch name found for ticket {ticket_id}", file=sys.stderr)
+            return 1
+
+        is_valid = _is_valid_branch_name(branch_name, expected_base)
+
+        print(
+            json.dumps(
+                {
+                    "ticket_id": ticket_id,
+                    "branch_name": branch_name,
+                    "expected_base": expected_base,
+                    "is_valid": is_valid,
+                },
+                indent=2,
+            )
+        )
+
+        return 0 if is_valid else 1
+
+    except linear_dao.LinearAPIError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
