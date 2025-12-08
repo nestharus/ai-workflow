@@ -21,6 +21,7 @@ from scripts.dev.lint import (
     _parse_args,
     _run_checked,
     _run_checkov,
+    _run_detect_secrets,
     _run_hadolint,
     _run_markdown_restriction,
     _run_mypy,
@@ -376,6 +377,7 @@ class TestLinterConstants:
             "yamllint",
             "yamldocs",
             "checkov",
+            "detect-secrets",
         ]
         assert expected == LINTER_NAMES
 
@@ -871,6 +873,159 @@ class TestRunCheckov:
         assert result == 0
 
 
+class TestRunDetectSecrets:
+    """Tests for _run_detect_secrets function."""
+
+    def test_returns_one_when_baseline_missing(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when secrets baseline file is missing."""
+        fs.create_dir("/fake/repo")
+        # Baseline file does not exist
+
+        with patch.object(lint, "SECRETS_BASELINE", Path("/fake/repo/.secrets.baseline")):
+            result = _run_detect_secrets()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "Secrets baseline missing" in captured.err
+
+    def test_runs_full_scan_when_no_files_specified(self, fs: FakeFilesystem) -> None:
+        """Should run detect-secrets scan --baseline when no files specified."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/.secrets.baseline", contents="{}")
+
+        with (
+            patch.object(lint, "SECRETS_BASELINE", Path("/fake/repo/.secrets.baseline")),
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            result = _run_detect_secrets(None)
+
+        assert result == 0
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+        assert call_args == [
+            "/usr/bin/uv",
+            "run",
+            "detect-secrets",
+            "scan",
+            "--baseline",
+            "/fake/repo/.secrets.baseline",
+        ]
+
+    def test_filters_excluded_files_and_runs_hook(self, fs: FakeFilesystem) -> None:
+        """Should filter excluded extensions and use detect-secrets-hook for file list."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/.secrets.baseline", contents="{}")
+        fs.create_file(
+            "/fake/repo/.lint.detect-secrets.yaml",
+            contents=(
+                "excluded_extensions:\n"
+                "  - .png\n"
+                "  - .exe\n"
+                "  - .db\n"
+                "excluded_names:\n"
+                "  - uv.lock\n"
+                "  - .secrets.baseline\n"
+            ),
+        )
+
+        # Mix of scannable and excluded files
+        test_files = [
+            "app/main.py",  # scannable
+            "tests/test_main.py",  # scannable
+            "image.png",  # excluded by extension
+            "binary.exe",  # excluded by extension
+            "uv.lock",  # excluded by name
+            ".secrets.baseline",  # excluded by name
+            "config.json",  # scannable
+            "data.db",  # excluded by extension
+        ]
+
+        with (
+            patch.object(lint, "SECRETS_BASELINE", Path("/fake/repo/.secrets.baseline")),
+            patch.object(
+                lint, "LINT_DETECT_SECRETS_CONFIG", Path("/fake/repo/.lint.detect-secrets.yaml")
+            ),
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            result = _run_detect_secrets(test_files)
+
+        assert result == 0
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+
+        # Should use detect-secrets-hook for file-based scanning
+        assert call_args[:4] == [
+            "/usr/bin/uv",
+            "run",
+            "detect-secrets-hook",
+            "--baseline",
+        ]
+        assert "/fake/repo/.secrets.baseline" in call_args
+
+        # Only scannable files should be passed
+        assert "app/main.py" in call_args
+        assert "tests/test_main.py" in call_args
+        assert "config.json" in call_args
+
+        # Excluded files should not be passed
+        assert "image.png" not in call_args
+        assert "binary.exe" not in call_args
+        assert "uv.lock" not in call_args
+        assert ".secrets.baseline" not in call_args
+        assert "data.db" not in call_args
+
+    def test_returns_zero_when_no_scannable_files(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 0 and print message when all files are excluded."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/.secrets.baseline", contents="{}")
+        fs.create_file(
+            "/fake/repo/.lint.detect-secrets.yaml",
+            contents=("excluded_extensions:\n  - .png\n  - .exe\nexcluded_names:\n  - uv.lock\n"),
+        )
+
+        # All files are excluded
+        test_files = [
+            "image.png",
+            "binary.exe",
+            "uv.lock",
+        ]
+
+        with (
+            patch.object(lint, "SECRETS_BASELINE", Path("/fake/repo/.secrets.baseline")),
+            patch.object(
+                lint, "LINT_DETECT_SECRETS_CONFIG", Path("/fake/repo/.lint.detect-secrets.yaml")
+            ),
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            result = _run_detect_secrets(test_files)
+
+        assert result == 0
+        mock_check.assert_not_called()
+        captured = capsys.readouterr()
+        assert "No scannable files" in captured.out
+
+    def test_propagates_error_when_secrets_found(self, fs: FakeFilesystem) -> None:
+        """Should propagate CalledProcessError when detect-secrets finds secrets."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/.secrets.baseline", contents="{}")
+
+        with (
+            patch.object(lint, "SECRETS_BASELINE", Path("/fake/repo/.secrets.baseline")),
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            mock_check.side_effect = subprocess.CalledProcessError(1, ["detect-secrets"])
+            with pytest.raises(subprocess.CalledProcessError):
+                _run_detect_secrets(None)
+
+
 class TestMain:
     """Tests for main function."""
 
@@ -957,6 +1112,7 @@ class TestMain:
         fs.create_file("/fake/repo/.hadolint.yaml", contents="")
         fs.create_file("/fake/repo/.pymarkdown.json", contents="{}")
         fs.create_file("/fake/repo/.yamllint.yaml", contents="")
+        fs.create_file("/fake/repo/.secrets.baseline", contents="{}")
         fs.create_file(
             "/fake/repo/.lint.scripts.yaml",
             contents="prefix_rules:\n  scripts.knowledge.: knowledge.",
@@ -978,6 +1134,7 @@ class TestMain:
             patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
             patch.object(lint, "CHECKOV_CONFIG", Path("/fake/repo/.checkov.yaml")),
             patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")),
+            patch.object(lint, "SECRETS_BASELINE", Path("/fake/repo/.secrets.baseline")),
             patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
             patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
@@ -1007,6 +1164,7 @@ class TestMain:
         fs.create_file("/fake/repo/.hadolint.yaml", contents="")
         fs.create_file("/fake/repo/.pymarkdown.json", contents="{}")
         fs.create_file("/fake/repo/.yamllint.yaml", contents="")
+        fs.create_file("/fake/repo/.secrets.baseline", contents="{}")
         fs.create_file(
             "/fake/repo/.lint.scripts.yaml",
             contents="prefix_rules:\n  scripts.knowledge.: knowledge.",
@@ -1028,6 +1186,7 @@ class TestMain:
             patch.object(lint, "OPENAPI_SCHEMA", Path("/fake/repo/openapi/openapi.json")),
             patch.object(lint, "CHECKOV_CONFIG", Path("/fake/repo/.checkov.yaml")),
             patch.object(lint, "HADOLINT_CONFIG", Path("/fake/repo/.hadolint.yaml")),
+            patch.object(lint, "SECRETS_BASELINE", Path("/fake/repo/.secrets.baseline")),
             patch.object(lint, "LINT_SCRIPTS_CONFIG", Path("/fake/repo/.lint.scripts.yaml")),
             patch.object(lint, "LINT_HADOLINT_CONFIG", Path("/fake/repo/.lint.hadolint.yaml")),
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),

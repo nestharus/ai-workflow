@@ -53,6 +53,7 @@ dev = [
     "types-pyyaml>=6.0.12.20250915,<6.0.13",
     "types-jsonschema>=4.23.0,<4.24.0",
     "yamllint>=1.37.1,<1.38.0",
+    "detect-secrets>=1.5.0,<1.6.0",
 ]
 # Knowledge management system dependencies (scripts/knowledge/)
 knowledge = [
