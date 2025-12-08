@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import urllib.error
 import urllib.request
 from typing import Any
@@ -42,9 +43,11 @@ class LinearClient:
 
         Raises:
             LinearAPIError: If no API key is provided and LINEAR_API_KEY
-                environment variable is not set.
+                environment variable is not set, or if the API key is empty.
         """
         if api_key is not None:
+            if not api_key.strip():
+                raise LinearAPIError("API key is empty")
             self._api_key = api_key
         else:
             env_key = os.environ.get("LINEAR_API_KEY")
@@ -914,6 +917,7 @@ query IssueComments($id: String!, $after: String) {
 
 
 # Module-level default client instance (lazily initialized)
+_client_lock = threading.Lock()
 _default_client: LinearClient | None = None
 
 
@@ -928,7 +932,9 @@ def _get_default_client() -> LinearClient:
     """
     global _default_client
     if _default_client is None:
-        _default_client = LinearClient()
+        with _client_lock:
+            if _default_client is None:
+                _default_client = LinearClient()
     return _default_client
 
 

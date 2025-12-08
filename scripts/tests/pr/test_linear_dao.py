@@ -73,6 +73,22 @@ class TestLinearClientInit:
             LinearClient()
         assert "LINEAR_API_KEY environment variable not set" in str(exc_info.value)
 
+    def test_init_raises_for_empty_api_key(self) -> None:
+        """Raise LinearAPIError when api_key is empty string."""
+        with pytest.raises(LinearAPIError) as exc_info:
+            LinearClient(api_key="")
+        assert "API key is empty" in str(exc_info.value)
+
+    def test_init_raises_for_whitespace_only_api_key(self) -> None:
+        """Raise LinearAPIError when api_key is whitespace only."""
+        with pytest.raises(LinearAPIError) as exc_info:
+            LinearClient(api_key="   ")
+        assert "API key is empty" in str(exc_info.value)
+
+        with pytest.raises(LinearAPIError) as exc_info:
+            LinearClient(api_key="\t\n")
+        assert "API key is empty" in str(exc_info.value)
+
 
 # ============================================================================
 # TestLinearClientRunGraphQL
