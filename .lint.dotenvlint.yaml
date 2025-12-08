@@ -1,0 +1,20 @@
+# Lint script driver configuration for dotenv-linter
+# NOTE: This is configuration for the lint.py driver, NOT dotenv-linter's native config
+# Patterns to scan for .env files
+
+targets:
+  - .env.example
+  - .env.*.example
+
+exclude_patterns:
+  - .env.local          # Local secrets excluded
+  - .env.*.local        # Environment-specific local overrides
+
+exclude_dirs:
+  - .venv
+  - .venv2
+  - .tasks/store
+  - .tmp
+  - .worktrees
+  - .git-rewrite
+  - node_modules

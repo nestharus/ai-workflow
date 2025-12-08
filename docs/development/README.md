@@ -71,3 +71,43 @@ For detailed classification rules when creating or modifying documentation, see:
 
 For restructuring documentation between GENERAL and PROJECT files, see:
 * `docs/processes/information-migration.yml` - Full workflow with CLI commands
+
+## External Tool Dependencies
+
+### dotenv-linter (Optional)
+
+dotenv-linter is an external linting tool for validating `.env` files. It helps catch
+common mistakes like duplicate keys, trailing whitespace, and incorrect formatting.
+
+**Installation**:
+
+* **macOS**:
+
+  ```bash
+  brew install dotenv-linter
+  ```
+
+* **Linux**:
+
+  Download from official releases or install via cargo:
+
+  ```bash
+  cargo install dotenv-linter
+  ```
+
+* **Official Installation Docs**: [dotenv-linter installation](https://dotenv-linter.github.io/#/installation)
+
+**Usage**:
+
+Once installed, dotenv-linter is automatically integrated into the project lint
+pipeline, invoked via `uv run lint dotenvlint`. Configuration is managed via
+`.lint.dotenvlint.yaml`.
+
+**Pre-commit vs Lint Driver**: The pre-commit hook in `.pre-commit-config.yaml` runs
+`dotenv-linter` directly on files matching the `files: ^\.env.*$` pattern at commit time.
+The `uv run lint dotenvlint` command uses `.lint.dotenvlint.yaml` to determine which
+`.env` templates to include or exclude. To change pre-commit behavior, edit
+`.pre-commit-config.yaml`; to change CI/local lint behavior, edit `.lint.dotenvlint.yaml`.
+
+**Note**: This is an optional tool. If not installed, the lint script will skip
+dotenv-linter checks.
