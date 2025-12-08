@@ -73,7 +73,7 @@ def _generate_branch_name(ticket_id: str, title: str, max_length: int) -> str:
                 truncated = truncated[:last_hyphen]
             sanitized_title = truncated.rstrip("-")
 
-        branch_name = f"{ticket_id}-{sanitized_title}"
+        branch_name = f"{ticket_id}-{sanitized_title}".rstrip("-")
 
     return branch_name
 
@@ -901,7 +901,7 @@ def generate_branch_command(ticket_id: str) -> int:
     """
     try:
         info = linear_dao.get_ticket_info(ticket_id)
-        identifier = info.get("identifier", ticket_id)
+        identifier = info.get("identifier") or ticket_id
         title = info.get("title", "")
 
         if not title:
