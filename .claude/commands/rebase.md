@@ -2,7 +2,8 @@
 
 ---
 
-description: Rebase a PR branch by squashing, rebasing onto target, resolving conflicts, and pushing
+description: Rebase a PR branch by squashing, rebasing onto target, resolving
+  conflicts, and pushing
 allowed-tools: Task, Read, Glob, Bash
 
 ---
@@ -18,48 +19,36 @@ Rebase PR: $ARGUMENTS
 
 ## Workflow
 
-### 1. Get PR Information
+### 1. Create Rebase Sandbox
+
+Create an isolated sandbox for the rebase operation:
 
 ```bash
-uv run pr get-pr $ARGUMENTS
+uv run pr promote-worktree $ARGUMENTS
 ```
 
 This returns JSON with:
 
-* `branch_name`: Git branch name (may contain slashes, e.g., `mrasolomon/nes-87-...`)
-* `worktree_path`: Path to the worktree, or `null` if on branch directly
-* `working_directory`: Where to run commands - `.` or worktree path
-* `is_worktree`: Boolean - `true` if using worktree, `false` if on branch directly
-* `pr_number`: PR number
-* `pr_url`: PR URL
+* `sandbox_path`: Path to the shared clone (where rebase happens)
+* `source_path`: Path to the original worktree (for reading clean code)
+* `branch_name`: Git branch name
 * `base_branch`: Target branch the PR will merge into (e.g., `main`, `develop`)
+* `pr_number`: PR number
 
-### 1b. Get Repository Root
-
-```bash
-git rev-parse --show-toplevel
-```
-
-Store this as `repo_root`.
-
-Set up variables:
-
-* `repo_root`: From the git command above
-* `working_dir`: `{{repo_root}}/{{working_directory}}` (absolute path)
-* `base_branch`: The target branch from the PR info (NOT hardcoded to `main`)
+Store these values for use throughout the workflow.
 
 ### 2. Gather Merge Context (Before Squash)
 
 Before squashing, gather context needed for conflict resolution:
 
 ```bash
-cd {{working_dir}} && git fetch origin {{base_branch}}
+cd {{sandbox_path}} && git fetch origin {{base_branch}}
 ```
 
 Find the merge-base (original base commit before branches diverged):
 
 ```bash
-cd {{working_dir}} && git merge-base origin/{{base_branch}} HEAD
+cd {{sandbox_path}} && git merge-base origin/{{base_branch}} HEAD
 ```
 
 Store this as `base_commit`.
@@ -67,7 +56,7 @@ Store this as `base_commit`.
 Find commits added to target branch since the base:
 
 ```bash
-cd {{working_dir}} && git log --oneline {{base_commit}}..origin/{{base_branch}}
+cd {{sandbox_path}} && git log --oneline {{base_commit}}..origin/{{base_branch}}
 ```
 
 Store these commit SHAs as `target_commits` (list from oldest to newest).
@@ -77,7 +66,7 @@ Store these commit SHAs as `target_commits` (list from oldest to newest).
 Squash all commits and rebase onto the target branch:
 
 ```bash
-uv run pr squash-rebase --worktree {{working_dir}} --base-branch {{base_branch}}
+uv run pr squash-rebase --worktree {{sandbox_path}} --base-branch {{base_branch}}
 ```
 
 This command:
@@ -97,13 +86,13 @@ When conflicts occur during rebase:
 1. Get the list of conflicted files:
 
    ```bash
-   cd {{working_dir}} && git status --porcelain | grep "^UU" | cut -c4-
+   cd {{sandbox_path}} && git status --porcelain | grep "^UU" | cut -c4-
    ```
 
 2. Get the source commit SHA (the squashed commit being rebased):
 
    ```bash
-   cd {{working_dir}} && git rev-parse HEAD
+   cd {{sandbox_path}} && git rev-parse HEAD
    ```
 
    Store as `source_commit`.
@@ -119,7 +108,8 @@ When conflicts occur during rebase:
    ```json
    {
      "file_path": "<relative path to conflicted file>",
-     "worktree": "{{working_dir}}",
+     "sandbox_path": "{{sandbox_path}}",
+     "source_path": "{{source_path}}",
      "base_commit": "{{base_commit}}",
      "target_branch": "origin/{{base_branch}}",
      "target_commits": ["<sha1>", "<sha2>", ...],
@@ -127,24 +117,48 @@ When conflicts occur during rebase:
    }
    ```
 
+   **Note**: The agent uses `sandbox_path` for conflict editing and `source_path` for researching clean code context.
+
 4. After all files are resolved, continue the rebase:
 
    ```bash
-   cd {{working_dir}} && git rebase --continue
+   cd {{sandbox_path}} && git rebase --continue
    ```
 
 5. If more conflicts appear, repeat step 4.
 
 ### 5. Force Push
 
-After successful rebase:
+After successful rebase, push from the sandbox:
 
 ```bash
-cd {{working_dir}} && git push --force-with-lease
+cd {{sandbox_path}} && git push --force-with-lease
+```
+
+### 6. Sync Source Worktree
+
+After the force push, sync the source worktree to match the rebased branch:
+
+```bash
+cd {{source_path}} && git fetch origin && git reset --hard origin/{{branch_name}}
+```
+
+This ensures the original worktree has the rebased history and is ready for continued work.
+
+### 7. Cleanup Sandbox
+
+After successful sync, remove the sandbox:
+
+```bash
+uv run pr cleanup-sandbox $ARGUMENTS
 ```
 
 ## Important Rules
 
 * Always force push with `--force-with-lease` (safer than `--force`)
-* The conflict-resolver agent analyzes BOTH sides' intent and stitches changes together
+* The conflict-resolver agent analyzes BOTH sides' intent and stitches changes
+  together
 * Never just pick one side of a conflict - always analyze and merge properly
+* **Always use sandbox**: Whether working from repo root or a worktree, rebase
+  happens in the sandbox to keep the source unblocked
+* The source_path remains clean for code research during conflict resolution

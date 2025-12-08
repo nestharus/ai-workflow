@@ -21,6 +21,8 @@ Usage:
     uv run pr get-expected-branch-name <ticket-id>
     uv run pr is-valid-branch-name --ticket <id> --branch <name>
     uv run pr extract-ticket-id [<branch-name>]
+    uv run pr promote-worktree [<identifier>]
+    uv run pr cleanup-sandbox [<identifier>]
 """
 
 from __future__ import annotations
@@ -366,6 +368,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Branch name to parse. If omitted, uses current branch.",
     )
 
+    # promote-worktree command
+    promote_parser = subparsers.add_parser(
+        "promote-worktree",
+        help="Create a sandbox for rebase/merge (keeps source unblocked)",
+    )
+    promote_parser.add_argument(
+        "identifier",
+        nargs="?",
+        default=None,
+        help="PR ID (17/#17), ticket ID (NES-123), branch name, or omit for current branch.",
+    )
+
+    # cleanup-sandbox command
+    cleanup_parser = subparsers.add_parser(
+        "cleanup-sandbox",
+        help="Remove a rebase sandbox created by promote-worktree",
+    )
+    cleanup_parser.add_argument(
+        "identifier",
+        nargs="?",
+        default=None,
+        help="PR ID, ticket ID, branch name, or omit for current branch.",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -422,6 +448,10 @@ def main(argv: list[str] | None = None) -> int:
         return commands.is_valid_branch_name_command(args.ticket, args.branch)
     if args.command == "extract-ticket-id":
         return commands.extract_ticket_id_command(args.branch_name)
+    if args.command == "promote-worktree":
+        return commands.promote_worktree_command(args.identifier)
+    if args.command == "cleanup-sandbox":
+        return commands.cleanup_sandbox_command(args.identifier)
 
     return 1
 

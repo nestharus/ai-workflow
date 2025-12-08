@@ -515,3 +515,65 @@ def create_worktree_tracking(worktree_path: Path, branch_name: str) -> tuple[boo
     if result.returncode != 0:
         return False, result.stderr
     return True, ""
+
+
+def create_shared_clone(source_path: Path, clone_path: Path, branch_name: str) -> tuple[bool, str]:
+    """Create a shared clone for safe rebase/merge operations.
+
+    Uses git clone --shared to create a lightweight clone that shares the object
+    store with the source repository. This allows performing rebase/merge operations
+    in isolation while the source worktree remains readable.
+
+    Args:
+        source_path: Path to the source worktree or repo.
+        clone_path: Path where the shared clone should be created.
+        branch_name: Name of the branch to checkout in the clone.
+
+    Returns:
+        Tuple of (success, error_message).
+    """
+    # Ensure parent directory exists
+    clone_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Create shared clone
+    result = _run_git(
+        ["git", "clone", "--shared", "--no-checkout", str(source_path), str(clone_path)]
+    )
+    if result is None:
+        return False, "git not available"
+    if result.returncode != 0:
+        return False, result.stderr
+
+    # Checkout the branch
+    result = _run_git(["git", "checkout", branch_name], cwd=clone_path)
+    if result is None:
+        return False, "git not available"
+    if result.returncode != 0:
+        # Clean up the clone if checkout fails
+        import shutil
+
+        shutil.rmtree(clone_path, ignore_errors=True)
+        return False, f"checkout failed: {result.stderr}"
+
+    return True, ""
+
+
+def remove_shared_clone(clone_path: Path) -> tuple[bool, str]:
+    """Remove a shared clone directory.
+
+    Args:
+        clone_path: Path to the shared clone to remove.
+
+    Returns:
+        Tuple of (success, error_message).
+    """
+    import shutil
+
+    if not clone_path.exists():
+        return True, ""
+
+    try:
+        shutil.rmtree(clone_path)
+        return True, ""
+    except OSError as e:
+        return False, str(e)
