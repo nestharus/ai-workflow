@@ -1,0 +1,14 @@
+# Trivy linter configuration for scripts/dev/lint.py
+
+# Filesystem scan target (uv.lock for Python dependencies)
+fs_target: uv.lock
+
+# Enable/disable specific scan modes
+enable_fs_scan: true
+enable_image_scan: true
+
+# Skip image scan if Dockerfile is missing (instead of failing)
+skip_image_if_no_dockerfile: true
+
+# Skip fs scan if uv.lock is missing instead of failing (true=skip, false=fail)
+skip_fs_if_no_lockfile: false

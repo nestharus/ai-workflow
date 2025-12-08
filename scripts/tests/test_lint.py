@@ -18,6 +18,7 @@ from scripts.dev.lint import (
     LINTER_RUNNERS_WITH_FILES,
     InvalidCommandError,
     _actionlint,
+    _docker,
     _dotenv_linter,
     _hadolint,
     _load_yaml_config,
@@ -35,6 +36,7 @@ from scripts.dev.lint import (
     _run_scripts,
     _run_yamldocs,
     _run_yamllint,
+    _trivy,
     _uv,
     main,
 )
@@ -118,6 +120,40 @@ class TestActionlint:
             with pytest.raises(RuntimeError) as exc_info:
                 _actionlint()
             assert "actionlint CLI required" in str(exc_info.value)
+
+
+class TestTrivy:
+    """Tests for _trivy function."""
+
+    def test_returns_trivy_path_when_found(self) -> None:
+        """Should return trivy executable path when available."""
+        with patch("shutil.which", return_value="/usr/bin/trivy"):
+            result = _trivy()
+            assert result == "/usr/bin/trivy"
+
+    def test_raises_when_not_found(self) -> None:
+        """Should raise RuntimeError when trivy not found."""
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(RuntimeError) as exc_info:
+                _trivy()
+            assert "trivy CLI required" in str(exc_info.value)
+
+
+class TestDocker:
+    """Tests for _docker function."""
+
+    def test_returns_docker_path_when_found(self) -> None:
+        """Should return docker executable path when available."""
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            result = _docker()
+            assert result == "/usr/bin/docker"
+
+    def test_raises_when_not_found(self) -> None:
+        """Should raise RuntimeError when docker not found."""
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(RuntimeError) as exc_info:
+                _docker()
+            assert "docker CLI required" in str(exc_info.value)
 
 
 class TestRunChecked:
@@ -419,6 +455,7 @@ class TestLinterConstants:
             "dotenvlint",
             "checkov",
             "detect-secrets",
+            "trivy",
         ]
         assert expected == LINTER_NAMES
 
@@ -460,6 +497,11 @@ class TestLinterConstants:
     def test_actionlint_config_path(self) -> None:
         """Should have config path for actionlint linter."""
         assert LINT_ACTIONLINT_CONFIG.name == ".lint.actionlint.yaml"
+
+    def test_trivy_registered_in_no_files_runners(self) -> None:
+        """Should have trivy in LINTER_RUNNERS_NO_FILES."""
+        assert "trivy" in LINTER_RUNNERS_NO_FILES
+        assert callable(LINTER_RUNNERS_NO_FILES["trivy"])
 
 
 class TestParseArgs:
@@ -1402,6 +1444,19 @@ class TestMain:
         captured = capsys.readouterr()
         assert "uv CLI required" in captured.err
 
+    def test_returns_one_when_trivy_not_found(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should return 1 when trivy is not found."""
+        # Run specifically the trivy linter which requires trivy
+        with (
+            patch("sys.argv", ["lint", "trivy"]),
+            patch("shutil.which", return_value=None),
+        ):
+            result = main()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "trivy CLI required" in captured.err
+
     def test_returns_one_when_openapi_missing(
         self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -1424,6 +1479,7 @@ class TestMain:
         )
         fs.create_file("/fake/repo/.lint.dotenvlint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/.lint.actionlint.yaml", contents="ignore: []\nexclude_dirs: []")
+        fs.create_file("/fake/repo/.lint.trivy.yaml", contents="")
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
@@ -1436,6 +1492,7 @@ class TestMain:
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
             patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
+            patch.object(lint, "LINT_TRIVY_CONFIG", Path("/fake/repo/.lint.trivy.yaml")),
             patch.object(
                 lint,
                 "LINT_MARKDOWN_RESTRICTION_CONFIG",
@@ -1453,6 +1510,7 @@ class TestMain:
             ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
+            patch("subprocess.call", return_value=0),
         ):
             result = main()
 
@@ -1485,6 +1543,8 @@ class TestMain:
         fs.create_file("/fake/repo/.pymarkdown.json", contents="{}")
         fs.create_file("/fake/repo/.yamllint.yaml", contents="")
         fs.create_file("/fake/repo/.secrets.baseline", contents="{}")
+        fs.create_file("/fake/repo/.trivy.yaml", contents="")
+        fs.create_file("/fake/repo/uv.lock", contents="# lockfile")
         fs.create_file(
             "/fake/repo/.lint.scripts.yaml",
             contents="prefix_rules:\n  scripts.knowledge.: knowledge.",
@@ -1499,6 +1559,7 @@ class TestMain:
         )
         fs.create_file("/fake/repo/.lint.dotenvlint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/.lint.actionlint.yaml", contents="ignore: []\nexclude_dirs: []")
+        fs.create_file("/fake/repo/.lint.trivy.yaml", contents="")
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
@@ -1514,6 +1575,7 @@ class TestMain:
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
             patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
+            patch.object(lint, "LINT_TRIVY_CONFIG", Path("/fake/repo/.lint.trivy.yaml")),
             patch.object(
                 lint,
                 "LINT_MARKDOWN_RESTRICTION_CONFIG",
@@ -1531,6 +1593,7 @@ class TestMain:
             ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
+            patch("subprocess.call", return_value=0),
         ):
             result = main()
 
@@ -1549,6 +1612,8 @@ class TestMain:
         fs.create_file("/fake/repo/.pymarkdown.json", contents="{}")
         fs.create_file("/fake/repo/.yamllint.yaml", contents="")
         fs.create_file("/fake/repo/.secrets.baseline", contents="{}")
+        fs.create_file("/fake/repo/.trivy.yaml", contents="")
+        fs.create_file("/fake/repo/uv.lock", contents="# lockfile")
         fs.create_file(
             "/fake/repo/.lint.scripts.yaml",
             contents="prefix_rules:\n  scripts.knowledge.: knowledge.",
@@ -1563,6 +1628,7 @@ class TestMain:
         )
         fs.create_file("/fake/repo/.lint.dotenvlint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/.lint.actionlint.yaml", contents="ignore: []\nexclude_dirs: []")
+        fs.create_file("/fake/repo/.lint.trivy.yaml", contents="")
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
@@ -1578,6 +1644,7 @@ class TestMain:
             patch.object(lint, "LINT_PYMARKDOWN_CONFIG", Path("/fake/repo/.lint.pymarkdown.yaml")),
             patch.object(lint, "LINT_YAMLLINT_CONFIG", Path("/fake/repo/.lint.yamllint.yaml")),
             patch.object(lint, "LINT_YAMLDOCS_CONFIG", Path("/fake/repo/.lint.yamldocs.yaml")),
+            patch.object(lint, "LINT_TRIVY_CONFIG", Path("/fake/repo/.lint.trivy.yaml")),
             patch.object(
                 lint,
                 "LINT_MARKDOWN_RESTRICTION_CONFIG",
@@ -1595,6 +1662,7 @@ class TestMain:
             ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
+            patch("subprocess.call", return_value=0),
         ):
             main()
 
@@ -1641,3 +1709,39 @@ class TestMain:
         assert "ruff" in str(calls[1])
         # Third call should be mypy
         assert "mypy" in str(calls[2])
+
+    def test_returns_one_on_oserror(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should return 1 and print message when OSError occurs."""
+        with (
+            patch("sys.argv", ["lint", "ruff"]),
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            mock_check.side_effect = OSError("Permission denied")
+            result = main()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "OS error" in captured.err
+        assert "Permission denied" in captured.err
+
+    def test_returns_one_on_yaml_error(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 and print message when YAML configuration error occurs."""
+
+        # Create a file with invalid YAML content
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/.lint.trivy.yaml", contents="invalid: yaml: content: [")
+
+        with (
+            patch("sys.argv", ["lint", "trivy"]),
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_TRIVY_CONFIG", Path("/fake/repo/.lint.trivy.yaml")),
+            patch("shutil.which", return_value="/usr/bin/trivy"),
+        ):
+            result = main()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "YAML configuration error" in captured.err
