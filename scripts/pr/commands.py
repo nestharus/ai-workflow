@@ -1044,9 +1044,16 @@ def setup_worktree_command(ticket_id: str) -> int:
         # This always creates a new branch, never reuses an existing one
         branch_name = _find_available_branch_name(base_branch_name)
 
-        # Worktree path: .worktrees/<branch_name>
+        # Worktree base directory
+        base_dir = Path(".worktrees").resolve()
         # Note: branch names with slashes create nested directories
-        worktree_path = Path(".worktrees") / branch_name
+        worktree_path = (base_dir / branch_name).resolve()
+        # Ensure the resolved path stays within .worktrees to avoid traversal
+        try:
+            worktree_path.relative_to(base_dir)
+        except ValueError:
+            print("Error: Unsafe branch name resolves outside .worktrees", file=sys.stderr)
+            return 1
 
         # Check if worktree already exists at this path
         if git_dao.worktree_exists(worktree_path):
