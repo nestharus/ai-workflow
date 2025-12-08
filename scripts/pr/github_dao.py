@@ -337,14 +337,18 @@ def get_pr_changed_files(pr_number: int) -> list[str]:
         List of file paths changed in the PR.
     """
     # Use REST API for files as GraphQL pagination is complex for this
+    # Note: gh api --paginate outputs multiple JSON arrays concatenated together,
+    # not a single merged array. Using --jq to extract filenames avoids this issue.
     output = run_gh_command(
-        ["api", f"repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/files", "--paginate"]
+        [
+            "api",
+            f"repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/files",
+            "--paginate",
+            "--jq",
+            ".[].filename",
+        ]
     )
-    try:
-        files_data = json.loads(output)
-    except json.JSONDecodeError as e:
-        raise GraphQLError(f"Invalid JSON from gh: {e}") from e
-    return [f.get("filename", "") for f in files_data if f.get("filename")]
+    return [line for line in output.splitlines() if line.strip()]
 
 
 def post_pr_comment(pr_number: int, body: str) -> None:
