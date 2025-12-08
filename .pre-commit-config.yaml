@@ -37,3 +37,11 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+  - repo: https://github.com/dotenv-linter/dotenv-linter
+    rev: v3.3.0  # Pinned version - must match documentation and plan references
+    hooks:
+      - id: dotenv-linter
+        name: Lint .env files
+        types: [file]
+        files: ^\.env.*$
