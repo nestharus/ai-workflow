@@ -23,10 +23,12 @@ LINTER_NAMES = [
     "yamllint",
     "yamldocs",
     "checkov",
+    "detect-secrets",
 ]
 OPENAPI_SCHEMA = REPO_ROOT / "openapi" / "openapi.json"
 CHECKOV_CONFIG = REPO_ROOT / ".checkov.yaml"
 HADOLINT_CONFIG = REPO_ROOT / ".hadolint.yaml"
+SECRETS_BASELINE = REPO_ROOT / ".secrets.baseline"
 UV_CLI_REQUIRED = "uv CLI required to run lint"
 HADOLINT_CLI_REQUIRED = "hadolint CLI required to run lint"
 
@@ -37,6 +39,7 @@ LINT_PYMARKDOWN_CONFIG = REPO_ROOT / ".lint.pymarkdown.yaml"
 LINT_YAMLLINT_CONFIG = REPO_ROOT / ".lint.yamllint.yaml"
 LINT_YAMLDOCS_CONFIG = REPO_ROOT / ".lint.yamldocs.yaml"
 LINT_MARKDOWN_RESTRICTION_CONFIG = REPO_ROOT / ".lint.markdown-restriction.yaml"
+LINT_DETECT_SECRETS_CONFIG = REPO_ROOT / ".lint.detect-secrets.yaml"
 
 
 def _load_yaml_config(config_path: Path) -> dict[str, Any]:
@@ -422,6 +425,68 @@ def _run_checkov() -> int:
     return 0
 
 
+def _run_detect_secrets(files: list[str] | None = None) -> int:
+    """Run detect-secrets to scan for secrets.
+
+    Args:
+        files: Optional list of files to scan. If None, scans all tracked files.
+
+    Returns:
+        0 if no new secrets found, 1 if baseline missing.
+        Raises CalledProcessError if detect-secrets finds new secrets.
+    """
+    if not SECRETS_BASELINE.exists():
+        print(
+            f"Secrets baseline missing at {SECRETS_BASELINE}. "
+            "Run `uv run detect-secrets scan > .secrets.baseline` first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    uv_exe = _uv()
+    if files:
+        # Load exclusion config from .lint.detect-secrets.yaml
+        config = _load_yaml_config(LINT_DETECT_SECRETS_CONFIG)
+        excluded_extensions = set(config.get("excluded_extensions", []))
+        excluded_names = set(config.get("excluded_names", []))
+
+        scannable_files = [
+            f
+            for f in files
+            if not any(f.endswith(ext) for ext in excluded_extensions)
+            and Path(f).name not in excluded_names
+        ]
+
+        if not scannable_files:
+            print("No scannable files for detect-secrets")
+            return 0
+
+        # Use detect-secrets-hook for file-based scanning
+        _run_checked(
+            [
+                uv_exe,
+                "run",
+                "detect-secrets-hook",
+                "--baseline",
+                str(SECRETS_BASELINE),
+                *scannable_files,
+            ]
+        )
+    else:
+        # Scan all files and compare against baseline
+        _run_checked(
+            [
+                uv_exe,
+                "run",
+                "detect-secrets",
+                "scan",
+                "--baseline",
+                str(SECRETS_BASELINE),
+            ]
+        )
+    return 0
+
+
 # Map linter names to their runner functions (no file filtering support)
 LINTER_RUNNERS_NO_FILES: dict[str, Callable[[], int | None]] = {
     "scripts": _run_scripts,
@@ -437,6 +502,7 @@ LINTER_RUNNERS_WITH_FILES: dict[str, Callable[[list[str] | None], int | None]] =
     "hadolint": _run_hadolint,
     "pymarkdown": _run_pymarkdown,
     "yamllint": _run_yamllint,
+    "detect-secrets": _run_detect_secrets,
 }
 
 
