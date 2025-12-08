@@ -2,31 +2,19 @@
 Test Fixtures Module.
 
 This module implements the Composition Root pattern for the test suite, providing
-centralized fixture definitions for both integration and end-to-end (E2E) tests.
+centralized fixture definitions for integration tests.
 
-It supports two distinct testing tiers:
-1. Integration Tests (Fast):
-   - Run in-process using `httpx.ASGITransport`.
-   - Use `async_client` fixture.
-   - Mock external dependencies but execute full application code.
-   - No network overhead.
-
-2. E2E Tests (Slow):
-   - Run against a live server process using `subprocess`.
-   - Use `api_client` fixture.
-   - Verify the full stack including startup scripts, health checks, and networking.
-   - Marked with `@pytest.mark.e2e`.
+Integration Tests (Fast):
+- Run in-process using `httpx.ASGITransport`.
+- Use `async_client` fixture.
+- Mock external dependencies but execute full application code.
+- No network overhead.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import shutil
-import socket
-import subprocess
-import time
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
@@ -43,34 +31,7 @@ from app.core.settings import Settings
 logger = logging.getLogger(__name__)
 
 
-class DockerBuildError(RuntimeError):
-    """Raised when the Docker image build fails during E2E setup."""
-
-    def __init__(self, stderr: str) -> None:
-        """Attach stderr output from the failed build."""
-        super().__init__(f"Docker image build failed: {stderr}")
-
-
-class DockerStartupTimeoutError(RuntimeError):
-    """Raised when the containerized server does not become healthy in time."""
-
-    def __init__(self, container_name: str, timeout: float) -> None:
-        """Report the timeout and container name involved."""
-        message = (
-            f"Dockerized server failed to start within {timeout} seconds; "
-            f"see docker logs for {container_name}"
-        )
-        super().__init__(message)
-
-
-class DockerExecutableNotFoundError(FileNotFoundError):
-    """Raised when the docker CLI is missing from PATH."""
-
-    def __init__(self) -> None:
-        super().__init__("Docker executable not found on PATH")
-
-
-# --- Integration Test Fixtures (In-Process) ---
+# --- Test Fixtures ---
 
 
 @pytest.fixture
@@ -123,151 +84,11 @@ async def async_client(test_app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
         yield ac
 
 
-# --- E2E Test Fixtures (Dockerized Live Server) ---
-
-
-def _resolve_test_port() -> int:
-    """Return test port from env or allocate an ephemeral free port."""
-    env_port = os.getenv("TEST_PORT")
-    try:
-        if env_port and env_port != "0":
-            return int(env_port)
-    except ValueError:
-        logger.warning("Invalid TEST_PORT '%s'; falling back to ephemeral port", env_port)
-
-    # NOTE: Race condition exists here. The port is freed when the socket closes,
-    # allowing another process to claim it before Docker binds. Mitigations include:
-    # - Keeping the socket open until the service binds (not always feasible)
-    # - Letting Docker pick and reading the mapped port afterward
-    # - Retrying on bind failure with a new ephemeral port
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("", 0))
-        _, port = sock.getsockname()
-
-    os.environ["TEST_PORT"] = str(port)
-    return port
-
-
-TEST_PORT = _resolve_test_port()
-BASE_URL = f"http://127.0.0.1:{TEST_PORT}"
-
-
-def _docker_exe() -> str:
-    docker_path = shutil.which("docker")
-    if docker_path is None:
-        raise DockerExecutableNotFoundError()
-    return docker_path
-
-
-def _docker_run(
-    args: list[str], *, check: bool = False, **kwargs: object
-) -> subprocess.CompletedProcess:
-    command = [_docker_exe(), *args]
-    return subprocess.run(command, check=check, **kwargs)
-
-
-@pytest.fixture(scope="session")
-def live_server() -> Iterator[str]:
-    """
-    Launch a dockerized live server for E2E tests.
-
-    Uses docker-compose to launch the full stack so dependencies (DB, search)
-    match production composition.
-    """
-    compose_env = {**os.environ, "TEST_PORT": str(TEST_PORT)}
-    stack_name = "docker-compose stack"
-
-    # Run docker-compose to build and start the api stack with dependencies
-    try:
-        _docker_run(
-            ["compose", "-f", "docker-compose.yml", "up", "-d", "--build", "api"],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            env=compose_env,
-        )
-    except subprocess.CalledProcessError as exc:
-        stderr_output = exc.stderr.decode("utf-8") if exc.stderr else ""
-        raise DockerBuildError(stderr_output) from exc
-    # Poll for health
-    # Elasticsearch has a 60s start_period + 30s healthcheck interval,
-    # so we need more time for the full stack to become healthy
-    start_time = time.time()
-    timeout = 120.0  # seconds
-    healthy = False
-
-    with httpx.Client() as client:
-        while time.time() - start_time < timeout:
-            try:
-                response = client.get(f"{BASE_URL}/health")
-                try:
-                    payload = response.json()
-                except (json.JSONDecodeError, ValueError):
-                    time.sleep(0.5)
-                    continue
-                if response.status_code == 200 and payload.get("status") == "ok":
-                    healthy = True
-                    break
-            except httpx.RequestError:
-                pass
-            time.sleep(0.5)
-
-    if not healthy:
-        logs_result = _docker_run(
-            ["compose", "-f", "docker-compose.yml", "logs"],
-            capture_output=True,
-            text=True,
-            env=compose_env,
-        )
-        log_output = logs_result.stdout.strip() if logs_result.stdout else ""
-        if log_output:
-            logger.error("compose logs while failing health check:\n%s", log_output)
-        else:
-            logger.error("compose did not produce startup logs")
-
-        _docker_run(
-            ["compose", "-f", "docker-compose.yml", "down", "--remove-orphans"],
-            capture_output=True,
-            env=compose_env,
-        )
-        raise DockerStartupTimeoutError(stack_name, timeout)
-
-    try:
-        yield BASE_URL
-    finally:
-        # 5. Teardown
-        _docker_run(
-            [
-                "compose",
-                "-f",
-                "docker-compose.yml",
-                "down",
-                "--remove-orphans",
-                "--volumes",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            env=compose_env,
-        )
-
-
-@pytest_asyncio.fixture
-async def api_client(live_server: str) -> AsyncIterator[httpx.AsyncClient]:
-    """Yield an async client configured for the live server (E2E tests)."""
-    async with httpx.AsyncClient(base_url=live_server, timeout=5.0) as ac:
-        yield ac
-
-
 # --- Use-Case Coverage Reporting Hooks ---
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Register the use-case coverage threshold configuration options."""
-    parser.addini(
-        "usecase_coverage_threshold_e2e",
-        "Minimum e2e use-case coverage percentage required (0-100)",
-        default="100",
-    )
     parser.addini(
         "usecase_coverage_threshold_integration",
         "Minimum integration use-case coverage percentage required (0-100)",
@@ -292,7 +113,7 @@ def pytest_configure(config: pytest.Config) -> None:
     usecase_registry: dict = {
         "all_ids": [],
         "by_feature": {},
-        "by_tier": {"e2e": [], "integration": []},
+        "by_tier": {"integration": []},
         "metadata": {"version": "unknown", "last_updated": "unknown"},
     }
 
@@ -324,7 +145,7 @@ def pytest_configure(config: pytest.Config) -> None:
     features = data.get("features", {})
     all_ids: list[str] = []
     by_feature: dict[str, list[str]] = {}
-    by_tier: dict[str, list[str]] = {"e2e": [], "integration": []}
+    by_tier: dict[str, list[str]] = {"integration": []}
 
     for feature_key, feature_data in features.items():
         feature_name = feature_data.get("name", feature_key)
@@ -452,32 +273,6 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
     # Check per-tier thresholds and collect failures
     threshold_failures: list[str] = []
-
-    # Parse e2e threshold with error handling
-    e2e_threshold_str = config.getini("usecase_coverage_threshold_e2e")
-    e2e_threshold = 100.0
-    if e2e_threshold_str:
-        try:
-            e2e_threshold = float(e2e_threshold_str)
-            if e2e_threshold < 0 or e2e_threshold > 100:
-                logger.warning(
-                    "usecase_coverage_threshold_e2e value %.1f is outside valid range (0-100), "
-                    "clamping to valid range",
-                    e2e_threshold,
-                )
-                e2e_threshold = max(0.0, min(100.0, e2e_threshold))
-        except ValueError:
-            logger.warning(
-                "Invalid usecase_coverage_threshold_e2e value '%s', using default of 100.0",
-                e2e_threshold_str,
-            )
-            e2e_threshold = 100.0
-
-    e2e_stats = tier_stats.get("e2e", {"percentage": 100.0})
-    if e2e_stats["percentage"] < e2e_threshold:
-        threshold_failures.append(
-            f"e2e coverage {e2e_stats['percentage']:.1f}% < {e2e_threshold:.1f}%"
-        )
 
     # Parse integration threshold with error handling
     integration_threshold_str = config.getini("usecase_coverage_threshold_integration")

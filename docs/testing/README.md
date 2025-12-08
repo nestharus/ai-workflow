@@ -19,7 +19,6 @@ This validates all test tiers with appropriate coverage requirements.
 | **Unit** | Line/branch per function | All functions in `app/` |
 | **Component** | Line/branch per function | Service layer (`app/services/`) only |
 | **Integration** | Use-case | User scenarios from YAML |
-| **E2E** | Use-case | Full stack scenarios |
 | **Scripts** | Line/branch per function | Scripts and tools |
 
 Coverage thresholds are configured in project settings.
@@ -30,14 +29,13 @@ Coverage thresholds are configured in project settings.
 
 **File:** `api-testing-patterns.md`
 
-Defines how to test FastAPI endpoints across unit, integration, and E2E test layers. Covers fixture setup,
+Defines how to test FastAPI endpoints across unit and integration test layers. Covers fixture setup,
 dependency overrides, async client configuration, and test organization for comprehensive API coverage.
 
 **Apply when:**
 
 * Writing unit tests for route handlers
 * Setting up integration tests with test clients
-* Creating E2E tests against live servers
 * Configuring dependency overrides for testing
 
 ### Testing Patterns
@@ -49,7 +47,7 @@ markers, manage the use-case registry in `tests/docs/use_cases.yaml`, and track 
 
 **Apply when:**
 
-* Writing integration or E2E tests
+* Writing integration tests
 * Adding new use-cases to the registry
 * Linking tests to use-case IDs with `@pytest.mark.usecase`
 * Understanding the relationship between code coverage and use-case coverage
@@ -59,12 +57,12 @@ markers, manage the use-case registry in `tests/docs/use_cases.yaml`, and track 
 **File:** `testing-workflow.md`
 
 Describes the four-tier testing approach: Unit (all functions), Component (service layer), Integration
-(use-case based), and E2E (full stack). Covers the `test-coverage` command, coverage rules, and common
+(use-case based), and Scripts. Covers the `test-coverage` command, coverage rules, and common
 test commands.
 
 **Apply when:**
 
-* Running tests at different levels (unit, component, integration, E2E)
+* Running tests at different levels (unit, component, integration, scripts)
 * Understanding test fixture setup and scope
 * Executing test commands for specific test tiers
 * Understanding per-function vs use-case coverage requirements

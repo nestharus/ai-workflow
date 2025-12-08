@@ -80,11 +80,6 @@ class TestTestTiers:
         tiers = get_test_tiers()
         assert "integration" in tiers
 
-    def test_has_e2e_tier(self) -> None:
-        """Should have e2e test tier."""
-        tiers = get_test_tiers()
-        assert "e2e" in tiers
-
     def test_has_scripts_tier(self) -> None:
         """Should have scripts test tier."""
         tiers = get_test_tiers()
@@ -118,15 +113,6 @@ class TestTestTiers:
         tiers = get_test_tiers()
         config = tiers["integration"]
         assert config.test_path == "tests/integration"
-        assert config.coverage_type == "usecase"
-        # coverage_file field should be removed
-        assert not hasattr(config, "coverage_file")
-
-    def test_e2e_tier_config(self) -> None:
-        """E2E tier should use use-case coverage."""
-        tiers = get_test_tiers()
-        config = tiers["e2e"]
-        assert config.test_path == "tests/e2e"
         assert config.coverage_type == "usecase"
         # coverage_file field should be removed
         assert not hasattr(config, "coverage_file")
@@ -815,11 +801,6 @@ class TestParseArgs:
         """Should accept integration tier option."""
         args = parse_args(["--tier", "integration"])
         assert args.tier == "integration"
-
-    def test_accepts_e2e_tier(self) -> None:
-        """Should accept e2e tier option."""
-        args = parse_args(["--tier", "e2e"])
-        assert args.tier == "e2e"
 
     def test_accepts_scripts_tier(self) -> None:
         """Should accept scripts tier option."""

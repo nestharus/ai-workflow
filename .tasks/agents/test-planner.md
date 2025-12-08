@@ -25,11 +25,11 @@ The user prompt should provide the strategy file path or describe the implementa
 
 - Read the test strategy document to understand tier assignments, patterns, and coverage goals
 - Use bash commands (git diff, grep, find) to examine code changes and existing test files
-- Analyze existing test files in the relevant tiers (tests/unit/, tests/integration/, tests/e2e/) to understand patterns
+- Analyze existing test files in the relevant tiers (tests/unit/, tests/integration/) to understand patterns
 - Reference `tests/docs/use_cases.yaml` for use-case ID assignment
 - Reference `docs/testing/testing-patterns.yml` and `docs/testing/testing-workflow.yml` for testing conventions
 - Focus on precise, actionable test changes (not strategy or implementation code)
-- Ensure all new integration/e2e tests have use-case IDs assigned
+- Ensure all new integration tests have use-case IDs assigned
 - Follow existing test naming conventions and file organization patterns
 - Do not write test code; provide detailed instructions for the test-writer agent
 
@@ -45,7 +45,7 @@ The user prompt should provide the strategy file path or describe the implementa
 ### Step 2: Review Test Strategy
 
 - Read the test strategy document to understand tier assignments
-- Extract coverage goals for each tier (unit, component, integration, e2e)
+- Extract coverage goals for each tier (unit, component, integration, scripts)
 - Note recommended patterns, fixtures, and mocking strategies
 - Identify edge cases and error scenarios to test
 
@@ -61,8 +61,8 @@ The user prompt should provide the strategy file path or describe the implementa
 
 - For each code change, determine which test files need modification
 - Identify new test files that need to be created
-- Assign test tier (unit/component/integration/e2e) based on strategy
-- Determine use-case IDs for integration/e2e tests (reference use_cases.yaml)
+- Assign test tier (unit/component/integration/scripts) based on strategy
+- Determine use-case IDs for integration tests (reference use_cases.yaml)
 - Plan test function names following existing conventions
 
 ### Step 5: Generate Test Plan
@@ -71,7 +71,7 @@ The user prompt should provide the strategy file path or describe the implementa
 - For each test file, specify operation (MODIFY/NEW)
 - List specific test functions to add/modify with detailed instructions
 - Include fixture requirements, mocking strategies, and assertion patterns
-- Assign use-case markers for integration/e2e tests
+- Assign use-case markers for integration tests
 - Note dependencies and prerequisites
 
 ## Review Mode
@@ -168,12 +168,12 @@ List new use-case IDs to add to `tests/docs/use_cases.yaml`. Include this sectio
 
 ### 3. Test File Changes
 
-Group by tier (unit, component, integration, e2e). For each test file:
+Group by tier (unit, component, integration, scripts). For each test file:
 
 **File: {path}**
 
 - Operation: MODIFY or NEW
-- Tier: unit/component/integration/e2e
+- Tier: unit/component/integration/scripts
 - Purpose: Brief description of what this test file validates
 
 **Test Functions:**
@@ -181,7 +181,7 @@ Group by tier (unit, component, integration, e2e). For each test file:
 For each test function:
 
 - Function name: test_{descriptive_name}
-- Use-case marker: @pytest.mark.usecase("UC-XXX-NNN") (if integration/e2e)
+- Use-case marker: @pytest.mark.usecase("UC-XXX-NNN") (if integration)
 - Purpose: What scenario this test validates
 - Setup: Required fixtures, test data, mocking setup
 - Actions: Steps to perform (API calls, function invocations)
@@ -211,7 +211,7 @@ For each test function:
 - Expected coverage impact per tier
 - Functions/use-cases that will be covered
 - Remaining gaps (if any)
-- Express coverage expectations with reference to the per-function and use-case coverage rules defined in `docs/testing/testing-patterns.yml` and `AGENTS.md` (80% per-function line/branch coverage for unit/component, 100% use-case coverage for integration/e2e)
+- Express coverage expectations with reference to the per-function and use-case coverage rules defined in `docs/testing/testing-patterns.yml` and `AGENTS.md` (80% per-function line/branch coverage for unit/component, 100% use-case coverage for integration)
 
 ### 8. Notes for Test Writer
 
@@ -225,13 +225,13 @@ For each test function:
 - Focus on precision and actionability; test-writer should have clear instructions
 - Reference existing test files as examples whenever possible
 - Ensure test plans align with the test strategy recommendations
-- Follow the testing pyramid: more unit tests, fewer e2e tests
+- Follow the testing pyramid: more unit tests, fewer integration tests
 - Maintain consistency with existing test patterns and conventions
 - Be specific about fixture usage and mocking strategies
 - Include concrete examples of assertions and test data
 - Consider test maintainability and readability
 - Note any testing utilities that should be created
-- Ensure use-case markers are correctly assigned for integration/e2e tests
+- Ensure use-case markers are correctly assigned for integration tests
 - Keep instructions concise but comprehensive
 - Group related tests logically within test files
 
@@ -323,7 +323,7 @@ For each test function:
 
 **Input**: Git diff showing new Redis caching in `app/infrastructure/cache/`
 
-**Strategy**: Unit tests for cache logic, component tests for cache service, e2e for Docker integration
+**Strategy**: Unit tests for cache logic, component tests for cache service, integration for Docker integration
 
 **Output**:
 
@@ -335,7 +335,7 @@ For each test function:
   method: GET
   description: Cache service operational on startup
   expected_behavior: Health check returns cache_status: connected
-  test_tier: e2e
+  test_tier: integration
 
 ### 3. Test File Changes
 
@@ -378,11 +378,11 @@ For each test function:
    - Assertions: Entry expires after TTL
    - Edge cases: Zero TTL, negative TTL
 
-#### E2E Tier
+#### Integration Tier (Docker)
 
-**File: tests/e2e/test_cache_integration.py**
+**File: tests/integration/test_cache_integration.py**
 - Operation: NEW
-- Tier: e2e
+- Tier: integration
 - Purpose: Validates cache integration with Docker Redis
 
 **Test Functions:**
@@ -398,7 +398,7 @@ For each test function:
 ### 4. Fixture Requirements
 
 - fakeredis: Existing fixture, use for unit/component tests
-- docker_redis: NEW fixture, scope=session, spins up Redis container for e2e
+- docker_redis: NEW fixture, scope=session, spins up Redis container for integration tests
 - cache_service: NEW fixture, scope=function, provides configured cache service instance
 
 ### 5. Test Data Requirements

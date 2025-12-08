@@ -262,7 +262,6 @@ python_functions = ["test_*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
-    "e2e: marks tests as end-to-end (requires running server)",
     "usecase: links test to a specific use-case ID from the registry (tests/docs/use_cases.yaml)"
 ]
 
@@ -309,7 +308,7 @@ source = [
 # Custom coverage settings used by test_coverage.py
 # Each tier has its own thresholds based on coverage type:
 # - unit/component/scripts: line/branch coverage (per-function and overall)
-# - integration/e2e: use-case coverage only
+# - integration: use-case coverage only
 
 [tool.test_coverage.unit]
 # Unit tests cover ALL app/ functions (including private)
@@ -327,10 +326,6 @@ min_branch_per_function = 70.0
 
 [tool.test_coverage.integration]
 # Integration tests: use-case coverage from tests/docs/use_cases.yaml
-min_usecase = 100.0
-
-[tool.test_coverage.e2e]
-# E2E tests: use-case coverage from tests/docs/use_cases.yaml
 min_usecase = 100.0
 
 [tool.test_coverage.scripts]

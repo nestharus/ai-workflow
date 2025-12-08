@@ -52,14 +52,14 @@ The user prompt will format this structured data as readable text while maintain
 - Examine existing code and test patterns in the codebase
 - Use firecrawl tools to research testing patterns or best practices when needed
 - Reference testing documentation from `docs/testing/testing-patterns.yml` and `docs/testing/testing-workflow.yml`
-- Consider the four-tier testing architecture (unit, component, integration, e2e)
+- Consider the four-tier testing architecture (unit, component, integration, scripts)
 - Analyze what types of testing are appropriate based on:
   - Nature of changes (new features, refactors, bug fixes, infrastructure)
   - Affected layers (API endpoints, services, repositories, utilities)
   - External dependencies (databases, APIs, file systems)
   - Complexity and risk level
 - Do not write tests or implementation code; focus on strategy and guidance
-- Ensure strategy aligns with project coverage requirements (80% line/branch for unit/component/scripts, 100% use-case for integration/e2e)
+- Ensure strategy aligns with project coverage requirements (80% line/branch for unit/component/scripts, 100% use-case for integration)
 
 ## Analysis Workflow
 
@@ -84,8 +84,8 @@ Assign appropriate test tiers based on component types:
 
 - **Unit**: Individual functions, utilities, pure logic
 - **Component**: Service layer public APIs
-- **Integration**: API endpoints with mocked dependencies
-- **E2E**: Full stack scenarios requiring Docker
+- **Integration**: API endpoints with mocked or Docker-based dependencies
+- **Scripts**: Tests for scripts and tools
 
 Consider tier-specific coverage requirements from `docs/testing/testing-workflow.yml`.
 

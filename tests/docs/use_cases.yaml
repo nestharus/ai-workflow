@@ -10,7 +10,7 @@
 #   - method: HTTP method (GET, POST, etc.)
 #   - description: Human-readable scenario description
 #   - expected_behavior: Detailed expected outcome including status codes
-#   - test_tier: integration or e2e
+#   - test_tier: integration
 #
 # Coverage is calculated dynamically from @pytest.mark.usecase markers.
 # Reference: docs/testing/testing-patterns.md for usage guidelines
@@ -31,7 +31,7 @@ features:
         expected_behavior: |
           Returns HTTP 200 with JSON body {"status": "ok"}.
           This is the root-level liveness probe for container orchestration.
-        test_tier: e2e
+        test_tier: integration
 
       - id: UC-HEALTH-002
         endpoint: /api/v1/health

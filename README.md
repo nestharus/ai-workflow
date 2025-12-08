@@ -172,7 +172,7 @@ Note: Example endpoints are non-resource demos for illustration purposes.
 | `app/` | FastAPI application (`api/v1/`, `contracts/`, `core/`, `infrastructure/`, `repositories/`, `services/`) |
 | `docs/` | Modular documentation (`usage/`, `development/`, `testing/`, `architecture/`, `processes/`) |
 | `scripts/` | Utility scripts for setup, linting, reviews, OpenAPI generation |
-| `tests/` | Test suites (`unit/`, `integration/`, `e2e/`) |
+| `tests/` | Test suites (`unit/`, `integration/`) |
 | `tools/` | Workflow support tools and concatenation utilities |
 | `.factory/` | Factory configuration (`settings.json`, `SCHEMA.md`) |
 | `openapi/` | Generated OpenAPI schema |

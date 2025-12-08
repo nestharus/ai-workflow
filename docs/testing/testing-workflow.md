@@ -10,7 +10,6 @@ coverage metrics for each testing level.
 | **Unit** | `tests/unit/` | Line/branch per function | All `app/` functions | Fast |
 | **Component** | `tests/unit/` | Line/branch per function | `app/services/` only | Fast |
 | **Integration** | `tests/integration/` | Use-case | Use cases from YAML | Fast |
-| **E2E** | `tests/e2e/` | Use-case | Use cases from YAML | Slow |
 | **Scripts** | `scripts/tests/` | Line/branch per function | `scripts/` | Fast |
 
 ## Unit Tests
@@ -47,24 +46,12 @@ functions within services are implementation details and are excluded from cover
 Integration tests validate user-facing scenarios defined in the use-case registry. Each test must be
 linked to a use-case with `@pytest.mark.usecase("UC-XXX-NNN")`.
 
-## E2E Tests
-
-* **Location**: `tests/e2e/`
-* **Coverage**: Use-case coverage (threshold configured in settings)
-* **Target**: Use cases defined in `tests/docs/use_cases.yaml`
-* **Fixture**: `api_client` (builds and runs a Docker container on port 8008)
-* **Marker**: `@pytest.mark.e2e`
-* **Scope**: Validates full stack, startup scripts, health checks, and network handling
-* **Command**: `uv run test-coverage --tier e2e`
-
-E2E tests require the full application stack running in Docker containers.
-
 ## Coverage Rules
 
 * **Per-function**: Each function must individually meet the configured threshold (not averaged across file)
 * **Class fields excluded**: Pydantic model type annotations are excluded from coverage
 * **Service layer**: Component tests only validate functions within `app/services/`
-* **Use-case coverage**: Integration/e2e require coverage of use cases (threshold in settings)
+* **Use-case coverage**: Integration requires coverage of use cases (threshold in settings)
 * **Private functions**: Unit tests validate ALL functions; component/scripts skip private
 
 ## Common Test Commands
@@ -88,8 +75,6 @@ uv run test-coverage --json-report coverage_report.json
 
 # Legacy pytest commands
 uv run pytest                       # Run all tests
-uv run pytest -m "not e2e"          # Skip E2E tests
-uv run pytest -m e2e                # Only E2E tests
 uv run pytest -v                    # Verbose output
 ```
 

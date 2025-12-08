@@ -1,17 +1,16 @@
 """Test coverage runner with separate reporting for different test tiers.
 
 This module provides:
-- Separate coverage tracking for 4 test tiers (unit, component, integration, e2e)
+- Separate coverage tracking for 4 test tiers (unit, component, integration, scripts)
 - Separate coverage between scripts/tests/ and tests/
 - Per-function line and branch coverage validation
-- Use-case coverage tracking for integration and e2e tests
+- Use-case coverage tracking for integration tests
 
 Test Tier Coverage Requirements:
 - Unit tests (tests/unit/): 80% line/branch per function across app/ (excluding class fields)
 - Component tests (tests/component/ or tests/unit/ with service focus): 80% line/branch
   per function for app/services/ only
 - Integration tests (tests/integration/): 100% use-case coverage
-- E2E tests (tests/e2e/): 100% use-case coverage
 - Scripts tests (scripts/tests/): Coverage for scripts/ and tools/
 
 Coverage Calculation:
@@ -134,7 +133,6 @@ class CoverageSettings:
     unit: TierSettings = field(default_factory=TierSettings)
     component: TierSettings = field(default_factory=TierSettings)
     integration: TierSettings = field(default_factory=TierSettings)
-    e2e: TierSettings = field(default_factory=TierSettings)
     scripts: TierSettings = field(default_factory=TierSettings)
 
 
@@ -174,7 +172,6 @@ def load_coverage_settings(pyproject_path: Path | None = None) -> CoverageSettin
         unit=load_tier("unit"),
         component=load_tier("component"),
         integration=load_tier("integration"),
-        e2e=load_tier("e2e"),
         scripts=load_tier("scripts"),
     )
 
@@ -269,13 +266,6 @@ def get_test_tiers() -> dict[str, TestTierConfig]:
             source_paths=["app"],
             coverage_type="usecase",
             min_usecase=settings.integration.min_usecase,
-        ),
-        "e2e": TestTierConfig(
-            name="e2e",
-            test_path="tests/e2e",
-            source_paths=["app"],
-            coverage_type="usecase",
-            min_usecase=settings.e2e.min_usecase,
         ),
         "scripts": TestTierConfig(
             name="scripts",
@@ -1154,7 +1144,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--tier",
-        choices=["unit", "component", "integration", "e2e", "scripts", "all"],
+        choices=["unit", "component", "integration", "scripts", "all"],
         default="all",
         help="Which test tier to run (default: all)",
     )

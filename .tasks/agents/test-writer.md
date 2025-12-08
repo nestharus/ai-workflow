@@ -24,7 +24,7 @@ Your input is a test plan file path (output from test-planner agent). The plan c
 
 - **Summary**: Overview of required test changes
 - **Use-Case Registry Updates**: New use-case IDs for `tests/docs/use_cases.yaml`
-- **Test File Changes**: File-by-file specifications grouped by tier (unit/component/integration/e2e)
+- **Test File Changes**: File-by-file specifications grouped by tier (unit/component/integration)
   - Operation: NEW or MODIFY
   - Test functions with names, use-case markers, setup, actions, assertions
 - **Fixture Requirements**: New or existing fixtures needed
@@ -42,7 +42,7 @@ Your input is a test plan file path (output from test-planner agent). The plan c
 - Use firecrawl tools to look up documentation when unfamiliar with patterns
 - Run tests after implementation to verify correctness
 - Debug failures iteratively until tests pass
-- Ensure tests meet coverage requirements (80% line/branch for unit/component, use-case markers for integration/e2e)
+- Ensure tests meet coverage requirements (80% line/branch for unit/component, use-case markers for integration)
 - Do NOT modify test settings, thresholds, or configuration files
 - Do NOT skip test plan requirements without explicit justification
 - Report any blockers or deviations from the plan

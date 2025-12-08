@@ -40,7 +40,6 @@ Test coverage is enforced separately for each test tier using `uv run test-cover
 | **unit** | `tests/unit/` | 80% line/branch per function | All `app/` functions |
 | **component** | `tests/unit/` | 80% line/branch per function | `app/services/` only |
 | **integration** | `tests/integration/` | 100% use-case | Use cases from YAML |
-| **e2e** | `tests/e2e/` | 100% use-case | Use cases from YAML |
 | **scripts** | `scripts/tests/` | 80% line/branch per function | `scripts/`, `tools/` |
 
 ### Coverage Rules
@@ -48,7 +47,7 @@ Test coverage is enforced separately for each test tier using `uv run test-cover
 * **Per-function**: Each function must individually meet the 80% threshold (not averaged)
 * **Class fields excluded**: Pydantic model type annotations are excluded from coverage
 * **Service layer**: Component tests only validate functions within `app/services/`
-* **Use-case coverage**: Integration/e2e require 100% coverage of use cases
+* **Use-case coverage**: Integration requires 100% coverage of use cases
 * **Private functions**: Unit tests validate all functions; component/scripts skip private
 
 ### Validation Commands

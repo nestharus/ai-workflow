@@ -273,6 +273,19 @@ class TestGetProcessedMessage:
         assert error_response.json()["type"] == "error"
 
 
+class TestRootHealthCheck:
+    """Tests for GET /health root liveness endpoint."""
+
+    @pytest.mark.usecase("UC-HEALTH-001")
+    def test_root_health_check_returns_ok(self, integration_client: TestClient) -> None:
+        """Test root health endpoint returns 200 OK with status 'ok'."""
+        response = integration_client.get("/health")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "ok"
+
+
 class TestHealthCheckIntegration:
     """Tests for GET /api/v1/health readiness endpoint."""
 
