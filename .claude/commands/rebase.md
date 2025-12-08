@@ -7,7 +7,14 @@ allowed-tools: Task, Read, Glob, Bash
 
 ---
 
-Rebase PR for ticket: $ARGUMENTS
+Rebase PR: $ARGUMENTS
+
+## Arguments
+
+* If `$ARGUMENTS` is empty: Use current branch (must be on PR branch)
+* If `$ARGUMENTS` is a PR ID (e.g., `17` or `#17`): Get branch from GitHub PR
+* If `$ARGUMENTS` is a ticket ID (e.g., `NES-87`): Look up branch from Linear
+* If `$ARGUMENTS` is a branch name: Use branch directly
 
 ## Workflow
 
@@ -20,17 +27,16 @@ uv run pr get-pr $ARGUMENTS
 This returns JSON with:
 
 * `branch_name`: Git branch name (may contain slashes, e.g., `mrasolomon/nes-87-...`)
-* `worktree_path`: Path to the worktree (e.g., `.worktrees/mrasolomon/nes-87-...`)
-* `working_directory`: Where to run commands - either `.` (repo root) or the worktree path
-* `is_worktree`: Boolean - `true` if working in worktree, `false` if on current branch
+* `worktree_path`: Path to the worktree, or `null` if on branch directly
+* `working_directory`: Where to run commands - `.` or worktree path
+* `is_worktree`: Boolean - `true` if using worktree, `false` if on branch directly
 * `pr_number`: PR number
 * `pr_url`: PR URL
 * `base_branch`: Target branch the PR will merge into (e.g., `main`, `develop`)
 
 Set up variables:
 
-* `ticket_id`: $ARGUMENTS
-* `working_dir`: `{{working_directory}}` (from `working_directory` in JSON)
+* `working_dir`: `{{working_directory}}` from `get-pr`
 * `base_branch`: The target branch from the PR info (NOT hardcoded to `main`)
 
 ### 2. Gather Merge Context (Before Squash)

@@ -7,13 +7,19 @@ allowed-tools: Task, Read, Glob, Bash
 
 ---
 
-Handle unresolved PR review threads for ticket: $ARGUMENTS
+Handle unresolved PR review threads: $ARGUMENTS
 
 ## Arguments
 
-The first argument is the ticket ID. Any text after the ticket ID is treated as local tasks.
+* If `$ARGUMENTS` is empty: Use current branch (must be on PR branch)
+* If `$ARGUMENTS` is a PR ID (e.g., `17` or `#17`): Get branch from GitHub PR
+* If `$ARGUMENTS` is a ticket ID (e.g., `NES-87`): Look up branch from Linear
+* If `$ARGUMENTS` is a branch name: Use branch directly
+* Additional text after identifier: Treated as local tasks
 
-Example: `/update-pr NES-123` - only PR threads
+Example: `/update-pr` - use current branch, only PR threads
+Example: `/update-pr 17` - PR #17, only PR threads
+Example: `/update-pr NES-123` - ticket NES-123, only PR threads
 Example: `/update-pr NES-123 ## Comment 1: Fix the bug...` - PR threads + local tasks
 
 ## Workflow
@@ -22,19 +28,29 @@ Example: `/update-pr NES-123 ## Comment 1: Fix the bug...` - PR threads + local 
 
 Split `$ARGUMENTS` to extract:
 
-* `ticket_id`: First word (e.g., `NES-123`)
-* `local_tasks_text`: Everything after the ticket ID (may be empty)
+* `identifier`: First word (PR ID, ticket ID, or branch name), or empty if no arguments
+* `local_tasks_text`: Everything after the identifier (may be empty)
 
 ### 2. Get PR Information
 
+If `identifier` is empty (no arguments), call without arguments:
+
 ```bash
-uv run pr get-pr {{ticket_id}}
+uv run pr get-pr
 ```
+
+Otherwise, pass only the identifier (first word):
+
+```bash
+uv run pr get-pr {{identifier}}
+```
+
+Note: `get-pr` accepts PR ID (17/#17), ticket ID (NES-123), branch name, or nothing.
 
 This returns JSON with:
 
 * `branch_name`: Git branch name (may contain slashes, e.g., `mrasolomon/nes-87-...`)
-* `worktree_path`: Path to the worktree (e.g., `.worktrees/mrasolomon/nes-87-...`)
+* `worktree_path`: Path to the worktree (e.g., `.worktrees/mrasolomon/nes-87-...`), or `null` if on branch
 * `working_directory`: Where to run commands - either `.` (repo root) or the worktree path
 * `is_worktree`: Boolean - `true` if working in worktree, `false` if on current branch
 * `pr_number`: PR number
@@ -49,13 +65,21 @@ First, get the repository root (where `.worktrees` lives):
 git rev-parse --show-toplevel
 ```
 
-Based on ticket info:
+Extract ticket ID from branch name (for tmp folder and Linear link):
 
-* `ticket_id`: (from step 1)
+```bash
+uv run pr extract-ticket-id {{branch_name}}
+```
+
+This returns JSON with `ticket_id` (e.g., `NES-87`) or `null` if no valid ticket pattern found.
+
+Based on the info gathered:
+
+* `ticket_id`: (from `extract-ticket-id` output, may be `null`)
 * `branch`: (from `branch_name` in JSON)
 * `repo_root`: (from git command above)
 * `working_dir`: `{{repo_root}}/{{working_directory}}` (from `working_directory` in JSON - either `.` or worktree path)
-* `tmp_folder`: `{{repo_root}}/.tmp/pr-threads/{{ticket_id}}`
+* `tmp_folder`: `{{repo_root}}/.tmp/pr-threads/{{ticket_id}}` (use `pr_number` if no ticket_id)
 * `pr_number`: (from `pr_number` in JSON)
 * `pr_url`: (from `pr_url` in JSON)
 * `base_branch`: (from `base_branch` in JSON)
@@ -257,8 +281,8 @@ Print to terminal:
 PR UPDATE COMPLETE - REVIEW REQUESTED
 ================================================================================
 
-Ticket: {{ticket_id}}
-Linear Ticket: https://linear.app/issue/{{ticket_id}}
+Ticket: {{ticket_id or "N/A"}}
+{{#if ticket_id}}Linear Ticket: https://linear.app/issue/{{ticket_id}}{{/if}}
 Pull Request: {{pr_url}}
 
 References:

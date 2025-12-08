@@ -414,3 +414,39 @@ def create_pr(worktree_path: str, title: str, body: str, head_branch: str) -> tu
     if result.returncode != 0:
         return False, result.stderr
     return True, result.stdout.strip()
+
+
+def get_pr_for_branch(branch_name: str) -> dict[str, Any] | None:
+    """Get the first open PR info for a branch using gh CLI.
+
+    Args:
+        branch_name: The branch name to find PR for.
+
+    Returns:
+        Dictionary with pr_number, pr_url, base_branch, or None if no open PR.
+    """
+    output = run_gh_command(
+        [
+            "pr",
+            "list",
+            "--head",
+            branch_name,
+            "--state",
+            "open",
+            "--json",
+            "number,url,baseRefName",
+            "--limit",
+            "1",
+        ]
+    )
+
+    prs = json.loads(output)
+    if not prs:
+        return None
+
+    pr = prs[0]
+    return {
+        "pr_number": pr.get("number"),
+        "pr_url": pr.get("url"),
+        "base_branch": pr.get("baseRefName"),
+    }

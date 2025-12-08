@@ -39,9 +39,12 @@ The command outputs JSON with the worktree details:
   "worktree_path": ".worktrees/<branch_name>",
   "branch_name": "<branch_name>",
   "branch_created": false,       // always false (no new branches created)
-  "tracked_remote": true         // true if tracking remote, false if local existed
+  "tracked_remote": true         // only present when status is "created"
 }
 ```
+
+Note: `tracked_remote` is only included when `status: "created"`. When `status: "exists"`, the
+worktree was already set up in a previous call, and the field is omitted.
 
 ### Step 2: Output Summary
 

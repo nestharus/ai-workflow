@@ -400,6 +400,24 @@ def get_current_branch() -> str | None:
     return branch if branch else None
 
 
+def is_inside_worktree() -> bool:
+    """Check if current directory is inside a git worktree (not the main repo).
+
+    Returns:
+        True if inside a worktree, False if in main repo or git unavailable.
+    """
+    git_dir = _run_git(["git", "rev-parse", "--git-dir"])
+    common_dir = _run_git(["git", "rev-parse", "--git-common-dir"])
+
+    if git_dir is None or common_dir is None:
+        return False
+    if git_dir.returncode != 0 or common_dir.returncode != 0:
+        return False
+
+    # If git-dir and git-common-dir differ, we're in a worktree
+    return git_dir.stdout.strip() != common_dir.stdout.strip()
+
+
 def fetch_origin() -> tuple[bool, str]:
     """Fetch from origin remote.
 
