@@ -166,9 +166,9 @@ def _run_ruff(files: list[str] | None = None) -> None:
         files: Optional list of files to lint. If None, lints entire repo.
     """
     uv_exe = _uv()
-    targets = files if files else ["."]
+    targets = files if files is not None else ["."]
     # Filter to only Python files if files are specified
-    if files:
+    if files is not None:
         py_files = [f for f in files if f.endswith(".py")]
         if not py_files:
             print("No Python files to lint with ruff")
@@ -185,7 +185,7 @@ def _run_mypy(files: list[str] | None = None) -> None:
         files: Optional list of files to check. If None, checks entire repo.
     """
     uv_exe = _uv()
-    if files:
+    if files is not None:
         py_files = [f for f in files if f.endswith(".py")]
         if not py_files:
             print("No Python files to check with mypy")
@@ -213,7 +213,7 @@ def _run_hadolint(files: list[str] | None = None) -> None:
     config = _load_yaml_config(LINT_HADOLINT_CONFIG)
     exclude_dirs = {REPO_ROOT / d for d in config.get("exclude_dirs", [])}
 
-    if files:
+    if files is not None:
         # Filter to only Dockerfile files
         dockerfiles = [Path(f) for f in files if Path(f).name == "Dockerfile"]
     else:
@@ -245,7 +245,7 @@ def _run_pymarkdown(files: list[str] | None = None) -> None:
     config = _load_yaml_config(LINT_PYMARKDOWN_CONFIG)
     excludes = config.get("excludes", [])
 
-    if files:
+    if files is not None:
         md_files = [f for f in files if f.endswith(".md")]
         if not md_files:
             print("No Markdown files to check with pymarkdown")
@@ -300,7 +300,7 @@ def _run_yamllint(files: list[str] | None = None) -> None:
     config = _load_yaml_config(LINT_YAMLLINT_CONFIG)
     exclude_dirs = {REPO_ROOT / d for d in config.get("exclude_dirs", [])}
 
-    if files:
+    if files is not None:
         yaml_files = [f for f in files if f.endswith(".yml") or f.endswith(".yaml")]
         if not yaml_files:
             print("No YAML files to check with yamllint")
@@ -444,7 +444,7 @@ def _run_detect_secrets(files: list[str] | None = None) -> int:
         return 1
 
     uv_exe = _uv()
-    if files:
+    if files is not None:
         # Load exclusion config from .lint.detect-secrets.yaml
         config = _load_yaml_config(LINT_DETECT_SECRETS_CONFIG)
         excluded_extensions = set(config.get("excluded_extensions", []))
