@@ -103,10 +103,13 @@ class LinearClient:
         except json.JSONDecodeError as e:
             raise LinearAPIError(f"Linear API returned malformed JSON: {e}") from e
 
-        if "errors" in result:
+        errors = result.get("errors")
+        if errors is not None:
+            if not isinstance(errors, list):
+                raise LinearAPIError("Linear API returned malformed errors field")
             error_messages = [
                 message
-                for err in result["errors"]
+                for err in errors
                 if isinstance(err, dict) and (message := err.get("message"))
             ]
             joined_messages = "; ".join(error_messages) if error_messages else "Unknown error"
