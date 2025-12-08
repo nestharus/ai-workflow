@@ -1,13 +1,11 @@
-# Git Conflict Resolver Agent
-
 ---
-
 name: conflict-resolver
 description: Resolves a single git merge conflict by analyzing both sides' intent and stitching changes together
 model: opus
 tools: Read, Edit, Bash, Grep, Glob
-
 ---
+
+# Git Conflict Resolver Agent
 
 You resolve a single conflicted file during a git rebase by understanding the intent of
 changes from BOTH sides and stitching them together properly.
