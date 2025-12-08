@@ -48,9 +48,18 @@ The command outputs JSON with the worktree details:
 }
 ```
 
+### Step 1b: Get Repository Root
+
+```bash
+git rev-parse --show-toplevel
+```
+
+Store this as `repo_root`.
+
 Store these values for subsequent operations:
+* `repo_root` - absolute path to the repository root
 * `<branchName>` - the branch name from Linear
-* `<worktree_path>` - path to the worktree (`.worktrees/<branchName>`)
+* `<worktree_path>` - absolute path: `{{repo_root}}/{{worktree_path from JSON}}`
 * `<BASE_BRANCH>` - the current branch, used as PR target
 
 ### Step 2: Load Plan
@@ -66,7 +75,7 @@ For each Plan in sequence:
 **Implementation Phase (use `timeout: 600000`):**
 
 ```bash
-cd .worktrees/<branchName> && uv run agent.mcp wait --command "uv run agent.tasks --agent implementor --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
+cd {{worktree_path}} && uv run agent.mcp wait --command "uv run agent.tasks --agent implementor --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
 ```
 
 Where `<PLAN_CONTENT>` is the specific plan section from the ticket description.
@@ -89,7 +98,7 @@ Handle each status:
 **Review Phase (use `timeout: 600000`):**
 
 ```bash
-cd .worktrees/<branchName> && uv run agent.mcp wait --command "uv run agent.tasks --agent reviewer --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
+cd {{worktree_path}} && uv run agent.mcp wait --command "uv run agent.tasks --agent reviewer --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
 ```
 
 Handle each status:
@@ -105,7 +114,7 @@ Handle each status:
 Run the lint-fixer sub-agent against the worktree in changed-only mode:
 
 ```yaml
-Task(subagent_type="lint-fixer", prompt="--worktree .worktrees/<branchName> --changed-only")
+Task(subagent_type="lint-fixer", prompt="--worktree {{worktree_path}} --changed-only")
 ```
 
 This only lints files that were modified, which is faster and appropriate for new implementations.
@@ -115,7 +124,7 @@ This only lints files that were modified, which is faster and appropriate for ne
 After all plans complete successfully, use the commit-push command:
 
 ```bash
-uv run pr commit-push --worktree <worktree_path> --set-upstream --message "<TICKET_ID>: <TITLE>
+uv run pr commit-push --worktree {{worktree_path}} --set-upstream --message "<TICKET_ID>: <TITLE>
 
 Implements the plan from Linear ticket <TICKET_ID>.
 
@@ -169,7 +178,7 @@ casing matches exactly. No manual linking is required.
 Get commit information:
 
 ```bash
-cd .worktrees/<branchName>
+cd {{worktree_path}}
 # Current branch commit (HEAD of PR branch)
 git rev-parse HEAD
 # Target branch commit (what PR merges into)
@@ -188,7 +197,7 @@ Linear Ticket: <LINEAR_TICKET_URL>
 Pull Request: <PR_URL>
 
 References:
-  worktree_directory: .worktrees/<branchName>
+  worktree_directory: {{worktree_path}}
   current_branch_commit: <CURRENT_SHA>   # HEAD of PR branch (latest changes)
   pr_target_branch_commit: <TARGET_SHA>  # HEAD of target branch (merge base)
 
@@ -203,13 +212,13 @@ Commands:
   Open <LINEAR_TICKET_URL>
 
   # Read implementation files
-  cd .worktrees/<branchName>
+  cd {{worktree_path}}
 
   # See latest commit details
-  cd .worktrees/<branchName> && git log -1
+  cd {{worktree_path}} && git log -1
 
   # Diff all PR changes against target branch
-  cd .worktrees/<branchName> && git diff <pr_target_branch_commit>...<current_branch_commit>
+  cd {{worktree_path}} && git diff <pr_target_branch_commit>...<current_branch_commit>
 ================================================================================
 ```
 
@@ -226,4 +235,4 @@ Commands:
 * The worktree isolates work from your main working directory
 * You can switch back to main repo anytime: `cd <original-path>`
 * Multiple execute-plan commands can run in parallel for different tickets
-* Clean up worktrees after PR merge: `git worktree remove .worktrees/<branchName>`
+* Clean up worktrees after PR merge: `git worktree remove {{worktree_path}}`

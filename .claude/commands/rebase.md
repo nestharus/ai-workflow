@@ -34,9 +34,18 @@ This returns JSON with:
 * `pr_url`: PR URL
 * `base_branch`: Target branch the PR will merge into (e.g., `main`, `develop`)
 
+### 1b. Get Repository Root
+
+```bash
+git rev-parse --show-toplevel
+```
+
+Store this as `repo_root`.
+
 Set up variables:
 
-* `working_dir`: `{{working_directory}}` from `get-pr`
+* `repo_root`: From the git command above
+* `working_dir`: `{{repo_root}}/{{working_directory}}` (absolute path)
 * `base_branch`: The target branch from the PR info (NOT hardcoded to `main`)
 
 ### 2. Gather Merge Context (Before Squash)

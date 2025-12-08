@@ -47,10 +47,19 @@ This returns JSON with:
 * `ticket_id`: The Linear ticket ID (e.g., `NES-87`), or `null` if not found
 * `valid`: Boolean indicating if the ticket exists in Linear
 
+### 2b. Get Repository Root
+
+```bash
+git rev-parse --show-toplevel
+```
+
+Store this as `repo_root`.
+
 Set up variables:
 
 * `ticket_id`: From `extract-ticket-id` output (may be `null`)
-* `working_dir`: `{{working_directory}}` from `get-pr`
+* `repo_root`: From the git command above
+* `working_dir`: `{{repo_root}}/{{working_directory}}` (absolute path)
 * `is_worktree`: `{{is_worktree}}` from `get-pr`
 * `base_branch`: The target branch from the PR info (NOT hardcoded to `main`)
 
