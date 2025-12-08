@@ -920,14 +920,14 @@ def merge_workflow_command(
     *,
     is_worktree: bool = True,
 ) -> int:
-    """Complete merge workflow: merge PR, cleanup, sync, mark done.
+    """Complete merge workflow: merge PR, cleanup, fetch, mark done.
 
     Args:
         ticket_id: Linear ticket ID (e.g., "NES-123"), or None to skip ticket operations.
         pr_number: PR number to merge.
         working_dir: Path to the working directory (worktree or repo root).
         branch_name: Name of the branch to delete.
-        base_branch: Target branch to sync.
+        base_branch: Target branch (used for ticket operations, not checkout).
         is_worktree: If True, remove worktree and delete branch. If False, skip cleanup.
 
     Returns:
@@ -968,35 +968,10 @@ def merge_workflow_command(
         print("Step 2: Skipping worktree removal (working on current branch)")
         print("Step 3: Skipping branch deletion (working on current branch)")
 
-    # Step 4: Sync target branch
-    print(f"Step 4: Syncing {base_branch}...")
-
-    # Fetch all and prune
+    # Step 4: Fetch and prune remote tracking branches
+    print("Step 4: Fetching and pruning remote branches...")
     git_dao.fetch_all_prune()
-
-    # Stash any local changes
-    had_stash = git_dao.stash()
-
-    # Checkout target branch
-    success, err = git_dao.checkout(base_branch)
-    if not success:
-        errors.append(f"Failed to checkout {base_branch}: {err}")
-        print(f"Warning: {errors[-1]}", file=sys.stderr)
-    else:
-        # Pull latest
-        success, err = git_dao.pull()
-        if not success:
-            errors.append(f"Failed to pull: {err}")
-            print(f"Warning: {errors[-1]}", file=sys.stderr)
-        else:
-            print(f"Synced {base_branch} successfully")
-
-    # Pop stash if we had one
-    if had_stash:
-        success, err = git_dao.stash_pop()
-        if not success:
-            errors.append(f"Stash pop had conflicts: {err}")
-            print(f"Warning: {errors[-1]} - manual resolution required", file=sys.stderr)
+    print("Remote branches updated")
 
     # Step 5: Check for remaining open PRs and conditionally mark done
     # Skip if no ticket_id provided

@@ -77,7 +77,7 @@ This command performs:
 2. **If `--is-worktree` flag is passed**:
    * Remove git worktree
    * Delete local branch
-3. Sync target branch (fetch, stash, checkout, pull, stash pop)
+3. Fetch and prune remote tracking branches
 4. **If `--ticket` provided**: Check for remaining open PRs:
    * If **no remaining open PRs**: Mark Linear ticket as Done
    * If **remaining open PRs exist**: Report the next open PR and skip marking done
@@ -88,4 +88,4 @@ This command performs:
 
 * Run `/rebase` before `/merge` to ensure the branch is up-to-date with the target
 * The PR merge auto-deletes the remote branch - do not delete it manually
-* If stash pop has conflicts after sync, resolve them manually
+* This command does NOT checkout or pull the target branch - do that manually if needed
