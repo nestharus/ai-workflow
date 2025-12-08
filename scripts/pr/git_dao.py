@@ -242,6 +242,8 @@ def remove_worktree(worktree: Path) -> tuple[bool, str]:
         Tuple of (success, error_message).
     """
     repo_root = get_repo_root()
+    if repo_root is None:
+        return False, "not in a git repo"
     result = _run_git(["git", "worktree", "remove", str(worktree)], cwd=repo_root)
     if result is None:
         return False, "git not available"
