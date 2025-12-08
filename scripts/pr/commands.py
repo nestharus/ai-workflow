@@ -584,8 +584,10 @@ def get_pr_command(ticket_id: str) -> int:
             except github_dao.GraphQLError:
                 continue
 
+        branch_name = info.get("branch_name")
         pr_info: dict[str, Any] = {
-            "branch_name": info.get("branch_name"),
+            "branch_name": branch_name,
+            "worktree_path": f".worktrees/{branch_name}" if branch_name else None,
             "pr_number": pr_number,
             "pr_url": pr_url,
             "base_branch": None,

@@ -1,9 +1,11 @@
----
-description: Merge a PR and perform cleanup (worktree removal, branch sync, ticket completion)
-allowed-tools: Task, Read, Glob, Bash
+# Merge PR Command
+
 ---
 
-# Merge PR Command
+description: Merge a PR and perform cleanup (worktree removal, branch sync, ticket completion)
+allowed-tools: Task, Read, Glob, Bash
+
+---
 
 Merge PR for ticket: $ARGUMENTS
 
@@ -18,15 +20,18 @@ uv run pr get-pr $ARGUMENTS
 ```
 
 This returns JSON with:
-- `branch_name`: Git branch name
-- `pr_number`: PR number
-- `pr_url`: PR URL
-- `base_branch`: Target branch the PR will merge into (e.g., `main`, `develop`)
+
+* `branch_name`: Git branch name (may contain slashes, e.g., `mrasolomon/nes-87-...`)
+* `worktree_path`: Path to the worktree (e.g., `.worktrees/mrasolomon/nes-87-...`)
+* `pr_number`: PR number
+* `pr_url`: PR URL
+* `base_branch`: Target branch the PR will merge into (e.g., `main`, `develop`)
 
 Set up variables:
-- `ticket_id`: $ARGUMENTS
-- `worktree`: `.worktrees/{{branch_name}}`
-- `base_branch`: The target branch from the PR info (NOT hardcoded to `main`)
+
+* `ticket_id`: $ARGUMENTS
+* `worktree`: `{{worktree_path}}` (from `worktree_path` in JSON)
+* `base_branch`: The target branch from the PR info (NOT hardcoded to `main`)
 
 ### 2. Complete Merge Workflow
 
@@ -37,18 +42,19 @@ uv run pr merge --ticket $ARGUMENTS --pr {{pr_number}} --worktree {{worktree}} -
 ```
 
 This command performs:
+
 1. Merge the PR (squash merge)
 2. Remove git worktree
 3. Delete local branch
 4. Sync target branch (fetch, stash, checkout, pull, stash pop)
 5. Check for remaining open PRs:
-   - If **no remaining open PRs**: Mark Linear ticket as Done
-   - If **remaining open PRs exist**: Report the next open PR and skip marking done
+   * If **no remaining open PRs**: Mark Linear ticket as Done
+   * If **remaining open PRs exist**: Report the next open PR and skip marking done
 
 **Note**: The remote branch auto-deletes after merge (configured in GitHub). Do NOT manually delete the remote branch.
 
 ## Important Rules
 
-- Run `/rebase` before `/merge` to ensure the branch is up-to-date with the target
-- The PR merge auto-deletes the remote branch - do not delete it manually
-- If stash pop has conflicts after sync, resolve them manually
+* Run `/rebase` before `/merge` to ensure the branch is up-to-date with the target
+* The PR merge auto-deletes the remote branch - do not delete it manually
+* If stash pop has conflicts after sync, resolve them manually

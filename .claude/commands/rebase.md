@@ -1,9 +1,11 @@
----
-description: Rebase a PR branch by squashing, rebasing onto target, resolving conflicts, and pushing
-allowed-tools: Task, Read, Glob, Bash
+# Rebase PR Command
+
 ---
 
-# Rebase PR Command
+description: Rebase a PR branch by squashing, rebasing onto target, resolving conflicts, and pushing
+allowed-tools: Task, Read, Glob, Bash
+
+---
 
 Rebase PR for ticket: $ARGUMENTS
 
@@ -16,15 +18,18 @@ uv run pr get-pr $ARGUMENTS
 ```
 
 This returns JSON with:
-- `branch_name`: Git branch name
-- `pr_number`: PR number
-- `pr_url`: PR URL
-- `base_branch`: Target branch the PR will merge into (e.g., `main`, `develop`)
+
+* `branch_name`: Git branch name (may contain slashes, e.g., `mrasolomon/nes-87-...`)
+* `worktree_path`: Path to the worktree (e.g., `.worktrees/mrasolomon/nes-87-...`)
+* `pr_number`: PR number
+* `pr_url`: PR URL
+* `base_branch`: Target branch the PR will merge into (e.g., `main`, `develop`)
 
 Set up variables:
-- `ticket_id`: $ARGUMENTS
-- `worktree`: `.worktrees/{{branch_name}}`
-- `base_branch`: The target branch from the PR info (NOT hardcoded to `main`)
+
+* `ticket_id`: $ARGUMENTS
+* `worktree`: `{{worktree_path}}` (from `worktree_path` in JSON)
+* `base_branch`: The target branch from the PR info (NOT hardcoded to `main`)
 
 ### 2. Gather Merge Context (Before Squash)
 
@@ -59,9 +64,10 @@ uv run pr squash-rebase --worktree {{worktree}} --base-branch {{base_branch}}
 ```
 
 This command:
-- Fetches the latest target branch
-- Squashes all commits into one (if multiple)
-- Rebases onto the target branch
+
+* Fetches the latest target branch
+* Squashes all commits into one (if multiple)
+* Rebases onto the target branch
 
 If the command returns exit code 0, skip to step 5 (Force Push).
 
@@ -72,23 +78,27 @@ If the command returns exit code 1, conflicts need resolution.
 When conflicts occur during rebase:
 
 1. Get the list of conflicted files:
+
    ```bash
    cd {{worktree}} && git status --porcelain | grep "^UU" | cut -c4-
    ```
 
 2. Get the source commit SHA (the squashed commit being rebased):
+
    ```bash
    cd {{worktree}} && git rev-parse HEAD
    ```
+
    Store as `source_commit`.
 
 3. For EACH conflicted file, invoke the conflict-resolver agent with context:
 
-   ```
+   ```python
    Task(subagent_type="conflict-resolver", model="opus", prompt=<JSON>)
    ```
 
    Where JSON contains:
+
    ```json
    {
      "file_path": "<relative path to conflicted file>",
@@ -101,6 +111,7 @@ When conflicts occur during rebase:
    ```
 
 4. After all files are resolved, continue the rebase:
+
    ```bash
    cd {{worktree}} && git rebase --continue
    ```
@@ -117,6 +128,6 @@ cd {{worktree}} && git push --force-with-lease
 
 ## Important Rules
 
-- Always force push with `--force-with-lease` (safer than `--force`)
-- The conflict-resolver agent analyzes BOTH sides' intent and stitches changes together
-- Never just pick one side of a conflict - always analyze and merge properly
+* Always force push with `--force-with-lease` (safer than `--force`)
+* The conflict-resolver agent analyzes BOTH sides' intent and stitches changes together
+* Never just pick one side of a conflict - always analyze and merge properly
