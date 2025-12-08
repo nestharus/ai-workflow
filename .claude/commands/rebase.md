@@ -19,9 +19,12 @@ Rebase PR: $ARGUMENTS
 
 ## Workflow
 
+**IMPORTANT**: All `uv run` commands must be executed from the repository root,
+not from inside the sandbox. The sandbox is only for git operations.
+
 ### 1. Create Rebase Sandbox
 
-Create an isolated sandbox for the rebase operation:
+Create an isolated sandbox for the rebase operation (from repo root):
 
 ```bash
 uv run pr promote-worktree $ARGUMENTS
@@ -63,7 +66,7 @@ Store these commit SHAs as `target_commits` (list from oldest to newest).
 
 ### 3. Squash and Rebase
 
-Squash all commits and rebase onto the target branch:
+Squash all commits and rebase onto the target branch (run from repo root):
 
 ```bash
 uv run pr squash-rebase --worktree {{sandbox_path}} --base-branch {{base_branch}}
@@ -147,7 +150,7 @@ This ensures the original worktree has the rebased history and is ready for cont
 
 ### 7. Cleanup Sandbox
 
-After successful sync, remove the sandbox:
+After successful sync, remove the sandbox (run from repo root):
 
 ```bash
 uv run pr cleanup-sandbox $ARGUMENTS
