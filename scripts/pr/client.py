@@ -2,19 +2,25 @@
 
 Usage:
     uv run pr fetch-threads --pr <number> --output-dir <path>
-    uv run pr commit-push --worktree <path> --message <msg>
+    uv run pr commit-push --worktree <path> --message <msg> [--set-upstream]
     uv run pr post-reply --pr <number> --thread-file <file> --body <text>
     uv run pr resolve-thread --thread-file <file>
     uv run pr deferred-comment --thread-file <file> --body <text>
     uv run pr import-local-tasks --output-dir <path> <body_file1> <body_file2> ...
     uv run pr post-deferred-replies --pr <number> --threads-dir <path>
     uv run pr request-review --pr <number>
-    uv run pr get-pr <ticket-id>
+    uv run pr get-pr [<ticket-id-or-branch>]
     uv run pr get-changed-files --pr <number>
     uv run pr set-ticket-done --ticket <id>
     uv run pr merge-pr --pr <number>
     uv run pr squash-rebase --worktree <path> --base-branch <branch>
-    uv run pr merge --ticket <id> --pr <n> --worktree <path> --branch <name> --base-branch <b>
+    uv run pr merge --ticket <id> --pr <n> --working-dir <path> --branch <name>
+        --base-branch <b> [--is-worktree]
+    uv run pr setup-worktree <ticket-id>
+    uv run pr checkout <ticket-id-or-branch>
+    uv run pr get-expected-branch-name <ticket-id>
+    uv run pr is-valid-branch-name --ticket <id> --branch <name>
+    uv run pr extract-ticket-id [<branch-name>]
 """
 
 from __future__ import annotations
@@ -66,6 +72,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--message",
         required=True,
         help="Commit message",
+    )
+    commit_parser.add_argument(
+        "--set-upstream",
+        action="store_true",
+        help="Set upstream tracking with -u flag (for new branches)",
     )
 
     # post-reply command
@@ -198,11 +209,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # get-pr command
     pr_info_parser = subparsers.add_parser(
         "get-pr",
-        help="Get PR info for a Linear ticket (branch name, PR number, PR URL, base branch)",
+        help="Get PR info for a PR ID, ticket ID, branch name, or current branch",
     )
     pr_info_parser.add_argument(
-        "ticket_id",
-        help="Linear ticket ID (e.g., NES-123)",
+        "identifier",
+        nargs="?",
+        default=None,
+        help="PR ID (17/#17), ticket ID (NES-123), branch name, or omit for current branch.",
     )
 
     # get-changed-files command
@@ -264,8 +277,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     merge_workflow_parser.add_argument(
         "--ticket",
-        required=True,
-        help="Linear ticket ID (e.g., NES-123)",
+        default=None,
+        help="Linear ticket ID (e.g., NES-123). If omitted, skips ticket operations.",
     )
     merge_workflow_parser.add_argument(
         "--pr",
@@ -274,10 +287,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="PR number to merge",
     )
     merge_workflow_parser.add_argument(
-        "--worktree",
+        "--working-dir",
         type=Path,
         required=True,
-        help="Path to the git worktree",
+        help="Path to the working directory (worktree or repo root)",
     )
     merge_workflow_parser.add_argument(
         "--branch",
@@ -288,6 +301,69 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--base-branch",
         required=True,
         help="Target branch to sync",
+    )
+    merge_workflow_parser.add_argument(
+        "--is-worktree",
+        action="store_true",
+        help="If set, remove worktree and delete branch after merge",
+    )
+
+    # setup-worktree command
+    setup_worktree_parser = subparsers.add_parser(
+        "setup-worktree",
+        help="Setup a git worktree for a Linear ticket",
+    )
+    setup_worktree_parser.add_argument(
+        "ticket_id",
+        help="Linear ticket ID (e.g., NES-87)",
+    )
+
+    # checkout command
+    checkout_parser = subparsers.add_parser(
+        "checkout",
+        help="Checkout an existing branch into a worktree",
+    )
+    checkout_parser.add_argument(
+        "identifier",
+        help="Linear ticket ID (e.g., NES-87) or branch name",
+    )
+
+    # get-expected-branch-name command
+    expected_branch_parser = subparsers.add_parser(
+        "get-expected-branch-name",
+        help="Get the expected branch name for a Linear ticket",
+    )
+    expected_branch_parser.add_argument(
+        "ticket_id",
+        help="Linear ticket ID (e.g., NES-87)",
+    )
+
+    # is-valid-branch-name command
+    valid_branch_parser = subparsers.add_parser(
+        "is-valid-branch-name",
+        help="Check if a branch name matches the expected pattern for a ticket",
+    )
+    valid_branch_parser.add_argument(
+        "--ticket",
+        required=True,
+        help="Linear ticket ID (e.g., NES-87)",
+    )
+    valid_branch_parser.add_argument(
+        "--branch",
+        required=True,
+        help="Branch name to validate",
+    )
+
+    # extract-ticket-id command
+    extract_ticket_parser = subparsers.add_parser(
+        "extract-ticket-id",
+        help="Extract and validate ticket ID from branch name",
+    )
+    extract_ticket_parser.add_argument(
+        "branch_name",
+        nargs="?",
+        default=None,
+        help="Branch name to parse. If omitted, uses current branch.",
     )
 
     return parser.parse_args(argv)
@@ -300,7 +376,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "fetch-threads":
         return commands.fetch_threads_command(args.pr, args.output_dir)
     if args.command == "commit-push":
-        return commands.commit_push_command(args.worktree, args.message)
+        return commands.commit_push_command(
+            args.worktree, args.message, set_upstream=args.set_upstream
+        )
     if args.command == "post-reply":
         return commands.post_reply_command(args.pr, args.thread_file, args.body)
     if args.command == "resolve-thread":
@@ -316,7 +394,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "open-pr":
         return commands.open_pr_command(args.worktree, args.title, args.body, args.branch)
     if args.command == "get-pr":
-        return commands.get_pr_command(args.ticket_id)
+        return commands.get_pr_command(args.identifier)
     if args.command == "get-changed-files":
         return commands.get_changed_files_command(args.pr)
     if args.command == "set-ticket-done":
@@ -329,10 +407,21 @@ def main(argv: list[str] | None = None) -> int:
         return commands.merge_workflow_command(
             args.ticket,
             args.pr,
-            args.worktree,
+            args.working_dir,
             args.branch,
             args.base_branch,
+            is_worktree=args.is_worktree,
         )
+    if args.command == "setup-worktree":
+        return commands.setup_worktree_command(args.ticket_id)
+    if args.command == "checkout":
+        return commands.checkout_worktree_command(args.identifier)
+    if args.command == "get-expected-branch-name":
+        return commands.get_expected_branch_name_command(args.ticket_id)
+    if args.command == "is-valid-branch-name":
+        return commands.is_valid_branch_name_command(args.ticket, args.branch)
+    if args.command == "extract-ticket-id":
+        return commands.extract_ticket_id_command(args.branch_name)
 
     return 1
 

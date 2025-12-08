@@ -72,7 +72,10 @@ def run_graphql_query(query: str) -> dict[str, Any]:
         Parsed JSON response.
     """
     output = run_gh_command(["api", "graphql", "-f", f"query={query}"])
-    result: dict[str, Any] = json.loads(output)
+    try:
+        result: dict[str, Any] = json.loads(output)
+    except json.JSONDecodeError as e:
+        raise GraphQLError(f"Invalid JSON from gh: {e}") from e
     return result
 
 
@@ -86,7 +89,10 @@ def run_graphql_mutation(mutation: str) -> dict[str, Any]:
         Parsed JSON response.
     """
     output = run_gh_command(["api", "graphql", "-f", f"query={mutation}"])
-    result: dict[str, Any] = json.loads(output)
+    try:
+        result: dict[str, Any] = json.loads(output)
+    except json.JSONDecodeError as e:
+        raise GraphQLError(f"Invalid JSON from gh: {e}") from e
     return result
 
 
@@ -331,11 +337,18 @@ def get_pr_changed_files(pr_number: int) -> list[str]:
         List of file paths changed in the PR.
     """
     # Use REST API for files as GraphQL pagination is complex for this
+    # Note: gh api --paginate outputs multiple JSON arrays concatenated together,
+    # not a single merged array. Using --jq to extract filenames avoids this issue.
     output = run_gh_command(
-        ["api", f"repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/files", "--paginate"]
+        [
+            "api",
+            f"repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/files",
+            "--paginate",
+            "--jq",
+            ".[].filename",
+        ]
     )
-    files_data = json.loads(output)
-    return [f.get("filename", "") for f in files_data if f.get("filename")]
+    return [line for line in output.splitlines() if line.strip()]
 
 
 def post_pr_comment(pr_number: int, body: str) -> None:
@@ -392,9 +405,7 @@ def merge_pr(pr_number: int, squash: bool = True, auto: bool = False) -> bool:
     return result.returncode == 0
 
 
-def create_pr(
-    worktree_path: str, title: str, body: str, head_branch: str
-) -> tuple[bool, str]:
+def create_pr(worktree_path: str, title: str, body: str, head_branch: str) -> tuple[bool, str]:
     """Create a new PR.
 
     Args:
@@ -416,3 +427,42 @@ def create_pr(
     if result.returncode != 0:
         return False, result.stderr
     return True, result.stdout.strip()
+
+
+def get_pr_for_branch(branch_name: str) -> dict[str, Any] | None:
+    """Get the first open PR info for a branch using gh CLI.
+
+    Args:
+        branch_name: The branch name to find PR for.
+
+    Returns:
+        Dictionary with pr_number, pr_url, base_branch, or None if no open PR.
+    """
+    output = run_gh_command(
+        [
+            "pr",
+            "list",
+            "--head",
+            branch_name,
+            "--state",
+            "open",
+            "--json",
+            "number,url,baseRefName",
+            "--limit",
+            "1",
+        ]
+    )
+
+    try:
+        prs = json.loads(output)
+    except json.JSONDecodeError as e:
+        raise GraphQLError(f"Invalid JSON from gh: {e}") from e
+    if not prs:
+        return None
+
+    pr = prs[0]
+    return {
+        "pr_number": pr.get("number"),
+        "pr_url": pr.get("url"),
+        "base_branch": pr.get("baseRefName"),
+    }

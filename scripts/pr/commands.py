@@ -13,6 +13,43 @@ from typing import Any
 
 from scripts.pr import git_dao, github_dao, linear_dao
 
+MAX_BRANCH_NAME_LENGTH = 50
+
+
+def _find_available_branch_name(base_name: str, max_length: int = MAX_BRANCH_NAME_LENGTH) -> str:
+    """Find an available branch name, adding a counter if needed.
+
+    Args:
+        base_name: The base branch name to start with.
+        max_length: Maximum length for the branch name. When adding a counter
+            suffix, the base name is truncated to ensure the total length
+            stays within this limit.
+
+    Returns:
+        An available branch name (base_name, base_name-2, base_name-3, etc.).
+    """
+    # Truncate base_name if it exceeds max_length
+    if len(base_name) > max_length:
+        base_name = base_name[:max_length]
+
+    if not git_dao.branch_exists(base_name):
+        return base_name
+
+    # Try with counter starting at 2
+    counter = 2
+    while True:
+        suffix = f"-{counter}"
+        # Truncate base to ensure total length stays within max_length
+        truncated_base = base_name[: max_length - len(suffix)]
+        candidate = f"{truncated_base}{suffix}"
+        if not git_dao.branch_exists(candidate):
+            return candidate
+        counter += 1
+
+        # Safety limit to prevent infinite loops
+        if counter > 100:
+            raise RuntimeError(f"Could not find available branch name for {base_name}")
+
 
 def _has_thumbs_up_from_author(thread: dict[str, Any]) -> bool:
     """Check if the thread has a thumbs-up reaction from the first author.
@@ -119,9 +156,7 @@ def _read_thread_file(thread_file: Path) -> dict[str, Any]:
     return data
 
 
-def _get_open_prs_for_ticket(
-    ticket_id: str, exclude_pr: int | None = None
-) -> list[dict[str, Any]]:
+def _get_open_prs_for_ticket(ticket_id: str, exclude_pr: int | None = None) -> list[dict[str, Any]]:
     """Get list of open PRs for a Linear ticket.
 
     Args:
@@ -220,12 +255,13 @@ def fetch_threads_command(pr_number: int, output_dir: Path) -> int:
     return 0
 
 
-def commit_push_command(worktree: Path, message: str) -> int:
+def commit_push_command(worktree: Path, message: str, *, set_upstream: bool = False) -> int:
     """Commit and push changes from a worktree.
 
     Args:
         worktree: Path to the git worktree.
         message: Commit message.
+        set_upstream: If True, set upstream tracking with -u flag on push.
 
     Returns:
         Exit code (0 for success).
@@ -235,19 +271,29 @@ def commit_push_command(worktree: Path, message: str) -> int:
         return 1
 
     # Check for changes
-    status = git_dao.get_status(worktree)
+    status, err = git_dao.get_status(worktree)
+    if err:
+        print(f"Error: {err}", file=sys.stderr)
+        return 1
     if not status:
         print("No changes to commit")
         return 0
 
     # Stage all changes
-    git_dao.stage_all(worktree)
+    if not git_dao.stage_all(worktree):
+        print("Error staging", file=sys.stderr)
+        return 1
 
     # Commit
-    git_dao.commit(worktree, message)
+    if not git_dao.commit(worktree, message):
+        print("Error committing", file=sys.stderr)
+        return 1
 
     # Push
-    git_dao.push(worktree)
+    success, err = git_dao.push(worktree, set_upstream=set_upstream)
+    if not success:
+        print(f"Error pushing: {err}", file=sys.stderr)
+        return 1
 
     print(f"Successfully committed and pushed: {message}")
     return 0
@@ -460,54 +506,201 @@ def open_pr_command(worktree: Path, title: str, body: str, branch: str) -> int:
     return 0
 
 
-def get_pr_command(ticket_id: str) -> int:
-    """Get PR info for a Linear ticket: branch name, PR number, PR URL, base branch.
+def _looks_like_pr_id(identifier: str) -> int | None:
+    """Check if identifier looks like a PR ID (e.g., 17 or #17).
 
     Args:
-        ticket_id: Linear ticket ID (e.g., "NES-123").
+        identifier: String to check.
+
+    Returns:
+        PR number if it matches, None otherwise.
+    """
+    # Strip leading # if present
+    cleaned = identifier.lstrip("#")
+    if cleaned.isdigit():
+        return int(cleaned)
+    return None
+
+
+def _looks_like_ticket_id(identifier: str) -> bool:
+    """Check if identifier looks like a Linear ticket ID (e.g., NES-87).
+
+    Ticket IDs have format: LETTERS-NUMBER (e.g., NES-87, PROJ-123).
+
+    Args:
+        identifier: String to check.
+
+    Returns:
+        True if it matches the ticket ID pattern (letters-digits).
+    """
+    return bool(re.match(r"^[A-Za-z]+-\d+$", identifier))
+
+
+def get_pr_command(identifier: str | None = None) -> int:
+    """Get PR info for a PR ID, ticket ID, branch name, or current branch.
+
+    Accepts:
+    - Nothing: Uses current branch
+    - PR ID (e.g., 17 or #17): Gets branch from GitHub PR
+    - Ticket ID (e.g., NES-87): Looks up branch from Linear
+    - Branch name: Uses branch directly
+
+    Args:
+        identifier: PR ID, ticket ID, branch name, or None for current branch.
 
     Returns:
         Exit code (0 for success).
     """
     try:
-        info = linear_dao.get_ticket_info(ticket_id)
+        current_branch = git_dao.get_current_branch()
+        in_worktree = git_dao.is_inside_worktree()
 
-        # Fetch GitHub attachments to find PR
-        attachments = linear_dao.fetch_github_attachments(ticket_id)
+        # Declare variables that will be assigned in different branches
+        branch_name: str | None
+        worktree_path: str | None
+        is_worktree: bool
+        working_directory: str
+        pr_number: int | None
+        pr_url: str | None
+        base_branch: str | None
 
-        # Collect all PR candidates from attachments
-        pr_url = None
-        pr_number = None
-        pr_candidates: list[tuple[str, int]] = []
-        for attachment in attachments:
-            url = attachment.get("url", "")
-            if "/pull/" in url:
-                match = re.search(r"/pull/(\d+)", url)
-                if match:
-                    pr_candidates.append((url, int(match.group(1))))
+        if identifier is None:
+            # No argument: use current branch
+            if not current_branch:
+                print("Error: Not on a branch", file=sys.stderr)
+                return 1
 
-        # Find the first open PR by checking state via GitHub API
-        for url, number in pr_candidates:
-            try:
-                gh_pr_info = github_dao.get_pr_info(number)
-                if gh_pr_info.get("state") == "OPEN":
-                    pr_url = url
-                    pr_number = number
-                    break
-            except github_dao.GraphQLError:
-                continue
+            branch_name = current_branch
+            worktree_path = f".worktrees/{branch_name}" if in_worktree else None
+            is_worktree = in_worktree
+            working_directory = "."
+
+            # Get PR info from GitHub
+            pr_data = github_dao.get_pr_for_branch(branch_name)
+            if pr_data:
+                pr_number = pr_data.get("pr_number")
+                pr_url = pr_data.get("pr_url")
+                base_branch = pr_data.get("base_branch")
+            else:
+                pr_number = None
+                pr_url = None
+                base_branch = None
+
+        elif (pr_id := _looks_like_pr_id(identifier)) is not None:
+            # PR ID: get branch info from GitHub PR
+            gh_pr_info = github_dao.get_pr_info(pr_id)
+            branch_name = gh_pr_info.get("head_branch")
+            base_branch = gh_pr_info.get("base_branch")
+
+            if not branch_name:
+                print(
+                    f"Error: Could not determine head branch for PR #{pr_id}",
+                    file=sys.stderr,
+                )
+                return 1
+
+            pr_number = pr_id
+            pr_url = (
+                f"https://github.com/{github_dao.REPO_OWNER}/{github_dao.REPO_NAME}/pull/{pr_id}"
+            )
+            worktree_path = f".worktrees/{branch_name}" if branch_name else None
+
+            # Determine working directory based on current branch and worktree status
+            if current_branch == branch_name:
+                is_worktree = in_worktree
+                working_directory = "."
+            else:
+                is_worktree = True
+                working_directory = worktree_path if worktree_path else "."
+
+        elif _looks_like_ticket_id(identifier):
+            # Ticket ID: get branch from Linear
+            info = linear_dao.get_ticket_info(identifier)
+            branch_name = info.get("branch_name")
+
+            if not branch_name:
+                print(
+                    f"Error: No branch name configured for ticket {identifier}",
+                    file=sys.stderr,
+                )
+                return 1
+
+            # Fetch GitHub attachments to find PR
+            attachments = linear_dao.fetch_github_attachments(identifier)
+
+            # Collect all PR candidates from attachments
+            pr_url = None
+            pr_number = None
+            pr_candidates: list[tuple[str, int]] = []
+            for attachment in attachments:
+                url = attachment.get("url", "")
+                if "/pull/" in url:
+                    match = re.search(r"/pull/(\d+)", url)
+                    if match:
+                        pr_candidates.append((url, int(match.group(1))))
+
+            # Find the first open PR by checking state via GitHub API
+            for url, number in pr_candidates:
+                try:
+                    gh_pr_info = github_dao.get_pr_info(number)
+                    if gh_pr_info.get("state") == "OPEN":
+                        pr_url = url
+                        pr_number = number
+                        break
+                except github_dao.GraphQLError:
+                    continue
+
+            worktree_path = f".worktrees/{branch_name}"
+
+            # Determine working directory based on current branch and worktree status
+            if current_branch == branch_name:
+                # We're on the correct branch (either main repo or inside worktree)
+                is_worktree = in_worktree
+                working_directory = "."
+            else:
+                # We're on a different branch, need to use the worktree
+                is_worktree = True
+                working_directory = worktree_path
+
+            # If we have a PR number, fetch the base branch from GitHub
+            base_branch = None
+            if pr_number:
+                gh_pr_info = github_dao.get_pr_info(pr_number)
+                base_branch = gh_pr_info.get("base_branch")
+
+        else:
+            # Branch name: use directly
+            branch_name = identifier
+            worktree_path = f".worktrees/{branch_name}"
+
+            # Determine working directory based on current branch and worktree status
+            if current_branch == branch_name:
+                is_worktree = in_worktree
+                working_directory = "."
+            else:
+                is_worktree = True
+                working_directory = worktree_path
+
+            # Get PR info from GitHub
+            pr_data = github_dao.get_pr_for_branch(branch_name)
+            if pr_data:
+                pr_number = pr_data.get("pr_number")
+                pr_url = pr_data.get("pr_url")
+                base_branch = pr_data.get("base_branch")
+            else:
+                pr_number = None
+                pr_url = None
+                base_branch = None
 
         pr_info: dict[str, Any] = {
-            "branch_name": info.get("branch_name"),
+            "branch_name": branch_name,
+            "worktree_path": worktree_path,
+            "working_directory": working_directory,
+            "is_worktree": is_worktree,
             "pr_number": pr_number,
             "pr_url": pr_url,
-            "base_branch": None,
+            "base_branch": base_branch,
         }
-
-        # If we have a PR number, fetch the base branch from GitHub
-        if pr_number:
-            gh_pr_info = github_dao.get_pr_info(pr_number)
-            pr_info["base_branch"] = gh_pr_info.get("base_branch")
 
         print(json.dumps(pr_info, indent=2))
         return 0
@@ -661,20 +854,23 @@ def squash_rebase_command(worktree: Path, base_branch: str) -> int:
 
 
 def merge_workflow_command(
-    ticket_id: str,
+    ticket_id: str | None,
     pr_number: int,
-    worktree: Path,
+    working_dir: Path,
     branch_name: str,
     base_branch: str,
+    *,
+    is_worktree: bool = True,
 ) -> int:
     """Complete merge workflow: merge PR, cleanup, sync, mark done.
 
     Args:
-        ticket_id: Linear ticket ID (e.g., "NES-123").
+        ticket_id: Linear ticket ID (e.g., "NES-123"), or None to skip ticket operations.
         pr_number: PR number to merge.
-        worktree: Path to the git worktree.
+        working_dir: Path to the working directory (worktree or repo root).
         branch_name: Name of the branch to delete.
         base_branch: Target branch to sync.
+        is_worktree: If True, remove worktree and delete branch. If False, skip cleanup.
 
     Returns:
         Exit code (0 for success).
@@ -689,26 +885,30 @@ def merge_workflow_command(
         return 1
     print(f"PR #{pr_number} merged successfully")
 
-    # Step 2: Remove worktree
-    print(f"Step 2: Removing worktree {worktree}...")
-    if worktree.is_dir():
-        success, err = git_dao.remove_worktree(worktree)
+    # Step 2: Remove worktree (only if working in a worktree)
+    if is_worktree:
+        print(f"Step 2: Removing worktree {working_dir}...")
+        if working_dir.is_dir():
+            success, err = git_dao.remove_worktree(working_dir)
+            if not success:
+                errors.append(f"Failed to remove worktree: {err}")
+                print(f"Warning: {errors[-1]}", file=sys.stderr)
+            else:
+                print("Worktree removed successfully")
+        else:
+            print(f"Worktree not found at {working_dir}, skipping removal")
+
+        # Step 3: Delete local branch (only if working in a worktree)
+        print(f"Step 3: Deleting local branch {branch_name}...")
+        success, err = git_dao.delete_branch(branch_name)
         if not success:
-            errors.append(f"Failed to remove worktree: {err}")
+            errors.append(f"Failed to delete branch: {err}")
             print(f"Warning: {errors[-1]}", file=sys.stderr)
         else:
-            print("Worktree removed successfully")
+            print("Local branch deleted successfully")
     else:
-        print(f"Worktree not found at {worktree}, skipping removal")
-
-    # Step 3: Delete local branch
-    print(f"Step 3: Deleting local branch {branch_name}...")
-    success, err = git_dao.delete_branch(branch_name)
-    if not success:
-        errors.append(f"Failed to delete branch: {err}")
-        print(f"Warning: {errors[-1]}", file=sys.stderr)
-    else:
-        print("Local branch deleted successfully")
+        print("Step 2: Skipping worktree removal (working on current branch)")
+        print("Step 3: Skipping branch deletion (working on current branch)")
 
     # Step 4: Sync target branch
     print(f"Step 4: Syncing {base_branch}...")
@@ -741,51 +941,55 @@ def merge_workflow_command(
             print(f"Warning: {errors[-1]} - manual resolution required", file=sys.stderr)
 
     # Step 5: Check for remaining open PRs and conditionally mark done
-    print(f"Step 5: Checking for remaining open PRs for {ticket_id}...")
-    remaining_prs: list[dict[str, Any]] = []
-    try:
-        remaining_prs = _get_open_prs_for_ticket(ticket_id, exclude_pr=pr_number)
-    except linear_dao.LinearAPIError as e:
-        errors.append(f"Error checking remaining PRs: {e}")
-        print(f"Warning: {errors[-1]}", file=sys.stderr)
-
-    if remaining_prs:
-        # Report remaining PRs instead of marking done
-        next_pr = remaining_prs[0]
-        print(f"Ticket {ticket_id} has {len(remaining_prs)} remaining open PR(s)")
-        print(f"Next open PR: #{next_pr['number']} - {next_pr['url']}")
-        print("Skipping mark as Done (ticket still has open PRs)")
+    # Skip if no ticket_id provided
+    if not ticket_id:
+        print("Step 5: Skipping ticket operations (no ticket ID provided)")
     else:
-        # No remaining PRs, mark as Done
-        print(f"No remaining open PRs. Marking {ticket_id} as Done...")
+        print(f"Step 5: Checking for remaining open PRs for {ticket_id}...")
+        remaining_prs: list[dict[str, Any]] = []
         try:
-            info = linear_dao.get_ticket_info(ticket_id)
-            team_id = info.get("team_id")
-            if team_id:
-                done_state_id = linear_dao.get_done_state_id(team_id)
-                issue_uuid = info.get("id")
-                if issue_uuid:
-                    success = linear_dao.set_ticket_state(issue_uuid, done_state_id)
-                    if success:
-                        print(f"Marked {ticket_id} as Done")
+            remaining_prs = _get_open_prs_for_ticket(ticket_id, exclude_pr=pr_number)
+        except linear_dao.LinearAPIError as e:
+            errors.append(f"Error checking remaining PRs: {e}")
+            print(f"Warning: {errors[-1]}", file=sys.stderr)
+
+        if remaining_prs:
+            # Report remaining PRs instead of marking done
+            next_pr = remaining_prs[0]
+            print(f"Ticket {ticket_id} has {len(remaining_prs)} remaining open PR(s)")
+            print(f"Next open PR: #{next_pr['number']} - {next_pr['url']}")
+            print("Skipping mark as Done (ticket still has open PRs)")
+        else:
+            # No remaining PRs, mark as Done
+            print(f"No remaining open PRs. Marking {ticket_id} as Done...")
+            try:
+                info = linear_dao.get_ticket_info(ticket_id)
+                team_id = info.get("team_id")
+                if team_id:
+                    done_state_id = linear_dao.get_done_state_id(team_id)
+                    issue_uuid = info.get("id")
+                    if issue_uuid:
+                        success = linear_dao.set_ticket_state(issue_uuid, done_state_id)
+                        if success:
+                            print(f"Marked {ticket_id} as Done")
+                        else:
+                            errors.append(f"Failed to mark {ticket_id} as Done")
+                            print(f"Warning: {errors[-1]}", file=sys.stderr)
                     else:
-                        errors.append(f"Failed to mark {ticket_id} as Done")
+                        errors.append(f"Could not get issue UUID for {ticket_id}")
                         print(f"Warning: {errors[-1]}", file=sys.stderr)
                 else:
-                    errors.append(f"Could not get issue UUID for {ticket_id}")
+                    errors.append(f"Could not get team ID for {ticket_id}")
                     print(f"Warning: {errors[-1]}", file=sys.stderr)
-            else:
-                errors.append(f"Could not get team ID for {ticket_id}")
+            except linear_dao.LinearAPIError as e:
+                errors.append(f"Linear API error: {e}")
                 print(f"Warning: {errors[-1]}", file=sys.stderr)
-        except linear_dao.LinearAPIError as e:
-            errors.append(f"Linear API error: {e}")
-            print(f"Warning: {errors[-1]}", file=sys.stderr)
 
     # Summary
     print("\n" + "=" * 60)
     print("MERGE WORKFLOW COMPLETE")
     print("=" * 60)
-    print(f"Ticket: {ticket_id}")
+    print(f"Ticket: {ticket_id or 'N/A'}")
     print(f"PR: #{pr_number}")
     print(f"Branch: {branch_name}")
     print(f"Target: {base_branch}")
@@ -796,3 +1000,468 @@ def merge_workflow_command(
     print("=" * 60)
 
     return 0
+
+
+def setup_worktree_command(ticket_id: str) -> int:
+    """Setup a git worktree for a Linear ticket.
+
+    Gets the branch name from Linear, finds an available branch name (adding
+    a counter if needed), and creates a new worktree with that branch.
+
+    This command ALWAYS creates a new branch. If the branch name from Linear
+    already exists (locally or on remote), a counter is appended (e.g.,
+    branch-name-2, branch-name-3).
+
+    Args:
+        ticket_id: Linear ticket ID (e.g., "NES-87").
+
+    Returns:
+        Exit code (0 for success).
+    """
+    try:
+        # Get ticket info including branchName from Linear
+        info = linear_dao.get_ticket_info(ticket_id)
+        base_branch_name = info.get("branch_name")
+
+        if not base_branch_name:
+            print(f"Error: No branch name found for ticket {ticket_id}", file=sys.stderr)
+            return 1
+
+        # Get current branch (base branch for PR)
+        base_branch = git_dao.get_current_branch()
+        if not base_branch:
+            print("Error: Could not determine current branch", file=sys.stderr)
+            return 1
+
+        # Fetch origin to get latest remote refs before checking branch existence
+        print("Fetching origin...", file=sys.stderr)
+        success, err = git_dao.fetch_origin()
+        if not success:
+            print(f"Error fetching origin: {err}", file=sys.stderr)
+            return 1
+
+        # Find an available branch name (adds counter if needed)
+        # This always creates a new branch, never reuses an existing one
+        branch_name = _find_available_branch_name(base_branch_name)
+
+        # Worktree base directory
+        base_dir = Path(".worktrees").resolve()
+        # Note: branch names with slashes create nested directories
+        worktree_path = (base_dir / branch_name).resolve()
+        # Ensure the resolved path stays within .worktrees to avoid traversal
+        try:
+            worktree_path.relative_to(base_dir)
+        except ValueError:
+            print("Error: Unsafe branch name resolves outside .worktrees", file=sys.stderr)
+            return 1
+
+        # Check if worktree already exists at this path
+        if git_dao.worktree_exists(worktree_path):
+            print(
+                json.dumps(
+                    {
+                        "status": "exists",
+                        "worktree_path": str(worktree_path),
+                        "branch_name": branch_name,
+                        "base_branch": base_branch,
+                    },
+                    indent=2,
+                )
+            )
+            return 0
+
+        # Create worktree with new branch
+        print(
+            f"Creating worktree at {worktree_path} (new branch: {branch_name})...",
+            file=sys.stderr,
+        )
+
+        success, err = git_dao.create_worktree(worktree_path, branch_name, create_branch=True)
+        if not success:
+            print(f"Error creating worktree: {err}", file=sys.stderr)
+            return 1
+
+        # Output result as JSON
+        print(
+            json.dumps(
+                {
+                    "status": "created",
+                    "worktree_path": str(worktree_path),
+                    "branch_name": branch_name,
+                    "base_branch": base_branch,
+                    "branch_created": True,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    except (linear_dao.LinearAPIError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def checkout_worktree_command(identifier: str) -> int:
+    """Checkout an existing branch into a worktree.
+
+    Takes either a Linear ticket ID (e.g., "NES-87") or a branch name. If the
+    identifier looks like a ticket ID (contains a dash with letters before it),
+    fetches the branch name from Linear. Otherwise, uses the identifier as the
+    branch name directly.
+
+    Unlike setup_worktree_command, this command:
+    - Does NOT create a new branch (only checks out existing branches)
+    - Errors if the branch doesn't exist locally or on remote
+    - If the branch exists only on remote, creates a local tracking branch
+
+    Args:
+        identifier: Linear ticket ID (e.g., "NES-87") or branch name.
+
+    Returns:
+        Exit code (0 for success).
+    """
+    # Determine if identifier is a ticket ID or branch name
+    is_ticket_id = _looks_like_ticket_id(identifier)
+
+    if is_ticket_id:
+        # Fetch branch name from Linear
+        try:
+            info = linear_dao.get_ticket_info(identifier)
+            branch_name = info.get("branch_name")
+            if not branch_name:
+                print(
+                    f"Error: No branch name found for ticket {identifier}",
+                    file=sys.stderr,
+                )
+                return 1
+        except linear_dao.LinearAPIError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+    else:
+        branch_name = identifier
+
+    # Fetch origin to get latest remote refs
+    print("Fetching origin...", file=sys.stderr)
+    success, err = git_dao.fetch_origin()
+    if not success:
+        print(f"Error fetching origin: {err}", file=sys.stderr)
+        return 1
+
+    # Check if branch exists
+    exists_local = git_dao.branch_exists_local(branch_name)
+    exists_remote = git_dao.branch_exists_remote(branch_name)
+
+    if not exists_local and not exists_remote:
+        print(
+            f"Error: Branch '{branch_name}' does not exist locally or on remote.",
+            file=sys.stderr,
+        )
+        print(
+            "Use 'uv run pr setup-worktree' or '/execute-plan' to create a new branch.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Worktree path: .worktrees/<branch_name>
+    worktree_path = Path(".worktrees") / branch_name
+
+    # Check if worktree already exists at this path
+    if git_dao.worktree_exists(worktree_path):
+        print(
+            json.dumps(
+                {
+                    "status": "exists",
+                    "worktree_path": str(worktree_path),
+                    "branch_name": branch_name,
+                    "branch_created": False,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    # Create worktree for existing branch (not creating a new branch)
+    if exists_local:
+        # Branch exists locally, just checkout
+        print(
+            f"Creating worktree at {worktree_path} (existing local branch: {branch_name})...",
+            file=sys.stderr,
+        )
+        success, err = git_dao.create_worktree(worktree_path, branch_name, create_branch=False)
+    else:
+        # Branch only exists on remote, create local tracking branch
+        print(
+            f"Creating worktree at {worktree_path} (tracking remote branch: {branch_name})...",
+            file=sys.stderr,
+        )
+        # Use git worktree add with remote tracking
+        success, err = git_dao.create_worktree_tracking(worktree_path, branch_name)
+
+    if not success:
+        print(f"Error creating worktree: {err}", file=sys.stderr)
+        return 1
+
+    # Output result as JSON
+    print(
+        json.dumps(
+            {
+                "status": "created",
+                "worktree_path": str(worktree_path),
+                "branch_name": branch_name,
+                "branch_created": False,
+                "tracked_remote": not exists_local,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def _is_valid_branch_name(
+    branch_name: str, expected_base: str, max_length: int = MAX_BRANCH_NAME_LENGTH
+) -> bool:
+    """Check if a branch name matches the expected pattern.
+
+    A branch name is valid if it matches either:
+    1. The expected base name (truncated to max_length if needed)
+    2. The pattern <truncated_base>-N where N is a counter >= 2
+
+    Args:
+        branch_name: The branch name to validate.
+        expected_base: The expected base branch name from Linear.
+        max_length: Maximum length for branch names (default 50).
+
+    Returns:
+        True if the branch name is valid, False otherwise.
+    """
+    # Enforce overall max length to prevent long numeric suffixes from bypassing the limit
+    if len(branch_name) > max_length:
+        return False
+
+    # Truncate expected base if it exceeds max_length
+    if len(expected_base) > max_length:
+        truncated_base = expected_base[:max_length]
+    else:
+        truncated_base = expected_base
+
+    # Check for exact match
+    if branch_name == truncated_base:
+        return True
+
+    # Check for pattern with counter suffix: <base>-N or <truncated_base>-N
+    # The counter suffix requires the base to be truncated to fit within max_length
+    pattern = r"^(.+)-(\d+)$"
+    match = re.match(pattern, branch_name)
+    if not match:
+        return False
+
+    base_part = match.group(1)
+    counter_str = match.group(2)
+
+    # Counter must be >= 2 (per _find_available_branch_name logic)
+    try:
+        counter = int(counter_str)
+        if counter < 2:
+            return False
+    except ValueError:
+        return False
+
+    # The base part should match a truncated version of expected_base
+    # The truncation accounts for the suffix length
+    suffix_len = len(f"-{counter_str}")
+    max_base_len = max_length - suffix_len
+    expected_truncated = expected_base[:max_base_len]
+
+    return base_part == expected_truncated
+
+
+def get_expected_branch_name_command(ticket_id: str) -> int:
+    """Get the expected branch name for a Linear ticket.
+
+    This returns the base branch name from Linear (before any counter suffixes
+    are added). The name is truncated to 50 characters if needed.
+
+    Args:
+        ticket_id: Linear ticket ID (e.g., "NES-87").
+
+    Returns:
+        Exit code (0 for success).
+    """
+    try:
+        info = linear_dao.get_ticket_info(ticket_id)
+        branch_name = info.get("branch_name")
+
+        if not branch_name:
+            print(f"Error: No branch name found for ticket {ticket_id}", file=sys.stderr)
+            return 1
+
+        # Truncate to max length (matching _find_available_branch_name behavior)
+        if len(branch_name) > MAX_BRANCH_NAME_LENGTH:
+            branch_name = branch_name[:MAX_BRANCH_NAME_LENGTH]
+
+        print(
+            json.dumps(
+                {
+                    "ticket_id": ticket_id,
+                    "expected_branch_name": branch_name,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    except linear_dao.LinearAPIError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def is_valid_branch_name_command(ticket_id: str, branch_name: str) -> int:
+    """Check if a branch name matches the expected pattern for a ticket.
+
+    A branch name is valid if it matches either:
+    1. The expected branch name from Linear (truncated to 50 chars)
+    2. The pattern <expected_branch>-N where N >= 2 (for counter suffixes)
+
+    Args:
+        ticket_id: Linear ticket ID (e.g., "NES-87").
+        branch_name: Branch name to validate.
+
+    Returns:
+        Exit code (0 for valid, 1 for invalid or error).
+    """
+    try:
+        info = linear_dao.get_ticket_info(ticket_id)
+        expected_base = info.get("branch_name")
+
+        if not expected_base:
+            print(f"Error: No branch name found for ticket {ticket_id}", file=sys.stderr)
+            return 1
+
+        is_valid = _is_valid_branch_name(branch_name, expected_base)
+
+        print(
+            json.dumps(
+                {
+                    "ticket_id": ticket_id,
+                    "branch_name": branch_name,
+                    "expected_base": expected_base,
+                    "is_valid": is_valid,
+                },
+                indent=2,
+            )
+        )
+
+        return 0 if is_valid else 1
+
+    except linear_dao.LinearAPIError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _extract_ticket_id_from_branch(branch_name: str) -> str | None:
+    """Extract a ticket ID from a branch name.
+
+    Looks for a ticket ID pattern in the branch name after the last '/'.
+    The first two tokens (separated by '-') form the ticket ID:
+    - First token: alphanumeric (e.g., 'nes', 'NES', 'PROJ')
+    - Second token: numeric (e.g., '87', '123')
+
+    Examples:
+        'mrasolomon/nes-87-fix-bug' -> 'NES-87'
+        'nes-123-feature' -> 'NES-123'
+        'main' -> None
+
+    Args:
+        branch_name: The branch name to parse.
+
+    Returns:
+        Ticket ID in uppercase (e.g., 'NES-87'), or None if no valid pattern found.
+    """
+    # Get part after last '/' (or whole string if no '/')
+    name_part = branch_name.rsplit("/", 1)[1] if "/" in branch_name else branch_name
+
+    # Split by '-' and check first two tokens
+    parts = name_part.split("-")
+    if len(parts) < 2:
+        return None
+
+    first_token = parts[0]
+    second_token = parts[1]
+
+    # First token must be alphanumeric
+    if not first_token.isalnum():
+        return None
+
+    # Second token must be numeric
+    if not second_token.isdigit():
+        return None
+
+    # Return uppercase ticket ID
+    return f"{first_token.upper()}-{second_token}"
+
+
+def extract_ticket_id_command(branch_name: str | None = None) -> int:
+    """Extract ticket ID from a branch name.
+
+    If branch_name is not provided, uses the current branch.
+    Validates the extracted ticket ID against Linear API.
+
+    Args:
+        branch_name: Branch name to parse, or None to use current branch.
+
+    Returns:
+        Exit code (0 for success with valid ticket, 1 for no ticket or error).
+    """
+    # Get branch name if not provided
+    if branch_name is None:
+        branch_name = git_dao.get_current_branch()
+        if not branch_name:
+            print("Error: Not on a branch", file=sys.stderr)
+            return 1
+
+    # Extract potential ticket ID
+    ticket_id = _extract_ticket_id_from_branch(branch_name)
+
+    if not ticket_id:
+        print(
+            json.dumps(
+                {
+                    "branch_name": branch_name,
+                    "ticket_id": None,
+                    "valid": False,
+                    "reason": "No ticket ID pattern found in branch name",
+                },
+                indent=2,
+            )
+        )
+        return 1
+
+    # Validate against Linear API
+    try:
+        info = linear_dao.get_ticket_info(ticket_id)
+        # If we get here without exception, ticket exists
+        print(
+            json.dumps(
+                {
+                    "branch_name": branch_name,
+                    "ticket_id": ticket_id,
+                    "valid": True,
+                    "ticket_title": info.get("title"),
+                },
+                indent=2,
+            )
+        )
+        return 0
+    except linear_dao.LinearAPIError:
+        print(
+            json.dumps(
+                {
+                    "branch_name": branch_name,
+                    "ticket_id": ticket_id,
+                    "valid": False,
+                    "reason": f"Ticket {ticket_id} not found in Linear",
+                },
+                indent=2,
+            )
+        )
+        return 1
