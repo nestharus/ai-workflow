@@ -518,42 +518,84 @@ def create_worktree_tracking(worktree_path: Path, branch_name: str) -> tuple[boo
 
 
 def create_shared_clone(source_path: Path, clone_path: Path, branch_name: str) -> tuple[bool, str]:
-    """Create a shared clone for safe rebase/merge operations.
+    """Create a sandbox clone for safe rebase/merge operations.
 
-    Uses git clone --shared to create a lightweight clone that shares the object
-    store with the source repository. This allows performing rebase/merge operations
-    in isolation while the source worktree remains readable.
+    Creates a fresh git repository that fetches from GitHub (not the local worktree).
+    This avoids issues with:
+    - Worktree branch locks preventing checkout of the same branch
+    - Origin pointing to local worktree instead of GitHub
+    - Missing git user config in cloned repos
 
     Args:
         source_path: Path to the source worktree or repo.
-        clone_path: Path where the shared clone should be created.
-        branch_name: Name of the branch to checkout in the clone.
+        clone_path: Path where the sandbox should be created.
+        branch_name: Name of the branch to checkout in the sandbox.
 
     Returns:
         Tuple of (success, error_message).
     """
-    # Ensure parent directory exists
+    import shutil
+
+    # Get the GitHub remote URL from the source repo
+    result = _run_git(["git", "remote", "get-url", "origin"], cwd=source_path)
+    if result is None:
+        return False, "git not available"
+    if result.returncode != 0:
+        return False, f"failed to get remote URL: {result.stderr}"
+    github_url = result.stdout.strip()
+
+    # Get git user config from source repo
+    user_name = None
+    user_email = None
+    result = _run_git(["git", "config", "user.name"], cwd=source_path)
+    if result and result.returncode == 0:
+        user_name = result.stdout.strip()
+    result = _run_git(["git", "config", "user.email"], cwd=source_path)
+    if result and result.returncode == 0:
+        user_email = result.stdout.strip()
+
+    # Ensure parent directory exists and clone path is clean
     clone_path.parent.mkdir(parents=True, exist_ok=True)
+    if clone_path.exists():
+        shutil.rmtree(clone_path)
 
-    # Create shared clone
-    result = _run_git(
-        ["git", "clone", "--shared", "--no-checkout", str(source_path), str(clone_path)]
-    )
+    # Initialize fresh git repo
+    clone_path.mkdir(parents=True)
+    result = _run_git(["git", "init"], cwd=clone_path)
     if result is None:
-        return False, "git not available"
-    if result.returncode != 0:
-        return False, result.stderr
-
-    # Checkout the branch
-    result = _run_git(["git", "checkout", branch_name], cwd=clone_path)
-    if result is None:
-        return False, "git not available"
-    if result.returncode != 0:
-        # Clean up the clone if checkout fails
-        import shutil
-
         shutil.rmtree(clone_path, ignore_errors=True)
-        return False, f"checkout failed: {result.stderr}"
+        return False, "git not available"
+    if result.returncode != 0:
+        shutil.rmtree(clone_path, ignore_errors=True)
+        return False, f"git init failed: {result.stderr}"
+
+    # Add GitHub as origin
+    result = _run_git(["git", "remote", "add", "origin", github_url], cwd=clone_path)
+    if result is None or result.returncode != 0:
+        shutil.rmtree(clone_path, ignore_errors=True)
+        return False, f"failed to add remote: {result.stderr if result else 'git not available'}"
+
+    # Set git user config if available
+    if user_name:
+        _run_git(["git", "config", "user.name", user_name], cwd=clone_path)
+    if user_email:
+        _run_git(["git", "config", "user.email", user_email], cwd=clone_path)
+
+    # Fetch the branch
+    result = _run_git(["git", "fetch", "origin", branch_name], cwd=clone_path)
+    if result is None or result.returncode != 0:
+        shutil.rmtree(clone_path, ignore_errors=True)
+        return False, f"failed to fetch branch: {result.stderr if result else 'git not available'}"
+
+    # Checkout as a new local branch (avoids worktree lock on same branch name)
+    # Use a sandbox-specific branch name to avoid conflicts
+    result = _run_git(
+        ["git", "checkout", "-b", branch_name, f"origin/{branch_name}"],
+        cwd=clone_path,
+    )
+    if result is None or result.returncode != 0:
+        shutil.rmtree(clone_path, ignore_errors=True)
+        return False, f"checkout failed: {result.stderr if result else 'git not available'}"
 
     return True, ""
 
