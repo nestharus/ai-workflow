@@ -549,8 +549,8 @@ def get_pr_command(ticket_id: str) -> int:
 
         # Determine working directory based on current branch
         current_branch = git_dao.get_current_branch()
-        is_worktree = current_branch != branch_name
-        working_directory = worktree_path if is_worktree else "."
+        is_worktree = branch_name is not None and current_branch != branch_name
+        working_directory = worktree_path if is_worktree and worktree_path else "."
 
         pr_info: dict[str, Any] = {
             "branch_name": branch_name,
@@ -1087,6 +1087,10 @@ def _is_valid_branch_name(branch_name: str, expected_base: str, max_length: int 
     Returns:
         True if the branch name is valid, False otherwise.
     """
+    # Enforce overall max length to prevent long numeric suffixes from bypassing the limit
+    if len(branch_name) > max_length:
+        return False
+
     # Truncate expected base if it exceeds max_length
     if len(expected_base) > max_length:
         truncated_base = expected_base[:max_length]
