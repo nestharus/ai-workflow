@@ -22,6 +22,7 @@ LINTER_NAMES = [
     "pymarkdown",
     "yamllint",
     "yamldocs",
+    "dotenvlint",
     "checkov",
 ]
 OPENAPI_SCHEMA = REPO_ROOT / "openapi" / "openapi.json"
@@ -29,6 +30,7 @@ CHECKOV_CONFIG = REPO_ROOT / ".checkov.yaml"
 HADOLINT_CONFIG = REPO_ROOT / ".hadolint.yaml"
 UV_CLI_REQUIRED = "uv CLI required to run lint"
 HADOLINT_CLI_REQUIRED = "hadolint CLI required to run lint"
+DOTENV_LINTER_CLI_REQUIRED = "dotenv-linter CLI required to run lint"
 
 # Lint script config file paths
 LINT_SCRIPTS_CONFIG = REPO_ROOT / ".lint.scripts.yaml"
@@ -37,6 +39,7 @@ LINT_PYMARKDOWN_CONFIG = REPO_ROOT / ".lint.pymarkdown.yaml"
 LINT_YAMLLINT_CONFIG = REPO_ROOT / ".lint.yamllint.yaml"
 LINT_YAMLDOCS_CONFIG = REPO_ROOT / ".lint.yamldocs.yaml"
 LINT_MARKDOWN_RESTRICTION_CONFIG = REPO_ROOT / ".lint.markdown-restriction.yaml"
+LINT_DOTENVLINT_CONFIG = REPO_ROOT / ".lint.dotenvlint.yaml"
 
 
 def _load_yaml_config(config_path: Path) -> dict[str, Any]:
@@ -65,6 +68,14 @@ def _hadolint() -> str:
     if hadolint_exe is None:
         raise RuntimeError(HADOLINT_CLI_REQUIRED)
     return hadolint_exe
+
+
+def _dotenv_linter() -> str:
+    """Locate the dotenv-linter executable on PATH."""
+    dotenv_linter_exe = shutil.which("dotenv-linter")
+    if dotenv_linter_exe is None:
+        raise RuntimeError(DOTENV_LINTER_CLI_REQUIRED)
+    return dotenv_linter_exe
 
 
 def _run_checked(command: list[str]) -> None:
@@ -369,6 +380,43 @@ def _run_yamldocs() -> int:
     return 0
 
 
+def _run_dotenvlint(files: list[str] | None = None) -> None:
+    """Run dotenv-linter on .env files.
+
+    Args:
+        files: Optional list of files to check. If None, checks configured targets.
+    """
+    dotenv_linter_exe = _dotenv_linter()
+    config = _load_yaml_config(LINT_DOTENVLINT_CONFIG)
+    exclude_dirs = {REPO_ROOT / d for d in config.get("exclude_dirs", [])}
+
+    if files:
+        # Filter to only .env files
+        env_files = [f for f in files if Path(f).name.startswith(".env")]
+        if not env_files:
+            print("No .env files to check with dotenv-linter")
+            return
+        targets = env_files
+    else:
+        # Find all .env files based on configured targets
+        targets_config = config.get("targets", [".env", ".env.*"])
+        exclude_patterns = config.get("exclude_patterns", [])
+        env_files = []
+        for pattern in targets_config:
+            for path in REPO_ROOT.glob(pattern):
+                if path.is_file() and not _is_path_excluded(path, exclude_dirs):
+                    # Check exclude patterns
+                    excluded = any(path.match(ep) for ep in exclude_patterns)
+                    if not excluded:
+                        env_files.append(str(path))
+        targets = env_files
+
+    if not targets:
+        print("No .env files found for dotenv-linter scan")
+    else:
+        _run_checked([dotenv_linter_exe, "check", *targets])
+
+
 def _run_markdown_restriction() -> int:
     """Run markdown restriction linter.
 
@@ -437,6 +485,7 @@ LINTER_RUNNERS_WITH_FILES: dict[str, Callable[[list[str] | None], int | None]] =
     "hadolint": _run_hadolint,
     "pymarkdown": _run_pymarkdown,
     "yamllint": _run_yamllint,
+    "dotenvlint": _run_dotenvlint,
 }
 
 

@@ -16,11 +16,13 @@ from scripts.dev.lint import (
     LINTER_RUNNERS_NO_FILES,
     LINTER_RUNNERS_WITH_FILES,
     InvalidCommandError,
+    _dotenv_linter,
     _hadolint,
     _load_yaml_config,
     _parse_args,
     _run_checked,
     _run_checkov,
+    _run_dotenvlint,
     _run_hadolint,
     _run_markdown_restriction,
     _run_mypy,
@@ -78,6 +80,23 @@ class TestHadolint:
             with pytest.raises(RuntimeError) as exc_info:
                 _hadolint()
             assert "hadolint CLI required" in str(exc_info.value)
+
+
+class TestDotenvLinter:
+    """Tests for _dotenv_linter function."""
+
+    def test_returns_dotenv_linter_path_when_found(self) -> None:
+        """Should return dotenv-linter executable path when available."""
+        with patch("shutil.which", return_value="/usr/bin/dotenv-linter"):
+            result = _dotenv_linter()
+            assert result == "/usr/bin/dotenv-linter"
+
+    def test_raises_when_not_found(self) -> None:
+        """Should raise RuntimeError when dotenv-linter not found."""
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(RuntimeError) as exc_info:
+                _dotenv_linter()
+            assert "dotenv-linter CLI required" in str(exc_info.value)
 
 
 class TestRunChecked:
@@ -375,6 +394,7 @@ class TestLinterConstants:
             "pymarkdown",
             "yamllint",
             "yamldocs",
+            "dotenvlint",
             "checkov",
         ]
         assert expected == LINTER_NAMES
@@ -533,6 +553,136 @@ class TestRunHadolint:
         dockerfile_args = [arg for arg in call_args if "Dockerfile" in arg]
         assert len(dockerfile_args) == 1
         assert "excluded" not in dockerfile_args[0]
+
+
+class TestRunDotenvlint:
+    """Tests for _run_dotenvlint function."""
+
+    def test_prints_message_when_no_env_files(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should print message when no .env files found."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/.lint.dotenvlint.yaml", contents="exclude_dirs: []")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_DOTENVLINT_CONFIG", Path("/fake/repo/.lint.dotenvlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/dotenv-linter"),
+        ):
+            _run_dotenvlint()
+
+        captured = capsys.readouterr()
+        assert "No .env files found" in captured.out
+
+    def test_runs_dotenv_linter_on_env_files(self, fs: FakeFilesystem) -> None:
+        """Should run dotenv-linter on found .env files."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/.env.example", contents="KEY=value")
+        fs.create_file("/fake/repo/.lint.dotenvlint.yaml", contents="exclude_dirs: []")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_DOTENVLINT_CONFIG", Path("/fake/repo/.lint.dotenvlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/dotenv-linter"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_dotenvlint()
+
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+        assert call_args[0] == "/usr/bin/dotenv-linter"
+        assert "check" in call_args
+        assert any(".env.example" in arg for arg in call_args)
+
+    def test_excludes_directories_from_config(self, fs: FakeFilesystem) -> None:
+        """Should exclude directories specified in config."""
+        fs.create_dir("/fake/repo")
+        fs.create_dir("/fake/repo/excluded")
+        fs.create_file("/fake/repo/.env.example", contents="KEY=value")
+        fs.create_file("/fake/repo/excluded/.env.example", contents="KEY=value")
+        fs.create_file("/fake/repo/.lint.dotenvlint.yaml", contents="exclude_dirs:\n  - excluded")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_DOTENVLINT_CONFIG", Path("/fake/repo/.lint.dotenvlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/dotenv-linter"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_dotenvlint()
+
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+        # Only the root .env.example should be included, not the excluded one
+        env_file_args = [arg for arg in call_args if ".env" in arg]
+        assert len(env_file_args) == 1
+        assert "excluded" not in env_file_args[0]
+
+    def test_file_filtering_support(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should filter to only .env files when files list provided."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/.env.example", contents="KEY=value")
+        fs.create_file("/fake/repo/README.md", contents="# README")
+        fs.create_file("/fake/repo/.lint.dotenvlint.yaml", contents="exclude_dirs: []")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_DOTENVLINT_CONFIG", Path("/fake/repo/.lint.dotenvlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/dotenv-linter"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_dotenvlint(files=["/fake/repo/.env.example", "/fake/repo/README.md"])
+
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+        # Only .env.example should be in the args, not README.md
+        assert "/fake/repo/.env.example" in call_args
+        assert "/fake/repo/README.md" not in call_args
+
+    def test_handles_exclude_patterns_from_config(self, fs: FakeFilesystem) -> None:
+        """Should exclude files matching exclude_patterns from config."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/.env.example", contents="KEY=value")
+        fs.create_file("/fake/repo/.env.local", contents="KEY=value")
+        fs.create_file(
+            "/fake/repo/.lint.dotenvlint.yaml",
+            contents="exclude_dirs: []\nexclude_patterns:\n  - '*.local'",
+        )
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_DOTENVLINT_CONFIG", Path("/fake/repo/.lint.dotenvlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/dotenv-linter"),
+            patch("subprocess.check_call") as mock_check,
+        ):
+            _run_dotenvlint()
+
+        mock_check.assert_called_once()
+        call_args = mock_check.call_args[0][0]
+        # Only .env.example should be included, not .env.local
+        env_file_args = [arg for arg in call_args if ".env" in arg]
+        assert len(env_file_args) == 1
+        assert ".env.example" in env_file_args[0]
+        assert ".env.local" not in str(call_args)
+
+    def test_no_files_message_when_files_filtered_to_empty(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should print message when files list filters to no .env files."""
+        fs.create_dir("/fake/repo")
+        fs.create_file("/fake/repo/.lint.dotenvlint.yaml", contents="exclude_dirs: []")
+
+        with (
+            patch.object(lint, "REPO_ROOT", Path("/fake/repo")),
+            patch.object(lint, "LINT_DOTENVLINT_CONFIG", Path("/fake/repo/.lint.dotenvlint.yaml")),
+            patch("shutil.which", return_value="/usr/bin/dotenv-linter"),
+        ):
+            _run_dotenvlint(files=["README.md", "config.yaml"])
+
+        captured = capsys.readouterr()
+        assert "No .env files to check" in captured.out
 
 
 class TestRunPymarkdown:
@@ -907,6 +1057,7 @@ class TestMain:
             "/fake/repo/.lint.markdown-restriction.yaml",
             contents="restrictions: []\nexclude_dirs: []",
         )
+        fs.create_file("/fake/repo/.lint.dotenvlint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
@@ -923,6 +1074,11 @@ class TestMain:
                 lint,
                 "LINT_MARKDOWN_RESTRICTION_CONFIG",
                 Path("/fake/repo/.lint.markdown-restriction.yaml"),
+            ),
+            patch.object(
+                lint,
+                "LINT_DOTENVLINT_CONFIG",
+                Path("/fake/repo/.lint.dotenvlint.yaml"),
             ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
@@ -969,6 +1125,7 @@ class TestMain:
             "/fake/repo/.lint.markdown-restriction.yaml",
             contents="restrictions: []\nexclude_dirs: []",
         )
+        fs.create_file("/fake/repo/.lint.dotenvlint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
@@ -987,6 +1144,11 @@ class TestMain:
                 lint,
                 "LINT_MARKDOWN_RESTRICTION_CONFIG",
                 Path("/fake/repo/.lint.markdown-restriction.yaml"),
+            ),
+            patch.object(
+                lint,
+                "LINT_DOTENVLINT_CONFIG",
+                Path("/fake/repo/.lint.dotenvlint.yaml"),
             ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
@@ -1019,6 +1181,7 @@ class TestMain:
             "/fake/repo/.lint.markdown-restriction.yaml",
             contents="restrictions: []\nexclude_dirs: []",
         )
+        fs.create_file("/fake/repo/.lint.dotenvlint.yaml", contents="exclude_dirs: []")
         fs.create_file("/fake/repo/pyproject.toml", contents="[project.scripts]")
 
         with (
@@ -1037,6 +1200,11 @@ class TestMain:
                 lint,
                 "LINT_MARKDOWN_RESTRICTION_CONFIG",
                 Path("/fake/repo/.lint.markdown-restriction.yaml"),
+            ),
+            patch.object(
+                lint,
+                "LINT_DOTENVLINT_CONFIG",
+                Path("/fake/repo/.lint.dotenvlint.yaml"),
             ),
             patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
             patch("subprocess.check_call"),
