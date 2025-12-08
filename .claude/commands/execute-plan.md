@@ -19,30 +19,36 @@ The worktree branch is created from the current branch and PRs back to it.
 
 ### Step 1: Setup Git Worktree
 
-1. Record the current branch: `git branch --show-current` → `<BASE_BRANCH>`
+Run the setup-worktree command to create a worktree for the ticket:
 
-2. Fetch the ticket details using the Linear CLI:
+```bash
+uv run pr setup-worktree $ARGUMENTS
+```
 
-   ```bash
-   uv run linear get-issue $ARGUMENTS
-   ```
+This command:
+1. Fetches the `branchName` from Linear for the ticket
+2. Records the current branch as `<BASE_BRANCH>` for PR targeting
+3. Fetches from origin to get latest remote refs
+4. Checks if the branch exists on remote
+5. Creates the worktree at `.worktrees/<branchName>`:
+   * If branch exists on remote: checks out the existing branch
+   * If branch does not exist: creates a new branch with `-b` flag
 
-3. Extract `branchName` from the JSON response - this is the branch name Linear provides
-   * Store this value as `<branchName>` (e.g., `mrasolomon/nes-87-git-worktrees-...`)
-   * The worktree path will be `.worktrees/<branchName>` (slashes create nested folders)
+The command outputs JSON with the worktree details:
+```json
+{
+  "status": "created",        // or "exists" if worktree already exists
+  "worktree_path": ".worktrees/<branchName>",
+  "branch_name": "<branchName>",
+  "base_branch": "<BASE_BRANCH>",
+  "branch_created": true      // false if checking out existing branch
+}
+```
 
-4. Check if branch exists on remote:
-
-   ```bash
-   git fetch origin
-   git ls-remote --heads origin <branchName>
-   ```
-
-5. Create worktree:
-   * If branch exists on remote: `git worktree add .worktrees/<branchName> <branchName>`
-   * If branch does not exist: `git worktree add .worktrees/<branchName> -b <branchName>`
-
-6. Change to worktree directory for all subsequent operations
+Store these values for subsequent operations:
+* `<branchName>` - the branch name from Linear
+* `<worktree_path>` - path to the worktree (`.worktrees/<branchName>`)
+* `<BASE_BRANCH>` - the current branch, used as PR target
 
 ### Step 2: Load Plan
 
@@ -103,38 +109,23 @@ This only lints files that were modified, which is faster and appropriate for ne
 
 ### Step 5: Commit and Push
 
-After all plans complete successfully:
+After all plans complete successfully, use the commit-push command:
 
-1. Stage all changes:
+```bash
+uv run pr commit-push --worktree <worktree_path> --set-upstream --message "<TICKET_ID>: <TITLE>
 
-   ```bash
-   cd .worktrees/<branchName>
-   git add -A
-   ```
+Implements the plan from Linear ticket <TICKET_ID>.
 
-2. Create commit with descriptive message:
+Changes:
+- <Summary of Plan 1>
+- <Summary of Plan 2>
+- ..."
+```
 
-   ```bash
-   git commit -m "$(cat <<EOF
-   <TICKET_ID>: <TITLE>
-
-   Implements the plan from Linear ticket <TICKET_ID>.
-
-   Changes:
-   - <Summary of Plan 1>
-   - <Summary of Plan 2>
-   - ...
-
-   By $(git config user.name) <$(git config user.email)>
-   EOF
-   )"
-   ```
-
-3. Push branch:
-
-   ```bash
-   git push -u origin <branchName>
-   ```
+This command:
+1. Stages all changes (`git add -A`)
+2. Creates the commit with the provided message
+3. Pushes with `-u origin HEAD` to set upstream tracking (required for new branches)
 
 ### Step 6: Create Pull Request
 

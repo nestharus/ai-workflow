@@ -2,7 +2,7 @@
 
 Usage:
     uv run pr fetch-threads --pr <number> --output-dir <path>
-    uv run pr commit-push --worktree <path> --message <msg>
+    uv run pr commit-push --worktree <path> --message <msg> [--set-upstream]
     uv run pr post-reply --pr <number> --thread-file <file> --body <text>
     uv run pr resolve-thread --thread-file <file>
     uv run pr deferred-comment --thread-file <file> --body <text>
@@ -16,6 +16,7 @@ Usage:
     uv run pr squash-rebase --worktree <path> --base-branch <branch>
     uv run pr merge --ticket <id> --pr <n> --worktree <path> --branch <name> --base-branch <b>
     uv run pr generate-branch <ticket-id>
+    uv run pr setup-worktree <ticket-id>
 """
 
 from __future__ import annotations
@@ -67,6 +68,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--message",
         required=True,
         help="Commit message",
+    )
+    commit_parser.add_argument(
+        "--set-upstream",
+        action="store_true",
+        help="Set upstream tracking with -u flag (for new branches)",
     )
 
     # post-reply command
@@ -301,6 +307,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Linear ticket ID (e.g., NES-87)",
     )
 
+    # setup-worktree command
+    setup_worktree_parser = subparsers.add_parser(
+        "setup-worktree",
+        help="Setup a git worktree for a Linear ticket",
+    )
+    setup_worktree_parser.add_argument(
+        "ticket_id",
+        help="Linear ticket ID (e.g., NES-87)",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -311,7 +327,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "fetch-threads":
         return commands.fetch_threads_command(args.pr, args.output_dir)
     if args.command == "commit-push":
-        return commands.commit_push_command(args.worktree, args.message)
+        return commands.commit_push_command(
+            args.worktree, args.message, set_upstream=args.set_upstream
+        )
     if args.command == "post-reply":
         return commands.post_reply_command(args.pr, args.thread_file, args.body)
     if args.command == "resolve-thread":
@@ -346,6 +364,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "generate-branch":
         return commands.generate_branch_command(args.ticket_id)
+    if args.command == "setup-worktree":
+        return commands.setup_worktree_command(args.ticket_id)
 
     return 1
 

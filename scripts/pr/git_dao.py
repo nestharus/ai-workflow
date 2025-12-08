@@ -67,23 +67,30 @@ def commit(worktree: Path, message: str) -> bool:
     return result.returncode == 0
 
 
-def push(worktree: Path) -> bool:
+def push(worktree: Path, set_upstream: bool = False) -> tuple[bool, str]:
     """Push to remote.
 
     Args:
         worktree: Path to the git worktree.
+        set_upstream: If True, set upstream tracking with -u flag.
 
     Returns:
-        True if successful.
+        Tuple of (success, error_message).
     """
+    cmd = ["git", "push"]
+    if set_upstream:
+        cmd.extend(["-u", "origin", "HEAD"])
+
     result = subprocess.run(
-        ["git", "push"],
+        cmd,
         cwd=worktree,
         capture_output=True,
         text=True,
         check=False,
     )
-    return result.returncode == 0
+    if result.returncode != 0:
+        return False, result.stderr
+    return True, ""
 
 
 def fetch_branch(worktree: Path, branch: str) -> tuple[bool, str]:
@@ -400,3 +407,94 @@ def branch_exists(branch_name: str) -> bool:
         True if the branch exists locally or on the remote.
     """
     return branch_exists_local(branch_name) or branch_exists_remote(branch_name)
+
+
+def get_current_branch() -> str | None:
+    """Get the name of the current branch.
+
+    Returns:
+        Branch name, or None if not on a branch.
+    """
+    result = subprocess.run(
+        ["git", "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    return branch if branch else None
+
+
+def fetch_origin() -> tuple[bool, str]:
+    """Fetch from origin remote.
+
+    Returns:
+        Tuple of (success, error_message).
+    """
+    result = subprocess.run(
+        ["git", "fetch", "origin"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False, result.stderr
+    return True, ""
+
+
+def create_worktree(worktree_path: Path, branch_name: str, create_branch: bool) -> tuple[bool, str]:
+    """Create a git worktree.
+
+    Args:
+        worktree_path: Path where the worktree should be created.
+        branch_name: Name of the branch to checkout in the worktree.
+        create_branch: If True, create a new branch with -b flag.
+
+    Returns:
+        Tuple of (success, error_message).
+    """
+    cmd = ["git", "worktree", "add", str(worktree_path)]
+    if create_branch:
+        cmd.extend(["-b", branch_name])
+    else:
+        cmd.append(branch_name)
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False, result.stderr
+    return True, ""
+
+
+def worktree_exists(worktree_path: Path) -> bool:
+    """Check if a worktree exists at the given path.
+
+    Args:
+        worktree_path: Path to check.
+
+    Returns:
+        True if a worktree exists at the path.
+    """
+    result = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+
+    # Check if the path appears in the worktree list
+    abs_path = str(worktree_path.resolve())
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            worktree_dir = line[9:]  # len("worktree ") == 9
+            if Path(worktree_dir).resolve() == Path(abs_path):
+                return True
+    return False

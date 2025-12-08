@@ -307,12 +307,13 @@ def fetch_threads_command(pr_number: int, output_dir: Path) -> int:
     return 0
 
 
-def commit_push_command(worktree: Path, message: str) -> int:
+def commit_push_command(worktree: Path, message: str, *, set_upstream: bool = False) -> int:
     """Commit and push changes from a worktree.
 
     Args:
         worktree: Path to the git worktree.
         message: Commit message.
+        set_upstream: If True, set upstream tracking with -u flag on push.
 
     Returns:
         Exit code (0 for success).
@@ -334,7 +335,10 @@ def commit_push_command(worktree: Path, message: str) -> int:
     git_dao.commit(worktree, message)
 
     # Push
-    git_dao.push(worktree)
+    success, err = git_dao.push(worktree, set_upstream=set_upstream)
+    if not success:
+        print(f"Error pushing: {err}", file=sys.stderr)
+        return 1
 
     print(f"Successfully committed and pushed: {message}")
     return 0
@@ -917,6 +921,97 @@ def generate_branch_command(ticket_id: str) -> int:
         # Output just the branch name (for easy capture by scripts)
         print(branch_name)
         return 0
+    except linear_dao.LinearAPIError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def setup_worktree_command(ticket_id: str) -> int:
+    """Setup a git worktree for a Linear ticket.
+
+    Gets the branch name from Linear, fetches origin, checks if the branch
+    exists on remote, and creates the worktree appropriately.
+
+    Args:
+        ticket_id: Linear ticket ID (e.g., "NES-87").
+
+    Returns:
+        Exit code (0 for success).
+    """
+    try:
+        # Get ticket info including branchName from Linear
+        info = linear_dao.get_ticket_info(ticket_id)
+        branch_name = info.get("branch_name")
+
+        if not branch_name:
+            print(f"Error: No branch name found for ticket {ticket_id}", file=sys.stderr)
+            return 1
+
+        # Get current branch (base branch for PR)
+        base_branch = git_dao.get_current_branch()
+        if not base_branch:
+            print("Error: Could not determine current branch", file=sys.stderr)
+            return 1
+
+        # Worktree path: .worktrees/<branch_name>
+        # Note: branch names with slashes create nested directories
+        worktree_path = Path(".worktrees") / branch_name
+
+        # Check if worktree already exists
+        if git_dao.worktree_exists(worktree_path):
+            print(
+                json.dumps(
+                    {
+                        "status": "exists",
+                        "worktree_path": str(worktree_path),
+                        "branch_name": branch_name,
+                        "base_branch": base_branch,
+                    },
+                    indent=2,
+                )
+            )
+            return 0
+
+        # Fetch origin to get latest remote refs
+        print("Fetching origin...", file=sys.stderr)
+        success, err = git_dao.fetch_origin()
+        if not success:
+            print(f"Error fetching origin: {err}", file=sys.stderr)
+            return 1
+
+        # Check if branch exists on remote
+        branch_exists_remote = git_dao.branch_exists_remote(branch_name)
+
+        # Create worktree
+        # If branch exists on remote, checkout existing branch
+        # If not, create new branch with -b flag
+        create_branch = not branch_exists_remote
+        print(
+            f"Creating worktree at {worktree_path} "
+            f"({'new branch' if create_branch else 'existing branch'})...",
+            file=sys.stderr,
+        )
+
+        success, err = git_dao.create_worktree(worktree_path, branch_name, create_branch)
+        if not success:
+            print(f"Error creating worktree: {err}", file=sys.stderr)
+            return 1
+
+        # Output result as JSON
+        print(
+            json.dumps(
+                {
+                    "status": "created",
+                    "worktree_path": str(worktree_path),
+                    "branch_name": branch_name,
+                    "base_branch": base_branch,
+                    "branch_created": create_branch,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
     except linear_dao.LinearAPIError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
