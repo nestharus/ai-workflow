@@ -16,7 +16,7 @@ exclude_dirs:
   - .git-rewrite
   - .idea
   - .git
-  - .github
+  - .github  # Workflows linted by actionlint instead (see docs/usage/actionlint.yml)
   - .huggingface
   - .cache
   - .uv-cache

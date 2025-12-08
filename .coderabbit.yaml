@@ -158,7 +158,6 @@ reviews:
     github-checks:
       enabled: true
       timeout_ms: 300000
-
   finishing_touches:
     docstrings:
       enabled: false
