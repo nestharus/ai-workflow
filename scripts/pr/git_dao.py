@@ -28,27 +28,31 @@ def _run_git(
             cwd=cwd,
             capture_output=True,
             text=True,
+            errors="replace",
             check=False,
         )
     except (FileNotFoundError, OSError):
         return None
 
 
-def get_status(worktree: Path) -> str:
+def get_status(worktree: Path) -> tuple[str, str | None]:
     """Get git status output.
 
     Args:
         worktree: Path to the git worktree.
 
     Returns:
-        Porcelain status output, or empty string if git unavailable or error.
+        Tuple of (status, error). On success, status contains porcelain output
+        (empty string if clean) and error is None. On failure, status is empty
+        and error contains the error message.
     """
     result = _run_git(["git", "status", "--porcelain"], cwd=worktree)
     if result is None:
-        return ""
+        return "", "git is not available"
     if result.returncode != 0:
-        return ""
-    return result.stdout.strip()
+        err = result.stderr.strip() or "git status failed"
+        return "", err
+    return result.stdout.strip(), None
 
 
 def stage_all(worktree: Path) -> bool:

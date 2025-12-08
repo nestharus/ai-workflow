@@ -269,7 +269,10 @@ def commit_push_command(worktree: Path, message: str, *, set_upstream: bool = Fa
         return 1
 
     # Check for changes
-    status = git_dao.get_status(worktree)
+    status, err = git_dao.get_status(worktree)
+    if err:
+        print(f"Error: {err}", file=sys.stderr)
+        return 1
     if not status:
         print("No changes to commit")
         return 0

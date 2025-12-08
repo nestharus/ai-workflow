@@ -26,12 +26,12 @@ Check if `--changed-only` was provided in `$ARGUMENTS`:
 When in changed-only mode, detect the changed files once at the start for use in Step 3:
 
 ```bash
-# Get uncommitted changes (staged + unstaged)
-UNCOMMITTED=$(git diff --name-only HEAD && git diff --name-only --cached)
+# Get uncommitted changes (staged + unstaged), deduplicated
+UNCOMMITTED=$( (git diff --name-only HEAD 2>/dev/null; git diff --name-only --cached 2>/dev/null) | sort -u)
 
 # If no uncommitted changes, get files from last commit
 if [ -z "$UNCOMMITTED" ]; then
-    CHANGED_FILES=$(git diff --name-only HEAD~1..HEAD)
+    CHANGED_FILES=$(git diff --name-only HEAD~1..HEAD 2>/dev/null)
 else
     CHANGED_FILES=$UNCOMMITTED
 fi
