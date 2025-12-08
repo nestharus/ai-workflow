@@ -347,7 +347,7 @@ def _run_actionlint(files: list[str] | None = None) -> None:
             f
             for f in files
             if (f.endswith(".yml") or f.endswith(".yaml"))
-            and ".github/workflows/" in f
+            and (REPO_ROOT / f).resolve().is_relative_to(workflows_dir.resolve())
             and not _is_path_excluded((REPO_ROOT / f).resolve(), exclude_dirs)
         ]
         if not workflow_files:
