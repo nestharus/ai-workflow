@@ -188,6 +188,34 @@ class TestLinearClientRunGraphQL:
             error_str = str(exc_info.value)
             assert error_str == "Linear API error: Valid error message; Another valid message"
 
+    def test_graphql_errors_not_a_list_raises_error(self) -> None:
+        """GraphQL errors field that is not a list raises LinearAPIError."""
+        client = LinearClient(api_key="test-key")
+
+        # Test with string instead of list
+        mock_response = make_mock_response({"errors": "Not a list"})
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            with pytest.raises(LinearAPIError) as exc_info:
+                client._run_graphql("query { foo }")
+
+            error_str = str(exc_info.value)
+            assert error_str == "Linear API returned malformed errors field"
+
+    def test_graphql_errors_as_dict_raises_error(self) -> None:
+        """GraphQL errors field that is a dict raises LinearAPIError."""
+        client = LinearClient(api_key="test-key")
+
+        # Test with dict instead of list
+        mock_response = make_mock_response({"errors": {"message": "Single error as dict"}})
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            with pytest.raises(LinearAPIError) as exc_info:
+                client._run_graphql("query { foo }")
+
+            error_str = str(exc_info.value)
+            assert error_str == "Linear API returned malformed errors field"
+
     def test_malformed_json_raises_error(self) -> None:
         """Malformed JSON responses raise LinearAPIError."""
         client = LinearClient(api_key="test-key")
