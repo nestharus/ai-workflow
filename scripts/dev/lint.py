@@ -21,6 +21,7 @@ LINTER_NAMES = [
     "hadolint",
     "pymarkdown",
     "yamllint",
+    "actionlint",
     "yamldocs",
     "dotenvlint",
     "checkov",
@@ -43,6 +44,8 @@ LINT_YAMLDOCS_CONFIG = REPO_ROOT / ".lint.yamldocs.yaml"
 LINT_MARKDOWN_RESTRICTION_CONFIG = REPO_ROOT / ".lint.markdown-restriction.yaml"
 LINT_DOTENVLINT_CONFIG = REPO_ROOT / ".lint.dotenvlint.yaml"
 LINT_DETECT_SECRETS_CONFIG = REPO_ROOT / ".lint.detect-secrets.yaml"
+LINT_ACTIONLINT_CONFIG = REPO_ROOT / ".lint.actionlint.yaml"
+ACTIONLINT_CLI_REQUIRED = "actionlint CLI required to run lint"
 
 
 def _load_yaml_config(config_path: Path) -> dict[str, Any]:
@@ -79,6 +82,13 @@ def _dotenv_linter() -> str:
     if dotenv_linter_exe is None:
         raise RuntimeError(DOTENV_LINTER_CLI_REQUIRED)
     return dotenv_linter_exe
+
+
+def _actionlint() -> str:
+    actionlint_exe = shutil.which("actionlint")
+    if actionlint_exe is None:
+        raise RuntimeError(ACTIONLINT_CLI_REQUIRED)
+    return actionlint_exe
 
 
 def _run_checked(command: list[str]) -> None:
@@ -332,6 +342,60 @@ def _run_yamllint(files: list[str] | None = None) -> None:
         _run_checked([uv_exe, "run", "yamllint", "-c", yamllint_config, *yaml_files])
 
 
+def _run_actionlint(files: list[str] | None = None) -> None:
+    """Run actionlint on GitHub Actions workflow files.
+
+    Args:
+        files: Optional list of files to check. If None, checks all workflow files.
+    """
+    actionlint_exe = _actionlint()
+    config = _load_yaml_config(LINT_ACTIONLINT_CONFIG)
+    ignore_patterns: list[str] = config.get("ignore", [])
+    exclude_dirs = {REPO_ROOT / d for d in config.get("exclude_dirs", [])}
+
+    workflows_dir = REPO_ROOT / ".github" / "workflows"
+
+    if files is not None:
+        # Filter to only workflow YAML files in .github/workflows/
+        workflow_files = [
+            f
+            for f in files
+            if (f.endswith(".yml") or f.endswith(".yaml"))
+            and (REPO_ROOT / f).resolve().is_relative_to(workflows_dir.resolve())
+            and not _is_path_excluded((REPO_ROOT / f).resolve(), exclude_dirs)
+        ]
+        if not workflow_files:
+            print("No GitHub Actions workflow files to check with actionlint")
+            return
+        targets = workflow_files
+    else:
+        if not workflows_dir.exists():
+            print("No .github/workflows/ directory found for actionlint scan")
+            return
+        # Enumerate workflow files, respecting exclude_dirs
+        workflow_files = [
+            str(path)
+            for path in workflows_dir.rglob("*.yml")
+            if path.is_file() and not _is_path_excluded(path, exclude_dirs)
+        ]
+        workflow_files.extend(
+            str(path)
+            for path in workflows_dir.rglob("*.yaml")
+            if path.is_file() and not _is_path_excluded(path, exclude_dirs)
+        )
+        if not workflow_files:
+            print("No workflow files found for actionlint scan")
+            return
+        targets = workflow_files
+
+    cmd = [actionlint_exe]
+    for pattern in ignore_patterns:
+        cmd.extend(["-ignore", pattern])
+    cmd.extend(targets)
+
+    _run_checked(cmd)
+
+
 def _run_yamldocs() -> int:
     """Run YAML documentation schema linter.
 
@@ -550,6 +614,7 @@ LINTER_RUNNERS_WITH_FILES: dict[str, Callable[[list[str] | None], int | None]] =
     "hadolint": _run_hadolint,
     "pymarkdown": _run_pymarkdown,
     "yamllint": _run_yamllint,
+    "actionlint": _run_actionlint,
     "dotenvlint": _run_dotenvlint,
     "detect-secrets": _run_detect_secrets,
 }
@@ -591,7 +656,7 @@ def main() -> int:
 
     # If files are specified but only non-file-filtering linters are requested,
     # warn the user
-    if files:
+    if files is not None:
         file_filtering_linters = set(LINTER_RUNNERS_WITH_FILES.keys())
         requested_filterable = [
             linter for linter in linters_to_run if linter in file_filtering_linters
