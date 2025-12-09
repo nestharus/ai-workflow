@@ -5,12 +5,11 @@ kind: usage_guide
 scope: Developers using the Linear client for issue management and automation
 description: |
   Comprehensive guide for setting up and using the Linear client wrappers. This project
-  provides two LinearClient implementations with different backends and use cases:
+  provides a canonical Python LinearClient at scripts/clients/linear_client.py with direct
+  GraphQL support, plus a backwards-compatible facade at scripts/pr/linear_dao.py for
+  existing scripts.
 
-  1. stdlib LinearClient (scripts/pr/linear_dao.py) - Pure Python stdlib implementation
-  2. Node LinearClient (scripts/clients/linear_client.py) - Node.js/TypeScript SDK wrapper
-
-  Choose the appropriate client based on your runtime requirements and feature needs.
+  For new code, prefer importing from scripts.clients.linear_client directly.
 domain:
   - linear
   - automation
@@ -40,18 +39,18 @@ two_client_distinction:
     headers:
       - Class
       - Location
-      - Backend
+      - Role
       - Use Case
     rows:
       - class: LinearClient
-        location: scripts/pr/linear_dao.py
-        backend: Pure stdlib (urllib, json)
-        use_case: PR tooling and scripts that cannot depend on Node.js
-
-      - class: LinearClient
         location: scripts/clients/linear_client.py
-        backend: Node.js (TypeScript CLI)
-        use_case: Richer automation scenarios requiring full Linear SDK
+        role: Canonical implementation
+        use_case: New Python code - direct GraphQL client with full API coverage
+
+      - class: LinearClient (re-export)
+        location: scripts/pr/linear_dao.py
+        role: Backwards-compatible facade
+        use_case: Existing PR tooling scripts only - re-exports from linear_client.py
 
   decision_guide:
     title: Quick Decision Checklist
@@ -78,24 +77,26 @@ two_client_distinction:
         explanation: If your project already uses Node.js and TypeScript, the Node client integrates more naturally
 
   when_to_use:
-    stdlib_client:
-      import: from scripts.pr.linear_dao import LinearClient
-      description: |
-        Use this client when you need a lightweight, stdlib-only client for basic
-        Linear operations in Python scripts. Ideal for:
-        - PR tooling and merge scripts
-        - Environments without Node.js installed
-        - Simple automation with minimal dependencies
-        - CI/CD pipelines where Node.js is unavailable
-
-    node_client:
+    canonical_client:
       import: from scripts.clients.linear_client import LinearClient
       description: |
-        Use this client when you need access to the full Linear TypeScript SDK
-        capabilities via the Node wrapper. Ideal for:
-        - Complex automation requiring advanced SDK features
-        - Scenarios where rich data types are needed
-        - Integration with other TypeScript-based tooling
+        Use this client for all new Python code. This is the canonical, single-source-of-truth
+        implementation with full API coverage. Ideal for:
+        - Any new Python scripts or automation
+        - PR tooling and merge scripts (new code)
+        - CI/CD pipelines
+        - All environments (no Node.js required)
+
+    facade_client:
+      import: from scripts.pr.linear_dao import LinearClient  # For existing scripts only
+      description: |
+        This is a backwards-compatible facade that re-exports LinearClient from
+        scripts.clients.linear_client. Use only for:
+        - Existing scripts that already import from linear_dao
+        - Gradual migration of legacy code
+
+        NOTE: New code should import directly from scripts.clients.linear_client.
+        The facade import is shown here only for documentation of existing code.
 
   trade_offs:
     stdlib_client:
@@ -227,9 +228,12 @@ sections:
 
   - id: python-api
     index: 4
-    title: Node LinearClient API Reference (scripts/clients/linear_client.py)
+    title: LinearClient API Reference (scripts/clients/linear_client.py) - Canonical
     category: api
-    summary: Complete reference for the Node-based Python LinearClient wrapper.
+    summary: |
+      Complete reference for the canonical Python LinearClient. This is the single
+      source-of-truth implementation for Linear API access in Python. All new code
+      should import from this module.
     items:
       - id: python-api-initialization
         title: Client Initialization
@@ -532,16 +536,33 @@ sections:
     index: 5
     title: stdlib LinearClient API Reference (scripts/pr/linear_dao.py)
     category: api
+    facade_notice: |
+      IMPORTANT: scripts/pr/linear_dao.py is now a thin, backwards-compatible facade
+      that re-exports LinearClient from scripts/clients/linear_client.py.
+
+      For new code, import directly from the canonical location:
+        from scripts.clients.linear_client import LinearClient, LinearClientError
+
+      The linear_dao module exists only to maintain compatibility with existing scripts.
     summary: |
-      Complete reference for the pure stdlib LinearClient. This client uses only Python
-      standard library (urllib, json) with no external dependencies.
+      Reference for the backwards-compatible facade module. This module re-exports
+      LinearClient and related types from scripts/clients/linear_client.py.
     items:
       - id: stdlib-api-initialization
         title: Client Initialization
         examples:
-          - description: Initialize with explicit API key
+          - description: Initialize with explicit API key (PREFERRED - canonical import)
             language: python
             code: |
+              from scripts.clients.linear_client import LinearClient
+
+              client = LinearClient(api_key="lin_api_your_key_here")
+
+          - description: Initialize with explicit API key (legacy facade import - existing scripts only)
+            language: python
+            code: |
+              # LEGACY: For existing scripts only - new code should use scripts.clients.linear_client
+              # This import path is maintained for backwards compatibility
               from scripts.pr.linear_dao import LinearClient
 
               client = LinearClient(api_key="lin_api_your_key_here")
@@ -549,7 +570,7 @@ sections:
           - description: Initialize from environment variable
             language: python
             code: |
-              from scripts.pr.linear_dao import LinearClient
+              from scripts.clients.linear_client import LinearClient
 
               # LINEAR_API_KEY must be set in environment
               client = LinearClient()
@@ -557,13 +578,13 @@ sections:
           - description: Error handling for missing API key
             language: python
             code: |
-              from scripts.pr.linear_dao import LinearClient, LinearAPIError
+              from scripts.clients.linear_client import LinearClient, LinearClientError
 
               try:
                   client = LinearClient()
-              except LinearAPIError as e:
-                  print(f"Error: {e}")
-                  # Error: LINEAR_API_KEY environment variable not set
+              except LinearClientError as e:
+                  print(f"Error: {e.code} - {e.message}")
+                  # Error: MISSING_API_KEY - LINEAR_API_KEY must be provided or set in environment
 
       - id: stdlib-api-list-teams
         title: List Teams
@@ -905,13 +926,27 @@ sections:
       - id: stdlib-api-error-handling
         title: Error Handling
         description: |
-          All methods raise LinearAPIError on failure. This is a simpler error model
-          compared to the Node client - errors are raised as RuntimeError subclasses
-          with descriptive messages.
+          All methods raise LinearAPIError on failure. LinearAPIError is now an alias
+          for LinearClientError from scripts.clients.linear_client. Error strings now
+          include a code prefix: "CODE: message" (e.g., "NOT_FOUND: Ticket not found:
+          INVALID-999"). Code that parses error messages should be updated accordingly.
         exception:
           name: LinearAPIError
           parent: RuntimeError
-          description: Raised when any Linear API operation fails
+          description: |
+            Raised when any Linear API operation fails. This is an alias for
+            LinearClientError from scripts.clients.linear_client.
+          attributes:
+            - name: code
+              type: str
+              description: Error code identifying the type of error (e.g., "NOT_FOUND", "MISSING_API_KEY")
+            - name: message
+              type: str
+              description: Human-readable error message
+        error_format_note: |
+          LinearAPIError is now an alias for LinearClientError. Error strings now include
+          a code prefix: "CODE: message" (e.g., "MISSING_API_KEY: LINEAR_API_KEY environment
+          variable not set"). Code that parses error messages should be updated accordingly.
         error_conditions:
           - LINEAR_API_KEY environment variable not set
           - HTTP errors from the Linear API
@@ -922,14 +957,19 @@ sections:
         example:
           language: python
           code: |
+            # Preferred import for new code
+            from scripts.clients.linear_client import LinearClient, LinearClientError
+
+            # Or for existing scripts using the facade
             from scripts.pr.linear_dao import LinearClient, LinearAPIError
 
             client = LinearClient()
             try:
                 info = client.get_ticket_info("INVALID-999")
-            except LinearAPIError as e:
-                print(f"Error: {e}")
-                # Error: Ticket not found: INVALID-999
+            except LinearClientError as e:  # or LinearAPIError (same class)
+                print(f"Error code: {e.code}")
+                print(f"Error message: {e.message}")
+                print(f"Full error: {e}")  # "NOT_FOUND: Ticket not found: INVALID-999"
 
   - id: python-cli
     index: 6
