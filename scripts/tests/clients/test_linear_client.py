@@ -63,6 +63,36 @@ class TestLinearClientInit:
         assert exc_info.value.code == "MISSING_API_KEY"
         assert "LINEAR_API_KEY must be provided" in exc_info.value.message
 
+    def test_init_raises_for_empty_api_key(self) -> None:
+        """Raise error when explicit API key is empty string."""
+        with pytest.raises(LinearClientError) as exc_info:
+            LinearClient(api_key="")
+        assert exc_info.value.code == "EMPTY_API_KEY"
+        assert "empty or whitespace-only" in exc_info.value.message
+
+    def test_init_raises_for_whitespace_only_api_key(self) -> None:
+        """Raise error when explicit API key is whitespace-only."""
+        with pytest.raises(LinearClientError) as exc_info:
+            LinearClient(api_key="   ")
+        assert exc_info.value.code == "EMPTY_API_KEY"
+        assert "empty or whitespace-only" in exc_info.value.message
+
+    def test_init_raises_for_empty_env_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Raise error when LINEAR_API_KEY env var is empty string."""
+        monkeypatch.setenv("LINEAR_API_KEY", "")
+        with pytest.raises(LinearClientError) as exc_info:
+            LinearClient()
+        assert exc_info.value.code == "MISSING_API_KEY"
+
+    def test_init_raises_for_whitespace_only_env_api_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Raise error when LINEAR_API_KEY env var is whitespace-only."""
+        monkeypatch.setenv("LINEAR_API_KEY", "   ")
+        with pytest.raises(LinearClientError) as exc_info:
+            LinearClient()
+        assert exc_info.value.code == "EMPTY_API_KEY"
+
     def test_init_does_not_validate_scripts_directory(self) -> None:
         """Client initialization does not check scripts directory existence.
 
@@ -773,6 +803,65 @@ class TestLinearClientErrorHandling:
         assert exc_info.value.code == "GRAPHQL_ERROR"
         assert "Field 'issue' not found" in exc_info.value.message
 
+    def test_graphql_multiple_errors_joined(self, mocker: MockerFixture) -> None:
+        """Multiple GraphQL errors are joined with semicolons."""
+        mock_response = {
+            "errors": [
+                {"message": "First error"},
+                {"message": "Second error"},
+                {"message": "Third error"},
+            ]
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.get_issue("NES-24")
+
+        assert exc_info.value.code == "GRAPHQL_ERROR"
+        # Verify all errors are included and joined with semicolons
+        assert "First error" in exc_info.value.message
+        assert "Second error" in exc_info.value.message
+        assert "Third error" in exc_info.value.message
+        assert ";" in exc_info.value.message
+
+    def test_non_utf8_response_raises_error(self, mocker: MockerFixture) -> None:
+        """Handle non-UTF8 response from the API."""
+        mock_response = MagicMock()
+        # Invalid UTF-8 bytes
+        mock_response.read.return_value = b"\x80\x81\x82"
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = mock_response
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.get_issue("NES-24")
+
+        assert exc_info.value.code == "PARSE_ERROR"
+        assert "non-UTF-8" in exc_info.value.message
+
+    def test_non_object_json_response_raises_error(self, mocker: MockerFixture) -> None:
+        """Handle non-object JSON response (e.g., array or string)."""
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'["array", "response"]'
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = mock_response
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.get_issue("NES-24")
+
+        assert exc_info.value.code == "PARSE_ERROR"
+        assert "non-object JSON" in exc_info.value.message
+
     def test_empty_response_data(self, mocker: MockerFixture) -> None:
         """Handle empty data in successful response."""
         mock_response = {"data": {"issue": None}}
@@ -1081,6 +1170,333 @@ class TestLinearClientNetworkErrors:
         assert "Failed to serialize request payload to JSON" in exc_info.value.message
 
 
+class TestLinearClientListUnresolvedComments:
+    """Test the list_unresolved_comments method."""
+
+    def test_list_unresolved_comments_success(self, mocker: MockerFixture) -> None:
+        """Successfully list unresolved comments."""
+        mock_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-uuid-123",
+                    "identifier": "NES-456",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [
+                            {
+                                "id": "comment-uuid-1",
+                                "body": "Test comment body",
+                                "createdAt": "2025-01-15T10:00:00Z",
+                                "updatedAt": "2025-01-15T11:00:00Z",
+                                "resolvedAt": None,
+                                "user": {
+                                    "id": "user-uuid-1",
+                                    "name": "Test User",
+                                    "email": "test@example.com",
+                                },
+                            }
+                        ],
+                    },
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test-key")
+        result = client.list_unresolved_comments("NES-456")
+
+        assert result["issueId"] == "issue-uuid-123"
+        assert result["issueIdentifier"] == "NES-456"
+        assert result["totalCount"] == 1
+        assert len(result["comments"]) == 1
+        assert result["comments"][0]["body"] == "Test comment body"
+
+    def test_list_unresolved_comments_filters_resolved(self, mocker: MockerFixture) -> None:
+        """Resolved comments are filtered out."""
+        mock_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-uuid-123",
+                    "identifier": "NES-456",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [
+                            {
+                                "id": "comment-1",
+                                "body": "Unresolved comment",
+                                "createdAt": "2025-01-15T10:00:00Z",
+                                "updatedAt": "2025-01-15T11:00:00Z",
+                                "resolvedAt": None,
+                                "user": {"id": "u1", "name": "User1", "email": "u1@example.com"},
+                            },
+                            {
+                                "id": "comment-2",
+                                "body": "Resolved comment",
+                                "createdAt": "2025-01-15T10:00:00Z",
+                                "updatedAt": "2025-01-15T11:00:00Z",
+                                "resolvedAt": "2025-01-15T12:00:00Z",
+                                "user": {"id": "u2", "name": "User2", "email": "u2@example.com"},
+                            },
+                        ],
+                    },
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test-key")
+        result = client.list_unresolved_comments("NES-456")
+
+        assert result["totalCount"] == 1
+        assert len(result["comments"]) == 1
+        assert result["comments"][0]["id"] == "comment-1"
+        assert result["comments"][0]["body"] == "Unresolved comment"
+
+    def test_list_unresolved_comments_pagination(self, mocker: MockerFixture) -> None:
+        """Pagination handles multiple pages correctly."""
+        page1_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-uuid-123",
+                    "identifier": "NES-456",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                        "nodes": [
+                            {
+                                "id": "comment-1",
+                                "body": "First comment",
+                                "createdAt": "2025-01-15T10:00:00Z",
+                                "updatedAt": "2025-01-15T11:00:00Z",
+                                "resolvedAt": None,
+                                "user": {"id": "u1", "name": "User1", "email": "u1@example.com"},
+                            }
+                        ],
+                    },
+                }
+            }
+        }
+        page2_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-uuid-123",
+                    "identifier": "NES-456",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [
+                            {
+                                "id": "comment-2",
+                                "body": "Second comment",
+                                "createdAt": "2025-01-15T12:00:00Z",
+                                "updatedAt": "2025-01-15T13:00:00Z",
+                                "resolvedAt": None,
+                                "user": {"id": "u2", "name": "User2", "email": "u2@example.com"},
+                            }
+                        ],
+                    },
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(page1_response),
+            create_mock_response(page2_response),
+        ]
+
+        client = LinearClient(api_key="test-key")
+        result = client.list_unresolved_comments("NES-456")
+
+        assert result["totalCount"] == 2
+        assert len(result["comments"]) == 2
+        assert result["comments"][0]["id"] == "comment-1"
+        assert result["comments"][1]["id"] == "comment-2"
+
+    def test_list_unresolved_comments_issue_not_found(self, mocker: MockerFixture) -> None:
+        """Raise NOT_FOUND error when issue doesn't exist."""
+        mock_response = {"data": {"issue": None}}
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test-key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.list_unresolved_comments("INVALID-999")
+
+        assert exc_info.value.code == "NOT_FOUND"
+        assert "Issue not found: INVALID-999" in exc_info.value.message
+
+    def test_list_unresolved_comments_handles_null_user(self, mocker: MockerFixture) -> None:
+        """Handle comments with null user (system comments)."""
+        mock_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-uuid-123",
+                    "identifier": "NES-456",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [
+                            {
+                                "id": "comment-1",
+                                "body": "System comment",
+                                "createdAt": "2025-01-15T10:00:00Z",
+                                "updatedAt": "2025-01-15T11:00:00Z",
+                                "resolvedAt": None,
+                                "user": None,
+                            }
+                        ],
+                    },
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test-key")
+        result = client.list_unresolved_comments("NES-456")
+
+        assert result["totalCount"] == 1
+        assert len(result["comments"]) == 1
+        assert result["comments"][0]["user"] is None
+
+    def test_list_unresolved_comments_return_structure(self, mocker: MockerFixture) -> None:
+        """Verify the full key set and nesting of the returned value.
+
+        This test ensures the return structure matches what
+        list_unresolved_comments_command in commands.py expects to output
+        via json.dumps().
+        """
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_response = create_mock_response(
+            {
+                "data": {
+                    "issue": {
+                        "id": "issue-uuid-123",
+                        "identifier": "NES-456",
+                        "comments": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [
+                                {
+                                    "id": "comment-uuid-1",
+                                    "body": "Test comment body",
+                                    "createdAt": "2025-01-15T10:00:00Z",
+                                    "updatedAt": "2025-01-15T11:00:00Z",
+                                    "resolvedAt": None,
+                                    "user": {
+                                        "id": "user-uuid-1",
+                                        "name": "Test User",
+                                        "email": "test@example.com",
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                }
+            }
+        )
+        mock_urlopen.return_value = mock_response
+
+        client = LinearClient(api_key="test-key")
+        result = client.list_unresolved_comments("NES-456")
+
+        # Assert top-level keys exist and have correct types
+        assert "issueId" in result
+        assert "issueIdentifier" in result
+        assert "comments" in result
+        assert "totalCount" in result
+
+        assert isinstance(result["issueId"], str)
+        assert isinstance(result["issueIdentifier"], str)
+        assert isinstance(result["comments"], list)
+        assert isinstance(result["totalCount"], int)
+
+        # Assert top-level values
+        assert result["issueId"] == "issue-uuid-123"
+        assert result["issueIdentifier"] == "NES-456"
+        assert result["totalCount"] == 1
+
+        # Assert comment structure
+        assert len(result["comments"]) == 1
+        comment = result["comments"][0]
+
+        # Assert per-comment keys exist
+        assert "id" in comment
+        assert "body" in comment
+        assert "createdAt" in comment
+        assert "updatedAt" in comment
+        assert "user" in comment
+
+        # Assert per-comment values
+        assert comment["id"] == "comment-uuid-1"
+        assert comment["body"] == "Test comment body"
+        assert comment["createdAt"] == "2025-01-15T10:00:00Z"
+        assert comment["updatedAt"] == "2025-01-15T11:00:00Z"
+
+        # Assert user structure within comment
+        user = comment["user"]
+        assert user is not None
+        assert "id" in user
+        assert "name" in user
+        assert "email" in user
+        assert user["id"] == "user-uuid-1"
+        assert user["name"] == "Test User"
+        assert user["email"] == "test@example.com"
+
+    def test_list_unresolved_comments_pagination_error(self, mocker: MockerFixture) -> None:
+        """Raise PAGINATION_ERROR when pagination doesn't advance."""
+        page1_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-uuid-123",
+                    "identifier": "NES-456",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                        "nodes": [
+                            {
+                                "id": "comment-1",
+                                "body": "First comment",
+                                "createdAt": "2025-01-15T10:00:00Z",
+                                "updatedAt": "2025-01-15T11:00:00Z",
+                                "resolvedAt": None,
+                                "user": None,
+                            }
+                        ],
+                    },
+                }
+            }
+        }
+        # Second response has same cursor, which should trigger pagination error
+        page2_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-uuid-123",
+                    "identifier": "NES-456",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                        "nodes": [],
+                    },
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(page1_response),
+            create_mock_response(page2_response),
+        ]
+
+        client = LinearClient(api_key="test-key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.list_unresolved_comments("NES-456")
+
+        assert exc_info.value.code == "PAGINATION_ERROR"
+        assert "Pagination did not advance" in exc_info.value.message
+
+
 class TestFetchGitHubAttachments:
     """Tests for fetch_github_attachments method."""
 
@@ -1160,3 +1576,342 @@ class TestFetchGitHubAttachments:
         assert len(attachments) == 2
         assert attachments[0]["url"] == "https://github.com/org/repo/pull/1"
         assert attachments[1]["url"] == "https://github.com/org/repo/pull/2"
+
+
+class TestResolveTeamId:
+    """Tests for _resolve_team_id helper."""
+
+    def test_uuid_returns_as_is(self, mocker: MockerFixture) -> None:
+        """Valid UUID string returns as-is without API call."""
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+
+        client = LinearClient(api_key="test-key")
+        result = client._resolve_team_id("550e8400-e29b-41d4-a716-446655440000")
+
+        assert result == "550e8400-e29b-41d4-a716-446655440000"
+        # No API call should be made for UUID
+        mock_urlopen.assert_not_called()
+
+    def test_team_key_lookup_case_insensitive(self, mocker: MockerFixture) -> None:
+        """Team key lookup is case-insensitive."""
+        teams_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": "team-uuid-123", "name": "Nexus Team", "key": "NES"},
+                    ],
+                }
+            }
+        }
+        mocker.patch("urllib.request.urlopen", return_value=create_mock_response(teams_response))
+
+        client = LinearClient(api_key="test-key")
+        # Lowercase "nes" should match team with key "NES"
+        result = client._resolve_team_id("nes")
+
+        assert result == "team-uuid-123"
+
+    def test_team_name_lookup_case_insensitive(self, mocker: MockerFixture) -> None:
+        """Team name lookup is case-insensitive."""
+        teams_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": "team-uuid-456", "name": "Engineering", "key": "ENG"},
+                    ],
+                }
+            }
+        }
+        mocker.patch("urllib.request.urlopen", return_value=create_mock_response(teams_response))
+
+        client = LinearClient(api_key="test-key")
+        # Lowercase "engineering" should match team with name "Engineering"
+        result = client._resolve_team_id("engineering")
+
+        assert result == "team-uuid-456"
+
+    def test_key_takes_precedence_over_name(self, mocker: MockerFixture) -> None:
+        """Team key lookup takes precedence over name lookup."""
+        teams_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": "team-by-key", "name": "Different Name", "key": "NES"},
+                        {"id": "team-by-name", "name": "nes", "key": "OTHER"},
+                    ],
+                }
+            }
+        }
+        mocker.patch("urllib.request.urlopen", return_value=create_mock_response(teams_response))
+
+        client = LinearClient(api_key="test-key")
+        # "nes" should match by key first, not by name
+        result = client._resolve_team_id("nes")
+
+        assert result == "team-by-key"
+
+    def test_not_found_returns_none(self, mocker: MockerFixture) -> None:
+        """Returns None when team is not found."""
+        teams_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": "team-uuid-123", "name": "Nexus Team", "key": "NES"},
+                    ],
+                }
+            }
+        }
+        mocker.patch("urllib.request.urlopen", return_value=create_mock_response(teams_response))
+
+        client = LinearClient(api_key="test-key")
+        result = client._resolve_team_id("nonexistent")
+
+        assert result is None
+
+    def test_empty_string_returns_none_without_api_call(self, mocker: MockerFixture) -> None:
+        """Empty string returns None without calling list_teams."""
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+
+        client = LinearClient(api_key="test-key")
+        result = client._resolve_team_id("")
+
+        assert result is None
+        mock_urlopen.assert_not_called()
+
+    def test_whitespace_only_returns_none_without_api_call(self, mocker: MockerFixture) -> None:
+        """Whitespace-only string returns None without calling list_teams."""
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+
+        client = LinearClient(api_key="test-key")
+        result = client._resolve_team_id("   ")
+
+        assert result is None
+        mock_urlopen.assert_not_called()
+
+    def test_excessively_long_string_returns_none_without_api_call(
+        self, mocker: MockerFixture
+    ) -> None:
+        """String over 100 characters returns None without calling list_teams."""
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+
+        client = LinearClient(api_key="test-key")
+        long_string = "a" * 101
+        result = client._resolve_team_id(long_string)
+
+        assert result is None
+        mock_urlopen.assert_not_called()
+
+
+class TestValidatePriority:
+    """Tests for _validate_priority helper."""
+
+    @pytest.mark.parametrize("priority", [0, 1, 2, 3, 4])
+    def test_valid_priorities_pass(self, priority: int) -> None:
+        """Valid priorities (0-4) do not raise errors."""
+        client = LinearClient(api_key="test-key")
+        # Should not raise
+        client._validate_priority(priority)
+
+    def test_none_priority_passes(self) -> None:
+        """None priority (no priority set) does not raise."""
+        client = LinearClient(api_key="test-key")
+        # Should not raise
+        client._validate_priority(None)
+
+    @pytest.mark.parametrize("invalid_priority", [-1, 5, 100, -100])
+    def test_invalid_priorities_raise(self, invalid_priority: int) -> None:
+        """Invalid priorities raise LinearClientError."""
+        client = LinearClient(api_key="test-key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client._validate_priority(invalid_priority)
+        assert exc_info.value.code == "INVALID_PRIORITY"
+        assert "must be between 0 and 4" in exc_info.value.message
+
+    @pytest.mark.parametrize("bool_value", [True, False])
+    def test_boolean_raises(self, bool_value: bool) -> None:
+        """Boolean values are rejected even though bool is subclass of int."""
+        client = LinearClient(api_key="test-key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client._validate_priority(bool_value)
+        assert exc_info.value.code == "INVALID_PRIORITY"
+
+
+class TestGetTicketInfo:
+    """Tests for get_ticket_info method."""
+
+    def test_get_ticket_info_success(self, mocker: MockerFixture) -> None:
+        """Successfully get ticket info with all fields."""
+        mock_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-uuid-123",
+                    "identifier": "NES-456",
+                    "title": "Test Ticket",
+                    "branchName": "nes-456-test-ticket",
+                    "state": {"id": "state-id", "name": "In Progress", "type": "started"},
+                    "team": {"id": "team-uuid-789"},
+                }
+            }
+        }
+        mocker.patch("urllib.request.urlopen", return_value=create_mock_response(mock_response))
+
+        client = LinearClient(api_key="test-key")
+        result = client.get_ticket_info("NES-456")
+
+        assert result["id"] == "issue-uuid-123"
+        assert result["identifier"] == "NES-456"
+        assert result["title"] == "Test Ticket"
+        assert result["branch_name"] == "nes-456-test-ticket"
+        assert result["state"] == "In Progress"
+        assert result["state_type"] == "started"
+        assert result["team_id"] == "team-uuid-789"
+
+    def test_get_ticket_info_not_found(self, mocker: MockerFixture) -> None:
+        """Raise NOT_FOUND error when ticket not found."""
+        mock_response = {"data": {"issue": None}}
+        mocker.patch("urllib.request.urlopen", return_value=create_mock_response(mock_response))
+
+        client = LinearClient(api_key="test-key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.get_ticket_info("INVALID-999")
+
+        assert exc_info.value.code == "NOT_FOUND"
+        assert "Ticket not found: INVALID-999" in exc_info.value.message
+
+    def test_get_ticket_info_null_nested_objects(self, mocker: MockerFixture) -> None:
+        """Handle null state and team gracefully."""
+        mock_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-uuid-123",
+                    "identifier": "NES-456",
+                    "title": "Test Ticket",
+                    "branchName": "nes-456-test-ticket",
+                    "state": None,
+                    "team": None,
+                }
+            }
+        }
+        mocker.patch("urllib.request.urlopen", return_value=create_mock_response(mock_response))
+
+        client = LinearClient(api_key="test-key")
+        result = client.get_ticket_info("NES-456")
+
+        assert result["id"] == "issue-uuid-123"
+        assert result["state"] is None
+        assert result["state_type"] is None
+        assert result["team_id"] is None
+
+
+class TestGetDoneStateId:
+    """Tests for get_done_state_id method."""
+
+    def test_get_done_state_id_success(self, mocker: MockerFixture) -> None:
+        """Successfully get done state ID."""
+        mock_response = {
+            "data": {
+                "team": {
+                    "states": {
+                        "nodes": [
+                            {"id": "done-state-id", "name": "Done", "type": "completed"}
+                        ]
+                    }
+                }
+            }
+        }
+        mocker.patch("urllib.request.urlopen", return_value=create_mock_response(mock_response))
+
+        client = LinearClient(api_key="test-key")
+        result = client.get_done_state_id("team-uuid-123")
+
+        assert result == "done-state-id"
+
+    def test_get_done_state_id_team_not_found(self, mocker: MockerFixture) -> None:
+        """Raise NOT_FOUND error when team not found."""
+        mock_response = {"data": {"team": None}}
+        mocker.patch("urllib.request.urlopen", return_value=create_mock_response(mock_response))
+
+        client = LinearClient(api_key="test-key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.get_done_state_id("invalid-team-uuid")
+
+        assert exc_info.value.code == "NOT_FOUND"
+        assert "Team not found" in exc_info.value.message
+
+    def test_get_done_state_id_not_found(self, mocker: MockerFixture) -> None:
+        """Raise NOT_FOUND error when no done state found."""
+        mock_response = {"data": {"team": {"states": {"nodes": []}}}}
+        mocker.patch("urllib.request.urlopen", return_value=create_mock_response(mock_response))
+
+        client = LinearClient(api_key="test-key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.get_done_state_id("team-uuid-123")
+
+        assert exc_info.value.code == "NOT_FOUND"
+        assert "No 'Done' state found" in exc_info.value.message
+
+    def test_get_done_state_id_missing_id_field(self, mocker: MockerFixture) -> None:
+        """Raise error when state exists but id field is missing."""
+        mock_response = {
+            "data": {
+                "team": {
+                    "states": {
+                        "nodes": [
+                            {"name": "Done", "type": "completed"}  # No 'id' field
+                        ]
+                    }
+                }
+            }
+        }
+        mocker.patch("urllib.request.urlopen", return_value=create_mock_response(mock_response))
+
+        client = LinearClient(api_key="test-key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.get_done_state_id("team-uuid-123")
+
+        assert exc_info.value.code == "NOT_FOUND"
+        assert "No 'Done' state ID found" in exc_info.value.message
+
+
+class TestSetTicketState:
+    """Tests for set_ticket_state method."""
+
+    def test_set_ticket_state_success(self, mocker: MockerFixture) -> None:
+        """Successfully set ticket state returns dict with stateName."""
+        mock_response = {
+            "data": {
+                "issueUpdate": {
+                    "success": True,
+                    "issue": {"state": {"name": "Done"}},
+                }
+            }
+        }
+        mocker.patch("urllib.request.urlopen", return_value=create_mock_response(mock_response))
+
+        client = LinearClient(api_key="test-key")
+        result = client.set_ticket_state("issue-uuid", "state-uuid")
+
+        assert result == {"stateName": "Done"}
+
+    def test_set_ticket_state_failure(self, mocker: MockerFixture) -> None:
+        """Raise error when state update fails."""
+        mock_response = {
+            "data": {
+                "issueUpdate": {
+                    "success": False,
+                    "issue": None,
+                }
+            }
+        }
+        mocker.patch("urllib.request.urlopen", return_value=create_mock_response(mock_response))
+
+        client = LinearClient(api_key="test-key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.set_ticket_state("issue-uuid", "invalid-state-uuid")
+
+        assert exc_info.value.code == "API_ERROR"
+        assert "Failed to update state" in exc_info.value.message
