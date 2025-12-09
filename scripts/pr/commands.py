@@ -1682,6 +1682,25 @@ def _extract_ticket_id_from_branch(branch_name: str) -> str | None:
     return f"{first_token.upper()}-{second_token}"
 
 
+def list_unresolved_comments_command(ticket_id: str) -> int:
+    """List unresolved comments for a Linear ticket.
+
+    Args:
+        ticket_id: Linear ticket ID (e.g., "NES-123").
+
+    Returns:
+        Exit code (0 for success).
+    """
+    try:
+        client = linear_dao.LinearClient()
+        result = client.list_unresolved_comments(ticket_id)
+        print(json.dumps(result, indent=2))
+        return 0
+    except linear_dao.LinearAPIError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def extract_ticket_id_command(branch_name: str | None = None) -> int:
     """Extract ticket ID from a branch name.
 

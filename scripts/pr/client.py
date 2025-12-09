@@ -21,6 +21,7 @@ Usage:
     uv run pr get-expected-branch-name <ticket-id>
     uv run pr is-valid-branch-name --ticket <id> --branch <name>
     uv run pr extract-ticket-id [<branch-name>]
+    uv run pr list-unresolved-comments <ticket-id>
     uv run pr promote-worktree [<identifier>]
     uv run pr cleanup-sandbox [<identifier>]
 """
@@ -368,6 +369,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Branch name to parse. If omitted, uses current branch.",
     )
 
+    # list-unresolved-comments command
+    unresolved_comments_parser = subparsers.add_parser(
+        "list-unresolved-comments",
+        help="List unresolved comments for a Linear ticket",
+    )
+    unresolved_comments_parser.add_argument(
+        "ticket_id",
+        help="Linear ticket ID (e.g., NES-123)",
+    )
+
     # promote-worktree command
     promote_parser = subparsers.add_parser(
         "promote-worktree",
@@ -448,6 +459,8 @@ def main(argv: list[str] | None = None) -> int:
         return commands.is_valid_branch_name_command(args.ticket, args.branch)
     if args.command == "extract-ticket-id":
         return commands.extract_ticket_id_command(args.branch_name)
+    if args.command == "list-unresolved-comments":
+        return commands.list_unresolved_comments_command(args.ticket_id)
     if args.command == "promote-worktree":
         return commands.promote_worktree_command(args.identifier)
     if args.command == "cleanup-sandbox":
