@@ -72,7 +72,7 @@ knowledge = [
 "app.api.generate" = "scripts.app.gen_openapi:main"
 # Development scripts
 setup = "scripts.dev.setup:main"
-lint = "scripts.dev.lint:main"
+lint = "scripts.dev.linter.lint_cli:main"
 "agent.claude" = "scripts.dev.claude_agent_runner:main"
 "agent.huggingface" = "scripts.dev.huggingface_agent_runner:main"
 "agent.opencode" = "scripts.dev.opencode_agent_runner:main"
