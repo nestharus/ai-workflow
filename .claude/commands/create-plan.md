@@ -95,6 +95,11 @@ The planner agent will:
 
 Wait for the planner agent to complete.
 
+Review the plan by grepping for "Implementation Plan", "Plans", and "Plan 1:".
+If these are not found then rerun the planner with the file and comments that plan was
+not found due to plan template not being followed. Expected to find Implementation Plan,
+Plans, and Plan 1: per template.
+
 ### Step 4: Update Linear Ticket
 
 Update the ticket description directly from the temp file:
