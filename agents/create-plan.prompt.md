@@ -1,13 +1,17 @@
 ---
 description: Create an implementation plan from a Linear ticket (or create ticket from prompt)
-argument-hint: [ticket-id or description of work]
-allowed-tools: Bash, Read, Write, Glob, Grep, Task
+name: create-plan
+argument-hint: ticket-id or description of work
+agent: 'agent'
+tools: ['*']
 ---
 
 # Create Implementation Plan
 
-Create an implementation plan. If `$ARGUMENTS` is a ticket ID (e.g., `NES-123`), fetch that
-ticket. Otherwise, create a new ticket using the arguments as a description.
+Create an implementation plan. If the user provides a ticket ID (e.g., `NES-123`), fetch that
+ticket. Otherwise, create a new ticket using the provided description.
+
+**Input:** `${input:ticketIdOrDescription}` - Either a ticket ID (format: XXX-NNN) or a description of work to create a new ticket
 
 ## Plan Storage
 
@@ -18,15 +22,15 @@ the ticket description is updated to include the full plan content below a `---`
 
 ### Step 1: Determine Ticket
 
-Check if `$ARGUMENTS` looks like a ticket ID (format: `XXX-NNN` where XXX is letters and NNN is
+Check if the user's input looks like a ticket ID (format: `XXX-NNN` where XXX is letters and NNN is
 numbers):
 
 **If ticket ID provided:**
 
-Fetch basic ticket info (title, URL) using the Linear CLI:
+Fetch basic ticket info (title, URL) using #tool:terminal:
 
 ```bash
-uv run linear get-issue <TICKET_ID>
+uv run linear get-issue ${input:ticketId}
 ```
 
 Extract and store `title` and `url` from the JSON response.
@@ -45,21 +49,21 @@ Extract and store `title` and `url` from the JSON response.
 3. Create ticket using the Linear CLI (use team name "Neshq" - the CLI resolves names to IDs)
 4. Capture the created ticket ID from the response
 
-List the available projects:
+List the available projects using #tool:terminal:
 
 ```bash
 uv run linear list-projects
 ```
 
-Then, create the ticket:
+Then, create the ticket using #tool:terminal:
 
 ```bash
-uv run linear create-issue --team Neshq --title "<EXTRACTED_TITLE>" --description "$ARGUMENTS" --project "<SELECTED_PROJECT>"
+uv run linear create-issue --team Neshq --title "<EXTRACTED_TITLE>" --description "${input:description}" --project "<SELECTED_PROJECT>"
 ```
 
 ### Step 2: Extract Description to Temp File
 
-Extract the ticket description to a temp file for the planner agent:
+Extract the ticket description to a temp file for the planner agent using #tool:terminal:
 
 ```bash
 mkdir -p .tmp
@@ -70,10 +74,11 @@ uv run linear get-issue-description <TICKET_ID> > .tmp/<TICKET_ID>.md
 
 ### Step 3: Run Planner Agent
 
-Use the Task tool to invoke the planner agent with the temp file:
+Use #runSubagent to delegate to the Planner agent with the temp file:
 
 ```text
-Task(subagent_type="planner", prompt="file:.tmp/<TICKET_ID>.md
+#runSubagent Planner agent with prompt:
+"file:.tmp/<TICKET_ID>.md
 
 ## Create Plan
 
@@ -81,10 +86,10 @@ Ticket ID: <TICKET_ID>
 Title: <TITLE>
 
 Create a new implementation plan for this ticket. The file contains the ticket description.
-Add the plan after a `---` separator.")
+Add the plan after a `---` separator."
 ```
 
-The planner agent will:
+The Planner agent will:
 
 * Read the temp file to get the ticket description
 * Analyze the ticket requirements
@@ -93,16 +98,16 @@ The planner agent will:
 * Generate a comprehensive implementation plan
 * Write the plan back to the temp file (description + separator + plan)
 
-Wait for the planner agent to complete.
+Wait for the Planner agent to complete.
 
-Review the plan by grepping for "Implementation Plan", "Plans", and "Plan 1:".
-If these are not found then rerun the planner with the file and comments that plan was
+Review the plan by searching for "Implementation Plan", "Plans", and "Plan 1:".
+If these are not found then rerun the Planner agent with #runSubagent and comment that plan was
 not found due to plan template not being followed. Expected to find Implementation Plan,
 Plans, and Plan 1: per template.
 
 ### Step 4: Update Linear Ticket
 
-Update the ticket description directly from the temp file:
+Update the ticket description directly from the temp file using #tool:terminal:
 
 ```bash
 uv run linear update-issue <TICKET_ID> --description-file .tmp/<TICKET_ID>.md
@@ -112,7 +117,7 @@ uv run linear update-issue <TICKET_ID> --description-file .tmp/<TICKET_ID>.md
 
 ### Step 5: Cleanup
 
-Delete the temp file:
+Delete the temp file using #tool:terminal:
 
 ```bash
 rm .tmp/<TICKET_ID>.md
@@ -136,7 +141,7 @@ Please review the plan on the ticket:
 3. Verify the plan adequately addresses all requirements
 4. Check that success criteria are measurable and complete
 
-Get plan description with `uv run linear get-issue <TICKET_ID>`
+If the Linear MCP tool does not work you can use `uv run linear get-issue <TICKET_ID>`
 
 After review, run /execute-plan <ticket-id> to implement.
 ================================================================================
@@ -146,6 +151,6 @@ After review, run /execute-plan <ticket-id> to implement.
 
 * If ticket fetch fails, report the error and stop
 * If ticket creation fails, report the error and stop
-* If planner agent fails, report the error output and stop
+* If Planner agent (#runSubagent) fails, report the error output and stop
 * If Linear ticket update fails, report the error and stop
-* Always clean up the temp file, even on errors
+* Always clean up the temp file using #tool:terminal, even on errors

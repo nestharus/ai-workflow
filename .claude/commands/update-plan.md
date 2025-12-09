@@ -111,7 +111,7 @@ Changes incorporated:
 Please review the updated plan on the ticket before executing:
 <LINEAR_TICKET_URL>
 
-If the Linear MCP tool does not work you can use `uv run linear get-issue <TICKET_ID>`
+Get plan description with `uv run linear get-issue <TICKET_ID>`
 ================================================================================
 ```
 

@@ -1,12 +1,15 @@
 ---
 description: Execute an implementation plan in a git worktree
+name: execute-plan
 argument-hint: "`ticket-id`"
-allowed-tools: Bash, Read, Write, Glob, Grep, Task
+agent: 'agent'
+tools:
+  - '*'
 ---
 
 # Execute Implementation Plan in Git Worktree
 
-Execute the implementation plan for ticket `$ARGUMENTS` in a dedicated git worktree.
+Execute the implementation plan for the specified ticket ID in a dedicated git worktree.
 
 ## Git Worktree Workflow
 
@@ -17,10 +20,10 @@ The worktree branch is created from the current branch and PRs back to it.
 
 ### Step 1: Setup Git Worktree
 
-Run the setup-worktree command to create a worktree for the ticket:
+Run the setup-worktree command using #tool:terminal to create a worktree for the ticket:
 
 ```bash
-uv run pr setup-worktree $ARGUMENTS
+uv run pr setup-worktree ${input:ticketId}
 ```
 
 This command:
@@ -48,6 +51,8 @@ The command outputs JSON with the worktree details:
 
 ### Step 1b: Get Repository Root
 
+Use #tool:terminal to get the repository root:
+
 ```bash
 git rev-parse --show-toplevel
 ```
@@ -62,15 +67,15 @@ Store these values for subsequent operations:
 
 ### Step 2: Split Plans into Files
 
-Split the ticket plans into individual files:
+Split the ticket plans into individual files using #tool:terminal:
 
 ```bash
-uv run linear split-plans <TICKET_ID> --output-dir .tmp/plans/<TICKET_ID>
+uv run linear split-plans ${input:ticketId} --output-dir .tmp/plans/${input:ticketId}
 ```
 
 This extracts each `### Plan N:` section into separate files:
-- `.tmp/plans/<TICKET_ID>/plan1.md`
-- `.tmp/plans/<TICKET_ID>/plan2.md`
+- `.tmp/plans/${input:ticketId}/plan1.md`
+- `.tmp/plans/${input:ticketId}/plan2.md`
 - etc.
 
 The command outputs JSON listing the plan files:
@@ -91,45 +96,43 @@ If the command fails (no `---` separator or no plans found), suggest running `/c
 
 ### Step 3: Execute Plans
 
-For each plan file in sequence:
+For each plan file in sequence, use #runSubagent to delegate to the Implementor agent:
 
 **Implementation Phase:**
 
-```text
-Task(subagent_type="implementor", prompt="{{plan_file_path}}")
-```
+Use #runSubagent to invoke the Implementor agent with the plan file path as the prompt. The Implementor should work in the worktree directory.
 
-Handle implementor output:
+Handle Implementor output:
 * `SUCCESS` - Proceed to review
-* `TESTS: [...]` - Run test-fixer agent, then retry implementor
+* `TESTS: [...]` - Run test-fixer agent, then retry Implementor
 * `FAIL: ...` - Analyze failure, may need human intervention
 
 ### Step 4: Lint Phase
 
-Run the lint-fixer sub-agent against the worktree in changed-only mode:
-
-```text
-Task(subagent_type="lint-fixer", prompt="--worktree {{worktree_path}} --changed-only")
-```
+Use #runSubagent to delegate to the Lint Fixer agent against the worktree in changed-only mode.
 
 This only lints files that were modified, which is faster and appropriate for new implementations.
 
+Parameters:
+- `--worktree {{worktree_path}}`
+- `--changed-only`
+
 ### Step 5: Cleanup Plan Files
 
-Remove the temporary plan files:
+Remove the temporary plan files using #tool:terminal:
 
 ```bash
-rm -rf .tmp/plans/<TICKET_ID>
+rm -rf .tmp/plans/${input:ticketId}
 ```
 
 ### Step 6: Commit and Push
 
-After all plans complete successfully, use the commit-push command:
+After all plans complete successfully, use #tool:terminal with the commit-push command:
 
 ```bash
-uv run pr commit-push --worktree {{worktree_path}} --set-upstream --message "<TICKET_ID>: <TITLE>
+uv run pr commit-push --worktree {{worktree_path}} --set-upstream --message "${input:ticketId}: <TITLE>
 
-Implements the plan from Linear ticket <TICKET_ID>.
+Implements the plan from Linear ticket ${input:ticketId}.
 
 Changes:
 - <Summary of Plan 1>
@@ -144,15 +147,15 @@ This command:
 
 ### Step 7: Create Pull Request
 
-Create PR targeting the base branch:
+Create PR targeting the base branch using #tool:terminal:
 
 1. Use the following command:
 
    ```bash
-   gh pr create --base <BASE_BRANCH> --title "<TICKET_ID>: <TITLE>" --body "$(cat <<'EOF'
+   gh pr create --base <BASE_BRANCH> --title "${input:ticketId}: <TITLE>" --body "$(cat <<'EOF'
    ## Summary
 
-   Implements [<TICKET_ID>](<LINEAR_TICKET_URL>)
+   Implements [${input:ticketId}](<LINEAR_TICKET_URL>)
 
    <PLAN_OVERVIEW>
 
@@ -178,7 +181,7 @@ Create PR targeting the base branch:
 **Note**: The PR and branch are automatically linked to the Linear ticket when the ticket ID
 casing matches exactly. No manual linking is required.
 
-Get commit information:
+Get commit information using #tool:terminal:
 
 ```bash
 cd {{worktree_path}}
@@ -195,11 +198,11 @@ Print to terminal:
 IMPLEMENTATION COMPLETE - REVIEW REQUESTED
 ================================================================================
 
-Ticket: <TICKET_ID> - <TITLE>
+Ticket: ${input:ticketId} - <TITLE>
 Linear Ticket: <LINEAR_TICKET_URL>
 Pull Request: <PR_URL>
 
-Get plan description with `uv run linear get-issue <TICKET_ID>`
+If the Linear MCP tool does not work you can use `uv run linear get-issue ${input:ticketId}`
 
 References:
   worktree_directory: {{worktree_path}}
@@ -230,11 +233,11 @@ Commands:
 ## Error Handling
 
 * If ticket fetch fails, report the error and stop
-* If plan split fails (no separator or no plans), suggest running /create-plan first
+* If plan split fails (no separator or no plans), suggest running `/create-plan` first
 * If worktree creation fails (branch exists), offer to reuse or clean up
 * If any agent fails, save progress and report what completed vs what failed
 * If PR creation fails, report the error but keep the branch pushed
-* Always clean up `.tmp/plans/<TICKET_ID>` directory on completion or error
+* Always clean up `.tmp/plans/${input:ticketId}` directory on completion or error
 
 ## Notes
 

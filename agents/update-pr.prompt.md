@@ -1,48 +1,53 @@
-# Update PR Command
-
 ---
-
 description: Update a PR by handling unresolved review threads
-allowed-tools: Task, Read, Glob, Bash
-
+name: update-pr
+argument-hint: "[PR#/ticket/branch] [additional tasks]"
+agent: 'agent'
+tools:
+  - '*'
 ---
 
-Handle unresolved PR review threads: $ARGUMENTS
+# Update PR
+
+Handle unresolved PR review threads and local tasks.
 
 ## Arguments
 
-* If `$ARGUMENTS` is empty: Use current branch (must be on PR branch)
-* If `$ARGUMENTS` is a PR ID (e.g., `17` or `#17`): Get branch from GitHub PR
-* If `$ARGUMENTS` is a ticket ID (e.g., `NES-87`): Look up branch from Linear
-* If `$ARGUMENTS` is a branch name: Use branch directly
-* Additional text after identifier: Treated as local tasks
+The prompt accepts different types of identifiers:
 
-Example: `/update-pr` - use current branch, only PR threads
-Example: `/update-pr 17` - PR #17, only PR threads
-Example: `/update-pr NES-123` - ticket NES-123, only PR threads
-Example: `/update-pr NES-123 ## Comment 1: Fix the bug...` - PR threads + local tasks
+* **Empty**: Use current branch (must be on PR branch)
+* **PR ID** (e.g., `17` or `#17`): Get branch from GitHub PR
+* **Ticket ID** (e.g., `NES-87`): Look up branch from Linear
+* **Branch name**: Use branch directly
+* **Additional text**: After identifier, treated as local tasks
+
+**Examples:**
+- Use current branch, only PR threads: `/update-pr`
+- PR #17, only PR threads: `/update-pr 17`
+- Ticket NES-123, only PR threads: `/update-pr NES-123`
+- PR threads + local tasks: `/update-pr NES-123 ## Comment 1: Fix the bug...`
 
 ## Workflow
 
 ### 1. Parse Arguments
 
-Split `$ARGUMENTS` to extract:
+Split arguments to extract:
 
 * `identifier`: First word (PR ID, ticket ID, or branch name), or empty if no arguments
 * `local_tasks_text`: Everything after the identifier (may be empty)
 
 ### 2. Get PR Information
 
-If `identifier` is empty (no arguments), call without arguments:
+If `identifier` is empty (no arguments), call without arguments using #tool:terminal:
 
 ```bash
 uv run pr get-pr
 ```
 
-Otherwise, pass only the identifier (first word):
+Otherwise, pass only the identifier (first word) using #tool:terminal:
 
 ```bash
-uv run pr get-pr {{identifier}}
+uv run pr get-pr ${input:target}
 ```
 
 Note: `get-pr` accepts PR ID (17/#17), ticket ID (NES-123), branch name, or nothing.
@@ -59,13 +64,13 @@ This returns JSON with:
 
 ### 3. Set Up Variables
 
-First, get the repository root (where `.worktrees` lives):
+First, get the repository root (where `.worktrees` lives) using #tool:terminal:
 
 ```bash
 git rev-parse --show-toplevel
 ```
 
-Extract ticket ID from branch name (for tmp folder and Linear link):
+Extract ticket ID from branch name (for tmp folder and Linear link) using #tool:terminal:
 
 ```bash
 uv run pr extract-ticket-id {{branch_name}}
@@ -126,7 +131,7 @@ raw_file.unlink()
 
 #### Step 4c: Import body files
 
-Pass the body files to the github client to create the local task JSON files:
+Pass the body files to the github client to create the local task JSON files using #tool:terminal:
 
 ```bash
 uv run pr import-local-tasks --output-dir {{tmp_folder}} {{tmp_folder}}/body_0.txt {{tmp_folder}}/body_1.txt ...
@@ -135,6 +140,8 @@ uv run pr import-local-tasks --output-dir {{tmp_folder}} {{tmp_folder}}/body_0.t
 This creates `local_0.json`, `local_1.json`, etc. and deletes the body files.
 
 ### 5. Fetch Unresolved Threads
+
+Using #tool:terminal:
 
 ```bash
 uv run pr fetch-threads --pr {{pr_number}} --output-dir {{tmp_folder}}
@@ -151,17 +158,15 @@ This automatically:
 
 **CRITICAL: Process tasks ONE AT A TIME. Do NOT run pr-comment-handler agents in parallel.**
 
-List all files in `{{tmp_folder}}` matching `thread_*.json` and `local_*.json`. Process each sequentially:
+List all files in `{{tmp_folder}}` matching `thread_*.json` and `local_*.json`. Process each sequentially by using #runSubagent to delegate to the PR Comment Handler agent with:
 
-```python
-Task(subagent_type="pr-comment-handler", prompt="
+```
 thread_file: {{tmp_folder}}/thread_N.json (or local_N.json)
 worktree: {{working_dir}}
 branch: {{branch}}
-")
 ```
 
-Wait for each pr-comment-handler to complete before starting the next one. This ensures:
+Wait for each PR Comment Handler to complete before starting the next one. This ensures:
 
 * Changes from one task don't conflict with another
 * Test updates are applied incrementally
@@ -169,7 +174,7 @@ Wait for each pr-comment-handler to complete before starting the next one. This 
 
 ### 7. Handle Responses
 
-After each pr-comment-handler completes, it returns one of:
+After each PR Comment Handler completes, it returns one of:
 
 * `action: resolve` - Thread was resolved (discussion concluded with agreement)
 * `action: implement` - Changes were made (and optionally a deferred reply stored)
@@ -187,7 +192,7 @@ Continue to next task.
 
 ### 8. Check for Code Changes
 
-After all tasks are processed, check if any code changes were made:
+After all tasks are processed, check if any code changes were made using #tool:terminal:
 
 ```bash
 cd {{working_dir}} && git status --porcelain
@@ -199,12 +204,10 @@ If the output is empty (no changes), skip steps 9-11 and go directly to step 14 
 
 **Skip this step if no code changes were made (step 8 output was empty).**
 
-Run the test-debugger sub-agent against the working directory:
+Use #runSubagent to delegate to the Test Debugger agent with:
 
-```python
-Task(subagent_type="test-debugger", prompt="
+```
 worktree: {{working_dir}}
-")
 ```
 
 This will:
@@ -217,10 +220,10 @@ This will:
 
 **Skip this step if no code changes were made (step 8 output was empty).**
 
-After tests pass, run the lint-fixer sub-agent against the working directory in changed-only mode:
+After tests pass, use #runSubagent to delegate to the Lint Fixer agent in changed-only mode:
 
-```python
-Task(subagent_type="lint-fixer", prompt="--worktree {{working_dir}} --changed-only")
+```
+--worktree {{working_dir}} --changed-only
 ```
 
 This only lints files that were modified, which is faster and appropriate for PR updates.
@@ -229,7 +232,7 @@ This only lints files that were modified, which is faster and appropriate for PR
 
 **Skip this step if no code changes were made (step 8 output was empty).**
 
-If tests pass and changes were made:
+If tests pass and changes were made, use #tool:terminal:
 
 ```bash
 uv run pr commit-push --worktree {{working_dir}} --message "Address PR review feedback"
@@ -237,7 +240,7 @@ uv run pr commit-push --worktree {{working_dir}} --message "Address PR review fe
 
 ### 12. Post Deferred Replies (GitHub only)
 
-Post any deferred replies stored in thread files (skips LOCAL origin tasks automatically):
+Post any deferred replies stored in thread files (skips LOCAL origin tasks automatically) using #tool:terminal:
 
 ```bash
 uv run pr post-deferred-replies --pr {{pr_number}} --threads-dir {{tmp_folder}}
@@ -247,7 +250,7 @@ uv run pr post-deferred-replies --pr {{pr_number}} --threads-dir {{tmp_folder}}
 
 **Skip this step if no code changes were made (step 8 output was empty).**
 
-Only request CodeRabbit review if there were code changes:
+Only request CodeRabbit review if there were code changes using #tool:terminal:
 
 ```bash
 uv run pr request-review --pr {{pr_number}}
@@ -264,7 +267,7 @@ Delete the tmp folder for the PR comments that was created.
 
 ### 16. Output Summary
 
-Get commit information:
+Get commit information using #tool:terminal:
 
 ```bash
 cd {{working_dir}}
@@ -284,7 +287,7 @@ PR UPDATE COMPLETE - REVIEW REQUESTED
 Ticket: {{ticket_id or "N/A"}}
 {{#if ticket_id}}
 Linear Ticket: https://linear.app/issue/{{ticket_id}}
-Get plan description with `uv run linear get-issue <TICKET_ID>`
+If the Linear MCP tool does not work you can use `uv run linear get-issue <TICKET_ID>`
 {{/if}}
 Pull Request: {{pr_url}}
 
@@ -331,5 +334,5 @@ LOCAL TASK RESPONSES
 
 * Follow co-author rules in AGENTS.md (no AI co-authors)
 * Never defer - implement or challenge, don't postpone
-* Run test-debugger and lint-fixer sub-agents against working directory before pushing
-* DO NOT RUN LINTING DIRECTLY. USE THE SUB-AGENT.
+* Run Test Debugger and Lint Fixer sub-agents (using #runSubagent) against working directory before pushing
+* DO NOT RUN LINTING DIRECTLY. USE THE LINT FIXER AGENT VIA #runSubagent.
