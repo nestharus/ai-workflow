@@ -123,6 +123,7 @@ This summary will be collected by the calling command to report all changes.
 6. Success criteria must be measurable and verifiable
 7. Keep plans focused - prefer multiple small plans over one large plan
 8. When updating, preserve valid parts of the existing plan
+9. Do not modify any file other than the plan file.
 
 ## Guidance
 
