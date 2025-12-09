@@ -73,6 +73,7 @@ knowledge = [
 # Development scripts
 setup = "scripts.dev.setup:main"
 lint = "scripts.dev.linter.lint_cli:main"
+"dev.ensure-env" = "scripts.dev.ensure_dev_env:main"
 "agent.claude" = "scripts.dev.claude_agent_runner:main"
 "agent.huggingface" = "scripts.dev.huggingface_agent_runner:main"
 "agent.opencode" = "scripts.dev.opencode_agent_runner:main"
@@ -247,6 +248,7 @@ convention = "google"
 "scripts/knowledge/**/*.py" = ["ANN401"]
 "scripts/mcp/**/*.py" = ["ANN401", "E402", "S108"]  # E402 for late imports after sys.path; S108 for socket paths
 "scripts/tasks/**/*.py" = ["ANN401"]
+"scripts/dev/ensure_dev_env.py" = ["S108"]  # S108 for /tmp socket directory creation
 
 # Scripts: E402 for modules with late imports after sys.path manipulation
 "scripts/dev/test_runner/test_coverage.py" = ["E402"]

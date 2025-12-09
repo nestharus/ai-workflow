@@ -8,9 +8,13 @@ Usage:
     # Start the bridge server (HTTP mode for host-based development):
     uvicorn scripts.mcp.app.main:app --host 127.0.0.1 --port 8080
 
-    # Or use docker-compose (Unix socket mode, preferred for Docker):
-    docker-compose up mcp-bridge
-    # Socket will be at the mcp_socket volume inside /tmp
+    # Or use the dev-tools compose stack (Unix socket mode, preferred for Docker):
+    #   uv run dev.ensure-env   # preferred, orchestrated startup
+    # or explicitly:
+    docker compose -p ai-workflow-devtools -f docker-compose.dev.yml up -d mcp-bridge
+    # Socket will be at /tmp/mcp-sockets/mcp-bridge.sock on the host
+    # (mapped to /tmp/mcp-bridge.sock inside the container).
+    # The main application stack uses: docker compose up (against docker-compose.yml)
 
     # Use the HTTP client - HTTP mode (for non-Docker host usage):
     from scripts.mcp.client import HttpMCPClient

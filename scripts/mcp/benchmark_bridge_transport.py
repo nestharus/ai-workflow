@@ -24,7 +24,10 @@ Usage:
         --min-throughput-improvement 15
 
 Requirements:
-    - MCP bridge must be running (docker-compose up mcp-bridge)
+    - MCP bridge must be running via the dev-tools stack. Preferred method:
+      uv run dev.ensure-env
+      Or start manually:
+      docker compose -p ai-workflow-devtools -f docker-compose.dev.yml up -d mcp-bridge
     - For socket mode: MCP_BRIDGE_SOCKET must be set or socket must exist
     - For HTTP mode: Bridge must be accessible at the specified URL
 

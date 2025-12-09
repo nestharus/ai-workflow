@@ -33,10 +33,18 @@ Usage:
     client = HttpMCPClient()  # Uses MCP_BRIDGE_URL or http://localhost:8080
 
     # Unix socket mode (preferred for Docker):
-    client = HttpMCPClient(socket_path="/tmp/mcp-bridge.sock")
+    # When using the dev-tools compose stack, the host-visible socket path is
+    # /tmp/mcp-sockets/mcp-bridge.sock (mapped to /tmp/mcp-bridge.sock inside
+    # the container). Use socket_path or MCP_BRIDGE_SOCKET to specify:
+    #
+    # Host-side (running client on WSL/host against dev-tools bridge):
+    client = HttpMCPClient(socket_path="/tmp/mcp-sockets/mcp-bridge.sock")
     # Or via environment:
-    # export MCP_BRIDGE_SOCKET=/tmp/mcp-bridge.sock
+    # export MCP_BRIDGE_SOCKET=/tmp/mcp-sockets/mcp-bridge.sock
     # client = HttpMCPClient()
+    #
+    # Container-side (running client in same container namespace as bridge):
+    # client = HttpMCPClient(socket_path="/tmp/mcp-bridge.sock")
 
     # Check overall bridge health
     if client.health_check():
@@ -195,8 +203,10 @@ class HttpMCPClient:
             else:
                 raise MCPClientError(
                     f"Cannot connect to mcp-bridge at {self.base_url}. "
-                    "Ensure the MCP bridge is running. "
-                    "If using Docker, run: docker compose up mcp-bridge"
+                    "Ensure the MCP bridge is running. For local development, run "
+                    "'uv run dev.ensure-env' (preferred) or "
+                    "'docker compose -p ai-workflow-devtools "
+                    "-f docker-compose.dev.yml up -d mcp-bridge'."
                 )
         elif result.returncode == 28:
             raise MCPClientError(f"Request timed out after {timeout}s")

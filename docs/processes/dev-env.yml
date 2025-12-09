@@ -1,0 +1,89 @@
+doc_id: dev-env
+title: Dev Environment Stack
+description: Configuration and operation of the dev-tools Docker Compose stack for persistent
+  development services.
+domain: []
+scope: general
+sections:
+  - id: overview
+    index: 1
+    title: Overview
+    category: standard
+    items:
+      - id: overview-purpose
+        text: The dev-tools compose stack runs persistent support services (MCP bridge, future RAG,
+          webhooks) in Docker containers that remain running independently of WSL shell sessions.
+      - id: overview-socket-mode
+        text: The MCP bridge service communicates via Unix domain socket at /tmp/mcp-sockets/mcp-bridge.sock
+          on the host (mapped to /tmp/mcp-bridge.sock inside the container), not HTTP port 8080.
+          This IPC mode provides lower latency for local inter-process communication.
+      - id: overview-compose-file
+        text: 'All dev-tool services are defined in docker-compose.dev.yml with project name:
+          ai-workflow-devtools'
+  - id: start-stop
+    index: 2
+    title: Starting and Stopping
+    category: standard
+    items:
+      - id: start-command
+        text: 'Start the dev-tools stack: docker compose -p ai-workflow-devtools -f docker-compose.dev.yml
+          up -d'
+      - id: stop-command
+        text: 'Stop the dev-tools stack: docker compose -p ai-workflow-devtools -f docker-compose.dev.yml
+          down'
+      - id: ensure-script
+        text: 'Automated startup via uv run dev.ensure-env which handles locking, health checks,
+          and idempotent startup. This is the preferred method.'
+  - id: health-verification
+    index: 3
+    title: Health Verification
+    category: standard
+    items:
+      - id: health-check-command
+        text: "Check container health status: docker inspect --format '{{.State.Health.Status}}'\
+          \ ai-workflow-mcp-bridge-dev"
+      - id: health-healthy
+        text: 'Status healthy indicates the container is running and responding to health probes.
+          The service is ready for use.'
+      - id: health-unhealthy
+        text: 'Status unhealthy indicates the container is running but failing health checks.
+          Check logs with: docker logs ai-workflow-mcp-bridge-dev'
+      - id: health-starting
+        text: 'Status starting indicates the container is initializing. Wait a few seconds and
+          check again.'
+  - id: troubleshooting
+    index: 4
+    title: Troubleshooting
+    category: standard
+    items:
+      - id: trouble-docker-not-running
+        text: 'Problem: Docker not running. Symptoms: docker info fails or times out. Exit code
+          10 from ensure script. Solution: Start Docker Desktop or the Docker daemon service.'
+      - id: trouble-container-unhealthy
+        text: 'Problem: Container unhealthy. Symptoms: docker inspect shows unhealthy status.
+          Exit code 12 from ensure script. Solution: Check docker logs ai-workflow-mcp-bridge-dev
+          for errors. Common causes include missing socket file or service crash.'
+      - id: trouble-wsl-mounts
+        text: 'Problem: WSL mount or socket permission issues. Symptoms: Permission denied errors
+          in container logs. Solution: Ensure /tmp/mcp-sockets directory exists and is writable
+          (mkdir -p /tmp/mcp-sockets && chmod 1777 /tmp/mcp-sockets). Check that the socket path
+          is not blocked by file permissions.'
+      - id: trouble-stale-lock
+        text: 'Problem: Stale lock file blocking startup. Symptoms: Script exits immediately
+          claiming another process is running. Solution: Remove .claude/.tmp/ensure-dev-env.lock
+          manually if the owning process no longer exists.'
+  - id: logs-files
+    index: 5
+    title: Logs and Files
+    category: standard
+    items:
+      - id: log-file
+        text: 'Script output is logged to .claude/dev-env.log when invoked via hooks. Inspect
+          this file to see [DEVENV] prefixed messages and diagnose startup issues.'
+      - id: lock-file
+        text: 'Lock file at .claude/.tmp/ensure-dev-env.lock prevents concurrent ensure-env
+          runs. Contains PID:timestamp format. Automatically cleaned after 5 minutes if process
+          is dead.'
+      - id: container-logs
+        text: 'Container logs: docker logs ai-workflow-mcp-bridge-dev or docker logs -f for
+          streaming. These show service-level output and errors.'
