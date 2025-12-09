@@ -282,7 +282,10 @@ PR UPDATE COMPLETE - REVIEW REQUESTED
 ================================================================================
 
 Ticket: {{ticket_id or "N/A"}}
-{{#if ticket_id}}Linear Ticket: https://linear.app/issue/{{ticket_id}}{{/if}}
+{{#if ticket_id}}
+Linear Ticket: https://linear.app/issue/{{ticket_id}}
+If the Linear MCP tool does not work you can use `uv run linear get-issue <TICKET_ID>`
+{{/if}}
 Pull Request: {{pr_url}}
 
 References:

@@ -196,6 +196,8 @@ Ticket: <TICKET_ID> - <TITLE>
 Linear Ticket: <LINEAR_TICKET_URL>
 Pull Request: <PR_URL>
 
+If the Linear MCP tool does not work you can use `uv run linear get-issue <TICKET_ID>`
+
 References:
   worktree_directory: {{worktree_path}}
   current_branch_commit: <CURRENT_SHA>   # HEAD of PR branch (latest changes)

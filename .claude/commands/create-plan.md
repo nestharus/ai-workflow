@@ -109,6 +109,8 @@ Please review the plan on the ticket:
 3. Verify the plan adequately addresses all requirements
 4. Check that success criteria are measurable and complete
 
+If the Linear MCP tool does not work you can use `uv run linear get-issue <TICKET_ID>`
+
 After review, run /execute-plan <ticket-id> to implement.
 ================================================================================
 ```
