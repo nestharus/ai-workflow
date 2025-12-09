@@ -278,8 +278,6 @@ class LinearClient:
             - state: dict | None (id, name, type)
             - project: dict | None (id, name)
             - parent: dict | None (id, identifier, title)
-            - commentCount: int
-            - childrenCount: int
 
         Raises:
             LinearClientError: If the operation fails.
@@ -324,12 +322,6 @@ query($issueId: String!) {
       identifier
       title
     }
-    comments {
-      totalCount
-    }
-    children {
-      totalCount
-    }
   }
 }
 """
@@ -359,8 +351,6 @@ query($issueId: String!) {
             "state": issue.get("state"),
             "project": issue.get("project"),
             "parent": issue.get("parent"),
-            "commentCount": (issue.get("comments") or {}).get("totalCount", 0),
-            "childrenCount": (issue.get("children") or {}).get("totalCount", 0),
         }
 
     def get_ticket_info(self, ticket_id: str) -> dict[str, Any]:

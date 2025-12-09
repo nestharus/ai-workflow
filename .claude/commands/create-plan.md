@@ -1,7 +1,7 @@
 ---
 description: Create an implementation plan from a Linear ticket (or create ticket from prompt)
 argument-hint: [ticket-id or description of work]
-allowed-tools: Bash, Read, Write, Glob, Grep
+allowed-tools: Bash, Read, Write, Glob, Grep, Task
 ---
 
 # Create Implementation Plan
@@ -23,15 +23,17 @@ numbers):
 
 **If ticket ID provided:**
 
-Fetch the ticket using the Linear CLI:
+Fetch basic ticket info (title, URL) using the Linear CLI:
 
 ```bash
 uv run linear get-issue <TICKET_ID>
 ```
 
+Extract and store `title` and `url` from the JSON response.
+
 **If no ticket ID (description provided instead):**
 
-1. Get available projects using the Linear CLI:
+1. Get available projects using the Linear CLI
 2. Analyze the description to determine the most appropriate project:
    * "AI Workflow Application Phase N" - for app development work
    * "Task System" - for task/agent system work
@@ -40,7 +42,7 @@ uv run linear get-issue <TICKET_ID>
    * "GitHub CI" - for CI/CD work
    * "Knowledge System" - for knowledge/fact extraction work
    * Default to "Task System" if unclear
-3. Create ticket using the Linear CLI (use team name "Neshq" - the CLI resolves names to IDs):
+3. Create ticket using the Linear CLI (use team name "Neshq" - the CLI resolves names to IDs)
 4. Capture the created ticket ID from the response
 
 List the available projects:
@@ -55,43 +57,63 @@ Then, create the ticket:
 uv run linear create-issue --team Neshq --title "<EXTRACTED_TITLE>" --description "$ARGUMENTS" --project "<SELECTED_PROJECT>"
 ```
 
-### Step 2: Run Planner Agent
+### Step 2: Extract Description to Temp File
 
-Use the Task tool to invoke the planner agent:
+Extract the ticket description to a temp file for the planner agent:
+
+```bash
+mkdir -p .tmp
+uv run linear get-issue-description <TICKET_ID> > .tmp/<TICKET_ID>.md
+```
+
+**IMPORTANT**: Do NOT read the temp file. The planner agent will read and update it.
+
+### Step 3: Run Planner Agent
+
+Use the Task tool to invoke the planner agent with the temp file:
 
 ```text
-Task(subagent_type="planner", prompt="Ticket ID: <ID>
+Task(subagent_type="planner", prompt="file:.tmp/<TICKET_ID>.md
+
+## Create Plan
+
+Ticket ID: <TICKET_ID>
 Title: <TITLE>
-Description:
-<DESCRIPTION>")
+
+Create a new implementation plan for this ticket. The file contains the ticket description.
+Add the plan after a `---` separator.")
 ```
 
 The planner agent will:
 
+* Read the temp file to get the ticket description
 * Analyze the ticket requirements
 * Explore the codebase for context
 * Research unfamiliar patterns if needed
 * Generate a comprehensive implementation plan
+* Write the plan back to the temp file (description + separator + plan)
 
-Wait for the planner agent to complete and capture its output (the plan content).
+Wait for the planner agent to complete.
 
-### Step 3: Update Linear Ticket
+### Step 4: Update Linear Ticket
 
-Update the ticket description using the Linear CLI to append the plan content:
+Update the ticket description directly from the temp file:
 
 ```bash
-uv run linear update-issue <TICKET_ID> --description "<ORIGINAL_DESCRIPTION>
-
----
-
-# Implementation Plan
-
-<PLAN_CONTENT>"
+uv run linear update-issue <TICKET_ID> --description-file .tmp/<TICKET_ID>.md
 ```
 
-The plan becomes part of the ticket description and is visible directly on the ticket.
+**IMPORTANT**: Do NOT read the temp file. Pass it directly to `update-issue` using `--description-file`.
 
-### Step 4: Output Review Request
+### Step 5: Cleanup
+
+Delete the temp file:
+
+```bash
+rm .tmp/<TICKET_ID>.md
+```
+
+### Step 6: Output Review Request
 
 Print the following to terminal:
 
@@ -121,3 +143,4 @@ After review, run /execute-plan <ticket-id> to implement.
 * If ticket creation fails, report the error and stop
 * If planner agent fails, report the error output and stop
 * If Linear ticket update fails, report the error and stop
+* Always clean up the temp file, even on errors

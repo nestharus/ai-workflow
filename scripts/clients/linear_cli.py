@@ -28,6 +28,68 @@ def get_issue(issue_id: str) -> None:
     print(json.dumps({"ok": True, "data": issue}, indent=2))
 
 
+def get_issue_description(issue_id: str) -> None:
+    """Fetch and print only the issue description as plain text."""
+    client = LinearClient()
+    issue = client.get_issue(issue_id)
+    print(issue.get("description") or "")
+
+
+def split_plans(issue_id: str, output_dir: str) -> None:
+    """Split ticket description into individual plan files.
+
+    Extracts plans from the ticket description (after the `---` separator)
+    and writes each plan to a separate file in the output directory.
+
+    Args:
+        issue_id: The issue identifier (e.g., NES-24)
+        output_dir: Directory to write plan files (e.g., .tmp/plans/NES-24)
+    """
+    import os
+    import re
+
+    client = LinearClient()
+    issue = client.get_issue(issue_id)
+    description = issue.get("description") or ""
+
+    # Find the plan section after ---
+    separator_match = re.search(r"^---\s*$", description, re.MULTILINE)
+    if not separator_match:
+        print(json.dumps({"ok": False, "error": {"code": "NO_PLAN", "message": "No plan found (missing --- separator)"}}))
+        sys.exit(1)
+
+    plan_content = description[separator_match.end():].strip()
+
+    # Split on "### Plan N:" headers
+    plan_pattern = re.compile(r"^### Plan \d+:", re.MULTILINE)
+    matches = list(plan_pattern.finditer(plan_content))
+
+    if not matches:
+        print(json.dumps({"ok": False, "error": {"code": "NO_PLANS", "message": "No plans found (no '### Plan N:' headers)"}}))
+        sys.exit(1)
+
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+
+    plans = []
+    for i, match in enumerate(matches):
+        start = match.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(plan_content)
+        plan_text = plan_content[start:end].strip()
+
+        # Extract plan title from header
+        header_line = plan_text.split("\n")[0]
+        plan_num = i + 1
+        plan_file = os.path.join(output_dir, f"plan{plan_num}.md")
+
+        with open(plan_file, "w", encoding="utf-8") as f:
+            f.write(plan_text)
+
+        plans.append({"file": plan_file, "header": header_line})
+
+    print(json.dumps({"ok": True, "data": {"plans": plans, "count": len(plans)}}, indent=2))
+
+
 def list_projects() -> None:
     """List and print projects as JSON (first page only)."""
     client = LinearClient()
@@ -69,8 +131,20 @@ def create_issue(
 def update_issue(
     issue_id: str,
     description: str | None = None,
+    description_file: str | None = None,
 ) -> None:
-    """Update an issue description and print result as JSON."""
+    """Update an issue description and print result as JSON.
+
+    Args:
+        issue_id: The issue identifier (e.g., NES-24)
+        description: New description text (mutually exclusive with description_file)
+        description_file: Path to file containing new description (mutually exclusive with description)
+    """
+    # Read description from file if provided
+    if description_file:
+        with open(description_file, encoding="utf-8") as f:
+            description = f.read()
+
     client = LinearClient()
     issue = client.update_issue(
         issue_id=issue_id,
@@ -98,6 +172,23 @@ def main() -> None:
     get_issue_parser = subparsers.add_parser("get-issue", help="Fetch issue details")
     get_issue_parser.add_argument("issue_id", help="Issue ID (e.g., NES-24)")
 
+    # get-issue-description command
+    get_issue_desc_parser = subparsers.add_parser(
+        "get-issue-description", help="Fetch issue description as plain text"
+    )
+    get_issue_desc_parser.add_argument("issue_id", help="Issue ID (e.g., NES-24)")
+
+    # split-plans command
+    split_plans_parser = subparsers.add_parser(
+        "split-plans", help="Split ticket plans into individual files"
+    )
+    split_plans_parser.add_argument("issue_id", help="Issue ID (e.g., NES-24)")
+    split_plans_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory to write plan files (e.g., .tmp/plans/NES-24)",
+    )
+
     # list-projects command
     subparsers.add_parser("list-projects", help="List projects (first page only)")
 
@@ -121,6 +212,9 @@ def main() -> None:
     update_issue_parser = subparsers.add_parser("update-issue", help="Update an issue description")
     update_issue_parser.add_argument("issue_id", help="Issue ID (e.g., NES-24)")
     update_issue_parser.add_argument("--description", help="New issue description")
+    update_issue_parser.add_argument(
+        "--description-file", help="Path to file containing new issue description"
+    )
 
     # create-comment command
     create_comment_parser = subparsers.add_parser(
@@ -150,6 +244,10 @@ def main() -> None:
     try:
         if args.command == "get-issue":
             get_issue(args.issue_id)
+        elif args.command == "get-issue-description":
+            get_issue_description(args.issue_id)
+        elif args.command == "split-plans":
+            split_plans(args.issue_id, args.output_dir)
         elif args.command == "list-projects":
             list_projects()
         elif args.command == "list-teams":
@@ -167,6 +265,7 @@ def main() -> None:
             update_issue(
                 issue_id=args.issue_id,
                 description=args.description,
+                description_file=args.description_file,
             )
         elif args.command == "create-comment":
             create_comment(issue_id=args.issue_id, body=args.body)

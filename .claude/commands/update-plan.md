@@ -15,22 +15,24 @@ Parse arguments: first token is ticket ID, rest is the update prompt (optional).
 ### Step 1: Fetch Existing Plan to Temp File
 
 1. Create .tmp directory if it doesn't exist
-2. Fetch the ticket details and pipe the entire output to `.tmp/<TICKET_ID>.md`
+2. Fetch the ticket description to a markdown file:
 
 ```bash
 mkdir -p .tmp
-uv run linear get-issue <TICKET_ID> > .tmp/<TICKET_ID>.md
+uv run linear get-issue-description <TICKET_ID> > .tmp/<TICKET_ID>.md
 ```
 
-3. Verify the file was created (metadata check only, no content reading):
+3. Verify the file was created and is not empty:
 
 ```bash
-test -f .tmp/<TICKET_ID>.md && echo "exists"
+test -s .tmp/<TICKET_ID>.md && echo "exists"
 ```
 
-**IMPORTANT**: Do NOT read or manipulate the temp file contents directly. The planner agent
-will handle reading and updating the file. This command only fetches the ticket data for the
-planner agent to process.
+If the file is empty or doesn't exist, the ticket has no description - suggest running `/create-plan` first.
+
+**IMPORTANT**: Do NOT read the temp file contents directly. The planner agent will handle
+reading and updating the file. This step only extracts the ticket description for the planner
+agent to process.
 
 ### Step 2: Determine Update Source
 
@@ -60,31 +62,19 @@ Wait for each planner agent invocation to complete before proceeding to the next
 The planner agent will read from and update the temp file directly.
 
 **Collect the summary** returned by each planner invocation. These summaries will be used
-in Step 6 for the update comment.
+in Step 5 for the update comment.
 
-### Step 4: Read Updated Plan
+### Step 4: Update Linear Ticket
 
-After all planner invocations complete, read the updated plan from the temp file:
-
-```bash
-cat .tmp/<TICKET_ID>.md
-```
-
-Extract the plan content (everything after the `---` separator line).
-
-### Step 5: Update Linear Ticket
-
-Update the ticket description with the new plan using the Linear CLI:
+After all planner invocations complete, update the ticket description directly from the temp file:
 
 ```bash
-uv run linear update-issue <TICKET_ID> --description "<ORIGINAL_DESCRIPTION>
-
----
-
-<UPDATED_PLAN_CONTENT>"
+uv run linear update-issue <TICKET_ID> --description-file .tmp/<TICKET_ID>.md
 ```
 
-### Step 6: Add Update Comment
+**IMPORTANT**: Do NOT read the temp file. Pass it directly to `update-issue` using `--description-file`.
+
+### Step 5: Add Update Comment
 
 Add a comment on the ticket summarizing the changes using the Linear CLI:
 
@@ -97,16 +87,15 @@ Changes incorporated:
 The implementation plan in the ticket description has been updated."
 ```
 
-### Step 7: Request Review and Cleanup
+### Step 6: Cleanup and Confirm
 
-1. Print confirmation message requesting review
-2. Delete the temp file
+1. Delete the temp file
 
 ```bash
 rm .tmp/<TICKET_ID>.md
 ```
 
-Print the following to terminal:
+2. Print confirmation message:
 
 ```text
 ================================================================================
@@ -129,7 +118,7 @@ If the Linear MCP tool does not work you can use `uv run linear get-issue <TICKE
 ## Error Handling
 
 * If ticket fetch fails, report the error and stop
-* If existing plan not found in ticket description, suggest running /create-plan first
+* If existing plan not found in ticket description (empty file), suggest running /create-plan first
 * If planner agent fails, report the error output and stop
 * If Linear ticket update fails, report the error and stop
 * Always clean up the temp file, even on errors

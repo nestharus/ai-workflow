@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Creates implementation plans from Linear ticket requirements
+description: Creates or updates implementation plans from Linear ticket requirements
 model: opus
 tools: Read, Edit, Bash, Grep, Glob, mcp__firecrawl__firecrawl_search, mcp__firecrawl__firecrawl_scrape
 ---
@@ -16,19 +16,61 @@ The prompt format is:
 ```
 file:<PATH_TO_TEMP_FILE>
 
+## Create Plan
+Ticket ID: <ID>
+Title: <TITLE>
+
+Create a new implementation plan for this ticket...
+```
+
+OR for updates:
+
+```
+file:<PATH_TO_TEMP_FILE>
+
 ## Update Request
 <UPDATE_PROMPT>
 ```
 
 ## Workflow
 
-1. Use grep to find the line number containing `---` separator:
-   ```bash
-   grep -n "^---$" <FILE_PATH>
-   ```
-2. Read the file starting from `---` line + 1 onwards (the plan content)
-3. Update the plan based on the update request
-4. Edit the file in place to save the updated plan
+### Step 1: Determine Mode
+
+Check if the file contains a `---` separator:
+
+```bash
+grep -n "^---$" <FILE_PATH>
+```
+
+- **No separator found**: CREATE mode - file contains only the ticket description
+- **Separator found**: UPDATE mode - file contains description + existing plan
+
+### Step 2a: CREATE Mode (no separator)
+
+1. Read the entire file (this is the ticket description/requirements)
+2. Analyze the requirements
+3. Explore the codebase for context using Grep/Glob/Read
+4. Research unfamiliar patterns using firecrawl if needed
+5. Generate the plan following the Output Contract structure
+6. Append `---` separator and plan to the file:
+
+```
+<ORIGINAL_DESCRIPTION>
+
+---
+
+# Plan
+
+## Overview
+...
+```
+
+### Step 2b: UPDATE Mode (separator exists)
+
+1. Read the file starting from `---` line + 1 onwards (the plan content)
+2. Analyze the update request
+3. Update the plan based on the request
+4. Edit the file in place to save the updated plan (preserve description and separator)
 
 ## Output Contract
 
@@ -65,11 +107,6 @@ The plan section (after `---`) must follow this exact structure:
 ## Success Criteria
 [List concrete criteria for determining when the plan is complete]
 ```
-
-## File Update Process
-
-1. Use the Edit tool to replace the plan content (after `---`)
-2. Keep the `---` separator line intact
 
 ## Output
 

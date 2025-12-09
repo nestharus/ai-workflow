@@ -1,12 +1,10 @@
-# Execute Implementation Plan in Git Worktree
-
 ---
-
 description: Execute an implementation plan in a git worktree
 argument-hint: "`ticket-id`"
-allowed-tools: Bash, Read, Write, Glob, Grep
-
+allowed-tools: Bash, Read, Write, Glob, Grep, Task
 ---
+
+# Execute Implementation Plan in Git Worktree
 
 Execute the implementation plan for ticket `$ARGUMENTS` in a dedicated git worktree.
 
@@ -62,64 +60,69 @@ Store these values for subsequent operations:
 * `<worktree_path>` - absolute path: `{{repo_root}}/{{worktree_path from JSON}}`
 * `<BASE_BRANCH>` - the current branch, used as PR target
 
-### Step 2: Load Plan
+### Step 2: Split Plans into Files
 
-1. The plan is in the ticket description (from Step 1), after the `---` separator
-2. Parse the plan to identify individual Plans (Plan 1, Plan 2, etc.)
-3. Extract the success criteria
+Split the ticket plans into individual files:
+
+```bash
+uv run linear split-plans <TICKET_ID> --output-dir .tmp/plans/<TICKET_ID>
+```
+
+This extracts each `### Plan N:` section into separate files:
+- `.tmp/plans/<TICKET_ID>/plan1.md`
+- `.tmp/plans/<TICKET_ID>/plan2.md`
+- etc.
+
+The command outputs JSON listing the plan files:
+```json
+{
+  "ok": true,
+  "data": {
+    "plans": [
+      {"file": ".tmp/plans/NES-24/plan1.md", "header": "### Plan 1: Title"},
+      {"file": ".tmp/plans/NES-24/plan2.md", "header": "### Plan 2: Title"}
+    ],
+    "count": 2
+  }
+}
+```
+
+If the command fails (no `---` separator or no plans found), suggest running `/create-plan` first.
 
 ### Step 3: Execute Plans
 
-For each Plan in sequence:
+For each plan file in sequence:
 
-**Implementation Phase (use `timeout: 600000`):**
+**Implementation Phase:**
 
-```bash
-cd {{worktree_path}} && uv run agent.mcp wait --command "uv run agent.tasks --agent implementor --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
+```text
+Task(subagent_type="implementor", prompt="{{plan_file_path}}")
 ```
 
-Where `<PLAN_CONTENT>` is the specific plan section from the ticket description.
-
-The `agent.mcp wait` command handles all polling internally and returns a final status.
-No re-running is required in the normal case.
-
-Handle each status:
-* `"status": "completed"` → Check implementor output:
-  * `SUCCESS` → proceed to review
-  * `TESTS: [...]` → run test-debugger, then retry
-  * `FAIL: ...` → analyze failure, may need human intervention
-* `"status": "failed"` → Check `error` field and `stderr` for details
-* `"status": "timeout"` → Job exceeded time limit. Options:
-  1. Increase `--max-seconds` and re-run if more time is needed
-  2. Check agent logs for stuck processes
-  3. Manually intervene if the task is inherently too long
-* `"status": "killed"` → Job was externally terminated
-
-**Review Phase (use `timeout: 600000`):**
-
-```bash
-cd {{worktree_path}} && uv run agent.mcp wait --command "uv run agent.tasks --agent reviewer --prompt \"<PLAN_CONTENT>\"" --max-seconds 600
-```
-
-Handle each status:
-* `"status": "completed"` → Check reviewer output:
-  * `REVIEW: PASS` → proceed to next plan
-  * `REVIEW: FAIL - ...` → re-run implementor with feedback, then re-review
-* `"status": "failed"` → Check `error` field and `stderr` for details
-* `"status": "timeout"` → Job exceeded time limit (see options above)
-* `"status": "killed"` → Job was externally terminated
+Handle implementor output:
+* `SUCCESS` - Proceed to review
+* `TESTS: [...]` - Run test-fixer agent, then retry implementor
+* `FAIL: ...` - Analyze failure, may need human intervention
 
 ### Step 4: Lint Phase
 
 Run the lint-fixer sub-agent against the worktree in changed-only mode:
 
-```yaml
+```text
 Task(subagent_type="lint-fixer", prompt="--worktree {{worktree_path}} --changed-only")
 ```
 
 This only lints files that were modified, which is faster and appropriate for new implementations.
 
-### Step 5: Commit and Push
+### Step 5: Cleanup Plan Files
+
+Remove the temporary plan files:
+
+```bash
+rm -rf .tmp/plans/<TICKET_ID>
+```
+
+### Step 6: Commit and Push
 
 After all plans complete successfully, use the commit-push command:
 
@@ -139,7 +142,7 @@ This command:
 2. Creates the commit with the provided message
 3. Pushes with `-u origin HEAD` to set upstream tracking (required for new branches)
 
-### Step 6: Create Pull Request
+### Step 7: Create Pull Request
 
 Create PR targeting the base branch:
 
@@ -170,7 +173,7 @@ Create PR targeting the base branch:
    )"
    ```
 
-### Step 7: Output Summary
+### Step 8: Output Summary
 
 **Note**: The PR and branch are automatically linked to the Linear ticket when the ticket ID
 casing matches exactly. No manual linking is required.
@@ -227,10 +230,11 @@ Commands:
 ## Error Handling
 
 * If ticket fetch fails, report the error and stop
-* If plan not found in ticket description, suggest running /create-plan first
+* If plan split fails (no separator or no plans), suggest running /create-plan first
 * If worktree creation fails (branch exists), offer to reuse or clean up
 * If any agent fails, save progress and report what completed vs what failed
 * If PR creation fails, report the error but keep the branch pushed
+* Always clean up `.tmp/plans/<TICKET_ID>` directory on completion or error
 
 ## Notes
 
