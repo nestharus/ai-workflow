@@ -743,6 +743,79 @@ class TestListTeams:
         assert teams[1]["id"] == "team-2"
         assert teams[2]["id"] == "team-3"
 
+    def test_list_teams_caching(self) -> None:
+        """Verify list_teams caches results to avoid redundant API calls."""
+        client = LinearClient(api_key="test-key")
+
+        mock_response = make_mock_response(
+            {
+                "data": {
+                    "teams": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [{"id": "team-1", "name": "Team 1", "key": "T1"}],
+                    }
+                }
+            }
+        )
+
+        with patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
+            # First call should hit the API
+            teams1 = client.list_teams()
+            assert mock_urlopen.call_count == 1
+            assert len(teams1) == 1
+
+            # Second call should use cache, no additional API call
+            teams2 = client.list_teams()
+            assert mock_urlopen.call_count == 1  # Still 1, not 2
+            assert teams1 is teams2  # Same list object from cache
+
+    def test_list_teams_caching_per_include_archived(self) -> None:
+        """Verify caching is separate for include_archived True/False."""
+        client = LinearClient(api_key="test-key")
+
+        mock_response_active = make_mock_response(
+            {
+                "data": {
+                    "teams": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [{"id": "team-1", "name": "Active", "key": "ACT"}],
+                    }
+                }
+            }
+        )
+        mock_response_all = make_mock_response(
+            {
+                "data": {
+                    "teams": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [
+                            {"id": "team-1", "name": "Active", "key": "ACT"},
+                            {"id": "team-2", "name": "Archived", "key": "ARC"},
+                        ],
+                    }
+                }
+            }
+        )
+
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[mock_response_active, mock_response_all],
+        ) as mock_urlopen:
+            # Call without archived
+            teams_active = client.list_teams(include_archived=False)
+            assert mock_urlopen.call_count == 1
+            assert len(teams_active) == 1
+
+            # Call with archived - should hit API again (different cache key)
+            teams_all = client.list_teams(include_archived=True)
+            assert mock_urlopen.call_count == 2
+            assert len(teams_all) == 2
+
+            # Repeat calls should use cache
+            client.list_teams(include_archived=False)
+            client.list_teams(include_archived=True)
+            assert mock_urlopen.call_count == 2  # No additional calls
+
 
 # ============================================================================
 # TestListProjects
@@ -1307,6 +1380,22 @@ class TestCreateComment:
 
             assert "Failed to create comment" in str(exc_info.value)
 
+    def test_create_comment_null_response(self) -> None:
+        """Raise error when API returns commentCreate as null.
+
+        When the GraphQL API returns data.commentCreate as null (not missing),
+        the client should handle this gracefully rather than raising AttributeError.
+        """
+        client = LinearClient(api_key="test-key")
+
+        mock_response = make_mock_response({"data": {"commentCreate": None}})
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            with pytest.raises(LinearAPIError) as exc_info:
+                client.create_comment(issue_id="NES-123", body="Comment")
+
+            assert "Failed to create comment" in str(exc_info.value)
+
     def test_create_comment_uses_variables(self) -> None:
         """Verify create_comment uses variables payload (security test)."""
         client = LinearClient(api_key="test-key")
@@ -1764,6 +1853,19 @@ class TestGetDoneStateId:
 
         assert state_id == "done-state-uuid"
 
+    def test_get_done_state_id_team_not_found(self) -> None:
+        """Raise error when team is not found (null from API)."""
+        client = LinearClient(api_key="test-key")
+
+        mock_response = make_mock_response({"data": {"team": None}})
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            with pytest.raises(LinearAPIError) as exc_info:
+                client.get_done_state_id("invalid-team-uuid")
+
+            assert "Team not found" in str(exc_info.value)
+            assert "invalid-team-uuid" in str(exc_info.value)
+
     def test_get_done_state_id_not_found(self) -> None:
         """Raise error when no done state found."""
         client = LinearClient(api_key="test-key")
@@ -1836,7 +1938,7 @@ class TestSetTicketState:
     """Tests for set_ticket_state method."""
 
     def test_set_ticket_state_success(self) -> None:
-        """Successfully set ticket state."""
+        """Successfully set ticket state returns dict with stateName."""
         client = LinearClient(api_key="test-key")
 
         mock_response = make_mock_response(
@@ -1853,20 +1955,23 @@ class TestSetTicketState:
         with patch("urllib.request.urlopen", return_value=mock_response):
             result = client.set_ticket_state("issue-uuid", "done-state-uuid")
 
-        assert result is True
+        assert result == {"stateName": "Done"}
 
     def test_set_ticket_state_failure(self) -> None:
-        """Return False when state update fails."""
+        """Raise LinearAPIError when state update fails."""
         client = LinearClient(api_key="test-key")
 
         mock_response = make_mock_response(
             {"data": {"issueUpdate": {"success": False, "issue": None}}}
         )
 
-        with patch("urllib.request.urlopen", return_value=mock_response):
-            result = client.set_ticket_state("issue-uuid", "invalid-state-uuid")
+        with (
+            patch("urllib.request.urlopen", return_value=mock_response),
+            pytest.raises(LinearAPIError) as exc_info,
+        ):
+            client.set_ticket_state("issue-uuid", "invalid-state-uuid")
 
-        assert result is False
+        assert "Failed to update state for issue: issue-uuid" in str(exc_info.value)
 
 
 # ============================================================================
