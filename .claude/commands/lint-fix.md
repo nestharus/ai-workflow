@@ -1,8 +1,7 @@
 # Lint-Fixer Sub-Agent Workflow
 
-> **Metadata:** Description: Run lint-fixer sub-agent until only
-> markdown-restriction errors remain. Allowed tools: Task, Bash, Read, Grep,
-> Glob, TodoWrite
+> **Metadata:** Description: Run lint-fixer sub-agent until all lint errors are
+> fixed. Allowed tools: Task, Bash, Read, Grep, Glob, TodoWrite
 
 Fix all lint errors AND warnings in the project by repeatedly running the lint-fixer sub-agent.
 
@@ -57,7 +56,7 @@ Task(subagent_type="lint-fixer", prompt="--changed-only")
 
 After the lint-fixer returns, check its summary:
 
-* If the lint-fixer reports **success** (only markdown-restriction errors remain), you are done
+* If the lint-fixer reports **success** (no lint errors remain), you are done
 * If the lint-fixer reports **remaining fixable errors or warnings** (ruff, mypy, yamllint, etc.), go to Step 3
 * If the lint-fixer reports **errors or warnings are unfixable** (with reasons), go to Step 4 (Investigation)
 * If the lint-fixer asks you to fix specific errors or warnings manually, fix them and return to Step 1

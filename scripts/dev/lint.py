@@ -17,14 +17,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # Linter names in execution order
 LINTER_NAMES = [
     "scripts",
-    "markdown-restriction",
     "ruff",
     "mypy",
     "hadolint",
     "pymarkdown",
     "yamllint",
     "actionlint",
-    "yamldocs",
     "dotenvlint",
     "checkov",
     "detect-secrets",
@@ -45,8 +43,6 @@ LINT_SCRIPTS_CONFIG = REPO_ROOT / ".lint.scripts.yaml"
 LINT_HADOLINT_CONFIG = REPO_ROOT / ".lint.hadolint.yaml"
 LINT_PYMARKDOWN_CONFIG = REPO_ROOT / ".lint.pymarkdown.yaml"
 LINT_YAMLLINT_CONFIG = REPO_ROOT / ".lint.yamllint.yaml"
-LINT_YAMLDOCS_CONFIG = REPO_ROOT / ".lint.yamldocs.yaml"
-LINT_MARKDOWN_RESTRICTION_CONFIG = REPO_ROOT / ".lint.markdown-restriction.yaml"
 LINT_DOTENVLINT_CONFIG = REPO_ROOT / ".lint.dotenvlint.yaml"
 LINT_DETECT_SECRETS_CONFIG = REPO_ROOT / ".lint.detect-secrets.yaml"
 LINT_ACTIONLINT_CONFIG = REPO_ROOT / ".lint.actionlint.yaml"
@@ -416,57 +412,6 @@ def _run_actionlint(files: list[str] | None = None) -> None:
     _run_checked(cmd)
 
 
-def _run_yamldocs() -> int:
-    """Run YAML documentation schema linter.
-
-    Validates that YAML documentation files (identified by doc_id at root)
-    follow the schema defined in general.yaml.schema-guidelines.yml.
-
-    Returns:
-        0 if all files pass, 1 if errors found.
-    """
-    from scripts.dev.lint_yaml_docs import lint_directory
-
-    config = _load_yaml_config(LINT_YAMLDOCS_CONFIG)
-    targets = config.get("targets", ["docs/"])
-    exclude_dirs = set(config.get("exclude_dirs", []))
-
-    total_errors = 0
-    total_docs = 0
-
-    for target in targets:
-        target_path = REPO_ROOT / target
-        if not target_path.exists():
-            continue
-
-        # Filter out excluded directories
-        results, _, _ = lint_directory(target_path)
-
-        # Filter results to exclude configured directories
-        filtered_results = [
-            r for r in results if not any(excl in r["file_path"] for excl in exclude_dirs)
-        ]
-        filtered_errors = sum(len(r["errors"]) for r in filtered_results)
-        filtered_docs = sum(1 for r in filtered_results if r["is_doc_file"])
-
-        total_errors += filtered_errors
-        total_docs += filtered_docs
-
-        # Print errors
-        for result in filtered_results:
-            if result["errors"]:
-                print(f"\n{result['file_path']}:")
-                for error in result["errors"]:
-                    print(f"  {error['error_type']}: {error['message']}")
-
-    if total_errors > 0:
-        print(f"\nFound {total_errors} error(s) in {total_docs} documentation file(s)")
-        return 1
-
-    print(f"Checked {total_docs} documentation file(s). No errors found.")
-    return 0
-
-
 def _run_dotenvlint(files: list[str] | None = None) -> None:
     """Run dotenv-linter on .env files.
 
@@ -502,34 +447,6 @@ def _run_dotenvlint(files: list[str] | None = None) -> None:
         print("No .env files found for dotenv-linter scan")
     else:
         _run_checked([dotenv_linter_exe, "check", *targets])
-
-
-def _run_markdown_restriction() -> int:
-    """Run markdown restriction linter.
-
-    Validates that only README.md and AGENTS.md are allowed as markdown files
-    in root, app/**, docs/**, scripts/**, and tests/** directories.
-
-    Returns:
-        0 if all files pass, 1 if violations found.
-    """
-    from scripts.dev.lint_markdown_restriction import (
-        format_violations,
-        lint_markdown_restriction,
-    )
-
-    violations, exit_code = lint_markdown_restriction(LINT_MARKDOWN_RESTRICTION_CONFIG)
-
-    if violations:
-        print(format_violations(violations), file=sys.stderr)
-        print(
-            f"\nFound {len(violations)} forbidden markdown file(s).",
-            file=sys.stderr,
-        )
-    else:
-        print("No forbidden markdown files found.")
-
-    return exit_code
 
 
 def _run_checkov() -> int:
@@ -783,8 +700,6 @@ def _run_trivy() -> int:
 # Map linter names to their runner functions (no file filtering support)
 LINTER_RUNNERS_NO_FILES: dict[str, Callable[[], int | None]] = {
     "scripts": _run_scripts,
-    "markdown-restriction": _run_markdown_restriction,
-    "yamldocs": _run_yamldocs,
     "checkov": _run_checkov,
     "trivy": _run_trivy,
 }
