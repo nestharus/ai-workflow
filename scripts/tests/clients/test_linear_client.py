@@ -849,7 +849,13 @@ class TestLinearCLIOutputFormat:
         ]
 
         mocker.patch.object(linear_cli, "LinearClient")
-        linear_cli.LinearClient.return_value.list_comments.return_value = mock_comments
+        mock_client_result = {
+            "issueId": "issue-123",
+            "issueIdentifier": "NES-24",
+            "comments": mock_comments,
+            "totalCount": 2,
+        }
+        linear_cli.LinearClient.return_value.list_comments.return_value = mock_client_result
 
         linear_cli.list_comments("NES-24")
         captured = capsys.readouterr()
