@@ -55,17 +55,37 @@ def split_plans(issue_id: str, output_dir: str) -> None:
     # Find the plan section after ---
     separator_match = re.search(r"^---\s*$", description, re.MULTILINE)
     if not separator_match:
-        print(json.dumps({"ok": False, "error": {"code": "NO_PLAN", "message": "No plan found (missing --- separator)"}}))
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "NO_PLAN",
+                        "message": "No plan found (missing --- separator)",
+                    },
+                }
+            )
+        )
         sys.exit(1)
 
-    plan_content = description[separator_match.end():].strip()
+    plan_content = description[separator_match.end() :].strip()
 
     # Split on "### Plan N:" headers
     plan_pattern = re.compile(r"^### Plan \d+:", re.MULTILINE)
     matches = list(plan_pattern.finditer(plan_content))
 
     if not matches:
-        print(json.dumps({"ok": False, "error": {"code": "NO_PLANS", "message": "No plans found (no '### Plan N:' headers)"}}))
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "NO_PLANS",
+                        "message": "No plans found (no '### Plan N:' headers)",
+                    },
+                }
+            )
+        )
         sys.exit(1)
 
     # Create output directory
@@ -107,7 +127,9 @@ def list_teams() -> None:
 def list_comments(issue_id: str) -> None:
     """List and print comments on an issue as JSON."""
     client = LinearClient()
-    comments = client.list_comments(issue_id)
+    result = client.list_comments(issue_id)
+    # Extract comments list from rich metadata to preserve CLI contract
+    comments = result.get("comments", [])
     print(json.dumps({"ok": True, "data": {"comments": comments}}, indent=2))
 
 
@@ -115,7 +137,7 @@ def create_issue(
     team: str,
     title: str,
     description: str | None = None,
-    project: str | None = None,
+    project_id: str | None = None,
 ) -> None:
     """Create a new issue and print result as JSON."""
     client = LinearClient()
@@ -123,7 +145,7 @@ def create_issue(
         team=team,
         title=title,
         description=description,
-        project=project,
+        project_id=project_id,
     )
     print(json.dumps({"ok": True, "data": issue}, indent=2))
 
@@ -137,8 +159,10 @@ def update_issue(
 
     Args:
         issue_id: The issue identifier (e.g., NES-24)
-        description: New description text (mutually exclusive with description_file)
-        description_file: Path to file containing new description (mutually exclusive with description)
+        description: New description text (mutually exclusive with
+            description_file)
+        description_file: Path to file containing new description
+            (mutually exclusive with description)
     """
     # Read description from file if provided
     if description_file:
@@ -259,7 +283,7 @@ def main() -> None:
                 team=args.team,
                 title=args.title,
                 description=args.description,
-                project=args.project,
+                project_id=args.project,
             )
         elif args.command == "update-issue":
             update_issue(
