@@ -619,3 +619,109 @@ def remove_shared_clone(clone_path: Path) -> tuple[bool, str]:
         return True, ""
     except OSError as e:
         return False, str(e)
+
+
+def get_conflicted_files(worktree: Path) -> list[str]:
+    """Get list of files with merge conflicts.
+
+    Args:
+        worktree: Path to the git worktree.
+
+    Returns:
+        List of file paths with conflicts (empty if none or error).
+    """
+    result = _run_git(["git", "status", "--porcelain"], cwd=worktree)
+    if result is None or result.returncode != 0:
+        return []
+
+    conflicted: list[str] = []
+    for line in result.stdout.splitlines():
+        # UU = both modified (conflict)
+        if line.startswith("UU "):
+            conflicted.append(line[3:])
+    return conflicted
+
+
+def get_commits_between(worktree: Path, base_commit: str, target_ref: str) -> list[str]:
+    """Get list of commit SHAs between two refs.
+
+    Args:
+        worktree: Path to the git worktree.
+        base_commit: Base commit SHA.
+        target_ref: Target ref (e.g., origin/main).
+
+    Returns:
+        List of commit SHAs from oldest to newest (empty if none or error).
+    """
+    result = _run_git(
+        ["git", "log", "--oneline", "--reverse", f"{base_commit}..{target_ref}"],
+        cwd=worktree,
+    )
+    if result is None or result.returncode != 0:
+        return []
+
+    commits: list[str] = []
+    for line in result.stdout.splitlines():
+        if line:
+            # Format: "sha message" - extract just the SHA
+            sha = line.split()[0]
+            commits.append(sha)
+    return commits
+
+
+def get_head_sha(worktree: Path) -> str:
+    """Get the SHA of HEAD.
+
+    Args:
+        worktree: Path to the git worktree.
+
+    Returns:
+        SHA string, or empty string on error.
+    """
+    result = _run_git(["git", "rev-parse", "HEAD"], cwd=worktree)
+    if result is None or result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def force_push(worktree: Path) -> tuple[bool, str]:
+    """Force push with lease to remote.
+
+    Args:
+        worktree: Path to the git worktree.
+
+    Returns:
+        Tuple of (success, error_message).
+    """
+    result = _run_git(["git", "push", "--force-with-lease"], cwd=worktree)
+    if result is None:
+        return False, "git not available"
+    if result.returncode != 0:
+        return False, result.stderr
+    return True, ""
+
+
+def reset_hard_to_remote(worktree: Path, branch_name: str) -> tuple[bool, str]:
+    """Reset worktree to match remote branch.
+
+    Args:
+        worktree: Path to the git worktree.
+        branch_name: Branch name to reset to (will use origin/<branch_name>).
+
+    Returns:
+        Tuple of (success, error_message).
+    """
+    # First fetch
+    result = _run_git(["git", "fetch", "origin"], cwd=worktree)
+    if result is None:
+        return False, "git not available"
+    if result.returncode != 0:
+        return False, f"fetch failed: {result.stderr}"
+
+    # Then reset
+    result = _run_git(["git", "reset", "--hard", f"origin/{branch_name}"], cwd=worktree)
+    if result is None:
+        return False, "git not available"
+    if result.returncode != 0:
+        return False, f"reset failed: {result.stderr}"
+    return True, ""

@@ -24,6 +24,8 @@ Usage:
     uv run pr list-unresolved-comments <ticket-id>
     uv run pr promote-worktree [<identifier>]
     uv run pr cleanup-sandbox [<identifier>]
+    uv run pr rebase-start [<identifier>]
+    uv run pr rebase-finish [<identifier>]
 """
 
 from __future__ import annotations
@@ -403,6 +405,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="PR ID, ticket ID, branch name, or omit for current branch.",
     )
 
+    # rebase-start command
+    rebase_start_parser = subparsers.add_parser(
+        "rebase-start",
+        help="Create sandbox, gather context, squash and rebase (returns conflict info)",
+    )
+    rebase_start_parser.add_argument(
+        "identifier",
+        nargs="?",
+        default=None,
+        help="PR ID (17/#17), ticket ID (NES-123), branch name, or omit for current branch.",
+    )
+
+    # rebase-finish command
+    rebase_finish_parser = subparsers.add_parser(
+        "rebase-finish",
+        help="Force push, sync source worktree, and cleanup sandbox",
+    )
+    rebase_finish_parser.add_argument(
+        "identifier",
+        nargs="?",
+        default=None,
+        help="PR ID (17/#17), ticket ID (NES-123), branch name, or omit for current branch.",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -465,6 +491,10 @@ def main(argv: list[str] | None = None) -> int:
         return commands.promote_worktree_command(args.identifier)
     if args.command == "cleanup-sandbox":
         return commands.cleanup_sandbox_command(args.identifier)
+    if args.command == "rebase-start":
+        return commands.rebase_start_command(args.identifier)
+    if args.command == "rebase-finish":
+        return commands.rebase_finish_command(args.identifier)
 
     return 1
 

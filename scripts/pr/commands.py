@@ -1766,3 +1766,300 @@ def extract_ticket_id_command(branch_name: str | None = None) -> int:
             )
         )
         return 1
+
+
+def rebase_start_command(identifier: str | None = None) -> int:
+    """Create sandbox, gather context, squash and rebase onto base branch.
+
+    Combines promote-worktree + context gathering + squash-rebase into one command.
+    Returns all context needed for conflict resolution if conflicts occur.
+
+    Args:
+        identifier: PR ID, ticket ID, branch name, or None for current branch.
+
+    Returns:
+        Exit code (0 for success, 1 for conflicts needing resolution, 2 for error).
+    """
+    try:
+        repo_root = git_dao.get_repo_root()
+        if repo_root is None:
+            print("Error: Not in a git repository", file=sys.stderr)
+            return 2
+
+        current_branch = git_dao.get_current_branch()
+
+        # Determine branch and worktree info
+        branch_name: str | None
+        pr_number: int | None
+        base_branch: str | None
+
+        if identifier is None:
+            if not current_branch:
+                print("Error: Not on a branch", file=sys.stderr)
+                return 2
+
+            branch_name = current_branch
+            pr_data = github_dao.get_pr_for_branch(branch_name)
+            if pr_data:
+                pr_number = pr_data.get("pr_number")
+                base_branch = pr_data.get("base_branch", "main")
+            else:
+                pr_number = None
+                base_branch = "main"
+
+        elif (pr_id := _looks_like_pr_id(identifier)) is not None:
+            gh_pr_info = github_dao.get_pr_info(pr_id)
+            branch_name = gh_pr_info.get("head_branch")
+            base_branch = gh_pr_info.get("base_branch", "main")
+
+            if not branch_name:
+                print(f"Error: Could not determine head branch for PR #{pr_id}", file=sys.stderr)
+                return 2
+
+            pr_number = pr_id
+
+        elif _looks_like_ticket_id(identifier):
+            info = linear_dao.get_ticket_info(identifier)
+            linear_branch_name = info.get("branch_name")
+
+            if not linear_branch_name:
+                print(f"Error: No branch name configured for ticket {identifier}", file=sys.stderr)
+                return 2
+
+            branch_name = _find_existing_branch_for_ticket(linear_branch_name)
+            if not branch_name:
+                branch_name = _get_expected_branch_name(linear_branch_name)
+
+            # Try to get base_branch from PR if one exists
+            attachments = linear_dao.fetch_github_attachments(identifier)
+            pr_number = None
+            base_branch = "main"
+            for attachment in attachments:
+                url = attachment.get("url", "")
+                if "/pull/" in url:
+                    match = re.search(r"/pull/(\d+)", url)
+                    if match:
+                        try:
+                            gh_pr_info = github_dao.get_pr_info(int(match.group(1)))
+                            if gh_pr_info.get("state") == "OPEN":
+                                pr_number = int(match.group(1))
+                                base_branch = gh_pr_info.get("base_branch", "main")
+                                break
+                        except github_dao.GraphQLError:
+                            continue
+        else:
+            branch_name = identifier
+            pr_data = github_dao.get_pr_for_branch(branch_name)
+            if pr_data:
+                pr_number = pr_data.get("pr_number")
+                base_branch = pr_data.get("base_branch", "main")
+            else:
+                pr_number = None
+                base_branch = "main"
+
+        # Determine source path
+        working_directory = "."
+        if current_branch != branch_name:
+            working_directory = f".worktrees/{branch_name}"
+
+        source_path = Path.cwd() if working_directory == "." else repo_root / working_directory
+
+        if not source_path.is_dir():
+            print(f"Error: Source path does not exist: {source_path}", file=sys.stderr)
+            return 2
+
+        # Create sandbox
+        sanitized_branch = branch_name.replace("/", "-") if branch_name else "unknown"
+        sandbox_path = repo_root / ".git" / "rebase-sandbox" / sanitized_branch
+
+        # Clean up existing sandbox if present
+        if sandbox_path.exists():
+            success, err = git_dao.remove_shared_clone(sandbox_path)
+            if not success:
+                print(f"Error cleaning up existing sandbox: {err}", file=sys.stderr)
+                return 2
+
+        # Create shared clone
+        print(f"Creating rebase sandbox at: {sandbox_path}", file=sys.stderr)
+        success, err = git_dao.create_shared_clone(source_path, sandbox_path, branch_name)
+        if not success:
+            print(f"Error creating sandbox: {err}", file=sys.stderr)
+            return 2
+
+        # Gather merge context
+        print(f"Fetching origin/{base_branch}...", file=sys.stderr)
+        success, err = git_dao.fetch_branch(sandbox_path, base_branch)
+        if not success:
+            print(f"Error fetching branch: {err}", file=sys.stderr)
+            return 2
+
+        # Get merge base
+        base_commit, err = git_dao.get_merge_base(sandbox_path, base_branch)
+        if not base_commit:
+            print(f"Error finding merge base: {err}", file=sys.stderr)
+            return 2
+
+        # Get target commits
+        target_commits = git_dao.get_commits_between(
+            sandbox_path, base_commit, f"origin/{base_branch}"
+        )
+
+        # Count commits ahead
+        commit_count, err = git_dao.count_commits_ahead(sandbox_path, base_branch)
+        if commit_count < 0:
+            print(f"Error counting commits: {err}", file=sys.stderr)
+            return 2
+
+        print(f"Found {commit_count} commit(s) ahead of origin/{base_branch}", file=sys.stderr)
+
+        # Squash if needed
+        if commit_count > 1:
+            print(f"Squashing {commit_count} commits...", file=sys.stderr)
+            commit_msg = git_dao.get_last_commit_message(sandbox_path)
+            success, err = git_dao.soft_reset(sandbox_path, base_commit)
+            if not success:
+                print(f"Error during soft reset: {err}", file=sys.stderr)
+                return 2
+
+            success = git_dao.commit(sandbox_path, commit_msg)
+            if not success:
+                print("Error creating squashed commit", file=sys.stderr)
+                return 2
+
+            print("Commits squashed successfully", file=sys.stderr)
+
+        # Rebase
+        print(f"Rebasing onto origin/{base_branch}...", file=sys.stderr)
+        success, has_conflicts, err = git_dao.rebase(sandbox_path, base_branch)
+
+        # Build result
+        result: dict[str, Any] = {
+            "sandbox_path": str(sandbox_path),
+            "source_path": str(source_path),
+            "branch_name": branch_name,
+            "base_branch": base_branch,
+            "pr_number": pr_number,
+            "base_commit": base_commit,
+            "target_commits": target_commits,
+            "has_conflicts": has_conflicts,
+        }
+
+        if has_conflicts:
+            # Get conflicted files and source commit
+            conflicted_files = git_dao.get_conflicted_files(sandbox_path)
+            source_commit = git_dao.get_head_sha(sandbox_path)
+            result["conflicted_files"] = conflicted_files
+            result["source_commit"] = source_commit
+            print("Rebase conflicts detected", file=sys.stderr)
+            print(json.dumps(result, indent=2))
+            return 1
+
+        if not success:
+            print(f"Error during rebase: {err}", file=sys.stderr)
+            return 2
+
+        print("Squash and rebase completed successfully", file=sys.stderr)
+        print(json.dumps(result, indent=2))
+        return 0
+
+    except linear_dao.LinearAPIError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    except github_dao.GraphQLError as e:
+        print(f"Error fetching PR info from GitHub: {e}", file=sys.stderr)
+        return 2
+
+
+def rebase_finish_command(identifier: str | None = None) -> int:
+    """Force push, sync source worktree, and cleanup sandbox.
+
+    Combines force push + sync + cleanup into one command.
+
+    Args:
+        identifier: PR ID, ticket ID, branch name, or None for current branch.
+
+    Returns:
+        Exit code (0 for success).
+    """
+    try:
+        repo_root = git_dao.get_repo_root()
+        if repo_root is None:
+            print("Error: Not in a git repository", file=sys.stderr)
+            return 1
+
+        current_branch = git_dao.get_current_branch()
+
+        # Determine branch name
+        branch_name: str | None
+        if identifier is None:
+            branch_name = current_branch
+            if not branch_name:
+                print("Error: Not on a branch", file=sys.stderr)
+                return 1
+        elif (pr_id := _looks_like_pr_id(identifier)) is not None:
+            gh_pr_info = github_dao.get_pr_info(pr_id)
+            branch_name = gh_pr_info.get("head_branch")
+            if not branch_name:
+                print(f"Error: Could not determine branch for PR #{pr_id}", file=sys.stderr)
+                return 1
+        elif _looks_like_ticket_id(identifier):
+            info = linear_dao.get_ticket_info(identifier)
+            linear_branch_name = info.get("branch_name")
+            if not linear_branch_name:
+                print(f"Error: No branch name for ticket {identifier}", file=sys.stderr)
+                return 1
+            branch_name = _find_existing_branch_for_ticket(linear_branch_name)
+            if not branch_name:
+                branch_name = _get_expected_branch_name(linear_branch_name)
+        else:
+            branch_name = identifier
+
+        # Find sandbox
+        sanitized_branch = branch_name.replace("/", "-")
+        sandbox_path = repo_root / ".git" / "rebase-sandbox" / sanitized_branch
+
+        if not sandbox_path.exists():
+            print(f"Error: No sandbox found at: {sandbox_path}", file=sys.stderr)
+            return 1
+
+        # Determine source path
+        working_directory = "."
+        if current_branch != branch_name:
+            working_directory = f".worktrees/{branch_name}"
+
+        source_path = Path.cwd() if working_directory == "." else repo_root / working_directory
+
+        # Force push from sandbox
+        print("Force pushing from sandbox...", file=sys.stderr)
+        success, err = git_dao.force_push(sandbox_path)
+        if not success:
+            print(f"Error pushing: {err}", file=sys.stderr)
+            return 1
+
+        # Sync source worktree if it exists
+        if source_path.is_dir():
+            print(f"Syncing source worktree: {source_path}", file=sys.stderr)
+            success, err = git_dao.reset_hard_to_remote(source_path, branch_name)
+            if not success:
+                print(f"Warning: Failed to sync source worktree: {err}", file=sys.stderr)
+
+        # Cleanup sandbox
+        print("Cleaning up sandbox...", file=sys.stderr)
+        success, err = git_dao.remove_shared_clone(sandbox_path)
+        if not success:
+            print(f"Warning: Failed to remove sandbox: {err}", file=sys.stderr)
+
+        result: dict[str, Any] = {
+            "status": "success",
+            "branch_name": branch_name,
+            "source_path": str(source_path),
+        }
+        print(json.dumps(result, indent=2))
+        return 0
+
+    except linear_dao.LinearAPIError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except github_dao.GraphQLError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1

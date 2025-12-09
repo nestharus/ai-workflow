@@ -19,149 +19,93 @@ Rebase PR: $ARGUMENTS
 
 ## Workflow
 
-**IMPORTANT**: All `uv run` commands must be executed from the repository root,
-not from inside the sandbox. The sandbox is only for git operations.
+### 1. Start Rebase
 
-### 1. Create Rebase Sandbox
-
-Create an isolated sandbox for the rebase operation (from repo root):
+Run the rebase-start command (from repo root):
 
 ```bash
-uv run pr promote-worktree $ARGUMENTS
-```
-
-This returns JSON with:
-
-* `sandbox_path`: Path to the shared clone (where rebase happens)
-* `source_path`: Path to the original worktree (for reading clean code)
-* `branch_name`: Git branch name
-* `base_branch`: Target branch the PR will merge into (e.g., `main`, `develop`)
-* `pr_number`: PR number
-
-Store these values for use throughout the workflow.
-
-### 2. Gather Merge Context (Before Squash)
-
-Before squashing, gather context needed for conflict resolution:
-
-```bash
-cd {{sandbox_path}} && git fetch origin {{base_branch}}
-```
-
-Find the merge-base (original base commit before branches diverged):
-
-```bash
-cd {{sandbox_path}} && git merge-base origin/{{base_branch}} HEAD
-```
-
-Store this as `base_commit`.
-
-Find commits added to target branch since the base:
-
-```bash
-cd {{sandbox_path}} && git log --oneline {{base_commit}}..origin/{{base_branch}}
-```
-
-Store these commit SHAs as `target_commits` (list from oldest to newest).
-
-### 3. Squash and Rebase
-
-Squash all commits and rebase onto the target branch (run from repo root):
-
-```bash
-uv run pr squash-rebase --worktree {{sandbox_path}} --base-branch {{base_branch}}
+uv run pr rebase-start $ARGUMENTS
 ```
 
 This command:
 
+* Creates an isolated sandbox for the rebase operation
 * Fetches the latest target branch
+* Gathers merge context (base commit, target commits)
 * Squashes all commits into one (if multiple)
 * Rebases onto the target branch
 
-If the command returns exit code 0, skip to step 5 (Force Push).
+**Exit codes:**
 
-If the command returns exit code 1, conflicts need resolution.
+* `0`: Success, no conflicts - proceed to step 3
+* `1`: Conflicts detected - proceed to step 2
+* `2`: Error - abort
 
-### 4. Resolve Conflicts with Agent
+**JSON output includes:**
 
-When conflicts occur during rebase:
+* `sandbox_path`: Path to the sandbox (where rebase happens)
+* `source_path`: Path to the original worktree (for reading clean code)
+* `branch_name`: Git branch name
+* `base_branch`: Target branch the PR will merge into
+* `pr_number`: PR number
+* `base_commit`: The merge-base commit SHA
+* `target_commits`: List of commit SHAs added to base branch since divergence
+* `has_conflicts`: Boolean indicating if conflicts occurred
+* `conflicted_files`: (only if conflicts) List of files with conflicts
+* `source_commit`: (only if conflicts) SHA of the squashed commit being rebased
 
-1. Get the list of conflicted files:
+### 2. Resolve Conflicts (if needed)
 
-   ```bash
-   cd {{sandbox_path}} && git status --porcelain | grep "^UU" | cut -c4-
-   ```
+When conflicts occur (exit code 1), use the conflict-resolver agent for each
+conflicted file:
 
-2. Get the source commit SHA (the squashed commit being rebased):
-
-   ```bash
-   cd {{sandbox_path}} && git rev-parse HEAD
-   ```
-
-   Store as `source_commit`.
-
-3. For EACH conflicted file, invoke the conflict-resolver agent with context:
-
-   ```python
-   Task(subagent_type="conflict-resolver", model="opus", prompt=<JSON>)
-   ```
-
-   Where JSON contains:
-
-   ```json
-   {
-     "file_path": "<relative path to conflicted file>",
-     "sandbox_path": "{{sandbox_path}}",
-     "source_path": "{{source_path}}",
-     "base_commit": "{{base_commit}}",
-     "target_branch": "origin/{{base_branch}}",
-     "target_commits": ["<sha1>", "<sha2>", ...],
-     "source_commit": "{{source_commit}}"
-   }
-   ```
-
-   **Note**: The agent uses `sandbox_path` for conflict editing and `source_path` for researching clean code context.
-
-4. After all files are resolved, continue the rebase:
-
-   ```bash
-   cd {{sandbox_path}} && git rebase --continue
-   ```
-
-5. If more conflicts appear, repeat step 4.
-
-### 5. Force Push
-
-After successful rebase, push from the sandbox:
-
-```bash
-cd {{sandbox_path}} && git push --force-with-lease
+```python
+Task(subagent_type="conflict-resolver", model="opus", prompt=<JSON>)
 ```
 
-### 6. Sync Source Worktree
+Where JSON contains the context from step 1:
 
-After the force push, sync the source worktree to match the rebased branch:
-
-```bash
-cd {{source_path}} && git fetch origin && git reset --hard origin/{{branch_name}}
+```json
+{
+  "file_path": "<relative path to conflicted file>",
+  "sandbox_path": "{{sandbox_path}}",
+  "source_path": "{{source_path}}",
+  "base_commit": "{{base_commit}}",
+  "target_branch": "origin/{{base_branch}}",
+  "target_commits": ["<sha1>", "<sha2>", ...],
+  "source_commit": "{{source_commit}}"
+}
 ```
 
-This ensures the original worktree has the rebased history and is ready for continued work.
+**Note**: The agent uses `sandbox_path` for conflict editing and `source_path`
+for researching clean code context.
 
-### 7. Cleanup Sandbox
-
-After successful sync, remove the sandbox (run from repo root):
+After all files are resolved, continue the rebase:
 
 ```bash
-uv run pr cleanup-sandbox $ARGUMENTS
+cd {{sandbox_path}} && git add -A && git rebase --continue
 ```
+
+If more conflicts appear, repeat step 2.
+
+### 3. Finish Rebase
+
+After successful rebase (or after resolving all conflicts), run:
+
+```bash
+uv run pr rebase-finish $ARGUMENTS
+```
+
+This command:
+
+* Force pushes from the sandbox (with `--force-with-lease`)
+* Syncs the source worktree to match the rebased branch
+* Cleans up the sandbox
 
 ## Important Rules
 
-* Always force push with `--force-with-lease` (safer than `--force`)
+* Always use `--force-with-lease` (handled automatically by rebase-finish)
 * The conflict-resolver agent analyzes BOTH sides' intent and stitches changes
   together
 * Never just pick one side of a conflict - always analyze and merge properly
-* **Always use sandbox**: Whether working from repo root or a worktree, rebase
-  happens in the sandbox to keep the source unblocked
 * The source_path remains clean for code research during conflict resolution
