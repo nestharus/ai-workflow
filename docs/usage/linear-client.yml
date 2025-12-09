@@ -889,15 +889,18 @@ sections:
             required: true
             description: Target workflow state ID
         returns:
-          type: bool
-          description: True if successful, False otherwise
+          type: dict[str, Any]
+          description: Dictionary containing the updated issue state with stateName key
+        raises:
+          - LinearClientError if the API call fails or update is unsuccessful
         example:
           language: python
           code: |
             # Get ticket info first to get UUIDs
             info = client.get_ticket_info("NES-24")
             done_id = client.get_done_state_id(info['team_id'])
-            success = client.set_ticket_state(info['id'], done_id)
+            result = client.set_ticket_state(info['id'], done_id)
+            print(f"State changed to: {result['stateName']}")
 
       - id: stdlib-api-error-handling
         title: Error Handling

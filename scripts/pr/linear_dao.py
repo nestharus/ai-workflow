@@ -32,6 +32,7 @@ class LinearClient:
 
     Attributes:
         _api_key: The Linear API key used for authentication.
+        _teams_cache: Cached teams list to avoid redundant API calls.
     """
 
     def __init__(self, api_key: str | None = None) -> None:
@@ -45,6 +46,7 @@ class LinearClient:
             LinearAPIError: If no API key is provided and LINEAR_API_KEY
                 environment variable is not set, or if the API key is empty.
         """
+        self._teams_cache: dict[bool, list[dict[str, Any]]] = {}
         if api_key is not None:
             if not api_key.strip():
                 raise LinearAPIError("API key is empty")
@@ -258,7 +260,10 @@ query($teamId: String!) {
 """
         variables = {"teamId": team_id}
         result = self._run_graphql(query, variables)
-        states = result.get("data", {}).get("team", {}).get("states", {}).get("nodes", [])
+        team = result.get("data", {}).get("team")
+        if not team:
+            raise LinearAPIError(f"Team not found: {team_id}")
+        states = team.get("states", {}).get("nodes", [])
 
         if states:
             state_id = states[0].get("id")
@@ -268,7 +273,7 @@ query($teamId: String!) {
 
         raise LinearAPIError(f"No 'Done' state found for team {team_id}")
 
-    def set_ticket_state(self, issue_uuid: str, state_id: str) -> bool:
+    def set_ticket_state(self, issue_uuid: str, state_id: str) -> dict[str, Any]:
         """Update a Linear ticket's state.
 
         Args:
@@ -276,10 +281,11 @@ query($teamId: String!) {
             state_id: Target workflow state ID.
 
         Returns:
-            True if successful, False otherwise.
+            Dictionary containing the updated issue state:
+            - stateName: The name of the new state (e.g., "Done")
 
         Raises:
-            LinearAPIError: If the API call fails.
+            LinearAPIError: If the API call fails or update is unsuccessful.
         """
         mutation = """
 mutation($issueId: String!, $stateId: String!) {
@@ -295,8 +301,10 @@ mutation($issueId: String!, $stateId: String!) {
 """
         variables = {"issueId": issue_uuid, "stateId": state_id}
         result = self._run_graphql(mutation, variables)
-        success = result.get("data", {}).get("issueUpdate", {}).get("success", False)
-        return bool(success)
+        issue_update = result.get("data", {}).get("issueUpdate", {})
+        if not issue_update.get("success"):
+            raise LinearAPIError(f"Failed to update state for issue: {issue_uuid}")
+        return {"stateName": issue_update.get("issue", {}).get("state", {}).get("name")}
 
     def _resolve_team_id(self, team: str) -> str | None:
         """Resolve a team identifier to a team UUID.
@@ -346,6 +354,8 @@ mutation($issueId: String!, $stateId: String!) {
         """List all teams in the Linear workspace.
 
         Fetches teams with cursor-based pagination to retrieve all results.
+        Results are cached per include_archived value for the lifetime of the
+        client instance to avoid redundant API calls.
 
         Args:
             include_archived: Whether to include archived teams. Defaults to False.
@@ -365,6 +375,10 @@ mutation($issueId: String!, $stateId: String!) {
         Raises:
             LinearAPIError: If the API call fails.
         """
+        # Return cached result if available
+        if include_archived in self._teams_cache:
+            return self._teams_cache[include_archived]
+
         all_teams: list[dict[str, Any]] = []
         cursor: str | None = None
 
@@ -407,6 +421,8 @@ query($includeArchived: Boolean!, $after: String) {
                 raise LinearAPIError("Pagination did not advance: missing or repeated endCursor")
             cursor = next_cursor
 
+        # Cache the result for future calls
+        self._teams_cache[include_archived] = all_teams
         return all_teams
 
     def _validate_priority(self, priority: int | None) -> None:
@@ -806,7 +822,7 @@ mutation CommentCreate($input: CommentCreateInput!) {
         result = self._run_graphql(mutation, variables)
 
         comment_create = result.get("data", {}).get("commentCreate", {})
-        if not comment_create.get("success"):
+        if not (isinstance(comment_create, dict) and comment_create.get("success")):
             raise LinearAPIError(f"Failed to create comment on issue: {issue_id}")
 
         comment = comment_create.get("comment", {})
@@ -1179,4 +1195,5 @@ def set_ticket_state(issue_uuid: str, state_id: str) -> bool:
         LinearAPIError: If the API call fails.
     """
     client = _get_default_client()
-    return client.set_ticket_state(issue_uuid, state_id)
+    client.set_ticket_state(issue_uuid, state_id)
+    return True

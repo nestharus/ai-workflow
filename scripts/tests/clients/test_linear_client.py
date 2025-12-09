@@ -1,11 +1,11 @@
 """Unit tests for the Linear client Python wrapper.
 
 These tests verify that the LinearClient wrapper correctly handles initialization,
-subprocess execution, JSON parsing, and error handling without making actual API calls.
+GraphQL API calls, JSON parsing, and error handling without making actual API calls.
 """
 
 import json
-from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,24 +14,20 @@ from pytest_mock import MockerFixture
 from scripts.clients.linear_client import LinearClient, LinearClientError
 
 
-@pytest.fixture
-def mock_script_paths(mocker: MockerFixture) -> MagicMock:
-    """Mock Path.exists() to return True for linear client script paths.
+def create_mock_response(data: dict[str, Any]) -> MagicMock:
+    """Create a mock HTTP response with the given data.
 
-    This fixture ensures tests don't depend on the actual dist/ directory
-    being built from TypeScript sources. The dist/ directory is gitignored
-    and only exists after running npm build locally.
+    Args:
+        data: Dictionary to return as JSON response body.
+
+    Returns:
+        Mock object that behaves like an HTTP response.
     """
-    original_exists = Path.exists
-
-    def patched_exists(self: Path) -> bool:
-        # Allow script path checks to pass for linear client
-        path_str = str(self)
-        if "scripts/clients/linear" in path_str:
-            return True
-        return original_exists(self)
-
-    return mocker.patch.object(Path, "exists", patched_exists)
+    mock_response = MagicMock()
+    mock_response.read.return_value = json.dumps(data).encode("utf-8")
+    mock_response.__enter__ = MagicMock(return_value=mock_response)
+    mock_response.__exit__ = MagicMock(return_value=False)
+    return mock_response
 
 
 class TestLinearClientInit:
@@ -42,9 +38,20 @@ class TestLinearClientInit:
         client = LinearClient(api_key="test_api_key")
         assert client._api_key == "test_api_key"
 
+    def test_init_with_api_key_strips_whitespace(self) -> None:
+        """Initialize client with API key strips leading/trailing whitespace."""
+        client = LinearClient(api_key="  test_api_key  ")
+        assert client._api_key == "test_api_key"
+
     def test_init_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Initialize client from LINEAR_API_KEY environment variable."""
         monkeypatch.setenv("LINEAR_API_KEY", "env_api_key")
+        client = LinearClient()
+        assert client._api_key == "env_api_key"
+
+    def test_init_from_env_strips_whitespace(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Initialize client from env variable strips leading/trailing whitespace."""
+        monkeypatch.setenv("LINEAR_API_KEY", "  env_api_key  ")
         client = LinearClient()
         assert client._api_key == "env_api_key"
 
@@ -70,26 +77,37 @@ class TestLinearClientInit:
 class TestLinearClientGetIssue:
     """Test the get_issue method."""
 
-    def test_get_issue_success(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
+    def test_get_issue_success(self, mocker: MockerFixture) -> None:
         """Successfully fetch issue details."""
         mock_response = {
-            "ok": True,
             "data": {
-                "id": "issue-123",
-                "identifier": "NES-24",
-                "title": "Test Issue",
-                "description": "Test description",
-                "url": "https://linear.app/issue/NES-24",
-                "branchName": "nes-24-test-issue",
-                "priority": 2,
-                "createdAt": "2025-01-01T00:00:00Z",
-                "updatedAt": "2025-01-02T00:00:00Z",
-            },
+                "issue": {
+                    "id": "issue-123",
+                    "identifier": "NES-24",
+                    "title": "Test Issue",
+                    "description": "Test description",
+                    "url": "https://linear.app/issue/NES-24",
+                    "branchName": "nes-24-test-issue",
+                    "priority": 2,
+                    "estimate": None,
+                    "createdAt": "2025-01-01T00:00:00Z",
+                    "updatedAt": "2025-01-02T00:00:00Z",
+                    "completedAt": None,
+                    "canceledAt": None,
+                    "dueDate": None,
+                    "team": None,
+                    "assignee": None,
+                    "state": None,
+                    "project": None,
+                    "parent": None,
+                    "comments": {"totalCount": 0},
+                    "children": {"totalCount": 0},
+                }
+            }
         }
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test_key")
         result = client.get_issue("NES-24")
@@ -98,70 +116,77 @@ class TestLinearClientGetIssue:
         assert result["identifier"] == "NES-24"
         assert result["title"] == "Test Issue"
 
-        # Verify subprocess was called correctly
-        mock_run.assert_called_once()
-        (cmd,) = mock_run.call_args[0]
-        assert "node" in cmd
-        assert "--issue-id" in cmd
-        assert "NES-24" in cmd
-        assert mock_run.call_args[1]["env"]["LINEAR_API_KEY"] == "test_key"
+        # Verify urlopen was called
+        mock_urlopen.assert_called_once()
 
-    def test_get_issue_not_found(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
+    def test_get_issue_not_found(self, mocker: MockerFixture) -> None:
         """Raise error when issue is not found."""
-        mock_response = {
-            "ok": False,
-            "error": {"code": "NOT_FOUND", "message": "Issue not found"},
-        }
+        mock_response = {"data": {"issue": None}}
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test_key")
         with pytest.raises(LinearClientError) as exc_info:
             client.get_issue("INVALID-999")
 
         assert exc_info.value.code == "NOT_FOUND"
-        assert exc_info.value.message == "Issue not found"
+        assert "INVALID-999" in exc_info.value.message
 
-    def test_get_issue_parse_error(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
+    def test_get_issue_parse_error(self, mocker: MockerFixture) -> None:
         """Raise error when JSON parsing fails."""
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = "Invalid JSON"
-        mock_run.return_value.stderr = "JSON parse error"
-        mock_run.return_value.returncode = 1
+        mock_response = MagicMock()
+        mock_response.read.return_value = b"Invalid JSON"
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = mock_response
 
         client = LinearClient(api_key="test_key")
         with pytest.raises(LinearClientError) as exc_info:
             client.get_issue("NES-24")
 
         assert exc_info.value.code == "PARSE_ERROR"
-        assert "JSON parse error" in exc_info.value.message
 
 
 class TestLinearClientCreateIssue:
     """Test the create_issue method."""
 
-    def test_create_issue_success(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
+    def test_create_issue_success(self, mocker: MockerFixture) -> None:
         """Successfully create a new issue."""
-        mock_response = {
-            "ok": True,
+        # First call: list_teams for team resolution
+        teams_response = {
             "data": {
-                "id": "new-issue-123",
-                "identifier": "NES-99",
-                "title": "New Feature",
-                "url": "https://linear.app/issue/NES-99",
-                "branchName": "nes-99-new-feature",
-            },
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": "team-uuid-123", "name": "Nexus", "key": "NES"},
+                    ],
+                }
+            }
+        }
+        # Second call: issueCreate mutation
+        create_response = {
+            "data": {
+                "issueCreate": {
+                    "success": True,
+                    "issue": {
+                        "id": "new-issue-123",
+                        "identifier": "NES-99",
+                        "title": "New Feature",
+                        "url": "https://linear.app/issue/NES-99",
+                        "branchName": "nes-99-new-feature",
+                    },
+                }
+            }
         }
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(teams_response),
+            create_mock_response(create_response),
+        ]
 
         client = LinearClient(api_key="test_key")
         result = client.create_issue(
@@ -174,89 +199,78 @@ class TestLinearClientCreateIssue:
         assert result["identifier"] == "NES-99"
         assert result["title"] == "New Feature"
 
-        # Verify arguments
-        (cmd,) = mock_run.call_args[0]
-        assert "--team" in cmd
-        assert "NES" in cmd
-        assert "--title" in cmd
-        assert "New Feature" in cmd
-        assert "--description" in cmd
-        assert "Feature description" in cmd
-        assert "--priority" in cmd
-        assert "2" in cmd
-
-    def test_create_issue_empty_team(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
+    def test_create_issue_empty_team(self, mocker: MockerFixture) -> None:
         """Raise error when team is an empty string."""
-        mock_response = {
-            "ok": False,
-            "error": {"code": "INVALID_INPUT", "message": "Team is required"},
-        }
-
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
-
+        # Empty team will cause _resolve_team_id to return None
         client = LinearClient(api_key="test_key")
-        with pytest.raises(LinearClientError):
-            # This will be caught by the wrapper's error handling
-            # The actual validation happens in TypeScript, so we simulate the error
+        with pytest.raises(LinearClientError) as exc_info:
             client.create_issue(team="", title="Test")
 
-    def test_create_issue_without_optional_params(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
+        assert exc_info.value.code == "NOT_FOUND"
+
+    def test_create_issue_without_optional_params(self, mocker: MockerFixture) -> None:
         """Create issue with only required parameters."""
-        mock_response = {
-            "ok": True,
+        # First call: list_teams for team resolution
+        teams_response = {
             "data": {
-                "id": "new-issue-456",
-                "identifier": "NES-100",
-                "title": "Simple Issue",
-                "url": "https://linear.app/issue/NES-100",
-                "branchName": "nes-100-simple-issue",
-            },
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": "team-uuid-123", "name": "Nexus", "key": "NES"},
+                    ],
+                }
+            }
+        }
+        # Second call: issueCreate mutation
+        create_response = {
+            "data": {
+                "issueCreate": {
+                    "success": True,
+                    "issue": {
+                        "id": "new-issue-456",
+                        "identifier": "NES-100",
+                        "title": "Simple Issue",
+                        "url": "https://linear.app/issue/NES-100",
+                        "branchName": "nes-100-simple-issue",
+                    },
+                }
+            }
         }
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(teams_response),
+            create_mock_response(create_response),
+        ]
 
         client = LinearClient(api_key="test_key")
         result = client.create_issue(team="NES", title="Simple Issue")
 
         assert result["identifier"] == "NES-100"
 
-        # Verify only required arguments are passed
-        (cmd,) = mock_run.call_args[0]
-        assert "--team" in cmd
-        assert "--title" in cmd
-        assert "--description" not in cmd
-        assert "--priority" not in cmd
-
 
 class TestLinearClientUpdateIssue:
     """Test the update_issue method."""
 
-    def test_update_issue_success(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
+    def test_update_issue_success(self, mocker: MockerFixture) -> None:
         """Successfully update an existing issue."""
         mock_response = {
-            "ok": True,
             "data": {
-                "id": "issue-123",
-                "identifier": "NES-24",
-                "title": "Updated Title",
-                "url": "https://linear.app/issue/NES-24",
-                "updatedAt": "2025-01-03T00:00:00Z",
-            },
+                "issueUpdate": {
+                    "success": True,
+                    "issue": {
+                        "id": "issue-123",
+                        "identifier": "NES-24",
+                        "title": "Updated Title",
+                        "url": "https://linear.app/issue/NES-24",
+                        "updatedAt": "2025-01-03T00:00:00Z",
+                    },
+                }
+            }
         }
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test_key")
         result = client.update_issue(
@@ -268,142 +282,137 @@ class TestLinearClientUpdateIssue:
         assert result["title"] == "Updated Title"
         assert result["updatedAt"] == "2025-01-03T00:00:00Z"
 
-        # Verify arguments
-        (cmd,) = mock_run.call_args[0]
-        assert "--issue-id" in cmd
-        assert "NES-24" in cmd
-        assert "--title" in cmd
-        assert "Updated Title" in cmd
-        assert "--priority" in cmd
-        assert "1" in cmd
-
-    def test_update_issue_partial_update(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
+    def test_update_issue_partial_update(self, mocker: MockerFixture) -> None:
         """Update only some fields of an issue."""
         mock_response = {
-            "ok": True,
             "data": {
-                "id": "issue-123",
-                "identifier": "NES-24",
-                "title": "Original Title",
-                "url": "https://linear.app/issue/NES-24",
-                "updatedAt": "2025-01-03T00:00:00Z",
-            },
+                "issueUpdate": {
+                    "success": True,
+                    "issue": {
+                        "id": "issue-123",
+                        "identifier": "NES-24",
+                        "title": "Original Title",
+                        "url": "https://linear.app/issue/NES-24",
+                        "updatedAt": "2025-01-03T00:00:00Z",
+                    },
+                }
+            }
         }
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test_key")
-        client.update_issue(issue_id="NES-24", priority=3)
+        result = client.update_issue(issue_id="NES-24", priority=3)
 
-        # Verify only issue-id and priority are passed
-        (cmd,) = mock_run.call_args[0]
-        assert "--issue-id" in cmd
-        assert "--priority" in cmd
-        assert "--title" not in cmd
-        assert "--description" not in cmd
+        assert result["identifier"] == "NES-24"
 
-    def test_update_issue_no_updates_error(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
+    def test_update_issue_no_updates_error(self, mocker: MockerFixture) -> None:
         """Raise NO_UPDATES error when no updatable fields are provided."""
-        mock_response = {
-            "ok": False,
-            "error": {
-                "code": "NO_UPDATES",
-                "message": "No fields provided to update",
-            },
-        }
-
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
-
         client = LinearClient(api_key="test_key")
         with pytest.raises(LinearClientError) as exc_info:
             # Only issue_id provided, no updatable fields
             client.update_issue(issue_id="NES-24")
 
         assert exc_info.value.code == "NO_UPDATES"
-        assert "No fields provided to update" in exc_info.value.message
+        assert "At least one field must be provided" in exc_info.value.message
 
 
 class TestLinearClientComments:
     """Test comment-related methods."""
 
-    def test_list_comments_success(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
+    def test_list_comments_success(self, mocker: MockerFixture) -> None:
         """Successfully list comments on an issue."""
         mock_response = {
-            "ok": True,
             "data": {
-                "comments": [
-                    {
-                        "id": "comment-1",
-                        "body": "First comment",
-                        "createdAt": "2025-01-01T00:00:00Z",
-                        "updatedAt": "2025-01-01T00:00:00Z",
-                        "user": {"id": "user-1", "name": "Test User"},
+                "issue": {
+                    "id": "issue-123",
+                    "identifier": "NES-24",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [
+                            {
+                                "id": "comment-1",
+                                "body": "First comment",
+                                "createdAt": "2025-01-01T00:00:00Z",
+                                "updatedAt": "2025-01-01T00:00:00Z",
+                                "user": {
+                                    "id": "user-1",
+                                    "name": "Test User",
+                                    "email": "test@example.com",
+                                },
+                            },
+                            {
+                                "id": "comment-2",
+                                "body": "Second comment",
+                                "createdAt": "2025-01-02T00:00:00Z",
+                                "updatedAt": "2025-01-02T00:00:00Z",
+                                "user": {
+                                    "id": "user-2",
+                                    "name": "Another User",
+                                    "email": "another@example.com",
+                                },
+                            },
+                        ],
                     },
-                    {
-                        "id": "comment-2",
-                        "body": "Second comment",
-                        "createdAt": "2025-01-02T00:00:00Z",
-                        "updatedAt": "2025-01-02T00:00:00Z",
-                        "user": {"id": "user-2", "name": "Another User"},
-                    },
-                ]
-            },
+                }
+            }
         }
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test_key")
-        comments = client.list_comments("NES-24")
+        result = client.list_comments("NES-24")
 
-        assert len(comments) == 2
-        assert comments[0]["body"] == "First comment"
-        assert comments[1]["body"] == "Second comment"
-        assert comments[0]["user"]["name"] == "Test User"
+        assert len(result["comments"]) == 2
+        assert result["comments"][0]["body"] == "First comment"
+        assert result["comments"][1]["body"] == "Second comment"
+        assert result["comments"][0]["user"]["name"] == "Test User"
 
-    def test_list_comments_empty(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
+    def test_list_comments_empty(self, mocker: MockerFixture) -> None:
         """Return empty list when no comments exist."""
-        mock_response = {"ok": True, "data": {"comments": []}}
+        mock_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-123",
+                    "identifier": "NES-24",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [],
+                    },
+                }
+            }
+        }
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test_key")
-        comments = client.list_comments("NES-24")
+        result = client.list_comments("NES-24")
 
-        assert len(comments) == 0
-        assert isinstance(comments, list)
+        assert len(result["comments"]) == 0
+        assert isinstance(result["comments"], list)
 
-    def test_create_comment_success(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
+    def test_create_comment_success(self, mocker: MockerFixture) -> None:
         """Successfully create a comment on an issue."""
         mock_response = {
-            "ok": True,
             "data": {
-                "id": "comment-new",
-                "body": "New comment",
-                "createdAt": "2025-01-03T00:00:00Z",
-                "issueId": "issue-123",
-                "user": {"id": "user-1", "name": "Test User"},
-            },
+                "commentCreate": {
+                    "success": True,
+                    "comment": {
+                        "id": "comment-new",
+                        "body": "New comment",
+                        "createdAt": "2025-01-03T00:00:00Z",
+                        "issue": {"id": "issue-123"},
+                        "user": {"id": "user-1", "name": "Test User", "email": "test@example.com"},
+                    },
+                }
+            }
         }
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test_key")
         result = client.create_comment(issue_id="NES-24", body="New comment")
@@ -411,54 +420,46 @@ class TestLinearClientComments:
         assert result["id"] == "comment-new"
         assert result["body"] == "New comment"
 
-        # Verify arguments
-        (cmd,) = mock_run.call_args[0]
-        assert "--issue-id" in cmd
-        assert "NES-24" in cmd
-        assert "--body" in cmd
-        assert "New comment" in cmd
-
 
 class TestLinearClientListProjects:
     """Test the list_projects method."""
 
-    def test_list_projects_success(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
+    def test_list_projects_success(self, mocker: MockerFixture) -> None:
         """Successfully list all projects."""
         mock_response = {
-            "ok": True,
             "data": {
-                "projects": [
-                    {
-                        "id": "project-1",
-                        "name": "Project Alpha",
-                        "description": "First project",
-                        "url": "https://linear.app/project/alpha",
-                        "slugId": "alpha",
-                        "createdAt": "2025-01-01T00:00:00Z",
-                        "updatedAt": "2025-01-02T00:00:00Z",
-                        "archivedAt": None,
-                        "state": "in_progress",
-                    },
-                    {
-                        "id": "project-2",
-                        "name": "Project Beta",
-                        "description": None,
-                        "url": "https://linear.app/project/beta",
-                        "slugId": "beta",
-                        "createdAt": "2025-01-01T00:00:00Z",
-                        "updatedAt": "2025-01-02T00:00:00Z",
-                        "archivedAt": None,
-                        "state": "planned",
-                    },
-                ]
-            },
+                "projects": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {
+                            "id": "project-1",
+                            "name": "Project Alpha",
+                            "description": "First project",
+                            "url": "https://linear.app/project/alpha",
+                            "slugId": "alpha",
+                            "createdAt": "2025-01-01T00:00:00Z",
+                            "updatedAt": "2025-01-02T00:00:00Z",
+                            "archivedAt": None,
+                            "state": "in_progress",
+                        },
+                        {
+                            "id": "project-2",
+                            "name": "Project Beta",
+                            "description": None,
+                            "url": "https://linear.app/project/beta",
+                            "slugId": "beta",
+                            "createdAt": "2025-01-01T00:00:00Z",
+                            "updatedAt": "2025-01-02T00:00:00Z",
+                            "archivedAt": None,
+                            "state": "planned",
+                        },
+                    ],
+                }
+            }
         }
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test_key")
         projects = client.list_projects()
@@ -467,13 +468,19 @@ class TestLinearClientListProjects:
         assert projects[0]["name"] == "Project Alpha"
         assert projects[1]["name"] == "Project Beta"
 
-    def test_list_projects_empty(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
+    def test_list_projects_empty(self, mocker: MockerFixture) -> None:
         """Return empty list when no projects exist."""
-        mock_response = {"ok": True, "data": {"projects": []}}
+        mock_response = {
+            "data": {
+                "projects": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [],
+                }
+            }
+        }
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test_key")
         projects = client.list_projects()
@@ -481,45 +488,90 @@ class TestLinearClientListProjects:
         assert len(projects) == 0
         assert isinstance(projects, list)
 
+    def test_list_projects_flattens_teams(self, mocker: MockerFixture) -> None:
+        """Verify teams.nodes is flattened to teams list."""
+        mock_response = {
+            "data": {
+                "projects": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {
+                            "id": "project-1",
+                            "name": "Project Alpha",
+                            "teams": {
+                                "nodes": [
+                                    {"id": "team-1", "name": "Engineering", "key": "ENG"},
+                                    {"id": "team-2", "name": "Design", "key": "DES"},
+                                ]
+                            },
+                        },
+                        {
+                            "id": "project-2",
+                            "name": "Project Beta",
+                            "teams": {
+                                "nodes": [{"id": "team-1", "name": "Engineering", "key": "ENG"}]
+                            },
+                        },
+                    ],
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test_key")
+        projects = client.list_projects()
+
+        # Verify teams is now a flat list, not nested under nodes
+        assert len(projects) == 2
+        assert isinstance(projects[0]["teams"], list)
+        assert len(projects[0]["teams"]) == 2
+        assert projects[0]["teams"][0]["key"] == "ENG"
+        assert projects[0]["teams"][1]["key"] == "DES"
+        assert isinstance(projects[1]["teams"], list)
+        assert len(projects[1]["teams"]) == 1
+
 
 class TestLinearClientListTeams:
     """Test the list_teams method."""
 
-    def test_list_teams_success(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
+    def test_list_teams_success(self, mocker: MockerFixture) -> None:
         """Successfully list all teams."""
         mock_response = {
-            "ok": True,
             "data": {
-                "teams": [
-                    {
-                        "id": "team-1",
-                        "name": "Engineering",
-                        "key": "ENG",
-                        "description": "Engineering team",
-                        "createdAt": "2025-01-01T00:00:00Z",
-                        "updatedAt": "2025-01-02T00:00:00Z",
-                        "archivedAt": None,
-                        "private": False,
-                        "timezone": "America/New_York",
-                    },
-                    {
-                        "id": "team-2",
-                        "name": "Nexus",
-                        "key": "NES",
-                        "description": None,
-                        "createdAt": "2025-01-01T00:00:00Z",
-                        "updatedAt": "2025-01-02T00:00:00Z",
-                        "archivedAt": None,
-                        "private": True,
-                        "timezone": None,
-                    },
-                ]
-            },
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {
+                            "id": "team-1",
+                            "name": "Engineering",
+                            "key": "ENG",
+                            "description": "Engineering team",
+                            "createdAt": "2025-01-01T00:00:00Z",
+                            "updatedAt": "2025-01-02T00:00:00Z",
+                            "archivedAt": None,
+                            "private": False,
+                            "timezone": "America/New_York",
+                        },
+                        {
+                            "id": "team-2",
+                            "name": "Nexus",
+                            "key": "NES",
+                            "description": None,
+                            "createdAt": "2025-01-01T00:00:00Z",
+                            "updatedAt": "2025-01-02T00:00:00Z",
+                            "archivedAt": None,
+                            "private": True,
+                            "timezone": None,
+                        },
+                    ],
+                }
+            }
         }
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test_key")
         teams = client.list_teams()
@@ -528,13 +580,19 @@ class TestLinearClientListTeams:
         assert teams[0]["key"] == "ENG"
         assert teams[1]["key"] == "NES"
 
-    def test_list_teams_empty(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
+    def test_list_teams_empty(self, mocker: MockerFixture) -> None:
         """Return empty list when no teams exist."""
-        mock_response = {"ok": True, "data": {"teams": []}}
+        mock_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [],
+                }
+            }
+        }
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test_key")
         teams = client.list_teams()
@@ -542,73 +600,136 @@ class TestLinearClientListTeams:
         assert len(teams) == 0
         assert isinstance(teams, list)
 
+    def test_list_teams_caching(self, mocker: MockerFixture) -> None:
+        """Verify list_teams caches results to avoid redundant API calls."""
+        mock_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {
+                            "id": "team-1",
+                            "name": "Engineering",
+                            "key": "ENG",
+                            "description": "Engineering team",
+                            "createdAt": "2025-01-01T00:00:00Z",
+                            "updatedAt": "2025-01-02T00:00:00Z",
+                            "archivedAt": None,
+                            "private": False,
+                            "timezone": "America/New_York",
+                        },
+                    ],
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test_key")
+
+        # First call should hit the API
+        teams1 = client.list_teams()
+        assert mock_urlopen.call_count == 1
+        assert len(teams1) == 1
+
+        # Second call should use cache, no additional API call
+        teams2 = client.list_teams()
+        assert mock_urlopen.call_count == 1  # Still 1, not 2
+        assert teams1 is teams2  # Same list object from cache
+
+    def test_list_teams_caching_per_include_archived(self, mocker: MockerFixture) -> None:
+        """Verify caching is separate for include_archived True/False."""
+        mock_response_active = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [{"id": "team-1", "name": "Active", "key": "ACT"}],
+                }
+            }
+        }
+        mock_response_all = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": "team-1", "name": "Active", "key": "ACT"},
+                        {"id": "team-2", "name": "Archived", "key": "ARC"},
+                    ],
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(mock_response_active),
+            create_mock_response(mock_response_all),
+        ]
+
+        client = LinearClient(api_key="test_key")
+
+        # Call without archived
+        teams_active = client.list_teams(include_archived=False)
+        assert mock_urlopen.call_count == 1
+        assert len(teams_active) == 1
+
+        # Call with archived - should hit API again (different cache key)
+        teams_all = client.list_teams(include_archived=True)
+        assert mock_urlopen.call_count == 2
+        assert len(teams_all) == 2
+
+        # Repeat calls should use cache
+        client.list_teams(include_archived=False)
+        client.list_teams(include_archived=True)
+        assert mock_urlopen.call_count == 2  # No additional calls
+
 
 class TestLinearClientErrorHandling:
     """Test error handling and edge cases."""
 
-    def test_scripts_directory_not_found_on_invoke(self, tmp_path: Path) -> None:
-        """Raise error when scripts directory does not exist during script invocation."""
-        client = LinearClient(api_key="test_key")
+    def test_http_error_handling(self, mocker: MockerFixture) -> None:
+        """Raise API_ERROR on HTTP errors from urlopen."""
+        import urllib.error
 
-        # Point to a non-existent directory
-        client._scripts_dir = tmp_path / "nonexistent"
-
-        with pytest.raises(LinearClientError) as exc_info:
-            client.get_issue("NES-24")
-
-        assert exc_info.value.code == "SCRIPTS_NOT_FOUND"
-
-    def test_node_not_found_error(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
-        """Raise NODE_NOT_FOUND error when Node.js is not installed."""
-        # Mock subprocess.run to raise FileNotFoundError (simulating node not found)
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.side_effect = FileNotFoundError("node not found")
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="https://api.linear.app/graphql",
+            code=401,
+            msg="Unauthorized",
+            hdrs={},
+            fp=None,
+        )
 
         client = LinearClient(api_key="test_key")
         with pytest.raises(LinearClientError) as exc_info:
             client.get_issue("NES-24")
 
-        assert exc_info.value.code == "NODE_NOT_FOUND"
-        assert "Node.js" in exc_info.value.message
+        assert exc_info.value.code == "API_ERROR"
+        assert "401" in exc_info.value.message
 
-    def test_subprocess_os_error(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
-        """Raise SUBPROCESS_ERROR on OSError from subprocess.run."""
-        # Mock subprocess.run to raise OSError
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.side_effect = OSError("Permission denied")
+    def test_url_error_handling(self, mocker: MockerFixture) -> None:
+        """Raise API_ERROR on URLError from urlopen."""
+        import urllib.error
 
-        client = LinearClient(api_key="test_key")
-        with pytest.raises(LinearClientError) as exc_info:
-            client.get_issue("NES-24")
-
-        assert exc_info.value.code == "SUBPROCESS_ERROR"
-        assert "Permission denied" in exc_info.value.message
-
-    def test_subprocess_failure_handling(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
-        """Handle subprocess execution failures gracefully."""
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = ""
-        mock_run.return_value.stderr = "Node.js error"
-        mock_run.return_value.returncode = 1
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
 
         client = LinearClient(api_key="test_key")
         with pytest.raises(LinearClientError) as exc_info:
             client.get_issue("NES-24")
 
-        assert exc_info.value.code == "PARSE_ERROR"
+        assert exc_info.value.code == "API_ERROR"
+        assert "Connection refused" in exc_info.value.message
 
-    def test_invalid_json_handling(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
+    def test_invalid_json_handling(self, mocker: MockerFixture) -> None:
         """Handle malformed JSON responses."""
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = '{"ok": true, invalid json'
-        mock_run.return_value.stderr = ""
-        mock_run.return_value.returncode = 0
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'{"ok": true, invalid json'
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = mock_response
 
         client = LinearClient(api_key="test_key")
         with pytest.raises(LinearClientError) as exc_info:
@@ -616,21 +737,13 @@ class TestLinearClientErrorHandling:
 
         assert exc_info.value.code == "PARSE_ERROR"
 
-    def test_api_key_not_in_error_messages(
-        self, mocker: MockerFixture, mock_script_paths: MagicMock
-    ) -> None:
+    def test_api_key_not_in_error_messages(self, mocker: MockerFixture) -> None:
         """Ensure API key is not leaked in error messages."""
-        mock_response = {
-            "ok": False,
-            "error": {
-                "code": "UNAUTHORIZED",
-                "message": "Invalid API key provided",
-            },
-        }
+        # GraphQL error response
+        mock_response = {"errors": [{"message": "Invalid API key provided"}]}
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test-linear-api-key-12345")
         with pytest.raises(LinearClientError) as exc_info:
@@ -639,57 +752,40 @@ class TestLinearClientErrorHandling:
         # Verify the API key is not in the error message
         error_message = str(exc_info.value)
         assert "test-linear-api-key-12345" not in error_message
-        assert "UNAUTHORIZED" in error_message
+        assert "GRAPHQL_ERROR" in error_message
 
-    def test_script_not_found_error(self, tmp_path: Path) -> None:
-        """Raise error when script file does not exist."""
-        client = LinearClient(api_key="test_key")
-
-        # Create a scripts directory that exists but doesn't have the dist/script file
-        fake_scripts_dir = tmp_path / "linear"
-        fake_scripts_dir.mkdir()
-        (fake_scripts_dir / "dist").mkdir()
-        # Note: we don't create get-issue.js, so it will be "not found"
-
-        client._scripts_dir = fake_scripts_dir
-
-        with pytest.raises(LinearClientError) as exc_info:
-            client.get_issue("NES-24")
-
-        assert exc_info.value.code == "SCRIPT_NOT_FOUND"
-        assert "get-issue.js" in exc_info.value.message
-
-    def test_unknown_error_code(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
-        """Handle unknown error codes from the API."""
+    def test_graphql_error_handling(self, mocker: MockerFixture) -> None:
+        """Handle GraphQL errors from the API."""
         mock_response = {
-            "ok": False,
-            "error": {},  # Missing code and message
+            "errors": [
+                {"message": "Field 'issue' not found"},
+                {"message": "Invalid query"},
+            ]
         }
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test_key")
         with pytest.raises(LinearClientError) as exc_info:
             client.get_issue("NES-24")
 
-        assert exc_info.value.code == "UNKNOWN_ERROR"
-        assert "Unknown error occurred" in exc_info.value.message
+        assert exc_info.value.code == "GRAPHQL_ERROR"
+        assert "Field 'issue' not found" in exc_info.value.message
 
-    def test_empty_response_data(self, mocker: MockerFixture, mock_script_paths: MagicMock) -> None:
+    def test_empty_response_data(self, mocker: MockerFixture) -> None:
         """Handle empty data in successful response."""
-        mock_response = {"ok": True}  # Missing data field
+        mock_response = {"data": {"issue": None}}
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.stdout = json.dumps(mock_response)
-        mock_run.return_value.returncode = 0
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
 
         client = LinearClient(api_key="test_key")
-        result = client.get_issue("NES-24")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.get_issue("NES-24")
 
-        # Should return empty dict when data is missing
-        assert result == {}
+        # Should raise NOT_FOUND when issue is None
+        assert exc_info.value.code == "NOT_FOUND"
 
 
 class TestLinearCLIOutputFormat:
@@ -894,3 +990,167 @@ class TestLinearCLIOutputFormat:
         assert "error" in output
         assert output["error"]["code"] == "INVALID_INPUT"
         assert "--team" in output["error"]["message"]
+
+
+class TestLinearClientNetworkErrors:
+    """Test network error handling in _run_graphql."""
+
+    def test_timeout_error_raises_api_error(self, mocker: MockerFixture) -> None:
+        """Verify TimeoutError is caught and wrapped as LinearClientError."""
+
+        # Mock urlopen to raise TimeoutError
+        mocker.patch(
+            "urllib.request.urlopen",
+            side_effect=TimeoutError("timed out"),
+        )
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client._run_graphql("query { viewer { id } }", timeout=30)
+
+        assert exc_info.value.code == "API_ERROR"
+        assert "timed out" in exc_info.value.message
+        assert "30 seconds" in exc_info.value.message
+
+    def test_timeout_error_includes_custom_timeout_value(self, mocker: MockerFixture) -> None:
+        """Verify TimeoutError message includes the configured timeout value."""
+
+        mocker.patch(
+            "urllib.request.urlopen",
+            side_effect=TimeoutError("timed out"),
+        )
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client._run_graphql("query { viewer { id } }", timeout=60)
+
+        assert "60 seconds" in exc_info.value.message
+
+    def test_socket_timeout_raises_api_error(self, mocker: MockerFixture) -> None:
+        """Verify socket.timeout is caught and wrapped as LinearClientError."""
+
+        # Mock urlopen to raise socket.timeout
+        mocker.patch(
+            "urllib.request.urlopen",
+            side_effect=TimeoutError("timed out"),
+        )
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client._run_graphql("query { viewer { id } }", timeout=30)
+
+        assert exc_info.value.code == "API_ERROR"
+        assert "timed out" in exc_info.value.message
+        assert "30 seconds" in exc_info.value.message
+
+    def test_socket_timeout_includes_custom_timeout_value(self, mocker: MockerFixture) -> None:
+        """Verify socket.timeout error message includes the configured timeout value."""
+
+        mocker.patch(
+            "urllib.request.urlopen",
+            side_effect=TimeoutError("timed out"),
+        )
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client._run_graphql("query { viewer { id } }", timeout=60)
+
+        assert "60 seconds" in exc_info.value.message
+
+    def test_json_serialization_error_raises_parse_error(self, mocker: MockerFixture) -> None:
+        """Verify TypeError from json.dumps is wrapped as LinearClientError."""
+
+        # Create a non-serializable object
+        class NonSerializable:
+            pass
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client._run_graphql(
+                "query { viewer { id } }",
+                variables={"bad": NonSerializable()},
+            )
+
+        assert exc_info.value.code == "PARSE_ERROR"
+        assert "Failed to serialize request payload to JSON" in exc_info.value.message
+
+
+class TestFetchGitHubAttachments:
+    """Tests for fetch_github_attachments method."""
+
+    def test_fetch_attachments_success(self, mocker: MockerFixture) -> None:
+        """Successfully fetch GitHub attachments."""
+        mock_response = create_mock_response(
+            {
+                "data": {
+                    "issue": {
+                        "attachments": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [
+                                {"url": "https://github.com/org/repo/pull/1", "title": "PR #1"},
+                                {"url": "https://github.com/org/repo/pull/2", "title": "PR #2"},
+                            ],
+                        }
+                    }
+                }
+            }
+        )
+        mocker.patch("urllib.request.urlopen", return_value=mock_response)
+
+        client = LinearClient(api_key="test-key")
+        attachments = client.fetch_github_attachments("NES-123")
+
+        assert len(attachments) == 2
+        assert attachments[0]["url"] == "https://github.com/org/repo/pull/1"
+        assert attachments[1]["url"] == "https://github.com/org/repo/pull/2"
+
+    def test_fetch_attachments_ticket_not_found_raises(self, mocker: MockerFixture) -> None:
+        """Raise NOT_FOUND error when ticket does not exist."""
+        mock_response = create_mock_response({"data": {"issue": None}})
+        mocker.patch("urllib.request.urlopen", return_value=mock_response)
+
+        client = LinearClient(api_key="test-key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.fetch_github_attachments("INVALID-999")
+
+        assert exc_info.value.code == "NOT_FOUND"
+        assert "Ticket not found: INVALID-999" in exc_info.value.message
+
+    def test_fetch_attachments_with_pagination(self, mocker: MockerFixture) -> None:
+        """Fetch attachments across multiple pages."""
+        page1_response = create_mock_response(
+            {
+                "data": {
+                    "issue": {
+                        "attachments": {
+                            "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                            "nodes": [
+                                {"url": "https://github.com/org/repo/pull/1", "title": "PR #1"}
+                            ],
+                        }
+                    }
+                }
+            }
+        )
+        page2_response = create_mock_response(
+            {
+                "data": {
+                    "issue": {
+                        "attachments": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [
+                                {"url": "https://github.com/org/repo/pull/2", "title": "PR #2"}
+                            ],
+                        }
+                    }
+                }
+            }
+        )
+        mocker.patch("urllib.request.urlopen", side_effect=[page1_response, page2_response])
+
+        client = LinearClient(api_key="test-key")
+        attachments = client.fetch_github_attachments("NES-123")
+
+        assert len(attachments) == 2
+        assert attachments[0]["url"] == "https://github.com/org/repo/pull/1"
+        assert attachments[1]["url"] == "https://github.com/org/repo/pull/2"
