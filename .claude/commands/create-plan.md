@@ -124,7 +124,7 @@ Print the following to terminal:
 
 ```text
 ================================================================================
-PLAN REVIEW REQUESTED
+PLAN CREATION COMPLETE - REVIEW REQUESTED
 ================================================================================
 
 Ticket: <TICKET_ID> - <TITLE>
