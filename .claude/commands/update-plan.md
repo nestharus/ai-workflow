@@ -22,6 +22,16 @@ mkdir -p .tmp
 uv run linear get-issue <TICKET_ID> > .tmp/<TICKET_ID>.md
 ```
 
+3. Verify the file was created by reading the first line only (NOT the full file):
+
+```bash
+head -n 1 .tmp/<TICKET_ID>.md
+```
+
+**IMPORTANT**: Do NOT read or manipulate the temp file contents directly. The planner agent
+will handle reading and updating the file. This command only fetches the ticket data for the
+planner agent to process.
+
 ### Step 2: Determine Update Source
 
 If an update prompt was provided in $ARGUMENTS (after the ticket ID), use that as the
