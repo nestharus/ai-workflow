@@ -1145,6 +1145,119 @@ mutation($issueId: String!, $stateId: String!) {
             raise LinearClientError("API_ERROR", f"Failed to update state for issue: {issue_uuid}")
         return {"stateName": issue_update.get("issue", {}).get("state", {}).get("name")}
 
+    def list_unresolved_comments(self, issue_id: str) -> dict[str, Any]:
+        """List unresolved comments for a Linear issue with pagination.
+
+        Fetches only comments that have not been resolved (resolvedAt is null).
+
+        Args:
+            issue_id: Issue identifier (e.g., "NES-123") or UUID.
+
+        Returns:
+            Dictionary containing:
+            - issueId: UUID of the issue
+            - issueIdentifier: Issue identifier (e.g., "NES-123")
+            - comments: List of unresolved comment dictionaries, each containing:
+                - id: Comment UUID
+                - body: Comment body text
+                - createdAt: ISO timestamp when comment was created
+                - updatedAt: ISO timestamp when comment was last updated
+                - user: User info dict with id, name, email (or None for system comments)
+            - totalCount: Total number of unresolved comments retrieved
+
+        Raises:
+            LinearClientError: If the issue is not found or API call fails.
+        """
+        all_comments: list[dict[str, Any]] = []
+        cursor: str | None = None
+        issue_uuid: str | None = None
+        issue_identifier: str | None = None
+
+        while True:
+            query = """
+query IssueUnresolvedComments($id: String!, $after: String) {
+  issue(id: $id) {
+    id
+    identifier
+    comments(first: 100, after: $after) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+        body
+        createdAt
+        updatedAt
+        resolvedAt
+        user {
+          id
+          name
+          email
+        }
+      }
+    }
+  }
+}
+"""
+            variables: dict[str, Any] = {"id": issue_id}
+            if cursor is not None:
+                variables["after"] = cursor
+
+            result = self._run_graphql(query, variables)
+            issue = result.get("data", {}).get("issue")
+            if not issue:
+                raise LinearClientError("NOT_FOUND", f"Issue not found: {issue_id}")
+
+            # Capture issue UUID and identifier on first iteration
+            if issue_uuid is None:
+                issue_uuid = issue.get("id")
+                issue_identifier = issue.get("identifier")
+
+            comments_data = issue.get("comments") or {}
+            nodes = comments_data.get("nodes", [])
+
+            for node in nodes:
+                # Skip resolved comments
+                if node.get("resolvedAt") is not None:
+                    continue
+
+                user_data = node.get("user")
+                user_info: dict[str, Any] | None = None
+                if user_data:
+                    user_info = {
+                        "id": user_data.get("id"),
+                        "name": user_data.get("name"),
+                        "email": user_data.get("email"),
+                    }
+                all_comments.append(
+                    {
+                        "id": node.get("id"),
+                        "body": node.get("body"),
+                        "createdAt": node.get("createdAt"),
+                        "updatedAt": node.get("updatedAt"),
+                        "user": user_info,
+                    }
+                )
+
+            page_info = comments_data.get("pageInfo", {})
+            next_cursor = page_info.get("endCursor")
+            if not page_info.get("hasNextPage"):
+                break
+            if not next_cursor or next_cursor == cursor:
+                raise LinearClientError(
+                    "PAGINATION_ERROR",
+                    "Pagination did not advance: missing or repeated endCursor",
+                )
+            cursor = next_cursor
+
+        return {
+            "issueId": issue_uuid,
+            "issueIdentifier": issue_identifier,
+            "comments": all_comments,
+            "totalCount": len(all_comments),
+        }
+
 
 # Module-level thread-safe default client pattern
 _client_lock = threading.Lock()
