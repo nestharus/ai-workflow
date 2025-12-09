@@ -55,8 +55,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Install uv by copying the prebuilt binary from the official image.
 COPY --from=uv /uv /usr/local/bin/uv
 
-# Copy dependency file
-COPY pyproject.toml ./pyproject.toml
+# Copy dependency files
+COPY pyproject.toml uv.lock ./
 
 # Install dependencies using uv sync.
 # Fails fast if dependencies cannot be resolved (no fallback).

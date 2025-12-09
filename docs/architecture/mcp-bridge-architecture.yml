@@ -84,10 +84,11 @@ sections:
     category: standard
     items:
       - id: deployment-1
-        text: "Primary local dev path: Unix socket mode via Docker. The bridge
-          listens on /tmp/mcp-bridge.sock inside the container. docker-compose uses a
-          named volume (mcp_socket) to share the socket. This provides ~50% lower latency
-          and ~30-50% less CPU usage compared to HTTP/TCP."
+        text: "Primary local dev path: Unix socket mode via the dev-tools Docker Compose stack.
+          Start with uv run dev.ensure-env (preferred) or docker compose -p ai-workflow-devtools
+          -f docker-compose.dev.yml up -d mcp-bridge. The bridge listens on /tmp/mcp-bridge.sock
+          inside the container (mounted from host /tmp/mcp-sockets via bind mount). This
+          provides ~50% lower latency and ~30-50% less CPU usage compared to HTTP/TCP."
       - id: deployment-2
         text: "Host HTTP mode (non-Docker): For running uvicorn directly on the host
           without Docker, use --host 127.0.0.1 --port 8080. HttpMCPClient defaults to
@@ -97,8 +98,9 @@ sections:
           env > base_url argument > MCP_BRIDGE_URL env > default http://localhost:8080."
       - id: deployment-4
         text: "Socket path semantics: The socket path inside the container is /tmp/mcp-bridge.sock
-          (set via MCP_BRIDGE_SOCKET env var). When using docker-compose or docker run, mount a
-          host directory to /tmp to access the socket from the host."
+          (set via MCP_BRIDGE_SOCKET env var). When using docker compose or docker run, mount
+          /tmp/mcp-sockets from the host to /tmp in the container to access the socket from
+          the host."
       - id: deployment-5
         text: "HTTP fallback: Host-based HTTP mode remains officially supported for non-Docker
           development workflows. Both Unix-socket and HTTP modes are validated in automated tests."
@@ -116,8 +118,10 @@ sections:
           reduced CPU overhead from avoiding TCP stack processing. Actual results vary by
           workload and system configuration."
       - id: performance-3
-        text: "To run benchmarks: Ensure mcp-bridge is running (docker-compose up mcp-bridge),
-          then run: python scripts/mcp/benchmark_bridge_transport.py --compare --iterations 100"
+        text: "To run benchmarks: Ensure mcp-bridge is running via the dev-tools stack (preferred:
+          uv run dev.ensure-env, or manually: docker compose -p ai-workflow-devtools -f
+          docker-compose.dev.yml up -d mcp-bridge), then run: python scripts/mcp/benchmark_bridge_transport.py
+          --compare --iterations 100"
       - id: performance-4
         text: "Metrics collected: min/median/mean/p90/p99/max latency in milliseconds,
           throughput in requests per second, success rate percentage."

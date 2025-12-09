@@ -1,0 +1,46 @@
+# Dev-tools stack for AI Workflow
+#
+# This compose file defines persistent development support services that run
+# independently of WSL shell sessions. Use project name: ai-workflow-devtools
+#
+# Start:  docker compose -p ai-workflow-devtools -f docker-compose.dev.yml up -d
+# Stop:   docker compose -p ai-workflow-devtools -f docker-compose.dev.yml down
+# Logs:   docker logs ai-workflow-mcp-bridge-dev
+#
+# Preferred: Use `uv run dev.ensure-env` for automated startup with locking
+# and health checks.
+
+services:
+  # MCP Bridge Service
+  # REST-to-MCP bridge that exposes MCP tools via Unix socket.
+  # Local development only - must not be exposed to untrusted networks.
+  #
+  # SOCKET MODE: The bridge listens on a Unix socket at /tmp/mcp-bridge.sock
+  # inside the container. A dedicated host directory (/tmp/mcp-sockets) is
+  # mounted to container /tmp so host processes can access the socket at
+  # /tmp/mcp-sockets/mcp-bridge.sock. This targeted mount reduces attack surface.
+  #
+  # PERMISSIONS: The container runs as appuser (UID 10000). The host
+  # /tmp/mcp-sockets directory must be writable by this user for socket creation.
+  mcp-bridge:
+    build:
+      context: ./scripts/mcp
+      dockerfile: Dockerfile
+    container_name: ai-workflow-mcp-bridge-dev
+    # Bind mount targeted socket directory from host to container /tmp
+    # This allows host processes to communicate via /tmp/mcp-sockets/mcp-bridge.sock
+    # Using targeted mount reduces attack surface compared to mounting entire /tmp
+    volumes:
+      - /tmp/mcp-sockets:/tmp
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MCP_BRIDGE_SOCKET=/tmp/mcp-bridge.sock
+      # Default MCP server - mcp-background-job provides time/scheduling tools
+      - MCP_COMMAND=uvx mcp-background-job
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--unix-socket", "/tmp/mcp-bridge.sock", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
