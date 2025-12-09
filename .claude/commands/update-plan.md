@@ -1,8 +1,10 @@
 ---
 description: Update an existing implementation plan with additional requirements
-argument-hint: <ticket-id> <additional requirements>
+argument-hint: ticket-id and additional requirements
 allowed-tools: Bash, Read, Write, Glob, Grep
 ---
+
+# Update Implementation Plan
 
 Update the implementation plan for ticket `$ARGUMENTS`.
 
@@ -13,20 +15,27 @@ Parse arguments: first token is ticket ID, rest is the update prompt.
 ### Step 1: Fetch Existing Context
 
 1. Fetch the ticket details using the Linear CLI:
+2. Parse the existing plan from the ticket description (after the `---` separator)
+3. Get any review feedback from the ticket using the Linear CLI:
+
+Fetch ticket details:
+
 ```bash
 uv run linear get-issue <TICKET_ID>
 ```
-2. Parse the existing plan from the ticket description (after the `---` separator)
-3. Get any review feedback from the ticket using the Linear CLI:
+
+Get review feedback:
+
 ```bash
 uv run linear list-comments <TICKET_ID>
 ```
 
 ### Step 2: Run Planner Agent with Update Context
 
-Execute the planner agent with the existing plan and update request using the MCP client (use `timeout: 600000`):
-```bash
-uv run agent.mcp wait --command "uv run agent.tasks --agent planner --prompt \"Ticket ID: <ID>
+Use the Task tool to invoke the planner agent with the existing plan and update request:
+
+```text
+Task(subagent_type="planner", prompt="Ticket ID: <ID>
 Title: <TITLE>
 Description:
 <DESCRIPTION>
@@ -38,24 +47,15 @@ Description:
 <UPDATE_PROMPT>
 
 ## Instructions
-Revise the existing plan to incorporate the update request. Preserve what is still valid, modify what needs to change, and add any new requirements. Output the complete revised plan.\"" --max-seconds 600
+Revise the existing plan to incorporate the update request. Preserve what is still valid, modify what needs to change, and add any new requirements. Output the complete revised plan.")
 ```
 
-The `agent.mcp wait` command handles all polling internally and returns a final status.
-No re-running is required in the normal case.
-
-Handle each status:
-- `"status": "completed"` → Agent finished, extract plan from `stdout`
-- `"status": "failed"` → Check `error` field and `stderr` for details
-- `"status": "timeout"` → Job exceeded time limit. Options:
-  1. Increase `--max-seconds` and re-run if more time is needed
-  2. Check agent logs for stuck processes
-  3. Manually intervene if the task is inherently too long
-- `"status": "killed"` → Job was externally terminated
+Wait for the planner agent to complete and capture its output (the updated plan content).
 
 ### Step 3: Update Linear Ticket
 
 Update the ticket description using the Linear CLI:
+
 ```bash
 uv run linear update-issue <TICKET_ID> --description "<ORIGINAL_DESCRIPTION>
 
@@ -69,6 +69,7 @@ uv run linear update-issue <TICKET_ID> --description "<ORIGINAL_DESCRIPTION>
 ### Step 4: Add Update Comment
 
 Add a comment on the ticket using the Linear CLI:
+
 ```bash
 uv run linear create-comment <TICKET_ID> --body "## Plan Updated
 
@@ -82,7 +83,7 @@ The implementation plan in the ticket description has been updated."
 
 Print the following to terminal:
 
-```
+```text
 ================================================================================
 PLAN UPDATED
 ================================================================================
@@ -100,7 +101,7 @@ Please review the updated plan on the ticket before executing:
 
 ## Error Handling
 
-- If ticket fetch fails, report the error and stop
-- If existing plan not found in ticket description, suggest running /create-plan first
-- If planner agent fails, report the error output and stop
-- If Linear ticket update fails, report the error and stop
+* If ticket fetch fails, report the error and stop
+* If existing plan not found in ticket description, suggest running /create-plan first
+* If planner agent fails, report the error output and stop
+* If Linear ticket update fails, report the error and stop

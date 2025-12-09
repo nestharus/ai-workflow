@@ -8,6 +8,7 @@ targets:
   - scripts/knowledge/README.md
 
 excludes:
+  - .claude/**  # Agent command files have YAML frontmatter
   - __pycache__
   - .venv*
   - build
