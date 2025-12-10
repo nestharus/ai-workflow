@@ -81,6 +81,7 @@ lint = "scripts.dev.linter.lint_cli:main"
 "agent.mcp" = "scripts.dev.mcp_agent_client:main"
 # GitHub PR operations
 "pr" = "scripts.pr.client:main"
+"pr.sandbox" = "scripts.pr.sandbox.server:main"
 # Review scripts
 "review.coderabbit" = "scripts.dev.review.coderabbit_review:main"
 "review.sonar" = "scripts.dev.review.sonar_review:main"
@@ -237,6 +238,7 @@ convention = "google"
     "TCH003", "TC002", "TC001",  # Allow runtime type imports
     "S101",      # Allow assert statements
     "S104",      # Allow binding to all interfaces
+    "S108",      # Allow insecure temp file usage (sandbox sockets)
     "S310",      # Allow URL open audits
     "S603",      # Allow subprocess without shell=True
     "S607",      # Allow partial executable paths (git, uv, etc.)

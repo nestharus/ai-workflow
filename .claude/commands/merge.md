@@ -2,7 +2,7 @@
 
 ---
 
-description: Merge a PR and perform cleanup (worktree removal, branch sync, ticket completion)
+description: Merge a PR via GitHub and perform cleanup (worktree removal, branch sync, ticket completion)
 allowed-tools: Task, Read, Glob, Bash
 
 ---
@@ -84,8 +84,54 @@ This command performs:
 
 **Note**: The remote branch auto-deletes after merge (configured in GitHub). Do NOT manually delete the remote branch.
 
+## Sandbox Merge (Alternative Workflow)
+
+To merge main INTO your feature branch (instead of merging your PR into main),
+use the sandbox merge operation. This is useful for incorporating upstream changes
+into your branch before submitting your PR.
+
+### Prerequisites
+
+Ensure the sandbox server is running:
+
+```bash
+# Create the socket directory first (required for host access)
+mkdir -p /tmp/sandbox-sockets && chmod 1777 /tmp/sandbox-sockets
+
+# Start the sandbox server
+docker compose -f scripts/pr/sandbox/docker-compose.yml up -d
+```
+
+### Execute Sandbox Merge
+
+```bash
+uv run pr sandbox-merge --branch {{branch_name}} --target main -v
+```
+
+This operation:
+
+* Runs entirely in the `.git/sandbox/` checkout managed by the sandbox server
+* Leaves your main checkout untouched
+* Merges the target branch (e.g., `main`) INTO your feature branch
+* Pushes the result automatically
+
+**Exit codes:**
+
+* `0`: Success, merge completed and pushed
+* `2`: Conflicts detected - resolve in `.git/sandbox/` then push manually
+* `1`: Error - check logs
+
+**Socket configuration:**
+
+* Default socket path: `/tmp/sandbox-sockets/sandbox.sock`
+* Override with `--socket <path>` if needed
+* Docker users: Set `SANDBOX_SOCKET_HOST_DIR` when starting the container for non-default paths
+
+For detailed architecture information, see `docs/development/sandbox-architecture.md`.
+
 ## Important Rules
 
 * Run `/rebase` before `/merge` to ensure the branch is up-to-date with the target
 * The PR merge auto-deletes the remote branch - do not delete it manually
 * This command does NOT checkout or pull the target branch - do that manually if needed
+* The sandbox merge workflow is separate from the GitHub PR merge - use the right one for your use case

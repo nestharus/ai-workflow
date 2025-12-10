@@ -1,0 +1,38 @@
+# Docker Compose configuration for sandbox server
+#
+# Usage:
+#   # Create host socket directory first (required):
+#   mkdir -p /tmp/sandbox-sockets && chmod 1777 /tmp/sandbox-sockets
+#
+#   # Start the server:
+#   docker compose -f scripts/pr/sandbox/docker-compose.yml up -d
+#   docker compose -f scripts/pr/sandbox/docker-compose.yml logs -f
+#   docker compose -f scripts/pr/sandbox/docker-compose.yml down
+#
+# The socket will be available at the host path defined by SANDBOX_SOCKET_HOST_DIR
+# (defaults to /tmp/sandbox-sockets). The CLI uses /tmp/sandbox-sockets/sandbox.sock.
+
+services:
+  sandbox-server:
+    build:
+      context: ../../..
+      dockerfile: scripts/pr/sandbox/Dockerfile
+    image: ai-workflow/sandbox-server:dev
+    container_name: sandbox-server
+    restart: unless-stopped
+
+    volumes:
+      # Mount repository as read-write for sandbox operations
+      - ../../../:/repo:rw
+      # Bind-mount host directory so socket is accessible from host CLI
+      # Default: /tmp/sandbox-sockets on host -> /tmp in container
+      # Socket will be at /tmp/sandbox-sockets/sandbox.sock on host
+      - ${SANDBOX_SOCKET_HOST_DIR:-/tmp/sandbox-sockets}:/tmp
+
+    environment:
+      - SANDBOX_SOCKET_PATH=/tmp/sandbox.sock
+      - SANDBOX_REPO_PATH=/repo
+      # Health check is defined in Dockerfile (validates socket and server response)
+
+# No named volumes needed - using bind mount for socket directory
+volumes: {}

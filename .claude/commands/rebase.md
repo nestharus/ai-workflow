@@ -2,8 +2,7 @@
 
 ---
 
-description: Rebase a PR branch by squashing, rebasing onto target, resolving
-  conflicts, and pushing
+description: Rebase a PR branch onto target using persistent sandbox server
 allowed-tools: Task, Read, Glob, Bash
 
 ---
@@ -17,94 +16,121 @@ Rebase PR: $ARGUMENTS
 * If `$ARGUMENTS` is a ticket ID (e.g., `NES-87`): Look up branch from Linear
 * If `$ARGUMENTS` is a branch name: Use branch directly
 
-## Workflow
+## Prerequisites
 
-### 1. Start Rebase
-
-Run the rebase-start command (from repo root):
+Ensure the sandbox server is running:
 
 ```bash
-uv run pr rebase-start $ARGUMENTS
+# Create the socket directory first (required for host access)
+mkdir -p /tmp/sandbox-sockets && chmod 1777 /tmp/sandbox-sockets
+
+# Start the sandbox server
+docker compose -f scripts/pr/sandbox/docker-compose.yml up -d
+```
+
+## Workflow
+
+### 1. Get PR Information
+
+```bash
+uv run pr get-pr $ARGUMENTS
+```
+
+This returns JSON with:
+
+* `branch_name`: Git branch name
+* `worktree_path`: Path to the worktree (or `null` if on branch)
+* `working_directory`: Where to run commands
+* `is_worktree`: Boolean
+* `pr_number`: PR number
+* `pr_url`: PR URL
+* `base_branch`: Target branch the PR will merge into
+
+### 2. Execute Sandbox Rebase
+
+Run the sandbox-rebase command:
+
+```bash
+uv run pr sandbox-rebase --branch {{branch_name}} --target {{base_branch}} -v
 ```
 
 This command:
 
-* Creates an isolated sandbox for the rebase operation
-* Fetches the latest target branch
-* Gathers merge context (base commit, target commits)
-* Squashes all commits into one (if multiple)
-* Rebases onto the target branch
+* Connects to the sandbox server via Unix domain socket
+* Fetches the latest branches in the sandbox
+* Performs the rebase operation in the isolated `.git/sandbox/` checkout
+* Pushes the rebased branch with `--force-with-lease`
 
 **Exit codes:**
 
-* `0`: Success, no conflicts - proceed to step 3
-* `1`: Conflicts detected - proceed to step 2
-* `2`: Error - abort
+* `0`: Success, rebase completed and pushed
+* `2`: Conflicts detected - proceed to step 3
+* `1`: Error - check logs and abort
 
-**JSON output includes:**
+### 3. Resolve Conflicts (if needed)
 
-* `sandbox_path`: Path to the sandbox (where rebase happens)
-* `source_path`: Path to the original worktree (for reading clean code)
-* `branch_name`: Git branch name
-* `base_branch`: Target branch the PR will merge into
-* `pr_number`: PR number
-* `base_commit`: The merge-base commit SHA
-* `target_commits`: List of commit SHAs added to base branch since divergence
-* `has_conflicts`: Boolean indicating if conflicts occurred
-* `conflicted_files`: (only if conflicts) List of files with conflicts
-* `source_commit`: (only if conflicts) SHA of the squashed commit being rebased
-
-### 2. Resolve Conflicts (if needed)
-
-When conflicts occur (exit code 1), use the conflict-resolver agent for each
-conflicted file:
+When conflicts occur (exit code 2), the CLI outputs the list of conflicted files.
+Use the conflict-resolver agent for each conflicted file:
 
 ```python
 Task(subagent_type="conflict-resolver", model="opus", prompt=<JSON>)
 ```
 
-Where JSON contains the context from step 1:
+Where JSON contains:
 
 ```json
 {
   "file_path": "<relative path to conflicted file>",
-  "sandbox_path": "{{sandbox_path}}",
-  "source_path": "{{source_path}}",
-  "base_commit": "{{base_commit}}",
+  "sandbox_path": ".git/sandbox",
+  "source_path": "{{working_directory}}",
+  "base_commit": "<merge-base SHA>",
   "target_branch": "origin/{{base_branch}}",
   "target_commits": ["<sha1>", "<sha2>", ...],
-  "source_commit": "{{source_commit}}"
+  "source_commit": "<squashed commit SHA>"
 }
 ```
 
-**Note**: The agent uses `sandbox_path` for conflict editing and `source_path`
+To obtain the required SHA values, run these commands inside the `.git/sandbox` directory:
+
+```bash
+# Get merge-base SHA (base_commit)
+cd .git/sandbox && git merge-base HEAD origin/{{base_branch}}
+
+# Get current HEAD SHA (source_commit)
+cd .git/sandbox && git rev-parse HEAD
+```
+
+**Note**: The agent uses `.git/sandbox` for conflict editing and `source_path`
 for researching clean code context.
 
 After all files are resolved, continue the rebase:
 
 ```bash
-cd {{sandbox_path}} && git add -A && git rebase --continue
+cd .git/sandbox && git add -A && git rebase --continue
 ```
 
-If more conflicts appear, repeat step 2.
+If more conflicts appear, repeat step 3.
 
-### 3. Finish Rebase
+### 4. Push After Manual Conflict Resolution
 
-After successful rebase (or after resolving all conflicts), run:
+After resolving all conflicts manually, push from the sandbox:
 
 ```bash
-uv run pr rebase-finish $ARGUMENTS
+cd .git/sandbox && git push --force-with-lease origin {{branch_name}}
 ```
 
-This command:
+## Architecture
 
-* Force pushes from the sandbox (with `--force-with-lease`)
-* Syncs the source worktree to match the rebased branch
-* Cleans up the sandbox
+The rebase operation runs entirely in the `.git/sandbox/` checkout, managed by
+the sandbox server. This isolates git operations from your main checkout and
+worktrees.
+
+For detailed architecture information, see `docs/development/sandbox-architecture.md`.
 
 ## Important Rules
 
-* Always use `--force-with-lease` (handled automatically by rebase-finish)
+* The sandbox server must be running before executing rebase
+* Always use `--force-with-lease` (handled automatically by the server)
 * The conflict-resolver agent analyzes BOTH sides' intent and stitches changes
   together
 * Never just pick one side of a conflict - always analyze and merge properly
