@@ -57,6 +57,12 @@ class TestIsPathExcluded:
         path = Path("/repo/.tmp/deep/nested/file.yaml")
         assert is_path_excluded(path, exclude_paths) is True
 
+    def test_path_equals_excluded_directory(self) -> None:
+        """Should return True when path exactly equals an excluded directory."""
+        exclude_paths = {Path("/repo/.tmp")}
+        path = Path("/repo/.tmp")
+        assert is_path_excluded(path, exclude_paths) is True
+
 
 # --- YamllintLinter Tests ---
 
@@ -368,6 +374,38 @@ class TestRunDotenvlint:
         assert mock_run_checked.called
         cmd = mock_run_checked.call_args[0][0]
         assert not any(".tmp" in arg for arg in cmd), "Files in .tmp should be excluded"
+
+    def test_excludes_worktrees_directory(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        dotenvlint_config: Path,
+    ) -> None:
+        """Should exclude .env files in .worktrees directory."""
+        fs.create_file(str(fake_repo / ".env.example"), contents="KEY=value")
+        fs.create_dir(str(fake_repo / ".worktrees" / "branch"))
+        fs.create_file(
+            str(fake_repo / ".worktrees" / "branch" / ".env.production.example"),
+            contents="KEY=value",
+        )
+
+        with (
+            patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT", fake_repo),
+            patch(
+                "scripts.dev.linter.linters.dotenvlint.LINT_DOTENVLINT_CONFIG", dotenvlint_config
+            ),
+            patch(
+                "scripts.dev.linter.linters.dotenvlint.get_executable",
+                return_value="/usr/bin/dotenv-linter",
+            ),
+            patch("scripts.dev.linter.linters.dotenvlint.run_checked") as mock_run_checked,
+        ):
+            linter = DotenvlintLinter()
+            linter.run()
+
+        assert mock_run_checked.called
+        cmd = mock_run_checked.call_args[0][0]
+        assert not any(".worktrees" in arg for arg in cmd), "Files in .worktrees should be excluded"
 
     def test_excludes_local_env_files(
         self,
