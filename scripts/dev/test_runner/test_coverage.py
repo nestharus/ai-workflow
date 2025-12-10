@@ -532,183 +532,6 @@ def load_use_cases(use_cases_path: Path) -> list[UseCase]:
     return use_cases
 
 
-def run_test_suite(
-    config: TestTierConfig, coverage_db_path: Path, first_tier: bool = False
-) -> tuple[CoverageResult | None, Any]:
-    """Run a test suite and collect coverage data.
-
-    Args:
-        config: Test tier configuration
-        coverage_db_path: Path to the .coverage database
-        first_tier: If True, this is the first tier (don't use --cov-append)
-
-    Returns:
-        Tuple of (CoverageResult if successful, TestSummary from junit XML)
-    """
-    # Set up junit XML output path
-    junit_xml_path = coverage_db_path.parent / f"junit_{config.name}.xml"
-
-    # Set up coverage data file path (inside .coverage directory to avoid conflict)
-    # pytest-cov uses .coverage as a file by default, but we use .coverage as a directory
-    coverage_data_file = coverage_db_path.parent / "data"
-    cov_env = {"COVERAGE_FILE": str(coverage_data_file)}
-
-    # Build pytest command with coverage
-    # Each source path needs its own --cov argument
-    cov_args = [f"--cov={path}" for path in config.source_paths]
-    cmd = [
-        "uv",
-        "run",
-        "python",
-        "-m",
-        "pytest",
-        config.test_path,
-        *cov_args,
-        "--cov-branch",
-        "--cov-context=test",  # Enable per-test coverage tracking for redundant test detection
-        "--cov-report=term-missing",
-        "--cov-fail-under=0",  # Disable fail-under (we do our own validation)
-        f"--junitxml={junit_xml_path}",  # Generate JUnit XML for test results
-        "-q",
-        "-p",
-        "no:randomly",
-    ]
-
-    # Add --cov-append for all tiers except the first one
-    if not first_tier:
-        cmd.append("--cov-append")
-
-    print(f"\n{'=' * 70}")
-    print(f"Running {config.name} tests: {config.test_path}")
-    print(f"Measuring coverage for: {', '.join(config.source_paths)}")
-    print("=" * 70)
-
-    result = _run_command(cmd, capture=False, env=cov_env)
-
-    # Parse junit XML to extract test results
-    test_summary = None
-    if junit_xml_path.exists():
-        from scripts.dev.test_runner.junit_parser import parse_junit_xml
-
-        try:
-            test_results, test_summary = parse_junit_xml(junit_xml_path)
-            # Write test results to database
-            for test_result in test_results:
-                coverage_db.write_test_result(
-                    coverage_db_path,
-                    tier=config.name,
-                    test_name=test_result.test_name,
-                    status=test_result.status,
-                    duration=test_result.duration,
-                    message=test_result.message,
-                    traceback=test_result.traceback,
-                )
-        except Exception as e:
-            print(f"\nWARNING: Failed to parse junit XML: {e}")
-
-    if result.returncode != 0:
-        print(f"\nWARNING: {config.name} tests had failures (exit code {result.returncode})")
-
-    # Load coverage data from the consolidated .coverage database
-    # We need to generate a JSON report temporarily to extract the data
-    json_output_path = REPO_ROOT / ".coverage" / f"temp_{config.name}.json"
-    json_output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Generate JSON report for this tier's coverage
-    cov_report_cmd = [
-        "uv",
-        "run",
-        "python",
-        "-m",
-        "coverage",
-        "json",
-        "-o",
-        str(json_output_path),
-    ]
-    _run_command(cov_report_cmd, capture=True, env=cov_env)
-
-    if not json_output_path.exists():
-        print(f"ERROR: Coverage JSON report not generated: {json_output_path}")
-        return None, test_summary
-
-    with json_output_path.open() as f:
-        coverage_data = json.load(f)
-
-    totals = coverage_data.get("totals", {})
-
-    # Calculate function-level coverage
-    all_functions: dict[str, dict[str, Any]] = {}
-    all_function_coverages: list[FunctionCoverage] = []
-    files_data = coverage_data.get("files", {})
-
-    for file_path in files_data:
-        # For component tests, only include service layer files
-        if config.service_layer_only and not _is_in_service_layer(file_path):
-            continue
-
-        func_coverages = _calculate_function_coverage(
-            file_path,
-            coverage_data,
-            REPO_ROOT,
-            exclude_class_fields=config.exclude_class_fields,
-        )
-        for fc in func_coverages:
-            # Skip private functions if configured
-            if config.skip_private_functions and _is_private_function(fc.name):
-                continue
-
-            # For service-layer-only mode, skip non-service files
-            if config.service_layer_only and not _is_in_service_layer(fc.file_path):
-                continue
-
-            all_function_coverages.append(fc)
-            key = f"{fc.file_path}::{fc.name}"
-            all_functions[key] = {
-                "name": fc.name,
-                "file": fc.file_path,
-                "start_line": fc.start_line,
-                "end_line": fc.end_line,
-                "line_coverage": fc.line_coverage_pct,
-                "branch_coverage": fc.branch_coverage_pct,
-                "missing_lines": fc.missing_lines,
-                "missing_branches": fc.missing_branches,
-            }
-
-    # Write tier configuration to database
-    coverage_db.write_tier_config(coverage_db_path, config.name, config)
-
-    # Write function coverage to database with pass/fail flags
-    if all_function_coverages:
-        coverage_db.write_function_coverage(
-            coverage_db_path,
-            config.name,
-            all_function_coverages,
-            config.min_line_per_function,
-            config.min_branch_per_function,
-        )
-
-    # Clean up temporary JSON file
-    json_output_path.unlink(missing_ok=True)
-
-    coverage_result = CoverageResult(
-        suite_name=config.name,
-        total_lines=totals.get("num_statements", 0),
-        covered_lines=totals.get("covered_lines", 0),
-        missing_lines=totals.get("missing_lines", 0),
-        line_coverage_pct=totals.get("percent_covered", 0.0),
-        total_branches=totals.get("num_branches", 0),
-        covered_branches=totals.get("covered_branches", 0),
-        missing_branches=totals.get("num_partial_branches", 0) + totals.get("missing_branches", 0),
-        branch_coverage_pct=totals.get("percent_covered_branches", 0.0)
-        if "percent_covered_branches" in totals
-        else 0.0,
-        files=files_data,
-        functions=all_functions,
-    )
-
-    return coverage_result, test_summary
-
-
 def _parse_usecase_markers_from_content(content: str) -> set[str]:
     """Parse use-case IDs from test file content.
 
@@ -850,8 +673,22 @@ def _scan_tests_for_usecases(test_path: str, repo_root: Path) -> dict[str, list[
     return usecase_to_tests
 
 
+# -----------------------------------------------------------------------------
+# LEGACY/BACKWARD-COMPATIBILITY FUNCTION
+# This function is retained only for backward compatibility with external callers.
+# It is NOT used by the new strategy classes (IntegrationTestStrategy).
+# For internal use, prefer _scan_tests_for_usecases() which provides richer
+# metadata (test file paths and function names) required for
+# coverage_db.write_usecase_coverage().
+# -----------------------------------------------------------------------------
 def collect_covered_usecases(test_path: str) -> set[str]:
     """Collect use-case IDs from pytest markers in tests.
+
+    .. deprecated::
+        This function is retained for backward compatibility only.
+        New code should use :func:`_scan_tests_for_usecases` instead,
+        which returns richer metadata (test file and function names)
+        required for ``coverage_db.write_usecase_coverage()``.
 
     Parses test files directly to extract @pytest.mark.usecase markers
     and determine which use cases have corresponding tests.
@@ -908,11 +745,24 @@ def calculate_usecase_coverage(
     )
 
 
+# -----------------------------------------------------------------------------
+# DEPRECATED: Legacy validation helper retained for backward compatibility.
+# All orchestrated runs (via main()) must use LineBranchTestStrategy.validate()
+# from test_strategies.py instead. This function is kept only for external,
+# non-main callers. It will be removed once all external callers migrate to
+# the strategy pattern.
+# -----------------------------------------------------------------------------
 def validate_line_branch_coverage(
     result: CoverageResult,
     config: TestTierConfig,
 ) -> list[str]:
     """Validate per-function line and branch coverage.
+
+    .. deprecated::
+        This function is deprecated. Use :meth:`LineBranchTestStrategy.validate`
+        from ``test_strategies.py`` instead. This function is retained only for
+        backward compatibility with external callers that are not part of the
+        main orchestration loop.
 
     Returns list of failure messages.
     """
@@ -948,11 +798,24 @@ def validate_line_branch_coverage(
     return failures
 
 
+# -----------------------------------------------------------------------------
+# DEPRECATED: Legacy validation helper retained for backward compatibility.
+# All orchestrated runs (via main()) must use IntegrationTestStrategy.validate()
+# from test_strategies.py instead. This function is kept only for external,
+# non-main callers. It will be removed once all external callers migrate to
+# the strategy pattern.
+# -----------------------------------------------------------------------------
 def validate_usecase_coverage(
     uc_result: UseCaseCoverageResult,
     config: TestTierConfig,
 ) -> list[str]:
     """Validate use-case coverage.
+
+    .. deprecated::
+        This function is deprecated. Use :meth:`IntegrationTestStrategy.validate`
+        from ``test_strategies.py`` instead. This function is retained only for
+        backward compatibility with external callers that are not part of the
+        main orchestration loop.
 
     Returns list of failure messages.
     """
@@ -1189,8 +1052,39 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+# =============================================================================
+# ORCHESTRATOR INVARIANTS - main() delegates all tier-specific logic to strategies
+#
+# These invariants ensure main() remains a thin orchestrator, not a decision-maker:
+#
+# 1. NO COVERAGE-TYPE BRANCHING: main() must NOT branch on config.coverage_type for
+#    core execution or validation logic. The factory (create_strategy) handles type
+#    dispatch. main()'s ONLY tier-specific code is read-only presentation logic
+#    (print_summary, JSON report).
+#
+# 2. NO DIRECT VALIDATION CALLS: main() must NOT call validate_line_branch_coverage()
+#    or validate_usecase_coverage() directly. All threshold checking is delegated to
+#    strategy.validate().
+#
+# 3. NO SUMMARY FIELD COMPUTATION: main() must NOT compute passing_functions,
+#    failing_functions, or tier_pass itself. These values come exclusively from
+#    strategy.build_summary(). The returned dict is opaque to main().
+#
+# 4. STRATEGY OWNERSHIP: Validation logic and summary construction are OWNED BY
+#    STRATEGIES. main() only orchestrates the lifecycle: run_tests() ->
+#    collect_results() -> validate() -> build_summary().
+#
+# 5. STRATEGY SUMMARIES ARE OPAQUE: main() must pass strategy.build_summary() output
+#    directly to coverage_db.write_tier_summary() without inspection or modification.
+#
+# See also: test_strategies.py module docstring for complementary invariants about
+# pytest command construction and tier_pass ownership within strategies.
+# =============================================================================
 def main() -> int:
     """Run test coverage analysis and validation."""
+    # Import strategy pattern (deferred to avoid circular import at module level)
+    from scripts.dev.test_runner.test_strategies import TestStrategy, create_strategy
+
     args = parse_args()
 
     # Set up coverage database path (.coverage/coverage.db)
@@ -1221,17 +1115,13 @@ def main() -> int:
     # Determine which tiers to run
     tiers_to_run = list(test_tiers.keys()) if args.tier == "all" else [args.tier]
 
-    # Collect results
-    line_branch_results: list[tuple[TestTierConfig, CoverageResult]] = []
-    usecase_results: list[tuple[TestTierConfig, UseCaseCoverageResult]] = []
-    all_failures: list[str] = []
-    # Track test summaries for each tier (tier_name -> TestSummary)
-    tier_test_summaries: dict[str, Any] = {}
-
+    # INVARIANT: This loop does not branch on config.coverage_type
+    # Strategy instantiation and CLI threshold overrides
+    strategies: list[TestStrategy] = []
     for idx, tier_name in enumerate(tiers_to_run):
         config = test_tiers[tier_name]
 
-        # Override per-function thresholds from args if provided
+        # Apply CLI threshold overrides to each TestTierConfig
         if args.min_line != DEFAULT_MIN_LINE_PER_FUNCTION:
             config.min_line_per_function = args.min_line
         if args.min_branch != DEFAULT_MIN_BRANCH_PER_FUNCTION:
@@ -1239,76 +1129,27 @@ def main() -> int:
         if args.min_usecase != DEFAULT_MIN_USECASE:
             config.min_usecase = args.min_usecase
 
-        if config.coverage_type == "line_branch":
-            # First tier should not use --cov-append
-            is_first_tier = idx == 0
-            result, test_summary = run_test_suite(
-                config, coverage_db_path, first_tier=is_first_tier
-            )
-            if test_summary:
-                tier_test_summaries[tier_name] = test_summary
-            if result:
-                line_branch_results.append((config, result))
-                if not args.no_validate:
-                    failures = validate_line_branch_coverage(result, config)
-                    all_failures.extend(failures)
+        # Factory creates the correct strategy based on config.coverage_type internally
+        strategy = create_strategy(
+            config,
+            coverage_db_path,
+            REPO_ROOT,
+            first_tier=(idx == 0),
+            use_cases=use_cases,
+        )
+        strategies.append(strategy)
 
-        elif config.coverage_type == "usecase":
-            # Run tests (without coverage measurement for usecase tiers)
-            cmd = [
-                "uv",
-                "run",
-                "python",
-                "-m",
-                "pytest",
-                config.test_path,
-                "-v",
-                "-p",
-                "no:randomly",
-            ]
-            print(f"\n{'=' * 70}")
-            print(f"Running {config.name} tests: {config.test_path}")
-            print("=" * 70)
-            _run_command(cmd, capture=False)
+    # Execute strategies uniformly - NO coverage_type inspection
+    all_failures: list[str] = []
+    for strategy in strategies:
+        strategy.run_tests()
+        strategy.collect_results()
+        # NOTE: Skipping validation when --no-validate is passed intentionally prevents
+        # coverage failures from affecting tier_pass in build_summary().
+        if not args.no_validate:
+            all_failures.extend(strategy.validate())
 
-            # Write tier config for usecase tiers too
-            coverage_db.write_tier_config(coverage_db_path, config.name, config)
-
-            # Scan test files for usecase markers with test function information
-            usecase_to_tests = _scan_tests_for_usecases(config.test_path, REPO_ROOT)
-            covered_ids = set(usecase_to_tests.keys())
-
-            # Write use case coverage to database for each use case in this tier
-            tier_use_cases = [uc for uc in use_cases if uc.test_tier == tier_name]
-            for uc in tier_use_cases:
-                if uc.id in usecase_to_tests:
-                    # Use case is covered - get first test location
-                    test_info = usecase_to_tests[uc.id][0]
-                    coverage_db.write_usecase_coverage(
-                        coverage_db_path,
-                        uc.id,
-                        covered=True,
-                        test_file=test_info["file"],
-                        test_function=test_info["test_function"],
-                    )
-                else:
-                    # Use case is not covered
-                    coverage_db.write_usecase_coverage(
-                        coverage_db_path,
-                        uc.id,
-                        covered=False,
-                        test_file=None,
-                        test_function=None,
-                    )
-
-            # Calculate use-case coverage from detected markers
-            uc_result = calculate_usecase_coverage(tier_name, use_cases, covered_ids)
-            usecase_results.append((config, uc_result))
-            if not args.no_validate:
-                failures = validate_usecase_coverage(uc_result, config)
-                all_failures.extend(failures)
-
-    if not line_branch_results and not usecase_results:
+    if not strategies:
         print("ERROR: No coverage results collected")
         return 1
 
@@ -1339,56 +1180,19 @@ def main() -> int:
         # Clean up temporary file
         json_output_path.unlink(missing_ok=True)
 
-    # Write tier summaries for each tier
-    for config, result in line_branch_results:
-        # Calculate passing/failing functions
-        passing_funcs = sum(
-            1
-            for func_data in result.functions.values()
-            if func_data["line_coverage"] >= config.min_line_per_function
-            and func_data["branch_coverage"] >= config.min_branch_per_function
-        )
-        failing_funcs = len(result.functions) - passing_funcs
+    # Write tier summaries - strategy owns ALL summary computation
+    for strategy in strategies:
+        summary = strategy.build_summary()
+        # IMMEDIATELY pass to DB writer - no inspection or modification
+        coverage_db.write_tier_summary(coverage_db_path, strategy.config.name, summary)
 
-        # Get test counts from junit summary
-        test_summary = tier_test_summaries.get(config.name)
-        total_tests = test_summary.total if test_summary else 0
-        tests_passed = test_summary.passed if test_summary else 0
-        tests_failed = (test_summary.failed + test_summary.errors) if test_summary else 0
-
-        # Check if there are tier-specific coverage failures
-        tier_failures = [f for f in all_failures if f.startswith(f"{config.name}:")]
-        has_coverage_failures = len(tier_failures) > 0
-        has_test_failures = tests_failed > 0
-
-        # Determine if tier passes all requirements (coverage + all tests passed)
-        tier_pass = 1 if not has_coverage_failures and not has_test_failures else 0
-
-        summary = {
-            "coverage_type": config.coverage_type,
-            "total_functions": len(result.functions),
-            "passing_functions": passing_funcs,
-            "failing_functions": failing_funcs,
-            "overall_line_pct": result.line_coverage_pct,
-            "overall_branch_pct": result.branch_coverage_pct,
-            "total_tests": total_tests,
-            "tests_passed": tests_passed,
-            "tests_failed": tests_failed,
-            "tier_pass": tier_pass,
-        }
-        coverage_db.write_tier_summary(coverage_db_path, config.name, summary)
-
-    for config, uc_result in usecase_results:
-        # Determine if tier passes
-        tier_pass = 1 if uc_result.coverage_pct >= config.min_usecase else 0
-
-        summary = {
-            "coverage_type": config.coverage_type,
-            "total_usecases": uc_result.total_cases,
-            "usecases_covered": uc_result.covered_cases,
-            "tier_pass": tier_pass,
-        }
-        coverage_db.write_tier_summary(coverage_db_path, config.name, summary)
+    # For print_summary() and JSON report ONLY (read-only presentation)
+    line_branch_results: list[tuple[TestTierConfig, CoverageResult]] = [
+        (s.config, s.coverage_result) for s in strategies if s.coverage_result is not None
+    ]
+    usecase_results: list[tuple[TestTierConfig, UseCaseCoverageResult]] = [
+        (s.config, s.usecase_result) for s in strategies if s.usecase_result is not None
+    ]
 
     # Run redundant test detection
     redundant_result: RedundantTestResult | None = None

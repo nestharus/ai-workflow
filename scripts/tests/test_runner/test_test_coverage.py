@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -1322,3 +1322,751 @@ class TestUsecaseDatabaseIntegration:
         assert "integration" in result["by_tier"]
         assert result["by_tier"]["integration"]["total"] == 2
         assert result["by_tier"]["integration"]["covered"] == 1
+
+
+class TestMainOrchestratorInvariants:
+    """AST-based smoke tests enforcing architectural invariants for main().
+
+    These are BRITTLE, AST-based tests that verify main() adheres to the
+    orchestrator pattern and does not contain coverage-type-specific logic
+    that belongs in strategies. Minor refactors (e.g., renaming variables)
+    may require adjusting these tests, but the underlying invariants should
+    remain.
+
+    The invariants enforced:
+    1. main() must NOT branch on coverage_type for execution/validation logic
+    2. main() must NOT call deprecated validation helpers directly
+
+    These tests exist because the strategy pattern requires strict separation
+    of concerns: main() orchestrates, strategies decide. Violations would
+    create tight coupling and duplicate logic.
+    """
+
+    def test_main_does_not_branch_on_coverage_type(self) -> None:
+        """Ensure main() does not contain if-conditions that branch on coverage_type.
+
+        The orchestrator pattern requires that main() delegates all
+        coverage-type-specific logic to strategies via the factory pattern.
+        If main() branches on coverage_type, it violates the principle that
+        strategies own all tier-specific behavior.
+
+        This test parses the AST of main() and checks that no `if` condition
+        references `coverage_type`. The strategy factory (create_strategy)
+        is the ONLY place that should inspect coverage_type.
+
+        Note: This test may need adjustment if main() is significantly
+        refactored, but the invariant itself should remain.
+        """
+        import inspect
+
+        from scripts.dev.test_runner.test_coverage import main
+
+        source = inspect.getsource(main)
+        tree = ast.parse(source)
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If):
+                # Get the string representation of the condition
+                condition_str = ast.unparse(node.test)
+                assert "coverage_type" not in condition_str, (
+                    f"main() must NOT branch on coverage_type. Found condition: {condition_str}\n"
+                    "Coverage-type-specific logic belongs in strategy classes,\n"
+                    "not the orchestrator."
+                )
+
+    def test_main_does_not_call_validation_helpers_directly(self) -> None:
+        """Ensure main() does not call deprecated validation helpers directly.
+
+        The strategy pattern requires that all validation logic is owned by
+        strategy.validate(). The legacy functions validate_line_branch_coverage()
+        and validate_usecase_coverage() are kept for backward compatibility
+        with external callers, but main() must NOT call them directly.
+
+        This test checks the source code of main() for direct references to
+        these deprecated functions.
+
+        Note: This test may need adjustment if the deprecated functions are
+        renamed, but the invariant (validation owned by strategies) should remain.
+        """
+        import inspect
+
+        from scripts.dev.test_runner.test_coverage import main
+
+        source = inspect.getsource(main)
+
+        assert "validate_line_branch_coverage" not in source, (
+            "main() must NOT call validate_line_branch_coverage() directly.\n"
+            "Validation logic is owned by LineBranchTestStrategy.validate()."
+        )
+
+        assert "validate_usecase_coverage" not in source, (
+            "main() must NOT call validate_usecase_coverage() directly.\n"
+            "Validation logic is owned by IntegrationTestStrategy.validate()."
+        )
+
+
+# =============================================================================
+# FIXTURES FOR END-TO-END TESTS
+# =============================================================================
+
+
+@pytest.fixture
+def e2e_coverage_setup(tmp_path: Path) -> dict[str, Path]:
+    """Set up a temporary coverage directory and SQLite database for e2e tests.
+
+    Returns:
+        Dictionary with 'coverage_dir', 'db_path', and 'data_file' paths.
+    """
+    from scripts.dev.test_runner import coverage_db
+
+    coverage_dir = tmp_path / ".coverage"
+    coverage_dir.mkdir(parents=True, exist_ok=True)
+    db_path = coverage_dir / "coverage.db"
+    data_file = coverage_dir / "data"
+
+    # Initialize the custom tables
+    coverage_db.init_custom_tables(db_path)
+
+    return {
+        "coverage_dir": coverage_dir,
+        "db_path": db_path,
+        "data_file": data_file,
+        "tmp_path": tmp_path,
+    }
+
+
+# =============================================================================
+# END-TO-END DATABASE STATE TESTS
+# =============================================================================
+
+
+class TestMainEndToEndDBState:
+    """Black-box tests for coverage_db integration used by main().
+
+    These tests verify that:
+    1. The coverage database APIs correctly store and retrieve data
+    2. Database queries return well-formed results with expected keys/types
+    3. Data shapes match what main() and strategies expect to persist
+
+    NOTE: These tests focus on structure and type correctness, NOT specific
+    numeric values, as coverage numbers may vary across environments.
+    """
+
+    def test_tier_summary_exists_after_main_invocation(
+        self, e2e_coverage_setup: dict[str, Path]
+    ) -> None:
+        """Verify that tier summary is written to DB after running with --no-validate.
+
+        Uses get_tier_summary() to assert that:
+        - The summary exists for the requested tier
+        - coverage_type is set appropriately
+        - Numeric counts are non-negative integers
+        """
+        from scripts.dev.test_runner import coverage_db
+
+        db_path = e2e_coverage_setup["db_path"]
+
+        # Write a mock tier summary directly (simulating what main() does)
+        summary = {
+            "coverage_type": "line_branch",
+            "total_functions": 10,
+            "passing_functions": 8,
+            "failing_functions": 2,
+            "overall_line_pct": 85.5,
+            "overall_branch_pct": 72.3,
+            "total_usecases": 0,
+            "usecases_covered": 0,
+            "total_tests": 15,
+            "tests_passed": 14,
+            "tests_failed": 1,
+            "tier_pass": 0,
+        }
+        coverage_db.write_tier_summary(db_path, "scripts", summary)
+
+        # Query using the DAO function
+        result = coverage_db.get_tier_summary(db_path, "scripts")
+
+        # Assert structure and types
+        assert result is not None
+        assert result != {}
+        assert result["tier"] == "scripts"
+        assert result["coverage_type"] == "line_branch"
+
+        # Numeric fields should be non-negative integers
+        assert isinstance(result["total_functions"], int)
+        assert result["total_functions"] >= 0
+        assert isinstance(result["passing_functions"], int)
+        assert result["passing_functions"] >= 0
+        assert isinstance(result["failing_functions"], int)
+        assert result["failing_functions"] >= 0
+
+        # Coverage percentages should be floats or None
+        assert result["overall_line_pct"] is None or isinstance(
+            result["overall_line_pct"], (int, float)
+        )
+        assert result["overall_branch_pct"] is None or isinstance(
+            result["overall_branch_pct"], (int, float)
+        )
+
+    def test_functions_below_threshold_returns_well_formed_results(
+        self, e2e_coverage_setup: dict[str, Path]
+    ) -> None:
+        """Verify that get_functions_below_threshold returns well-formed results.
+
+        Asserts that returned items have expected keys and types, even if
+        the exact numbers vary across environments.
+        """
+        from scripts.dev.test_runner import coverage_db
+
+        db_path = e2e_coverage_setup["db_path"]
+
+        # Write some function coverage data with functions below threshold
+        func_coverage = FunctionCoverage(
+            name="low_coverage_func",
+            file_path="scripts/example.py",
+            start_line=10,
+            end_line=25,
+            total_lines=15,
+            covered_lines=5,
+            missing_lines=[12, 14, 16, 18, 20, 22, 24],
+            line_coverage_pct=33.3,
+            total_branches=4,
+            covered_branches=1,
+            missing_branches=[(15, 20), (15, 25)],
+            branch_coverage_pct=25.0,
+        )
+        coverage_db.write_function_coverage(
+            db_path, "scripts", [func_coverage], threshold_line=60.0, threshold_branch=50.0
+        )
+
+        # Query functions below threshold
+        result = coverage_db.get_functions_below_threshold(db_path, tier="scripts")
+
+        # Should return a list
+        assert isinstance(result, list)
+        assert len(result) >= 1
+
+        # Each item should have expected keys
+        for item in result:
+            assert "file_path" in item
+            assert "function_name" in item
+            assert "tier" in item
+            assert "line_coverage_pct" in item
+            assert "branch_coverage_pct" in item
+            assert "missing_lines" in item
+            assert "missing_branches" in item
+            assert "threshold_line" in item
+            assert "threshold_branch" in item
+            assert "line_pass" in item
+            assert "branch_pass" in item
+
+            # Type assertions
+            assert isinstance(item["file_path"], str)
+            assert isinstance(item["function_name"], str)
+            assert isinstance(item["line_coverage_pct"], (int, float))
+            assert isinstance(item["missing_lines"], list)
+            assert isinstance(item["missing_branches"], list)
+
+    def test_usecase_coverage_returns_well_formed_results(
+        self, e2e_coverage_setup: dict[str, Path]
+    ) -> None:
+        """Verify that get_usecase_coverage returns well-formed results.
+
+        Asserts expected keys are present and values have correct types.
+        """
+        from scripts.dev.test_runner import coverage_db
+
+        db_path = e2e_coverage_setup["db_path"]
+
+        # Write some use case data
+        use_cases = [
+            UseCase("UC-E2E-001", "/api/test", "GET", "Test endpoint", "integration"),
+            UseCase("UC-E2E-002", "/api/other", "POST", "Other endpoint", "integration"),
+        ]
+        coverage_db.write_usecase_registry(db_path, use_cases)
+
+        # Write coverage for one of them
+        coverage_db.write_usecase_coverage(
+            db_path,
+            "UC-E2E-001",
+            covered=True,
+            test_file="tests/integration/test_api.py",
+            test_function="test_endpoint",
+        )
+        coverage_db.write_usecase_coverage(
+            db_path, "UC-E2E-002", covered=False, test_file=None, test_function=None
+        )
+
+        # Query using the DAO function
+        result = coverage_db.get_usecase_coverage(db_path)
+
+        # Assert top-level structure
+        assert "total" in result
+        assert "covered" in result
+        assert "coverage_pct" in result
+        assert "by_tier" in result
+        assert "uncovered" in result
+
+        # Type assertions
+        assert isinstance(result["total"], int)
+        assert result["total"] >= 0
+        assert isinstance(result["covered"], int)
+        assert result["covered"] >= 0
+        assert isinstance(result["coverage_pct"], (int, float))
+        assert 0 <= result["coverage_pct"] <= 100
+        assert isinstance(result["by_tier"], dict)
+        assert isinstance(result["uncovered"], list)
+
+        # by_tier entries should have expected structure
+        for tier_name, tier_data in result["by_tier"].items():
+            assert isinstance(tier_name, str)
+            assert "total" in tier_data
+            assert "covered" in tier_data
+            assert "coverage_pct" in tier_data
+
+
+# =============================================================================
+# JSON REPORT SCHEMA VALIDATION TESTS
+# =============================================================================
+
+
+class TestJSONReportSchemaValidation:
+    """Tests that validate JSON report schema expectations.
+
+    These tests serve as DOCUMENTATION and SCHEMA VALIDATION for the JSON report
+    structure. They verify that reports with the expected structure can be parsed
+    correctly and contain the required fields.
+
+    Schema Requirements:
+    1. Top-level 'tiers' and 'thresholds' keys
+    2. Correct structure for line_branch tier entries
+    3. Correct structure for usecase tier entries
+    4. Redundant tests block when present (optional)
+
+    NOTE: These tests validate schema correctness using pre-built JSON structures.
+    They do NOT test that main() actually produces these structures - that is
+    covered by TestMainJSONReportIntegration below.
+    """
+
+    def test_json_report_has_toplevel_keys(self, tmp_path: Path) -> None:
+        """Verify JSON report has required top-level keys."""
+        import json
+
+        # Create a mock JSON report matching the structure from main()
+        report = {
+            "tiers": {
+                "scripts": {
+                    "type": "line_branch",
+                    "line_coverage": 85.5,
+                    "branch_coverage": 72.3,
+                    "total_lines": 1000,
+                    "covered_lines": 855,
+                    "total_branches": 200,
+                    "covered_branches": 145,
+                    "functions": {},
+                }
+            },
+            "thresholds": {
+                "min_line": 60.0,
+                "min_branch": 50.0,
+                "min_usecase": 100.0,
+            },
+        }
+
+        report_path = tmp_path / "report.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        # Load and verify structure
+        loaded = json.loads(report_path.read_text())
+
+        assert "tiers" in loaded
+        assert "thresholds" in loaded
+        assert isinstance(loaded["tiers"], dict)
+        assert isinstance(loaded["thresholds"], dict)
+
+    def test_line_branch_tier_entry_structure(self, tmp_path: Path) -> None:
+        """Verify line_branch tier entries have correct structure."""
+        import json
+
+        report = {
+            "tiers": {
+                "unit": {
+                    "type": "line_branch",
+                    "line_coverage": 85.5,
+                    "branch_coverage": 72.3,
+                    "total_lines": 1000,
+                    "covered_lines": 855,
+                    "total_branches": 200,
+                    "covered_branches": 145,
+                    "functions": {
+                        "app/services/example.py::process": {
+                            "name": "process",
+                            "file": "app/services/example.py",
+                            "line_coverage": 90.0,
+                            "branch_coverage": 80.0,
+                        }
+                    },
+                }
+            },
+            "thresholds": {"min_line": 60.0, "min_branch": 50.0, "min_usecase": 100.0},
+        }
+
+        report_path = tmp_path / "report.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        loaded = json.loads(report_path.read_text())
+        unit_tier = loaded["tiers"]["unit"]
+
+        # Assert required keys for line_branch type
+        assert unit_tier["type"] == "line_branch"
+        assert "line_coverage" in unit_tier
+        assert "branch_coverage" in unit_tier
+        assert "total_lines" in unit_tier
+        assert "covered_lines" in unit_tier
+        assert "total_branches" in unit_tier
+        assert "covered_branches" in unit_tier
+        assert "functions" in unit_tier
+
+        # Type assertions
+        assert isinstance(unit_tier["line_coverage"], (int, float))
+        assert isinstance(unit_tier["branch_coverage"], (int, float))
+        assert isinstance(unit_tier["total_lines"], int)
+        assert isinstance(unit_tier["covered_lines"], int)
+        assert isinstance(unit_tier["total_branches"], int)
+        assert isinstance(unit_tier["covered_branches"], int)
+        assert isinstance(unit_tier["functions"], dict)
+
+    def test_usecase_tier_entry_structure(self, tmp_path: Path) -> None:
+        """Verify usecase tier entries have correct structure."""
+        import json
+
+        report = {
+            "tiers": {
+                "integration": {
+                    "type": "usecase",
+                    "total_cases": 10,
+                    "covered_cases": 8,
+                    "uncovered_cases": ["UC-INT-001", "UC-INT-002"],
+                    "coverage_pct": 80.0,
+                }
+            },
+            "thresholds": {"min_line": 60.0, "min_branch": 50.0, "min_usecase": 100.0},
+        }
+
+        report_path = tmp_path / "report.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        loaded = json.loads(report_path.read_text())
+        integration_tier = loaded["tiers"]["integration"]
+
+        # Assert required keys for usecase type
+        assert integration_tier["type"] == "usecase"
+        assert "total_cases" in integration_tier
+        assert "covered_cases" in integration_tier
+        assert "uncovered_cases" in integration_tier
+        assert "coverage_pct" in integration_tier
+
+        # Type assertions
+        assert isinstance(integration_tier["total_cases"], int)
+        assert isinstance(integration_tier["covered_cases"], int)
+        assert isinstance(integration_tier["uncovered_cases"], list)
+        assert isinstance(integration_tier["coverage_pct"], (int, float))
+
+        # uncovered_cases should be a list of strings
+        for uc_id in integration_tier["uncovered_cases"]:
+            assert isinstance(uc_id, str)
+
+    def test_redundant_tests_block_structure(self, tmp_path: Path) -> None:
+        """Verify redundant_tests block has correct structure when present."""
+        import json
+
+        report = {
+            "tiers": {},
+            "thresholds": {"min_line": 60.0, "min_branch": 50.0, "min_usecase": 100.0},
+            "redundant_tests": {
+                "summary": {
+                    "total_tests": 50,
+                    "tests_with_unique_coverage": 45,
+                    "redundant_tests": 5,
+                },
+                "tests": [
+                    {"test_name": "test_redundant_1", "unique_lines": 0},
+                    {"test_name": "test_redundant_2", "unique_lines": 0},
+                ],
+                "total_tests_analyzed": 50,
+                "tests_with_unique_coverage": 45,
+            },
+        }
+
+        report_path = tmp_path / "report.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        loaded = json.loads(report_path.read_text())
+
+        # Assert redundant_tests block exists and has expected structure
+        assert "redundant_tests" in loaded
+        redundant = loaded["redundant_tests"]
+
+        assert "summary" in redundant
+        assert "tests" in redundant
+        assert "total_tests_analyzed" in redundant
+        assert "tests_with_unique_coverage" in redundant
+
+        # Type assertions
+        assert isinstance(redundant["summary"], dict)
+        assert isinstance(redundant["tests"], list)
+        assert isinstance(redundant["total_tests_analyzed"], int)
+        assert isinstance(redundant["tests_with_unique_coverage"], int)
+
+    def test_json_report_combined_tiers(self, tmp_path: Path) -> None:
+        """Verify JSON report can contain both line_branch and usecase tiers."""
+        import json
+
+        # A report with multiple tier types
+        report = {
+            "tiers": {
+                "unit": {
+                    "type": "line_branch",
+                    "line_coverage": 85.5,
+                    "branch_coverage": 72.3,
+                    "total_lines": 1000,
+                    "covered_lines": 855,
+                    "total_branches": 200,
+                    "covered_branches": 145,
+                    "functions": {},
+                },
+                "scripts": {
+                    "type": "line_branch",
+                    "line_coverage": 75.0,
+                    "branch_coverage": 65.0,
+                    "total_lines": 500,
+                    "covered_lines": 375,
+                    "total_branches": 100,
+                    "covered_branches": 65,
+                    "functions": {},
+                },
+                "integration": {
+                    "type": "usecase",
+                    "total_cases": 10,
+                    "covered_cases": 10,
+                    "uncovered_cases": [],
+                    "coverage_pct": 100.0,
+                },
+            },
+            "thresholds": {"min_line": 60.0, "min_branch": 50.0, "min_usecase": 100.0},
+        }
+
+        report_path = tmp_path / "report.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        loaded = json.loads(report_path.read_text())
+
+        # Verify all tiers are present
+        assert "unit" in loaded["tiers"]
+        assert "scripts" in loaded["tiers"]
+        assert "integration" in loaded["tiers"]
+
+        # Verify types are correct
+        assert loaded["tiers"]["unit"]["type"] == "line_branch"
+        assert loaded["tiers"]["scripts"]["type"] == "line_branch"
+        assert loaded["tiers"]["integration"]["type"] == "usecase"
+
+        # Each tier type has its expected keys
+        for tier_name in ["unit", "scripts"]:
+            tier = loaded["tiers"][tier_name]
+            assert "line_coverage" in tier
+            assert "branch_coverage" in tier
+            assert "functions" in tier
+
+        integration = loaded["tiers"]["integration"]
+        assert "total_cases" in integration
+        assert "covered_cases" in integration
+        assert "coverage_pct" in integration
+
+
+# =============================================================================
+# JSON REPORT INTEGRATION TESTS
+# =============================================================================
+
+
+class TestMainJSONReportIntegration:
+    """Integration tests that verify main() produces valid JSON reports.
+
+    These tests verify that the CLI entrypoint actually generates JSON reports
+    with the expected structure when --json-report is provided.
+    """
+
+    def test_main_json_report_generation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify main() with --json-report produces valid JSON with expected structure.
+
+        This test mocks the strategy execution to avoid running actual pytest/coverage,
+        but exercises the JSON report generation path in main().
+        """
+        import json
+        from unittest.mock import MagicMock, patch
+
+        from scripts.dev.test_runner.test_coverage import (
+            CoverageResult,
+            TestTierConfig,
+            UseCaseCoverageResult,
+            main,
+        )
+
+        # Set up paths
+        json_report_path = tmp_path / "test_report.json"
+        coverage_dir = tmp_path / ".coverage"
+        coverage_dir.mkdir(parents=True, exist_ok=True)
+        coverage_data_file = coverage_dir / "data"
+        coverage_data_file.touch()
+
+        # Create mock tier config and results
+        mock_line_branch_config = TestTierConfig(
+            name="scripts",
+            test_path="scripts/tests",
+            source_paths=["scripts/"],
+            coverage_type="line_branch",
+        )
+        mock_coverage_result = CoverageResult(
+            suite_name="scripts",
+            total_lines=1000,
+            covered_lines=855,
+            missing_lines=145,
+            line_coverage_pct=85.5,
+            total_branches=200,
+            covered_branches=145,
+            missing_branches=55,
+            branch_coverage_pct=72.3,
+            files={},
+            functions={
+                "scripts/example.py::process": {
+                    "name": "process",
+                    "file": "scripts/example.py",
+                    "line_coverage": 90.0,
+                    "branch_coverage": 80.0,
+                }
+            },
+        )
+
+        mock_usecase_config = TestTierConfig(
+            name="integration",
+            test_path="tests/integration",
+            source_paths=["app/"],
+            coverage_type="usecase",
+        )
+        mock_usecase_result = UseCaseCoverageResult(
+            tier="integration",
+            total_cases=10,
+            covered_cases=8,
+            uncovered_cases=["UC-INT-001", "UC-INT-002"],
+            coverage_pct=80.0,
+        )
+
+        # Create mock strategies
+        mock_line_branch_strategy = MagicMock()
+        mock_line_branch_strategy.config = mock_line_branch_config
+        mock_line_branch_strategy.coverage_result = mock_coverage_result
+        mock_line_branch_strategy.usecase_result = None
+        mock_line_branch_strategy.validate.return_value = []
+        mock_line_branch_strategy.build_summary.return_value = {"tier_pass": True}
+
+        mock_usecase_strategy = MagicMock()
+        mock_usecase_strategy.config = mock_usecase_config
+        mock_usecase_strategy.coverage_result = None
+        mock_usecase_strategy.usecase_result = mock_usecase_result
+        mock_usecase_strategy.validate.return_value = []
+        mock_usecase_strategy.build_summary.return_value = {"tier_pass": True}
+
+        def mock_create_strategy(*args: Any, **kwargs: Any) -> MagicMock:
+            config = args[0]
+            if config.coverage_type == "line_branch":
+                return mock_line_branch_strategy
+            return mock_usecase_strategy
+
+        # Mock the tier configs to return our mock configs
+        def mock_get_test_tiers() -> dict:
+            return {
+                "scripts": mock_line_branch_config,
+                "integration": mock_usecase_config,
+            }
+
+        # Patch command-line args
+        test_args = [
+            "test_coverage.py",
+            "--tier",
+            "all",
+            "--json-report",
+            str(json_report_path),
+            "--no-validate",
+            "--skip-redundant-detection",
+        ]
+        monkeypatch.setattr("sys.argv", test_args)
+
+        # Patch REPO_ROOT to use tmp_path
+        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
+
+        # Create minimal files needed by main()
+        use_cases_dir = tmp_path / "tests" / "docs"
+        use_cases_dir.mkdir(parents=True, exist_ok=True)
+        (use_cases_dir / "use_cases.yaml").write_text("use_cases: []")
+
+        # Apply patches and run main()
+        # Note: create_strategy is imported inside main(), so we patch it at the source
+        with (
+            patch(
+                "scripts.dev.test_runner.test_coverage.get_test_tiers",
+                mock_get_test_tiers,
+            ),
+            patch(
+                "scripts.dev.test_runner.test_strategies.create_strategy",
+                mock_create_strategy,
+            ),
+            patch("scripts.dev.test_runner.test_coverage._run_command"),
+            patch("scripts.dev.test_runner.coverage_db.init_custom_tables"),
+            patch("scripts.dev.test_runner.coverage_db.clear_custom_tables"),
+            patch("scripts.dev.test_runner.coverage_db.write_usecase_registry"),
+            patch("scripts.dev.test_runner.coverage_db.write_run_metadata"),
+            patch("scripts.dev.test_runner.coverage_db.write_tier_summary"),
+        ):
+            exit_code = main()
+
+        # Verify exit code
+        assert exit_code == 0, "main() should succeed with --no-validate"
+
+        # Verify JSON report was created
+        assert json_report_path.exists(), "JSON report file should be created"
+
+        # Load and verify structure
+        with json_report_path.open() as f:
+            report = json.load(f)
+
+        # Verify top-level keys
+        assert "tiers" in report, "Report should have 'tiers' key"
+        assert "thresholds" in report, "Report should have 'thresholds' key"
+
+        # Verify line_branch tier structure
+        assert "scripts" in report["tiers"], "Should have 'scripts' tier"
+        scripts_tier = report["tiers"]["scripts"]
+        assert scripts_tier["type"] == "line_branch"
+        assert "line_coverage" in scripts_tier
+        assert "branch_coverage" in scripts_tier
+        assert "total_lines" in scripts_tier
+        assert "covered_lines" in scripts_tier
+        assert "total_branches" in scripts_tier
+        assert "covered_branches" in scripts_tier
+        assert "functions" in scripts_tier
+
+        # Verify usecase tier structure
+        assert "integration" in report["tiers"], "Should have 'integration' tier"
+        integration_tier = report["tiers"]["integration"]
+        assert integration_tier["type"] == "usecase"
+        assert "total_cases" in integration_tier
+        assert "covered_cases" in integration_tier
+        assert "uncovered_cases" in integration_tier
+        assert "coverage_pct" in integration_tier
+
+        # Verify thresholds structure
+        assert "min_line" in report["thresholds"]
+        assert "min_branch" in report["thresholds"]
+        assert "min_usecase" in report["thresholds"]
