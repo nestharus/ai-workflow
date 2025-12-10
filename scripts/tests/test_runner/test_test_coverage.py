@@ -46,7 +46,20 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def clear_settings_cache() -> Generator[None]:
-    """Clear settings cache before and after each test."""
+    """Reset module-level settings cache before and after each test.
+
+    This fixture intentionally resets ``scripts.dev.test_runner.test_coverage._settings``
+    to ``None`` before and after each test. This ensures that tests exercising
+    dynamic coverage settings always reload configuration from the current
+    ``pyproject.toml`` (or fake filesystem equivalent), rather than using stale
+    cached values from previous tests.
+
+    Note:
+        This fixture mutates module-level state. If additional test modules need
+        this behavior, consider moving it to a shared ``conftest.py`` under
+        ``scripts/tests/test_runner/`` so cross-module impact is explicit and
+        discoverable.
+    """
     from scripts.dev.test_runner import test_coverage
 
     test_coverage._settings = None
@@ -606,6 +619,78 @@ min_usecase = 95.0
         assert tiers["e2e"].source_paths == ["app", "lib"]
         assert tiers["e2e"].coverage_type == "usecase"
         assert tiers["e2e"].min_usecase == 95.0
+
+
+class TestMainMisconfiguredTierHandling:
+    """Tests for main() handling of misconfigured tier errors.
+
+    These tests verify that main() catches ValueError from get_test_tiers()
+    and returns a clean error message instead of a full traceback.
+    """
+
+    def test_main_catches_get_test_tiers_value_error(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """main() should catch ValueError from get_test_tiers() and return exit code 1."""
+        import argparse
+
+        monkeypatch.setattr(
+            "scripts.dev.test_runner.test_coverage.parse_args",
+            lambda argv=None: argparse.Namespace(
+                tier="all",
+                min_line=60.0,
+                min_branch=50.0,
+                min_usecase=100.0,
+                no_validate=False,
+                json_report=None,
+                skip_redundant_detection=True,
+                include_partial_redundant=False,
+            ),
+        )
+        monkeypatch.setattr(
+            "scripts.dev.test_runner.test_coverage.get_test_tiers",
+            lambda: (_ for _ in ()).throw(
+                ValueError("Custom tier 'e2e' is missing required fields: test_path")
+            ),
+        )
+        from scripts.dev.test_runner.test_coverage import main
+
+        result = main()
+        assert result == 1
+
+    def test_main_prints_error_message_for_misconfigured_tier(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """main() should print error message from ValueError without traceback."""
+        import argparse
+
+        monkeypatch.setattr(
+            "scripts.dev.test_runner.test_coverage.parse_args",
+            lambda argv=None: argparse.Namespace(
+                tier="all",
+                min_line=60.0,
+                min_branch=50.0,
+                min_usecase=100.0,
+                no_validate=False,
+                json_report=None,
+                skip_redundant_detection=True,
+                include_partial_redundant=False,
+            ),
+        )
+        error_message = "Custom tier 'e2e' is missing required fields: test_path"
+        monkeypatch.setattr(
+            "scripts.dev.test_runner.test_coverage.get_test_tiers",
+            lambda: (_ for _ in ()).throw(ValueError(error_message)),
+        )
+        from scripts.dev.test_runner.test_coverage import main
+
+        main()
+        captured = capsys.readouterr()
+        assert "ERROR:" in captured.out
+        assert error_message in captured.out
+        # Should not have traceback markers
+        assert "Traceback" not in captured.out
+        assert "raise ValueError" not in captured.out
 
 
 class TestTestTiers:

@@ -17,6 +17,26 @@ Coverage Calculation:
 - Per-function coverage: Each function must individually meet the threshold
 - Class fields (Pydantic model fields in contracts) are excluded
 - Files with no functions can have 0% coverage (valid)
+
+--no-validate Behavior:
+    The --no-validate flag skips coverage threshold validation, but its effect differs
+    between coverage types:
+
+    Line/Branch Tiers (unit, component, scripts):
+        - Coverage threshold checks are skipped (functions below threshold do not cause failure)
+        - Test failures still cause tier_pass=0 (test execution results are always respected)
+        - Coverage metrics are still collected and reported, just not enforced
+
+    Usecase Tiers (integration):
+        - Coverage threshold checks are skipped entirely
+        - tier_pass is ALWAYS set to 1 when --no-validate is used
+        - This is because usecase tiers do not track individual test pass/fail status;
+          they only measure whether use-case markers exist in test files
+        - Teams adding custom usecase tiers should be aware that --no-validate effectively
+          disables all gating for usecase coverage
+
+    Use --no-validate for exploratory runs or when you want coverage metrics without
+    enforcement. Do not use it in CI pipelines that require coverage gates.
 """
 
 from __future__ import annotations
@@ -1131,8 +1151,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--tier",
         default="all",
-        help="Which test tier to run. Valid values are determined by configuration "
-        "(default tiers: unit, component, integration, scripts). Use 'all' for all tiers.",
+        help="Which test tier to run. Valid tiers are derived from [tool.test_coverage.*] "
+        "in pyproject.toml (e.g., unit, component, integration, scripts). Use 'all' to run "
+        "all configured tiers. To see currently available tier names, run "
+        "'uv run test-coverage --tier all' or pass an invalid tier name to see the error message.",
     )
     parser.add_argument(
         "--min-line",
@@ -1155,7 +1177,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-validate",
         action="store_true",
-        help="Skip coverage validation (just run and report)",
+        help="Skip coverage threshold validation. For line/branch tiers, disables coverage "
+        "gating but test failures still cause tier_pass=0. For usecase tiers, disables "
+        "all gating and tier_pass is always 1 (use-case coverage is reported but not enforced).",
     )
     parser.add_argument(
         "--json-report",
@@ -1232,8 +1256,12 @@ def main() -> int:
     if use_cases:
         coverage_db.write_usecase_registry(coverage_db_path, use_cases)
 
-    # Get tier configurations from settings
-    test_tiers = get_test_tiers()
+    # Get tier configurations from settings (fail fast on config errors)
+    try:
+        test_tiers = get_test_tiers()
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        return 1
 
     # Validate --tier argument against available tiers
     if args.tier != "all" and args.tier not in test_tiers:
