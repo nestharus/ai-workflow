@@ -64,6 +64,22 @@ The planner agent will read from and update the temp file directly.
 **Collect the summary** returned by each planner invocation. These summaries will be used
 in Step 5 for the update comment.
 
+**Validate the plan structure** after each planner invocation:
+
+1. Find the first `---` separator line in the temp file
+2. Verify the line immediately after `---` (skipping blank lines) is `# Implementation Plan`
+3. Verify `## Plans` appears after `# Implementation Plan`
+4. Verify `### Plan 1:` appears after `## Plans`
+5. Verify plans are numbered sequentially (1, 2, 3, ...) with no gaps or letters (no "Plan 2a")
+
+If any validation fails, rerun the planner with feedback explaining which structural
+requirement was not met. The plan must follow this exact order after the `---` separator:
+- `# Implementation Plan` (must be first header after `---`)
+- `## Plans` (must appear before any `### Plan N:` headers)
+- `### Plan 1:` (at minimum, Plan 1 must exist)
+- Plans must be numbered sequentially: `### Plan 1:`, `### Plan 2:`, `### Plan 3:`, etc.
+- No letter suffixes allowed (e.g., "Plan 2a" is invalid - renumber to "Plan 3")
+
 ### Step 4: Update Linear Ticket
 
 After all planner invocations complete, update the ticket description directly from the temp file:
