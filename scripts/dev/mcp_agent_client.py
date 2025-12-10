@@ -359,7 +359,8 @@ def cmd_wait(
     except MCPClientError as e:
         # Transport/bridge-level errors (including HTTP timeouts during polling)
         # are NOT client-side max_seconds deadline expiry.
-        # Only explicit deadline expiry (lines 297-305, 321-326) returns status='timeout'.
+        # Only the branches above that return status='timeout' (deadline checks before
+        # starting, during polling, and when fetching output) represent true timeouts.
         # All other MCPClientError exceptions return status='failed'.
         return {"status": "failed", "job_id": job_id, "error": _format_bridge_error(e)}
 
