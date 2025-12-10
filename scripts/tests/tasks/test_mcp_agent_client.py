@@ -595,8 +595,13 @@ class TestErrorEdgeCases:
         # With max_seconds=0, it should timeout immediately
         assert result["status"] == "timeout"
 
-    def test_timeout_error_in_exception(self) -> None:
-        """Test that timeout errors in exceptions are detected."""
+    def test_transport_timeout_error_returns_failed_status(self) -> None:
+        """Test that transport-level timeout errors return status='failed'.
+
+        Transport-level timeouts (e.g., HTTP request timeouts during get_job_status)
+        should return status='failed' because the underlying job may still be running.
+        Only client-side max_seconds deadline expiry returns status='timeout'.
+        """
         fake_client = FakeHttpMCPClient(raise_on_call=MCPClientError("Request timed out after 30s"))
         result = cmd_wait(
             fake_client,  # type: ignore[arg-type]
@@ -605,7 +610,9 @@ class TestErrorEdgeCases:
             max_seconds=60,
             poll_interval=0.01,
         )
-        assert result["status"] == "timeout"
+        assert result["status"] == "failed"
+        assert get_exit_code(result) == 1
+        assert "timed out" in result["error"]
 
     def test_structuredcontent_null_handling(self) -> None:
         """Test that null structuredContent is handled."""
@@ -639,8 +646,12 @@ class TestBridgeErrorHandling:
         result = cmd_start(fake_client, "echo test")  # type: ignore[arg-type]
         assert get_exit_code(result) == 1
 
-    def test_wait_timeout_error_exit_code(self) -> None:
-        """Test that HTTP timeout in wait mode results in exit code 124."""
+    def test_wait_transport_timeout_error_exit_code(self) -> None:
+        """Test that HTTP transport timeout in wait mode results in exit code 1.
+
+        Transport-level timeouts (e.g., HTTP request timeouts) return status='failed'
+        and exit code 1 because the underlying job may still be running.
+        """
         fake_client = FakeHttpMCPClient(raise_on_call=MCPClientError("Request timed out after 30s"))
         result = cmd_wait(
             fake_client,  # type: ignore[arg-type]
@@ -649,8 +660,8 @@ class TestBridgeErrorHandling:
             max_seconds=60,
             poll_interval=0.01,
         )
-        assert result["status"] == "timeout"
-        assert get_exit_code(result) == 124
+        assert result["status"] == "failed"
+        assert get_exit_code(result) == 1
 
     def test_list_connection_failure(self) -> None:
         """Test list mode handles connection failures."""
@@ -671,8 +682,13 @@ class TestBridgeErrorHandling:
         assert result["job_id"] == "job-123"
         assert "Cannot connect" in result["error"]
 
-    def test_timeout_detection_case_insensitive(self) -> None:
-        """Test timeout detection works with various case patterns."""
+    def test_transport_timeout_errors_return_failed_with_preserved_message(self) -> None:
+        """Test that transport timeout errors return status='failed' and preserve error message.
+
+        Various timeout-related error messages from the transport layer should all
+        result in status='failed' (not 'timeout') because the underlying job may
+        still be running. The error message should be preserved for debugging.
+        """
         test_cases = [
             "Request timed out after 30s",
             "Connection TIMED OUT",
@@ -688,7 +704,12 @@ class TestBridgeErrorHandling:
                 max_seconds=60,
                 poll_interval=0.01,
             )
-            assert result["status"] == "timeout", f"Failed for: {error_msg}"
+            assert result["status"] == "failed", f"Failed for: {error_msg}"
+            assert get_exit_code(result) == 1, f"Wrong exit code for: {error_msg}"
+            # Error message should be preserved
+            assert error_msg.lower() in result["error"].lower(), (
+                f"Error not preserved for: {error_msg}"
+            )
 
     def test_server_error_response_preserved(self) -> None:
         """Test that server error messages are preserved in result."""
@@ -982,8 +1003,13 @@ class TestErrorStatusExitCodeMapping:
         # Error message preserved
         assert "Cannot connect to mcp-bridge" in result["error"]
 
-    def test_cmd_wait_sets_timeout_status_for_timeout_error(self) -> None:
-        """Test that cmd_wait sets status='timeout' for timeout errors."""
+    def test_cmd_wait_sets_failed_status_for_transport_timeout_error(self) -> None:
+        """Test that cmd_wait sets status='failed' for transport-level timeout errors.
+
+        Transport-level timeouts (e.g., HTTP request timeouts during get_job_status)
+        return status='failed' because the underlying job may still be running.
+        Only explicit max_seconds deadline expiry (with kill_job) returns status='timeout'.
+        """
         fake_client = FakeHttpMCPClient(raise_on_call=MCPClientError("Request timed out after 30s"))
         result = cmd_wait(
             fake_client,  # type: ignore[arg-type]
@@ -993,10 +1019,12 @@ class TestErrorStatusExitCodeMapping:
             poll_interval=0.01,
         )
 
-        # cmd_wait is responsible for choosing 'timeout' vs 'failed'
-        assert result["status"] == "timeout"
-        # Exit code 124 for timeout
-        assert get_exit_code(result) == 124
+        # Transport-level timeout errors get status='failed'
+        assert result["status"] == "failed"
+        # Exit code 1 for failed
+        assert get_exit_code(result) == 1
+        # Error message preserved
+        assert "timed out" in result["error"]
 
     def test_cmd_wait_sets_failed_status_for_4xx_error(self) -> None:
         """Test that cmd_wait sets status='failed' for HTTP 4xx errors."""
@@ -1017,3 +1045,477 @@ class TestErrorStatusExitCodeMapping:
         assert get_exit_code(result) == 1
         # Structured error format preserved
         assert "[NOT_FOUND]" in result["error"]
+
+
+class TestTimeoutSemantics:
+    """Tests verifying correct timeout status semantics.
+
+    The key distinction:
+    - status='timeout' (exit 124): ONLY for client-side max_seconds deadline expiry
+      where the client explicitly calls kill_job
+    - status='failed' (exit 1): For transport/bridge-level timeouts during
+      call_mcp_tool operations (the underlying job may still be running)
+    """
+
+    def test_max_seconds_deadline_expiry_returns_timeout_status(self, mock_time_sleep: Any) -> None:
+        """Test that explicit max_seconds deadline expiry returns status='timeout'.
+
+        When the client-side deadline is exceeded (remaining <= 0), the client
+        calls kill_job and returns status='timeout' with exit code 124.
+        """
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"job_id": "deadline-test-job"},  # execute_command response
+                {"status": "running"},  # get_job_status response
+                {},  # kill_job response (best effort)
+            ]
+        )
+
+        # Mock time to exceed deadline after first status check
+        call_count = [0]
+
+        def mock_monotonic() -> float:
+            call_count[0] += 1
+            if call_count[0] <= 4:
+                return 100.0  # Within deadline
+            return 200.0  # Exceeds deadline (100 + 10 max_seconds)
+
+        with patch(
+            "scripts.dev.mcp_agent_client.time.monotonic",
+            side_effect=mock_monotonic,
+        ):
+            result = cmd_wait(
+                fake_client,  # type: ignore[arg-type]
+                command="sleep 100",
+                job_id=None,
+                max_seconds=10,
+                poll_interval=0.01,
+            )
+
+        # Client-side deadline expiry returns timeout status
+        assert result["status"] == "timeout"
+        assert result["job_id"] == "deadline-test-job"
+        assert get_exit_code(result) == 124
+        # Error message explains the timeout
+        assert "exceeded" in result["error"] or "timeout" in result["error"].lower()
+
+    def test_attach_mode_transport_timeout_returns_failed_status(
+        self, mock_time_sleep: Any
+    ) -> None:
+        """Test that attach-mode transport timeouts return status='failed'.
+
+        When waiting on an existing job_id (attach mode), if the HTTP client
+        encounters a timeout during get_job_status, it should return status='failed'
+        because the underlying job may still be running.
+        """
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"status": "running"},  # First get_job_status succeeds
+            ]
+        )
+
+        # Make the second call raise a timeout error
+        call_count = [0]
+        original_call = fake_client.call_server_tool
+
+        def call_with_timeout_on_second(
+            server: str, name: str, arguments: dict[str, Any], timeout: float = 30.0
+        ) -> dict[str, Any]:
+            call_count[0] += 1
+            if call_count[0] == 2:
+                raise MCPClientError("Request timed out after 30s")
+            return original_call(server, name, arguments, timeout)
+
+        fake_client.call_server_tool = call_with_timeout_on_second  # type: ignore[method-assign]
+
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command=None,
+            job_id="existing-job-123",
+            max_seconds=600,
+            poll_interval=0.01,
+        )
+
+        # Transport timeout returns failed, not timeout
+        assert result["status"] == "failed"
+        assert result["job_id"] == "existing-job-123"
+        assert get_exit_code(result) == 1
+        # Error message preserved
+        assert "timed out" in result["error"]
+
+    def test_get_job_output_timeout_returns_failed_status(self, mock_time_sleep: Any) -> None:
+        """Test that timeout during get_job_output returns status='failed'.
+
+        Even after job completes, if we get a transport timeout while fetching
+        output, we should return status='failed' (job completed but output unknown).
+        """
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"status": "completed", "exit_code": 0},  # get_job_status succeeds
+            ]
+        )
+
+        # Make the get_job_output call raise a timeout
+        call_count = [0]
+        original_call = fake_client.call_server_tool
+
+        def call_with_timeout_on_output(
+            server: str, name: str, arguments: dict[str, Any], timeout: float = 30.0
+        ) -> dict[str, Any]:
+            call_count[0] += 1
+            if call_count[0] == 2 and name == "get_job_output":
+                raise MCPClientError("Request timed out while fetching output")
+            return original_call(server, name, arguments, timeout)
+
+        fake_client.call_server_tool = call_with_timeout_on_output  # type: ignore[method-assign]
+
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command=None,
+            job_id="job-output-timeout",
+            max_seconds=600,
+            poll_interval=0.01,
+        )
+
+        # Transport timeout returns failed
+        assert result["status"] == "failed"
+        assert result["job_id"] == "job-output-timeout"
+        assert get_exit_code(result) == 1
+        # Error message preserved
+        assert "timed out" in result["error"]
+
+    def test_execute_command_timeout_returns_failed_status(self) -> None:
+        """Test that timeout during execute_command returns status='failed'.
+
+        If the initial command fails to start due to transport timeout,
+        we should return status='failed' since we don't have a job_id.
+        """
+        fake_client = FakeHttpMCPClient(
+            raise_on_call=MCPClientError("Request timed out while starting command")
+        )
+
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=600,
+            poll_interval=0.01,
+        )
+
+        # Transport timeout returns failed
+        assert result["status"] == "failed"
+        assert get_exit_code(result) == 1
+        # Error message preserved
+        assert "timed out" in result["error"]
+
+    def test_deadline_expiry_before_start_returns_timeout_status(self) -> None:
+        """Test that deadline expiry before job starts returns status='timeout'.
+
+        If max_seconds=0, the deadline expires immediately before execute_command
+        can be called, resulting in status='timeout'.
+        """
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"job_id": "wont-be-used"},
+                {},  # kill_job response
+            ]
+        )
+
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=0,
+            poll_interval=0.01,
+        )
+
+        # Deadline expiry returns timeout
+        assert result["status"] == "timeout"
+        assert get_exit_code(result) == 124
+
+    def test_attach_mode_job_id_preserved_on_transport_error(self, mock_time_sleep: Any) -> None:
+        """Test that job_id is preserved in result when transport error occurs.
+
+        When waiting on an existing job and a transport error occurs,
+        the job_id should be included in the result for debugging.
+        """
+        fake_client = FakeHttpMCPClient(raise_on_call=MCPClientError("Connection reset by peer"))
+
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command=None,
+            job_id="preserve-this-id",
+            max_seconds=600,
+            poll_interval=0.01,
+        )
+
+        # job_id should be preserved in the result
+        assert result["status"] == "failed"
+        assert result["job_id"] == "preserve-this-id"
+        assert get_exit_code(result) == 1
+
+
+class TestTimeoutFloorBehavior:
+    """Tests for the timeout floor behavior in cmd_wait's get_remaining_timeout().
+
+    The key behavior:
+    - When remaining > 1.0s: apply 1-second floor for sensible HTTP call timeouts
+    - When remaining <= 1.0s: use exact remaining time to not exceed max_seconds budget
+    - When remaining <= 0: return 0.0 to trigger timeout path
+    """
+
+    def test_small_remaining_budget_not_floored(self, mock_time_sleep: Any) -> None:
+        """Test that remaining time <= 1s is NOT floored to 1s.
+
+        When the remaining budget drops below 1 second, individual HTTP calls
+        should receive the exact remaining time (e.g., 0.5s) rather than being
+        floored to 1s, which would exceed the max_seconds budget.
+        """
+        timeouts_received: list[float] = []
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"status": "running"},  # First get_job_status
+                {"status": "running"},  # Second get_job_status
+                {},  # kill_job response
+            ]
+        )
+
+        # Capture the timeout passed to each call
+        original_call = fake_client.call_server_tool
+
+        def capturing_call(
+            server: str, name: str, arguments: dict[str, Any], timeout: float = 30.0
+        ) -> dict[str, Any]:
+            timeouts_received.append(timeout)
+            return original_call(server, name, arguments, timeout)
+
+        fake_client.call_server_tool = capturing_call  # type: ignore[method-assign]
+
+        # Mock time to have small remaining budget
+        call_count = [0]
+
+        def mock_monotonic() -> float:
+            """Return time values that create a small remaining budget.
+
+            Timeline (max_seconds=2):
+            - Call 1 (start): time=100.0, deadline=102.0, remaining=2.0 -> timeout=max(1.0, 2.0)=2.0
+            - Call 2 (status): time=101.5, deadline=102.0, remaining=0.5 -> timeout=0.5 (no floor)
+            - Call 3 (status check for loop): time=102.5, remaining=-0.5 -> triggers timeout
+            """
+            call_count[0] += 1
+            if call_count[0] <= 2:  # Initial setup
+                return 100.0
+            elif call_count[0] <= 4:  # First get_job_status
+                return 101.5  # 0.5s remaining
+            else:  # Deadline exceeded
+                return 102.5
+
+        with patch(
+            "scripts.dev.mcp_agent_client.time.monotonic",
+            side_effect=mock_monotonic,
+        ):
+            result = cmd_wait(
+                fake_client,  # type: ignore[arg-type]
+                command=None,
+                job_id="test-small-budget",
+                max_seconds=2,
+                poll_interval=0.01,
+            )
+
+        # Verify timeout status
+        assert result["status"] == "timeout"
+
+        # Key assertion: when remaining was 0.5s, the timeout should be 0.5s, NOT 1.0s
+        # The second call (first get_job_status) should have received ~0.5s timeout
+        assert len(timeouts_received) >= 1
+        small_timeouts = [t for t in timeouts_received if t < 1.0]
+        assert len(small_timeouts) > 0, (
+            f"Expected at least one timeout < 1.0s when budget is low, but got: {timeouts_received}"
+        )
+
+    def test_large_remaining_budget_uses_floor(self, mock_time_sleep: Any) -> None:
+        """Test that remaining time > 1s still applies the 1-second floor.
+
+        When there's plenty of budget remaining (e.g., 0.8s remaining but
+        logically we'd want a reasonable minimum), we should still get
+        at least 1s for HTTP calls when remaining > 1.0.
+        """
+        timeouts_received: list[float] = []
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"status": "completed", "exit_code": 0},  # get_job_status
+                {"stdout": "done", "stderr": ""},  # get_job_output
+            ]
+        )
+
+        original_call = fake_client.call_server_tool
+
+        def capturing_call(
+            server: str, name: str, arguments: dict[str, Any], timeout: float = 30.0
+        ) -> dict[str, Any]:
+            timeouts_received.append(timeout)
+            return original_call(server, name, arguments, timeout)
+
+        fake_client.call_server_tool = capturing_call  # type: ignore[method-assign]
+
+        # Mock time with large remaining budget
+        def mock_monotonic() -> float:
+            """Return time values that keep large remaining budget.
+
+            Timeline (max_seconds=60):
+            - Always return 100.0, deadline=160.0, remaining=60.0
+            """
+            return 100.0
+
+        with patch(
+            "scripts.dev.mcp_agent_client.time.monotonic",
+            side_effect=mock_monotonic,
+        ):
+            result = cmd_wait(
+                fake_client,  # type: ignore[arg-type]
+                command=None,
+                job_id="test-large-budget",
+                max_seconds=60,
+                poll_interval=0.01,
+            )
+
+        assert result["status"] == "completed"
+
+        # All timeouts should be at least 1.0s when budget is large
+        for timeout in timeouts_received:
+            assert timeout >= 1.0, f"Expected timeout >= 1.0s but got {timeout}"
+
+    def test_cmd_wait_respects_max_seconds_with_small_budget(self, mock_time_sleep: Any) -> None:
+        """Test that cmd_wait does not significantly exceed max_seconds.
+
+        This is an integration test that verifies the overall behavior:
+        when max_seconds is small (e.g., 2s), the total HTTP call timeouts
+        for status/output calls should not add up to significantly more than
+        max_seconds. Note: kill_job has a hardcoded 1.0s timeout which is
+        excluded from this budget check.
+        """
+        timeouts_received: list[tuple[str, float]] = []
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"status": "running"},  # get_job_status
+                {},  # kill_job
+            ]
+        )
+
+        original_call = fake_client.call_server_tool
+
+        def capturing_call(
+            server: str, name: str, arguments: dict[str, Any], timeout: float = 30.0
+        ) -> dict[str, Any]:
+            timeouts_received.append((name, timeout))
+            return original_call(server, name, arguments, timeout)
+
+        fake_client.call_server_tool = capturing_call  # type: ignore[method-assign]
+
+        # Simulate realistic time progression where remaining drops to 0.3s
+        call_count = [0]
+
+        def mock_monotonic() -> float:
+            call_count[0] += 1
+            # First calls: within budget
+            if call_count[0] <= 2:
+                return 100.0
+            # After first status check: only 0.3s remaining
+            elif call_count[0] <= 4:
+                return 101.7  # max_seconds=2, deadline=102, remaining=0.3
+            # Deadline passed
+            else:
+                return 102.1
+
+        with patch(
+            "scripts.dev.mcp_agent_client.time.monotonic",
+            side_effect=mock_monotonic,
+        ):
+            result = cmd_wait(
+                fake_client,  # type: ignore[arg-type]
+                command=None,
+                job_id="budget-test",
+                max_seconds=2,
+                poll_interval=0.01,
+            )
+
+        assert result["status"] == "timeout"
+
+        # Exclude kill_job calls (they have hardcoded 1.0s timeout)
+        status_timeouts = [t for name, t in timeouts_received if name != "kill_job"]
+
+        # The key assertion: sum of status/output timeouts should not exceed max_seconds
+        # With the fix, when remaining=0.3s, we get timeout=0.3s instead of 1.0s
+        total_timeout_budget = sum(status_timeouts)
+        max_seconds = 2
+        # Allow some tolerance for timing overhead
+        assert total_timeout_budget <= max_seconds + 0.5, (
+            f"Total timeout budget ({total_timeout_budget}s) significantly exceeded "
+            f"max_seconds ({max_seconds}s). Timeouts: {timeouts_received}"
+        )
+
+    def test_boundary_at_exactly_one_second(self, mock_time_sleep: Any) -> None:
+        """Test behavior when remaining is exactly 1.0 second.
+
+        When remaining == 1.0s, it should be returned unchanged (no floor applied
+        since the floor IS 1.0s anyway).
+        """
+        timeouts_received: list[tuple[str, float]] = []
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"status": "completed", "exit_code": 0},
+                {"stdout": "", "stderr": ""},
+            ]
+        )
+
+        original_call = fake_client.call_server_tool
+
+        def capturing_call(
+            server: str, name: str, arguments: dict[str, Any], timeout: float = 30.0
+        ) -> dict[str, Any]:
+            timeouts_received.append((name, timeout))
+            return original_call(server, name, arguments, timeout)
+
+        fake_client.call_server_tool = capturing_call  # type: ignore[method-assign]
+
+        # Mock time so remaining is exactly 1.0s for the get_job_status call
+        # deadline = start_time + max_seconds
+        # We want remaining = deadline - current_time = 1.0
+        # So current_time = deadline - 1.0 = start_time + max_seconds - 1.0
+        call_count = [0]
+        start_time = 100.0
+        max_seconds_val = 5
+
+        def mock_monotonic() -> float:
+            call_count[0] += 1
+            # Call 1: deadline calculation (start_time)
+            if call_count[0] == 1:
+                return start_time
+            # Call 2+: for get_remaining_timeout during get_job_status
+            # Set to (deadline - 1.0) so remaining = 1.0
+            return start_time + max_seconds_val - 1.0  # 104.0
+
+        with patch(
+            "scripts.dev.mcp_agent_client.time.monotonic",
+            side_effect=mock_monotonic,
+        ):
+            result = cmd_wait(
+                fake_client,  # type: ignore[arg-type]
+                command=None,
+                job_id="boundary-test",
+                max_seconds=max_seconds_val,
+                poll_interval=0.01,
+            )
+
+        assert result["status"] == "completed"
+
+        # At boundary (remaining=1.0), should get exactly 1.0s
+        # Find the get_job_status call
+        status_calls = [(name, t) for name, t in timeouts_received if name == "get_job_status"]
+        assert len(status_calls) >= 1, (
+            f"Expected at least one get_job_status call, got: {timeouts_received}"
+        )
+        boundary_timeout = status_calls[0][1]
+        assert abs(boundary_timeout - 1.0) < 0.1, (
+            f"Expected timeout ~1.0s at boundary, got {boundary_timeout}"
+        )

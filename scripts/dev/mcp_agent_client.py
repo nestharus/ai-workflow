@@ -110,13 +110,13 @@ def _format_bridge_error(e: MCPClientError) -> str:
     - Return anything other than a string
     - Perform timeout detection for status determination
 
-    Note on timeout detection: The logic that decides between status="timeout"
-    vs status="failed" MUST remain in cmd_wait() (see lines 597-606 in
-    mcp_agent_client.py). That function uses pattern matching on the error
-    message (case-insensitive check for "timed out" or "timeout") to set the
-    appropriate status. This helper only formats the message string; it does
-    NOT influence status selection. This separation ensures timeout semantics
-    (exit code 124) are controlled in one place.
+    Note on timeout semantics: The status="timeout" (exit code 124) is ONLY
+    returned when cmd_wait() explicitly detects that the client-side max_seconds
+    deadline has been exceeded and calls kill_job. Transport-level or bridge-level
+    timeouts (e.g., HTTP request timeouts during get_job_status/get_job_output)
+    result in status="failed" (exit code 1) because the underlying job may still
+    be running. This helper only formats error messages; it does NOT influence
+    status selection.
 
     The original MCPClientError error message is always preserved in the output.
 
@@ -265,11 +265,24 @@ def cmd_wait(
         deadline = time.monotonic() + max_seconds
 
         def get_remaining_timeout() -> float:
-            """Get remaining time before deadline, with minimum floor."""
+            """Get remaining time before deadline, with minimum floor for large budgets.
+
+            Returns:
+                - 0.0 if deadline has passed (remaining <= 0)
+                - remaining unchanged if remaining <= 1.0 (preserve tight deadline)
+                - max(1.0, remaining) if remaining > 1.0 (ensure reasonable call timeout)
+
+            This ensures we don't exceed max_seconds when the budget is nearly exhausted,
+            while still giving individual HTTP calls a reasonable timeout when there's
+            plenty of time remaining.
+            """
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return 0.0
-            # Use at least 1 second for individual calls to allow completion
+            # Only apply the 1-second floor when we have more time remaining
+            # to avoid exceeding max_seconds when budget is nearly exhausted
+            if remaining <= 1.0:
+                return remaining
             return max(1.0, remaining)
 
         if command:
@@ -344,17 +357,10 @@ def cmd_wait(
             time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
 
     except MCPClientError as e:
-        # Detect timeout errors and return appropriate status
-        # cmd_wait is responsible for choosing 'timeout' vs 'failed' status
-        error_msg = str(e).lower()
-        if "timed out" in error_msg or "timeout" in error_msg:
-            # cmd_wait sets status to "timeout" - helper just formats the message
-            return {
-                "status": "timeout",
-                "job_id": job_id,
-                "error": f"Job exceeded {max_seconds}s timeout: {_format_bridge_error(e)}",
-            }
-        # cmd_wait sets status to "failed" for non-timeout errors
+        # Transport/bridge-level errors (including HTTP timeouts during polling)
+        # are NOT client-side max_seconds deadline expiry.
+        # Only explicit deadline expiry (lines 297-305, 321-326) returns status='timeout'.
+        # All other MCPClientError exceptions return status='failed'.
         return {"status": "failed", "job_id": job_id, "error": _format_bridge_error(e)}
 
 
