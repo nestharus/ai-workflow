@@ -79,8 +79,11 @@ class TestGetMCPClient:
         client = get_mcp_client()
         assert isinstance(client, HttpMCPClient)
 
-    def test_accepts_base_url_parameter(self) -> None:
+    def test_accepts_base_url_parameter(self, monkeypatch: Any) -> None:
         """Test that get_mcp_client accepts base_url parameter."""
+        # Ensure bridge env vars don't override the explicit base_url in this test.
+        monkeypatch.delenv("MCP_BRIDGE_SOCKET", raising=False)
+        monkeypatch.delenv("MCP_BRIDGE_URL", raising=False)
         client = get_mcp_client(base_url="http://custom:9000")
         assert isinstance(client, HttpMCPClient)
         assert client.base_url == "http://custom:9000"
