@@ -103,15 +103,12 @@ PLAN UPDATE COMPLETE - REVIEW REQUESTED
 ================================================================================
 
 Ticket: <TICKET_ID> - <TITLE>
-Plan updated in Linear ticket description.
+
+Please review the updated plan on the ticket before executing:
+`uv run linear get-issue <TICKET_ID>`
 
 Changes incorporated:
 <SUMMARY_OF_ALL_UPDATES>
-
-Please review the updated plan on the ticket before executing:
-<LINEAR_TICKET_URL>
-
-Get plan description with `uv run linear get-issue <TICKET_ID>`
 ================================================================================
 ```
 
