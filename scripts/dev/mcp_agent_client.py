@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""MCP Agent Client - Manages long-running agent processes via MCP background-job server.
+"""MCP Agent Client - HTTP-based bridge client for managing long-running background jobs.
 
-This script acts as an MCP client to the background-job server, providing modes for
-starting, waiting on, listing, and cancelling background jobs. It replaces poll_agents.py
-with a more robust solution that handles all polling in Python.
+This client acts as a CLI and programmatic interface to the REST-to-MCP bridge,
+which manages background job processes. It normalizes provider-native job payloads
+from tools like `execute_command`, `get_job_status`, `get_job_output`, `list_jobs`,
+and `kill_job` into a stable JSON schema for consistent downstream consumption.
 
 Architecture Note (Layering):
     This client implements the **normalization layer** for background-job tool results.
@@ -18,7 +19,35 @@ Architecture Note (Layering):
     HTTP-only consumers of the bridge should expect provider-native payloads and
     implement their own normalization if needed.
 
+The module is designed to work across platforms by relying on the MCP bridge for
+process management, avoiding platform-specific process APIs.
+
+Configuration:
+    The bridge endpoint is configured with the following precedence:
+    1. --socket-path CLI flag (highest priority)
+    2. MCP_BRIDGE_SOCKET environment variable
+    3. --server-url CLI flag
+    4. MCP_BRIDGE_URL environment variable
+    5. Default: http://localhost:8080 (lowest priority)
+
+    When a socket path is configured (via flag or env), all URL settings are ignored.
+
+    To start the bridge server:
+        uv run agent.mcp bridge start
+
+    To start with Unix socket:
+        export MCP_BRIDGE_SOCKET=/tmp/mcp-sockets/mcp-bridge.sock
+        uv run agent.mcp bridge start --socket $MCP_BRIDGE_SOCKET
+
 Usage:
+    # Using environment variables (existing behavior):
+    export MCP_BRIDGE_SOCKET=/tmp/mcp-sockets/mcp-bridge.sock
+    uv run agent.mcp list
+
+    # Using explicit CLI flags (new):
+    uv run agent.mcp --socket-path /tmp/mcp-sockets/mcp-bridge.sock list
+    uv run agent.mcp --server-url http://localhost:8080 start --command "..."
+
     # Start a job and return immediately with job_id
     uv run agent.mcp start --command "uv run agent.tasks --agent planner --prompt '...'"
 
@@ -50,10 +79,6 @@ Exit Codes:
     1   - Client/server error (startup failure, malformed response)
     124 - Job exceeded --max-seconds timeout
     137 - Job was terminated via cancel
-
-Platform Support:
-    This script uses select.select() on pipes, which is not supported on native Windows.
-    It works on Linux, macOS, and WSL (Windows Subsystem for Linux).
 """
 
 from __future__ import annotations
@@ -62,379 +87,105 @@ import argparse
 import contextlib
 import json
 import os
-import select
-import subprocess
 import sys
-import threading
 import time
 from typing import Any
 
-from scripts.servers.mcp.client.http_client import HttpMCPClient
-from scripts.servers.mcp.client.http_client import MCPClientError as HttpMCPClientError
-
-
-class MCPClientError(Exception):
-    """Raised when MCP communication fails."""
-
-    pass
-
-
-class MCPClient:
-    """Minimal MCP client for background-job server using JSON-RPC 2.0.
-
-    Uses newline-delimited JSON format (FastMCP).
-    """
-
-    def __init__(
-        self,
-        command: list[str] | None = None,
-        startup_timeout: float = 10.0,
-    ) -> None:
-        """Start MCP server as subprocess.
-
-        Args:
-            command: Command to start MCP server. Defaults to ["uvx", "mcp-background-job"].
-            startup_timeout: Seconds to wait for server startup.
-
-        Raises:
-            MCPClientError: If server fails to start or times out.
-        """
-        if command is None:
-            command = ["uvx", "mcp-background-job"]
-
-        try:
-            self.proc = subprocess.Popen(
-                command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=0,  # Unbuffered for immediate I/O
-            )
-        except OSError as e:
-            raise MCPClientError(f"Failed to start MCP server: {e}") from e
-
-        self._request_id = 0
-        self._startup_timeout = startup_timeout
-        self._initialized = False
-
-        # Start background thread to drain stderr (prevents pipe blocking)
-        self._stderr_buffer = bytearray()
-        self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
-        self._stderr_thread.start()
-
-        # Wait for server to become ready (poll until startup_timeout)
-        # MCP servers are considered ready when the process is alive and accepting stdin
-        deadline = time.monotonic() + startup_timeout
-        poll_interval = 0.1  # Check every 100ms
-        while time.monotonic() < deadline:
-            time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
-            poll_result = self.proc.poll()
-            if poll_result is not None:
-                # Server exited - clean up and raise
-                self._shutdown(timeout=1.0)
-                raise MCPClientError(
-                    f"MCP server exited immediately with code {poll_result}: "
-                    f"{bytes(self._stderr_buffer).decode(errors='replace')}"
-                )
-            # Server is still running - perform MCP handshake
-            try:
-                self._initialize()
-            except Exception:
-                self._shutdown(timeout=1.0)
-                raise
-            else:
-                return
-        # Timeout waiting for startup
-        self._shutdown(timeout=1.0)
-        raise MCPClientError(f"MCP server did not become ready within {startup_timeout}s")
-
-    def _initialize(self) -> None:
-        """Perform MCP protocol handshake."""
-        if self._initialized:
-            return
-
-        # Send initialize request
-        self._request_id += 1
-        request = {
-            "jsonrpc": "2.0",
-            "id": self._request_id,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "mcp-agent-client", "version": "1.0.0"},
-            },
-        }
-        self._send_json(request)
-
-        # Read initialize response, skipping notifications and mismatched ids
-        deadline = time.monotonic() + self._startup_timeout
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise MCPClientError(f"MCP initialize timed out after {self._startup_timeout}s")
-            response = self._read_response(timeout=remaining)
-            # Skip notifications (no id) and mismatched responses
-            if "id" not in response:
-                continue
-            if response.get("id") != self._request_id:
-                continue
-            break
-
-        if "error" in response:
-            raise MCPClientError(f"MCP initialize failed: {response['error']}")
-
-        if "result" not in response or not isinstance(response.get("result"), dict):
-            raise MCPClientError("Invalid MCP initialize response: missing or invalid 'result'")
-
-        # Send initialized notification
-        notification = {
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized",
-        }
-        self._send_json(notification)
-
-        self._initialized = True
-
-    def _send_json(self, obj: dict[str, Any]) -> None:
-        """Send newline-delimited JSON."""
-        if self.proc.stdin is None:
-            raise MCPClientError("MCP server stdin not available")
-
-        try:
-            data = (json.dumps(obj) + "\n").encode("utf-8")
-        except (TypeError, ValueError) as e:
-            raise MCPClientError(f"Failed to serialize JSON: {e}") from e
-
-        try:
-            total = 0
-            while total < len(data):
-                written = self.proc.stdin.write(data[total:])
-                if written is None or written == 0:
-                    raise MCPClientError("Failed to send request: partial write")
-                total += written
-            self.proc.stdin.flush()
-        except (BrokenPipeError, OSError, ValueError) as e:
-            raise MCPClientError(f"Failed to send request: {e}") from e
-
-    def _drain_stderr(self) -> None:
-        """Background thread to drain stderr and prevent pipe blocking."""
-        if self.proc.stderr is None:
-            return
-        while True:
-            try:
-                chunk = self.proc.stderr.read(1024)
-                if not chunk:
-                    break
-                self._stderr_buffer.extend(chunk)
-                # Keep only last 64KB
-                if len(self._stderr_buffer) > 65536:
-                    del self._stderr_buffer[:-65536]
-            except (OSError, ValueError):
-                # Pipe closed or invalid
-                break
-
-    def _shutdown(self, timeout: float = 5.0) -> None:
-        """Robust shutdown: terminate/kill process, close pipes, join stderr thread.
-
-        Args:
-            timeout: Seconds to wait for graceful termination before killing.
-        """
-        # Terminate process if running
-        if self.proc.poll() is None:
-            with contextlib.suppress(OSError, ProcessLookupError):
-                self.proc.terminate()
-            try:
-                self.proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                with contextlib.suppress(OSError, ProcessLookupError):
-                    self.proc.kill()
-                with contextlib.suppress(OSError):
-                    self.proc.wait()
-
-        # Close all pipes
-        if self.proc.stdin:
-            with contextlib.suppress(OSError):
-                self.proc.stdin.close()
-        if self.proc.stdout:
-            with contextlib.suppress(OSError):
-                self.proc.stdout.close()
-        if self.proc.stderr:
-            with contextlib.suppress(OSError):
-                self.proc.stderr.close()
-
-        # Join stderr drain thread (with timeout to avoid hanging)
-        if hasattr(self, "_stderr_thread") and self._stderr_thread.is_alive():
-            self._stderr_thread.join(timeout=1.0)
-
-    def _read_response(self, timeout: float) -> dict[str, Any]:
-        """Read a newline-delimited JSON-RPC response.
-
-        Uses newline-delimited JSON format (FastMCP).
-
-        Args:
-            timeout: Timeout in seconds.
-
-        Returns:
-            Parsed JSON response.
-
-        Raises:
-            MCPClientError: On timeout, malformed response, or process exit.
-        """
-        if self.proc.stdout is None:
-            raise MCPClientError("MCP server stdout not available")
-
-        deadline = time.monotonic() + timeout
-        line_data = b""
-
-        try:
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise MCPClientError(f"MCP call timed out after {timeout}s")
-
-                # Check if data is available
-                # NOTE: select.select on pipes only works on Unix; this script is designed
-                # for WSL/Linux development environments. Native Windows would require
-                # a threading-based reader or WaitForSingleObject/PeekNamedPipe.
-                ready, _, _ = select.select([self.proc.stdout], [], [], min(remaining, 0.1))
-                if not ready:
-                    # Check if process died
-                    if self.proc.poll() is not None:
-                        raise MCPClientError("MCP server exited unexpectedly")
-                    continue
-
-                byte = self.proc.stdout.read(1)
-                if not byte:
-                    if self.proc.poll() is not None:
-                        raise MCPClientError("MCP server exited unexpectedly")
-                    continue
-
-                line_data += byte
-
-                # Limit line size to prevent memory exhaustion
-                max_line_size = 100 * 1024 * 1024  # 100MB
-                if len(line_data) > max_line_size:
-                    raise MCPClientError(f"Response line exceeds {max_line_size} byte limit")
-
-                # Newline marks end of JSON message
-                if byte == b"\n":
-                    break
-
-        except (OSError, ValueError) as e:
-            raise MCPClientError(f"I/O error reading response: {e}") from e
-
-        try:
-            text = line_data.decode("utf-8").strip()
-            if not text:
-                raise MCPClientError("Empty response from server")
-            return json.loads(text)  # type: ignore[no-any-return]
-        except UnicodeDecodeError as e:
-            raise MCPClientError(f"Invalid UTF-8 in response: {e} - {line_data[:200]!r}") from e
-        except json.JSONDecodeError as e:
-            raise MCPClientError(f"Invalid JSON response: {e} - {line_data[:200]!r}") from e
-
-    def call_tool(
-        self, name: str, arguments: dict[str, Any], timeout: float = 30.0
-    ) -> dict[str, Any]:
-        """Call an MCP tool and return result.
-
-        Uses newline-delimited JSON format (FastMCP).
-
-        Args:
-            name: Tool name (e.g., "execute_command", "get_job_status").
-            arguments: Tool arguments dict.
-            timeout: Per-call timeout in seconds.
-
-        Returns:
-            Result dict from tool call.
-
-        Raises:
-            MCPClientError: On JSON-RPC error, timeout, or unexpected process exit.
-        """
-        self._request_id += 1
-        request = {
-            "jsonrpc": "2.0",
-            "id": self._request_id,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": arguments},
-        }
-
-        self._send_json(request)
-
-        # Read response, validating that the id matches our request
-        deadline = time.monotonic() + timeout
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise MCPClientError(f"MCP call timed out after {timeout}s")
-            response = self._read_response(remaining)
-            # Skip notifications (no id) and mismatched responses
-            if "id" not in response:
-                continue
-            if response.get("id") != self._request_id:
-                continue
-            break
-
-        # Validate JSON-RPC response
-        if "error" in response:
-            error = response["error"]
-            if not isinstance(error, dict):
-                raise MCPClientError(f"Invalid JSON-RPC error type: {type(error).__name__}")
-            code = error.get("code", -1)
-            message = error.get("message", "Unknown error")
-            raise MCPClientError(f"JSON-RPC error {code}: {message}")
-
-        if "result" not in response:
-            raise MCPClientError("Invalid JSON-RPC response: missing 'result'")
-
-        result = response["result"]
-        if not isinstance(result, dict):
-            raise MCPClientError(f"Invalid JSON-RPC result type: {type(result).__name__}")
-        return result
-
-    def close(self) -> None:
-        """Terminate MCP server subprocess."""
-        self._shutdown()
-
-
-def get_mcp_client() -> MCPClient | HttpMCPClient:
-    """Get MCP client based on MCP_TRANSPORT environment variable.
-
-    Returns:
-        MCPClient if MCP_TRANSPORT is not set or is "stdio"
-        HttpMCPClient if MCP_TRANSPORT is "http"
-
-    Raises:
-        ValueError: If MCP_TRANSPORT is set to an unknown value
-    """
-    transport = os.environ.get("MCP_TRANSPORT", "stdio").lower()
-    if transport == "stdio":
-        return MCPClient()
-    elif transport == "http":
-        return HttpMCPClient()
-    else:
-        raise ValueError(f"Unknown MCP_TRANSPORT: {transport}. Use 'stdio' or 'http'")
-
+from scripts.servers.mcp.client.http_client import HttpMCPClient, MCPClientError
 
 # Default server name for HTTP transport (configurable via MCP_SERVER env var)
 _MCP_SERVER = os.environ.get("MCP_SERVER", "background-job")
 
 
+def _format_bridge_error(e: MCPClientError) -> str:
+    """Format bridge errors with consistent, user-friendly messages.
+
+    This helper operates purely on the string message from MCPClientError,
+    detecting specific failure patterns via substring matching and optionally
+    wrapping or prefixing the message with human-oriented guidance.
+
+    IMPORTANT: This function MUST NOT:
+    - Remove or obscure technical details from the original error message
+    - Set status values or influence exit codes (that's cmd_* responsibility)
+    - Return anything other than a string
+    - Perform timeout detection for status determination
+
+    Note on timeout detection: The logic that decides between status="timeout"
+    vs status="failed" MUST remain in cmd_wait() (see lines 597-606 in
+    mcp_agent_client.py). That function uses pattern matching on the error
+    message (case-insensitive check for "timed out" or "timeout") to set the
+    appropriate status. This helper only formats the message string; it does
+    NOT influence status selection. This separation ensures timeout semantics
+    (exit code 124) are controlled in one place.
+
+    The original MCPClientError error message is always preserved in the output.
+
+    Args:
+        e: The MCPClientError exception.
+
+    Returns:
+        Formatted error message string containing the original error details.
+    """
+    error_msg = str(e)
+
+    # Connection failures: already have actionable guidance from HttpMCPClient
+    # Pattern: "Cannot connect to mcp-bridge at ..."
+    if "Cannot connect to mcp-bridge" in error_msg:
+        # Preserve as-is - HttpMCPClient already includes setup instructions
+        return error_msg
+
+    # Timeout errors: already formatted by HttpMCPClient
+    # Pattern: "Request timed out after {timeout}s" or similar
+    if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
+        return error_msg
+
+    # HTTP 4xx/5xx errors: HttpMCPClient formats as "[ERROR_TYPE] message"
+    # or "HTTP request failed: ..." - preserve the structured format
+    if error_msg.startswith("[") or "HTTP request failed" in error_msg:
+        return error_msg
+
+    # For any other errors, return as-is (already formatted by HttpMCPClient)
+    return error_msg
+
+
+def get_mcp_client(
+    base_url: str | None = None,
+    socket_path: str | None = None,
+) -> HttpMCPClient:
+    """Get HTTP MCP client for bridge communication.
+
+    Args:
+        base_url: Bridge server URL (from --server-url CLI flag).
+        socket_path: Unix socket path (from --socket-path CLI flag).
+
+    Returns:
+        Configured HttpMCPClient instance.
+
+    Precedence (highest to lowest):
+        1. socket_path argument (--socket-path CLI flag)
+        2. MCP_BRIDGE_SOCKET environment variable
+        3. base_url argument (--server-url CLI flag)
+        4. MCP_BRIDGE_URL environment variable
+        5. Default: http://localhost:8080
+
+    When socket_path is set (via arg or env), URL settings are ignored.
+    CLI flags override their corresponding environment variables.
+    """
+    # Precedence is handled by HttpMCPClient constructor:
+    # socket_path arg > MCP_BRIDGE_SOCKET env > base_url arg > MCP_BRIDGE_URL env > default
+    return HttpMCPClient(base_url=base_url, socket_path=socket_path)
+
+
 def call_mcp_tool(
-    client: MCPClient | HttpMCPClient,
+    client: HttpMCPClient,
     name: str,
     arguments: dict[str, Any],
     timeout: float = 30.0,
 ) -> dict[str, Any]:
-    """Call an MCP tool using the appropriate client method.
-
-    For stdio transport (MCPClient), calls call_tool() directly.
-    For HTTP transport (HttpMCPClient), calls call_server_tool() with the
-    server name from MCP_SERVER env var (defaults to 'background-job').
+    """Call an MCP tool using the HTTP client.
 
     Args:
-        client: MCP client instance.
+        client: HTTP MCP client instance.
         name: Tool name.
         arguments: Tool arguments.
         timeout: Request timeout in seconds.
@@ -443,20 +194,18 @@ def call_mcp_tool(
         Result dict from tool call.
 
     Raises:
-        MCPClientError or HttpMCPClientError: On communication failure.
+        MCPClientError: On communication failure.
     """
-    if isinstance(client, HttpMCPClient):
-        return client.call_server_tool(
-            server=_MCP_SERVER, name=name, arguments=arguments, timeout=timeout
-        )
-    return client.call_tool(name=name, arguments=arguments, timeout=timeout)
+    return client.call_server_tool(
+        server=_MCP_SERVER, name=name, arguments=arguments, timeout=timeout
+    )
 
 
-def cmd_start(client: MCPClient | HttpMCPClient, command: str) -> dict[str, Any]:
+def cmd_start(client: HttpMCPClient, command: str) -> dict[str, Any]:
     """Start a job and return immediately.
 
     Args:
-        client: MCP client instance.
+        client: HTTP MCP client instance.
         command: Shell command to execute.
 
     Returns:
@@ -471,8 +220,8 @@ def cmd_start(client: MCPClient | HttpMCPClient, command: str) -> dict[str, Any]
             return {"status": "failed", "error": "Invalid response format from server"}
         # Normalize: provider returns `id`, we expose `job_id` for consistency
         job_id = structured.get("job_id", structured.get("id"))
-    except (MCPClientError, HttpMCPClientError) as e:
-        return {"status": "failed", "error": str(e)}
+    except MCPClientError as e:
+        return {"status": "failed", "error": _format_bridge_error(e)}
     else:
         if not job_id:
             return {"status": "failed", "error": "No job_id returned by server"}
@@ -480,7 +229,7 @@ def cmd_start(client: MCPClient | HttpMCPClient, command: str) -> dict[str, Any]
 
 
 def cmd_wait(
-    client: MCPClient | HttpMCPClient,
+    client: HttpMCPClient,
     command: str | None,
     job_id: str | None,
     max_seconds: int,
@@ -489,7 +238,7 @@ def cmd_wait(
     """Start a job (or attach to existing) and wait for completion.
 
     Args:
-        client: MCP client instance.
+        client: HTTP MCP client instance.
         command: Shell command to execute (if starting new job).
         job_id: Existing job ID to wait on.
         max_seconds: Maximum time to wait.
@@ -547,7 +296,7 @@ def cmd_wait(
             remaining = get_remaining_timeout()
             if remaining <= 0:
                 # Kill job on timeout (best effort, with very short timeout)
-                with contextlib.suppress(MCPClientError, HttpMCPClientError):
+                with contextlib.suppress(MCPClientError):
                     call_mcp_tool(client, "kill_job", {"job_id": job_id}, 1.0)
                 return {
                     "status": "timeout",
@@ -594,23 +343,26 @@ def cmd_wait(
 
             time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
 
-    except (MCPClientError, HttpMCPClientError) as e:
+    except MCPClientError as e:
         # Detect timeout errors and return appropriate status
+        # cmd_wait is responsible for choosing 'timeout' vs 'failed' status
         error_msg = str(e).lower()
         if "timed out" in error_msg or "timeout" in error_msg:
+            # cmd_wait sets status to "timeout" - helper just formats the message
             return {
                 "status": "timeout",
                 "job_id": job_id,
-                "error": f"Job exceeded {max_seconds}s timeout: {e}",
+                "error": f"Job exceeded {max_seconds}s timeout: {_format_bridge_error(e)}",
             }
-        return {"status": "failed", "job_id": job_id, "error": str(e)}
+        # cmd_wait sets status to "failed" for non-timeout errors
+        return {"status": "failed", "job_id": job_id, "error": _format_bridge_error(e)}
 
 
-def cmd_list(client: MCPClient | HttpMCPClient) -> dict[str, Any]:
+def cmd_list(client: HttpMCPClient) -> dict[str, Any]:
     """List all jobs.
 
     Args:
-        client: MCP client instance.
+        client: HTTP MCP client instance.
 
     Returns:
         Result dict with status and jobs list.
@@ -623,15 +375,15 @@ def cmd_list(client: MCPClient | HttpMCPClient) -> dict[str, Any]:
         if not isinstance(structured, dict):
             return {"status": "failed", "error": "Invalid response format from server"}
         return {"status": "completed", "jobs": structured.get("jobs", [])}
-    except (MCPClientError, HttpMCPClientError) as e:
-        return {"status": "failed", "error": str(e)}
+    except MCPClientError as e:
+        return {"status": "failed", "error": _format_bridge_error(e)}
 
 
-def cmd_cancel(client: MCPClient | HttpMCPClient, job_id: str) -> dict[str, Any]:
+def cmd_cancel(client: HttpMCPClient, job_id: str) -> dict[str, Any]:
     """Cancel a running job.
 
     Args:
-        client: MCP client instance.
+        client: HTTP MCP client instance.
         job_id: ID of job to cancel.
 
     Returns:
@@ -639,8 +391,8 @@ def cmd_cancel(client: MCPClient | HttpMCPClient, job_id: str) -> dict[str, Any]
     """
     try:
         call_mcp_tool(client, "kill_job", {"job_id": job_id})
-    except (MCPClientError, HttpMCPClientError) as e:
-        return {"status": "failed", "job_id": job_id, "error": str(e)}
+    except MCPClientError as e:
+        return {"status": "failed", "job_id": job_id, "error": _format_bridge_error(e)}
     else:
         return {"status": "killed", "job_id": job_id}
 
@@ -686,6 +438,19 @@ def main() -> int:
         epilog=__doc__,
     )
 
+    # Top-level arguments for bridge configuration (apply to all subcommands)
+    parser.add_argument(
+        "--server-url",
+        help="MCP bridge server URL (overrides MCP_BRIDGE_URL env var)",
+    )
+    parser.add_argument(
+        "--socket-path",
+        help=(
+            "Unix socket path for MCP bridge "
+            "(overrides MCP_BRIDGE_SOCKET env var, takes precedence over --server-url)"
+        ),
+    )
+
     subparsers = parser.add_subparsers(dest="mode", required=True, help="Operation mode")
 
     # Start mode
@@ -722,9 +487,11 @@ def main() -> int:
     if args.mode == "wait" and not args.command and not args.job_id:
         parser.error("wait mode requires either --command or --job-id")
 
-    client = None
     try:
-        client = get_mcp_client()
+        client = get_mcp_client(
+            base_url=args.server_url,
+            socket_path=args.socket_path,
+        )
 
         if args.mode == "start":
             result = cmd_start(client, args.command)
@@ -747,7 +514,7 @@ def main() -> int:
         return get_exit_code(result)
 
     except MCPClientError as e:
-        result = {"status": "failed", "error": str(e)}
+        result = {"status": "failed", "error": _format_bridge_error(e)}
         print(json.dumps(result, indent=2))
         return 1
 
@@ -760,10 +527,6 @@ def main() -> int:
         result = {"status": "failed", "error": "Interrupted by user"}
         print(json.dumps(result, indent=2))
         return 130
-
-    finally:
-        if client and hasattr(client, "close"):
-            client.close()
 
 
 if __name__ == "__main__":

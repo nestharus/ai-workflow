@@ -2,482 +2,465 @@
 
 This module tests the MCP agent client script including:
 - Happy path tests for start, wait, list, and cancel modes
-- Error/edge case tests with mocked MCP subprocess
+- Error/edge case tests with mocked HTTP client
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, ClassVar
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 from scripts.dev.mcp_agent_client import (
-    MCPClient,
-    MCPClientError,
+    _format_bridge_error,
     cmd_cancel,
     cmd_list,
     cmd_start,
     cmd_wait,
     get_exit_code,
+    get_mcp_client,
+    main,
 )
+from scripts.mcp.client.http_client import HttpMCPClient, MCPClientError
 
 
-class FakeMCPProcess:
-    """Fake subprocess for testing MCP client."""
-
-    # Standard MCP initialize response - auto-prepended to all response lists
-    INIT_RESPONSE: ClassVar[dict[str, Any]] = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "result": {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "serverInfo": {"name": "fake-mcp", "version": "1.0.0"},
-        },
-    }
+class FakeHttpMCPClient:
+    """Fake HTTP MCP client for testing."""
 
     def __init__(
         self,
-        responses: list[dict[str, Any]] | None = None,
-        poll_result: int | None = None,
-        fail_on_start: bool = False,
-        fail_on_write: bool = False,
-        fail_mid_read: bool = False,
-        skip_init_response: bool = False,
+        tool_responses: list[dict[str, Any]] | None = None,
+        raise_on_call: Exception | None = None,
     ) -> None:
-        """Initialize fake process.
+        """Initialize fake client.
 
         Args:
-            responses: List of JSON-RPC responses to return (after init response).
-            poll_result: Return value for poll() (None = running, int = exit code).
-            fail_on_start: If True, poll() returns 1 immediately.
-            fail_on_write: If True, stdin.write() raises BrokenPipeError.
-            fail_mid_read: If True, stdout returns empty mid-read.
-            skip_init_response: If True, don't prepend the init response.
+            tool_responses: List of responses to return from call_server_tool().
+                           Each call pops the first response.
+            raise_on_call: If set, raise this exception on call_server_tool().
         """
-        # Prepend init response unless skipped
-        if skip_init_response:
-            self.responses = responses or []
-        else:
-            self.responses = [self.INIT_RESPONSE] + (responses or [])
-        self._response_index = 0
-        self._poll_result = poll_result
-        self._fail_on_start = fail_on_start
-        self._fail_on_write = fail_on_write
-        self._fail_mid_read = fail_mid_read
-        self._poll_count = 0
-        self._current_buffer = b""  # Buffer for byte-by-byte reading
+        self.tool_responses = list(tool_responses or [])
+        self.raise_on_call = raise_on_call
+        self.calls: list[tuple[str, str, dict[str, Any], float]] = []
 
-        self.stdin = MagicMock()
-        self.stdout = MagicMock()
-        self.stderr = MagicMock()
+    def call_server_tool(
+        self,
+        server: str,
+        name: str,
+        arguments: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        """Mock call_server_tool method."""
+        self.calls.append((server, name, arguments, timeout))
 
-        if fail_on_write:
-            self.stdin.write.side_effect = BrokenPipeError("Broken pipe")
-        else:
-            # Return the length of data written (for partial write loop support)
-            self.stdin.write.side_effect = lambda data: len(data)
-            self.stdin.flush.return_value = None
+        if self.raise_on_call:
+            raise self.raise_on_call
 
-        # Return empty to stop stderr drain thread after first read
-        self.stderr.read.return_value = b""
+        if not self.tool_responses:
+            return {}
 
-        # Set up stdout.read() to return response data
-        self._setup_stdout_read()
-
-    def _setup_stdout_read(self) -> None:
-        """Set up stdout.read() to return response data in JSONL format."""
-
-        def read_func(size: int = -1) -> bytes:
-            if self._fail_mid_read:
-                return b""
-
-            # If buffer is empty, load next response
-            if not self._current_buffer:
-                if self._response_index >= len(self.responses):
-                    return b""
-                response = self.responses[self._response_index]
-                # Use JSONL format (newline-delimited JSON)
-                self._current_buffer = json.dumps(response).encode("utf-8") + b"\n"
-                self._response_index += 1
-
-            # Return requested amount from buffer
-            if size <= 0:
-                result = self._current_buffer
-                self._current_buffer = b""
-                return result
-            result = self._current_buffer[:size]
-            self._current_buffer = self._current_buffer[size:]
-            return result
-
-        self.stdout.read.side_effect = read_func
-        self.stdout.fileno.return_value = 3
-
-    def poll(self) -> int | None:
-        """Check if process is running."""
-        self._poll_count += 1
-        if self._fail_on_start and self._poll_count == 1:
-            return 1
-        # Allow poll_result to change after initial startup
-        # Return None for first few polls to allow startup to succeed
-        if self._poll_result is not None and self._poll_count <= 2:
-            return None
-        return self._poll_result
-
-    def terminate(self) -> None:
-        """Terminate the process."""
-        pass
-
-    def wait(self, timeout: float | None = None) -> int:
-        """Wait for process to exit."""
-        return 0
-
-    def kill(self) -> None:
-        """Kill the process."""
-        pass
+        return self.tool_responses.pop(0)
 
 
 @pytest.fixture
-def mock_select(mocker: Any) -> Any:
-    """Mock select.select to always return ready, and mock time.sleep to not actually sleep."""
-    mock = mocker.patch("scripts.dev.mcp_agent_client.select.select")
-    mocker.patch("scripts.dev.mcp_agent_client.time.sleep")
-    mock.return_value = ([True], [], [])
-    return mock
+def mock_time_sleep(mocker: Any) -> Any:
+    """Mock time.sleep to not actually sleep."""
+    return mocker.patch("scripts.dev.mcp_agent_client.time.sleep")
 
 
-# Patch target for subprocess.Popen - must patch where it's used, not where it's defined
-POPEN_PATCH_TARGET = "scripts.dev.mcp_agent_client.subprocess.Popen"
+class TestGetMCPClient:
+    """Tests for get_mcp_client function."""
 
+    def test_returns_http_client(self) -> None:
+        """Test that get_mcp_client returns an HttpMCPClient."""
+        client = get_mcp_client()
+        assert isinstance(client, HttpMCPClient)
 
-class TestMCPClient:
-    """Tests for MCPClient class."""
+    def test_accepts_base_url_parameter(self) -> None:
+        """Test that get_mcp_client accepts base_url parameter."""
+        client = get_mcp_client(base_url="http://custom:9000")
+        assert isinstance(client, HttpMCPClient)
+        assert client.base_url == "http://custom:9000"
 
-    def test_client_init_success(self, mock_select: Any) -> None:
-        """Test successful client initialization."""
-        fake_proc = FakeMCPProcess()
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake", "command"])
-            assert client.proc is fake_proc  # type: ignore[comparison-overlap]
-            client.close()
+    def test_accepts_socket_path_parameter(self) -> None:
+        """Test that get_mcp_client accepts socket_path parameter."""
+        client = get_mcp_client(socket_path="/tmp/custom.sock")
+        assert isinstance(client, HttpMCPClient)
+        assert client.socket_path == "/tmp/custom.sock"
 
-    def test_client_init_os_error(self, mock_select: Any) -> None:
-        """Test client initialization with OS error."""
-        with (
-            patch(POPEN_PATCH_TARGET, side_effect=OSError("Command not found")),
-            pytest.raises(MCPClientError, match="Failed to start MCP server"),
-        ):
-            MCPClient(command=["nonexistent"])
+    def test_socket_path_takes_precedence_over_base_url(self) -> None:
+        """Test that socket_path takes precedence over base_url."""
+        client = get_mcp_client(base_url="http://custom:9000", socket_path="/tmp/custom.sock")
+        assert client.socket_path == "/tmp/custom.sock"
+        # When socket_path is set, base_url becomes http://localhost for curl
+        assert client.base_url == "http://localhost"
 
-    def test_client_init_immediate_exit(self, mock_select: Any) -> None:
-        """Test client initialization when server exits immediately."""
-        fake_proc = FakeMCPProcess(fail_on_start=True)
-        with (
-            patch(POPEN_PATCH_TARGET, return_value=fake_proc),
-            pytest.raises(MCPClientError, match="MCP server exited immediately"),
-        ):
-            MCPClient(command=["fake"])
-
-    def test_call_tool_success(self, mock_select: Any) -> None:
-        """Test successful tool call."""
-        # Response id=2 because init uses id=1
-        response = {"jsonrpc": "2.0", "id": 2, "result": {"job_id": "test-123"}}
-        fake_proc = FakeMCPProcess(responses=[response])
-
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            result = client.call_tool("execute", {"command": "test"})
-            assert result == {"job_id": "test-123"}
-            client.close()
-
-    def test_call_tool_json_rpc_error(self, mock_select: Any) -> None:
-        """Test tool call with JSON-RPC error response."""
-        # Response id=2 because init uses id=1
-        response = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "error": {"code": -32600, "message": "Invalid request"},
-        }
-        fake_proc = FakeMCPProcess(responses=[response])
-
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            try:
-                with pytest.raises(MCPClientError, match="JSON-RPC error -32600"):
-                    client.call_tool("execute", {"command": "test"})
-            finally:
-                client.close()
-
-    def test_call_tool_broken_pipe(self, mock_select: Any) -> None:
-        """Test tool call with broken pipe on send."""
-        # Create a proc that succeeds during init but fails on subsequent writes
-        fake_proc = FakeMCPProcess()
-
-        # Track call count to fail only after init
-        call_count = [0]
-
-        def write_with_failure(data: bytes) -> int:
-            call_count[0] += 1
-            # Allow first 2 writes (init request and notification) to succeed
-            if call_count[0] <= 2:
-                return len(data)
-            raise BrokenPipeError("Broken pipe")
-
-        fake_proc.stdin.write.side_effect = write_with_failure
-
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            try:
-                with pytest.raises(MCPClientError, match="Failed to send request"):
-                    client.call_tool("execute", {"command": "test"})
-            finally:
-                client.close()
-
-    def test_close_terminates_running_process(self, mock_select: Any) -> None:
-        """Test that close() terminates a running process."""
-        fake_proc = FakeMCPProcess()
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            client.close()
-            # Process should have been terminated
+    def test_none_parameters_use_defaults(self) -> None:
+        """Test that None parameters fall back to env vars or defaults."""
+        client = get_mcp_client(base_url=None, socket_path=None)
+        assert isinstance(client, HttpMCPClient)
 
 
 class TestCmdStart:
     """Tests for cmd_start function."""
 
-    def test_start_returns_job_id(self, mock_select: Any) -> None:
+    def test_start_returns_job_id(self) -> None:
         """Test that start mode returns job_id immediately."""
-        # Response id=2 because init uses id=1
-        response = {"jsonrpc": "2.0", "id": 2, "result": {"job_id": "abc-123"}}
-        fake_proc = FakeMCPProcess(responses=[response])
+        fake_client = FakeHttpMCPClient(tool_responses=[{"job_id": "abc-123"}])
+        result = cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+        assert result["status"] == "started"
+        assert result["job_id"] == "abc-123"
 
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            result = cmd_start(client, "echo hello")
-            assert result["status"] == "started"
-            assert result["job_id"] == "abc-123"
-            client.close()
+    def test_start_normalizes_id_to_job_id(self) -> None:
+        """Test that 'id' field is normalized to 'job_id'."""
+        fake_client = FakeHttpMCPClient(tool_responses=[{"id": "provider-id-123"}])
+        result = cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+        assert result["status"] == "started"
+        assert result["job_id"] == "provider-id-123"
 
-    def test_start_handles_error(self, mock_select: Any) -> None:
+    def test_start_extracts_from_structured_content(self) -> None:
+        """Test that job_id is extracted from structuredContent wrapper."""
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[{"structuredContent": {"job_id": "wrapped-123"}}]
+        )
+        result = cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+        assert result["status"] == "started"
+        assert result["job_id"] == "wrapped-123"
+
+    def test_start_handles_error(self) -> None:
         """Test that start mode handles errors gracefully."""
-        # Create proc that succeeds during init but fails on subsequent writes
-        fake_proc = FakeMCPProcess()
+        fake_client = FakeHttpMCPClient(raise_on_call=MCPClientError("Connection failed"))
+        result = cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "Connection failed" in result["error"]
 
-        # Track call count to fail only after init
-        call_count = [0]
+    def test_start_handles_no_job_id(self) -> None:
+        """Test that start mode fails gracefully when no job_id returned."""
+        fake_client = FakeHttpMCPClient(tool_responses=[{}])
+        result = cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "No job_id" in result["error"]
 
-        def write_with_failure(data: bytes) -> int:
-            call_count[0] += 1
-            # Allow first 2 writes (init request and notification) to succeed
-            if call_count[0] <= 2:
-                return len(data)
-            raise BrokenPipeError("Broken pipe")
-
-        fake_proc.stdin.write.side_effect = write_with_failure
-
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            result = cmd_start(client, "echo hello")
-            assert result["status"] == "failed"
-            assert "error" in result
-            client.close()
+    def test_start_handles_invalid_structured_content(self) -> None:
+        """Test that start mode handles non-dict structuredContent."""
+        # When structuredContent is present but not a dict, it should fail
+        fake_client = FakeHttpMCPClient(tool_responses=[{"structuredContent": "not a dict"}])
+        result = cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "Invalid response format" in result["error"]
 
 
 class TestCmdWait:
     """Tests for cmd_wait function."""
 
-    def test_wait_polls_until_complete(self, mock_select: Any) -> None:
+    def test_wait_polls_until_complete(self, mock_time_sleep: Any) -> None:
         """Test that wait mode polls and returns final result."""
-        # Response IDs: init=1, execute=2, status=3, output=4
-        execute_response = {"jsonrpc": "2.0", "id": 2, "result": {"job_id": "job-1"}}
-        status_response = {
-            "jsonrpc": "2.0",
-            "id": 3,
-            "result": {"status": "completed", "exit_code": 0},
-        }
-        output_response = {
-            "jsonrpc": "2.0",
-            "id": 4,
-            "result": {"stdout": "hello world", "stderr": ""},
-        }
-        fake_proc = FakeMCPProcess(responses=[execute_response, status_response, output_response])
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"job_id": "job-1"},  # execute_command response
+                {"status": "completed", "exit_code": 0},  # get_job_status response
+                {"stdout": "hello world", "stderr": ""},  # get_job_output response
+            ]
+        )
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo hello",
+            job_id=None,
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        assert result["status"] == "completed"
+        assert result["job_id"] == "job-1"
+        assert result["stdout"] == "hello world"
 
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            result = cmd_wait(
-                client,
-                command="echo hello",
-                job_id=None,
-                max_seconds=60,
-                poll_interval=0.01,
-            )
-            assert result["status"] == "completed"
-            assert result["job_id"] == "job-1"
-            assert result["stdout"] == "hello world"
-            client.close()
-
-    def test_wait_handles_timeout(self, mock_select: Any) -> None:
+    def test_wait_handles_timeout(self, mock_time_sleep: Any) -> None:
         """Test that wait mode returns timeout status when max_seconds exceeded."""
-        # Response IDs: init=1, execute=2, status=3,4,5..., kill=N
-        execute_response = {"jsonrpc": "2.0", "id": 2, "result": {"job_id": "job-1"}}
-        # Return "running" status repeatedly (starting at id=3)
-        running_responses = [
-            {"jsonrpc": "2.0", "id": i, "result": {"status": "running"}} for i in range(3, 103)
-        ]
-        # Add kill response at the end
-        kill_response = {"jsonrpc": "2.0", "id": 103, "result": {}}
-        fake_proc = FakeMCPProcess(responses=[execute_response, *running_responses, kill_response])
+        # Create client that always returns "running" status
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"job_id": "job-1"},  # execute_command response
+                {"status": "running"},  # get_job_status response
+                {"status": "running"},  # get_job_status response
+                {"status": "running"},  # get_job_status response
+                {},  # kill_job response
+            ]
+        )
 
-        # Track response count to know when init and execute are done
-        # Init response is at index 0, execute response is at index 1
-        response_count = [0]
-
-        def patched_setup() -> None:
-            def read_func(size: int = -1) -> bytes:
-                # Read from buffer or get new response
-                if not fake_proc._current_buffer:
-                    if fake_proc._response_index >= len(fake_proc.responses):
-                        return b""
-                    response = fake_proc.responses[fake_proc._response_index]
-                    fake_proc._current_buffer = json.dumps(response).encode("utf-8") + b"\n"
-                    fake_proc._response_index += 1
-                    response_count[0] = fake_proc._response_index
-
-                if size <= 0:
-                    result = fake_proc._current_buffer
-                    fake_proc._current_buffer = b""
-                    return result
-                result = fake_proc._current_buffer[:size]
-                fake_proc._current_buffer = fake_proc._current_buffer[size:]
-                return result
-
-            fake_proc.stdout.read.side_effect = read_func
-
-        patched_setup()
-
-        # Time mock that advances slowly until execute is done, then faster
+        # Mock time to advance past deadline quickly
         call_count = [0]
 
-        def mock_monotonic_fn() -> float:
+        def mock_monotonic() -> float:
             call_count[0] += 1
-            # Response 0=init, 1=execute, 2+=status polling
-            if response_count[0] <= 2:
-                # During init and execute, time advances slowly
-                return 100.0 + (call_count[0] * 0.001)
-            # During status polling, time advances faster to trigger timeout
-            return 100.0 + (call_count[0] * 0.2)
+            # First few calls (during execute_command) stay within deadline
+            if call_count[0] <= 4:
+                return 100.0
+            # After that, exceed deadline to trigger timeout
+            return 200.0
 
-        with (
-            patch(POPEN_PATCH_TARGET, return_value=fake_proc),
-            patch(
-                "scripts.dev.mcp_agent_client.time.monotonic",
-                side_effect=mock_monotonic_fn,
-            ),
-            patch("scripts.dev.mcp_agent_client.time.sleep"),
+        with patch(
+            "scripts.dev.mcp_agent_client.time.monotonic",
+            side_effect=mock_monotonic,
         ):
-            client = MCPClient(command=["fake"])
             result = cmd_wait(
-                client,
+                fake_client,  # type: ignore[arg-type]
                 command="sleep 100",
                 job_id=None,
-                max_seconds=10,  # Timeout during polling
+                max_seconds=10,
                 poll_interval=0.01,
             )
-            assert result["status"] == "timeout"
-            assert result["job_id"] == "job-1"
-            client.close()
+        assert result["status"] == "timeout"
+        assert result["job_id"] == "job-1"
 
-    def test_wait_with_existing_job_id(self, mock_select: Any) -> None:
+    def test_wait_with_existing_job_id(self, mock_time_sleep: Any) -> None:
         """Test waiting on an existing job by ID."""
-        # Response IDs: init=1, status=2, output=3
-        status_response = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "result": {"status": "completed", "exit_code": 0},
-        }
-        output_response = {
-            "jsonrpc": "2.0",
-            "id": 3,
-            "result": {"stdout": "done", "stderr": ""},
-        }
-        fake_proc = FakeMCPProcess(responses=[status_response, output_response])
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"status": "completed", "exit_code": 0},  # get_job_status response
+                {"stdout": "done", "stderr": ""},  # get_job_output response
+            ]
+        )
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command=None,
+            job_id="existing-job",
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        assert result["status"] == "completed"
+        assert result["job_id"] == "existing-job"
 
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            result = cmd_wait(
-                client,
-                command=None,
-                job_id="existing-job",
-                max_seconds=60,
-                poll_interval=0.01,
-            )
-            assert result["status"] == "completed"
-            assert result["job_id"] == "existing-job"
-            client.close()
-
-    def test_wait_no_job_id(self, mock_select: Any) -> None:
+    def test_wait_no_job_id(self) -> None:
         """Test wait mode fails gracefully when no job_id available."""
-        # Response without job_id (id=2 because init uses id=1)
-        execute_response = {"jsonrpc": "2.0", "id": 2, "result": {}}
-        fake_proc = FakeMCPProcess(responses=[execute_response])
+        fake_client = FakeHttpMCPClient(tool_responses=[{}])
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        assert result["status"] == "failed"
+        assert "No job_id" in result.get("error", "")
 
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            result = cmd_wait(
-                client,
-                command="echo test",
-                job_id=None,
-                max_seconds=60,
-                poll_interval=0.01,
-            )
-            assert result["status"] == "failed"
-            assert "No job_id" in result.get("error", "")
-            client.close()
+    def test_wait_polls_running_until_completed(self, mock_time_sleep: Any) -> None:
+        """Test that wait mode keeps polling while job is running."""
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"status": "running"},  # First status check
+                {"status": "running"},  # Second status check
+                {"status": "completed", "exit_code": 0},  # Third status check
+                {"stdout": "output", "stderr": ""},  # get_job_output response
+            ]
+        )
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command=None,
+            job_id="job-1",
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        assert result["status"] == "completed"
+        assert result["job_id"] == "job-1"
+
+    def test_wait_handles_failed_status(self, mock_time_sleep: Any) -> None:
+        """Test that wait mode returns failed job status."""
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"status": "failed", "exit_code": 1},  # get_job_status response
+                {"stdout": "", "stderr": "error occurred"},  # get_job_output response
+            ]
+        )
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command=None,
+            job_id="job-1",
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        assert result["status"] == "failed"
+        assert result["stderr"] == "error occurred"
+
+    def test_wait_handles_killed_status(self, mock_time_sleep: Any) -> None:
+        """Test that wait mode returns killed job status."""
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"status": "killed", "exit_code": 137},  # get_job_status response
+                {"stdout": "", "stderr": ""},  # get_job_output response
+            ]
+        )
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command=None,
+            job_id="job-1",
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        assert result["status"] == "killed"
+        assert result["exit_code"] == 137
+
+    def test_wait_immediate_completion_on_existing_job(self, mock_time_sleep: Any) -> None:
+        """Test idempotent wait: attaching to already-completed job returns immediately.
+
+        When waiting on an existing job_id that is already in a terminal state,
+        the function should return immediately without polling.
+        """
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                # First get_job_status returns completed immediately
+                {"status": "completed", "exit_code": 0},
+                # get_job_output response
+                {"stdout": "already done", "stderr": ""},
+            ]
+        )
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command=None,
+            job_id="already-completed-job",
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        assert result["status"] == "completed"
+        assert result["job_id"] == "already-completed-job"
+        assert result["stdout"] == "already done"
+        # Verify only 2 calls were made (get_job_status + get_job_output)
+        assert len(fake_client.calls) == 2
+
+    def test_wait_transient_get_job_status_error_fails(self, mock_time_sleep: Any) -> None:
+        """Test behavior when get_job_status raises MCPClientError.
+
+        The current implementation exits immediately on any error (no retry).
+        This documents the current behavior.
+        """
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                # execute_command response
+                {"job_id": "job-transient"},
+            ]
+        )
+
+        # Create a wrapper that raises error on second call
+        call_count = [0]
+        original_call = fake_client.call_server_tool
+
+        def call_with_error(
+            server: str, name: str, arguments: dict[str, Any], timeout: float = 30.0
+        ) -> dict[str, Any]:
+            call_count[0] += 1
+            if call_count[0] == 2:  # Second call (get_job_status)
+                raise MCPClientError("Connection reset by peer")
+            return original_call(server, name, arguments, timeout)
+
+        fake_client.call_server_tool = call_with_error  # type: ignore[method-assign]
+
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        # Current behavior: error causes failed status
+        assert result["status"] == "failed"
+        assert result["job_id"] == "job-transient"
+        assert "Connection reset" in result.get("error", "")
+
+    def test_wait_get_job_output_failure_after_completed(self, mock_time_sleep: Any) -> None:
+        """Test error reporting when get_job_output fails after terminal status.
+
+        When get_job_status returns 'completed' but get_job_output subsequently
+        raises MCPClientError, the result should include the job status
+        and an error field explaining the output retrieval failure.
+        """
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                # execute_command response
+                {"job_id": "job-output-fail"},
+                # get_job_status returns completed
+                {"status": "completed", "exit_code": 0},
+            ]
+        )
+
+        # Create error handler for third call
+        call_count = [0]
+        original_call = fake_client.call_server_tool
+
+        def call_with_error(
+            server: str, name: str, arguments: dict[str, Any], timeout: float = 30.0
+        ) -> dict[str, Any]:
+            call_count[0] += 1
+            if call_count[0] == 3:  # Third call (get_job_output)
+                raise MCPClientError("Failed to retrieve output: storage unavailable")
+            return original_call(server, name, arguments, timeout)
+
+        fake_client.call_server_tool = call_with_error  # type: ignore[method-assign]
+
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        # Current behavior: error during output retrieval causes failed status
+        assert result["status"] == "failed"
+        assert result["job_id"] == "job-output-fail"
+        assert "Failed to retrieve output" in result.get(
+            "error", ""
+        ) or "storage unavailable" in result.get("error", "")
 
 
 class TestCmdList:
     """Tests for cmd_list function."""
 
-    def test_list_returns_all_jobs(self, mock_select: Any) -> None:
+    def test_list_returns_all_jobs(self) -> None:
         """Test that list mode shows all jobs and their statuses."""
-        # Response id=2 because init uses id=1
-        response = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "result": {
-                "jobs": [
-                    {"id": "job-1", "status": "running"},
-                    {"id": "job-2", "status": "completed"},
-                ]
-            },
-        }
-        fake_proc = FakeMCPProcess(responses=[response])
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {
+                    "jobs": [
+                        {"id": "job-1", "status": "running"},
+                        {"id": "job-2", "status": "completed"},
+                    ]
+                }
+            ]
+        )
+        result = cmd_list(fake_client)  # type: ignore[arg-type]
+        assert result["status"] == "completed"
+        assert len(result["jobs"]) == 2
 
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            result = cmd_list(client)
-            assert result["status"] == "completed"
-            assert len(result["jobs"]) == 2
-            client.close()
+    def test_list_handles_error(self) -> None:
+        """Test that list mode handles errors gracefully."""
+        fake_client = FakeHttpMCPClient(raise_on_call=MCPClientError("Connection failed"))
+        result = cmd_list(fake_client)  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "Connection failed" in result["error"]
+
+    def test_list_handles_empty_jobs(self) -> None:
+        """Test that list mode handles empty jobs list."""
+        fake_client = FakeHttpMCPClient(tool_responses=[{"jobs": []}])
+        result = cmd_list(fake_client)  # type: ignore[arg-type]
+        assert result["status"] == "completed"
+        assert result["jobs"] == []
 
 
 class TestCmdCancel:
     """Tests for cmd_cancel function."""
 
-    def test_cancel_kills_job(self, mock_select: Any) -> None:
+    def test_cancel_kills_job(self) -> None:
         """Test that cancel mode terminates job."""
-        # Response id=2 because init uses id=1
-        response = {"jsonrpc": "2.0", "id": 2, "result": {}}
-        fake_proc = FakeMCPProcess(responses=[response])
+        fake_client = FakeHttpMCPClient(tool_responses=[{}])
+        result = cmd_cancel(fake_client, "job-to-kill")  # type: ignore[arg-type]
+        assert result["status"] == "killed"
+        assert result["job_id"] == "job-to-kill"
 
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            result = cmd_cancel(client, "job-to-kill")
-            assert result["status"] == "killed"
-            assert result["job_id"] == "job-to-kill"
-            client.close()
+    def test_cancel_handles_error(self) -> None:
+        """Test that cancel mode handles errors gracefully."""
+        fake_client = FakeHttpMCPClient(raise_on_call=MCPClientError("Job not found"))
+        result = cmd_cancel(fake_client, "missing-job")  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "Job not found" in result["error"]
 
 
 class TestGetExitCode:
@@ -492,6 +475,11 @@ class TestGetExitCode:
         """Test exit code for completion with error."""
         result = {"status": "completed", "exit_code": 5}
         assert get_exit_code(result) == 5
+
+    def test_completed_without_exit_code(self) -> None:
+        """Test exit code defaults to 0 when not provided."""
+        result = {"status": "completed"}
+        assert get_exit_code(result) == 0
 
     def test_started(self) -> None:
         """Test exit code for started status."""
@@ -513,220 +501,519 @@ class TestGetExitCode:
         result = {"status": "failed"}
         assert get_exit_code(result) == 1
 
+    def test_unknown_status(self) -> None:
+        """Test exit code 1 for unknown status."""
+        result = {"status": "unknown"}
+        assert get_exit_code(result) == 1
+
+    def test_invalid_exit_code_string(self) -> None:
+        """Test that invalid exit_code string is handled."""
+        result = {"status": "completed", "exit_code": "not-a-number"}
+        assert get_exit_code(result) == 0
+
 
 class TestJSONOutputFormat:
     """Tests for JSON output format compliance."""
 
-    def test_json_output_format(self, mock_select: Any) -> None:
+    def test_json_output_format(self) -> None:
         """Test that output is valid JSON matching expected schema."""
-        # Response id=2 because init uses id=1
-        response = {"jsonrpc": "2.0", "id": 2, "result": {"job_id": "test-job"}}
-        fake_proc = FakeMCPProcess(responses=[response])
+        fake_client = FakeHttpMCPClient(tool_responses=[{"job_id": "test-job"}])
+        result = cmd_start(fake_client, "echo test")  # type: ignore[arg-type]
 
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            result = cmd_start(client, "echo test")
+        # Verify result is JSON serializable
+        json_str = json.dumps(result)
+        parsed = json.loads(json_str)
 
-            # Verify result is JSON serializable
-            json_str = json.dumps(result)
-            parsed = json.loads(json_str)
-
-            # Verify expected fields
-            assert "status" in parsed
-            assert parsed["status"] in (
-                "started",
-                "completed",
-                "failed",
-                "killed",
-                "timeout",
-            )
-            client.close()
+        # Verify expected fields
+        assert "status" in parsed
+        assert parsed["status"] in (
+            "started",
+            "completed",
+            "failed",
+            "killed",
+            "timeout",
+        )
 
 
 class TestErrorEdgeCases:
     """Tests for error conditions and edge cases."""
 
-    def test_server_startup_failure(self) -> None:
-        """Test handling of server startup failure (command not found)."""
-        with (
-            patch(
-                POPEN_PATCH_TARGET,
-                side_effect=FileNotFoundError("[Errno 2] No such file or directory"),
-            ),
-            pytest.raises(MCPClientError, match="Failed to start MCP server"),
-        ):
-            MCPClient(command=["nonexistent-command"])
-
-    def test_server_unexpected_exit(self, mock_select: Any) -> None:
-        """Test handling of server exiting mid-operation."""
-        # Server exits after first response
-        fake_proc = FakeMCPProcess(poll_result=1)  # Exited with code 1
-
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            # The server appears running initially but poll_result=1 makes it look exited
-            # This should trigger the unexpected exit handling
-            client.close()
-
-    def test_malformed_json_response(self, mock_select: Any) -> None:
-        """Test handling of server returning invalid JSON."""
-        fake_proc = FakeMCPProcess()
-
-        # Create a response sequence: valid init response, then malformed JSON
-        init_response = json.dumps(FakeMCPProcess.INIT_RESPONSE).encode("utf-8") + b"\n"
-        malformed_response = b"{bad\n"
-        responses = [init_response, malformed_response]
-        response_index = [0]
-        current_buffer = [b""]
-
-        def read_with_malformed(size: int = -1) -> bytes:
-            # Load next response if buffer empty
-            if not current_buffer[0]:
-                if response_index[0] >= len(responses):
-                    return b""
-                current_buffer[0] = responses[response_index[0]]
-                response_index[0] += 1
-
-            if size <= 0:
-                result = current_buffer[0]
-                current_buffer[0] = b""
-                return result
-            result = current_buffer[0][:size]
-            current_buffer[0] = current_buffer[0][size:]
-            return result
-
-        fake_proc.stdout.read.side_effect = read_with_malformed
-
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            try:
-                with pytest.raises(MCPClientError, match="Invalid JSON response"):
-                    client.call_tool("execute", {"command": "test"})
-            finally:
-                client.close()
-
-    def test_missing_result_in_response(self, mock_select: Any) -> None:
-        """Test handling of response missing 'result' field."""
-        # Response with neither result nor error (id=2 because init uses id=1)
-        response = {"jsonrpc": "2.0", "id": 2}
-        fake_proc = FakeMCPProcess(responses=[response])
-
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            try:
-                with pytest.raises(
-                    MCPClientError, match="Invalid JSON-RPC response: missing 'result'"
-                ):
-                    client.call_tool("execute", {"command": "test"})
-            finally:
-                client.close()
-
-    def test_invalid_poll_interval_negative(self, mock_select: Any) -> None:
+    def test_invalid_poll_interval_negative(self) -> None:
         """Test that negative poll_interval returns error."""
-        fake_proc = FakeMCPProcess()
+        fake_client = FakeHttpMCPClient()
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=60,
+            poll_interval=-1.0,
+        )
+        assert result["status"] == "failed"
+        assert "poll_interval" in result["error"]
 
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            result = cmd_wait(
-                client,
-                command="echo test",
-                job_id=None,
-                max_seconds=60,
-                poll_interval=-1.0,
-            )
-            assert result["status"] == "failed"
-            assert "poll_interval" in result["error"]
-            client.close()
-
-    def test_invalid_poll_interval_nan(self, mock_select: Any) -> None:
+    def test_invalid_poll_interval_nan(self) -> None:
         """Test that NaN poll_interval returns error."""
-        fake_proc = FakeMCPProcess()
+        fake_client = FakeHttpMCPClient()
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=60,
+            poll_interval=float("nan"),
+        )
+        assert result["status"] == "failed"
+        assert "poll_interval" in result["error"]
 
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
+    def test_invalid_max_seconds_negative(self) -> None:
+        """Test that negative max_seconds returns error."""
+        fake_client = FakeHttpMCPClient()
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=-1,
+            poll_interval=0.01,
+        )
+        assert result["status"] == "failed"
+        assert "max_seconds" in result["error"]
+
+    def test_invalid_max_seconds_zero(self) -> None:
+        """Test that zero max_seconds with no immediate result times out."""
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"job_id": "job-1"},  # execute_command response
+                {},  # kill_job response
+            ]
+        )
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=0,
+            poll_interval=0.01,
+        )
+        # With max_seconds=0, it should timeout immediately
+        assert result["status"] == "timeout"
+
+    def test_timeout_error_in_exception(self) -> None:
+        """Test that timeout errors in exceptions are detected."""
+        fake_client = FakeHttpMCPClient(raise_on_call=MCPClientError("Request timed out after 30s"))
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        assert result["status"] == "timeout"
+
+    def test_structuredcontent_null_handling(self) -> None:
+        """Test that null structuredContent is handled."""
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[{"structuredContent": None, "job_id": "job-1"}]
+        )
+        result = cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+        assert result["status"] == "started"
+        assert result["job_id"] == "job-1"
+
+    def test_calls_correct_server(self) -> None:
+        """Test that calls are made to the correct server."""
+        fake_client = FakeHttpMCPClient(tool_responses=[{"job_id": "job-1"}])
+        cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+
+        assert len(fake_client.calls) == 1
+        server, name, arguments, _timeout = fake_client.calls[0]
+        assert server == "background-job"
+        assert name == "execute_command"
+        assert arguments == {"command": "echo hello"}
+
+
+class TestBridgeErrorHandling:
+    """Tests for HTTP bridge-specific error handling."""
+
+    def test_start_connection_failure_exit_code(self) -> None:
+        """Test that connection failures result in exit code 1."""
+        fake_client = FakeHttpMCPClient(
+            raise_on_call=MCPClientError("Cannot connect to mcp-bridge")
+        )
+        result = cmd_start(fake_client, "echo test")  # type: ignore[arg-type]
+        assert get_exit_code(result) == 1
+
+    def test_wait_timeout_error_exit_code(self) -> None:
+        """Test that HTTP timeout in wait mode results in exit code 124."""
+        fake_client = FakeHttpMCPClient(raise_on_call=MCPClientError("Request timed out after 30s"))
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        assert result["status"] == "timeout"
+        assert get_exit_code(result) == 124
+
+    def test_list_connection_failure(self) -> None:
+        """Test list mode handles connection failures."""
+        fake_client = FakeHttpMCPClient(
+            raise_on_call=MCPClientError("Cannot connect to mcp-bridge")
+        )
+        result = cmd_list(fake_client)  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "Cannot connect" in result["error"]
+
+    def test_cancel_connection_failure(self) -> None:
+        """Test cancel mode handles connection failures."""
+        fake_client = FakeHttpMCPClient(
+            raise_on_call=MCPClientError("Cannot connect to mcp-bridge")
+        )
+        result = cmd_cancel(fake_client, "job-123")  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert result["job_id"] == "job-123"
+        assert "Cannot connect" in result["error"]
+
+    def test_timeout_detection_case_insensitive(self) -> None:
+        """Test timeout detection works with various case patterns."""
+        test_cases = [
+            "Request timed out after 30s",
+            "Connection TIMED OUT",
+            "Timeout exceeded",
+            "TIMEOUT during request",
+        ]
+        for error_msg in test_cases:
+            fake_client = FakeHttpMCPClient(raise_on_call=MCPClientError(error_msg))
             result = cmd_wait(
-                client,
+                fake_client,  # type: ignore[arg-type]
                 command="echo test",
                 job_id=None,
                 max_seconds=60,
-                poll_interval=float("nan"),
-            )
-            assert result["status"] == "failed"
-            assert "poll_interval" in result["error"]
-            client.close()
-
-    def test_invalid_max_seconds_negative(self, mock_select: Any) -> None:
-        """Test that negative max_seconds returns error."""
-        fake_proc = FakeMCPProcess()
-
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            result = cmd_wait(
-                client,
-                command="echo test",
-                job_id=None,
-                max_seconds=-1,
                 poll_interval=0.01,
             )
-            assert result["status"] == "failed"
-            assert "max_seconds" in result["error"]
-            client.close()
+            assert result["status"] == "timeout", f"Failed for: {error_msg}"
 
-    def test_invalid_max_seconds_zero(self, mock_select: Any) -> None:
-        """Test that zero max_seconds with no immediate result times out."""
-        # This test verifies that max_seconds=0 immediately times out
-        # Response IDs: init=1, execute=2
-        execute_response = {"jsonrpc": "2.0", "id": 2, "result": {"job_id": "job-1"}}
-        # No status response - job will timeout immediately
-        kill_response = {"jsonrpc": "2.0", "id": 3, "result": {}}
-        fake_proc = FakeMCPProcess(responses=[execute_response, kill_response])
+    def test_server_error_response_preserved(self) -> None:
+        """Test that server error messages are preserved in result."""
+        fake_client = FakeHttpMCPClient(
+            raise_on_call=MCPClientError("[MCP_ERROR] Tool execution failed: command not found")
+        )
+        result = cmd_start(fake_client, "nonexistent-cmd")  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "MCP_ERROR" in result["error"]
+        assert "command not found" in result["error"]
 
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            result = cmd_wait(
-                client,
-                command="echo test",
-                job_id=None,
-                max_seconds=0,
-                poll_interval=0.01,
+    def test_socket_not_available_error(self) -> None:
+        """Test handling of socket not available."""
+        fake_client = FakeHttpMCPClient(
+            raise_on_call=MCPClientError(
+                "Cannot connect to mcp-bridge at /tmp/mcp-sockets/mcp-bridge.sock. "
+                "Socket not available. Ensure mcp-bridge container is running."
             )
-            # With max_seconds=0, it should timeout immediately
-            assert result["status"] == "timeout"
-            client.close()
+        )
+        result = cmd_start(fake_client, "echo test")  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "Socket not available" in result["error"]
 
-    def test_invalid_utf8_in_response(self, mock_select: Any) -> None:
-        """Test handling of invalid UTF-8 in response body."""
-        fake_proc = FakeMCPProcess()
+    def test_http_4xx_error(self) -> None:
+        """Test handling of HTTP 4xx client errors."""
+        fake_client = FakeHttpMCPClient(
+            raise_on_call=MCPClientError("[NOT_FOUND] Server 'unknown-server' not found")
+        )
+        result = cmd_start(fake_client, "echo test")  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "NOT_FOUND" in result["error"]
 
-        # Create a response sequence: valid init response, then invalid UTF-8
-        init_response = json.dumps(FakeMCPProcess.INIT_RESPONSE).encode("utf-8") + b"\n"
-        invalid_utf8_response = b"\xff\xfe\xfd\xfc\n"
-        responses = [init_response, invalid_utf8_response]
-        response_index = [0]
-        current_buffer = [b""]
+    def test_http_5xx_error(self) -> None:
+        """Test handling of HTTP 5xx server errors."""
+        fake_client = FakeHttpMCPClient(
+            raise_on_call=MCPClientError("HTTP request failed: Internal Server Error")
+        )
+        result = cmd_start(fake_client, "echo test")  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "HTTP request failed" in result["error"]
 
-        def read_with_invalid_utf8(size: int = -1) -> bytes:
-            # Load next response if buffer empty
-            if not current_buffer[0]:
-                if response_index[0] >= len(responses):
-                    return b""
-                current_buffer[0] = responses[response_index[0]]
-                response_index[0] += 1
 
-            if size <= 0:
-                result = current_buffer[0]
-                current_buffer[0] = b""
-                return result
-            result = current_buffer[0][:size]
-            current_buffer[0] = current_buffer[0][size:]
-            return result
+class TestCLIArguments:
+    """Tests for CLI argument parsing."""
 
-        fake_proc.stdout.read.side_effect = read_with_invalid_utf8
+    def test_server_url_flag_passed_to_get_mcp_client(self, mocker: Any) -> None:
+        """Test that --server-url flag is passed to get_mcp_client."""
+        mock_get_client = mocker.patch(
+            "scripts.dev.mcp_agent_client.get_mcp_client",
+            return_value=FakeHttpMCPClient(tool_responses=[{"jobs": []}]),
+        )
+        mocker.patch("sys.argv", ["mcp_agent_client", "--server-url", "http://custom:9000", "list"])
 
-        with patch(POPEN_PATCH_TARGET, return_value=fake_proc):
-            client = MCPClient(command=["fake"])
-            try:
-                with pytest.raises(MCPClientError, match="Invalid UTF-8"):
-                    client.call_tool("execute", {"command": "test"})
-            finally:
-                client.close()
+        main()
+
+        mock_get_client.assert_called_once_with(
+            base_url="http://custom:9000",
+            socket_path=None,
+        )
+
+    def test_socket_path_flag_passed_to_get_mcp_client(self, mocker: Any) -> None:
+        """Test that --socket-path flag is passed to get_mcp_client."""
+        mock_get_client = mocker.patch(
+            "scripts.dev.mcp_agent_client.get_mcp_client",
+            return_value=FakeHttpMCPClient(tool_responses=[{"jobs": []}]),
+        )
+        mocker.patch("sys.argv", ["mcp_agent_client", "--socket-path", "/tmp/custom.sock", "list"])
+
+        main()
+
+        mock_get_client.assert_called_once_with(
+            base_url=None,
+            socket_path="/tmp/custom.sock",
+        )
+
+    def test_both_flags_passed_to_get_mcp_client(self, mocker: Any) -> None:
+        """Test that both --server-url and --socket-path flags are passed."""
+        mock_get_client = mocker.patch(
+            "scripts.dev.mcp_agent_client.get_mcp_client",
+            return_value=FakeHttpMCPClient(tool_responses=[{"jobs": []}]),
+        )
+        mocker.patch(
+            "sys.argv",
+            [
+                "mcp_agent_client",
+                "--server-url",
+                "http://custom:9000",
+                "--socket-path",
+                "/tmp/custom.sock",
+                "list",
+            ],
+        )
+
+        main()
+
+        mock_get_client.assert_called_once_with(
+            base_url="http://custom:9000",
+            socket_path="/tmp/custom.sock",
+        )
+
+    def test_no_flags_uses_none(self, mocker: Any) -> None:
+        """Test that no flags results in None parameters."""
+        mock_get_client = mocker.patch(
+            "scripts.dev.mcp_agent_client.get_mcp_client",
+            return_value=FakeHttpMCPClient(tool_responses=[{"jobs": []}]),
+        )
+        mocker.patch("sys.argv", ["mcp_agent_client", "list"])
+
+        main()
+
+        mock_get_client.assert_called_once_with(
+            base_url=None,
+            socket_path=None,
+        )
+
+    def test_flags_work_with_start_mode(self, mocker: Any) -> None:
+        """Test that flags work with start mode."""
+        mock_get_client = mocker.patch(
+            "scripts.dev.mcp_agent_client.get_mcp_client",
+            return_value=FakeHttpMCPClient(tool_responses=[{"job_id": "test-123"}]),
+        )
+        mocker.patch(
+            "sys.argv",
+            [
+                "mcp_agent_client",
+                "--server-url",
+                "http://custom:9000",
+                "start",
+                "--command",
+                "echo hello",
+            ],
+        )
+
+        main()
+
+        mock_get_client.assert_called_once_with(
+            base_url="http://custom:9000",
+            socket_path=None,
+        )
+
+    def test_flags_work_with_wait_mode(self, mocker: Any) -> None:
+        """Test that flags work with wait mode."""
+        mock_get_client = mocker.patch(
+            "scripts.dev.mcp_agent_client.get_mcp_client",
+            return_value=FakeHttpMCPClient(
+                tool_responses=[
+                    {"status": "completed", "exit_code": 0},
+                    {"stdout": "", "stderr": ""},
+                ]
+            ),
+        )
+        mocker.patch(
+            "sys.argv",
+            [
+                "mcp_agent_client",
+                "--socket-path",
+                "/tmp/test.sock",
+                "wait",
+                "--job-id",
+                "test-job",
+            ],
+        )
+
+        main()
+
+        mock_get_client.assert_called_once_with(
+            base_url=None,
+            socket_path="/tmp/test.sock",
+        )
+
+    def test_flags_work_with_cancel_mode(self, mocker: Any) -> None:
+        """Test that flags work with cancel mode."""
+        mock_get_client = mocker.patch(
+            "scripts.dev.mcp_agent_client.get_mcp_client",
+            return_value=FakeHttpMCPClient(tool_responses=[{}]),
+        )
+        mocker.patch(
+            "sys.argv",
+            [
+                "mcp_agent_client",
+                "--server-url",
+                "http://localhost:9999",
+                "cancel",
+                "--job-id",
+                "cancel-me",
+            ],
+        )
+
+        main()
+
+        mock_get_client.assert_called_once_with(
+            base_url="http://localhost:9999",
+            socket_path=None,
+        )
+
+
+class TestFormatBridgeError:
+    """Tests for _format_bridge_error helper function."""
+
+    def test_bridge_not_running_socket_error_preserved(self) -> None:
+        """Test that 'bridge not running' errors preserve full technical detail."""
+        original_msg = (
+            "Cannot connect to mcp-bridge at /tmp/mcp-sockets/mcp-bridge.sock. "
+            "Socket not available. Ensure mcp-bridge container is running "
+            "and socket is mounted."
+        )
+        error = MCPClientError(original_msg)
+        result = _format_bridge_error(error)
+
+        # Original message must be fully preserved
+        assert original_msg in result
+        # Helper returns a string, not a dict
+        assert isinstance(result, str)
+
+    def test_bridge_not_running_http_error_preserved(self) -> None:
+        """Test that HTTP connection refused errors preserve full technical detail."""
+        original_msg = (
+            "Cannot connect to mcp-bridge at http://localhost:8080. "
+            "Ensure the MCP bridge is running. For local development, run "
+            "'uv run dev.ensure-env' (preferred) or "
+            "'docker compose -p ai-workflow-devtools "
+            "-f docker-compose.dev.yml up -d mcp-bridge'."
+        )
+        error = MCPClientError(original_msg)
+        result = _format_bridge_error(error)
+
+        # Original message must be fully preserved
+        assert original_msg in result
+        assert isinstance(result, str)
+
+    def test_http_4xx_error_preserved(self) -> None:
+        """Test that HTTP 4xx client errors preserve structured error format."""
+        original_msg = "[NOT_FOUND] Server 'unknown-server' not found"
+        error = MCPClientError(original_msg)
+        result = _format_bridge_error(error)
+
+        # Structured error format [TYPE] message must be preserved
+        assert "[NOT_FOUND]" in result
+        assert "unknown-server" in result
+        assert isinstance(result, str)
+
+    def test_http_5xx_error_preserved(self) -> None:
+        """Test that HTTP 5xx server errors preserve error details."""
+        original_msg = "HTTP request failed: Internal Server Error"
+        error = MCPClientError(original_msg)
+        result = _format_bridge_error(error)
+
+        # HTTP error format must be preserved
+        assert "HTTP request failed" in result
+        assert "Internal Server Error" in result
+        assert isinstance(result, str)
+
+    def test_timeout_error_preserved(self) -> None:
+        """Test that timeout errors preserve the timeout duration."""
+        original_msg = "Request timed out after 30s"
+        error = MCPClientError(original_msg)
+        result = _format_bridge_error(error)
+
+        # Timeout message with duration must be preserved
+        assert "timed out" in result.lower()
+        assert "30s" in result
+        assert isinstance(result, str)
+
+    def test_helper_does_not_return_dict(self) -> None:
+        """Test that helper returns string, not dict - status is cmd_* responsibility."""
+        error = MCPClientError("Any error message")
+        result = _format_bridge_error(error)
+
+        # MUST return string only - status/exit-code is cmd_* responsibility
+        assert isinstance(result, str)
+        assert not isinstance(result, dict)
+
+
+class TestErrorStatusExitCodeMapping:
+    """Tests verifying cmd_* functions set status/exit-code, not _format_bridge_error."""
+
+    def test_cmd_start_sets_failed_status_for_connection_error(self) -> None:
+        """Test that cmd_start sets status='failed' for connection errors."""
+        fake_client = FakeHttpMCPClient(
+            raise_on_call=MCPClientError(
+                "Cannot connect to mcp-bridge at /tmp/mcp-sockets/mcp-bridge.sock. "
+                "Socket not available."
+            )
+        )
+        result = cmd_start(fake_client, "echo test")  # type: ignore[arg-type]
+
+        # cmd_start is responsible for setting status
+        assert result["status"] == "failed"
+        # Exit code mapping
+        assert get_exit_code(result) == 1
+        # Error message preserved
+        assert "Cannot connect to mcp-bridge" in result["error"]
+
+    def test_cmd_wait_sets_timeout_status_for_timeout_error(self) -> None:
+        """Test that cmd_wait sets status='timeout' for timeout errors."""
+        fake_client = FakeHttpMCPClient(raise_on_call=MCPClientError("Request timed out after 30s"))
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+
+        # cmd_wait is responsible for choosing 'timeout' vs 'failed'
+        assert result["status"] == "timeout"
+        # Exit code 124 for timeout
+        assert get_exit_code(result) == 124
+
+    def test_cmd_wait_sets_failed_status_for_4xx_error(self) -> None:
+        """Test that cmd_wait sets status='failed' for HTTP 4xx errors."""
+        fake_client = FakeHttpMCPClient(
+            raise_on_call=MCPClientError("[NOT_FOUND] Server 'background-job' not found")
+        )
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+
+        # Non-timeout errors get status='failed'
+        assert result["status"] == "failed"
+        # Exit code 1 for failed
+        assert get_exit_code(result) == 1
+        # Structured error format preserved
+        assert "[NOT_FOUND]" in result["error"]
