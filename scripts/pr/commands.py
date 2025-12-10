@@ -2063,3 +2063,149 @@ def rebase_finish_command(identifier: str | None = None) -> int:
     except github_dao.GraphQLError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+
+
+def sandbox_rebase_command(
+    branch: str,
+    target: str,
+    socket_path: str | None = None,
+    verbose: bool = False,
+) -> int:
+    """Rebase a branch onto a target using the sandbox server.
+
+    Args:
+        branch: Branch to rebase.
+        target: Target branch to rebase onto.
+        socket_path: Path to the sandbox server socket (defaults to DEFAULT_SOCKET_PATH).
+        verbose: If True, print progress messages.
+
+    Returns:
+        Exit code:
+        - 0 on success
+        - 2 when conflicts are detected
+        - 1 on errors
+    """
+    from scripts.pr.sandbox.client import (
+        DEFAULT_SOCKET_PATH,
+        SandboxClientError,
+        format_response,
+        send_rebase,
+    )
+    from scripts.pr.sandbox.protocol import ConflictResponse, SuccessResponse
+
+    if socket_path is None:
+        socket_path = DEFAULT_SOCKET_PATH
+
+    try:
+        response = send_rebase(
+            branch=branch,
+            target=target,
+            socket_path=socket_path,
+            wait=True,
+            verbose=verbose,
+        )
+        print(format_response(response))
+
+        if isinstance(response, SuccessResponse):
+            return 0
+        elif isinstance(response, ConflictResponse):
+            # Return exit code 2 for conflicts (distinguishable from errors)
+            return 2
+        return 1
+
+    except SandboxClientError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def sandbox_merge_command(
+    branch: str,
+    target: str,
+    socket_path: str | None = None,
+    verbose: bool = False,
+) -> int:
+    """Merge a target branch into a branch using the sandbox server.
+
+    Args:
+        branch: Branch to merge into.
+        target: Target branch to merge from.
+        socket_path: Path to the sandbox server socket (defaults to DEFAULT_SOCKET_PATH).
+        verbose: If True, print progress messages.
+
+    Returns:
+        Exit code:
+        - 0 on success
+        - 2 when conflicts are detected
+        - 1 on errors
+    """
+    from scripts.pr.sandbox.client import (
+        DEFAULT_SOCKET_PATH,
+        SandboxClientError,
+        format_response,
+        send_merge,
+    )
+    from scripts.pr.sandbox.protocol import ConflictResponse, SuccessResponse
+
+    if socket_path is None:
+        socket_path = DEFAULT_SOCKET_PATH
+
+    try:
+        response = send_merge(
+            branch=branch,
+            target=target,
+            socket_path=socket_path,
+            wait=True,
+            verbose=verbose,
+        )
+        print(format_response(response))
+
+        if isinstance(response, SuccessResponse):
+            return 0
+        elif isinstance(response, ConflictResponse):
+            # Return exit code 2 for conflicts (distinguishable from errors)
+            return 2
+        return 1
+
+    except SandboxClientError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def sandbox_status_command(
+    request_id: str | None = None,
+    socket_path: str | None = None,
+) -> int:
+    """Get status of sandbox operations.
+
+    Args:
+        request_id: Specific request ID, or None for all operations.
+        socket_path: Path to the sandbox server socket (defaults to DEFAULT_SOCKET_PATH).
+
+    Returns:
+        Exit code:
+        - 0 when status retrieval succeeds
+        - 1 when an error response is returned or a client error occurs
+    """
+    from scripts.pr.sandbox.client import (
+        DEFAULT_SOCKET_PATH,
+        SandboxClientError,
+        format_response,
+        get_status,
+    )
+    from scripts.pr.sandbox.protocol import ErrorResponse
+
+    if socket_path is None:
+        socket_path = DEFAULT_SOCKET_PATH
+
+    try:
+        response = get_status(request_id=request_id, socket_path=socket_path)
+        print(format_response(response))
+
+        # Return 1 for error responses to maintain consistency with other commands
+        if isinstance(response, ErrorResponse):
+            return 1
+        return 0
+
+    except SandboxClientError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1

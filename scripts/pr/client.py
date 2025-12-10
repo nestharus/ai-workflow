@@ -26,6 +26,9 @@ Usage:
     uv run pr cleanup-sandbox [<identifier>]
     uv run pr rebase-start [<identifier>]
     uv run pr rebase-finish [<identifier>]
+    uv run pr sandbox-rebase --branch <name> --target <name>
+    uv run pr sandbox-merge --branch <name> --target <name>
+    uv run pr sandbox-status [--request-id <uuid>]
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ import argparse
 from pathlib import Path
 
 from scripts.pr import commands
+from scripts.pr.sandbox.client import DEFAULT_SOCKET_PATH
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -429,6 +433,76 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="PR ID (17/#17), ticket ID (NES-123), branch name, or omit for current branch.",
     )
 
+    # sandbox-rebase command
+    sandbox_rebase_parser = subparsers.add_parser(
+        "sandbox-rebase",
+        help="Rebase a branch onto a target using the sandbox server",
+    )
+    sandbox_rebase_parser.add_argument(
+        "--branch",
+        required=True,
+        help="Branch to rebase",
+    )
+    sandbox_rebase_parser.add_argument(
+        "--target",
+        required=True,
+        help="Target branch to rebase onto",
+    )
+    sandbox_rebase_parser.add_argument(
+        "--socket",
+        default=DEFAULT_SOCKET_PATH,
+        help="Path to sandbox server socket",
+    )
+    sandbox_rebase_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print progress messages",
+    )
+
+    # sandbox-merge command
+    sandbox_merge_parser = subparsers.add_parser(
+        "sandbox-merge",
+        help="Merge a target branch into a branch using the sandbox server",
+    )
+    sandbox_merge_parser.add_argument(
+        "--branch",
+        required=True,
+        help="Branch to merge into",
+    )
+    sandbox_merge_parser.add_argument(
+        "--target",
+        required=True,
+        help="Target branch to merge from",
+    )
+    sandbox_merge_parser.add_argument(
+        "--socket",
+        default=DEFAULT_SOCKET_PATH,
+        help="Path to sandbox server socket",
+    )
+    sandbox_merge_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print progress messages",
+    )
+
+    # sandbox-status command
+    sandbox_status_parser = subparsers.add_parser(
+        "sandbox-status",
+        help="Get status of sandbox operations",
+    )
+    sandbox_status_parser.add_argument(
+        "--request-id",
+        default=None,
+        help="Specific request ID (omit for all)",
+    )
+    sandbox_status_parser.add_argument(
+        "--socket",
+        default=DEFAULT_SOCKET_PATH,
+        help="Path to sandbox server socket",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -495,6 +569,12 @@ def main(argv: list[str] | None = None) -> int:
         return commands.rebase_start_command(args.identifier)
     if args.command == "rebase-finish":
         return commands.rebase_finish_command(args.identifier)
+    if args.command == "sandbox-rebase":
+        return commands.sandbox_rebase_command(args.branch, args.target, args.socket, args.verbose)
+    if args.command == "sandbox-merge":
+        return commands.sandbox_merge_command(args.branch, args.target, args.socket, args.verbose)
+    if args.command == "sandbox-status":
+        return commands.sandbox_status_command(args.request_id, args.socket)
 
     return 1
 
