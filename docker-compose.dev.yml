@@ -6,6 +6,7 @@
 # Start:  docker compose -p ai-workflow-devtools -f docker-compose.dev.yml up -d
 # Stop:   docker compose -p ai-workflow-devtools -f docker-compose.dev.yml down
 # Logs:   docker logs ai-workflow-mcp-bridge-dev
+#         docker logs ai-workflow-sandbox-server-dev
 #
 # Preferred: Use `uv run dev.ensure-env` for automated startup with locking
 # and health checks.
@@ -24,7 +25,7 @@ services:
   # /tmp/mcp-sockets directory must be writable by this user for socket creation.
   mcp-bridge:
     build:
-      context: ./scripts/mcp
+      context: ./scripts/servers/mcp
       dockerfile: Dockerfile
     container_name: ai-workflow-mcp-bridge-dev
     # Bind mount targeted socket directory from host to container /tmp
@@ -42,5 +43,51 @@ services:
       interval: 30s
       timeout: 3s
       start_period: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Sandbox Server Service
+  # Git rebase/merge operations in isolated sandbox checkout.
+  # Local development only - must not be exposed to untrusted networks.
+  #
+  # SOCKET MODE: The server listens on a Unix socket at /tmp/sandbox.sock
+  # inside the container. Host directory /tmp/sandbox-sockets is mounted to
+  # container /tmp so host processes access the socket at
+  # /tmp/sandbox-sockets/sandbox.sock.
+  #
+  # PERMISSIONS: Runs as root to handle WSL2 Windows filesystem permission
+  # quirks when mounting the repository.
+  sandbox-server:
+    build:
+      context: ./scripts/servers/sandbox
+      dockerfile: Dockerfile
+    container_name: ai-workflow-sandbox-server-dev
+    # Run as root to handle WSL2 Windows filesystem permission quirks
+    user: root
+    volumes:
+      # Mount repository as read-write for sandbox operations
+      - ./:/repo:rw
+      # Bind mount socket directory from host to container /tmp
+      - /tmp/sandbox-sockets:/tmp
+      # Mount SSH key for authentication to remote repositories
+      - ~/.ssh/github:/ssh-key:ro
+    environment:
+      - SANDBOX_SOCKET_PATH=/tmp/sandbox.sock
+      - SANDBOX_REPO_PATH=/repo
+      # Use SSH with the mounted key, bypassing config file ownership checks
+      - GIT_SSH_COMMAND=ssh -i /ssh-key -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import socket,json; s=socket.socket(socket.AF_UNIX); s.settimeout(3);
+          s.connect('/tmp/sandbox.sock'); s.sendall(b'{"command":"status"}\n');
+          r=s.recv(4096); s.close(); d=json.loads(r); exit(0 if d.get('status')=='success'
+          else 1)
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
       retries: 3
     restart: unless-stopped

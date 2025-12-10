@@ -37,7 +37,7 @@ import argparse
 from pathlib import Path
 
 from scripts.pr import commands
-from scripts.pr.sandbox.client import DEFAULT_SOCKET_PATH
+from scripts.servers.sandbox.client import DEFAULT_SOCKET_PATH
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

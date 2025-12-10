@@ -17,8 +17,8 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from scripts.pr.sandbox.constants import DEFAULT_SOCKET_PATH
-from scripts.pr.sandbox.operations import (
+from scripts.servers.sandbox.constants import DEFAULT_SOCKET_PATH
+from scripts.servers.sandbox.operations import (
     MergeResult,
     RebaseResult,
     ensure_sandbox_exists,
@@ -26,7 +26,7 @@ from scripts.pr.sandbox.operations import (
     push_from_sandbox,
     rebase_in_sandbox,
 )
-from scripts.pr.sandbox.protocol import (
+from scripts.servers.sandbox.protocol import (
     CancelRequest,
     ConflictResponse,
     ErrorResponse,
@@ -123,6 +123,12 @@ class SandboxServer:
             self._handle_client,
             path=self.socket_path,
         )
+
+        # Make socket world-writable so host CLI can connect regardless of user
+        # This is required when running the server as root in Docker while the
+        # CLI runs as a non-root user on the host
+        os.chmod(self.socket_path, 0o777)
+
         logger.info(f"Server listening on {self.socket_path}")
 
         # Start the operation processor after server is ready

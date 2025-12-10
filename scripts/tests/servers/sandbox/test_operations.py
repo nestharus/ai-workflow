@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from scripts.pr.sandbox.operations import (
+from scripts.servers.sandbox.operations import (
     ensure_sandbox_exists,
     get_conflicts,
     merge_in_sandbox,
@@ -41,7 +41,7 @@ class TestEnsureSandboxExists:
         sandbox_path.mkdir(parents=True)
         (sandbox_path / ".git").mkdir()
 
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # git rev-parse --git-dir for repo_root
                 make_completed_process(stdout=".git\n"),
@@ -60,7 +60,7 @@ class TestEnsureSandboxExists:
         # Create .git as a file (gitdir pointer) instead of directory
         (sandbox_path / ".git").write_text("gitdir: /some/other/path/.git")
 
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # git rev-parse --git-dir for repo_root
                 make_completed_process(stdout=".git\n"),
@@ -74,7 +74,7 @@ class TestEnsureSandboxExists:
 
     def test_creates_new_sandbox_if_not_exists(self, tmp_path: Path) -> None:
         """Create new sandbox if it doesn't exist."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # git rev-parse --git-dir
                 make_completed_process(stdout=".git\n"),
@@ -101,7 +101,7 @@ class TestEnsureSandboxExists:
 
     def test_raises_if_git_dir_resolution_fails(self, tmp_path: Path) -> None:
         """Raise RuntimeError if git dir resolution fails."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.return_value = make_completed_process(returncode=1, stderr="not a git repo")
 
             with pytest.raises(RuntimeError, match="Failed to resolve git dir"):
@@ -109,7 +109,7 @@ class TestEnsureSandboxExists:
 
     def test_raises_if_no_remote_url(self, tmp_path: Path) -> None:
         """Raise RuntimeError if can't get remote URL."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # git rev-parse --git-dir
                 make_completed_process(stdout=".git\n"),
@@ -122,7 +122,7 @@ class TestEnsureSandboxExists:
 
     def test_raises_if_remote_url_is_empty(self, tmp_path: Path) -> None:
         """Raise RuntimeError if remote URL is empty."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # git rev-parse --git-dir
                 make_completed_process(stdout=".git\n"),
@@ -141,7 +141,7 @@ class TestEnsureSandboxExists:
         sandbox_path = git_dir / "sandbox"
         sandbox_path.write_text("stale file")  # Create a regular file, not a directory
 
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # git rev-parse --git-dir for repo_root
                 make_completed_process(stdout=".git\n"),
@@ -177,7 +177,7 @@ class TestEnsureSandboxExists:
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # git rev-parse --git-dir returns absolute path to worktree git dir
                 make_completed_process(stdout=f"{main_git_dir}\n"),
@@ -209,7 +209,7 @@ class TestSyncSandboxBranch:
 
     def test_syncs_existing_branch(self, tmp_path: Path) -> None:
         """Sync an existing local branch."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # git fetch origin
                 make_completed_process(),
@@ -232,7 +232,7 @@ class TestSyncSandboxBranch:
 
     def test_creates_new_branch_if_not_exists(self, tmp_path: Path) -> None:
         """Create new branch tracking remote if doesn't exist locally."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # git fetch origin
                 make_completed_process(),
@@ -253,7 +253,7 @@ class TestSyncSandboxBranch:
 
     def test_returns_error_on_fetch_failure(self, tmp_path: Path) -> None:
         """Return error if fetch fails."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.return_value = make_completed_process(returncode=1, stderr="fetch failed")
 
             success, error = sync_sandbox_branch(tmp_path, "feature-x")
@@ -263,7 +263,7 @@ class TestSyncSandboxBranch:
 
     def test_returns_error_when_reset_hard_fails(self, tmp_path: Path) -> None:
         """Return error when branch exists but git reset --hard fails."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # git fetch origin
                 make_completed_process(),
@@ -287,7 +287,7 @@ class TestSyncSandboxBranch:
 
     def test_returns_error_when_checkout_new_branch_fails(self, tmp_path: Path) -> None:
         """Return error when branch doesn't exist and git checkout -b fails."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # git fetch origin
                 make_completed_process(),
@@ -315,7 +315,7 @@ class TestGetConflicts:
 
     def test_returns_empty_list_when_no_conflicts(self, tmp_path: Path) -> None:
         """Return empty list when no conflicts."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.return_value = make_completed_process(stdout="")
 
             conflicts = get_conflicts(tmp_path)
@@ -324,7 +324,7 @@ class TestGetConflicts:
 
     def test_returns_conflicted_files(self, tmp_path: Path) -> None:
         """Return list of files with UU (both modified) status."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.return_value = make_completed_process(
                 stdout="UU file1.py\nUU file2.py\nM  file3.py\n"
             )
@@ -335,7 +335,7 @@ class TestGetConflicts:
 
     def test_handles_aa_conflicts(self, tmp_path: Path) -> None:
         """Return files with AA (both added) status."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.return_value = make_completed_process(stdout="AA newfile.py\n")
 
             conflicts = get_conflicts(tmp_path)
@@ -344,7 +344,7 @@ class TestGetConflicts:
 
     def test_handles_dd_conflicts(self, tmp_path: Path) -> None:
         """Return files with DD (both deleted) status."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.return_value = make_completed_process(stdout="DD deleted.py\n")
 
             conflicts = get_conflicts(tmp_path)
@@ -357,7 +357,7 @@ class TestRebaseInSandbox:
 
     def test_successful_rebase(self, tmp_path: Path) -> None:
         """Return success result on successful rebase."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # sync_sandbox_branch calls
                 make_completed_process(),  # fetch
@@ -380,7 +380,7 @@ class TestRebaseInSandbox:
 
     def test_rebase_with_conflicts(self, tmp_path: Path) -> None:
         """Return conflict result when rebase has conflicts."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # sync_sandbox_branch calls
                 make_completed_process(),  # fetch
@@ -409,7 +409,7 @@ class TestMergeInSandbox:
 
     def test_successful_merge(self, tmp_path: Path) -> None:
         """Return success result on successful merge."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # sync_sandbox_branch calls
                 make_completed_process(),  # fetch
@@ -432,7 +432,7 @@ class TestMergeInSandbox:
 
     def test_merge_with_conflicts(self, tmp_path: Path) -> None:
         """Return conflict result when merge has conflicts."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.side_effect = [
                 # sync_sandbox_branch calls
                 make_completed_process(),  # fetch
@@ -461,7 +461,7 @@ class TestPushFromSandbox:
 
     def test_successful_push(self, tmp_path: Path) -> None:
         """Return success on successful push."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.return_value = make_completed_process()
 
             success, error = push_from_sandbox(tmp_path, "feature-x")
@@ -471,7 +471,7 @@ class TestPushFromSandbox:
 
     def test_force_push(self, tmp_path: Path) -> None:
         """Use force-with-lease when force=True."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.return_value = make_completed_process()
 
             push_from_sandbox(tmp_path, "feature-x", force=True)
@@ -484,7 +484,7 @@ class TestPushFromSandbox:
 
     def test_push_failure(self, tmp_path: Path) -> None:
         """Return error on push failure."""
-        with patch("scripts.pr.sandbox.operations._run_git") as mock_run:
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
             mock_run.return_value = make_completed_process(returncode=1, stderr="rejected")
 
             success, error = push_from_sandbox(tmp_path, "feature-x")

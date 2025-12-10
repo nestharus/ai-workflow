@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from scripts.pr.sandbox.protocol import RebaseRequest, StatusRequest
-from scripts.pr.sandbox.server import (
+from scripts.servers.sandbox.protocol import RebaseRequest, StatusRequest
+from scripts.servers.sandbox.server import (
     MAX_HISTORY_SIZE,
     OperationStatus,
     SandboxServer,
@@ -364,7 +364,7 @@ class TestHandleCancel:
             status="pending",
         )
 
-        from scripts.pr.sandbox.protocol import CancelRequest
+        from scripts.servers.sandbox.protocol import CancelRequest
 
         request = CancelRequest(request_id="pending-op")
         response = server._handle_cancel(request)
@@ -388,7 +388,7 @@ class TestHandleCancel:
             status="in_progress",
         )
 
-        from scripts.pr.sandbox.protocol import CancelRequest
+        from scripts.servers.sandbox.protocol import CancelRequest
 
         request = CancelRequest(request_id="in-progress-op")
         response = server._handle_cancel(request)
@@ -413,7 +413,7 @@ class TestHandleCancel:
             result={"message": "Done"},
         )
 
-        from scripts.pr.sandbox.protocol import CancelRequest
+        from scripts.servers.sandbox.protocol import CancelRequest
 
         request = CancelRequest(request_id="completed-op")
         response = server._handle_cancel(request)
@@ -437,7 +437,7 @@ class TestHandleCancel:
             result={"conflicts": ["file.txt"]},
         )
 
-        from scripts.pr.sandbox.protocol import CancelRequest
+        from scripts.servers.sandbox.protocol import CancelRequest
 
         request = CancelRequest(request_id="conflict-op")
         response = server._handle_cancel(request)
@@ -453,7 +453,7 @@ class TestHandleCancel:
 
         # Do not add any operation - history is empty
 
-        from scripts.pr.sandbox.protocol import CancelRequest
+        from scripts.servers.sandbox.protocol import CancelRequest
 
         request = CancelRequest(request_id="nonexistent-op")
         response = server._handle_cancel(request)
@@ -537,7 +537,7 @@ class TestEarlyShutdown:
 
         with (
             patch(
-                "scripts.pr.sandbox.server.ensure_sandbox_exists",
+                "scripts.servers.sandbox.server.ensure_sandbox_exists",
                 return_value=Path("/tmp/sandbox"),
             ),
             patch(
@@ -590,7 +590,7 @@ class TestProcessQueuePrunesOnCancel:
             )
 
         # Create a cancelled operation
-        from scripts.pr.sandbox.server import QueuedOperation
+        from scripts.servers.sandbox.server import QueuedOperation
 
         response_queue: asyncio.Queue[str] = asyncio.Queue()
         queued_op = QueuedOperation(
@@ -634,7 +634,7 @@ class TestCancellationBeforePush:
         """_format_rebase_result should skip push if operation was cancelled."""
         from unittest.mock import patch
 
-        from scripts.pr.sandbox.operations import RebaseResult
+        from scripts.servers.sandbox.operations import RebaseResult
 
         server = SandboxServer(repo_path=Path("/tmp"))
         server.sandbox_path = Path("/tmp/sandbox")
@@ -649,7 +649,7 @@ class TestCancellationBeforePush:
         result = RebaseResult(success=True, has_conflicts=False, conflicts=[], error="")
 
         # Mock push_from_sandbox to verify it's NOT called
-        with patch("scripts.pr.sandbox.server.push_from_sandbox") as mock_push:
+        with patch("scripts.servers.sandbox.server.push_from_sandbox") as mock_push:
             response = server._format_rebase_result("test-op", result, "feature-branch")
 
         # Push should NOT have been called
@@ -665,7 +665,7 @@ class TestCancellationBeforePush:
         """_format_merge_result should skip push if operation was cancelled."""
         from unittest.mock import patch
 
-        from scripts.pr.sandbox.operations import MergeResult
+        from scripts.servers.sandbox.operations import MergeResult
 
         server = SandboxServer(repo_path=Path("/tmp"))
         server.sandbox_path = Path("/tmp/sandbox")
@@ -680,7 +680,7 @@ class TestCancellationBeforePush:
         result = MergeResult(success=True, has_conflicts=False, conflicts=[], error="")
 
         # Mock push_from_sandbox to verify it's NOT called
-        with patch("scripts.pr.sandbox.server.push_from_sandbox") as mock_push:
+        with patch("scripts.servers.sandbox.server.push_from_sandbox") as mock_push:
             response = server._format_merge_result("test-op", result, "feature-branch")
 
         # Push should NOT have been called
@@ -696,7 +696,7 @@ class TestCancellationBeforePush:
         """_format_rebase_result should push when operation is not cancelled."""
         from unittest.mock import patch
 
-        from scripts.pr.sandbox.operations import RebaseResult
+        from scripts.servers.sandbox.operations import RebaseResult
 
         server = SandboxServer(repo_path=Path("/tmp"))
         server.sandbox_path = Path("/tmp/sandbox")
@@ -712,7 +712,7 @@ class TestCancellationBeforePush:
 
         # Mock push_from_sandbox to verify it IS called
         with patch(
-            "scripts.pr.sandbox.server.push_from_sandbox", return_value=(True, None)
+            "scripts.servers.sandbox.server.push_from_sandbox", return_value=(True, None)
         ) as mock_push:
             response = server._format_rebase_result("test-op", result, "feature-branch")
 
@@ -728,7 +728,7 @@ class TestCancellationBeforePush:
         """_format_merge_result should push when operation is not cancelled."""
         from unittest.mock import patch
 
-        from scripts.pr.sandbox.operations import MergeResult
+        from scripts.servers.sandbox.operations import MergeResult
 
         server = SandboxServer(repo_path=Path("/tmp"))
         server.sandbox_path = Path("/tmp/sandbox")
@@ -744,7 +744,7 @@ class TestCancellationBeforePush:
 
         # Mock push_from_sandbox to verify it IS called
         with patch(
-            "scripts.pr.sandbox.server.push_from_sandbox", return_value=(True, None)
+            "scripts.servers.sandbox.server.push_from_sandbox", return_value=(True, None)
         ) as mock_push:
             response = server._format_merge_result("test-op", result, "feature-branch")
 
@@ -760,7 +760,7 @@ class TestCancellationBeforePush:
         """_format_rebase_result should push when there's no history entry (edge case)."""
         from unittest.mock import patch
 
-        from scripts.pr.sandbox.operations import RebaseResult
+        from scripts.servers.sandbox.operations import RebaseResult
 
         server = SandboxServer(repo_path=Path("/tmp"))
         server.sandbox_path = Path("/tmp/sandbox")
@@ -773,7 +773,7 @@ class TestCancellationBeforePush:
 
         # Mock push_from_sandbox to verify it IS called (fail-safe behavior)
         with patch(
-            "scripts.pr.sandbox.server.push_from_sandbox", return_value=(True, None)
+            "scripts.servers.sandbox.server.push_from_sandbox", return_value=(True, None)
         ) as mock_push:
             response = server._format_rebase_result("test-op", result, "feature-branch")
 
@@ -788,7 +788,7 @@ class TestCancellationBeforePush:
         """_format_merge_result should push when there's no history entry (edge case)."""
         from unittest.mock import patch
 
-        from scripts.pr.sandbox.operations import MergeResult
+        from scripts.servers.sandbox.operations import MergeResult
 
         server = SandboxServer(repo_path=Path("/tmp"))
         server.sandbox_path = Path("/tmp/sandbox")
@@ -801,7 +801,7 @@ class TestCancellationBeforePush:
 
         # Mock push_from_sandbox to verify it IS called (fail-safe behavior)
         with patch(
-            "scripts.pr.sandbox.server.push_from_sandbox", return_value=(True, None)
+            "scripts.servers.sandbox.server.push_from_sandbox", return_value=(True, None)
         ) as mock_push:
             response = server._format_merge_result("test-op", result, "feature-branch")
 

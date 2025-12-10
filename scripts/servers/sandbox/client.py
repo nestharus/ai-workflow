@@ -11,8 +11,8 @@ import socket
 import sys
 import time
 
-from scripts.pr.sandbox.constants import DEFAULT_SOCKET_PATH
-from scripts.pr.sandbox.protocol import (
+from scripts.servers.sandbox.constants import DEFAULT_SOCKET_PATH
+from scripts.servers.sandbox.protocol import (
     ConflictResponse,
     ErrorResponse,
     MergeRequest,

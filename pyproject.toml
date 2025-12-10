@@ -83,7 +83,7 @@ lint = "scripts.dev.linter.lint_cli:main"
 "ai" = "scripts.dev.commands.cli:main"
 # GitHub PR operations
 "pr" = "scripts.pr.client:main"
-"pr.sandbox" = "scripts.pr.sandbox.server:main"
+"pr.sandbox" = "scripts.servers.sandbox.server:main"
 # Review scripts
 "review.coderabbit" = "scripts.dev.review.coderabbit_review:main"
 "review.sonar" = "scripts.dev.review.sonar_review:main"
@@ -251,8 +251,12 @@ convention = "google"
 # Scripts: ANN401 for modules with generic helper functions using Any
 "scripts/knowledge/**/*.py" = ["ANN401"]
 "scripts/mcp/**/*.py" = ["ANN401", "E402", "S108"]  # E402 for late imports after sys.path; S108 for socket paths
+"scripts/servers/mcp/**/*.py" = ["ANN401", "E402", "S108"]  # E402 for late imports after sys.path; S108 for socket paths
 "scripts/tasks/**/*.py" = ["ANN401"]
 "scripts/dev/ensure_dev_env.py" = ["S108"]  # S108 for /tmp socket directory creation
+
+# Scripts: S103 for world-writable socket permissions (security: host/container user isolation)
+"scripts/servers/sandbox/server.py" = ["S103"]  # S103: socket world-writable for host CLI access
 
 # Scripts: E402 for modules with late imports after sys.path manipulation
 "scripts/dev/test_runner/test_coverage.py" = ["E402"]

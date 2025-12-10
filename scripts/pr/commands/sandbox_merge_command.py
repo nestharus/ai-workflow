@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import sys
 
-from scripts.pr.sandbox.client import (
+from scripts.servers.sandbox.client import (
     DEFAULT_SOCKET_PATH,
     SandboxClientError,
     format_response,
     send_merge,
 )
-from scripts.pr.sandbox.protocol import ConflictResponse, SuccessResponse
+from scripts.servers.sandbox.protocol import ConflictResponse, SuccessResponse
 
 
 def sandbox_merge_command(

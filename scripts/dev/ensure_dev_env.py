@@ -19,12 +19,16 @@ DOCKER_TIMEOUT = 5  # seconds for docker info
 COMPOSE_TIMEOUT = 60  # seconds for docker compose up
 INSPECT_TIMEOUT = 10  # seconds for docker inspect
 HEALTH_POLL_INTERVAL = 2  # seconds between health checks
-HEALTH_TIMEOUT = 20  # total seconds to wait for healthy
-CONTAINER_NAME = "ai-workflow-mcp-bridge-dev"
+HEALTH_TIMEOUT = 60  # total seconds to wait for healthy (increased for multiple containers)
 COMPOSE_FILE = "docker-compose.dev.yml"
 PROJECT_NAME = "ai-workflow-devtools"
 LOCK_STALE_SECONDS = 300  # 5 minutes
-SOCKET_DIR = Path("/tmp/mcp-sockets")  # Host socket directory for targeted mount
+
+# Container definitions: (name, socket_directory)
+CONTAINERS = [
+    ("ai-workflow-mcp-bridge-dev", Path("/tmp/mcp-sockets")),
+    ("ai-workflow-sandbox-server-dev", Path("/tmp/sandbox-sockets")),
+]
 
 # Paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -137,31 +141,44 @@ def release_lock() -> None:
             LOCK_FILE.unlink()
 
 
-def ensure_socket_directory() -> None:
-    """Create the socket directory if it doesn't exist.
+def _ensure_single_socket_directory(socket_dir: Path) -> None:
+    """Create a single socket directory if it doesn't exist.
 
-    Creates /tmp/mcp-sockets with world-writable permissions (1777)
+    Creates the directory with world-writable permissions (1777)
     to allow the container's appuser (UID 10000) to create the socket.
 
     If the path exists but is not a directory (e.g., a regular file),
     it will be removed and recreated as a directory.
+
+    Args:
+        socket_dir: Path to the socket directory to create/verify.
     """
-    if not SOCKET_DIR.exists():
-        log(f"Creating socket directory: {SOCKET_DIR}")
-        SOCKET_DIR.mkdir(parents=True, exist_ok=True)
-        SOCKET_DIR.chmod(0o1777)
-    elif not SOCKET_DIR.is_dir():
-        log(f"Socket path exists but is not a directory: {SOCKET_DIR}")
+    if not socket_dir.exists():
+        log(f"Creating socket directory: {socket_dir}")
+        socket_dir.mkdir(parents=True, exist_ok=True)
+        socket_dir.chmod(0o1777)
+    elif not socket_dir.is_dir():
+        log(f"Socket path exists but is not a directory: {socket_dir}")
         with contextlib.suppress(OSError):
-            SOCKET_DIR.unlink()
-        SOCKET_DIR.mkdir(parents=True, exist_ok=True)
-        SOCKET_DIR.chmod(0o1777)
+            socket_dir.unlink()
+        socket_dir.mkdir(parents=True, exist_ok=True)
+        socket_dir.chmod(0o1777)
     else:
         # Ensure correct permissions even if directory exists
-        current_mode = SOCKET_DIR.stat().st_mode & 0o7777
+        current_mode = socket_dir.stat().st_mode & 0o7777
         if current_mode != 0o1777:
             log(f"Fixing socket directory permissions: {oct(current_mode)} -> 0o1777")
-            SOCKET_DIR.chmod(0o1777)
+            socket_dir.chmod(0o1777)
+
+
+def ensure_socket_directories() -> None:
+    """Create all socket directories for dev services.
+
+    Iterates through CONTAINERS and ensures each socket directory exists
+    with correct permissions.
+    """
+    for _, socket_dir in CONTAINERS:
+        _ensure_single_socket_directory(socket_dir)
 
 
 def check_docker_available() -> tuple[bool, str]:
@@ -203,10 +220,11 @@ def start_compose() -> tuple[bool, str]:
         return False, "docker compose up timed out"
 
 
-def get_container_health(timeout: float | None = None) -> str:
+def get_container_health(container_name: str, timeout: float | None = None) -> str:
     """Get container health status.
 
     Args:
+        container_name: Name of the container to check.
         timeout: Maximum seconds to wait for inspect command.
                  Defaults to INSPECT_TIMEOUT if not specified.
 
@@ -218,7 +236,7 @@ def get_container_health(timeout: float | None = None) -> str:
         return ""
     try:
         result = subprocess.run(
-            ["docker", "inspect", "--format", "{{.State.Health.Status}}", CONTAINER_NAME],
+            ["docker", "inspect", "--format", "{{.State.Health.Status}}", container_name],
             capture_output=True,
             text=True,
             timeout=effective_timeout,
@@ -229,34 +247,56 @@ def get_container_health(timeout: float | None = None) -> str:
 
 
 def wait_for_healthy() -> bool:
-    """Poll for healthy status.
+    """Poll for healthy status on all containers.
 
     Ensures wall time never exceeds HEALTH_TIMEOUT by capping each inspect
     call to the remaining time budget. Tracks the last-known health status
-    to provide more informative logging on timeout.
+    per container to provide more informative logging on timeout.
 
     Returns:
-        True if healthy within timeout.
+        True if all containers are healthy within timeout.
     """
     start = time.monotonic()
-    last_status: str = ""
+    # Track last status per container
+    last_statuses: dict[str, str] = {name: "" for name, _ in CONTAINERS}
+    # Track which containers are healthy
+    healthy_containers: set[str] = set()
+
     while True:
         remaining = HEALTH_TIMEOUT - (time.monotonic() - start)
         if remaining <= 0:
-            status_msg = last_status if last_status else "unknown"
-            log(f"Health check timed out; last known status: {status_msg}")
+            unhealthy = [
+                f"{name}={last_statuses.get(name, 'unknown')}"
+                for name, _ in CONTAINERS
+                if name not in healthy_containers
+            ]
+            log(f"Health check timed out; unhealthy containers: {', '.join(unhealthy)}")
             return False
 
-        status = get_container_health(timeout=remaining)
-        if status:
-            last_status = status
-        if status == "healthy":
+        # Check each container that isn't healthy yet
+        for container_name, _ in CONTAINERS:
+            if container_name in healthy_containers:
+                continue
+
+            status = get_container_health(container_name, timeout=remaining)
+            if status:
+                last_statuses[container_name] = status
+            if status == "healthy":
+                log(f"Container {container_name} is healthy")
+                healthy_containers.add(container_name)
+
+        # All containers healthy?
+        if len(healthy_containers) == len(CONTAINERS):
             return True
 
         remaining = HEALTH_TIMEOUT - (time.monotonic() - start)
         if remaining <= 0:
-            status_msg = last_status if last_status else "unknown"
-            log(f"Health check timed out; last known status: {status_msg}")
+            unhealthy = [
+                f"{name}={last_statuses.get(name, 'unknown')}"
+                for name, _ in CONTAINERS
+                if name not in healthy_containers
+            ]
+            log(f"Health check timed out; unhealthy containers: {', '.join(unhealthy)}")
             return False
 
         time.sleep(min(HEALTH_POLL_INTERVAL, max(0.0, remaining)))
@@ -281,8 +321,8 @@ def main() -> int:
                 log(f"docker info failed: {docker_stderr.strip()[:200]}")
                 return EXIT_DOCKER_NOT_AVAILABLE
 
-            # Step 3: Ensure socket directory exists before starting compose
-            ensure_socket_directory()
+            # Step 3: Ensure socket directories exist before starting compose
+            ensure_socket_directories()
 
             # Step 4: Start compose stack
             success, stderr = start_compose()

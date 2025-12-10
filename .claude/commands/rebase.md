@@ -18,14 +18,11 @@ Rebase PR: $ARGUMENTS
 
 ## Prerequisites
 
-Ensure the sandbox server is running:
+The sandbox server starts automatically via `uv run dev.ensure-env` (triggered by
+SessionStart hook). If not running, start manually:
 
 ```bash
-# Create the socket directory first (required for host access)
-mkdir -p /tmp/sandbox-sockets && chmod 1777 /tmp/sandbox-sockets
-
-# Start the sandbox server
-docker compose -f scripts/pr/sandbox/docker-compose.yml up -d
+docker compose -p ai-workflow-devtools -f docker-compose.dev.yml up -d
 ```
 
 ## Workflow

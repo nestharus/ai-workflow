@@ -42,7 +42,7 @@ ai-workflow/
 
 ## Components
 
-### Socket Server (`scripts/pr/sandbox/server.py`)
+### Socket Server (`scripts/servers/sandbox/server.py`)
 
 The socket server manages all sandbox operations:
 
@@ -54,15 +54,14 @@ The socket server manages all sandbox operations:
 
 **Start the server:**
 
-```bash
-# Create the socket directory first (required for host access)
-mkdir -p /tmp/sandbox-sockets && chmod 1777 /tmp/sandbox-sockets
+The sandbox server starts automatically via `uv run dev.ensure-env` (triggered by
+SessionStart hook). If not running, start manually:
 
-# Start the server
-docker compose -f scripts/pr/sandbox/docker-compose.yml up -d
+```bash
+docker compose -p ai-workflow-devtools -f docker-compose.dev.yml up -d
 ```
 
-### CLI Client (`scripts/pr/sandbox/client.py`)
+### CLI Client (`scripts/servers/sandbox/client.py`)
 
 The CLI provides commands for interacting with the server:
 
@@ -77,7 +76,7 @@ uv run pr sandbox-merge --branch feature-x --target main -v
 uv run pr sandbox-status
 ```
 
-### Protocol (`scripts/pr/sandbox/protocol.py`)
+### Protocol (`scripts/servers/sandbox/protocol.py`)
 
 Request/response protocol using JSON over Unix socket:
 
@@ -96,7 +95,7 @@ Request/response protocol using JSON over Unix socket:
 * `ProgressResponse`: Operation in progress
 * `ErrorResponse`: Operation failed
 
-### Operations (`scripts/pr/sandbox/operations.py`)
+### Operations (`scripts/servers/sandbox/operations.py`)
 
 Git operations for the sandbox:
 
@@ -156,7 +155,7 @@ Server -> Client: {"status": "success", "request_id": "...", "result": {...}}\n
 ## Directory Structure
 
 ```text
-scripts/pr/sandbox/
+scripts/servers/sandbox/
 ├── __init__.py        # Package exports
 ├── client.py          # CLI client
 ├── docker-compose.yml # Docker configuration
@@ -192,7 +191,7 @@ If your workflow requires multiple remotes:
    git remote add upstream https://github.com/upstream/repo.git
    ```
 
-2. Or modify `ensure_sandbox_exists()` in `scripts/pr/sandbox/operations.py` to copy
+2. Or modify `ensure_sandbox_exists()` in `scripts/servers/sandbox/operations.py` to copy
    additional remotes as needed.
 
 ## Migration from Old System

@@ -20,13 +20,13 @@ def sandbox_status_command(
         - 0 when status retrieval succeeds
         - 1 when an error response is returned or a client error occurs
     """
-    from scripts.pr.sandbox.client import (
+    from scripts.servers.sandbox.client import (
         DEFAULT_SOCKET_PATH,
         SandboxClientError,
         format_response,
         get_status,
     )
-    from scripts.pr.sandbox.protocol import ErrorResponse
+    from scripts.servers.sandbox.protocol import ErrorResponse
 
     if socket_path is None:
         socket_path = DEFAULT_SOCKET_PATH

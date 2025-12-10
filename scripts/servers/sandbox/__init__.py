@@ -6,8 +6,8 @@ in an isolated sandbox directory, separate from the user's main checkout.
 
 from __future__ import annotations
 
-from scripts.pr.sandbox.constants import DEFAULT_SOCKET_PATH
-from scripts.pr.sandbox.operations import (
+from scripts.servers.sandbox.constants import DEFAULT_SOCKET_PATH
+from scripts.servers.sandbox.operations import (
     MergeResult,
     OperationResult,
     RebaseResult,
@@ -18,7 +18,7 @@ from scripts.pr.sandbox.operations import (
     rebase_in_sandbox,
     sync_sandbox_branch,
 )
-from scripts.pr.sandbox.protocol import (
+from scripts.servers.sandbox.protocol import (
     CancelRequest,
     ConflictResponse,
     ErrorResponse,

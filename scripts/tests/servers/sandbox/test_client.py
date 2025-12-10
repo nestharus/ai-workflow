@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from scripts.pr.sandbox.client import (
+from scripts.servers.sandbox.client import (
     SandboxClientError,
     _connect,
     _send_request,
@@ -16,7 +16,7 @@ from scripts.pr.sandbox.client import (
     send_merge,
     send_rebase,
 )
-from scripts.pr.sandbox.protocol import (
+from scripts.servers.sandbox.protocol import (
     ConflictResponse,
     ErrorResponse,
     ProgressResponse,
@@ -140,7 +140,7 @@ class TestSendRebase:
 
     def test_returns_success_response(self) -> None:
         """Return success response from server."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -160,7 +160,7 @@ class TestSendRebase:
 
     def test_returns_conflict_response(self) -> None:
         """Return conflict response from server."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -184,8 +184,8 @@ class TestSendRebaseWait:
     def test_waits_for_progress_response(self) -> None:
         """Wait for completion when server returns ProgressResponse."""
         with (
-            patch("scripts.pr.sandbox.client._connect") as mock_connect,
-            patch("scripts.pr.sandbox.client._wait_for_completion") as mock_wait,
+            patch("scripts.servers.sandbox.client._connect") as mock_connect,
+            patch("scripts.servers.sandbox.client._wait_for_completion") as mock_wait,
         ):
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
@@ -212,8 +212,8 @@ class TestSendRebaseWait:
     def test_waits_for_queued_response(self) -> None:
         """Wait for completion when server returns QueuedResponse."""
         with (
-            patch("scripts.pr.sandbox.client._connect") as mock_connect,
-            patch("scripts.pr.sandbox.client._wait_for_completion") as mock_wait,
+            patch("scripts.servers.sandbox.client._connect") as mock_connect,
+            patch("scripts.servers.sandbox.client._wait_for_completion") as mock_wait,
         ):
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
@@ -235,7 +235,7 @@ class TestSendRebaseWait:
 
     def test_returns_progress_response_when_not_waiting(self) -> None:
         """Return ProgressResponse immediately when wait=False."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -259,7 +259,7 @@ class TestSendRebaseInvalidResponse:
 
     def test_raises_client_error_on_invalid_json(self) -> None:
         """Raise SandboxClientError when server returns invalid JSON."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -278,7 +278,7 @@ class TestSendRebaseInvalidResponse:
 
     def test_raises_client_error_on_unknown_status(self) -> None:
         """Raise SandboxClientError when server returns unknown status."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -299,7 +299,7 @@ class TestSendMerge:
 
     def test_returns_success_response(self) -> None:
         """Return success response from server."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -322,8 +322,8 @@ class TestSendMergeWait:
     def test_waits_for_progress_response(self) -> None:
         """Wait for completion when server returns ProgressResponse."""
         with (
-            patch("scripts.pr.sandbox.client._connect") as mock_connect,
-            patch("scripts.pr.sandbox.client._wait_for_completion") as mock_wait,
+            patch("scripts.servers.sandbox.client._connect") as mock_connect,
+            patch("scripts.servers.sandbox.client._wait_for_completion") as mock_wait,
         ):
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
@@ -350,8 +350,8 @@ class TestSendMergeWait:
     def test_waits_for_queued_response(self) -> None:
         """Wait for completion when server returns QueuedResponse."""
         with (
-            patch("scripts.pr.sandbox.client._connect") as mock_connect,
-            patch("scripts.pr.sandbox.client._wait_for_completion") as mock_wait,
+            patch("scripts.servers.sandbox.client._connect") as mock_connect,
+            patch("scripts.servers.sandbox.client._wait_for_completion") as mock_wait,
         ):
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
@@ -373,7 +373,7 @@ class TestSendMergeWait:
 
     def test_returns_progress_response_when_not_waiting(self) -> None:
         """Return ProgressResponse immediately when wait=False."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -397,7 +397,7 @@ class TestSendMergeInvalidResponse:
 
     def test_raises_client_error_on_invalid_json(self) -> None:
         """Raise SandboxClientError when server returns invalid JSON."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -420,7 +420,7 @@ class TestNonObjectJsonResponse:
 
     def test_send_rebase_raises_on_json_array(self) -> None:
         """Raise SandboxClientError when server returns JSON array instead of object."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -439,7 +439,7 @@ class TestNonObjectJsonResponse:
 
     def test_send_merge_raises_on_json_string(self) -> None:
         """Raise SandboxClientError when server returns JSON string instead of object."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -458,7 +458,7 @@ class TestNonObjectJsonResponse:
 
     def test_get_status_raises_on_json_number(self) -> None:
         """Raise SandboxClientError when server returns JSON number instead of object."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -476,7 +476,7 @@ class TestGetStatus:
 
     def test_gets_status_for_request_id(self) -> None:
         """Get status for specific request ID."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -493,7 +493,7 @@ class TestGetStatus:
 
     def test_gets_all_statuses(self) -> None:
         """Get status for all operations."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -512,7 +512,7 @@ class TestGetStatusInvalidResponse:
 
     def test_raises_client_error_on_invalid_json(self) -> None:
         """Raise SandboxClientError when server returns invalid JSON."""
-        with patch("scripts.pr.sandbox.client._connect") as mock_connect:
+        with patch("scripts.servers.sandbox.client._connect") as mock_connect:
             mock_socket = MagicMock()
             mock_connect.return_value = mock_socket
 
@@ -596,7 +596,7 @@ class TestWaitForCompletion:
         """Return success response when operation completes immediately."""
         mock_socket = MagicMock()
 
-        with patch("scripts.pr.sandbox.client.get_status") as mock_get_status:
+        with patch("scripts.servers.sandbox.client.get_status") as mock_get_status:
             mock_get_status.return_value = SuccessResponse(
                 request_id="test-id",
                 result={"message": "done"},
@@ -617,9 +617,9 @@ class TestWaitForCompletion:
         mock_socket = MagicMock()
 
         with (
-            patch("scripts.pr.sandbox.client.get_status") as mock_get_status,
-            patch("scripts.pr.sandbox.client.time.sleep"),
-            patch("scripts.pr.sandbox.client.time.monotonic") as mock_monotonic,
+            patch("scripts.servers.sandbox.client.get_status") as mock_get_status,
+            patch("scripts.servers.sandbox.client.time.sleep"),
+            patch("scripts.servers.sandbox.client.time.monotonic") as mock_monotonic,
         ):
             # Simulate time progression: start at 0, then check at 6 seconds (past max_wait)
             mock_monotonic.side_effect = [0.0, 6.0]
@@ -645,9 +645,9 @@ class TestWaitForCompletion:
         mock_socket = MagicMock()
 
         with (
-            patch("scripts.pr.sandbox.client.get_status") as mock_get_status,
-            patch("scripts.pr.sandbox.client.time.sleep"),
-            patch("scripts.pr.sandbox.client.time.monotonic") as mock_monotonic,
+            patch("scripts.servers.sandbox.client.get_status") as mock_get_status,
+            patch("scripts.servers.sandbox.client.time.sleep"),
+            patch("scripts.servers.sandbox.client.time.monotonic") as mock_monotonic,
         ):
             # Simulate time: start, first check, second check
             mock_monotonic.side_effect = [0.0, 1.0, 2.0]
@@ -670,7 +670,7 @@ class TestWaitForCompletion:
         """Return conflict response when operation has conflicts."""
         mock_socket = MagicMock()
 
-        with patch("scripts.pr.sandbox.client.get_status") as mock_get_status:
+        with patch("scripts.servers.sandbox.client.get_status") as mock_get_status:
             mock_get_status.return_value = ConflictResponse(
                 request_id="test-id",
                 files=["file.py"],
@@ -691,9 +691,9 @@ class TestWaitForCompletion:
         mock_socket = MagicMock()
 
         with (
-            patch("scripts.pr.sandbox.client.get_status") as mock_get_status,
-            patch("scripts.pr.sandbox.client.time.sleep"),
-            patch("scripts.pr.sandbox.client.time.monotonic") as mock_monotonic,
+            patch("scripts.servers.sandbox.client.get_status") as mock_get_status,
+            patch("scripts.servers.sandbox.client.time.sleep"),
+            patch("scripts.servers.sandbox.client.time.monotonic") as mock_monotonic,
         ):
             mock_monotonic.side_effect = [0.0, 1.0, 2.0]
             mock_get_status.side_effect = [
@@ -716,8 +716,8 @@ class TestWaitForCompletion:
         mock_socket = MagicMock()
 
         with (
-            patch("scripts.pr.sandbox.client.get_status") as mock_get_status,
-            patch("scripts.pr.sandbox.client.time.sleep") as mock_sleep,
+            patch("scripts.servers.sandbox.client.get_status") as mock_get_status,
+            patch("scripts.servers.sandbox.client.time.sleep") as mock_sleep,
         ):
             mock_get_status.return_value = SuccessResponse(
                 request_id="test-id",
@@ -742,8 +742,8 @@ class TestWaitForCompletion:
         mock_socket = MagicMock()
 
         with (
-            patch("scripts.pr.sandbox.client.get_status") as mock_get_status,
-            patch("scripts.pr.sandbox.client.time.sleep") as mock_sleep,
+            patch("scripts.servers.sandbox.client.get_status") as mock_get_status,
+            patch("scripts.servers.sandbox.client.time.sleep") as mock_sleep,
         ):
             mock_get_status.return_value = SuccessResponse(
                 request_id="test-id",
@@ -769,11 +769,11 @@ class TestMainStatusExitCodes:
 
     def test_status_returns_zero_on_success(self) -> None:
         """Return exit code 0 when status returns SuccessResponse."""
-        from scripts.pr.sandbox.client import main
+        from scripts.servers.sandbox.client import main
 
         with (
             patch("sys.argv", ["client", "status", "--request-id", "test-id"]),
-            patch("scripts.pr.sandbox.client.get_status") as mock_get_status,
+            patch("scripts.servers.sandbox.client.get_status") as mock_get_status,
         ):
             mock_get_status.return_value = SuccessResponse(
                 request_id="test-id",
@@ -786,11 +786,11 @@ class TestMainStatusExitCodes:
 
     def test_status_returns_one_on_error(self) -> None:
         """Return exit code 1 when status returns ErrorResponse."""
-        from scripts.pr.sandbox.client import main
+        from scripts.servers.sandbox.client import main
 
         with (
             patch("sys.argv", ["client", "status", "--request-id", "unknown-id"]),
-            patch("scripts.pr.sandbox.client.get_status") as mock_get_status,
+            patch("scripts.servers.sandbox.client.get_status") as mock_get_status,
         ):
             mock_get_status.return_value = ErrorResponse(
                 request_id="unknown-id",
@@ -803,11 +803,11 @@ class TestMainStatusExitCodes:
 
     def test_status_returns_zero_on_queued(self) -> None:
         """Return exit code 0 when status returns QueuedResponse."""
-        from scripts.pr.sandbox.client import main
+        from scripts.servers.sandbox.client import main
 
         with (
             patch("sys.argv", ["client", "status", "--request-id", "test-id"]),
-            patch("scripts.pr.sandbox.client.get_status") as mock_get_status,
+            patch("scripts.servers.sandbox.client.get_status") as mock_get_status,
         ):
             mock_get_status.return_value = QueuedResponse(
                 request_id="test-id",
@@ -820,11 +820,11 @@ class TestMainStatusExitCodes:
 
     def test_status_returns_zero_on_progress(self) -> None:
         """Return exit code 0 when status returns ProgressResponse."""
-        from scripts.pr.sandbox.client import main
+        from scripts.servers.sandbox.client import main
 
         with (
             patch("sys.argv", ["client", "status", "--request-id", "test-id"]),
-            patch("scripts.pr.sandbox.client.get_status") as mock_get_status,
+            patch("scripts.servers.sandbox.client.get_status") as mock_get_status,
         ):
             mock_get_status.return_value = ProgressResponse(
                 request_id="test-id",
@@ -841,14 +841,14 @@ class TestMainRebaseExitCodes:
 
     def test_rebase_returns_zero_on_success(self) -> None:
         """Return exit code 0 when rebase returns SuccessResponse."""
-        from scripts.pr.sandbox.client import main
+        from scripts.servers.sandbox.client import main
 
         with (
             patch(
                 "sys.argv",
                 ["client", "rebase", "--branch", "feature", "--target", "main"],
             ),
-            patch("scripts.pr.sandbox.client.send_rebase") as mock_send_rebase,
+            patch("scripts.servers.sandbox.client.send_rebase") as mock_send_rebase,
         ):
             mock_send_rebase.return_value = SuccessResponse(
                 request_id="test-id",
@@ -861,14 +861,14 @@ class TestMainRebaseExitCodes:
 
     def test_rebase_returns_two_on_conflict(self) -> None:
         """Return exit code 2 when rebase returns ConflictResponse."""
-        from scripts.pr.sandbox.client import main
+        from scripts.servers.sandbox.client import main
 
         with (
             patch(
                 "sys.argv",
                 ["client", "rebase", "--branch", "feature", "--target", "main"],
             ),
-            patch("scripts.pr.sandbox.client.send_rebase") as mock_send_rebase,
+            patch("scripts.servers.sandbox.client.send_rebase") as mock_send_rebase,
         ):
             mock_send_rebase.return_value = ConflictResponse(
                 request_id="test-id",
@@ -881,14 +881,14 @@ class TestMainRebaseExitCodes:
 
     def test_rebase_returns_one_on_error(self) -> None:
         """Return exit code 1 when rebase returns ErrorResponse."""
-        from scripts.pr.sandbox.client import main
+        from scripts.servers.sandbox.client import main
 
         with (
             patch(
                 "sys.argv",
                 ["client", "rebase", "--branch", "feature", "--target", "main"],
             ),
-            patch("scripts.pr.sandbox.client.send_rebase") as mock_send_rebase,
+            patch("scripts.servers.sandbox.client.send_rebase") as mock_send_rebase,
         ):
             mock_send_rebase.return_value = ErrorResponse(
                 request_id="test-id",
@@ -905,14 +905,14 @@ class TestMainMergeExitCodes:
 
     def test_merge_returns_zero_on_success(self) -> None:
         """Return exit code 0 when merge returns SuccessResponse."""
-        from scripts.pr.sandbox.client import main
+        from scripts.servers.sandbox.client import main
 
         with (
             patch(
                 "sys.argv",
                 ["client", "merge", "--branch", "feature", "--target", "main"],
             ),
-            patch("scripts.pr.sandbox.client.send_merge") as mock_send_merge,
+            patch("scripts.servers.sandbox.client.send_merge") as mock_send_merge,
         ):
             mock_send_merge.return_value = SuccessResponse(
                 request_id="test-id",
@@ -925,14 +925,14 @@ class TestMainMergeExitCodes:
 
     def test_merge_returns_two_on_conflict(self) -> None:
         """Return exit code 2 when merge returns ConflictResponse."""
-        from scripts.pr.sandbox.client import main
+        from scripts.servers.sandbox.client import main
 
         with (
             patch(
                 "sys.argv",
                 ["client", "merge", "--branch", "feature", "--target", "main"],
             ),
-            patch("scripts.pr.sandbox.client.send_merge") as mock_send_merge,
+            patch("scripts.servers.sandbox.client.send_merge") as mock_send_merge,
         ):
             mock_send_merge.return_value = ConflictResponse(
                 request_id="test-id",
@@ -945,14 +945,14 @@ class TestMainMergeExitCodes:
 
     def test_merge_returns_one_on_error(self) -> None:
         """Return exit code 1 when merge returns ErrorResponse."""
-        from scripts.pr.sandbox.client import main
+        from scripts.servers.sandbox.client import main
 
         with (
             patch(
                 "sys.argv",
                 ["client", "merge", "--branch", "feature", "--target", "main"],
             ),
-            patch("scripts.pr.sandbox.client.send_merge") as mock_send_merge,
+            patch("scripts.servers.sandbox.client.send_merge") as mock_send_merge,
         ):
             mock_send_merge.return_value = ErrorResponse(
                 request_id="test-id",
