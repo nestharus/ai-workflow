@@ -10,29 +10,57 @@ reviews:
     enabled: true
     auto_incremental_review: true
     drafts: false
-  commit_status: true
-  # Include only reviewable paths (patterns without '!' are inclusions).
-  # Partial exclusions for subdirectories within included folders use '!'.
+  # Exclude generated artifacts, caches, IDE files, and non-reviewable paths.
+  # NOTE: Patterns starting with '!' are EXCLUSIONS.
+  # We use '/**' to ensure the entire directory content is ignored.
   path_filters:
-    # Root files
-    - "*"
-    # Included folders
-    - ".ai/**"
-    - ".claude/**"
-    - ".crush/**"
-    - ".github/**"
-    - ".huggingface/**"
-    - ".opencode/**"
-    - ".tasks/**"
-    - "agents/**"
-    - "app/**"
-    - "docs/**"
-    - "scripts/**"
-    - "tests/**"
-    # Excluded subdirectories within included folders
+    - "!.review/**"
     - "!.tasks/store/**"
+    - "!.venv*/**"
+    - "!venv/**"
+    - "!env/**"
+    - "!ENV/**"
+    - "!build/**"
+    - "!dist/**"
+    - "!**/*.egg-info/**"
+    - "!pip-wheel-metadata/**"
+    - "!__pycache__/**"
+    - "!**/*.pyc"
+    - "!**/*.pyo"
+    - "!**/*.py[cod]"
+    - "!.coverage"
+    - "!.coverage.*"
+    - "!htmlcov/**"
+    - "!coverage.xml"
+    - "!junit.xml"
+    - "!.mypy_cache/**"
+    - "!.pytest_cache/**"
+    - "!.ruff_cache/**"
+    - "!.sonar/**"
+    - "!.factory/**"
+    - "!.pyright/**"
+    - "!.idea*/**"
+    - "!.vscode/**"
+    - "!*.sublime-project"
+    - "!*.sublime-workspace"
+    - "!openapi/**"
+    - "!to_adapt/**"
+    - "!out/**"
+    - "!.uv-cache/**"
+    - "!.knowledge/**"
+    - "!uv.lock"
+    - "!LICENSE"
+    - "!.DS_Store"
+    - "!Thumbs.db"
+    - "!**/*.log"
+    - "!.env"
+    - "!.env.*"
     - "!docs/plans/**"
     - "!docs/references/**"
+    - "!.serena/**"
+    - "!.tmp/**"
+    - "!.worktrees/**"
+    - "!.git-rewrite/**"
   tools:
     # Python linters disabled - run in local CI via scripts/dev/lint.py (runs ruff, mypy)
     ruff:
@@ -117,18 +145,19 @@ reviews:
       enabled: false
     checkmake:
       enabled: false
-    fortitudeLint:
-      enabled: false
-    shellcheck:
-      enabled: false
-    languagetool:
-      enabled: false
-    ast-grep:
-      enabled: false
 
-    # GitHub checks disabled - not using GitHub Actions CI
+    # Tools kept enabled for code review quality
+    shellcheck:
+      enabled: true
+    languagetool:
+      enabled: true
+    ast-grep:
+      essential_rules: true
+
+    # GitHub checks with 5-minute timeout to wait for local CI completion
     github-checks:
-      enabled: false
+      enabled: true
+      timeout_ms: 300000
   finishing_touches:
     docstrings:
       enabled: false

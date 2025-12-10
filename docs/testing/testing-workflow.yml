@@ -1,0 +1,229 @@
+doc_id: original-testing-testing-workflow
+title: Testing Workflow
+description: Testing is divided into four tiers to balance feedback speed, comprehensive verification,
+  and appropriate coverage metrics for each testing level.
+domain: []
+scope: project
+sections:
+  - id: test-tiers-overview
+    index: 1
+    title: Test Tiers Overview
+    category: standard
+    items:
+  - id: test-tiers-overview-1
+    text: |
+      Test tiers summary:
+      - Unit: tests/unit/, line/branch per function, all app/ functions, fast
+      - Component: tests/unit/, line/branch per function, app/services/ only, fast
+      - Integration: tests/integration/, use-case coverage, use cases from YAML, fast
+      - E2E: tests/e2e/, use-case coverage, use cases from YAML, slow
+      - Scripts: scripts/tests/, line/branch per function, scripts/, fast
+  - id: unit-tests
+    index: 2
+    title: Unit Tests
+    category: standard
+    items:
+  - id: unit-tests-location-testsunit
+    text: 'Location: `tests/unit/`'
+  - id: unit-tests-coverage-line-and-branch
+    text: 'Coverage: Line and branch coverage per function (threshold configured in settings)'
+  - id: unit-tests-target-all-functions-in
+    text: 'Target: All functions in `app/` including private functions'
+  - id: unit-tests-fixture-uses-mocks-and-fa
+    text: 'Fixture: Uses mocks and fakes for isolation'
+  - id: unit-tests-command-uv-run-test-cove
+    text: 'Command: `uv run test-coverage --tier unit`'
+  - id: unit-tests-6
+    rule: Unit tests validate individual functions and methods in isolation. Coverage is measured per-function,
+      meaning each function must individually meet the configured threshold.
+  - id: component-tests
+    index: 3
+    title: Component Tests
+    category: standard
+    items:
+  - id: component-tests-location-testsunit-s
+    text: 'Location: `tests/unit/` (service-focused tests)'
+  - id: component-tests-coverage-line-and-branch
+    text: 'Coverage: Line and branch coverage per function (threshold configured in settings)'
+  - id: component-tests-target-only-functions-wit
+    text: 'Target: Only functions within `app/services/` (service layer)'
+  - id: component-tests-scope-tests-service-layer
+    text: 'Scope: Tests service layer public API; private functions are skipped'
+  - id: component-tests-command-uv-run-test-cove
+    text: 'Command: `uv run test-coverage --tier component`'
+  - id: component-tests-6
+    text: Component tests target the service layer, treating it as the public API of the application.
+      Private functions within services are implementation details and are excluded from coverage validation.
+  - id: integration-tests
+    index: 4
+    title: Integration Tests
+    category: standard
+    items:
+  - id: integration-tests-location-testsintegrati
+    text: 'Location: `tests/integration/`'
+  - id: integration-tests-coverage-use-case-coverag
+    text: 'Coverage: Use-case coverage (threshold configured in settings)'
+  - id: integration-tests-target-use-cases-defined
+    text: 'Target: Use cases defined in `tests/docs/use_cases.yaml`'
+  - id: integration-tests-fixture-async_client-u
+    text: 'Fixture: `async_client` (uses `httpx.ASGITransport`)'
+  - id: integration-tests-scope-tests-application-l
+    text: 'Scope: Tests application logic with mocked external dependencies; no network overhead'
+  - id: integration-tests-command-uv-run-test-cove
+    text: 'Command: `uv run test-coverage --tier integration`'
+  - id: integration-tests-7
+    rule: Integration tests validate user-facing scenarios defined in the use-case registry. Each test
+      must be linked to a use-case with `@pytest.mark.usecase("UC-XXX-NNN")`.
+  - id: e2e-tests
+    index: 5
+    title: E2E Tests
+    category: standard
+    items:
+  - id: e2e-tests-location-testse2e
+    text: 'Location: `tests/e2e/`'
+  - id: e2e-tests-coverage-use-case-coverag
+    text: 'Coverage: Use-case coverage (threshold configured in settings)'
+  - id: e2e-tests-target-use-cases-defined
+    text: 'Target: Use cases defined in `tests/docs/use_cases.yaml`'
+  - id: e2e-tests-fixture-api_client-bui
+    text: 'Fixture: `api_client` (builds and runs a Docker container on port 8008)'
+  - id: e2e-tests-marker-pytestmarke2e
+    text: 'Marker: `@pytest.mark.e2e`'
+  - id: e2e-tests-scope-validates-full-stac
+    text: 'Scope: Validates full stack, startup scripts, health checks, and network handling'
+  - id: e2e-tests-command-uv-run-test-cove
+    text: 'Command: `uv run test-coverage --tier e2e`'
+  - id: e2e-tests-8
+    text: E2E tests require the full application stack running in Docker containers.
+  - id: coverage-rules
+    index: 6
+    title: Coverage Rules
+    category: standard
+    items:
+  - id: coverage-rules-per-function-each-functio
+    rule: |
+      Per-function: Each function must individually meet the configured threshold (not averaged across file)
+  - id: coverage-rules-class-fields-excluded-pyd
+    text: 'Class fields excluded: Pydantic model type annotations are excluded from coverage'
+  - id: coverage-rules-service-layer-component-t
+    text: 'Service layer: Component tests only validate functions within `app/services/`'
+  - id: coverage-rules-use-case-coverage-integra
+    text: |
+      Use-case coverage: Integration/e2e require coverage of use cases (threshold in settings)
+  - id: coverage-rules-private-functions-unit-te
+    text: 'Private functions: Unit tests validate ALL functions; component/scripts skip private'
+  - id: common-test-commands
+    index: 7
+    title: Common Test Commands
+    category: standard
+    items:
+  - id: common-test-commands-1
+    text: |
+      > Note: `pytest-check` is available for multiple soft assertions in a single test. > Example:
+      `check.equal(result, expected)`.
+  - id: common-test-commands-code-2
+    text: |
+      # Run all test tiers with validation uv run test-coverage # Run specific tier uv run test-coverage --tier unit uv
+      run test-coverage --tier integration # Report only (no validation failures) uv run test-coverage --no-validate #
+      Generate JSON report uv run test-coverage --json-report coverage_report.json # Legacy pytest commands uv run
+      pytest                       # Run all tests uv run pytest -m "not e2e"          # Skip E2E tests uv run pytest -m
+      e2e                # Only E2E tests uv run pytest -v                    # Verbose output
+  - id: coverage-database
+    index: 8
+    title: Coverage Database
+    category: standard
+    items:
+  - id: coverage-database-1
+    text: The `test-coverage` command generates a comprehensive coverage database at `.coverage/coverage.db`
+      containing all coverage metrics, test results, and analysis data. This SQLite database serves as
+      the single source of truth for all coverage information.
+  - id: database-schema
+    index: 9
+    title: Database Schema
+    category: standard
+    items:
+  - id: database-schema-1
+    text: 'The coverage database includes custom tables (prefixed with `cc_`) that store:'
+  - id: database-schema-run-metadata
+    text: 'Run metadata: Timestamp and repository information'
+  - id: database-schema-tier-configuration
+    text: 'Tier configuration: Coverage thresholds and settings from `pyproject.toml`'
+  - id: database-schema-function-coverage
+    text: 'Function coverage: Per-function line/branch coverage with pass/fail flags'
+  - id: database-schema-missing-lines
+    text: 'Missing lines: Uncovered lines with source context and branch information'
+  - id: database-schema-usecase-registry
+    text: 'Use-case registry: Use cases defined in `tests/docs/use_cases.yaml`'
+  - id: database-schema-usecase-coverage
+    text: 'Use-case coverage: Which use cases are covered by tests'
+  - id: database-schema-test-results
+    text: 'Test results: Individual test pass/fail status with error details'
+  - id: database-schema-tier-summaries
+    text: 'Tier summaries: Overall metrics and pass/fail status per tier'
+  - id: database-schema-details
+    text: For detailed schema information, see `docs/plans/coverage_consolidation_plan.md`.
+  - id: analysis-tools
+    index: 10
+    title: Analysis Tools
+    category: standard
+    items:
+  - id: analysis-tools-1
+    text: 'After running `test-coverage`, use these tools to analyze coverage data:'
+  - id: analysis-tools-code
+    text: |
+      # View summary of all tiers
+      uv run coverage-summary
+      # List all files with coverage metrics
+      uv run coverage-files
+      # View detailed coverage for a specific file
+      uv run coverage-file app/core/factory.py
+      # List functions below threshold
+      uv run coverage-functions
+  - id: analysis-tools-3
+    text: All analysis tools read directly from `.coverage/coverage.db` and support filtering by tier
+      and file path. Use `--help` on any tool to see available options.
+  - id: automated-test-workflow
+    index: 11
+    title: Automated Test Workflow
+    category: standard
+    items:
+  - id: automated-test-workflow-overview
+    text: |
+      The `test-workflow` CLI provides an automated test generation workflow that orchestrates
+      strategy creation, planning, writing, debugging, and coverage validation. It implements
+      iterative feedback loops until coverage thresholds are met.
+  - id: automated-test-workflow-spec-reference
+    rule: |
+      The state machine and contracts are defined by `scripts/tasks/workflows/test_automation.py`
+      (orchestrator implementation) and the agent prompts in `.tasks/agents/test-strategy.md`,
+      `.tasks/agents/test-planner.md`, `.tasks/agents/test-writer-nodebug.md`, and
+      `.tasks/agents/test-debugger.md`. Consult these files for state handlers, transition
+      logic, and input/output contracts for each workflow state.
+  - id: automated-test-workflow-cli
+    text: |
+      # Run the test automation workflow for target files
+      uv run test-workflow app/services/user_service.py app/api/endpoints/users.py
+
+      # With custom iteration limits
+      uv run test-workflow --max-iterations 3 --max-debug-retries 2 app/core/factory.py
+  - id: automated-test-workflow-loop
+    text: |
+      The workflow operates as a state machine with the following high-level loop:
+      1. **Strategy**: test-strategy agent analyzes target files and produces a testing strategy
+      2. **Planning**: test-planner agent creates an actionable test plan from the strategy
+      3. **Strategy Review**: test-strategy agent reviews the plan against the strategy
+      4. **Writing**: test-writer-nodebug agent writes tests according to the approved plan
+      5. **Debugging**: test-debugger agent fixes any failing tests
+      6. **Plan Review**: test-planner agent verifies written tests match the plan
+      7. **Coverage**: Orchestrator runs coverage and loops back to Planning if gaps remain
+  - id: automated-test-workflow-states
+    text: |
+      Terminal states: COMPLETE (coverage threshold met) or BLOCKED (unrecoverable failure).
+      The workflow exits with code 0 on success and 1 on failure.
+  - id: automated-test-workflow-agents
+    text: |
+      Agents used by the workflow:
+      - `test-strategy` (`.tasks/agents/test-strategy.md`): Strategy generation and review
+      - `test-planner` (`.tasks/agents/test-planner.md`): Test planning and plan review
+      - `test-writer-nodebug` (`.tasks/agents/test-writer-nodebug.md`): Test writing (no debugging)
+      - `test-debugger` (`.tasks/agents/test-debugger.md`): Test debugging and fixing

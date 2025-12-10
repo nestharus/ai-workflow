@@ -1,0 +1,104 @@
+doc_id: mcp-background-job-setup
+title: MCP Background Job Server Setup
+description: Configuration and validation for the mcp-background-job MCP server used for long-running
+  agent processes.
+domain: []
+scope: general
+sections:
+  - id: overview
+    index: 1
+    title: Overview
+    category: standard
+    items:
+  - id: overview-purpose
+    text: The mcp-background-job MCP server enables managing long-running CLI processes from Claude
+      Code sessions. It spawns subprocesses, tracks them by ID, and provides output when they complete.
+  - id: overview-use-case
+    text: This server is used by the agent.mcp CLI to run agents that may exceed the 10-minute Bash
+      tool timeout. The MCP server manages the subprocess lifecycle while the Python client handles
+      polling and output retrieval.
+  - id: prerequisites
+    index: 2
+    title: Prerequisites
+    category: standard
+    items:
+  - id: prereq-uvx
+    text: 'uvx must be installed and available in PATH. uvx is part of the uv package manager:'
+  - id: prereq-uvx-install
+    text: 'Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh'
+  - id: prereq-version
+    text: 'Minimum required version: mcp-background-job v0.1.1 or later'
+  - id: configuration
+    index: 3
+    title: Configuration
+    category: standard
+    items:
+  - id: config-location
+    text: 'MCP server configuration is stored in .mcp.json at the project root:'
+  - id: config-example
+    text: |
+      {
+        "mcpServers": {
+          "background-job": {
+            "type": "stdio",
+            "command": "uvx",
+            "args": ["mcp-background-job"]
+          }
+        }
+      }
+  - id: config-auto-start
+    text: Claude Code automatically starts configured MCP servers when a session begins.
+  - id: available-tools
+    index: 4
+    title: Available Tools
+    category: standard
+    items:
+  - id: tools-list
+    text: 'The background-job MCP server exposes the following tools:'
+  - id: tool-execute
+    text: 'execute: Start a new background job with a shell command. Returns a job_id.'
+  - id: tool-status
+    text: 'status: Get the current status of a job (running, completed, failed, killed).'
+  - id: tool-output
+    text: 'output: Retrieve stdout and stderr from a completed job.'
+  - id: tool-list
+    text: 'list: List all tracked jobs and their statuses.'
+  - id: tool-kill
+    text: 'kill: Terminate a running job.'
+  - id: tool-tail
+    text: 'tail: Stream output from a running job (out of scope for agent.mcp client).'
+  - id: tool-interact
+    text: 'interact: Send input to a running job stdin (out of scope for agent.mcp client).'
+  - id: validation
+    index: 5
+    title: Validation
+    category: standard
+    items:
+  - id: validation-intro
+    text: 'To verify the MCP server is working correctly:'
+  - id: validation-step-1
+    text: '1. Start a new Claude Code session in the project directory.'
+  - id: validation-step-2
+    text: '2. Confirm background-job tools are available (they should appear in tool list).'
+  - id: validation-step-3
+    text: '3. Run a quick test by executing a simple command via the execute tool.'
+  - id: validation-manual
+    text: 'For manual testing outside Claude Code, run: uvx mcp-background-job and verify it starts
+      without errors. The server communicates via JSON-RPC 2.0 over stdio.'
+  - id: troubleshooting
+    index: 6
+    title: Troubleshooting
+    category: standard
+    items:
+  - id: trouble-not-found
+    text: 'Error: uvx command not found. Solution: Install uv package manager and ensure it is in
+      PATH.'
+  - id: trouble-version
+    text: 'Error: Tool not available. Solution: Ensure mcp-background-job version is v0.1.1 or later.
+      Run uvx mcp-background-job@latest to get the latest version.'
+  - id: trouble-permission
+    text: 'Error: Permission denied. Solution: The MCP server may need approval in Claude Code settings.
+      Check enableAllProjectMcpServers or enabledMcpjsonServers settings.'
+  - id: trouble-timeout
+    text: 'Error: Server timeout. Solution: The MCP server process may have crashed. Check stderr
+      output and restart the Claude Code session.'

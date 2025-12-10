@@ -1,0 +1,123 @@
+services:
+  api:
+    build: .
+    container_name: ai-workflow-api
+    ports:
+      - "${TEST_PORT:-8000}:8000"
+    command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./tests:/app/tests
+      - ./data:/app/data
+    environment:
+      - DEBUG=true
+      - PYTHONUNBUFFERED=1
+      # Development credentials only; production secrets must come from .env or
+      # docker-compose.override.yml, deploy-time env vars, or Docker secrets via
+      # Vault/AWS Secrets Manager (never checked into source).
+      - SURREALDB_URL=ws://surrealdb:8000/rpc
+      - SURREALDB_NAMESPACE=knowledge
+      - SURREALDB_DATABASE=facts
+      - SURREALDB_USER=DevRootUser1!
+      - SURREALDB_PASS=DevRootPass1!
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      # - LOG_LEVEL=debug
+    depends_on:
+      surrealdb:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # MCP Bridge Service
+  # REST-to-MCP bridge that exposes MCP tools via Unix socket.
+  # Local development only - must not be exposed to untrusted networks.
+  # For production, place behind an authenticated TLS-terminating proxy.
+  #
+  # SOCKET MODE: The bridge listens exclusively on a Unix socket inside the
+  # container (/tmp/mcp-bridge.sock) and is NOT published to the host by default.
+  # Other services in this compose file do not currently depend on the MCP bridge.
+  # For manual host access, mount the socket volume to a host path:
+  #   docker run -v /tmp/mcp-sockets:/tmp ai-workflow/mcp-bridge:dev
+  #
+  # PERMISSIONS: When bind-mounting a host directory for the socket, ensure it is
+  # writable by the container user (appuser, UID 10000). The container will fail to
+  # create the socket if the host directory is root-owned with restrictive permissions.
+  # Options: chmod 1777 /tmp/mcp-sockets, or chown 10000:10000 /tmp/mcp-sockets
+  mcp-bridge:
+    build:
+      context: ./scripts/mcp
+      dockerfile: Dockerfile
+    container_name: ai-workflow-mcp-bridge
+    # Mount socket directory for Unix socket communication
+    volumes:
+      - mcp_socket:/tmp
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MCP_BRIDGE_SOCKET=/tmp/mcp-bridge.sock
+      # MCP_COMMAND defaults to "uvx mcp-background-job" in the bridge
+      # Override with MCP_CONFIG_PATH to use a config file instead
+      # - MCP_CONFIG_PATH=/app/config/.mcp.yml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--unix-socket", "/tmp/mcp-bridge.sock", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+
+  surrealdb:
+    # Using -dev image which includes shell utilities needed for healthcheck
+    image: surrealdb/surrealdb:v2.3.10-dev
+    container_name: ai-workflow-surrealdb
+    # Run as root inside the container to avoid permission issues with Docker
+    # volumes
+    user: root
+    # SurrealDB listens on 8000 inside its container and is reachable by other
+    # services via surrealdb:8000; only api publishes 8000 to the host, so
+    # there's no host port conflict.
+    command:
+      - start
+      - --log
+      - trace
+      - --user
+      - DevRootUser1!
+      - --pass
+      - DevRootPass1!
+      - surrealkv:/data/database.db
+    volumes:
+      - surrealdb_data:/data
+    healthcheck:
+      test: ["CMD", "/surreal", "isready", "--conn", "http://localhost:8000"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    restart: unless-stopped
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.2.1
+    container_name: ai-workflow-elasticsearch
+    # Bind to localhost only; other Docker services can reach it via elasticsearch:9200
+    ports:
+      - "127.0.0.1:9200:9200"
+    environment:
+      - discovery.type=single-node
+      # Disable security only for local development; enable auth, TLS, and access controls in production.
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  surrealdb_data:
+  elasticsearch_data:
+  mcp_socket:  # Named volume for Unix socket IPC

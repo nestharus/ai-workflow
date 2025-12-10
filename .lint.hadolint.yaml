@@ -1,0 +1,13 @@
+# Lint script configuration for hadolint
+# Directories to exclude when searching for Dockerfiles
+
+exclude_dirs:
+  - .tasks/store  # Generated task files
+  - .tmp
+  - .worktrees
+  - .git-rewrite
+  - .venv
+  - .venv2
+  - docs/plans
+  - docs/references
+  - to_adapt

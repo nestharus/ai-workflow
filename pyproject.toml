@@ -1,0 +1,341 @@
+[project]
+name = "ai-workflow"
+version = "0.1.0"
+description = "Automated, orchestrator-based AI workflow system with 5-role agent skeleton."
+readme = "README.md"
+# ADR-0001: Use Python 3.14+ as the supported runtime range.
+requires-python = ">=3.14.0,<3.15.0"
+# Allow patch-level updates; review dependencies monthly for minor/major releases.
+dependencies = [
+    "fastapi>=0.121.2,<0.122.0",
+    "uvicorn[standard]>=0.38.0,<0.39.0",
+    "orjson>=3.11.4,<3.12.0",
+    "pydantic>=2.12.4,<2.13.0",
+    "pydantic-settings>=2.12.0,<2.13.0",
+    "surrealdb>=1.0.6,<1.1.0",
+    "elasticsearch>=9.2.0,<9.3.0",
+    "anyio>=4.11.0,<4.12.0",
+    "duckdb>=1.4.2,<1.5.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app", "scripts"]
+exclude = ["tests*", "scripts/dev*", "scripts/knowledge*", "scripts/tests*"]
+
+[dependency-groups]
+# Core testing dependencies for tests/ (app tests)
+test = [
+    "httpx==0.28.1",
+    "pytest==9.0.1",
+    "pytest-asyncio==1.3.0",
+    "pytest-check==2.6.0",
+    "pytest-cov>=7.0.0,<7.1.0",
+    "pytest-mock>=3.15.1,<3.16.0",
+    "pytest-randomly>=4.0.1,<4.1.0",
+    "pytest-xdist==3.8.0",
+    "pyfakefs>=5.8.0,<5.9.0",
+    "jsonschema>=4.23.0,<5.0.0",
+    "pytz>=2025.2,<2026.0",
+]
+# Linters, formatters, type checkers, and pre-commit hooks
+dev = [
+    { include-group = "test" },
+    "mypy>=1.18.2,<1.19.0",
+    "ruff>=0.14.5,<0.15",
+    "checkov>=3.2.494,<3.3",
+    "pymarkdownlnt==0.9.33",
+    "pre-commit>=4.4.0,<4.5",
+    "hadolint-coatl>=2.14.0,<2.15.0",
+    "types-pyyaml>=6.0.12.20250915,<6.0.13",
+    "types-jsonschema>=4.23.0,<4.24.0",
+    "yamllint>=1.37.1,<1.38.0",
+    "detect-secrets>=1.5.0,<1.6.0",
+]
+# Knowledge management system dependencies (scripts/knowledge/)
+knowledge = [
+    { include-group = "test" },
+    "duckdb>=1.4.2,<1.5.0",
+    "pyyaml>=6.0.3,<6.1.0",
+    "spacy>=3.8.11,<3.9.0",
+    "transformers>=4.57.3,<4.58.0",
+    "accelerate>=1.12.0,<1.13.0",
+    "torch>=2.9.1,<3.0.0",
+]
+
+[project.scripts]
+# Runtime scripts
+"app.start" = "scripts.app.start_server:main"
+"app.api.generate" = "scripts.app.gen_openapi:main"
+# Development scripts
+setup = "scripts.dev.setup:main"
+lint = "scripts.dev.linter.lint_cli:main"
+"dev.ensure-env" = "scripts.dev.ensure_dev_env:main"
+"agent.claude" = "scripts.dev.claude_agent_runner:main"
+"agent.huggingface" = "scripts.dev.huggingface_agent_runner:main"
+"agent.opencode" = "scripts.dev.opencode_agent_runner:main"
+"agent.tasks" = "scripts.dev.tasks_agent_runner:main"
+"agent.mcp" = "scripts.dev.mcp_agent_client:main"
+# GitHub PR operations
+"pr" = "scripts.pr.client:main"
+"pr.sandbox" = "scripts.pr.sandbox.server:main"
+# Review scripts
+"review.coderabbit" = "scripts.dev.review.coderabbit_review:main"
+"review.sonar" = "scripts.dev.review.sonar_review:main"
+"review.latest" = "scripts.dev.review.latest_review:main"
+# Test runner scripts
+test-coverage = "scripts.dev.test_runner.test_coverage:main"
+# Test workflow orchestration
+test-workflow = "scripts.tasks.workflows.test_automation:main"
+# Test analysis scripts (LLM-friendly coverage querying)
+coverage-summary = "scripts.dev.test_analysis.coverage_summary:main"
+coverage-files = "scripts.dev.test_analysis.coverage_files:main"
+coverage-file = "scripts.dev.test_analysis.coverage_file:main"
+coverage-functions = "scripts.dev.test_analysis.coverage_functions:main"
+# Client scripts
+"linear" = "scripts.clients.linear_cli:main"
+# Knowledge scripts
+"knowledge.compare-yml-docs" = "scripts.knowledge.compare_yaml_docs:main"
+"knowledge.grep-yml-ids" = "scripts.knowledge.grep_yml_ids:main"
+# Knowledge management scripts
+"knowledge.mark-resolved" = "scripts.knowledge.resolution_tracker:main"
+"knowledge.query-comparisons" = "scripts.knowledge.query_comparisons:main"
+"knowledge.query-iterative-movements" = "scripts.knowledge.movement_tracker:main_query_iterative"
+"knowledge.record-iterative-movement" = "scripts.knowledge.movement_tracker:main_record_iterative"
+"knowledge.record-movement" = "scripts.knowledge.movement_tracker:main"
+"knowledge.generate-migration-report" = "scripts.knowledge.generate_migration_report:main"
+"knowledge.track-additions" = "scripts.knowledge.track_additions:main_track"
+"knowledge.validate-addition" = "scripts.knowledge.track_additions:main_validate"
+"knowledge.start-migration" = "scripts.knowledge.migration_manager:main_start"
+"knowledge.validate-migration" = "scripts.knowledge.migration_manager:main_validate"
+# Keyword extraction pipeline entry points
+"knowledge.extract-facts" = "scripts.knowledge.fact_extraction:main"
+"knowledge.isolate-entity-facts" = "scripts.knowledge.fact_isolation:main"
+"knowledge.store-fact" = "scripts.knowledge.fact_store:main_store"
+"knowledge.store-structural-facts" = "scripts.knowledge.fact_store:main_store_structural"
+"knowledge.query-facts" = "scripts.knowledge.fact_store:main_query"
+"knowledge.export-facts-jsonl" = "scripts.knowledge.fact_store:main_export_jsonl"
+"knowledge.decorate-yaml-with-fact-ids" = "scripts.knowledge.fact_store:main_decorate"
+"knowledge.start-fact-migration" = "scripts.knowledge.fact_migration:main_start_fact_migration"
+"knowledge.classify-facts" = "scripts.knowledge.fact_migration:main_classify_facts"
+"knowledge.move-facts" = "scripts.knowledge.fact_migration:main_move_facts"
+"knowledge.validate-fact-migration" = "scripts.knowledge.fact_migration:main_validate_fact_migration"
+"knowledge.extract-keyword-candidates" = "scripts.knowledge.candidate_extraction:main"
+"knowledge.query-keyword-candidates" = "scripts.knowledge.query_keyword_candidates:main"
+"knowledge.classify-keyword" = "scripts.knowledge.classify_keyword:main"
+"knowledge.apply-keywords-to-yaml" = "scripts.knowledge.keyword_store:main_apply"
+"knowledge.score-candidates-with-qwen" = "scripts.knowledge.qwen_scoring:main"
+"knowledge.track-keyword-variants" = "scripts.knowledge.variant_resolver:main_track"
+"knowledge.query-variants" = "scripts.knowledge.query_variants:main"
+"knowledge.validate-variant" = "scripts.knowledge.validate_variant:main"
+"knowledge.apply-variant-decisions" = "scripts.knowledge.variant_resolver:main_apply"
+"knowledge.extract-keywords" = "scripts.knowledge.extraction_pipeline:main"
+"knowledge.validate-artifact-kinds" = "scripts.knowledge.validate_artifact_kinds:main"
+# Artifact lifecycle management (per docs/plans/fact_redesign.md lines 561-569)
+"knowledge.detect-artifacts" = "scripts.knowledge.detect_artifacts:main"
+"knowledge.query-artifacts" = "scripts.knowledge.query_artifacts:main"
+"knowledge.render-artifacts" = "scripts.knowledge.render_artifacts:main"
+"knowledge.query-validations" = "scripts.knowledge.query_validations:main"
+# Artifact-level semantic fact extraction (per docs/plans/fact_redesign.md lines 838-841)
+"knowledge.extract-artifact-facts" = "scripts.knowledge.artifact_fact_extractor:main"
+
+[tool.uv]
+link-mode = "copy"
+
+[tool.ruff]
+# ADR-0005: Standardize on Ruff for linting and formatting.
+target-version = "py314"
+line-length = 100
+exclude = [
+    ".venv",
+    "build",
+    "dist",
+    ".coverage/",
+    "htmlcov/",
+    "uv.lock",
+    "to_adapt/",
+    ".idea/",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    "openapi/",
+    ".review/",
+    ".serena/",
+    ".tasks/store/",
+    ".huggingface/",
+    ".tmp/",
+    ".worktrees/",
+    ".git-rewrite/",
+    "LICENSE",
+    "scripts/clients/linear/node_modules/",
+    "scripts/clients/linear/dist/",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "TRY",  # tryceratops (exception handling)
+    "ANN",  # flake8-annotations (type hints)
+    "B",    # flake8-bugbear (common bugs)
+    "UP",   # pyupgrade (modern python syntax)
+    "S",    # flake8-bandit (security)
+    "SIM",  # flake8-simplify (code simplification)
+    "RUF",  # ruff specific rules
+    "TCH",
+    "D"
+]
+ignore = []
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: Allow test-specific patterns
+"tests/**/*.py" = [
+    "S101",      # Allow assert statements
+    "S104",      # Allow binding to all interfaces (0.0.0.0)
+    "S105",      # Allow hardcoded passwords in test fixtures
+    "S106",      # Allow hardcoded passwords in function args
+    "S108",      # Allow insecure temp file usage
+    "S603",      # Allow subprocess without shell=True
+    "S608",      # Allow SQL with string formatting (test queries)
+    "D",         # Skip docstring requirements
+    "TCH003", "TC001", "TC002",  # Allow runtime type imports
+    "TRY003",    # Allow inline exception messages
+    "ANN401",    # Allow Any type annotations
+]
+"scripts/tests/**/*.py" = [
+    "S101",      # Allow assert statements
+    "S104",      # Allow binding to all interfaces
+    "S105",      # Allow hardcoded passwords in test fixtures
+    "S106",      # Allow hardcoded passwords in function args
+    "S108",      # Allow insecure temp file usage
+    "S603",      # Allow subprocess without shell=True
+    "S608",      # Allow SQL with string formatting
+    "D",         # Skip docstring requirements
+    "TCH003", "TC001", "TC002",  # Allow runtime type imports
+    "TRY003",    # Allow inline exception messages
+    "ANN401",    # Allow Any type annotations
+    "E402",      # Allow late imports (after sys.path manipulation)
+]
+
+# Production: Minimal ignores for technical requirements
+"**/__init__.py" = ["D104"]
+"app/contracts/**/*.py" = ["TCH003"]
+"app/schemas/**/*.py" = ["TCH003"]
+"app/api/**/*.py" = ["TC001"]
+
+# Scripts: Relaxed rules for CLI tools (base rules for all scripts)
+"scripts/**/*.py" = [
+    "TRY003",    # Allow inline exception messages
+    "TRY300",    # Allow return in try block
+    "TRY301",    # Allow raise in try block
+    "TCH003", "TC002", "TC001",  # Allow runtime type imports
+    "S101",      # Allow assert statements
+    "S104",      # Allow binding to all interfaces
+    "S108",      # Allow insecure temp file usage (sandbox sockets)
+    "S310",      # Allow URL open audits
+    "S603",      # Allow subprocess without shell=True
+    "S607",      # Allow partial executable paths (git, uv, etc.)
+    "S608",      # Allow SQL with string formatting (DuckDB queries)
+    "S314",      # Allow XML parsing (junit reports)
+]
+
+# Scripts: ANN401 for modules with generic helper functions using Any
+"scripts/knowledge/**/*.py" = ["ANN401"]
+"scripts/mcp/**/*.py" = ["ANN401", "E402", "S108"]  # E402 for late imports after sys.path; S108 for socket paths
+"scripts/tasks/**/*.py" = ["ANN401"]
+"scripts/dev/ensure_dev_env.py" = ["S108"]  # S108 for /tmp socket directory creation
+
+# Scripts: E402 for modules with late imports after sys.path manipulation
+"scripts/dev/test_runner/test_coverage.py" = ["E402"]
+
+# Scripts: F401 for modules with import side effects
+"scripts/dev/huggingface_agent_runner.py" = ["F401"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "scripts/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "usecase: links test to a specific use-case ID from the registry (tests/docs/use_cases.yaml)"
+]
+
+[tool.coverage.run]
+source = ["app", "scripts"]
+branch = true  # Enable branch coverage
+omit = [
+    "tests/*",
+    "scripts/tests/*",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+    "*/.venv/*",
+    "scripts/clients/linear/node_modules/*",
+    "scripts/clients/linear/dist/*",
+]
+
+[tool.coverage.report]
+# Threshold enforcement is handled by test_coverage.py with tier-specific settings
+fail_under = 0
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self\\.debug:",
+    "if settings\\.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == \"__main__\":",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod"
+]
+
+# Per-suite coverage thresholds (enforced by scripts/test_coverage.py)
+# Use `uv run test-coverage` for separate coverage with per-function validation
+[tool.coverage.paths]
+# Map source paths for combining coverage from different test runs
+source = [
+    "app/",
+    "scripts/",
+]
+
+# Custom coverage settings used by test_coverage.py
+# Each tier has its own thresholds based on coverage type:
+# - unit/component/scripts: line/branch coverage (per-function and overall)
+# - integration: use-case coverage only
+
+[tool.test_coverage.unit]
+# Unit tests cover ALL app/ functions (including private)
+min_line_overall = 80.0
+min_branch_overall = 70.0
+min_line_per_function = 60.0
+min_branch_per_function = 50.0
+
+[tool.test_coverage.component]
+# Component tests cover app/services/ public functions only
+min_line_overall = 80.0
+min_branch_overall = 70.0
+min_line_per_function = 80.0
+min_branch_per_function = 70.0
+
+[tool.test_coverage.integration]
+# Integration tests: use-case coverage from tests/docs/use_cases.yaml
+min_usecase = 100.0
+
+[tool.test_coverage.scripts]
+# Scripts tests cover scripts/
+min_line_overall = 80.0
+min_branch_overall = 70.0
+min_line_per_function = 60.0
+min_branch_per_function = 50.0
+

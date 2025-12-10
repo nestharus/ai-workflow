@@ -1,0 +1,7 @@
+# Configuration file for the .tasks system.
+# Routing is now agent-specific: each agent defines its own `routing_thresholds`
+# in its frontmatter to specify which runner/model combination to use for
+# different prompt character counts. See .tasks/agents/*.md for agent configs.
+
+# Directory path for .tasks system agents.
+agents_dir: .tasks/agents

@@ -1,0 +1,295 @@
+doc_id: project-fastapi-router-patterns
+title: FastAPI Router Patterns
+version_hint: 2024-2025
+kind: fastapi_router_standards
+description: >
+  FastAPI-specific patterns for APIRouter organization, dependency injection with Depends(), request validation,
+  response handling, and OpenAPI documentation.
+scope: >
+  Covers APIRouter instantiation and configuration, route handler decorators, dependency injection with Annotated and
+  Depends(), request validation with Path/Query/Header, response_model configuration, OpenAPI documentation, router
+  registration,
+  and anti-patterns. Generic handler structure is in docs/development/python/router-patterns.toon.
+domain:
+  - fastapi
+primary_runtime_references:
+  - path: app/api/v1/router.py
+    role: Versioned API router registration.
+  - path: app/api/v1/endpoints/
+    role: Endpoint implementations directory.
+  - path: app/core/dependencies.py
+    role: Dependency injection providers.
+  - path: app/contracts/errors.py
+    role: Error response contracts and VALIDATION_ERROR_RESPONSE.
+related_pattern_docs:
+  - python/router-patterns.toon
+  - fastapi/api-patterns.toon
+  - fastapi/dependency-patterns.toon
+  - fastapi/exception-patterns.toon
+  - fastapi/factory-patterns.toon
+  - fastapi/service-patterns.toon
+sections:
+  - id: router-organization
+    index: 1
+    title: APIRouter organization
+    category: standard
+    summary: Organize routers by domain or resource for clarity and maintainability.
+    sample_code:
+      description: Minimal router instantiation and route definition.
+      imports:
+        - fastapi.APIRouter
+      code: |
+        router = APIRouter()
+
+        @router.get("")
+        async def list_items():
+            ...
+    rules:
+      - id: organization.granularity
+        rule: Create one router per domain or resource (e.g., users.py, items.py, orders.py).
+      - id: organization.instantiation
+        rule: Use APIRouter() instances; never attach routes directly to the app object in endpoint files.
+      - id: organization.grouping
+        rule: Group related endpoints within the same router file for discoverability.
+      - id: organization.versioned-registration
+        rule: >
+          Register each router with the versioned API router so the application factory can apply the /api/{version}
+          prefix
+          and shared dependencies.
+      - id: organization.trailing-slashes
+        rule: >
+          Use canonical paths without a trailing slash; allow FastAPI redirect behavior to handle variants while
+          documenting
+          only the non-slashed form.
+  - id: router-configuration
+    index: 2
+    title: Router configuration
+    category: standard
+    summary: Configure routers to reduce repetition and ensure consistent API structure.
+    rules:
+      - id: config.prefix
+        rule: >
+          Set the prefix argument at router level (e.g., prefix="/items") when including the router; prefer registration
+          time so paths follow the no-trailing-slash convention.
+      - id: config.tags
+        rule: >
+          Use tags for grouping endpoints in OpenAPI UI; apply consistently either at router registration time
+          (preferred)
+          or on individual route decorators, but do not mix both patterns.
+      - id: config.dependencies
+        rule: >
+          Apply shared dependencies (authentication, authorization, rate limiting, request logging) at router level when
+          they apply to all endpoints.
+      - id: config.responses
+        rule: >
+          When many routes share the same response shapes, define common responses at router or registration time using
+          shared contracts from the contracts module.
+  - id: handler-structure
+    index: 3
+    title: Route handler structure
+    category: standard
+    summary: >
+      Keep route handlers thin; their responsibility is to validate input, call service methods, and return responses.
+    sample_code:
+      description: Standard pattern for a thin route handler delegating to a service.
+      imports:
+        - fastapi.APIRouter
+        - typing.Annotated
+        - fastapi.Depends
+      components:
+        - type: route
+          method: GET
+          path: /{item_id}
+          response_model: ItemResponse
+          handler_params: 'item_id: int, service: Annotated[ItemService, Depends(get_item_service)]'
+          body: return await service.get_item(item_id)
+    rules:
+      - id: handler.thin
+        rule: Keep route handlers thin; they should only validate, call services, and return responses.
+      - id: handler.validation
+        rule: Let Pydantic and FastAPI handle input validation automatically via type hints and models.
+      - id: handler.service-call
+        rule: Call the appropriate service layer method for business logic.
+      - id: handler.return
+        rule: Return Pydantic models; let FastAPI handle serialization.
+  - id: dependency-injection
+    index: 4
+    title: Dependency injection in routers
+    category: standard
+    summary: Use FastAPI dependency injection for services, settings, database sessions, and user context.
+    sample_code:
+      description: Dependency injection using Annotated type aliases for clean signatures.
+      imports:
+        - typing.Annotated
+        - fastapi.Depends
+        - app.core.dependencies.get_settings
+      snippets:
+        - name: type_alias
+          code: ItemServiceDep = Annotated[ItemService, Depends(get_item_service)]
+        - name: handler_with_deps
+          code: |
+            async def create_item(item: ItemCreate, service: ItemServiceDep, settings: Annotated[AppSettings,
+            Depends(get_settings)]): ...
+    rules:
+      - id: di.annotated
+        rule: Use Annotated type aliases for cleaner function signatures.
+      - id: di.service-injection
+        rule: Inject services rather than repositories or DB connections directly into routers.
+      - id: di.settings-injection
+        rule: >
+          Inject configuration via Depends(get_settings) instead of reading environment variables inside route handlers.
+      - id: di.shared-providers
+        rule: >
+          Keep get_*_service, get_settings, and other provider functions in dedicated dependency modules for reuse
+          across
+          routers, background tasks, and tests.
+  - id: request-validation
+    index: 5
+    title: Request validation
+    category: standard
+    summary: Use Pydantic models and FastAPI parameter types for comprehensive request validation.
+    sample_code:
+      description: Request validation using Query, Header, and type hints with constraints.
+      imports:
+        - typing.Annotated
+        - fastapi.Query
+      code: |
+        async def list_items(page: Annotated[int, Query(ge=1)] = 1, page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+        user_agent: Annotated[str | None, Header()] = None) -> ItemsPage: ...
+    rules:
+      - id: validation.pydantic-models
+        rule: Use Pydantic models for request bodies (defined in contracts).
+      - id: validation.path-query
+        rule: Use Path, Query, Header with strict types for path and query parameters.
+      - id: validation.constraints
+        rule: Use Field for validation rules (min_length, regex, etc.) in Pydantic models, not in router logic.
+  - id: response-handling
+    index: 6
+    title: Response handling
+    category: standard
+    summary: Always specify response models and appropriate status codes for type safety and documentation.
+    sample_code:
+      description: Response handling with explicit response_model and status_code.
+      imports:
+        - fastapi.APIRouter
+        - fastapi.status
+      snippets:
+        - name: create_route
+          code: |
+            @router.post("/", response_model=ItemResponse, status_code=201) async def create_item(item: ItemCreate,
+            ...): ...
+        - name: delete_route
+          code: |
+            @router.delete("/{id}", response_model=None, status_code=204) async def delete_item(id: int, ...): ...
+    rules:
+      - id: response.model-required
+        rule: >
+          Always specify response_model in the decorator for output data filtering, validation, and OpenAPI schema
+          derivation.
+      - id: response.status-codes
+        rule: Explicitly set status_code for non-200 success cases (e.g., 201 Created).
+      - id: response.empty
+        rule: For 204 No Content, use response_model=None and status_code=204.
+      - id: response.serializer
+        rule: >
+          Prefer the global default response class from the application factory; override only when a different content
+          type or serialization behavior is required.
+  - id: error-handling
+    index: 7
+    title: Error handling in routers
+    category: standard
+    summary: Let services raise domain exceptions; rely on global handlers for HTTP translation.
+    rules:
+      - id: errors.domain-exceptions
+        rule: Let the service layer raise specific domain exceptions (e.g., ItemNotFound, DuplicateItem).
+      - id: errors.infrastructure
+        rule: Let infrastructure components raise their own typed errors rather than converting them to HTTP responses.
+      - id: errors.global-handlers
+        rule: Rely on global exception handlers to translate domain and infrastructure exceptions into HTTP responses.
+      - id: errors.router-specific
+        rule: >
+          Only raise HTTPException directly in routers for router-specific concerns such as authentication failures,
+          authorization
+          checks, and rate limiting.
+  - id: openapi-documentation
+    index: 8
+    title: OpenAPI documentation
+    category: standard
+    summary: Maximize utility of auto-generated API docs with comprehensive route metadata.
+    sample_code:
+      description: Comprehensive OpenAPI documentation on a route decorator.
+      imports:
+        - fastapi.APIRouter
+        - fastapi.status
+      components:
+        - type: route
+          method: GET
+          path: /{item_id}
+          response_model: ItemResponse
+          status_code: status.HTTP_200_OK
+          summary: Get item by ID
+          description: Retrieves full item details including inventory status.
+          responses: |
+            '200: {"description": "Item retrieved successfully"}, 400: VALIDATION_ERROR_RESPONSE, 403: {"description":
+            "Not authorized to view this item"}, 404: {"description": "Item not found"}'
+    rules:
+      - id: openapi.summary
+        rule: Every route must define a concise summary that describes its primary behavior.
+      - id: openapi.description
+        rule: >
+          Complex routes must define a description explaining important details, side effects, and edge cases (Markdown
+          supported).
+      - id: openapi.responses
+        rule: >
+          Document all relevant responses (success and error) using the responses parameter so status codes, schemas,
+          and examples are explicit.
+  - id: router-registration
+    index: 9
+    title: Router registration
+    category: standard
+    summary: Centralize router registration in the main API router file for maintainability.
+    sample_code:
+      description: Central router registration pattern.
+      imports:
+        - fastapi.APIRouter
+        - some_module.items_router
+      code: |
+        api_v1_router = APIRouter() api_v1_router.include_router(items_router, prefix="/items", tags=["Items"])
+    rules:
+      - id: registration.include-router
+        rule: Use api_router.include_router() to register routers.
+      - id: registration.configuration
+        rule: Set prefix and tags at registration time to keep endpoint files clean.
+      - id: registration.version-prefix
+        rule: Apply the /api/{version} prefix in the application factory so routers remain version-agnostic.
+      - id: registration.route-ordering
+        rule: Register more specific routers before generic or catch-all routers to avoid shadowing.
+  - id: anti-patterns
+    index: 10
+    title: Anti-patterns to avoid
+    category: anti_patterns
+    summary: Common pitfalls that violate router standards.
+    anti_patterns:
+      - id: anti.business-logic
+        anti_pattern: >
+          Business logic in routers; do not perform calculations, complex conditionals, or raw DB queries in route
+          handlers.
+      - id: anti.direct-db
+        anti_pattern: Direct DB access; avoid db.execute(...) in routers; use a service.
+      - id: anti.manual-json
+        anti_pattern: |
+          Manual JSON response; avoid returning dictionaries or JSONResponse manually unless absolutely necessary.
+      - id: anti.missing-response-model
+        anti_pattern: Missing response model; always define the return schema via response_model.
+      - id: anti.inconsistent-docs
+        anti_pattern: >
+          Inconsistent documentation or error schemas; do not omit summary, description, or error responses, and do not
+          handcraft unique error shapes per route.
+      - id: anti.bypass-error-handling
+        anti_pattern: |
+          Bypassing global error handling; do not raise HTTP errors directly from services or infrastructure layers.
+      - id: anti.blocking-code
+        anti_pattern: >
+          Blocking code; do not use sync I/O methods in async def handlers or mix heavy synchronous work into async
+          routes
+          without proper offloading.

@@ -1,0 +1,47 @@
+render_plan_id: prose.code-block.v1
+render_engine: text_llm
+artifact_kind: prose/code-block
+
+inputs:
+  use_structural_fieldfacts: true
+  use_semantic_facts: true
+
+determinism:
+  ordering:
+    - field_path
+
+steps:
+  - id: gather
+    instruction: >
+      Collect FieldFacts for description prose, language identifier, and code block
+      content. Description facts are semantic prose. Language and code are structural
+      fields that must be preserved exactly.
+
+  - id: normalize
+    instruction: >
+      Normalize terminology in description prose only. Preserve language identifier
+      and code block content exactly as-is. Code must never be modified during
+      normalization.
+
+  - id: order
+    instruction: >
+      Order by field_path: description facts first, then language, then code block.
+      This ensures description paragraph precedes the fenced code block in output.
+
+  - id: render
+    instruction: >
+      Render Markdown with prose paragraph followed by fenced code block. Description
+      paragraph covers all semantic facts about what the code demonstrates. Code block
+      uses triple backticks with language tag. Code content must be verbatim from
+      source.
+
+  - id: self_check
+    instruction: >
+      Verify code preserved verbatim (character-for-character match). Verify
+      description paragraph covers all semantic facts. Verify language tag matches
+      source. Flag any code modifications or missing description facts.
+
+notes: >
+  Example from general.python.docstrings-guide.yml sample_code blocks. Validation
+  uses normalized_diff comparator with preserve_code_verbatim=true to ensure code
+  blocks are unchanged while allowing prose formatting flexibility.

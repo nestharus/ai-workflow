@@ -1,0 +1,225 @@
+doc_id: general-yaml-schema-guidelines
+title: YAML Documentation Schema Guidelines
+version_hint: 2024-2025
+kind: schema_standard
+scope: |
+  All YAML documentation files in docs/, scripts/docs/, and tests/docs/. A file is
+  considered a documentation file when it has a `doc_id` field at the root level.
+  Excludes to_adapt/ directories and non-documentation YAML files.
+description: |
+  Defines the schema for YAML documentation files. The document-level schema has
+  fixed fields while section content is flexible. IDs are required for root elements
+  of sections but optional for their children.
+domain:
+  - yaml
+  - documentation
+
+sections:
+  - id: document-level-schema
+    index: 1
+    title: Document-Level Schema
+    category: standard
+    summary: Required and optional fields at the document root.
+    items:
+      - id: doc-schema-overview
+        text: |
+          A YAML documentation file is identified by having `doc_id` at the root level.
+          The following fields are supported at the document root.
+
+      - id: doc-schema-required-fields
+        title: Required Fields
+        fields:
+          - name: doc_id
+            type: string
+            required: true
+            description: Unique identifier for this document. Used for cross-references.
+
+          - name: title
+            type: string
+            required: true
+            description: Human-readable title of the document.
+
+          - name: sections
+            type: list
+            required: true
+            description: List of section objects containing the document content.
+
+      - id: doc-schema-optional-fields
+        title: Optional Fields
+        fields:
+          - name: version_hint
+            type: string
+            required: false
+            description: Version range or timeframe for the content (e.g., "2024-2025").
+
+          - name: kind
+            type: string
+            required: false
+            description: |
+              Document type classification (e.g., schema_standard, pattern, guideline).
+
+          - name: scope
+            type: string
+            required: false
+            description: What files or contexts this document applies to.
+
+          - name: description
+            type: string
+            required: false
+            description: Extended description of the document's purpose.
+
+          - name: domain
+            type: list[string]
+            required: false
+            description: Topic domains this document covers (e.g., yaml, python, fastapi).
+
+          - name: primary_runtime_references
+            type: list
+            required: false
+            description: Links to primary code or runtime references.
+
+          - name: related_docs
+            type: list
+            required: false
+            description: References to related documentation files.
+
+          - name: external_references
+            type: list
+            required: false
+            description: Links to external resources (URLs, specifications).
+
+  - id: section-schema
+    index: 2
+    title: Section Schema
+    category: standard
+    summary: Structure of section elements within the sections list.
+    rules:
+      - id: section-id-requirement
+        rule: |
+          Root elements of the `sections` list MUST have an `id` field. This enables
+          change tracking and comparison between document versions.
+
+      - id: section-common-fields
+        title: Common Section Fields
+        text: |
+          Sections typically include these fields, but structure is flexible beyond `id`.
+        fields:
+          - name: id
+            required: true
+            description: Unique identifier for the section within this document.
+
+          - name: index
+            required: false
+            description: Ordering hint for section display.
+
+          - name: title
+            required: false
+            description: Human-readable section title.
+
+          - name: category
+            required: false
+            description: Classification (e.g., standard, example, workflow).
+
+          - name: summary
+            required: false
+            description: Brief summary of section content.
+
+          - name: items
+            required: false
+            description: List of content items within the section.
+
+          - name: examples
+            required: false
+            description: Example content for the section.
+
+  - id: child-elements
+    index: 3
+    title: Child Element IDs
+    category: standard
+    summary: ID requirements for nested content.
+    rules:
+      - id: child-id-optional
+        rule: |
+          Children of section root elements MAY have `id` fields but they are NOT
+          required. This allows flexibility in structuring nested content.
+
+      - id: child-id-benefits
+        title: When to Add IDs to Children
+        text: Add IDs to child elements when you want to enable
+        reasons:
+          - Granular change tracking for specific items
+          - Cross-document references to specific content
+          - Dict-to-dict comparison for that element
+
+      - id: child-structure-flexible
+        text: |
+          Children can be inside any type of field (items, examples, fields, etc.).
+          The structure adapts to the content being represented.
+
+  - id: id-naming-conventions
+    index: 4
+    title: ID Naming Conventions
+    category: standard
+    summary: How to generate meaningful IDs.
+    items:
+      - id: id-naming-rules
+        title: ID Format Rules
+        rules:
+          - Use kebab-case (lowercase with hyphens)
+          - Use hierarchical prefixes for context (section-subsection-item)
+          - Make IDs descriptive enough to understand without context
+          - Keep IDs stable across edits (don't renumber)
+
+      - id: id-naming-examples
+        title: ID Examples
+        good:
+          - http-method-get
+          - url-versioning-rule
+          - section-includes-rest-protocols
+          - factory-patterns-purpose
+        bad:
+          - item-1
+          - section-3-2
+          - "42"
+          - ""
+
+  - id: detection-and-linting
+    index: 5
+    title: Documentation File Detection
+    category: standard
+    summary: How to identify and validate documentation YAML files.
+    rules:
+      - id: detection-rule
+        rule: |
+          A YAML file is a documentation file if and only if it has a `doc_id` field
+          at the root level. Linters and tools use this to distinguish documentation
+          from configuration or data YAML files.
+
+      - id: linter-rules
+        title: Linter Validation Rules
+        rules:
+          - doc_id must be present at root for documentation files
+          - title must be present at root for documentation files
+          - sections must be a list for documentation files
+          - Root elements of sections must have an id field
+          - Child element IDs are optional (no lint error if missing)
+
+  - id: comparison-semantics
+    index: 6
+    title: Comparison Semantics
+    category: standard
+    summary: How document comparison works.
+    rules:
+      - id: comparison-dict-equality
+        rule: |
+          The compare_yaml_docs.py tool uses dict-to-dict comparison (dict == dict)
+          to detect differences. Only elements with `id` fields are tracked. Changes
+          to any field within an ID'd element will be detected as a difference.
+
+      - id: comparison-tracking-scope
+        title: What Gets Tracked
+        text: |
+          Elements with an `id` field are tracked for comparison. Elements without
+          IDs are invisible to the comparison tool. This means child elements without
+          IDs won't be individually compared - only their parent (if it has an ID)
+          will show as changed.

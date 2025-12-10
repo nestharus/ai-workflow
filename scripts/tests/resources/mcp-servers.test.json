@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "background-job": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["mcp-background-job"]
+    },
+    "firecrawl": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "firecrawl-mcp"],
+      "env": {
+        "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
+      }
+    }
+  }
+}

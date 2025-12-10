@@ -1,0 +1,23 @@
+# MCP Bridge Configuration
+# Following Claude Code MCP specification
+# Environment variables supported: ${VAR}, ${VAR:-default}, $VAR
+
+mcpServers:
+  # Background job execution server (mcp-background-job)
+  # Provides tools for running and managing background shell commands
+  background-job:
+    type: stdio
+    command: uvx
+    args:
+      - mcp-background-job
+
+  # Firecrawl web scraping server
+  # Requires FIRECRAWL_API_KEY environment variable
+  firecrawl:
+    type: stdio
+    command: npx
+    args:
+      - "-y"
+      - firecrawl-mcp
+    env:
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY}

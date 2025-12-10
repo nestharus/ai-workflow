@@ -1,0 +1,48 @@
+# Lint script configuration for pymarkdown
+# Targets and excludes for markdown linting
+
+targets:
+  - README.md
+  - AGENTS.md
+  - docs/**/*.md
+  - scripts/knowledge/README.md
+
+excludes:
+  - .claude/**  # Agent command files have YAML frontmatter
+  - __pycache__
+  - .venv*
+  - build
+  - dist
+  - .mypy_cache
+  - .pytest_cache
+  - .ruff_cache
+  - .sonar/**
+  - .review
+  - .tasks/store  # Generated task files
+  - .tmp/**
+  - .worktrees/**
+  - .git-rewrite/**
+  - openapi
+  - .idea*
+  - to_adapt
+  - to_adapt/**
+  - htmlcov
+  - .coverage*
+  - coverage.xml
+  - junit.xml
+  - uv.lock
+  - LICENSE
+  - .git
+  - .github
+  - .code
+  - out
+  - .uv-cache
+  - .cache
+  # .knowledge exclusions are defensive; targets does not include .knowledge
+  # paths, so these patterns are currently unused but prevent accidental future matches
+  - .knowledge/knowledge.duckdb
+  - .knowledge/**/*.csv
+  - .knowledge/originals/**
+  - .serena/**
+  - docs/plans/**
+  - docs/references/**

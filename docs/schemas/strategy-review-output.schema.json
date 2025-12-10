@@ -1,0 +1,166 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/your-org/ai-workflow/schemas/strategy-review-output.schema.json",
+  "title": "Strategy Review Output",
+  "description": "Output contract for strategy agents when reviewing planner outputs. This schema generalizes docs/schemas/test-strategy-review.schema.json to serve as the canonical format for all strategy-to-planner review loops, extending the existing pattern (same status values, same conditional structure) while adding fields specific to general plan review (id, location, suggestion). This structured data appears after a review marker (e.g., REVIEW:) when evaluating a plan document against a strategy document.",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["APPROVED", "FEEDBACK", "BLOCKED"],
+      "description": "The review status. APPROVED: plan aligns with strategy; FEEDBACK: plan needs improvements; BLOCKED: cannot review (e.g., missing required inputs)."
+    },
+    "issues": {
+      "type": "array",
+      "description": "List of issues found during review. Required when status is 'FEEDBACK'.",
+      "items": {
+        "$ref": "#/$defs/Issue"
+      }
+    },
+    "reason": {
+      "type": "string",
+      "description": "Explanation for why the review is blocked. Required when status is 'BLOCKED'."
+    }
+  },
+  "required": ["status"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "APPROVED"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "issues": {
+            "maxItems": 0
+          }
+        },
+        "not": {
+          "required": ["reason"]
+        }
+      },
+      "description": "When APPROVED, issues must be omitted or empty array. This structurally enforces 'no feedback remaining'."
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "FEEDBACK"
+          }
+        }
+      },
+      "then": {
+        "required": ["issues"],
+        "properties": {
+          "issues": {
+            "minItems": 1
+          }
+        }
+      },
+      "description": "When FEEDBACK, issues array is required with at least one issue."
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "BLOCKED"
+          }
+        }
+      },
+      "then": {
+        "required": ["reason"]
+      },
+      "description": "When BLOCKED, reason is required explaining why review cannot proceed."
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "Issue": {
+      "type": "object",
+      "description": "An issue identified during strategy review of a plan.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for tracking this issue across iterations (e.g., 'SR-1-001').",
+          "pattern": "^[A-Z]+-[0-9]+-[0-9]+$"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "missing_requirement",
+            "incomplete_coverage",
+            "approach_mismatch",
+            "missing_detail",
+            "scope_creep",
+            "incorrect_priority",
+            "missing_dependency",
+            "unclear_deliverable",
+            "feasibility_concern",
+            "resource_issue"
+          ],
+          "description": "The category of the issue."
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description of what is wrong."
+        },
+        "location": {
+          "type": "string",
+          "description": "Reference to the plan section where the issue occurs (e.g., 'Plan 3: Step 2', 'Overview section')."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "Severity level of the issue. High: blocks plan approval; Medium: should be addressed; Low: nice to have."
+        },
+        "suggestion": {
+          "type": "string",
+          "description": "Actionable guidance on how to fix the issue."
+        }
+      },
+      "required": ["id", "category", "description", "location", "severity", "suggestion"],
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "status": "APPROVED"
+    },
+    {
+      "status": "FEEDBACK",
+      "issues": [
+        {
+          "id": "SR-1-001",
+          "category": "missing_requirement",
+          "description": "Plan does not address error handling for network failures",
+          "location": "Plan 2: Implementation section",
+          "severity": "high",
+          "suggestion": "Add a step to implement retry logic with exponential backoff for network requests"
+        },
+        {
+          "id": "SR-1-002",
+          "category": "missing_detail",
+          "description": "Schema definition lacks field validation rules",
+          "location": "Plan 1: Create schema",
+          "severity": "medium",
+          "suggestion": "Specify regex patterns for string fields and min/max constraints for numeric fields"
+        },
+        {
+          "id": "SR-1-003",
+          "category": "unclear_deliverable",
+          "description": "Success criteria are vague and not measurable",
+          "location": "Success Criteria section",
+          "severity": "medium",
+          "suggestion": "Define specific, testable acceptance criteria (e.g., 'All unit tests pass with >90% coverage')"
+        }
+      ]
+    },
+    {
+      "status": "BLOCKED",
+      "reason": "Cannot review - strategy document path is invalid or file does not exist"
+    }
+  ]
+}

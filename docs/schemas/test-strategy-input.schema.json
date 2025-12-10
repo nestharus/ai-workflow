@@ -1,0 +1,189 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/your-org/ai-workflow/schemas/test-strategy-input.schema.json",
+  "title": "Test Strategy Input",
+  "description": "Input contract for the test-strategy agent that enables Python orchestration to pass specific target files and receive structured output.",
+  "type": "object",
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["generate", "review", "revise"],
+      "description": "The operation mode for the test-strategy agent. 'generate' creates a new strategy, 'review' validates a proposed plan against a strategy, 'revise' updates a strategy based on coverage gaps."
+    },
+    "target_files": {
+      "type": "array",
+      "description": "List of source files that require test strategy planning.",
+      "items": {
+        "$ref": "#/$defs/FileEntry"
+      },
+      "minItems": 1
+    },
+    "context": {
+      "type": "object",
+      "description": "Additional context to inform strategy generation.",
+      "properties": {
+        "analysis_description": {
+          "type": "string",
+          "description": "Human-readable description of the changes or analysis context."
+        },
+        "git_diff": {
+          "type": "string",
+          "description": "Git diff output showing the changes to the target files."
+        },
+        "existing_tests": {
+          "type": "array",
+          "description": "Paths to existing test files that cover the target files.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "strategy_document": {
+      "type": "string",
+      "description": "The original strategy document being reviewed. Required when mode is 'review'."
+    },
+    "proposed_plan": {
+      "type": "string",
+      "description": "The plan to review against the strategy. Required when mode is 'review'."
+    },
+    "coverage_gaps": {
+      "type": "array",
+      "description": "List of functions with insufficient coverage. Required when mode is 'revise'.",
+      "items": {
+        "$ref": "#/$defs/CoverageGap"
+      }
+    }
+  },
+  "required": ["mode", "target_files"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "review"
+          }
+        }
+      },
+      "then": {
+        "required": ["strategy_document", "proposed_plan"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "revise"
+          }
+        }
+      },
+      "then": {
+        "required": ["coverage_gaps"]
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "FileEntry": {
+      "type": "object",
+      "description": "Represents a single source file with optional change metadata.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path to the source file from the repository root.",
+          "pattern": "^[^/].+$",
+          "minLength": 1
+        },
+        "change_type": {
+          "$ref": "#/$defs/ChangeType"
+        },
+        "functions_changed": {
+          "type": "array",
+          "description": "List of function/method names that were modified. Only applicable when change_type is 'MODIFY'.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    },
+    "ChangeType": {
+      "type": "string",
+      "enum": ["NEW", "MODIFY", "DELETE", "RENAME"],
+      "description": "The type of change made to a file. NEW: new file created (full test coverage required), MODIFY: existing file changed (test additions/updates for changed functions), DELETE: file removed (remove corresponding tests, check for broken refs), RENAME: file renamed (update test imports, verify no logic changes)."
+    },
+    "CoverageGap": {
+      "type": "object",
+      "description": "Represents a function with insufficient test coverage.",
+      "properties": {
+        "function": {
+          "type": "string",
+          "description": "The name of the function with coverage gaps."
+        },
+        "file": {
+          "type": "string",
+          "description": "The file path containing the function."
+        },
+        "line_coverage": {
+          "type": "number",
+          "description": "Current line coverage percentage for the function.",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "branch_coverage": {
+          "type": "number",
+          "description": "Current branch coverage percentage for the function.",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": ["function", "file", "line_coverage", "branch_coverage"],
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "mode": "generate",
+      "target_files": [
+        {
+          "path": "app/services/user_service.py",
+          "change_type": "MODIFY",
+          "functions_changed": ["create_user", "delete_user"]
+        }
+      ],
+      "context": {
+        "analysis_description": "Added email verification to user creation flow",
+        "git_diff": "@@ -45,6 +45,10 @@ def create_user(self, username: str, email: str) -> User:\n+        if not self._validate_email(email):\n+            raise ValueError('Invalid email')\n",
+        "existing_tests": ["tests/unit/test_user_service.py"]
+      }
+    },
+    {
+      "mode": "review",
+      "target_files": [
+        {
+          "path": "app/services/user_service.py"
+        }
+      ],
+      "strategy_document": "## Strategy\n\nTier: unit\nCoverage: line_branch (80%)\n...",
+      "proposed_plan": "## Test Plan\n\n1. test_create_user_valid_email\n2. test_create_user_invalid_email\n..."
+    },
+    {
+      "mode": "revise",
+      "target_files": [
+        {
+          "path": "app/services/user_service.py"
+        }
+      ],
+      "coverage_gaps": [
+        {
+          "function": "create_user",
+          "file": "app/services/user_service.py",
+          "line_coverage": 45.0,
+          "branch_coverage": 30.0
+        }
+      ]
+    }
+  ]
+}

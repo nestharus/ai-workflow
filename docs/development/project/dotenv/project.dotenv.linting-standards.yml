@@ -1,0 +1,131 @@
+doc_id: project.dotenv.linting-standards
+title: ".env File Linting Standards"
+version_hint: 2024-2025
+kind: guideline
+scope: |
+  All .env and .env.* files in the repository that are not gitignored.
+  Applies to .env.example template files.
+description: |
+  This project uses dotenv-linter v3.3.0 to enforce formatting standards for .env files.
+  The linter catches common issues that could cause application malfunctions.
+domain:
+  - dotenv
+  - linting
+
+sections:
+  - id: overview
+    index: 1
+    title: Overview
+    category: standard
+    summary: Introduction to dotenv-linter integration.
+    items:
+      - id: overview-intro
+        text: |
+          This project uses dotenv-linter to enforce formatting standards for .env files.
+          The linter catches common issues that could cause application malfunctions.
+
+  - id: checks
+    index: 2
+    title: Enabled Checks
+    category: standard
+    summary: List of dotenv-linter checks applied.
+    items:
+      - id: check-list
+        text: |
+          Enabled checks include:
+      - id: check-duplicated-key
+        text: "DuplicatedKey: Detects duplicate environment variable keys"
+      - id: check-lowercase-key
+        text: "LowercaseKey: Keys should be UPPERCASE"
+      - id: check-space-character
+        text: "SpaceCharacter: Detects spaces around = delimiter"
+      - id: check-trailing-whitespace
+        text: "TrailingWhitespace: Removes trailing whitespace"
+      - id: check-unordered-key
+        text: "UnorderedKey: Keys should be alphabetically ordered"
+
+  - id: usage
+    index: 3
+    title: Usage
+    category: standard
+    summary: How to run the dotenv linter.
+    items:
+      - id: usage-lint-pipeline
+        text: |
+          Run dotenv-linter via the lint pipeline:
+          ```bash
+          uv run lint dotenvlint
+          ```
+      - id: usage-direct
+        text: |
+          Or directly:
+          ```bash
+          dotenv-linter check .env.example
+          ```
+
+  - id: configuration
+    index: 4
+    title: Configuration
+    category: standard
+    summary: Configuration file details.
+    items:
+      - id: config-location
+        text: |
+          Configuration is managed in .lint.dotenvlint.yaml.
+          This is a driver-level configuration for lint.py, NOT dotenv-linter's native config.
+          Exclude patterns can be added for local override files.
+      - id: config-files
+        text: |
+          Two configuration points control dotenv-linter scope:
+          - `.pre-commit-config.yaml`: Controls pre-commit hook behavior via `files: ^\.env.*$` pattern
+          - `.lint.dotenvlint.yaml`: Controls `uv run lint dotenvlint` behavior (targets and excludes)
+          Edit `.pre-commit-config.yaml` to change which files are linted at commit time.
+          Edit `.lint.dotenvlint.yaml` to change which files are linted via CI/local lint commands.
+
+  - id: installation
+    index: 5
+    title: Installation
+    category: standard
+    summary: How to install dotenv-linter.
+    items:
+      - id: install-macos
+        text: "macOS: brew install dotenv-linter"
+      - id: install-linux
+        text: "Linux: Download from https://github.com/dotenv-linter/dotenv-linter/releases"
+      - id: install-version
+        text: "Recommended version: v3.3.0"
+
+  - id: scope-separation
+    index: 6
+    title: Scope Separation
+    category: standard
+    summary: Intentional separation between automated and manual linting scopes.
+    items:
+      - id: scope-automated
+        text: |
+          Automated linting (via `uv run lint dotenvlint` and pre-commit hooks) targets only
+          `.env.example` and `.env.*.example` template files. These are version-controlled
+          files that serve as documentation for required environment variables.
+      - id: scope-gitignored
+        text: |
+          Real `.env` files (`.env`, `.env.local`, `.env.*.local`) are gitignored and are
+          NOT subject to automated CI linting. These files contain actual secrets and
+          sensitive configuration that should never be committed to version control.
+      - id: scope-manual
+        text: |
+          Developers can manually lint their local `.env` files using dotenv-linter directly:
+          ```bash
+          dotenv-linter check .env
+          dotenv-linter check .env.local
+          ```
+          This allows developers to ensure their local configuration follows formatting
+          standards without requiring these files to be tracked in git.
+      - id: scope-rationale
+        text: |
+          This separation is intentional to avoid coupling CI/automation behavior to the
+          presence of secret-bearing local files. By only linting committed template files
+          in automation, we ensure:
+          - CI pipelines are deterministic and reproducible
+          - Developers are not required to have local .env files for builds to pass
+          - Secret-bearing files remain outside of version control and CI scope
+          - Template files maintain consistent formatting as living documentation

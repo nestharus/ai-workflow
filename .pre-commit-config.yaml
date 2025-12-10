@@ -1,0 +1,47 @@
+repos:
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: |
+          (?x)^(
+            \.venv.*|
+            node_modules/.*|
+            uv\.lock|
+            htmlcov/.*|
+            \.coverage.*|
+            openapi/.*|
+            \.review/.*|
+            \.tmp/.*|
+            \.worktrees/.*|
+            \.tasks/store/.*|
+            \.huggingface/.*|
+            \.serena/.*|
+            \.mypy_cache/.*|
+            \.pytest_cache/.*|
+            \.ruff_cache/.*|
+            scripts/clients/linear/node_modules/.*|
+            scripts/clients/linear/dist/.*|
+            \.git-rewrite/.*|
+            to_adapt/.*|
+            \.idea/.*|
+            build/.*|
+            dist/.*
+          )$
+  - repo: local
+    hooks:
+      - id: project-lint
+        name: Run project lint pipeline (ruff + mypy)
+        entry: uv run lint
+        language: system
+        pass_filenames: false
+        always_run: true
+
+  - repo: https://github.com/dotenv-linter/dotenv-linter
+    rev: v3.3.0  # Pinned version - must match documentation and plan references
+    hooks:
+      - id: dotenv-linter
+        name: Lint .env files
+        types: [file]
+        files: ^\.env.*$
