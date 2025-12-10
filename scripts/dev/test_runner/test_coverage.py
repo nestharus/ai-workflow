@@ -117,7 +117,22 @@ from scripts.dev.test_runner.redundant_test_detector import (
 
 @dataclass
 class TierSettings:
-    """Settings for a single test tier loaded from pyproject.toml."""
+    """Threshold settings for a single test tier loaded from pyproject.toml.
+
+    This dataclass is responsible ONLY for coverage threshold values. It does NOT
+    contain path/type configuration (test_path, source_paths, coverage_type, flags).
+
+    Path and type defaults are defined in DEFAULT_TIER_CONFIGS. If pyproject.toml
+    specifies path/type overrides, they are parsed separately in load_coverage_settings()
+    and stored in TierPathOverrides, not here.
+
+    Attributes:
+        min_line_overall: Minimum overall line coverage percentage.
+        min_branch_overall: Minimum overall branch coverage percentage.
+        min_line_per_function: Minimum per-function line coverage percentage.
+        min_branch_per_function: Minimum per-function branch coverage percentage.
+        min_usecase: Minimum use-case coverage percentage (for usecase tiers).
+    """
 
     min_line_overall: float = DEFAULT_MIN_LINE_OVERALL
     min_branch_overall: float = DEFAULT_MIN_BRANCH_OVERALL
@@ -127,24 +142,76 @@ class TierSettings:
 
 
 @dataclass
-class CoverageSettings:
-    """All coverage settings loaded from pyproject.toml."""
+class TierPathOverrides:
+    """Optional path/type overrides from pyproject.toml for a tier.
 
-    unit: TierSettings = field(default_factory=TierSettings)
-    component: TierSettings = field(default_factory=TierSettings)
-    integration: TierSettings = field(default_factory=TierSettings)
-    scripts: TierSettings = field(default_factory=TierSettings)
+    These fields are all optional. When None, get_test_tiers() falls back to
+    DEFAULT_TIER_CONFIGS for the corresponding value.
+    """
+
+    test_path: str | None = None
+    source_paths: list[str] | None = None
+    coverage_type: str | None = None
+    skip_private_functions: bool | None = None
+    service_layer_only: bool | None = None
+    exclude_class_fields: bool | None = None
+
+
+# Single source of truth for path/type/flag defaults per tier.
+# Custom tiers not in this mapping must provide all required fields via TOML.
+DEFAULT_TIER_CONFIGS: dict[str, dict[str, Any]] = {
+    "unit": {
+        "test_path": "tests/unit",
+        "source_paths": ["app"],
+        "coverage_type": "line_branch",
+        "skip_private_functions": False,
+        "service_layer_only": False,
+        "exclude_class_fields": True,
+    },
+    "component": {
+        "test_path": "tests/unit",
+        "source_paths": ["app/services"],
+        "coverage_type": "line_branch",
+        "skip_private_functions": True,
+        "service_layer_only": True,
+        "exclude_class_fields": True,
+    },
+    "integration": {
+        "test_path": "tests/integration",
+        "source_paths": ["app"],
+        "coverage_type": "usecase",
+        "skip_private_functions": False,
+        "service_layer_only": False,
+        "exclude_class_fields": True,
+    },
+    "scripts": {
+        "test_path": "scripts/tests",
+        "source_paths": ["scripts", "tools"],
+        "coverage_type": "line_branch",
+        "skip_private_functions": True,
+        "service_layer_only": False,
+        "exclude_class_fields": True,
+    },
+}
+
+VALID_COVERAGE_TYPES = {"line_branch", "usecase"}
+
+
+@dataclass
+class CoverageSettings:
+    """All coverage settings loaded from pyproject.toml.
+
+    Attributes:
+        thresholds: Mapping of tier name to threshold settings.
+        path_overrides: Mapping of tier name to optional path/type overrides.
+    """
+
+    thresholds: dict[str, TierSettings] = field(default_factory=dict)
+    path_overrides: dict[str, TierPathOverrides] = field(default_factory=dict)
 
 
 def load_coverage_settings(pyproject_path: Path | None = None) -> CoverageSettings:
-    """Load coverage settings from pyproject.toml.
-
-    Args:
-        pyproject_path: Path to pyproject.toml. Defaults to REPO_ROOT/pyproject.toml.
-
-    Returns:
-        CoverageSettings with all tier configurations.
-    """
+    """Load coverage settings from pyproject.toml."""
     path = pyproject_path or REPO_ROOT / "pyproject.toml"
     if not path.exists():
         return CoverageSettings()
@@ -154,7 +221,13 @@ def load_coverage_settings(pyproject_path: Path | None = None) -> CoverageSettin
 
     test_coverage = data.get("tool", {}).get("test_coverage", {})
 
-    def load_tier(name: str) -> TierSettings:
+    # Default tier names for backward compatibility
+    DEFAULT_TIER_NAMES = ["unit", "component", "integration", "scripts"]
+
+    # Discover all tier names from pyproject.toml
+    all_tier_names = set(DEFAULT_TIER_NAMES) | set(test_coverage.keys())
+
+    def load_thresholds(name: str) -> TierSettings:
         tier_data = test_coverage.get(name, {})
         return TierSettings(
             min_line_overall=tier_data.get("min_line_overall", DEFAULT_MIN_LINE_OVERALL),
@@ -168,12 +241,21 @@ def load_coverage_settings(pyproject_path: Path | None = None) -> CoverageSettin
             min_usecase=tier_data.get("min_usecase", DEFAULT_MIN_USECASE),
         )
 
-    return CoverageSettings(
-        unit=load_tier("unit"),
-        component=load_tier("component"),
-        integration=load_tier("integration"),
-        scripts=load_tier("scripts"),
-    )
+    def load_path_overrides(name: str) -> TierPathOverrides:
+        tier_data = test_coverage.get(name, {})
+        return TierPathOverrides(
+            test_path=tier_data.get("test_path"),
+            source_paths=tier_data.get("source_paths"),
+            coverage_type=tier_data.get("coverage_type"),
+            skip_private_functions=tier_data.get("skip_private_functions"),
+            service_layer_only=tier_data.get("service_layer_only"),
+            exclude_class_fields=tier_data.get("exclude_class_fields"),
+        )
+
+    thresholds = {name: load_thresholds(name) for name in all_tier_names}
+    path_overrides = {name: load_path_overrides(name) for name in all_tier_names}
+
+    return CoverageSettings(thresholds=thresholds, path_overrides=path_overrides)
 
 
 # Load settings at module level (can be reloaded for testing)
@@ -231,56 +313,97 @@ class UseCaseCoverageResult:
 
 
 def get_test_tiers() -> dict[str, TestTierConfig]:
-    """Get test tier configurations with settings from pyproject.toml."""
+    """Get test tier configurations merging defaults with pyproject.toml settings.
+
+    Path/type/flag values are derived from:
+      1. TierPathOverrides (from pyproject.toml) if not None
+      2. DEFAULT_TIER_CONFIGS if the tier exists there
+      3. Error for custom tiers missing required fields
+
+    Threshold values come from TierSettings (which has its own defaults).
+    """
     settings = get_settings()
-    return {
-        "unit": TestTierConfig(
-            name="unit",
-            test_path="tests/unit",
-            source_paths=["app"],
-            coverage_type="line_branch",
-            min_line_overall=settings.unit.min_line_overall,
-            min_branch_overall=settings.unit.min_branch_overall,
-            min_line_per_function=settings.unit.min_line_per_function,
-            min_branch_per_function=settings.unit.min_branch_per_function,
-            skip_private_functions=False,
-            service_layer_only=False,
-            exclude_class_fields=True,
-        ),
-        "component": TestTierConfig(
-            name="component",
-            test_path="tests/unit",  # Component tests may be within unit tests targeting services
-            source_paths=["app/services"],
-            coverage_type="line_branch",
-            min_line_overall=settings.component.min_line_overall,
-            min_branch_overall=settings.component.min_branch_overall,
-            min_line_per_function=settings.component.min_line_per_function,
-            min_branch_per_function=settings.component.min_branch_per_function,
-            skip_private_functions=True,
-            service_layer_only=True,
-            exclude_class_fields=True,
-        ),
-        "integration": TestTierConfig(
-            name="integration",
-            test_path="tests/integration",
-            source_paths=["app"],
-            coverage_type="usecase",
-            min_usecase=settings.integration.min_usecase,
-        ),
-        "scripts": TestTierConfig(
-            name="scripts",
-            test_path="scripts/tests",
-            source_paths=["scripts", "tools"],
-            coverage_type="line_branch",
-            min_line_overall=settings.scripts.min_line_overall,
-            min_branch_overall=settings.scripts.min_branch_overall,
-            min_line_per_function=settings.scripts.min_line_per_function,
-            min_branch_per_function=settings.scripts.min_branch_per_function,
-            skip_private_functions=True,
-            service_layer_only=False,
-            exclude_class_fields=True,
-        ),
-    }
+    result: dict[str, TestTierConfig] = {}
+
+    for tier_name in settings.thresholds:
+        thresholds = settings.thresholds[tier_name]
+        overrides = settings.path_overrides.get(tier_name, TierPathOverrides())
+        defaults = DEFAULT_TIER_CONFIGS.get(tier_name, {})
+
+        # Derive path/type from overrides -> defaults (NO inline defaults here)
+        test_path = (
+            overrides.test_path if overrides.test_path is not None else defaults.get("test_path")
+        )
+        source_paths = (
+            overrides.source_paths
+            if overrides.source_paths is not None
+            else defaults.get("source_paths")
+        )
+        coverage_type = (
+            overrides.coverage_type
+            if overrides.coverage_type is not None
+            else defaults.get("coverage_type")
+        )
+
+        # Validate required fields for custom tiers
+        # DESIGN DECISION: Raise ValueError for custom tiers missing required fields.
+        # Rationale: Silent skipping would hide configuration errors, making debugging
+        # difficult. An explicit error forces the user to fix or remove the misconfigured
+        # tier, ensuring all configured tiers are intentional and valid.
+        if not test_path or not source_paths or not coverage_type:
+            missing_fields = []
+            if not test_path:
+                missing_fields.append("test_path")
+            if not source_paths:
+                missing_fields.append("source_paths")
+            if not coverage_type:
+                missing_fields.append("coverage_type")
+            msg = (
+                f"Custom tier '{tier_name}' is missing required fields: "
+                f"{', '.join(missing_fields)}. All custom tiers in [tool.test_coverage.<tier>] "
+                f"must specify test_path, source_paths, and coverage_type."
+            )
+            raise ValueError(msg)
+
+        # Validate coverage_type
+        if coverage_type not in VALID_COVERAGE_TYPES:
+            raise ValueError(f"Invalid coverage_type '{coverage_type}' for tier '{tier_name}'")
+
+        # Derive flags from overrides -> defaults (NO inline defaults here)
+        skip_private = (
+            overrides.skip_private_functions
+            if overrides.skip_private_functions is not None
+            else defaults.get("skip_private_functions", False)
+        )
+        service_only = (
+            overrides.service_layer_only
+            if overrides.service_layer_only is not None
+            else defaults.get("service_layer_only", False)
+        )
+        exclude_fields = (
+            overrides.exclude_class_fields
+            if overrides.exclude_class_fields is not None
+            else defaults.get("exclude_class_fields", True)
+        )
+
+        result[tier_name] = TestTierConfig(
+            name=tier_name,
+            test_path=test_path,
+            source_paths=source_paths,
+            coverage_type=coverage_type,
+            # Thresholds from TierSettings (has its own defaults)
+            min_line_overall=thresholds.min_line_overall,
+            min_branch_overall=thresholds.min_branch_overall,
+            min_line_per_function=thresholds.min_line_per_function,
+            min_branch_per_function=thresholds.min_branch_per_function,
+            min_usecase=thresholds.min_usecase,
+            # Flags derived above
+            skip_private_functions=skip_private,
+            service_layer_only=service_only,
+            exclude_class_fields=exclude_fields,
+        )
+
+    return result
 
 
 def _run_command(
@@ -1007,9 +1130,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--tier",
-        choices=["unit", "component", "integration", "scripts", "all"],
         default="all",
-        help="Which test tier to run (default: all)",
+        help="Which test tier to run. Valid values are determined by configuration "
+        "(default tiers: unit, component, integration, scripts). Use 'all' for all tiers.",
     )
     parser.add_argument(
         "--min-line",
@@ -1111,6 +1234,12 @@ def main() -> int:
 
     # Get tier configurations from settings
     test_tiers = get_test_tiers()
+
+    # Validate --tier argument against available tiers
+    if args.tier != "all" and args.tier not in test_tiers:
+        available = ", ".join(sorted(test_tiers.keys()))
+        print(f"ERROR: Unknown tier '{args.tier}'. Available tiers: {available}")
+        return 1
 
     # Determine which tiers to run
     tiers_to_run = list(test_tiers.keys()) if args.tier == "all" else [args.tier]
