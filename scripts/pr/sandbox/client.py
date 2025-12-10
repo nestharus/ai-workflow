@@ -40,6 +40,9 @@ POLL_BACKOFF_MULTIPLIER = 1.5
 # Maximum wait time for polling operations (seconds)
 MAX_WAIT_TIME = 300.0  # 5 minutes
 
+# Maximum response size (bytes) to prevent OOM/DoS
+MAX_RESPONSE_SIZE = 1_048_576  # 1 MiB
+
 
 class SandboxClientError(Exception):
     """Error communicating with sandbox server."""
@@ -104,6 +107,8 @@ def _send_request(sock: socket.socket, request_json: str) -> str:
             if not chunk:
                 break
             data += chunk
+            if len(data) > MAX_RESPONSE_SIZE:
+                raise SandboxClientError("Response too large")
             if b"\n" in data:
                 break
 
@@ -295,11 +300,20 @@ def _wait_for_completion(
     sock.close()
 
     start_time = time.monotonic()
-    current_interval = max(1e-3, initial_interval)
+    # Guard against NaN in initial_interval (NaN != NaN is True)
+    current_interval = max(1e-3, initial_interval) if initial_interval == initial_interval else 1e-3
 
     while True:
         elapsed = time.monotonic() - start_time
         remaining = max_wait - elapsed
+        # Guard against NaN in max_wait (NaN != NaN is True)
+        if remaining != remaining:
+            if verbose:
+                print("Invalid max_wait: NaN")
+            return ErrorResponse(
+                request_id=request_id,
+                message="Invalid max_wait: NaN",
+            )
         if remaining <= 0:
             if verbose:
                 print(f"Timeout waiting for operation after {max_wait} seconds")
