@@ -79,6 +79,8 @@ lint = "scripts.dev.linter.lint_cli:main"
 "agent.opencode" = "scripts.dev.opencode_agent_runner:main"
 "agent.tasks" = "scripts.dev.tasks_agent_runner:main"
 "agent.mcp" = "scripts.dev.mcp_agent_client:main"
+# AI workflow commands
+"ai" = "scripts.dev.commands.cli:main"
 # GitHub PR operations
 "pr" = "scripts.pr.client:main"
 "pr.sandbox" = "scripts.pr.sandbox.server:main"

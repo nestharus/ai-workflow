@@ -34,6 +34,7 @@ class TestLinearAPIErrorAlias:
     def test_linear_api_error_is_linear_client_error(self) -> None:
         """LinearAPIError should be an alias for LinearClientError."""
         from scripts.clients.linear_client import LinearClientError
+
         assert LinearAPIError is LinearClientError
 
     def test_linear_api_error_has_code_and_message(self) -> None:
@@ -50,6 +51,7 @@ class TestLinearClientReExport:
     def test_linear_client_is_reexported(self) -> None:
         """LinearClient from linear_dao is the same as from linear_client."""
         from scripts.clients.linear_client import LinearClient as CanonicalClient
+
         assert LinearClient is CanonicalClient
 
 
@@ -59,6 +61,7 @@ class TestGetDefaultClientReExport:
     def test_get_default_client_is_reexported(self) -> None:
         """_get_default_client from linear_dao is the same as from linear_client."""
         from scripts.clients.linear_client import _get_default_client as canonical_fn
+
         assert _get_default_client is canonical_fn
 
 
@@ -74,6 +77,7 @@ class TestBackwardsCompatibleFunctions:
     def reset_default_client(self) -> Generator[None]:
         """Reset the default client before and after each test."""
         import scripts.clients.linear_client as linear_client_module
+
         linear_client_module._default_client = None
         yield
         linear_client_module._default_client = None

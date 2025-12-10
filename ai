@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# AI workflow command runner
+#
+# Usage: ./ai <command> [args...]
+#
+# Examples:
+#   ./ai update-plan NES-102
+#   ./ai update-plan NES-102 "Add error handling"
+
+set -euo pipefail
+
+exec uv run ai "$@"

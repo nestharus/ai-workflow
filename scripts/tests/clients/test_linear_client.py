@@ -1816,9 +1816,7 @@ class TestGetDoneStateId:
             "data": {
                 "team": {
                     "states": {
-                        "nodes": [
-                            {"id": "done-state-id", "name": "Done", "type": "completed"}
-                        ]
+                        "nodes": [{"id": "done-state-id", "name": "Done", "type": "completed"}]
                     }
                 }
             }

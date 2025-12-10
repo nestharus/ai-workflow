@@ -25,6 +25,16 @@ from scripts.pr.sandbox.protocol import (
     parse_response,
 )
 
+__all__ = [
+    "DEFAULT_SOCKET_PATH",
+    "SandboxClientError",
+    "format_response",
+    "get_status",
+    "main",
+    "send_merge",
+    "send_rebase",
+]
+
 # Timeout for socket operations (seconds)
 SOCKET_TIMEOUT = 30.0
 

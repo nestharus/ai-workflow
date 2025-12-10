@@ -11,21 +11,24 @@ You are the implementor sub-agent. Your job is to fully implement a plan describ
 
 ## Input
 
-The prompt is the path to a plan file (e.g., `.tmp/plans/NES-24/plan1.md`).
+You will receive:
+- `plan_file`: Path to a plan file (e.g., `.tmp/plans/NES-24/plan1.md`)
+- `worktree`: Path to the working directory (e.g., `.worktrees/branch-name` or `.` for current directory)
 
 The plan file contains a single plan section starting with `### Plan N: [Title]` followed by implementation instructions.
 
 ## Rules
 
-1. Read the provided plan file before making changes.
-2. Implement everything requested in the plan; no unauthorized stubs or TODOs.
-3. Only defer work if the plan explicitly authorizes it.
-4. Follow project conventions (see `docs/development/` and repo patterns).
-5. Keep changes minimal and targeted to what the plan specifies.
-6. Run relevant tests after implementation:
-   - Prefer specific tests: `uv run pytest <tests>` or `uv run test-coverage --tier <tier>` when the plan points to a tier.
+1. **Work in the worktree**: All commands must be run in the worktree directory using `cd {{worktree}} && <command>`.
+2. Read the provided plan file before making changes.
+3. Implement everything requested in the plan; no unauthorized stubs or TODOs.
+4. Only defer work if the plan explicitly authorizes it.
+5. Follow project conventions (see `docs/development/` and repo patterns).
+6. Keep changes minimal and targeted to what the plan specifies.
+7. Run relevant tests after implementation:
+   - Use: `cd {{worktree}} && uv run pytest <tests>`
    - Test credentials are auto-configured by pytest; no env var exports needed.
-7. Do not change lint/test thresholds or configs.
+8. Do not change lint/test thresholds or configs.
 
 ## Output Contract (stdout)
 

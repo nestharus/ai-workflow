@@ -96,7 +96,8 @@ For each plan file in sequence:
 **Implementation Phase:**
 
 ```text
-Task(subagent_type="implementor", prompt="{{plan_file_path}}")
+Task(subagent_type="implementor", prompt="plan_file: {{plan_file_path}}
+worktree: {{worktree_path}}")
 ```
 
 Handle implementor output:
@@ -146,10 +147,10 @@ This command:
 
 Create PR targeting the base branch:
 
-1. Use the following command:
+1. Use the following command (run from worktree to ensure correct branch detection):
 
    ```bash
-   gh pr create --base <BASE_BRANCH> --title "<TICKET_ID>: <TITLE>" --body "$(cat <<'EOF'
+   cd {{worktree_path}} && gh pr create --base <BASE_BRANCH> --title "<TICKET_ID>: <TITLE>" --body "$(cat <<'EOF'
    ## Summary
 
    Implements [<TICKET_ID>](<LINEAR_TICKET_URL>)
