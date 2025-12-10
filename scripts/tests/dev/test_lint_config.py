@@ -337,14 +337,20 @@ class TestRunDotenvlint:
         check_index = cmd.index("check")
         files_passed = cmd[check_index + 1 :]
 
-        # .env.example should be included
+        # .env.example and .env.*.example should be included
         assert any(".env.example" in f for f in files_passed), ".env.example should be scanned"
+        assert any(".env.production.example" in f for f in files_passed), (
+            ".env.*.example files should be scanned"
+        )
         # .env should NOT be included
         assert not any(f.endswith("/.env") or f == ".env" for f in files_passed), (
             ".env should NOT be scanned"
         )
-        # .env.local should NOT be included (excluded pattern)
+        # .env.local should NOT be included (excluded pattern), and non-example .env.* skipped
         assert not any(".env.local" in f for f in files_passed), ".env.local should NOT be scanned"
+        assert not any(".env.development" in f for f in files_passed), (
+            "non-example .env.* files should NOT be scanned"
+        )
 
     def test_excludes_tmp_directory(
         self,
@@ -617,11 +623,16 @@ class TestRunDetectSecrets:
 
         assert mock_run_checked.called
         cmd = mock_run_checked.call_args[0][0]
-        # pyproject.toml should be included
-        assert any("pyproject.toml" in arg for arg in cmd), "Config files should be scanned"
-        # Excluded names should not be present
-        assert not any(arg == "uv.lock" for arg in cmd), "uv.lock should be excluded"
-        assert not any(arg == ".secrets.baseline" for arg in cmd), (
+        # Extract file arguments (those after --baseline and its value)
+        baseline_idx = cmd.index("--baseline")
+        file_args = cmd[baseline_idx + 2 :]  # Skip --baseline and its value
+        # pyproject.toml should be included (handle bare names or full paths)
+        assert any(arg.endswith("pyproject.toml") for arg in file_args), (
+            "Config files should be scanned"
+        )
+        # Excluded names should not be present (handle bare names or full paths)
+        assert not any(arg.endswith("uv.lock") for arg in file_args), "uv.lock should be excluded"
+        assert not any(arg.endswith(".secrets.baseline") for arg in file_args), (
             ".secrets.baseline should be excluded"
         )
 
