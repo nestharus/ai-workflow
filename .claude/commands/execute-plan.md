@@ -196,7 +196,7 @@ IMPLEMENTATION COMPLETE - REVIEW REQUESTED
 ================================================================================
 
 Ticket: <TICKET_ID> - <TITLE>
-Linear Ticket: <LINEAR_TICKET_URL>
+Linear Ticket: `uv run linear get-issue <TICKET_ID>`
 Pull Request: <PR_URL>
 
 Get plan description with `uv run linear get-issue <TICKET_ID>`
@@ -214,7 +214,7 @@ Review Process:
 
 Commands:
   # View implementation plan
-  Open <LINEAR_TICKET_URL>
+  `uv run linear get-issue <TICKET_ID>`
 
   # Read implementation files
   cd {{worktree_path}}
