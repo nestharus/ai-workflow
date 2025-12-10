@@ -67,8 +67,11 @@ sections:
       - MCP_BRIDGE_SOCKET: Unix socket path (preferred, takes precedence over URL)
       - MCP_BRIDGE_URL: HTTP URL fallback (default: http://localhost:8080)
   - id: config-cli-client
-    text: The agent.mcp CLI interacts with the bridge. Default socket location is /tmp/mcp-sockets/mcp-bridge.sock.
+    text: |
+      The agent.mcp CLI interacts with the bridge. Default socket location is /tmp/mcp-sockets/mcp-bridge.sock.
       Supports --socket-path and --server-url CLI flags for explicit configuration.
+      Precedence (highest to lowest): CLI flags > Environment variables > Defaults.
+      Full resolution order: --socket-path, MCP_BRIDGE_SOCKET, --server-url, MCP_BRIDGE_URL, default URL.
   - id: available-tools
     index: 4
     title: Available Tools

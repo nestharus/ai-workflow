@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from scripts.dev.mcp_agent_client import (
+    _MCP_SERVER,
     _format_bridge_error,
     cmd_cancel,
     cmd_list,
@@ -23,7 +24,7 @@ from scripts.dev.mcp_agent_client import (
     get_mcp_client,
     main,
 )
-from scripts.mcp.client.http_client import HttpMCPClient, MCPClientError
+from scripts.servers.mcp.client.http_client import HttpMCPClient, MCPClientError
 
 
 class FakeHttpMCPClient:
@@ -630,7 +631,7 @@ class TestErrorEdgeCases:
 
         assert len(fake_client.calls) == 1
         server, name, arguments, _timeout = fake_client.calls[0]
-        assert server == "background-job"
+        assert server == _MCP_SERVER
         assert name == "execute_command"
         assert arguments == {"command": "echo hello"}
 
@@ -1256,20 +1257,24 @@ class TestTimeoutSemantics:
 
 
 class TestTimeoutFloorBehavior:
-    """Tests for the timeout floor behavior in cmd_wait's get_remaining_timeout().
+    """Tests for timeout budget behavior in cmd_wait's get_remaining_timeout().
 
     The key behavior:
-    - When remaining > 1.0s: apply 1-second floor for sensible HTTP call timeouts
-    - When remaining <= 1.0s: use exact remaining time to not exceed max_seconds budget
+    - Timeouts are bounded by the remaining budget and never exceed max_seconds
+    - When remaining > 0: return exact remaining time
     - When remaining <= 0: return 0.0 to trigger timeout path
+
+    Tests verify:
+    - Small remaining budgets yield timeouts below 1.0s
+    - Large remaining budgets yield timeouts at or above 1.0s
     """
 
-    def test_small_remaining_budget_not_floored(self, mock_time_sleep: Any) -> None:
-        """Test that remaining time <= 1s is NOT floored to 1s.
+    def test_small_remaining_budget_uses_exact_time(self, mock_time_sleep: Any) -> None:
+        """Test that small remaining budgets produce timeouts below 1.0s.
 
         When the remaining budget drops below 1 second, individual HTTP calls
-        should receive the exact remaining time (e.g., 0.5s) rather than being
-        floored to 1s, which would exceed the max_seconds budget.
+        receive the exact remaining time (e.g., 0.5s), ensuring the overall
+        timeout budget (max_seconds) is respected.
         """
         timeouts_received: list[float] = []
         fake_client = FakeHttpMCPClient(
@@ -1298,8 +1303,8 @@ class TestTimeoutFloorBehavior:
             """Return time values that create a small remaining budget.
 
             Timeline (max_seconds=2):
-            - Call 1 (start): time=100.0, deadline=102.0, remaining=2.0 -> timeout=max(1.0, 2.0)=2.0
-            - Call 2 (status): time=101.5, deadline=102.0, remaining=0.5 -> timeout=0.5 (no floor)
+            - Call 1 (start): time=100.0, deadline=102.0, remaining=2.0 -> timeout=2.0
+            - Call 2 (status): time=101.5, deadline=102.0, remaining=0.5 -> timeout=0.5
             - Call 3 (status check for loop): time=102.5, remaining=-0.5 -> triggers timeout
             """
             call_count[0] += 1
@@ -1333,12 +1338,11 @@ class TestTimeoutFloorBehavior:
             f"Expected at least one timeout < 1.0s when budget is low, but got: {timeouts_received}"
         )
 
-    def test_large_remaining_budget_uses_floor(self, mock_time_sleep: Any) -> None:
-        """Test that remaining time > 1s still applies the 1-second floor.
+    def test_large_remaining_budget_produces_large_timeouts(self, mock_time_sleep: Any) -> None:
+        """Test that large remaining budgets produce timeouts at or above 1.0s.
 
-        When there's plenty of budget remaining (e.g., 0.8s remaining but
-        logically we'd want a reasonable minimum), we should still get
-        at least 1s for HTTP calls when remaining > 1.0.
+        When there's plenty of budget remaining (e.g., 60s), HTTP calls
+        receive the full remaining time, which naturally exceeds 1.0s.
         """
         timeouts_received: list[float] = []
         fake_client = FakeHttpMCPClient(
@@ -1457,8 +1461,7 @@ class TestTimeoutFloorBehavior:
     def test_boundary_at_exactly_one_second(self, mock_time_sleep: Any) -> None:
         """Test behavior when remaining is exactly 1.0 second.
 
-        When remaining == 1.0s, it should be returned unchanged (no floor applied
-        since the floor IS 1.0s anyway).
+        When remaining == 1.0s, the exact value is returned unchanged.
         """
         timeouts_received: list[tuple[str, float]] = []
         fake_client = FakeHttpMCPClient(
