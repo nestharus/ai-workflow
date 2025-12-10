@@ -8,12 +8,37 @@ from __future__ import annotations
 
 import logging
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from scripts.pr.git_dao import _run_git
-
 logger = logging.getLogger(__name__)
+
+
+def _run_git(
+    args: list[str],
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str] | None:
+    """Run a git command safely, catching missing git errors.
+
+    Args:
+        args: Command arguments (including "git").
+        cwd: Working directory.
+
+    Returns:
+        CompletedProcess result, or None if git is not available.
+    """
+    try:
+        return subprocess.run(
+            args,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return None
 
 
 @dataclass

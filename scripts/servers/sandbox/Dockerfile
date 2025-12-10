@@ -21,7 +21,7 @@
 #   - For production, implement proper authentication
 #
 # Build:
-#   docker build -t ai-workflow/sandbox-server:dev -f scripts/pr/sandbox/Dockerfile .
+#   docker build -t ai-workflow/sandbox-server:dev -f scripts/servers/sandbox/Dockerfile scripts/servers/sandbox/
 #
 # Run:
 #   mkdir -p /tmp/sandbox-sockets
@@ -30,7 +30,7 @@
 #   # Socket available at /tmp/sandbox-sockets/sandbox.sock
 #
 # Or use docker compose (recommended):
-#   docker compose -f scripts/pr/sandbox/docker-compose.yml up
+#   docker compose -p ai-workflow-devtools -f docker-compose.dev.yml up sandbox-server
 
 # Pinned uv version for reproducible builds.
 ARG UV_VERSION=0.9.12
@@ -51,9 +51,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Install uv by copying the prebuilt binary from the official image.
 COPY --from=uv /uv /usr/local/bin/uv
 
-# Copy dependency file and scripts package
-COPY pyproject.toml ./pyproject.toml
-COPY scripts ./scripts
+# Copy dependency files
+COPY pyproject.toml uv.lock ./
 
 # Install dependencies using uv sync.
 # --frozen ensures lockfile is not modified
@@ -70,10 +69,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install runtime dependencies (git is required) and create user
+# Install runtime dependencies (git and ssh are required for remote operations) and create user
 # hadolint ignore=DL3008
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git ca-certificates && \
+    apt-get install -y --no-install-recommends git ca-certificates openssh-client && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd -g 10000 appuser && \
     useradd -u 10000 -g appuser -s /bin/bash -m appuser && \
@@ -85,17 +84,30 @@ COPY --from=uv /uv /usr/local/bin/uv
 # Copy virtual environment from builder
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 
-# Copy scripts package
-COPY --from=builder --chown=appuser:appuser /app/scripts /app/scripts
+# Create the module structure to match repo imports (scripts.servers.sandbox.*)
+# This allows the same import statements to work in both Docker and repo
+RUN mkdir -p /app/scripts/servers/sandbox
 
-# Set path to use virtual environment
-ENV PATH="/app/.venv/bin:$PATH"
+# Copy application code to module path
+COPY --chown=appuser:appuser __init__.py constants.py operations.py protocol.py client.py server.py /app/scripts/servers/sandbox/
 
-# DEV IMAGE ONLY: Ensure socket directory is writable by appuser
-RUN chmod 1777 /tmp
+# Create __init__.py files for parent packages
+RUN touch /app/scripts/__init__.py /app/scripts/servers/__init__.py
+
+# Set path to use virtual environment and PYTHONPATH for module resolution
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app"
+
+# DEV IMAGE ONLY: Ensure socket directory is writable by appuser and configure git
+# Using '*' allows both /repo and any subdirectories like /repo/.git/sandbox
+RUN chmod 1777 /tmp && \
+    git config --global --add safe.directory '*'
 
 # Switch to non-root user
 USER appuser
+
+# Re-configure git safe.directory for appuser (global config is per-user)
+RUN git config --global --add safe.directory '*'
 
 # Socket path for Unix domain socket communication
 ENV SANDBOX_SOCKET_PATH=/tmp/sandbox.sock
@@ -109,5 +121,5 @@ ENV SANDBOX_REPO_PATH=/repo
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import socket,json,os; s=socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect(os.environ['SANDBOX_SOCKET_PATH']); s.sendall(b'{\"command\":\"status\"}\\n'); r=s.recv(4096); s.close(); d=json.loads(r); exit(0 if d.get('status')=='success' else 1)" || exit 1
 
-# Start the sandbox server
-CMD ["python", "-m", "scripts.pr.sandbox.server"]
+# Start the sandbox server as a module
+CMD ["python", "-m", "scripts.servers.sandbox.server"]

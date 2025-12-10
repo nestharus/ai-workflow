@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from scripts.pr.sandbox.protocol import (
+from scripts.servers.sandbox.protocol import (
     CancelRequest,
     ConflictResponse,
     ErrorResponse,

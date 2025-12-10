@@ -25,13 +25,13 @@ def sandbox_rebase_command(
         - 2 when conflicts are detected
         - 1 on errors
     """
-    from scripts.pr.sandbox.client import (
+    from scripts.servers.sandbox.client import (
         DEFAULT_SOCKET_PATH,
         SandboxClientError,
         format_response,
         send_rebase,
     )
-    from scripts.pr.sandbox.protocol import ConflictResponse, SuccessResponse
+    from scripts.servers.sandbox.protocol import ConflictResponse, SuccessResponse
 
     if socket_path is None:
         socket_path = DEFAULT_SOCKET_PATH

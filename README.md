@@ -1,5 +1,9 @@
 # Developing With AI 2.0
 
+Run this before you start working
+
+uv run dev.ensure-env >> .claude/dev-env.log 2>&1 || true
+
 **Developing With AI 2.0** is an automated, orchestrator-based AI workflow system in active development. It
 implements a structured collaboration model between AI agents coordinated by a FastAPI orchestrator service,
 with architecture details available in `docs/architecture/`.
