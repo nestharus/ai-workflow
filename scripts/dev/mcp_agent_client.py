@@ -120,6 +120,11 @@ def _format_bridge_error(e: MCPClientError) -> str:
 
     The original MCPClientError error message is always preserved in the output.
 
+    Note: Currently all code paths return the original error_msg unchanged.
+    This is intentional - HttpMCPClient already provides well-formatted error
+    messages. The structure is kept for future extensibility if custom
+    formatting is needed for specific error patterns.
+
     Args:
         e: The MCPClientError exception.
 
@@ -265,25 +270,18 @@ def cmd_wait(
         deadline = time.monotonic() + max_seconds
 
         def get_remaining_timeout() -> float:
-            """Get remaining time before deadline, with minimum floor for large budgets.
+            """Get remaining time before deadline.
 
             Returns:
                 - 0.0 if deadline has passed (remaining <= 0)
-                - remaining unchanged if remaining <= 1.0 (preserve tight deadline)
-                - max(1.0, remaining) if remaining > 1.0 (ensure reasonable call timeout)
+                - remaining time otherwise
 
-            This ensures we don't exceed max_seconds when the budget is nearly exhausted,
-            while still giving individual HTTP calls a reasonable timeout when there's
-            plenty of time remaining.
+            This ensures we don't exceed max_seconds when the budget is nearly exhausted.
             """
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return 0.0
-            # Only apply the 1-second floor when we have more time remaining
-            # to avoid exceeding max_seconds when budget is nearly exhausted
-            if remaining <= 1.0:
-                return remaining
-            return max(1.0, remaining)
+            return remaining
 
         if command:
             remaining = get_remaining_timeout()
