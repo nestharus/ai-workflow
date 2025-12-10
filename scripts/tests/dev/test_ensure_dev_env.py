@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,7 +20,6 @@ from scripts.dev.ensure_dev_env import (
     _try_atomic_create_lock,
     acquire_lock,
     check_docker_available,
-    ensure_socket_directories,
     get_container_health,
     is_pid_running,
     main,
@@ -324,8 +323,10 @@ class TestEnsureSingleSocketDirectory:
         """Should create the socket directory with correct permissions."""
         # pyfakefs already has /tmp; ensure mcp-sockets doesn't exist
         socket_dir = Path("/tmp/mcp-sockets")
-        if socket_dir.exists():
+        if socket_dir.is_dir():
             socket_dir.rmdir()
+        elif socket_dir.exists():
+            socket_dir.unlink()
 
         _ensure_single_socket_directory(socket_dir)
 
@@ -375,30 +376,6 @@ class TestEnsureSingleSocketDirectory:
         assert socket_path.is_dir()
         mode = socket_path.stat().st_mode & 0o7777
         assert mode == 0o1777
-
-
-class TestEnsureSocketDirectories:
-    """Tests for ensure_socket_directories function."""
-
-    def test_creates_all_socket_directories(self, fs: FakeFilesystem) -> None:
-        """Should create socket directories for all containers in CONTAINERS."""
-        # pyfakefs already creates /tmp by default, so we don't need to create it
-
-        # Mock CONTAINERS to use test paths
-        test_containers = [
-            ("test-container-1", Path("/tmp/test-sockets-1")),
-            ("test-container-2", Path("/tmp/test-sockets-2")),
-        ]
-
-        with patch.object(ensure_dev_env, "CONTAINERS", test_containers):
-            ensure_socket_directories()
-
-        # Verify all directories were created with correct permissions
-        for _, socket_dir in test_containers:
-            assert socket_dir.exists()
-            assert socket_dir.is_dir()
-            mode = socket_dir.stat().st_mode & 0o7777
-            assert mode == 0o1777
 
 
 class TestGetContainerHealth:
@@ -465,16 +442,15 @@ class TestGetContainerHealth:
 class TestWaitForHealthy:
     """Tests for wait_for_healthy function."""
 
-    def test_returns_true_when_immediately_healthy(self) -> None:
-        """Should return True when all containers are immediately healthy."""
-        # Mock CONTAINERS to have a single container for simpler testing
-        test_containers = [("test-container", Path("/tmp/test-sockets"))]
+    # Use a single container for simpler testing
+    TEST_CONTAINERS: ClassVar = [("test-container", Path("/tmp/test-sockets"))]
 
+    def test_returns_true_when_immediately_healthy(self) -> None:
+        """Should return True when container is immediately healthy."""
         with (
-            patch.object(ensure_dev_env, "CONTAINERS", test_containers),
+            patch.object(ensure_dev_env, "CONTAINERS", self.TEST_CONTAINERS),
             patch.object(ensure_dev_env, "get_container_health", return_value="healthy"),
             patch("time.monotonic") as mock_monotonic,
-            patch.object(ensure_dev_env, "log"),
         ):
             mock_monotonic.return_value = 0.0
             result = wait_for_healthy()
@@ -483,25 +459,20 @@ class TestWaitForHealthy:
 
     def test_returns_true_after_transition_to_healthy(self) -> None:
         """Should return True when container transitions from starting to healthy."""
-        # Mock CONTAINERS to have a single container for simpler testing
-        test_containers = [("test-container", Path("/tmp/test-sockets"))]
         health_sequence = ["starting", "starting", "healthy"]
         health_iter = iter(health_sequence)
 
         def mock_get_health(container_name: str, timeout: float | None = None) -> str:
-            return next(health_iter, "healthy")
+            return next(health_iter)
 
-        # Provide enough monotonic values for the loop iterations
-        # Each iteration: remaining check (line 266), loop iteration (line 292)
-        monotonic_values = [0.0] * 20  # Enough values for multiple iterations
+        monotonic_values = [0.0, 0.0, 2.0, 2.0, 4.0, 4.0]  # Pairs for each loop iteration
         monotonic_iter = iter(monotonic_values)
 
         with (
-            patch.object(ensure_dev_env, "CONTAINERS", test_containers),
+            patch.object(ensure_dev_env, "CONTAINERS", self.TEST_CONTAINERS),
             patch.object(ensure_dev_env, "get_container_health", side_effect=mock_get_health),
-            patch("time.monotonic", side_effect=lambda: next(monotonic_iter, 0.0)),
+            patch("time.monotonic", side_effect=lambda: next(monotonic_iter)),
             patch("time.sleep"),
-            patch.object(ensure_dev_env, "log"),
         ):
             result = wait_for_healthy()
 
@@ -509,79 +480,77 @@ class TestWaitForHealthy:
 
     def test_returns_false_on_timeout(self) -> None:
         """Should return False when health timeout is exceeded."""
-        # Mock CONTAINERS to have a single container for simpler testing
-        test_containers = [("test-container", Path("/tmp/test-sockets"))]
-
-        # Time starts at 0, then jumps past timeout (HEALTH_TIMEOUT = 60)
-        monotonic_values = [0.0, 0.0, 65.0]  # Start, first remaining check, then past timeout
+        # wait_for_healthy calls time.monotonic multiple times per iteration:
+        # 1. start = time.monotonic() at initialization
+        # 2. remaining = HEALTH_TIMEOUT - (time.monotonic() - start) before loop
+        # 3. remaining = HEALTH_TIMEOUT - (time.monotonic() - start) after container check
+        # We need the second remaining check (after health check) to be past timeout
+        monotonic_values = [0.0, 0.0, 100.0]  # init, first remaining check, post-check timeout
         monotonic_iter = iter(monotonic_values)
 
         with (
-            patch.object(ensure_dev_env, "CONTAINERS", test_containers),
+            patch.object(ensure_dev_env, "CONTAINERS", self.TEST_CONTAINERS),
             patch.object(ensure_dev_env, "get_container_health", return_value="starting"),
-            patch("time.monotonic", side_effect=lambda: next(monotonic_iter, 100.0)),
+            patch("time.monotonic", side_effect=lambda: next(monotonic_iter)),
             patch("time.sleep"),
             patch.object(ensure_dev_env, "log") as mock_log,
         ):
             result = wait_for_healthy()
 
         assert result is False
-        # Should have logged a timeout message
-        assert mock_log.called
+        mock_log.assert_called_once()
         log_message = mock_log.call_args[0][0]
         assert "timed out" in log_message
         assert "starting" in log_message
 
     def test_logs_last_known_status_on_timeout(self) -> None:
         """Should log last known status when timeout is exceeded."""
-        # Mock CONTAINERS to have a single container for simpler testing
-        test_containers = [("test-container", Path("/tmp/test-sockets"))]
-        # Sequence: returns "starting" then "" (empty)
+        # Sequence: returns "starting" then "" (empty), then timeout
         health_sequence = ["starting", ""]
         health_iter = iter(health_sequence)
 
         def mock_get_health(container_name: str, timeout: float | None = None) -> str:
             return next(health_iter, "")
 
-        # Time: 0s start, 5s after first check, then past timeout
-        monotonic_values = [0.0, 0.0, 5.0, 5.0, 65.0]
+        # Time pattern for two iterations:
+        # Iter 1: init(0), remaining check(0), post-check(5), sleep(5)
+        # Iter 2: remaining check(5), post-check(100 - timeout)
+        monotonic_values = [0.0, 0.0, 5.0, 5.0, 5.0, 100.0]
         monotonic_iter = iter(monotonic_values)
 
         with (
-            patch.object(ensure_dev_env, "CONTAINERS", test_containers),
+            patch.object(ensure_dev_env, "CONTAINERS", self.TEST_CONTAINERS),
             patch.object(ensure_dev_env, "get_container_health", side_effect=mock_get_health),
-            patch("time.monotonic", side_effect=lambda: next(monotonic_iter, 100.0)),
+            patch("time.monotonic", side_effect=lambda: next(monotonic_iter)),
             patch("time.sleep"),
             patch.object(ensure_dev_env, "log") as mock_log,
         ):
             result = wait_for_healthy()
 
         assert result is False
-        assert mock_log.called
+        mock_log.assert_called_once()
         log_message = mock_log.call_args[0][0]
         assert "starting" in log_message  # Should report last-seen status
 
-    def test_logs_empty_status_when_no_health_returned(self) -> None:
-        """Should log empty status when no health status was ever returned."""
-        # Mock CONTAINERS to have a single container for simpler testing
-        test_containers = [("test-container", Path("/tmp/test-sockets"))]
-        # Time immediately jumps past timeout
-        monotonic_values = [0.0, 65.0]  # Start, then past timeout
+    def test_logs_container_status_when_no_health_returned(self) -> None:
+        """Should log container with empty status when no health status was ever returned."""
+        # First remaining check passes, then timeout on second check
+        monotonic_values = [0.0, 0.0, 100.0]  # init, first remaining check, post-check timeout
         monotonic_iter = iter(monotonic_values)
 
         with (
-            patch.object(ensure_dev_env, "CONTAINERS", test_containers),
+            patch.object(ensure_dev_env, "CONTAINERS", self.TEST_CONTAINERS),
             patch.object(ensure_dev_env, "get_container_health", return_value=""),
-            patch("time.monotonic", side_effect=lambda: next(monotonic_iter, 100.0)),
+            patch("time.monotonic", side_effect=lambda: next(monotonic_iter)),
             patch("time.sleep"),
             patch.object(ensure_dev_env, "log") as mock_log,
         ):
             result = wait_for_healthy()
 
         assert result is False
-        assert mock_log.called
+        mock_log.assert_called_once()
         log_message = mock_log.call_args[0][0]
-        # When no health status is ever returned, last_statuses remains empty string
+        # When no status was returned, the container is logged with its name and empty status
         assert "test-container=" in log_message
         assert "timed out" in log_message
 

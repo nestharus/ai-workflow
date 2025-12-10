@@ -626,6 +626,54 @@ class TestRunDetectSecrets:
         assert any("settings.json" in arg for arg in cmd), "JSON files should be scanned"
         assert any("script.sh" in arg for arg in cmd), "Shell scripts should be scanned"
 
+    def test_no_scannable_files_short_circuits(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        detect_secrets_config: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Should print message and skip scan when all files are excluded."""
+        # Create only files that will be excluded (note: .secrets.baseline is
+        # already created by the detect_secrets_config fixture)
+        fs.create_file(str(fake_repo / "script.pyc"), contents=b"\x00\x01\x02")
+        fs.create_file(str(fake_repo / "image.png"), contents=b"\x89PNG")
+        fs.create_file(str(fake_repo / "data.db"), contents=b"SQLite")
+        fs.create_file(str(fake_repo / "uv.lock"), contents="dependencies")
+
+        with (
+            patch("scripts.dev.linter.linters.detect_secrets.REPO_ROOT", fake_repo),
+            patch(
+                "scripts.dev.linter.linters.detect_secrets.SECRETS_BASELINE",
+                fake_repo / ".secrets.baseline",
+            ),
+            patch(
+                "scripts.dev.linter.linters.detect_secrets.LINT_DETECT_SECRETS_CONFIG",
+                detect_secrets_config,
+            ),
+            patch(
+                "scripts.dev.linter.linters.detect_secrets.get_executable",
+                return_value="/usr/bin/uv",
+            ),
+            patch("scripts.dev.linter.linters.detect_secrets.run_checked") as mock_run_checked,
+        ):
+            linter = DetectSecretsLinter()
+            result = linter.run(
+                files=["script.pyc", "image.png", "data.db", "uv.lock", ".secrets.baseline"]
+            )
+
+        # run_checked should NOT be called when all files are excluded
+        assert not mock_run_checked.called, (
+            "run_checked should not be called with no scannable files"
+        )
+
+        # Verify the short-circuit message was printed
+        captured = capsys.readouterr()
+        assert "No scannable files for detect-secrets" in captured.out
+
+        # Result should still indicate success
+        assert result.success is True
+
 
 # --- ActionlintLinter Tests ---
 
