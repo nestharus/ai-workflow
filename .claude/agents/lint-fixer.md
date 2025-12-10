@@ -80,9 +80,9 @@ worktree path directly.
 When `--changed-only` is specified:
 1. Detect changed files (uncommitted first, then last commit)
 2. For linters that support `--files` (ruff, mypy, hadolint, pymarkdown, yamllint,
-   actionlint, dotenvlint), pass the changed files
-3. Skip linters that don't support file filtering (scripts, checkov, detect-secrets,
-   trivy) or skip them if no relevant files changed
+   actionlint, dotenvlint, detect-secrets), pass the changed files
+3. Skip linters that don't support file filtering (scripts, checkov, trivy) or skip
+   them if no relevant files changed
 
 ### 1. Run gen_openapi (required before lint, skip if --changed-only)
 
@@ -124,6 +124,7 @@ uv run lint pymarkdown --files $CHANGED_FILES
 uv run lint yamllint --files $CHANGED_FILES
 uv run lint actionlint --files $CHANGED_FILES
 uv run lint dotenvlint --files $CHANGED_FILES
+uv run lint detect-secrets --files $CHANGED_FILES
 ```
 
 ### 3. Fix and iterate

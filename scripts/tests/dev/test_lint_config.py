@@ -198,6 +198,78 @@ class TestRunYamllint:
         yaml_files = [arg for arg in cmd if arg.endswith((".yml", ".yaml"))]
         assert len(yaml_files) > 0, "Root YAML files should be included"
 
+    def test_files_parameter_filters_to_yaml_only(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        yamllint_config: Path,
+    ) -> None:
+        """Should only pass YAML files when files parameter is provided."""
+        # Create test files
+        fs.create_file(str(fake_repo / "config.yml"), contents="key: value")
+        fs.create_file(str(fake_repo / "settings.yaml"), contents="setting: true")
+        fs.create_file(str(fake_repo / "script.py"), contents="print('hello')")
+        fs.create_file(str(fake_repo / "README.md"), contents="# Readme")
+
+        with (
+            patch("scripts.dev.linter.linters.yamllint.REPO_ROOT", fake_repo),
+            patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", yamllint_config),
+            patch(
+                "scripts.dev.linter.linters.yamllint.get_executable",
+                return_value="/usr/bin/uv",
+            ),
+            patch("scripts.dev.linter.linters.yamllint.run_checked") as mock_run_checked,
+        ):
+            linter = YamllintLinter()
+            # Pass a mix of YAML and non-YAML files
+            linter.run(files=["config.yml", "settings.yaml", "script.py", "README.md"])
+
+        assert mock_run_checked.called
+        cmd = mock_run_checked.call_args[0][0]
+        # Get files passed after the yamllint config flag
+        config_index = cmd.index("-c")
+        files_passed = cmd[config_index + 2 :]  # Skip -c and config path
+
+        # Only YAML files should be passed
+        assert "config.yml" in files_passed, "config.yml should be included"
+        assert "settings.yaml" in files_passed, "settings.yaml should be included"
+        assert "script.py" not in files_passed, "script.py should NOT be included"
+        assert "README.md" not in files_passed, "README.md should NOT be included"
+        assert len(files_passed) == 2, "Only 2 YAML files should be passed"
+
+    def test_files_parameter_short_circuits_when_no_yaml_files(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        yamllint_config: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Should not call run_checked when no YAML files in the files list."""
+        # Create test files (non-YAML files only)
+        fs.create_file(str(fake_repo / "script.py"), contents="print('hello')")
+        fs.create_file(str(fake_repo / "README.md"), contents="# Readme")
+
+        with (
+            patch("scripts.dev.linter.linters.yamllint.REPO_ROOT", fake_repo),
+            patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", yamllint_config),
+            patch(
+                "scripts.dev.linter.linters.yamllint.get_executable",
+                return_value="/usr/bin/uv",
+            ),
+            patch("scripts.dev.linter.linters.yamllint.run_checked") as mock_run_checked,
+        ):
+            linter = YamllintLinter()
+            # Pass only non-YAML files
+            result = linter.run(files=["script.py", "README.md"])
+
+        # run_checked should NOT be called
+        assert not mock_run_checked.called, "run_checked should not be called when no YAML files"
+        # Should return success
+        assert result.success is True
+        # Should print the short-circuit message
+        captured = capsys.readouterr()
+        assert "No YAML files to check" in captured.out
+
 
 # --- DotenvlintLinter Tests ---
 
