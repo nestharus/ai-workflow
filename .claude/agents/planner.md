@@ -59,7 +59,7 @@ grep -n "^---$" <FILE_PATH>
 
 ---
 
-# Plan
+# Implementation Plan
 
 ## Overview
 ...
@@ -77,7 +77,7 @@ grep -n "^---$" <FILE_PATH>
 The plan section (after `---`) must follow this exact structure:
 
 ```markdown
-# Plan
+# Implementation Plan
 
 ## Overview
 [Brief summary of what this plan accomplishes - 1-2 sentences]
@@ -123,7 +123,8 @@ This summary will be collected by the calling command to report all changes.
 6. Success criteria must be measurable and verifiable
 7. Keep plans focused - prefer multiple small plans over one large plan
 8. When updating, preserve valid parts of the existing plan
-9. Do not modify any file other than the plan file.
+9. Do not modify any file other than the plan file
+10. Plans MUST be numbered sequentially: Plan 1, Plan 2, Plan 3, etc. No letter suffixes (e.g., "Plan 2a" is invalid - use "Plan 3" instead)
 
 ## Guidance
 
