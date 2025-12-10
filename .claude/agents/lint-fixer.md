@@ -52,7 +52,11 @@ violations for unfixable linters.
 - `hadolint` - Dockerfile linting
 - `pymarkdown` - Markdown validation
 - `yamllint` - YAML validation
+- `actionlint` - GitHub Actions workflow linting
+- `dotenvlint` - .env file validation
 - `checkov` - OpenAPI schema security scans
+- `detect-secrets` - Secret detection in code
+- `trivy` - Security vulnerability scanning
 
 ## CRITICAL: Never Run Full Lint Suite
 
@@ -75,10 +79,10 @@ worktree path directly.
 
 When `--changed-only` is specified:
 1. Detect changed files (uncommitted first, then last commit)
-2. For linters that support `--files` (ruff, mypy, hadolint, pymarkdown, yamllint),
-   pass the changed files
-3. Skip linters that don't support file filtering (scripts, checkov) or skip them if
-   no relevant files changed
+2. For linters that support `--files` (ruff, mypy, hadolint, pymarkdown, yamllint,
+   actionlint, dotenvlint), pass the changed files
+3. Skip linters that don't support file filtering (scripts, checkov, detect-secrets,
+   trivy) or skip them if no relevant files changed
 
 ### 1. Run gen_openapi (required before lint, skip if --changed-only)
 
@@ -97,7 +101,11 @@ uv run lint mypy              # Fix until clean
 uv run lint hadolint          # Fix until clean
 uv run lint pymarkdown        # Fix until clean
 uv run lint yamllint          # Fix until clean
+uv run lint actionlint        # Fix until clean
+uv run lint dotenvlint        # Fix until clean
 uv run lint checkov           # Fix until clean
+uv run lint detect-secrets    # Fix until clean
+uv run lint trivy             # Fix until clean
 ```
 
 **Changed-only mode** (with `--changed-only`):
@@ -114,6 +122,8 @@ uv run lint mypy --files $CHANGED_FILES
 uv run lint hadolint --files $CHANGED_FILES
 uv run lint pymarkdown --files $CHANGED_FILES
 uv run lint yamllint --files $CHANGED_FILES
+uv run lint actionlint --files $CHANGED_FILES
+uv run lint dotenvlint --files $CHANGED_FILES
 ```
 
 ### 3. Fix and iterate

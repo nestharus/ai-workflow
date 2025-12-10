@@ -21,8 +21,6 @@ repos:
             \.mypy_cache/.*|
             \.pytest_cache/.*|
             \.ruff_cache/.*|
-            scripts/clients/linear/node_modules/.*|
-            scripts/clients/linear/dist/.*|
             \.git-rewrite/.*|
             to_adapt/.*|
             \.idea/.*|

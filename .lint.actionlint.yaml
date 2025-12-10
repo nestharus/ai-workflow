@@ -3,12 +3,14 @@
 
 # Directories to exclude when searching for workflow files
 # (consistent with .lint.hadolint.yaml and .lint.yamllint.yaml)
-exclude_dirs: []
-  # Example:
-  # - .worktrees
+exclude_dirs:
+  - .tasks/store  # Generated task files
+  - .tmp          # Temporary files (may contain cloned repos with workflows)
+  - .worktrees    # Git worktrees (contain full repo checkouts with .github/workflows/)
+  - .git-rewrite  # Temporary git operation files
 
 # Patterns to ignore (passed as -ignore flags)
 ignore: []
-  # Example patterns:
-  # - "SC2086:"  # Ignore specific shellcheck warning
-  # - 'label "self-hosted" is unknown'  # Ignore custom runner labels
+# Example patterns:
+# - "SC2086:"  # Ignore specific shellcheck warning
+# - 'label "self-hosted" is unknown'  # Ignore custom runner labels
