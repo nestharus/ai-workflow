@@ -544,6 +544,9 @@ class TestEarlyShutdown:
                 "asyncio.start_unix_server",
                 new=AsyncMock(return_value=mock_server),
             ),
+            patch(
+                "scripts.servers.sandbox.server.os.chmod",
+            ),
         ):
             # start() should return quickly because shutdown was already requested
             # The event should be set immediately

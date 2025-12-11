@@ -85,7 +85,3 @@ to_adapt/
 .tmp/
 .worktrees/
 .git-rewrite/
-
-# Node.js dependencies and build artifacts (scripts/clients/linear/)
-scripts/clients/linear/node_modules/
-scripts/clients/linear/dist/
