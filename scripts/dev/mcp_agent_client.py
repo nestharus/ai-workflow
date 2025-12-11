@@ -159,6 +159,10 @@ def get_mcp_client(
 ) -> HttpMCPClient:
     """Get HTTP MCP client for bridge communication.
 
+    This function delegates to HttpMCPClient, which implements the transport
+    mode resolution logic. The arguments are passed directly to the
+    HttpMCPClient constructor.
+
     Args:
         base_url: Bridge server URL (from --server-url CLI flag).
         socket_path: Unix socket path (from --socket-path CLI flag).
@@ -175,9 +179,13 @@ def get_mcp_client(
 
     When socket_path is set (via arg or env), URL settings are ignored.
     CLI flags override their corresponding environment variables.
+
+    See Also:
+        scripts.servers.mcp.client.http_client.HttpMCPClient: The definitive
+        source for transport mode precedence rules and connection behavior.
     """
-    # Precedence is handled by HttpMCPClient constructor:
-    # socket_path arg > MCP_BRIDGE_SOCKET env > base_url arg > MCP_BRIDGE_URL env > default
+    # Delegates to HttpMCPClient which owns the precedence logic.
+    # See: scripts.servers.mcp.client.http_client.HttpMCPClient
     return HttpMCPClient(base_url=base_url, socket_path=socket_path)
 
 
@@ -270,13 +278,20 @@ def cmd_wait(
         deadline = time.monotonic() + max_seconds
 
         def get_remaining_timeout() -> float:
-            """Get remaining time before deadline.
+            """Get the exact remaining time budget before deadline, clamped at 0.0.
+
+            This function calculates the precise remaining seconds until the
+            max_seconds deadline. Every call to get_job_status() or get_job_output()
+            uses this value as its HTTP request timeout, ensuring that no individual
+            request can cause the total wait time to exceed the client's max_seconds
+            budget.
 
             Returns:
                 - 0.0 if deadline has passed (remaining <= 0)
-                - remaining time otherwise
+                - Exact remaining seconds otherwise (never negative)
 
-            This ensures we don't exceed max_seconds when the budget is nearly exhausted.
+            The clamping to 0.0 ensures callers receive a non-negative value even
+            when the deadline has already elapsed.
             """
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -306,7 +321,10 @@ def cmd_wait(
         while True:
             remaining = get_remaining_timeout()
             if remaining <= 0:
-                # Kill job on timeout (best effort, with very short timeout)
+                # Kill job on timeout (best effort, with very short timeout).
+                # The 1.0s timeout below is a separate, best-effort cleanup budget
+                # and is NOT counted against the client's max_seconds SLA. By this
+                # point the max_seconds deadline has already been exceeded.
                 with contextlib.suppress(MCPClientError):
                     call_mcp_tool(client, "kill_job", {"job_id": job_id}, 1.0)
                 return {

@@ -440,7 +440,12 @@ class TestGetContainerHealth:
 
 
 class TestWaitForHealthy:
-    """Tests for wait_for_healthy function."""
+    """Tests for wait_for_healthy function.
+
+    Note: The wait_for_healthy function now checks multiple containers defined
+    in CONTAINERS. These tests mock get_container_health to return statuses for
+    all containers being polled.
+    """
 
     # Use a single container for simpler testing
     TEST_CONTAINERS: ClassVar = [("test-container", Path("/tmp/test-sockets"))]
@@ -510,7 +515,7 @@ class TestWaitForHealthy:
         health_iter = iter(health_sequence)
 
         def mock_get_health(container_name: str, timeout: float | None = None) -> str:
-            return next(health_iter, "")
+            return next(health_iter)
 
         # Time pattern for two iterations:
         # Iter 1: init(0), remaining check(0), post-check(5), sleep(5)
@@ -553,6 +558,7 @@ class TestWaitForHealthy:
         # When no status was returned, the container is logged with its name and empty status
         assert "test-container=" in log_message
         assert "timed out" in log_message
+        assert "=" in log_message  # Container names are shown with status
 
 
 class TestMain:
