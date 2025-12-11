@@ -23,9 +23,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-# Add the scripts/mcp directory to Python path so we can import the bridge modules
-# This is necessary because scripts/mcp is a separate subproject with its own app/ folder
-MCP_BRIDGE_PATH = Path(__file__).parent.parent.parent / "mcp"
+# Add the scripts/servers/mcp directory to Python path so we can import the bridge modules
+# This is necessary because scripts/servers/mcp is a separate subproject with its own app/ folder
+MCP_BRIDGE_PATH = Path(__file__).parent.parent.parent / "servers" / "mcp"
 if str(MCP_BRIDGE_PATH) not in sys.path:
     sys.path.insert(0, str(MCP_BRIDGE_PATH))
 

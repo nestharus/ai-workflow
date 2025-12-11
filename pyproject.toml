@@ -316,32 +316,116 @@ source = [
 ]
 
 # Custom coverage settings used by test_coverage.py
-# Each tier has its own thresholds based on coverage type:
-# - unit/component/scripts: line/branch coverage (per-function and overall)
-# - integration: use-case coverage only
+#
+# Each tier can configure:
+#   - test_path: Path to test directory (string)
+#   - source_paths: Paths to source directories (list of strings)
+#   - coverage_type: Type of coverage measurement (string)
+#   - min_line_overall, min_branch_overall: Overall coverage thresholds
+#   - min_line_per_function, min_branch_per_function: Per-function thresholds
+#   - min_usecase: Use-case coverage threshold (for usecase type)
+#   - skip_private_functions: Skip functions starting with _ (bool)
+#   - service_layer_only: Only validate app/services/ files (bool)
+#   - exclude_class_fields: Exclude class field annotations (bool)
+#
+# BUILT-IN TIER DEFAULTS:
+# -----------------------
+# Built-in tiers (unit, component, integration, scripts) get their default
+# test_path, source_paths, coverage_type, and flags from DEFAULT_TIER_CONFIGS
+# in scripts/dev/test_runner/test_coverage.py. You only need to specify
+# threshold values (min_line_overall, etc.) for built-in tiers - path and
+# type settings are optional overrides.
+#
+# REQUIRED FIELDS FOR CUSTOM TIERS:
+# ---------------------------------
+# Default tiers (unit, component, integration, scripts) have built-in
+# path/type defaults. For any OTHER tier name (custom tiers), the following
+# fields are REQUIRED:
+#   - test_path: Path to test directory (e.g., "tests/e2e")
+#   - source_paths: List of source directories (e.g., ["app", "lib"])
+#   - coverage_type: Must be either "line_branch" or "usecase"
+#
+# VALID coverage_type VALUES:
+# ---------------------------
+#   - "line_branch": Measures line and branch coverage. Use for unit/component tests.
+#   - "usecase": Measures use-case coverage via test markers. Use for integration/e2e tests.
+#
+# ERROR BEHAVIOR:
+# ---------------
+# Misconfigured custom tiers cause a clear error (ValueError) that halts execution:
+#
+#   - Missing required fields:
+#     "Custom tier 'e2e' is missing required fields: test_path, source_paths, coverage_type.
+#      All custom tiers in [tool.test_coverage.<tier>] must specify test_path,
+#      source_paths, and coverage_type."
+#
+#   - Invalid coverage_type:
+#     "Invalid coverage_type 'invalid' for tier 'e2e'"
+#
+# This fail-fast behavior ensures configuration errors are caught early rather than
+# silently skipped. To disable a custom tier, remove or comment out its section entirely.
 
 [tool.test_coverage.unit]
-# Unit tests cover ALL app/ functions (including private)
+# test_path = "tests/unit"  # default
+# source_paths = ["app"]    # default
+# coverage_type = "line_branch"  # default
 min_line_overall = 80.0
 min_branch_overall = 70.0
 min_line_per_function = 60.0
 min_branch_per_function = 50.0
 
 [tool.test_coverage.component]
-# Component tests cover app/services/ public functions only
+# Component tests run under tests/unit/ but focus only on the app/services/ layer.
+# test_path = "tests/unit"              # default: runs tests from tests/unit/
+# source_paths = ["app/services"]       # default: validates app/services/ only
+# coverage_type = "line_branch"         # default
+# service_layer_only = true             # default: restricts coverage to service layer
+# skip_private_functions = true         # default: skips private functions (_prefixed)
 min_line_overall = 80.0
 min_branch_overall = 70.0
 min_line_per_function = 80.0
 min_branch_per_function = 70.0
 
 [tool.test_coverage.integration]
-# Integration tests: use-case coverage from tests/docs/use_cases.yaml
+# test_path = "tests/integration"  # default
+# source_paths = ["app"]           # default
+# coverage_type = "usecase"        # default
 min_usecase = 100.0
 
 [tool.test_coverage.scripts]
-# Scripts tests cover scripts/
+# test_path = "scripts/tests"  # default
+# source_paths = ["scripts", "tools"]  # default
+# coverage_type = "line_branch"  # default
 min_line_overall = 80.0
 min_branch_overall = 70.0
 min_line_per_function = 60.0
 min_branch_per_function = 50.0
+
+# Example: Custom e2e tier (uncomment to enable)
+# Custom tiers MUST specify test_path, source_paths, and coverage_type.
+# Omitting any required field raises ValueError with a clear message listing
+# all missing fields. Invalid coverage_type values also raise ValueError.
+#
+# [tool.test_coverage.e2e]
+# test_path = "tests/e2e"           # REQUIRED for custom tiers
+# source_paths = ["app"]            # REQUIRED for custom tiers
+# coverage_type = "usecase"         # REQUIRED: must be "line_branch" or "usecase"
+# min_usecase = 100.0               # Optional: threshold for usecase coverage
+
+# Example: Custom tier mirroring built-in "unit" defaults
+# This shows how to explicitly set the same values as DEFAULT_TIER_CONFIGS["unit"]
+# in scripts/dev/test_runner/test_coverage.py. Useful when you want a variant of
+# the unit tier with different thresholds but identical path/type configuration.
+#
+# [tool.test_coverage.unit_strict]
+# test_path = "tests/unit"              # Same as DEFAULT_TIER_CONFIGS["unit"]
+# source_paths = ["app"]                # Same as DEFAULT_TIER_CONFIGS["unit"]
+# coverage_type = "line_branch"         # Same as DEFAULT_TIER_CONFIGS["unit"]
+# skip_private_functions = false        # Same as DEFAULT_TIER_CONFIGS["unit"]
+# service_layer_only = false            # Same as DEFAULT_TIER_CONFIGS["unit"]
+# exclude_class_fields = true           # Same as DEFAULT_TIER_CONFIGS["unit"]
+# min_line_overall = 90.0               # Stricter than default (80.0)
+# min_branch_overall = 85.0             # Stricter than default (70.0)
+# min_line_per_function = 80.0          # Stricter than default (60.0)
+# min_branch_per_function = 70.0        # Stricter than default (50.0)
 
