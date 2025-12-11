@@ -1,7 +1,7 @@
 doc_id: mcp-background-job-setup
 title: MCP Background Job Server Setup
 description: Configuration and validation for the mcp-background-job MCP server used for long-running
-  agent processes.
+  agent processes via the MCP bridge architecture.
 domain: []
 scope: general
 sections:
@@ -11,60 +11,84 @@ sections:
     category: standard
     items:
   - id: overview-purpose
-    text: The mcp-background-job MCP server enables managing long-running CLI processes from Claude
-      Code sessions. It spawns subprocesses, tracks them by ID, and provides output when they complete.
+    text: The mcp-background-job server is now managed via the MCP bridge service, which exposes the
+      background-job MCP server behind an HTTP/Unix socket interface. The bridge provides transport
+      persistence that survives Bash tool timeouts, enabling reliable long-running process management.
   - id: overview-use-case
-    text: This server is used by the agent.mcp CLI to run agents that may exceed the 10-minute Bash
-      tool timeout. The MCP server manages the subprocess lifecycle while the Python client handles
-      polling and output retrieval.
+    text: Callers should NOT attempt to start their own mcp-background-job subprocess when using this
+      workflow. Instead, the bridge container manages the subprocess lifecycle. This ensures consistent
+      connection handling and avoids timeout issues with direct stdio connections.
+  - id: overview-architecture
+    text: |
+      The system uses a layered architecture:
+      - Bridge layer (scripts/mcp/): Transport-only REST-to-MCP translation.
+        Converts HTTP requests to MCP protocol calls.
+      - Client layer (scripts/dev/mcp_agent_client.py): Tool-specific normalization
+        for background-job operations.
   - id: prerequisites
     index: 2
     title: Prerequisites
     category: standard
     items:
-  - id: prereq-uvx
-    text: 'uvx must be installed and available in PATH. uvx is part of the uv package manager:'
-  - id: prereq-uvx-install
-    text: 'Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh'
-  - id: prereq-version
-    text: 'Minimum required version: mcp-background-job v0.1.1 or later'
+  - id: prereq-docker
+    text: Docker must be installed and running for the container-based workflow. The MCP bridge runs
+      as a Docker container managed by docker-compose.
+  - id: prereq-uv
+    text: uv must be installed for running dev.ensure-env which starts the development environment
+      including the MCP bridge container.
+  - id: prereq-curl
+    text: curl must be available on the system. The HttpMCPClient uses curl for Unix socket communication
+      with the bridge.
   - id: configuration
     index: 3
     title: Configuration
     category: standard
     items:
-  - id: config-location
-    text: 'MCP server configuration is stored in .mcp.json at the project root:'
-  - id: config-example
+  - id: config-bridge-source
     text: |
-      {
-        "mcpServers": {
-          "background-job": {
-            "type": "stdio",
-            "command": "uvx",
-            "args": ["mcp-background-job"]
-          }
-        }
-      }
-  - id: config-auto-start
-    text: Claude Code automatically starts configured MCP servers when a session begins.
+      The MCP bridge loads server configurations from .mcp.yml or .mcp.json at project root. Example .mcp.yml:
+      ```yaml
+      mcpServers:
+        background-job:
+          type: stdio
+          command: uvx
+          args:
+            - mcp-background-job
+      ```
+  - id: config-docker-compose
+    text: |
+      docker-compose.dev.yml configures the mcp-bridge container with:
+      - MCP_BRIDGE_SOCKET=/tmp/mcp-bridge.sock - Unix socket path inside container
+      - MCP_COMMAND=uvx mcp-background-job - Default MCP server command
+      - Volume mount: /tmp/mcp-sockets:/tmp - Makes socket accessible to host at /tmp/mcp-sockets/mcp-bridge.sock
+  - id: config-env-vars
+    text: |
+      Environment variables for client configuration:
+      - MCP_BRIDGE_SOCKET: Unix socket path (preferred, takes precedence over URL)
+      - MCP_BRIDGE_URL: HTTP URL fallback (default: http://localhost:8080)
+  - id: config-cli-client
+    text: |
+      The agent.mcp CLI interacts with the bridge. Default socket location is /tmp/mcp-sockets/mcp-bridge.sock.
+      Supports --socket-path and --server-url CLI flags for explicit configuration.
+      Precedence (highest to lowest): CLI flags > Environment variables > Defaults.
+      Full resolution order: --socket-path, MCP_BRIDGE_SOCKET, --server-url, MCP_BRIDGE_URL, default URL.
   - id: available-tools
     index: 4
     title: Available Tools
     category: standard
     items:
   - id: tools-list
-    text: 'The background-job MCP server exposes the following tools:'
+    text: 'The background-job MCP server exposes the following tools via the bridge:'
   - id: tool-execute
-    text: 'execute: Start a new background job with a shell command. Returns a job_id.'
+    text: 'execute_command: Start a new background job with a shell command. Returns a job_id for tracking.'
   - id: tool-status
-    text: 'status: Get the current status of a job (running, completed, failed, killed).'
+    text: 'get_job_status: Get the current status of a job (running, completed, failed, killed).'
   - id: tool-output
-    text: 'output: Retrieve stdout and stderr from a completed job.'
+    text: 'get_job_output: Retrieve stdout and stderr from a completed job.'
   - id: tool-list
-    text: 'list: List all tracked jobs and their statuses.'
+    text: 'list_jobs: List all tracked jobs and their statuses.'
   - id: tool-kill
-    text: 'kill: Terminate a running job.'
+    text: 'kill_job: Terminate a running job by job_id.'
   - id: tool-tail
     text: 'tail: Stream output from a running job (out of scope for agent.mcp client).'
   - id: tool-interact
@@ -75,30 +99,46 @@ sections:
     category: standard
     items:
   - id: validation-intro
-    text: 'To verify the MCP server is working correctly:'
+    text: Validation is performed via the bridge health endpoint to confirm the MCP server is accessible
+      and operational.
   - id: validation-step-1
-    text: '1. Start a new Claude Code session in the project directory.'
+    text: |
+      1. Start environment with preferred method:
+      ```
+      uv run dev.ensure-env
+      ```
+      Or manually:
+      ```
+      docker compose -p ai-workflow-devtools -f docker-compose.dev.yml up -d mcp-bridge
+      ```
   - id: validation-step-2
-    text: '2. Confirm background-job tools are available (they should appear in tool list).'
+    text: |
+      2. Verify bridge health via /health endpoint:
+      ```
+      curl --unix-socket /tmp/mcp-sockets/mcp-bridge.sock http://localhost/health
+      ```
+      Expected response: {"status": "ok", "provider": "running"}
   - id: validation-step-3
-    text: '3. Run a quick test by executing a simple command via the execute tool.'
-  - id: validation-manual
-    text: 'For manual testing outside Claude Code, run: uvx mcp-background-job and verify it starts
-      without errors. The server communicates via JSON-RPC 2.0 over stdio.'
+    text: |
+      3. Test tool call via bridge:
+      ```
+      uv run agent.mcp list
+      ```
+      Should return JSON with job list.
   - id: troubleshooting
     index: 6
     title: Troubleshooting
     category: standard
     items:
-  - id: trouble-not-found
-    text: 'Error: uvx command not found. Solution: Install uv package manager and ensure it is in
-      PATH.'
-  - id: trouble-version
-    text: 'Error: Tool not available. Solution: Ensure mcp-background-job version is v0.1.1 or later.
-      Run uvx mcp-background-job@latest to get the latest version.'
-  - id: trouble-permission
-    text: 'Error: Permission denied. Solution: The MCP server may need approval in Claude Code settings.
-      Check enableAllProjectMcpServers or enabledMcpjsonServers settings.'
-  - id: trouble-timeout
-    text: 'Error: Server timeout. Solution: The MCP server process may have crashed. Check stderr
-      output and restart the Claude Code session.'
+  - id: trouble-bridge-not-running
+    text: 'Error: Cannot connect to mcp-bridge at /tmp/mcp-sockets/mcp-bridge.sock. Socket not available.
+      Solution: Start the dev environment with uv run dev.ensure-env'
+  - id: trouble-health-degraded
+    text: 'Error: Bridge returns {"status": "degraded", "provider": "down"}. Solution: Check container
+      logs with docker logs ai-workflow-mcp-bridge-dev'
+  - id: trouble-socket-permission
+    text: 'Error: Permission denied accessing socket. Solution: Ensure /tmp/mcp-sockets directory exists
+      and is writable. Container runs as appuser (UID 10000).'
+  - id: trouble-http-fallback
+    text: 'For non-Docker workflows, use HTTP mode: Set MCP_BRIDGE_URL=http://localhost:8080 environment
+      variable, or use --server-url http://localhost:8080 CLI flag.'
