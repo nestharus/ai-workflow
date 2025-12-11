@@ -241,8 +241,8 @@ def load_coverage_settings(pyproject_path: Path | None = None) -> CoverageSettin
 
     test_coverage = data.get("tool", {}).get("test_coverage", {})
 
-    # Default tier names for backward compatibility
-    DEFAULT_TIER_NAMES = ["unit", "component", "integration", "scripts"]
+    # Default tier names derived from DEFAULT_TIER_CONFIGS to avoid duplication
+    DEFAULT_TIER_NAMES = list(DEFAULT_TIER_CONFIGS.keys())
 
     # Discover all tier names from pyproject.toml
     all_tier_names = set(DEFAULT_TIER_NAMES) | set(test_coverage.keys())
