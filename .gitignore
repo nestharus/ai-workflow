@@ -35,6 +35,7 @@ pip-delete-this-directory.txt
 .claude/settings.local.json
 
 # Unit test / coverage reports
+.coverage
 .coverage/
 coverage.xml
 htmlcov/
