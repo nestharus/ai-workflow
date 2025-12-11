@@ -87,33 +87,38 @@ Where JSON contains:
 }
 ```
 
-To obtain the required SHA values, run these commands inside the `.git/sandbox` directory:
+To obtain the required SHA values, run git commands via docker exec (the sandbox runs inside a container):
 
 ```bash
 # Get merge-base SHA (base_commit)
-cd .git/sandbox && git merge-base HEAD origin/{{base_branch}}
+docker exec ai-workflow-sandbox-server-dev bash -c 'cd /repo/.git/sandbox && git merge-base HEAD origin/{{base_branch}}'
 
 # Get current HEAD SHA (source_commit)
-cd .git/sandbox && git rev-parse HEAD
+docker exec ai-workflow-sandbox-server-dev bash -c 'cd /repo/.git/sandbox && git rev-parse HEAD'
+
+# Get target commits since merge-base (for conflict-resolver)
+docker exec ai-workflow-sandbox-server-dev bash -c 'cd /repo/.git/sandbox && git rev-list $(git merge-base HEAD origin/{{base_branch}})..origin/{{base_branch}}'
 ```
 
 **Note**: The agent uses `.git/sandbox` for conflict editing and `source_path`
 for researching clean code context.
 
-After all files are resolved, continue the rebase:
+After all files are resolved, continue the rebase via docker exec:
 
 ```bash
-cd .git/sandbox && git add -A && git rebase --continue
+docker exec ai-workflow-sandbox-server-dev bash -c 'cd /repo/.git/sandbox && git add -A && GIT_EDITOR=true git rebase --continue'
 ```
+
+**Note**: `GIT_EDITOR=true` prevents the "Terminal is dumb, but EDITOR unset" error.
 
 If more conflicts appear, repeat step 3.
 
 ### 4. Push After Manual Conflict Resolution
 
-After resolving all conflicts manually, push from the sandbox:
+After resolving all conflicts manually, push from the sandbox via docker exec:
 
 ```bash
-cd .git/sandbox && git push --force-with-lease origin {{branch_name}}
+docker exec ai-workflow-sandbox-server-dev bash -c 'cd /repo/.git/sandbox && git push --force-with-lease origin {{branch_name}}'
 ```
 
 ## Architecture
