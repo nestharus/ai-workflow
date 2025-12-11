@@ -23,6 +23,28 @@ This validates all test tiers with appropriate coverage requirements.
 
 Coverage thresholds are configured in project settings.
 
+### --no-validate Behavior
+
+The `--no-validate` flag skips coverage threshold validation, but its effect differs between tier types:
+
+| Tier Type | --no-validate Effect |
+|-----------|---------------------|
+| **Line/Branch** (unit, component, scripts) | Coverage thresholds skipped; test failures still cause `tier_pass=0` |
+| **Usecase** (integration) | All gating disabled; `tier_pass` is always `1` |
+
+**Line/Branch Tiers**: When `--no-validate` is used, functions below the coverage threshold do
+not cause validation failure. However, test execution results are always respected - if any test
+fails, the tier still fails (`tier_pass=0`).
+
+**Usecase Tiers**: When `--no-validate` is used, the tier is always considered passed
+(`tier_pass=1`). This is because usecase tiers only check whether `@pytest.mark.usecase` markers
+exist in test files; they do not track individual test pass/fail status.
+
+**Guidance**: Use `--no-validate` for exploratory runs or when you want coverage metrics
+without enforcement. Do not use it in CI pipelines that require coverage gates. Teams adding
+custom usecase tiers should be aware that `--no-validate` effectively disables all gating for
+usecase coverage.
+
 ## Topics
 
 ### API Testing Patterns
