@@ -134,6 +134,9 @@ to the next. This saves time by not re-running already-passing linters.
 
 ## CRITICAL: Do NOT Change Lint Rules or Exclusions
 
+This section applies to automated lint-fixer runs. The lint-fixer agent must never autonomously
+alter lint configuration in response to failures.
+
 You may fix linting issues (formatting, syntax) IN configuration files, but you must NEVER change:
 
 - Lint rules, thresholds, or severity levels
@@ -147,6 +150,16 @@ Examples:
 
 Your job is to fix CODE to comply with lint rules, NOT to change rules or exclude files.
 If you cannot fix a lint error without changing configuration, report it as a remaining issue.
+
+### Ticket-Driven Configuration Changes
+
+Configuration changes to `.lint.*.yaml` files (such as aligning `exclude_dirs` across linters
+or removing obsolete paths) are handled via explicit tickets and must go through normal code
+review. These are human-initiated changes, not automated fixes.
+
+For example, aligning `.lint.actionlint.yaml` exclude_dirs with `.lint.hadolint.yaml` is valid
+when part of an approved change request (e.g., NES-97), but would never be performed by the
+lint-fixer agent autonomously.
 
 ## CRITICAL: No Random Suppressions
 
