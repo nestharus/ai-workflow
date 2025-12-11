@@ -31,6 +31,9 @@ venv.bak/
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
+
 # Unit test / coverage reports
 .coverage/
 coverage.xml

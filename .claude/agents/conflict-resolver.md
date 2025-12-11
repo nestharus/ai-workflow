@@ -35,12 +35,15 @@ EACH side was trying to accomplish and STITCH the changes together.
 
 ### Step 1: Understand Target Branch Changes
 
-For each commit in `target_commits`, examine what it changed in this file (run in
-sandbox):
+For each commit in `target_commits`, examine what it changed in this file.
+
+**IMPORTANT**: Git commands must run via docker exec since the sandbox is inside a container:
 
 ```bash
-cd <sandbox_path> && git show <commit> -- <file_path>
+docker exec ai-workflow-sandbox-server-dev bash -c 'cd /repo/<sandbox_path> && git show <commit> -- <file_path>'
 ```
+
+If `sandbox_path` is `.git/sandbox`, use `/repo/.git/sandbox` in the docker command.
 
 Document the INTENT of each change:
 
@@ -49,10 +52,10 @@ Document the INTENT of each change:
 
 ### Step 2: Understand Source Branch Changes
 
-Examine what the source branch changed from the base (run in sandbox):
+Examine what the source branch changed from the base (via docker exec):
 
 ```bash
-cd <sandbox_path> && git diff <base_commit> <source_commit> -- <file_path>
+docker exec ai-workflow-sandbox-server-dev bash -c 'cd /repo/<sandbox_path> && git diff <base_commit> <source_commit> -- <file_path>'
 ```
 
 Document the INTENT:
@@ -80,11 +83,15 @@ This helps you understand:
 
 ### Step 4: Read the Conflicted File
 
-Read the file with conflict markers from the **sandbox**:
+Read the file with conflict markers from the **sandbox** using the Read tool.
+Construct the absolute path from the repo root:
 
-```bash
-cat <sandbox_path>/<file_path>
 ```
+<repo_root>/<sandbox_path>/<file_path>
+```
+
+For example, if `sandbox_path` is `.git/sandbox`, use:
+`<repo_root>/.git/sandbox/<file_path>`
 
 Identify each conflict block (`<<<<<<<`, `=======`, `>>>>>>>`).
 
@@ -110,10 +117,11 @@ For EACH conflict block:
 Use the Edit tool to replace the entire conflicted section (including markers) with
 the properly merged code.
 
-**Important**: Edit the file in the **sandbox_path**, not the source_path:
+**Important**: Edit the file in the **sandbox_path**, not the source_path. Use the
+absolute path:
 
-```bash
-Edit file: <sandbox_path>/<file_path>
+```
+Edit file: <repo_root>/<sandbox_path>/<file_path>
 ```
 
 ## Output Contract
@@ -130,4 +138,7 @@ After resolving the file, output one of:
 * When in doubt about intent, prefer the more comprehensive/robust solution
 * Ensure the final code is syntactically valid
 * Do NOT add conflict markers in your resolution
-* Stage the file in the sandbox after resolution: `cd <sandbox_path> && git add <file_path>`
+* Stage the file in the sandbox after resolution via docker exec:
+  ```bash
+  docker exec ai-workflow-sandbox-server-dev bash -c 'cd /repo/<sandbox_path> && git add <file_path>'
+  ```
