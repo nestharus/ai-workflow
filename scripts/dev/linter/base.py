@@ -44,16 +44,16 @@ def run_checked(command: list[str]) -> None:
 
 
 def is_path_excluded(path: Path, exclude_paths: set[Path]) -> bool:
-    """Check if a path is under any excluded directory.
+    """Check if a path is under any excluded directory or equals one.
 
     Args:
         path: The file path to check.
         exclude_paths: Set of excluded directory paths (relative to REPO_ROOT).
 
     Returns:
-        True if the path is under an excluded directory.
+        True if the path is under an excluded directory or equals one.
     """
-    return any(excluded in path.parents for excluded in exclude_paths)
+    return path in exclude_paths or any(excluded in path.parents for excluded in exclude_paths)
 
 
 def get_executable(name: str, error_message: str) -> str:
