@@ -65,12 +65,37 @@ import json
 import os
 import subprocess
 from typing import Any
+from urllib.parse import quote
 
 
 class MCPClientError(Exception):
     """Raised when MCP communication fails."""
 
     pass
+
+
+def _validate_and_encode_server(server: str | None, param_name: str = "server") -> str:
+    """Validate and URL-encode a server name for safe use in URL paths.
+
+    Strips whitespace, validates non-empty, and URL-encodes for path safety.
+
+    Args:
+        server: The server name to validate and encode.
+        param_name: Parameter name for error messages (default: "server").
+
+    Returns:
+        URL-encoded server name safe for use in URL paths.
+
+    Raises:
+        MCPClientError: If server is not a non-empty string after stripping.
+    """
+    if not isinstance(server, str):
+        raise MCPClientError(f"{param_name} parameter must be a non-empty string")
+    server = server.strip()
+    if not server:
+        raise MCPClientError(f"{param_name} parameter must be a non-empty string")
+    # URL-encode to handle special characters (/, #, %, ?, etc.)
+    return quote(server, safe="")
 
 
 class HttpMCPClient:
@@ -287,9 +312,8 @@ class HttpMCPClient:
         Raises:
             MCPClientError: If server is invalid or on connection failure
         """
-        if not isinstance(server, str) or not server:
-            raise MCPClientError("server parameter must be a non-empty string")
-        url = f"{self.base_url}/mcp/{server}/tools"
+        encoded_server = _validate_and_encode_server(server)
+        url = f"{self.base_url}/mcp/{encoded_server}/tools"
         response = self._request_json("GET", url, payload=None, timeout=10.0)
         return response
 
@@ -308,11 +332,10 @@ class HttpMCPClient:
         Raises:
             MCPClientError: If parameters are invalid or on connection failure
         """
-        if not isinstance(server, str) or not server:
-            raise MCPClientError("server parameter must be a non-empty string")
+        encoded_server = _validate_and_encode_server(server)
         if not isinstance(tool_name, str) or not tool_name:
             raise MCPClientError("tool_name parameter must be a non-empty string")
-        url = f"{self.base_url}/mcp/{server}/tools/{tool_name}"
+        url = f"{self.base_url}/mcp/{encoded_server}/tools/{tool_name}"
         response = self._request_json("GET", url, payload=None, timeout=10.0)
         return response
 
@@ -342,11 +365,10 @@ class HttpMCPClient:
         Raises:
             MCPClientError: If parameters are invalid or on connection failure
         """
-        if not isinstance(server, str) or not server:
-            raise MCPClientError("server parameter must be a non-empty string")
+        encoded_server = _validate_and_encode_server(server)
         if not isinstance(name, str) or not name:
             raise MCPClientError("name parameter must be a non-empty string")
-        url = f"{self.base_url}/mcp/{server}/call"
+        url = f"{self.base_url}/mcp/{encoded_server}/call"
         # Use canonical field name 'timeout_seconds' per MCPCallRequest schema
         payload = {"tool": name, "arguments": arguments, "timeout_seconds": timeout}
 

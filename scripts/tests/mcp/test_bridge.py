@@ -1287,6 +1287,138 @@ class TestHttpMCPClient:
             assert client.socket_path is None
             assert client.base_url == "http://custom:9000"
 
+    # ========================================================================
+    # Tests for _validate_and_encode_server (URL path safety)
+    # ========================================================================
+
+    def test_server_validation_rejects_empty_string(self) -> None:
+        """Test that empty server name is rejected."""
+        from scripts.servers.mcp.client.http_client import MCPClientError as ClientError
+        from scripts.servers.mcp.client.http_client import _validate_and_encode_server
+
+        with pytest.raises(ClientError, match="non-empty string"):
+            _validate_and_encode_server("")
+
+    def test_server_validation_rejects_whitespace_only(self) -> None:
+        """Test that whitespace-only server name is rejected after stripping."""
+        from scripts.servers.mcp.client.http_client import MCPClientError as ClientError
+        from scripts.servers.mcp.client.http_client import _validate_and_encode_server
+
+        with pytest.raises(ClientError, match="non-empty string"):
+            _validate_and_encode_server("   ")
+
+    def test_server_validation_rejects_none(self) -> None:
+        """Test that None server name is rejected."""
+        from scripts.servers.mcp.client.http_client import MCPClientError as ClientError
+        from scripts.servers.mcp.client.http_client import _validate_and_encode_server
+
+        with pytest.raises(ClientError, match="non-empty string"):
+            _validate_and_encode_server(None)  # type: ignore[arg-type]
+
+    def test_server_validation_strips_whitespace(self) -> None:
+        """Test that leading/trailing whitespace is stripped from server name."""
+        from scripts.servers.mcp.client.http_client import _validate_and_encode_server
+
+        result = _validate_and_encode_server("  background-job  ")
+        assert result == "background-job"
+
+    def test_server_validation_encodes_special_chars(self) -> None:
+        """Test that URL-unsafe characters are encoded."""
+        from scripts.servers.mcp.client.http_client import _validate_and_encode_server
+
+        # Slash should be encoded
+        result = _validate_and_encode_server("server/name")
+        assert result == "server%2Fname"
+
+        # Hash should be encoded
+        result = _validate_and_encode_server("server#comment")
+        assert result == "server%23comment"
+
+        # Percent should be encoded
+        result = _validate_and_encode_server("server%20name")
+        assert result == "server%2520name"
+
+        # Question mark should be encoded
+        result = _validate_and_encode_server("server?query")
+        assert result == "server%3Fquery"
+
+        # Space should be encoded
+        result = _validate_and_encode_server("server name")
+        assert result == "server%20name"
+
+    def test_server_validation_allows_safe_chars(self) -> None:
+        """Test that normal server names pass through unchanged."""
+        from scripts.servers.mcp.client.http_client import _validate_and_encode_server
+
+        assert _validate_and_encode_server("background-job") == "background-job"
+        assert _validate_and_encode_server("my_server_v2") == "my_server_v2"
+        assert _validate_and_encode_server("server.name") == "server.name"
+
+    def test_call_server_tool_uses_encoded_server_name(self) -> None:
+        """Test that call_server_tool uses URL-encoded server name in request URL."""
+        captured_urls: list[str] = []
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            # Find the URL in the command (it's the argument after -X POST or the last arg)
+            for arg in cmd:
+                if arg.startswith("http://"):
+                    captured_urls.append(arg)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout='{"result": {}}', stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            client.call_server_tool("server/name", "test_tool", {})
+
+        assert len(captured_urls) == 1
+        # URL should have encoded server name
+        assert "server%2Fname" in captured_urls[0]
+
+    def test_list_server_tools_uses_encoded_server_name(self) -> None:
+        """Test that list_server_tools uses URL-encoded server name in request URL."""
+        captured_urls: list[str] = []
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            for arg in cmd:
+                if arg.startswith("http://"):
+                    captured_urls.append(arg)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout='{"tools": []}', stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            client.list_server_tools("server#name")
+
+        assert len(captured_urls) == 1
+        assert "server%23name" in captured_urls[0]
+
+    def test_get_server_tool_uses_encoded_server_name(self) -> None:
+        """Test that get_server_tool uses URL-encoded server name in request URL."""
+        captured_urls: list[str] = []
+
+        def run_mock(
+            cmd: list[str], input: str | None = None, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            for arg in cmd:
+                if arg.startswith("http://"):
+                    captured_urls.append(arg)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout='{"name": "tool"}', stderr=""
+            )
+
+        with patch("subprocess.run", side_effect=run_mock):
+            client = HttpMCPClient("http://localhost:8080")
+            client.get_server_tool("server?param=val", "my_tool")
+
+        assert len(captured_urls) == 1
+        assert "server%3Fparam%3Dval" in captured_urls[0]
+
 
 # ============================================================================
 # API Routes Tests (using TestClient)

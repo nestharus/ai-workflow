@@ -283,7 +283,7 @@ PR UPDATE COMPLETE - REVIEW REQUESTED
 
 Ticket: {{ticket_id or "N/A"}}
 {{#if ticket_id}}
-Linear Ticket: `uv run linear get-issue <TICKET_ID>`
+Run `uv run linear get-issue <TICKET_ID>` to fetch plan.
 {{/if}}
 Pull Request: {{pr_url}}
 

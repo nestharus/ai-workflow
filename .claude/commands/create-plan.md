@@ -139,12 +139,15 @@ PLAN CREATION COMPLETE - REVIEW REQUESTED
 ================================================================================
 
 Ticket: <TICKET_ID> - <TITLE>
-Linear Ticket: `uv run linear get-issue <TICKET_ID>`
+Run `uv run linear get-issue <TICKET_ID>` to fetch plan.
 
 Please review the plan on the ticket:
 1. Review the implementation plan in the ticket description
 2. Verify the plan adequately addresses all requirements
 3. Check that success criteria are measurable and complete
+
+YOU ARE REVIEWING THE IMPLEMENTATION PLAN FOR HOW TO CHANGE THE CODE,
+NOT THAT THE CODE FOLLOWS THE PLAN
 ================================================================================
 ```
 
