@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Run Droid with all permissions skipped
+droid --skip-permissions-unsafe "$@"

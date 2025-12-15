@@ -85,3 +85,4 @@ to_adapt/
 .tmp/
 .worktrees/
 .git-rewrite/
+.audit/
