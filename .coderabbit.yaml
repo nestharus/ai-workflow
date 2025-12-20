@@ -10,6 +10,7 @@ reviews:
     enabled: true
     auto_incremental_review: true
     drafts: false
+  commit_status: true
   # Exclude generated artifacts, caches, IDE files, and non-reviewable paths.
   # NOTE: Patterns starting with '!' are EXCLUSIONS.
   # We use '/**' to ensure the entire directory content is ignored.
