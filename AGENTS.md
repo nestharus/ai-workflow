@@ -313,6 +313,29 @@ Examples of when to use Firecrawl:
 * Need FastAPI middleware examples? Search for "FastAPI middleware authentication 2025"
 * Library API unclear? Scrape the official documentation page
 
+## Git Commit Signing
+
+All commits are automatically GPG-signed using the configured signing key. This is required
+by the repository's branch protection rules.
+
+**Current configuration** (already set globally):
+
+```bash
+git config --global user.signingkey 2AAAEEBD97F32BFE
+git config --global commit.gpgsign true
+```
+
+**Key location**: `~/.gnupg/` (RSA 4096-bit, no passphrase)
+
+**GitHub verification**: The public key must be added to GitHub at
+https://github.com/settings/keys for signatures to show as "Verified".
+
+To export the public key:
+
+```bash
+gpg --armor --export contact@nestharus.com
+```
+
 ## Git Commit Authorship
 
 When creating git commits, agents must NOT add themselves as authors or co-authors:
