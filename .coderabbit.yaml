@@ -11,57 +11,28 @@ reviews:
     auto_incremental_review: true
     drafts: false
   commit_status: true
-  # Exclude generated artifacts, caches, IDE files, and non-reviewable paths.
-  # NOTE: Patterns starting with '!' are EXCLUSIONS.
-  # We use '/**' to ensure the entire directory content is ignored.
+  # Include only reviewable paths (patterns without '!' are inclusions).
+  # Partial exclusions for subdirectories within included folders use '!'.
   path_filters:
-    - "!.review/**"
+    # Root files
+    - "*"
+    # Included folders
+    - ".ai/**"
+    - ".claude/**"
+    - ".crush/**"
+    - ".github/**"
+    - ".huggingface/**"
+    - ".opencode/**"
+    - ".tasks/**"
+    - "agents/**"
+    - "app/**"
+    - "docs/**"
+    - "scripts/**"
+    - "tests/**"
+    # Excluded subdirectories within included folders
     - "!.tasks/store/**"
-    - "!.venv*/**"
-    - "!venv/**"
-    - "!env/**"
-    - "!ENV/**"
-    - "!build/**"
-    - "!dist/**"
-    - "!**/*.egg-info/**"
-    - "!pip-wheel-metadata/**"
-    - "!__pycache__/**"
-    - "!**/*.pyc"
-    - "!**/*.pyo"
-    - "!**/*.py[cod]"
-    - "!.coverage"
-    - "!.coverage.*"
-    - "!htmlcov/**"
-    - "!coverage.xml"
-    - "!junit.xml"
-    - "!.mypy_cache/**"
-    - "!.pytest_cache/**"
-    - "!.ruff_cache/**"
-    - "!.sonar/**"
-    - "!.factory/**"
-    - "!.pyright/**"
-    - "!.idea*/**"
-    - "!.vscode/**"
-    - "!*.sublime-project"
-    - "!*.sublime-workspace"
-    - "!openapi/**"
-    - "!to_adapt/**"
-    - "!out/**"
-    - "!.uv-cache/**"
-    - "!.knowledge/**"
-    - "!uv.lock"
-    - "!LICENSE"
-    - "!.DS_Store"
-    - "!Thumbs.db"
-    - "!**/*.log"
-    - "!.env"
-    - "!.env.*"
     - "!docs/plans/**"
     - "!docs/references/**"
-    - "!.serena/**"
-    - "!.tmp/**"
-    - "!.worktrees/**"
-    - "!.git-rewrite/**"
   tools:
     # Python linters disabled - run in local CI via scripts/dev/lint.py (runs ruff, mypy)
     ruff:
