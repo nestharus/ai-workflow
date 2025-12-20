@@ -547,12 +547,20 @@ def create_shared_clone(source_path: Path, clone_path: Path, branch_name: str) -
     # Get git user config from source repo
     user_name = None
     user_email = None
+    signing_key = None
+    gpg_sign = None
     result = _run_git(["git", "config", "user.name"], cwd=source_path)
     if result and result.returncode == 0:
         user_name = result.stdout.strip()
     result = _run_git(["git", "config", "user.email"], cwd=source_path)
     if result and result.returncode == 0:
         user_email = result.stdout.strip()
+    result = _run_git(["git", "config", "user.signingkey"], cwd=source_path)
+    if result and result.returncode == 0:
+        signing_key = result.stdout.strip()
+    result = _run_git(["git", "config", "commit.gpgsign"], cwd=source_path)
+    if result and result.returncode == 0:
+        gpg_sign = result.stdout.strip()
 
     # Ensure parent directory exists and clone path is clean
     clone_path.parent.mkdir(parents=True, exist_ok=True)
@@ -580,6 +588,10 @@ def create_shared_clone(source_path: Path, clone_path: Path, branch_name: str) -
         _run_git(["git", "config", "user.name", user_name], cwd=clone_path)
     if user_email:
         _run_git(["git", "config", "user.email", user_email], cwd=clone_path)
+    if signing_key:
+        _run_git(["git", "config", "user.signingkey", signing_key], cwd=clone_path)
+    if gpg_sign:
+        _run_git(["git", "config", "commit.gpgsign", gpg_sign], cwd=clone_path)
 
     # Fetch the branch
     result = _run_git(["git", "fetch", "origin", branch_name], cwd=clone_path)
