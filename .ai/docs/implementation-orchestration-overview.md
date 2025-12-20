@@ -34,25 +34,25 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════════╗
-║                        IMPLEMENTATION ORCHESTRATION (CREATE)                   ║
+║                        IMPLEMENTATION ORCHESTRATION (CREATE)                  ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
                                     │
 ┌───────────────────────────────────┼───────────────────────────────────────────┐
 │                            STAGE 0: INTAKE                                    │
 │                                                                               │
-│  ┌─────────────────┐     ┌─────────────────┐                                 │
-│  │ @intent-        │     │ @scope-triager  │                                 │
-│  │   translator    │     │                 │                                 │
-│  └────────┬────────┘     └────────┬────────┘                                 │
+│  ┌─────────────────┐     ┌─────────────────┐                                  │
+│  │ @intent-        │     │ @scope-triager  │                                  │
+│  │   translator    │     │                 │                                  │
+│  └────────┬────────┘     └────────┬────────┘                                  │
 │           │                       │                                           │
 │           └───────────┬───────────┘                                           │
 │                       ▼                                                       │
 │           ┌─────────────────────┐                                             │
-│           │ @pipeline-oversight │ ◄── GATE                                   │
+│           │ @pipeline-oversight │ ◄── GATE                                    │
 │           │     -enforcer       │                                             │
 │           └─────────────────────┘                                             │
 │                                                                               │
-│  Outputs: intent.md, acceptance_criteria.md, constraints.md, unknowns.md     │
+│  Outputs: intent.md, acceptance_criteria.md, constraints.md, unknowns.md      │
 └───────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -60,11 +60,11 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 │                          STAGE 1: STRATEGY                                    │
 │                                                                               │
 │  ┌────────────────────┐                                                       │
-│  │ @strategy-planner  │ ◄── Planner slice (strategic)                        │
+│  │ @strategy-planner  │ ◄── Planner slice (strategic)                         │
 │  └─────────┬──────────┘                                                       │
 │            ▼                                                                  │
 │  ┌─────────────────────┐                                                      │
-│  │ @pipeline-oversight │ ◄── GATE                                            │
+│  │ @pipeline-oversight │ ◄── GATE                                             │
 │  │     -enforcer       │                                                      │
 │  └─────────────────────┘                                                      │
 │                                                                               │
@@ -73,16 +73,16 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
                                     │
                                     ▼
 ╔═══════════════════════════════════════════════════════════════════════════════╗
-║        STAGE 2: RESEARCH [Research Orchestration (CREATE) EXPANDED]          ║
+║        STAGE 2: RESEARCH [Research Orchestration (CREATE) EXPANDED]           ║
 ╠═══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                               ║
 ║  ┌─────────────────────────┐                                                  ║
-║  │ @research-question-     │ ◄── Planner slice                               ║
+║  │ @research-question-     │ ◄── Planner slice                                ║
 ║  │    decomposer           │                                                  ║
 ║  └───────────┬─────────────┘                                                  ║
 ║              ▼                                                                ║
 ║  ┌─────────────────────┐                                                      ║
-║  │ @pipeline-oversight │ ◄── GATE                                            ║
+║  │ @pipeline-oversight │ ◄── GATE                                             ║
 ║  │     -enforcer       │                                                      ║
 ║  └───────────┬─────────┘                                                      ║
 ║              ▼                                                                ║
@@ -93,7 +93,7 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ║  ║  │ @web-     │ │ @repo-    │ │ @dependency-   │                   ║        ║
 ║  ║  │  crawler  │ │  crawler  │ │  doc-crawler   │                   ║        ║
 ║  ║  └─────┬─────┘ └─────┬─────┘ └───────┬────────┘                   ║        ║
-║  ║        │             │               │                             ║        ║
+║  ║        │             │               │                            ║        ║
 ║  ║  ┌─────────────────┐ │ ┌────────────────────────┐                 ║        ║
 ║  ║  │ @repo-          │ │ │ @domain-structure-     │                 ║        ║
 ║  ║  │  integration-   │ │ │    crawler             │                 ║        ║
@@ -103,7 +103,7 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ║  ╚════════════════╧══════════════════════════════════════════════════╝        ║
 ║              ▼                                                                ║
 ║  ┌─────────────────────┐                                                      ║
-║  │ @pipeline-oversight │ ◄── GATE                                            ║
+║  │ @pipeline-oversight │ ◄── GATE                                             ║
 ║  │     -enforcer       │                                                      ║
 ║  └───────────┬─────────┘                                                      ║
 ║              ▼                                                                ║
@@ -123,7 +123,7 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ║  ╚═════════════════════════╧═════════════════════════════════════════╝        ║
 ║              ▼                                                                ║
 ║  ┌─────────────────────┐                                                      ║
-║  │ @pipeline-oversight │ ◄── GATE                                            ║
+║  │ @pipeline-oversight │ ◄── GATE                                             ║
 ║  │     -enforcer       │                                                      ║
 ║  └───────────┬─────────┘                                                      ║
 ║              ▼                                                                ║
@@ -138,11 +138,11 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ║  ╚══════════════════════════╧════════════════════════════════════════╝        ║
 ║              ▼                                                                ║
 ║  ┌─────────────────────┐                                                      ║
-║  │ @pipeline-oversight │ ◄── GATE                                            ║
+║  │ @pipeline-oversight │ ◄── GATE                                             ║
 ║  │     -enforcer       │                                                      ║
 ║  └─────────────────────┘                                                      ║
 ║                                                                               ║
-║  Outputs: research_findings.md, evidence_table.md, open_gaps.md,             ║
+║  Outputs: research_findings.md, evidence_table.md, open_gaps.md,              ║
 ║           domain_structure_candidates.md, repo_integration_map.md             ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
                                     │
@@ -152,12 +152,12 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ╠═══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                               ║
 ║  ┌─────────────────────────┐                                                  ║
-║  │ @planning-topic-        │ ◄── Decomposes into ordered topics              ║
+║  │ @planning-topic-        │ ◄── Decomposes into ordered topics               ║
 ║  │    decomposer           │                                                  ║
 ║  └───────────┬─────────────┘                                                  ║
 ║              ▼                                                                ║
 ║  ┌─────────────────────┐                                                      ║
-║  │ @pipeline-oversight │ ◄── GATE                                            ║
+║  │ @pipeline-oversight │ ◄── GATE                                             ║
 ║  │     -enforcer       │                                                      ║
 ║  └───────────┬─────────┘                                                      ║
 ║              ▼                                                                ║
@@ -180,7 +180,7 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ║  ╚═══════════════════════════════╧═══════════════════════════════════╝        ║
 ║              ▼                                                                ║
 ║  ┌─────────────────────┐                                                      ║
-║  │ @pipeline-oversight │ ◄── GATE (after all topics)                         ║
+║  │ @pipeline-oversight │ ◄── GATE (after all topics)                          ║
 ║  │     -enforcer       │                                                      ║
 ║  └───────────┬─────────┘                                                      ║
 ║              ▼                                                                ║
@@ -200,7 +200,7 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ║  ╚════════════════════════════╧══════════════════════════════════════╝        ║
 ║              ▼                                                                ║
 ║  ┌─────────────────────┐                                                      ║
-║  │ @pipeline-oversight │ ◄── GATE                                            ║
+║  │ @pipeline-oversight │ ◄── GATE                                             ║
 ║  │     -enforcer       │                                                      ║
 ║  └─────────────────────┘                                                      ║
 ║                                                                               ║
@@ -233,10 +233,10 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ║  ║                    │    │ @plan-patcher    │ ─► LOOP BACK         ║        ║
 ║  ║                    │    └──────────────────┘                      ║        ║
 ║  ║                    ▼                                              ║        ║
-║  ╚════════════════════════════════════════════════════════════════════╝       ║
+║  ╚═══════════════════════════════════════════════════════════════════╝        ║
 ║              ▼                                                                ║
 ║  ┌─────────────────────┐                                                      ║
-║  │ @pipeline-oversight │ ◄── GATE (per iteration)                            ║
+║  │ @pipeline-oversight │ ◄── GATE (per iteration)                             ║
 ║  │     -enforcer       │                                                      ║
 ║  └─────────────────────┘                                                      ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
@@ -246,12 +246,12 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 │                      STAGE 5: CODE IMPLEMENTATION                             │
 │                                                                               │
 │  ┌──────────────────┐                                                         │
-│  │ @implementor     │ ◄── Implementation slice                               │
+│  │ @implementor     │ ◄── Implementation slice                                │
 │  │                  │     (NO tests, code only, follow plan literally)        │
 │  └────────┬─────────┘                                                         │
 │           ▼                                                                   │
 │  ┌─────────────────────┐                                                      │
-│  │ @pipeline-oversight │ ◄── GATE                                            │
+│  │ @pipeline-oversight │ ◄── GATE                                             │
 │  │     -enforcer       │                                                      │
 │  └─────────────────────┘                                                      │
 │                                                                               │
@@ -263,17 +263,17 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 │                       STAGE 6: CODE DRIFT REVIEW                              │
 │                                                                               │
 │  ┌──────────────────────────┐                                                 │
-│  │ @implementation-drift-   │ ◄── Drift Reviewer                             │
+│  │ @implementation-drift-   │ ◄── Drift Reviewer                              │
 │  │    review                │     (Compare code vs implementation_plan.md)    │
 │  └───────────┬──────────────┘                                                 │
 │              │                                                                │
 │         ┌────┴────┐                                                           │
 │         │         │                                                           │
-│       PASS      FAIL ─────► Route to REPAIR orchestration OR @implementor    │
+│       PASS      FAIL ─────► Route to REPAIR orchestration OR @implementor     │
 │         │                   Then re-run drift review                          │
 │         ▼                                                                     │
 │  ┌─────────────────────┐                                                      │
-│  │ @pipeline-oversight │ ◄── GATE                                            │
+│  │ @pipeline-oversight │ ◄── GATE                                             │
 │  │     -enforcer       │                                                      │
 │  └─────────────────────┘                                                      │
 └───────────────────────────────────────────────────────────────────────────────┘
@@ -286,7 +286,7 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ║  ╔═══════════════════════════════════════════════════════════════════╗        ║
 ║  ║                    REVIEW LOOP (until PASS)                       ║        ║
 ║  ╠═══════════════════════════════════════════════════════════════════╣        ║
-║  ║  Artifact: repository code (scoped to changed files)             ║        ║
+║  ║  Artifact: repository code (scoped to changed files)              ║        ║
 ║  ║  Reviewers (sequential; rerun ALL on any fail):                   ║        ║
 ║  ║                                                                   ║        ║
 ║  ║  ┌────────────────────┐    ┌────────────────────┐                 ║        ║
@@ -307,7 +307,7 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ║  ╚════════════════════════════════════════════════════════════════════╝       ║
 ║              ▼                                                                ║
 ║  ┌─────────────────────┐                                                      ║
-║  │ @pipeline-oversight │ ◄── GATE (per iteration)                            ║
+║  │ @pipeline-oversight │ ◄── GATE (per iteration)                             ║
 ║  │     -enforcer       │                                                      ║
 ║  └─────────────────────┘                                                      ║
 ║                                                                               ║
@@ -324,12 +324,12 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 │                       STAGE 8: TEST STRATEGY                                  │
 │                                                                               │
 │  ┌──────────────────────┐                                                     │
-│  │ @testing-strategy    │ ◄── Planner slice                                  │
+│  │ @testing-strategy    │ ◄── Planner slice                                   │
 │  │                      │     (Identifies use-cases, components, codepaths)   │
 │  └────────┬─────────────┘                                                     │
 │           ▼                                                                   │
 │  ┌─────────────────────┐                                                      │
-│  │ @pipeline-oversight │ ◄── GATE                                            │
+│  │ @pipeline-oversight │ ◄── GATE                                             │
 │  │     -enforcer       │                                                      │
 │  └─────────────────────┘                                                      │
 │                                                                               │
@@ -342,12 +342,12 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ╠═══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                               ║
 ║  ┌─────────────────────────┐                                                  ║
-║  │ @planning-topic-        │ ◄── Decomposes test strategy into topics        ║
+║  │ @planning-topic-        │ ◄── Decomposes test strategy into topics         ║
 ║  │    decomposer           │                                                  ║
 ║  └───────────┬─────────────┘                                                  ║
 ║              ▼                                                                ║
 ║  ┌─────────────────────┐                                                      ║
-║  │ @pipeline-oversight │ ◄── GATE                                            ║
+║  │ @pipeline-oversight │ ◄── GATE                                             ║
 ║  │     -enforcer       │                                                      ║
 ║  └───────────┬─────────┘                                                      ║
 ║              ▼                                                                ║
@@ -370,7 +370,7 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ║  ╚═══════════════════════════════╧═══════════════════════════════════╝        ║
 ║              ▼                                                                ║
 ║  ┌─────────────────────┐                                                      ║
-║  │ @pipeline-oversight │ ◄── GATE                                            ║
+║  │ @pipeline-oversight │ ◄── GATE                                             ║
 ║  │     -enforcer       │                                                      ║
 ║  └─────────────────────┘                                                      ║
 ║                                                                               ║
@@ -382,12 +382,12 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 │                      STAGE 10: TEST IMPLEMENTATION                            │
 │                                                                               │
 │  ┌──────────────────────┐                                                     │
-│  │ @test-implementor    │ ◄── Implementation slice                           │
+│  │ @test-implementor    │ ◄── Implementation slice                            │
 │  │                      │     (Follow test plan literally)                    │
 │  └────────┬─────────────┘                                                     │
 │           ▼                                                                   │
 │  ┌─────────────────────┐                                                      │
-│  │ @pipeline-oversight │ ◄── GATE                                            │
+│  │ @pipeline-oversight │ ◄── GATE                                             │
 │  │     -enforcer       │                                                      │
 │  └─────────────────────┘                                                      │
 │                                                                               │
@@ -399,17 +399,17 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 │                       STAGE 11: TEST DRIFT REVIEW                             │
 │                                                                               │
 │  ┌──────────────────────────┐                                                 │
-│  │ @implementation-drift-   │ ◄── Drift Reviewer                             │
+│  │ @implementation-drift-   │ ◄── Drift Reviewer                              │
 │  │    review                │     (Compare tests vs test_implementation_plan) │
 │  └───────────┬──────────────┘                                                 │
 │              │                                                                │
 │         ┌────┴────┐                                                           │
 │         │         │                                                           │
-│       PASS      FAIL ─────► Route to REPAIR or @test-implementor             │
+│       PASS      FAIL ─────► Route to REPAIR or @test-implementor              │
 │         │                   Then re-run drift review                          │
 │         ▼                                                                     │
 │  ┌─────────────────────┐                                                      │
-│  │ @pipeline-oversight │ ◄── GATE                                            │
+│  │ @pipeline-oversight │ ◄── GATE                                             │
 │  │     -enforcer       │                                                      │
 │  └─────────────────────┘                                                      │
 └───────────────────────────────────────────────────────────────────────────────┘
@@ -444,7 +444,7 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ║  ╚═══════════════════════════════════════════════════════════════════╝        ║
 ║              ▼                                                                ║
 ║  ┌─────────────────────┐                                                      ║
-║  │ @pipeline-oversight │ ◄── GATE (per iteration)                            ║
+║  │ @pipeline-oversight │ ◄── GATE (per iteration)                             ║
 ║  │     -enforcer       │                                                      ║
 ║  └─────────────────────┘                                                      ║
 ║                                                                               ║
@@ -456,7 +456,7 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 │                      STAGE 13: FINAL VERIFICATION                             │
 │                                                                               │
 │  ┌──────────────────────┐                                                     │
-│  │ @verification-runner │ ◄── Implementation slice                           │
+│  │ @verification-runner │ ◄── Implementation slice                            │
 │  │                      │     (uv run lint && uv run pytest --cov)            │
 │  └────────┬─────────────┘                                                     │
 │           │                                                                   │
@@ -489,7 +489,7 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 │  ║           │                                                       ║        │
 │  ║           ▼                                                       ║        │
 │  ║  ┌─────────────────────┐                                          ║        │
-│  ║  │ @pipeline-oversight │ ◄── GATE                                ║        │
+│  ║  │ @pipeline-oversight │ ◄── GATE                                 ║        │
 │  ║  │     -enforcer       │                                          ║        │
 │  ║  └─────────────────────┘                                          ║        │
 │  ║                                                                   ║        │
@@ -499,7 +499,7 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 │                         (drift -> review -> verify)                           │
 │                                                                               │
 │  ┌─────────────────────┐                                                      │
-│  │ @pipeline-oversight │ ◄── GATE                                            │
+│  │ @pipeline-oversight │ ◄── GATE                                             │
 │  │     -enforcer       │                                                      │
 │  └─────────────────────┘                                                      │
 └───────────────────────────────────────────────────────────────────────────────┘
@@ -514,11 +514,11 @@ This document shows the complete Implementation Orchestration (CREATE) with all 
 ║  - Missing receipts                                                           ║
 ║  - Oversight flags suspicious instruction injection                           ║
 ║                                                                               ║
-║  Inputs: receipts folder, drift reports, review reports, git history         ║
-║  Output: audit_report.md (process-level misalignment analysis)               ║
+║  Inputs: receipts folder, drift reports, review reports, git history          ║
+║  Output: audit_report.md (process-level misalignment analysis)                ║
 ║                                                                               ║
 ║  ┌─────────────────────┐                                                      ║
-║  │ @pipeline-oversight │ ◄── GATE                                            ║
+║  │ @pipeline-oversight │ ◄── GATE                                             ║
 ║  │     -enforcer       │                                                      ║
 ║  └─────────────────────┘                                                      ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝

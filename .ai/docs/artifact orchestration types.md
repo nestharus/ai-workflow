@@ -1,6 +1,22 @@
 # Artifact Orchestration Types: Canonical Reference
 
+This document defines the orchestration types available in the AI workflow system. Each orchestration type represents a distinct workflow purpose. Orchestration types leverage reusable **patterns** (defined in `artifact orchestration patterns.md`) to implement their behavior.
+
+**Key Distinction:**
+- **Orchestration Types** = What workflows accomplish (purpose, inputs, outputs)
+- **Patterns** = How workflows accomplish it (reusable design constructs)
+
+---
+
 ## Infer Orchestration
+
+### Patterns Used
+
+| Pattern | Usage |
+|---------|-------|
+| **Intent Elicitation** | Transforms raw intent into structured specifications |
+| **Quality Gate** | Validates receipts before proceeding to planning |
+| **Agent Action Provenance** | Documents translator and triager decisions |
 
 ### Intent and Definition
 
@@ -57,13 +73,15 @@ A pipeline oversight gate at this stage ensures that if any required output (`in
 
 In essence, the Infer Orchestration will not proceed to planning until a validated intent and strategy are in place - it escalates to human input or additional research rather than risk proceeding on faulty assumptions.
 
-### Composition (what it calls, what calls it)
+### Composition
 
-The Infer Orchestration is typically the entry point of an artifact's lifecycle. It is invoked by higher-level workflows (like a Create or Update Orchestration) whenever a new task or change is initiated. It generally does not call any sub-orchestrations on its own (its steps are self-contained), but its output directly feeds subsequent orchestrations.
+**Position in workflow:** Entry point for artifact lifecycles.
 
-For example, the structured `intent.md`, `unknowns.md`, and `strategy.md` it produces become inputs to the Research and Plan orchestrations. After inferencing, the workflow often calls a Research Orchestration (if `unknowns.md` is non-empty) to resolve open questions, or proceeds to a Plan Orchestration if everything is clear.
+**Invoked by:** Create, Update orchestrations at workflow start.
 
-In summary, Create pipelines and Update pipelines call Infer at the start to establish a correct intent, whereas Infer itself remains focused on interpretation and does not delegate to other orchestrations.
+**Outputs consumed by:** Research (if unknowns exist), Plan (once intent is clear).
+
+**Internal structure:** Self-contained; uses Intent Elicitation pattern internally without delegating to other orchestration types.
 
 ### Domain-Neutrality
 
@@ -74,6 +92,14 @@ The output strategy is likewise abstract - it captures approach patterns (e.g., 
 This domain-agnostic design supports the truth hierarchy: the Strategy defined here guides planning but does not directly impose any artifact-level details. By not entangling with code or document specifics, the Infer stage ensures that decisions at the strategy layer can be reviewed or adjusted independently (governance can require human approval for strategy changes) before any concrete artifact work begins.
 
 ## Analyze Orchestration
+
+### Patterns Used
+
+| Pattern | Usage |
+|---------|-------|
+| **Fan-Out/Fan-In** | Multiple analyzers run concurrently on the artifact |
+| **Quality Gate** | Validates analysis completeness before proceeding |
+| **Agent Action Provenance** | Documents analysis findings and methodology |
 
 ### Intent and Definition
 
@@ -135,23 +161,15 @@ The escalation logic for analysis issues is to bring in additional help rather t
 
 In case of ambiguous or inconclusive analysis, a common escalation is to mark the uncertainty and continue (with the risk noted), or to pause the pipeline for human review if the understanding is critical for safe progression.
 
-### Composition (what it calls, what calls it)
+### Composition
 
-Analyze Orchestrations are often called by **Update** or **Audit** orchestrations when a thorough understanding of the current artifact is needed before making changes or judgments.
+**Position in workflow:** Information-gathering phase before modifications or audits.
 
-**What calls Analyze:**
+**Invoked by:** Update (to understand impact), Audit (to detect issues), Verify (to compare states).
 
-- **Update Orchestration** - Might invoke an Analyze step to map out where in the codebase a new feature should be inserted or to understand the impact of a change
-- **Audit Orchestration** - Uses analysis outputs (like drift reports or violation reports) as input signals for detecting issues
+**Outputs consumed by:** Plan (to design changes), Review (to cross-check expectations), Audit (for drift detection).
 
-**What Analyze calls:**
-
-The Analyze Orchestration itself can involve multiple analysis agents (as described above), but typically it does not call further sub-orchestrations. Its outputs (e.g., structural maps, summaries, or lists of detected issues) are consumed by:
-
-- **Planners** - Use the knowledge to design integration of new work
-- **Review orchestrations or Audits** - Use it to cross-check expectations (for example, a drift analysis compares an artifact against its specification and feeds results into an audit)
-
-**Summary:** Update, Verify, and Audit processes call Analyze to gather facts; Analyze produces reports but doesn't directly trigger other orchestrations except perhaps an optional Research step if directed.
+**Internal structure:** Uses Fan-Out/Fan-In pattern for concurrent analysis agents; does not delegate to other orchestration types.
 
 ### Domain-Neutrality
 
@@ -172,6 +190,15 @@ The orchestration's internal agents are chosen per domain (e.g., a `linter` and 
 - **Governance utility** - This clear role makes it an essential governance tool for artifact audit and for any planning stage that needs a reality check on the current state
 
 ## Research Orchestration
+
+### Patterns Used
+
+| Pattern | Usage |
+|---------|-------|
+| **Fan-Out/Fan-In** | Crawler agents gather information concurrently from multiple sources |
+| **Sequential Workflow** | Question decomposition and ordered synthesis |
+| **Quality Gate** | Validates evidence completeness before planning |
+| **Agent Action Provenance** | Documents sources, findings, and open gaps |
 
 ### Intent and Definition
 
@@ -241,34 +268,17 @@ The Pipeline Oversight Enforcer ensures no research question is simply dropped -
 
 In summary, Research Orchestration errs on the side of documenting gaps and escalating uncertainties, rather than providing a possibly-wrong answer.
 
-### Composition (what it calls, what calls it)
+### Composition
 
-The Research Orchestration is generally invoked by other orchestrations that encounter unknowns - most commonly by a Plan or Create Orchestration after the initial infer step.
+**Position in workflow:** Knowledge-gathering phase between Infer and Plan.
 
-**What triggers Research:**
+**Invoked by:** Create (when unknowns exist), Update (for new technical questions), Plan (for evidence needs).
 
-- In a Create (Implementation) pipeline, once intent and strategy are set, any `unknowns.md` triggers the Research sub-orchestration (Stage 2) to gather needed information before planning proceeds
-- It may also be called during Update Orchestrations if new questions arise about how to implement a change (like researching a new API or library to use)
+**Outputs consumed by:** Plan (evidence for design decisions), Strategy (if findings affect approach).
 
-**What Research produces:**
+**Internal structure:** Uses Fan-Out/Fan-In for concurrent crawlers; self-contained with internal synthesis agents. Does not delegate to other orchestration types.
 
-On the output side, Research produces artifacts that directly feed into planning:
-
-- `research_findings.md`
-- `evidence_table.md`
-- Other evidence artifacts
-
-These are consumed by the Plan Orchestration to ensure that design decisions are evidence-based.
-
-**Internal composition:**
-
-The Research Orchestration itself is self-contained in terms of sub-calls: it orchestrates numerous agents (decomposer, crawlers, synthesizers, etc.) internally, but it does not invoke higher-level orchestrations. Once it completes, control returns to the caller (e.g., the main implementation orchestrator) along with the research outputs.
-
-For quality, it does have an internal review stage - the coverage drift check - which acts like an embedded Review ensuring completeness of answers, but this is within the research flow.
-
-**Summary:**
-
-`Infer` -> `Research` -> `Plan` is a common chain: Infer hands off unknowns to Research; Research returns answers to enable effective planning.
+**Common workflow chain:** `Infer → Research → Plan`
 
 ### Domain-Neutrality
 
@@ -285,6 +295,16 @@ The outputs are structured in a generic way (findings with evidence, unanswered 
 Governance is built in uniformly: every claim is backed by a source, aligning with artifact-level trust requirements (nothing is asserted without evidence). The result is a reusable research module that can plug into any artifact workflow where learning is required, ensuring that subsequent strategies or plans are well-informed and credible.
 
 ## Plan Orchestration
+
+### Patterns Used
+
+| Pattern | Usage |
+|---------|-------|
+| **Sequential Workflow** | Decomposes goals into topics and processes them in order |
+| **Strategy-Plan-Artifact** | Maintains layer separation between strategy and implementation |
+| **Quality Gate Loop** | Plan review with iterative patching until all checks pass |
+| **Quality Gate** | Validates plan completeness before implementation |
+| **Agent Action Provenance** | Documents planning decisions and topic rationale |
 
 ### Intent and Definition
 
@@ -365,31 +385,17 @@ Throughout, governance is present: the final plan cannot proceed to implementati
 
 If the plan stage "fails" (cannot produce an approved plan), the orchestration will not permit implementation to start - instead it halts and flags the issue as requiring higher-level resolution (possibly triggering an Audit if this failure is seen as a process anomaly).
 
-### Composition (what it calls, what calls it)
+### Composition
 
-Plan Orchestration is called by Create or Update orchestrations once the strategy is established (and research completed if needed).
+**Position in workflow:** Converts strategy into actionable steps before implementation.
 
-**What calls Plan Orchestration:**
+**Invoked by:** Create (for implementation plans), Update (for change plans), Test workflows (for test plans).
 
-- In a new implementation scenario, the Implementation (Create) Orchestration invokes the Plan Orchestration to generate the `implementation_plan.md` (this corresponds to stages 3 and 9 in the pipeline: one plan for code implementation, one for test implementation)
-- In an Update Orchestration, the plan step would similarly create a plan for the changes (often a smaller plan focusing on the delta)
+**Outputs consumed by:** Implementation agents, Drift reviewers, Verify (for coverage checks).
 
-**What Plan Orchestration calls:**
+**Internal structure:** Uses Sequential Workflow to build plan incrementally; uses Quality Gate Loop pattern internally for plan validation. Does not delegate to other orchestration types.
 
-- Plan Orchestration itself may call sub-orchestrations for reviews - specifically, it leverages the Artifact Review Orchestration pattern to review and fix the plan artifact
-- However, these review steps are often considered part of the plan workflow rather than a completely separate orchestration call (they can be implemented inline with reviewer agents, as in the example above)
-- The Plan Orchestration might also incorporate an Integrate Orchestration when merging new information into an existing plan
-- For instance, integrating research findings into the strategy could be handled by an integrate step to ensure coherence, though in our pipeline this was done by the integration planner agent internally
-
-**Handoff after approval:**
-
-Once a plan is approved, the Plan Orchestration hands off to the next phase: typically a Create Orchestration (to implement the plan) or directly to an Integrate/Implement step if in the middle of an update.
-
-**Summary:**
-
-- Create and Update orchestrations call Plan
-- Plan internally calls Review (for plan verification), and sometimes uses Integrate logic (when assembling plan from multiple inputs)
-- Plan's outputs (the plan docs) are then consumed by Implement/Create steps and also serve as a reference for Verify/Drift checks later in the pipeline
+**Common workflow chain:** `Strategy → Plan → Implement`
 
 ### Domain-Neutrality
 
@@ -417,6 +423,19 @@ By not hard-coding any domain specifics in the orchestration logic (only in the 
 Crucially, it preserves layering: it deals only with plan correctness, leaving actual execution to the artifact creation stage. This upholds governance: changes to how work is done (process patterns) can be managed at the plan level distinct from actual content changes, improving cross-domain consistency and compliance.
 
 ## Create Orchestration
+
+### Patterns Used
+
+| Pattern | Usage |
+|---------|-------|
+| **Goal-Strategy-Tactic-Result-Observe** | Master orchestration flow from intent to verified artifact |
+| **Intent Elicitation** | Stage 0 intent translation |
+| **Sequential Workflow** | Plan decomposition and incremental building |
+| **Test-After Development** | Enforces code completion before test writing |
+| **Quality Gate Loop** | Plan, code, and test reviews with iterative patching |
+| **Printer-Metaphor** | Fixes flow through plan updates, not direct artifact patches |
+| **Quality Gate** | Validates receipts at every stage boundary |
+| **Agent Action Provenance** | Full audit trail across all stages |
 
 ### Intent and Definition
 
@@ -512,44 +531,27 @@ In general, the escalation logic for Create Orchestration is multi-tiered:
 
 Importantly, the orchestration never "patches over" a failure silently - an artifact will not be promoted unless all gates pass or an explicit human override is given. This strict approach ensures that the final artifact is trustworthy, and any unresolved issues are surfaced rather than hidden.
 
-### Composition (what it calls, what calls it)
+### Composition
 
-Create Orchestration is a top-level composite that calls almost every other orchestration type as part of its workflow.
+**Position in workflow:** Top-level orchestration for new artifact creation.
 
-**What Create Orchestration Calls:**
+**Invoked by:** External triggers (user requests, tickets, feature requests).
 
-For instance, the Implementation (Create) Orchestration calls:
+**Outputs consumed by:** Deployment pipelines, release processes, downstream systems.
 
-- `Infer` - to interpret intent
-- `Research` - to gather info
-- `Plan` - to devise the steps
-- Multiple `Review` orchestrations - plan review, code review, test review
-- `Integrate` steps - to merge content like test plans or incorporate fixes
-- `Verify` - to run final tests
-- `Repair` - if any verification fails
-- `Audit` - if governance limits are hit
+**Workflow phases:**
 
-It acts as the central coordinator that ensures each of these sub-orchestrations are invoked in the right order and under the right conditions.
+1. **Intent** → Uses Intent Elicitation pattern
+2. **Research** → Uses Fan-Out/Fan-In pattern (if unknowns exist)
+3. **Plan** → Uses Sequential Workflow pattern
+4. **Implement** → Uses Test-After Development pattern
+5. **Review** → Uses Quality Gate Loop pattern (for plan, code, tests)
+6. **Verify** → Final validation and drift checks
+7. **Repair** → Debug cycle if verification fails (uses Printer-Metaphor)
 
-**What Calls Create Orchestration:**
+**Internal structure:** Coordinates workflow phases; each phase uses appropriate patterns. Does not call other orchestration types as sub-orchestrations—instead implements the Goal-Strategy-Tactic-Result-Observe pattern directly with specialized agents.
 
-No other orchestration calls a Create Orchestration (since Create is typically the highest-level task like "implement this feature" or "write this document").
-
-**Variations:**
-
-However, there can be variations of create: e.g., a "Document Creation Orchestration" would similarly call steps to research facts, plan the outline, draft content, review for grammar/style, and verify requirements coverage.
-
-**Strict Layering:**
-
-The strict layering and separation of concerns is respected in the composition: the Create Orchestrator itself does no actual creation work - it routes tasks to specialized agents or sub-orchestrators. This means the Create Orchestration is primarily about coordination and integration of results.
-
-**Human Involvement:**
-
-Human involvement in Create Orchestration typically comes via governance touchpoints: e.g., requiring human approval for any strategic pattern changes that arise during the process (the "Integration Pivot" - where AI suggests a pattern classification and a human may update strategy or plan heuristics accordingly).
-
-**Summary:**
-
-In summary, Create Orchestration is the umbrella that invokes all needed sub-orchestrations in a lifecycle, and its own logic ensures that the outputs of one feed correctly into the next, with gating in between.
+**Human touchpoints:** Strategy approval, Integration Pivot decisions (via Progressive Automation with HITL pattern).
 
 ### Domain-Neutrality
 
@@ -568,6 +570,15 @@ Thus, the Create Orchestration ensures all artifact types go through rigorous, s
 - Only integrate changes through governed channels
 
 ## Integrate Orchestration
+
+### Patterns Used
+
+| Pattern | Usage |
+|---------|-------|
+| **Specification-Level Integration** | Resolves conflicts at strategy level, then regenerates |
+| **Printer-Metaphor** | Treats artifacts as derived outputs; merges sources not outputs |
+| **Quality Gate** | Validates integration completeness and structural integrity |
+| **Agent Action Provenance** | Documents merge decisions and conflict resolutions |
 
 ### Intent and Definition
 
@@ -641,35 +652,17 @@ In practice, integrators try minor adjustments and fallback strategies first, an
 
 Pipeline governance enforces that no integration is accepted until validation passes all criteria ("gate" on validation success), thus preventing partial merges from slipping through.
 
-### Composition (what it calls, what calls it)
+### Composition
 
-Integrate Orchestration is usually called by higher-level orchestrations whenever incremental updates are applied.
+**Position in workflow:** Merging phase when new content joins existing artifacts.
 
-**What Calls Integrate:**
+**Invoked by:** Plan (incorporating research), Update (applying changes), Repair (applying patches).
 
-- **Plan Orchestration** - Uses an integrate-like process to incorporate research findings into the plan (ensuring new steps merge into the plan structure coherently)
-- **Update Orchestration** - After generating the content change (say a code diff or a doc fragment), an Integrate Orchestration is invoked to apply that diff to the main artifact
-- **Create Orchestration** - Commonly invokes Integrate as a sub-step when combining phases (e.g., merging a generated test plan into the overall plan or merging a patched fix into the codebase)
+**Outputs consumed by:** Review (to validate merged artifact), Verify (to test merged result).
 
-**What Integrate Calls:**
+**Internal structure:** Uses Specification-Level Integration pattern for conflict resolution; works with internal agents (decomposer, merger, validator). Does not call other orchestration types.
 
-Integrate itself typically doesn't call other full orchestrations except in failure cases; it works with internal agents (`decomposer`, `merger`, `validator`).
-
-One exception is if integration fails in a complicated way, it might hand off to a Review or Repair process:
-
-- After merging, one might run a quick Review to ensure the integrated artifact meets standards
-- Call Repair if the integration introduced a bug not easily fixed by re-merging
-
-**Outputs and Consumers:**
-
-The outputs of Integrate (the merged artifact) are then consumed by subsequent steps like:
-
-- **Review orchestrations** - To formally review the updated artifact
-- **Verify** - To test it
-
-**Summary:**
-
-Plan, Update, and Repair orchestrations call Integrate to perform structured merges; Integrate itself works within its scope but signals to others if further action (like review or human input) is needed for complex merges.
+**On failure:** Escalates to human review or triggers repair cycle if merge introduces issues.
 
 ### Domain-Neutrality
 
@@ -703,6 +696,15 @@ By design, it separates the concern of "how to merge" from "what to merge" - the
 In terms of governance, Integrate introduces human checkpoints in a domain-agnostic way: any time a merge touches higher-level patterns (Strategy or Plan heuristics), it defers to human approval as per integration targets policy. This ensures that domain-wide decisions are not made by an automated merge in isolation.
 
 ## Review Orchestration
+
+### Patterns Used
+
+| Pattern | Usage |
+|---------|-------|
+| **Quality Gate Loop** | Core pattern: iterative review-patch-recheck until all pass |
+| **Fan-Out/Fan-In** | Multiple reviewers evaluate artifact concurrently |
+| **Quality Gate** | Enforces all-pass requirement before proceeding |
+| **Agent Action Provenance** | Documents review findings and patch decisions |
 
 ### Intent and Definition
 
@@ -775,26 +777,17 @@ An example: if a code review fails 3 times on the same pattern and cannot fix it
 
 Another governance aspect: the review orchestration never forces a `PASS`. If quality isn't met, it escalates rather than marking an artifact "approved" with known issues. This strictness ensures that artifact governance (through reviews) is upheld and any failure to reach consensus is handled at a higher level, not waived.
 
-### Composition (what it calls, what calls it)
+### Composition
 
-Review Orchestrations are called by `Create`/`Update` orchestrations at points where an artifact needs validation. In the Implementation pipeline, for example, Plan Review, Code Review, and Test Review are all instances of the Review Orchestration applied to different artifact types.
+**Position in workflow:** Quality enforcement gate before artifact progression.
 
-A `Repair` Orchestration also calls a Review Orchestration after applying a fix, to ensure the repaired artifact meets quality standards before returning it. Essentially, any time we have an artifact that must meet certain standards before proceeding, a Review step is inserted.
+**Invoked by:** Create (for plan/code/test reviews), Update (for change reviews), Repair (to validate fixes).
 
-The Review Orchestration itself is self-contained in terms of sub-calls; it uses internal parallel agents for checking and a patcher agent for fixing. It typically does not call other orchestrations except at escalation (where it might call `Audit` as a next step on failure).
+**Outputs consumed by:** Next pipeline stage (if pass), Audit (if repeated failures).
 
-**Upstream and Downstream Flow:**
+**Internal structure:** Implements Quality Gate Loop pattern with parallel reviewer agents and patcher agent. Does not call other orchestration types except escalation to Audit on loop exhaustion.
 
-- **Upstream:** It's orchestrated by higher flows - e.g., the Create Orchestration will invoke a Review on the code artifact, and again on the test artifact, etc., as mandatory gates
-- **Downstream:** A successful Review yields an improved artifact ready for the next stage (like verify or integration into the main branch), whereas an escalated Review will hand off to Audit or halt the pipeline
-
-**Artifact Audit vs Pipeline Audit:**
-
-It's worth noting that Review is a form of artifact governance (ensuring the artifact itself is good), distinct from pipeline governance. However, its outputs (review reports) are often used by pipeline-level audits to detect systemic issues (for example, if many artifacts keep failing the same review rule, the Audit orchestration takes that as input).
-
-**Summary:**
-
-`Create`, `Update`, and `Repair` orchestrations call Review to perform quality checks on artifacts; Review may in turn invoke a limited escalation to `Audit`; otherwise it is an end-of-line for that artifact's refinement loop.
+**Escalation:** On repeated failures (loop limit), escalates to Audit or human review.
 
 ### Domain-Neutrality
 
@@ -821,6 +814,13 @@ This ensures reusability across domains - one can create new Reviewer agents for
 Furthermore, the presence of the patcher in the loop underscores the principle that even though automated fixes are applied, they are applied in a controlled loop, not as one-off edits. This pattern holds across domains (e.g., an automated editor for prose would make changes and then the document is re-reviewed, just like code is re-linted and re-checked). This systematic approach yields a reliable improvement cycle for any artifact type.
 
 ## Verify Orchestration
+
+### Patterns Used
+
+| Pattern | Usage |
+|---------|-------|
+| **Quality Gate** | Final validation checkpoint before artifact completion |
+| **Agent Action Provenance** | Documents verification results and any failures |
 
 ### Intent and Definition
 
@@ -889,7 +889,17 @@ The escalation logic in that case might be to loop back to Plan or Tests creatio
 
 In summary, for any concrete failure (tests, etc.), the Verify orchestration entrusts fixes to the Repair sub-pipeline, whereas for systemic verification gaps or multiple repair failures, it escalates to human or audit. It never "ignores" a failing check; by design the pipeline stops here if verification isn't green.
 
-### Composition (what it calls, what calls it)
+### Composition
+
+**Position in workflow:** Final validation gate before artifact completion.
+
+**Invoked by:** Create (final stage), Update (after changes applied), Repair (to confirm fix works).
+
+**Outputs consumed by:** Deployment/release (if pass), Repair (if fail).
+
+**Internal structure:** Runs verification suite (tests, validators, drift checks); does not call other orchestration types directly. On failure, signals for Repair cycle.
+
+**On failure:** Triggers Repair orchestration to debug and fix issues.
 
 ### Domain-Neutrality
 
@@ -922,6 +932,15 @@ The important governance distinction is that verification is artifact-level gove
 Any deviations found here that indicate a misunderstanding of intent often feed back into strategy or plan (domain-neutral pattern of continuous improvement). For example, if an acceptance criterion was missed and discovered in verify, that might prompt an update to the planning heuristics so that future plans always include a step for it - illustrating the cross-domain learning through governance feedback loops.
 
 ## Repair Orchestration
+
+### Patterns Used
+
+| Pattern | Usage |
+|---------|-------|
+| **Printer-Metaphor** | Fixes are patches to be integrated, not direct artifact edits |
+| **Quality Gate Loop** | Validates fix meets quality standards before returning |
+| **Quality Gate** | Validates repair completeness and RCA documentation |
+| **Agent Action Provenance** | Documents root cause analysis and fix rationale |
 
 ### Intent and Definition
 
@@ -1003,26 +1022,19 @@ One more built-in guard: because Repair works in isolation, the main artifact re
 
 Thus, in the event of repair failure, the artifact in the mainline is still the old failing one, and the pipeline likely halts awaiting human input.
 
-### Composition (what it calls, what calls it)
+### Composition
 
-**Repair Orchestration** is called by any orchestration that encounters a critical failure that automated patching within the loop couldn't resolve. Commonly, a **Verify Orchestration** triggers Repair when tests fail, or a **Create/Update Orchestration** routes to Repair if, say, a drift cannot be corrected by re-syncing implementation (in Implementation Stage 6 and 11, a plan vs. code drift fail could call Repair as a more in-depth fix approach).
+**Position in workflow:** Debug and fix cycle triggered by failures.
 
-Additionally, a **Process Audit Orchestration** can recommend a repair (with a suggested approach) for systemic issues, essentially handing that off to Repair to implement the actual changes. Repair itself will utilize sub-steps:
+**Invoked by:** Verify (on test failures), Create/Update (on drift failures), Audit (with recommended fixes).
 
-- It calls on an **Investigator agent** to do debugging and fixing
-- It may invoke a **Review Orchestration** to validate its fix as mentioned
+**Outputs consumed by:** Calling orchestration (patch to integrate), Audit (RCA for pattern analysis).
 
-In some scenarios, after Repair produces a patch, the pipeline might invoke an **Integrate Orchestration** to merge that patch back into the main artifact (though in code, applying a patch is straightforward; in documents, integrating the diff might need a safe merge). However, often the Orchestration that called Repair will handle integration: e.g., the Implementation Orchestrator receives the patch diff and then applies it in the main branch, followed by re-running whatever stage failed.
+**Internal structure:** Uses Investigator agent in isolated sandbox; uses Quality Gate Loop pattern internally to validate fixes. Returns patch and RCA rather than directly modifying artifact.
 
-So the composition is:
+**On success:** Returns patch for integration by caller.
 
-- **Verify/Integrate/Review orchestrations** call Repair on failure
-- Repair uses **Investigator** and possibly **Review** internally
-- Repair returns a patch and analysis
-
-If successful, the calling orchestration (or its parent) then integrates that patch and resumes. If unsuccessful, the calling context escalates further (perhaps up to an Audit or human).
-
-Repair is thus a specialized sub-orchestration focused on troubleshooting. Notably, from a governance perspective, it produces a clear record (root cause, diff, etc.) which is an input to artifact governance (e.g., the RCA can be later audited or used to update testing to cover this case in the future). This separation of concerns means the pipeline can treat repair outcomes in a consistent way: either a fix artifact to incorporate or a signal to escalate.
+**On failure:** Escalates to human or Audit; does not merge half-fixes.
 
 ### Domain-Neutrality
 
@@ -1047,9 +1059,20 @@ Importantly, repair orchestrations maintain **artifact governance** by not letti
 
 ## Update Orchestration
 
+### Patterns Used
+
+| Pattern | Usage |
+|---------|-------|
+| **Intent Elicitation** | Interprets change request into structured update intent |
+| **Sequential Workflow** | Decomposes update into ordered steps |
+| **Specification-Level Integration** | Integrates changes through strategy reconciliation |
+| **Quality Gate Loop** | Validates updated artifact meets all criteria |
+| **Quality Gate** | Validates each update phase before progression |
+| **Agent Action Provenance** | Documents change rationale and impact analysis |
+
 ### Intent and Definition
 
-**Update Orchestration** coordinates the intentional modification of an existing artifact, leveraging the other orchestration types to ensure the change is implemented correctly, consistently, and with full traceability.
+**Update Orchestration** coordinates the intentional modification of an existing artifact, leveraging patterns to ensure the change is implemented correctly, consistently, and with full traceability.
 
 Unlike **Create Orchestration** (which starts from nothing) or **Repair** (which responds to an unexpected failure), an Update Orchestration is initiated by a deliberate intent to change something - for example, add a new feature to existing code, revise a section of a document, or refactor a component.
 
@@ -1113,29 +1136,26 @@ Essentially, the Update Orchestration inherits the escalation logic of each sub-
 
 From a **pipeline governance perspective**, if an update fails in a way that two or three attempts can't fix (similar pattern failing), a `Process Audit` might trigger to see if there's a systemic issue (maybe the plan heuristics for updates are insufficient). The presence of the `Pipeline Oversight Enforcer` at each gate ensures that an update that's not meeting standards does not slip through: it either loops or escalates. In worst cases, the escalation might be to abort the update (leaving the artifact unchanged) and mark the task for manual handling.
 
-### Composition (what it calls, what calls it)
+### Composition
 
-**Update Orchestration** is typically invoked by an external trigger such as a user request for modification, a change in requirements, or possibly by an Audit that identified an artifact needing improvement (though audit might just recommend it, then a user triggers the update).
+**Position in workflow:** Manages intentional modifications to existing artifacts.
 
-It acts as a wrapper that calls multiple orchestrations:
+**Invoked by:** External triggers (change requests, requirement updates), Audit (with improvement recommendations).
 
-- `Infer` (if needed to clarify the change intent)
-- `Analyze` (to examine current artifact)
-- `Plan` (to design the change)
-- `Create/Implement` (to perform the change, often using an Integrate orchestration if merging into existing content)
-- `Review` (to critique the changed artifact)
-- `Verify` (to test the changed artifact)
-- `Repair` (if tests fail) in sequence
+**Outputs consumed by:** Deployment/release (if pass), human review (if escalation needed).
 
-In effect, it can be seen as a variant of the Create pipeline tailored to starting with an existing artifact and focusing on the delta.
+**Workflow phases:**
 
-Importantly, it also leverages **Integrate Orchestration** heavily: after generating the new pieces (code or text), it must integrate them into the artifact (which might involve merging code or combining document sections) - this is a core difference from create, where the artifact started empty. So the update orchestrator often calls Integrate both at the planning stage (merging new plan steps) and at the implementation stage (merging the changes into the main artifact representation).
+1. **Infer** → Uses Intent Elicitation pattern for change intent
+2. **Analyze** → Uses Fan-Out/Fan-In pattern for current state analysis
+3. **Plan** → Uses Sequential Workflow for change decomposition
+4. **Implement** → Uses Specification-Level Integration for integration
+5. **Review** → Uses Quality Gate Loop pattern for quality validation
+6. **Verify** → Final validation including regression testing
 
-Once the process is done, the updated artifact is produced along with all the receipts and evidence of what was done. Because it composes many parts, no single sub-call does heavy lifting alone - it's the orchestrator's job to ensure the handoffs are smooth (the plan is based on current analysis, implementation follows the plan, etc.).
+**Internal structure:** Coordinates workflow phases using appropriate patterns. Key difference from Create: heavily uses Specification-Level Integration pattern for integrating changes into existing artifacts.
 
-**Upstream:** The caller of Update is usually a human decision or a scheduling system that decided it's time to implement a certain change (one could imagine a backlog item triggers this orchestrator).
-
-**Downstream:** After a successful update, the artifact might go to a human for final approval or directly into production, depending on governance rules. If the update orchestration fails or escalates, it returns control to a human operator or triggers an audit.
+**On failure:** Escalates to Repair (for fixable issues), Audit (for systemic issues), or human (for scope/design issues).
 
 ### Domain-Neutrality
 
@@ -1160,6 +1180,15 @@ Across domains, this yields more reliable and governable updates: every update h
 By using the existing orchestration toolkit in a modular way, the Update Orchestration achieves reusability and consistency: essentially, `Update = Infer/Analyze + Plan + (Create & Integrate) + Review + Verify`, which is a pattern that translates well to any artifact type with minor tooling swaps.
 
 ## Audit Orchestration
+
+### Patterns Used
+
+| Pattern | Usage |
+|---------|-------|
+| **Fan-Out/Fan-In** | Multiple analyzers examine receipts and artifacts concurrently |
+| **Progressive Automation with HITL** | Converts audit findings into permanent heuristic improvements |
+| **Quality Gate** | Validates audit completeness before action dispatch |
+| **Agent Action Provenance** | Documents audit findings, classifications, and recommendations |
 
 ### Intent and Definition
 
@@ -1260,34 +1289,28 @@ If an audit identifies a possible tampering (like receipts not matching artifact
 
 In summary, audit orchestrations escalate findings to the appropriate level of intervention: process changes for systemic issues, human fixes for isolated ones, and ensure nothing slips through silently.
 
-### Composition (what it calls, what calls it)
+### Composition
 
-**Audit Orchestration** can be triggered by specific events or thresholds (loop limits, drift score too high, etc.) in the pipeline by the **Pipeline Oversight** (this is the automated trigger). It can also be scheduled or manually invoked for periodic checks.
+**Position in workflow:** Meta-level governance oversight, triggered by escalations or scheduled.
 
-In terms of composition, Audit orchestrations often call on analysis tools:
+**Invoked by:**
+- Review/Verify (on loop limit escalation)
+- Pipeline Oversight (on threshold violations)
+- Scheduled triggers (periodic compliance checks)
+- Manual triggers (ad-hoc audits)
 
-- Static analyzers
-- Log scanners
-- Diff tools
+**Outputs consumed by:**
+- Repair (with recommended fixes)
+- Update (for systemic improvements)
+- Human overseers (for decisions)
+- Progressive Automation with HITL (to improve heuristics)
 
-These are usually encapsulated in the **Pattern Analyzer** logic. Audit orchestrations generally do not call other main orchestrations except possibly to consult an Investigator or repair process for follow-up.
+**Internal structure:** Uses Fan-Out/Fan-In for concurrent analysis agents (receipt collector, pattern analyzer, issue classifier). Does not directly modify artifacts; produces reports and recommendations.
 
-However, we saw in the **Repair Orchestration** context that a Process Audit can produce recommendations consumed by a Repair Orchestration - that implies the chain:
-
-1. Audit identifies a systemic issue and suggests a fix
-2. Triggers a Repair orchestration to implement remediation steps
-
-For example, if audit finds a systemic code style problem, it might trigger an automated refactoring (under an Update orchestration) across the codebase to fix it. But those would be separate orchestrations initiated as a result of audit, not sub-called by audit.
-
-**Upstream triggers:**
-
-- Various orchestrations like Review or Verify will call Audit when their own escalation conditions hit (like the loop limit)
-- The pipeline oversight might also call an audit after a sequence of orchestrations completes, as a final assurance check (like auditing a release candidate artifact for any issues not caught)
-- **Artifact Audit** might be invoked at the end of a Create/Update to double-check trust (for instance, verifying that all receipts are present and every deviation was justified)
-
-In doing so, it differentiates from the process triggers: an artifact audit could be triggered by a policy like "audit any artifact of high criticality before deployment." In both cases, the Audit Orchestration uses similar mechanisms (collect data, analyze, report).
-
-After an audit runs, it typically doesn't directly modify anything; instead it outputs recommendations or actions for others. It's the governance eyes and ears. Because audit is about oversight, it sits somewhat above the regular flow: often triggered by the oversight agent or on schedule, and its "customers" are either human overseers or orchestrations like Repair that handle what audit finds.
+**Classification outcomes:**
+- **SYSTEMIC** → Halt pipeline, organizational response
+- **ISOLATED** → Escalate to local human/Repair
+- **FALSE_ALARM** → Log and reset counters
 
 ### Domain-Neutrality
 
