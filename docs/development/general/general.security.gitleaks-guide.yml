@@ -1,0 +1,517 @@
+doc_id: general-security-gitleaks-guide
+title: Gitleaks Guide
+version_hint: 2024-2025
+kind: security_guide
+description: >
+  Guide for using gitleaks to prevent secrets from being committed to the repository,
+  including inline allowlisting, .gitleaks.toml configuration, and CI integration.
+scope: All developers working with this codebase must follow these practices to prevent credential leaks.
+domain:
+  - security
+  - git
+  - ci-cd
+external_references:
+  - url: https://github.com/gitleaks/gitleaks
+    title: Gitleaks Official Repository
+  - url: https://github.com/gitleaks/gitleaks#configuration
+    title: Gitleaks Configuration Documentation
+
+sections:
+  - id: overview
+    index: 1
+    title: Overview
+    category: standard
+    summary: What gitleaks is and why we use it.
+    items:
+      - id: what-is-gitleaks
+        title: What is gitleaks?
+        text: |
+          Gitleaks is a SAST (Static Application Security Testing) tool for detecting hardcoded
+          secrets like passwords, API keys, and tokens in git repositories. It uses regex-based
+          pattern matching to identify potential secrets in source code and git history.
+
+      - id: why-use-gitleaks
+        title: Why we use gitleaks
+        text: |
+          Committing secrets to git repositories is a critical security risk. Even if a
+          secret is later removed, it remains in the git history. Gitleaks helps us:
+        reasons:
+          - Catch secrets before they are committed (pre-commit hook)
+          - Prevent secrets in pull requests (CI checks)
+          - Scan git history for leaked credentials (historical audit)
+          - Maintain a secure development workflow with minimal friction
+
+      - id: how-it-works
+        title: How it works
+        text: |
+          Gitleaks scans files for patterns that match known secret formats using regex rules.
+          When a potential secret is detected, it can be handled in several ways:
+        methods:
+          - Block the commit and require the secret to be removed
+          - Allow the secret via inline gitleaks:allow comment (for false positives)
+          - Add the finding's fingerprint to .gitleaksignore file
+          - Exclude paths or patterns via .gitleaks.toml configuration
+
+      - id: comparison-with-detect-secrets
+        title: Gitleaks vs detect-secrets
+        text: |
+          This project uses BOTH gitleaks and detect-secrets for defense-in-depth secret scanning.
+          Each tool has different strengths:
+        comparison:
+          - id: gitleaks-strengths
+            tool: gitleaks
+            strengths:
+              - Uses regex-based pattern matching (fast)
+              - Supports .gitleaksignore for fingerprint-based exceptions
+              - Inline comments with gitleaks:allow
+              - Strong at catching specific secret formats (AWS keys, GitHub tokens)
+          - id: detect-secrets-strengths
+            tool: detect-secrets
+            strengths:
+              - Uses baseline methodology (lower false positives over time)
+              - Heuristic detection for high-entropy strings
+              - Interactive audit workflow
+              - Strong at catching unknown secret patterns
+        cross_reference:
+          text: For detect-secrets usage, see the companion guide.
+          link: general.security.detect-secrets-guide.yml
+
+  - id: inline-allowlisting
+    index: 2
+    title: Inline Allowlisting
+    category: standard
+    summary: How to use inline comments to mark false positives.
+    items:
+      - id: gitleaks-allow-comment-syntax
+        title: Gitleaks Allow Comment Syntax
+        text: |
+          When gitleaks flags a false positive (e.g., example code, test fixtures,
+          or non-sensitive strings that match patterns), you can allowlist it with a
+          gitleaks:allow comment on the same line.
+        sample_code:
+          description: Example of inline allowlisting with gitleaks:allow comment.
+          language: python
+          code: |
+            # This is a fake API key for documentation purposes
+            EXAMPLE_API_KEY = "sk-1234567890abcdef"  # gitleaks:allow
+
+            # For YAML files:
+            api_key: "AKIAIOSFODNN7EXAMPLE"  # gitleaks:allow
+
+            # For JSON files (comment in adjacent code or use .gitleaksignore):
+            # Note: JSON doesn't support comments, so use .gitleaksignore for JSON files
+
+      - id: when-to-allowlist
+        title: When to use inline allowlisting
+        rules:
+          - id: allowlist.examples
+            rule: Example code or documentation that shows API key formats but contains fake values
+          - id: allowlist.test-fixtures
+            rule: Test fixtures with dummy credentials clearly marked as non-production
+          - id: allowlist.placeholders
+            rule: Placeholder strings that happen to match secret patterns (e.g., "YOUR_API_KEY_HERE")
+          - id: allowlist.false-positives
+            rule: High-entropy strings that are not actually secrets (e.g., base64-encoded test data)
+
+      - id: when-not-to-allowlist
+        title: When NOT to use inline allowlisting
+        warnings:
+          - id: no-real-secrets
+            warning: NEVER allowlist actual secrets. Remove them and rotate the credentials.
+          - id: no-convenience
+            warning: Do not allowlist for convenience. If something looks like a secret, investigate it.
+          - id: no-commit-real
+            warning: |
+              If you accidentally committed a real secret, do not allowlist it.
+              See "Handling Real Secrets" section.
+
+      - id: comparison-with-detect-secrets-pragma
+        title: Comparison with detect-secrets
+        text: |
+          Gitleaks uses `gitleaks:allow` comments while detect-secrets uses `pragma: allowlist secret`.
+          Both accomplish the same goal but with different syntax.
+        comparison:
+          - tool: gitleaks
+            syntax: "# gitleaks:allow"
+          - tool: detect-secrets
+            syntax: "# pragma: allowlist secret"
+        cross_reference:
+          text: For detect-secrets inline allowlisting, see the detect-secrets guide.
+          link: general.security.detect-secrets-guide.yml#inline-allowlisting
+
+  - id: gitleaksignore-management
+    index: 3
+    title: .gitleaksignore Management
+    category: standard
+    summary: How to use the .gitleaksignore file for fingerprint-based exceptions.
+    items:
+      - id: what-is-gitleaksignore
+        title: What is the .gitleaksignore file?
+        text: |
+          The `.gitleaksignore` file contains a list of fingerprints for findings that have
+          been reviewed and deemed safe (false positives). Each fingerprint uniquely identifies
+          a specific finding, allowing gitleaks to skip it in future scans.
+
+      - id: fingerprint-based-allowlisting
+        title: Fingerprint-based allowlisting
+        text: |
+          When gitleaks detects a potential secret, it generates a unique fingerprint based on
+          the file path, line number, and secret content. You can add this fingerprint to
+          .gitleaksignore to suppress the finding.
+        sample_code:
+          description: Example of adding a fingerprint to .gitleaksignore.
+          language: bash
+          code: |
+            # Run gitleaks to get the finding details including fingerprint
+            gitleaks detect --verbose
+
+            # The output will include a fingerprint like:
+            # Fingerprint: path/to/file.py:10:EXAMPLE_KEY
+
+            # Add the fingerprint to .gitleaksignore
+            echo "path/to/file.py:10:EXAMPLE_KEY" >> .gitleaksignore
+
+      - id: gitleaksignore-workflow
+        title: .gitleaksignore workflow
+        steps:
+          - id: step-1-detect
+            step: Run gitleaks detect to find potential secrets
+          - id: step-2-review
+            step: Review each finding to determine if it is a real secret or false positive
+          - id: step-3-verify
+            step: Verify that flagged items are NOT real secrets before adding to .gitleaksignore
+          - id: step-4-add
+            step: Add fingerprints for false positives to .gitleaksignore
+          - id: step-5-commit
+            step: Commit the updated .gitleaksignore file with your changes
+          - id: step-6-document
+            step: Consider adding inline gitleaks:allow comments for clarity when appropriate
+
+      - id: gitleaksignore-best-practices
+        title: .gitleaksignore best practices
+        rules:
+          - id: gitleaksignore.review-always
+            rule: Always review findings before adding fingerprints. Never blindly add items.
+          - id: gitleaksignore.document
+            rule: Add comments in code explaining why false positives were allowlisted.
+          - id: gitleaksignore.periodic-review
+            rule: Periodically review the .gitleaksignore file to ensure it's still accurate.
+          - id: gitleaksignore.prefer-inline
+            rule: Prefer inline gitleaks:allow comments for one-off exceptions rather than fingerprints.
+
+  - id: configuration-management
+    index: 4
+    title: Configuration Management (.gitleaks.toml)
+    category: standard
+    summary: How to configure gitleaks with .gitleaks.toml.
+    items:
+      - id: what-is-gitleaks-toml
+        title: What is .gitleaks.toml?
+        text: |
+          The `.gitleaks.toml` file is the primary configuration file for gitleaks. It allows
+          you to customize detection rules, define path exclusions, and create allowlist patterns.
+          This file must exist at the repository root for consistent behavior across local
+          development and CI environments.
+
+      - id: regex-based-rules
+        title: Regex-based rules
+        text: |
+          Gitleaks uses regex patterns to detect secrets. The default ruleset covers common
+          secret formats like AWS keys, GitHub tokens, and API keys. You can extend or modify
+          these rules in .gitleaks.toml.
+        sample_code:
+          description: Example of a custom rule in .gitleaks.toml.
+          language: toml
+          code: |
+            # Custom rule to detect internal API keys
+            [[rules]]
+            id = "internal-api-key"
+            description = "Internal API Key"
+            regex = '''INTERNAL_API_KEY_[A-Z0-9]{32}'''
+            keywords = ["internal_api_key"]
+
+      - id: custom-rules
+        title: Custom rules
+        text: |
+          You can define custom rules to detect organization-specific secret formats or
+          to adjust sensitivity for particular patterns.
+        sample_code:
+          description: Example of multiple custom rules.
+          language: toml
+          code: |
+            # Extend the default gitleaks config
+            [extend]
+            useDefault = true
+
+            # Custom rule for organization-specific tokens
+            [[rules]]
+            id = "org-specific-token"
+            description = "Organization Specific Token"
+            regex = '''ORG_TOKEN_[a-zA-Z0-9]{40}'''
+            tags = ["org", "token"]
+
+      - id: path-exclusions
+        title: Path exclusions
+        text: |
+          Use the allowlist section to exclude specific paths, files, or patterns from scanning.
+          This is useful for test fixtures, documentation examples, and generated files.
+        sample_code:
+          description: Example of path exclusions in .gitleaks.toml.
+          language: toml
+          code: |
+            [allowlist]
+            # Exclude specific paths using regex patterns
+            paths = [
+              '''\.tmp/.*''',
+              '''\.worktrees/.*''',
+              '''\.venv/.*''',
+              '''node_modules/.*''',
+              '''\.git-rewrite/.*''',
+              '''htmlcov/.*''',
+              '''openapi/.*''',
+            ]
+
+            # Exclude specific regex patterns (false positive patterns)
+            regexes = [
+              '''EXAMPLE_.*''',
+              '''PLACEHOLDER_.*''',
+            ]
+
+  - id: handling-real-secrets
+    index: 5
+    title: Handling Real Secrets
+    category: standard
+    summary: What to do when a real secret is detected.
+    items:
+      - id: real-secret-detected
+        title: If gitleaks flags a real secret
+        text: |
+          If gitleaks identifies an actual secret in your code, follow these steps
+          immediately. Do NOT attempt to allowlist or bypass the check.
+        steps:
+          - id: real-secret-step-1
+            priority: CRITICAL
+            step: Do NOT commit the secret. Remove it from your code immediately.
+
+          - id: real-secret-step-2
+            priority: CRITICAL
+            step: |
+              Rotate the secret. Assume it is compromised and generate a new credential.
+              This applies even if the secret was never pushed to the remote repository.
+
+          - id: real-secret-step-3
+            priority: HIGH
+            step: |
+              Move the secret to a secure location: environment variables, secret management
+              system (e.g., AWS Secrets Manager, HashiCorp Vault), or encrypted configuration.
+
+          - id: real-secret-step-4
+            priority: HIGH
+            step: |
+              Update your code to read the secret from the secure location at runtime rather
+              than hardcoding it.
+
+          - id: real-secret-step-5
+            priority: MEDIUM
+            step: |
+              Check git history to ensure the secret was never committed. If it was, contact
+              your security team immediately for incident response procedures.
+
+      - id: secret-already-committed
+        title: If a secret was already committed
+        text: |
+          If a real secret made it into git history (including remote branches):
+        emergency_steps:
+          - id: emergency-step-1
+            urgency: IMMEDIATE
+            action: Notify your security team or incident response contact immediately.
+
+          - id: emergency-step-2
+            urgency: IMMEDIATE
+            action: Rotate the compromised credential. Assume it has been exposed.
+
+          - id: emergency-step-3
+            urgency: HIGH
+            action: |
+              Do NOT simply remove the secret in a new commit. It will remain in git history.
+              Coordinate with your team to rewrite history (git filter-branch, BFG Repo-Cleaner)
+              or consider the repository compromised.
+
+          - id: emergency-step-4
+            urgency: HIGH
+            action: Review access logs for the compromised credential to check for unauthorized usage.
+
+          - id: emergency-step-5
+            urgency: MEDIUM
+            action: Document the incident for post-mortem and process improvement.
+
+      - id: secure-alternatives
+        title: Secure alternatives to hardcoded secrets
+        options:
+          - id: env-vars
+            option: Environment variables (.env files, never committed to git)
+          - id: secret-manager
+            option: Secret management systems (AWS Secrets Manager, Azure Key Vault, HashiCorp Vault)
+          - id: config-files
+            option: Encrypted configuration files (git-crypt, SOPS)
+          - id: ci-secrets
+            option: CI/CD platform secrets (GitHub Actions secrets, GitLab CI variables)
+          - id: runtime-injection
+            option: Runtime secret injection (Kubernetes secrets, Docker secrets)
+
+  - id: ci-integration
+    index: 6
+    title: CI Integration
+    category: standard
+    summary: How gitleaks runs in pre-commit hooks, lint pipelines, and CI.
+    items:
+      - id: lint-command
+        title: Running gitleaks via lint command
+        text: |
+          The canonical way to run the project-wide gitleaks check is through the lint command.
+          This integrates with the project's unified linting infrastructure and handles all configuration.
+        sample_code:
+          description: Run gitleaks through the project lint command.
+          language: bash
+          code: |
+            # Run gitleaks check via lint command (recommended)
+            uv run lint gitleaks
+
+            # Run all linters including gitleaks
+            uv run lint
+
+      - id: pre-commit-hook
+        title: Pre-commit hook
+        text: |
+          Gitleaks runs automatically as a pre-commit hook, scanning staged files
+          before each commit. This provides the earliest possible feedback to prevent
+          secrets from entering the repository.
+        sample_code:
+          description: Pre-commit hook configuration for gitleaks.
+          language: yaml
+          code: |
+            # .pre-commit-config.yaml
+            repos:
+              - repo: https://github.com/gitleaks/gitleaks
+                rev: v8.24.2
+                hooks:
+                  - id: gitleaks
+                    args: ['--config', '.gitleaks.toml']
+
+      - id: pre-commit-workflow
+        title: Pre-commit workflow
+        text: |
+          When you attempt to commit files, gitleaks will:
+        workflow:
+          - id: pre-commit-scan
+            action: Scan all staged files for potential secrets using regex patterns
+          - id: pre-commit-check-config
+            action: Apply rules and exclusions from .gitleaks.toml
+          - id: pre-commit-check-inline
+            action: Skip findings with gitleaks:allow comments
+          - id: pre-commit-check-ignore
+            action: Skip findings with fingerprints in .gitleaksignore
+          - id: pre-commit-block
+            action: Block the commit if new secrets are detected
+
+      - id: ci-pipeline-check
+        title: CI pipeline checks
+        text: |
+          In addition to pre-commit hooks, gitleaks runs in the CI pipeline to
+          catch any secrets that may have bypassed local checks (e.g., via --no-verify
+          or outdated hooks). The CI pipeline uses the project's lint command for
+          consistent behavior with local development.
+        sample_code:
+          description: CI workflow step for gitleaks using project lint command.
+          language: yaml
+          code: |
+            # .github/workflows/lint.yml (recommended - uses project lint infrastructure)
+            - name: Gitleaks secret scan
+              run: uv run lint gitleaks
+
+            # Alternative: direct gitleaks invocation
+            # - name: Gitleaks secret scan
+            #   run: gitleaks detect --config .gitleaks.toml
+
+      - id: ci-failure-handling
+        title: Handling CI failures
+        text: |
+          If the gitleaks CI check fails:
+        steps:
+          - id: ci-failure-review
+            step: Review the CI logs to identify which file(s) triggered the detection
+          - id: ci-failure-verify
+            step: Verify whether the flagged item is a real secret or false positive
+          - id: ci-failure-action
+            step: |
+              If real secret: Follow "Handling Real Secrets" procedure. Do NOT merge the PR.
+          - id: ci-failure-allowlist
+            step: |
+              If false positive: Add gitleaks:allow comment, update .gitleaksignore, or
+              configure path exclusion in .gitleaks.toml. Commit the fix and push to re-trigger CI.
+
+  - id: troubleshooting
+    index: 7
+    title: Troubleshooting
+    category: guidance
+    summary: Common issues and solutions.
+    items:
+      - id: false-positive-handling
+        title: Too many false positives
+        text: |
+          If gitleaks is flagging too many false positives in your workflow:
+        solutions:
+          - Use inline gitleaks:allow comments for specific instances
+          - Add fingerprints to .gitleaksignore after careful review
+          - Add path exclusions to .gitleaks.toml for directories with known false positives
+          - Add regex exclusions to .gitleaks.toml for patterns that consistently cause false positives
+          - Consider tuning or disabling specific rules in .gitleaks.toml
+
+      - id: hook-not-running
+        title: Pre-commit hook not running
+        text: |
+          If the gitleaks hook isn't running on commits:
+        checks:
+          - Verify hooks are installed with `pre-commit install`
+          - Check .pre-commit-config.yaml exists and includes the gitleaks hook
+          - Ensure you're not using `--no-verify` flag
+          - Update hooks with `pre-commit autoupdate`
+          - Verify gitleaks binary is installed and in PATH
+
+      - id: gitleaks-toml-conflicts
+        title: Configuration conflicts
+        text: |
+          If gitleaks behaves differently in local vs CI environments:
+        resolution:
+          - Ensure .gitleaks.toml is committed to the repository
+          - Verify both environments use --config .gitleaks.toml flag
+          - Check that the same gitleaks version is used (pinned in .pre-commit-config.yaml)
+          - Ensure .gitleaksignore is also committed if used
+
+      - id: performance-issues
+        title: Slow scanning on large repos
+        text: |
+          If scans are taking too long:
+        optimizations:
+          - Use path exclusions in .gitleaks.toml to skip large directories (node_modules, .venv)
+          - Avoid scanning git history unless specifically needed (use --no-git flag for file-only scans)
+          - Run scans only on changed files in CI rather than entire repository
+          - Consider using gitleaks in --staged mode for pre-commit hooks
+
+      - id: binary-not-found
+        title: Gitleaks binary not found
+        text: |
+          If you see "gitleaks: command not found" or similar error:
+        installation_options:
+          - id: homebrew
+            method: Homebrew (macOS/Linux)
+            command: brew install gitleaks
+          - id: go-install
+            method: Go install
+            command: go install github.com/gitleaks/gitleaks/v8@v8.24.2
+          - id: binary-download
+            method: Binary download
+            instruction: Download from https://github.com/gitleaks/gitleaks/releases
+          - id: pre-commit-managed
+            method: Pre-commit managed (automatic)
+            instruction: Pre-commit will automatically download gitleaks when the hook runs

@@ -209,3 +209,38 @@ sections:
           Major Python projects including FastAPI, Pydantic, and similar frameworks
           exclude test directories from strict mypy checking. This is a well-established
           pattern that balances type safety with test maintainability.
+
+  - id: external-dependencies
+    index: 5
+    title: External Binary Dependencies
+    category: setup
+    summary: External tools required by the lint pipeline that are not Python packages.
+    items:
+      - id: gitleaks-installation
+        title: Gitleaks Installation
+        text: |
+          Gitleaks is a Go binary required for secret scanning via `uv run lint gitleaks`.
+          The pre-commit hook automatically downloads gitleaks, but direct CLI usage
+          requires manual installation.
+        version: v8.24.2
+        version_note: Must match rev in .pre-commit-config.yaml
+        installation_methods:
+          - method: Homebrew (recommended for macOS/Linux)
+            command: brew install gitleaks
+            note: Version may differ from pinned; verify with `gitleaks version`
+          - method: Go install (for pinned version)
+            command: go install github.com/gitleaks/gitleaks/v8@v8.24.2
+            note: Requires Go 1.21+
+          - method: Binary download
+            url: https://github.com/gitleaks/gitleaks/releases/tag/v8.24.2
+            note: Download appropriate binary for your OS/arch
+          - method: Docker (no local install)
+            command: docker run -v $(pwd):/path zricethezav/gitleaks:v8.24.2 dir /path
+            note: Alternative to local installation
+        verification:
+          command: gitleaks version
+          expected_output: "8.24.2"
+        error_handling: |
+          If gitleaks is not installed, `uv run lint gitleaks` will emit:
+          "gitleaks CLI not found. Install with: brew install gitleaks (macOS/Linux)
+          or go install github.com/gitleaks/gitleaks/v8@v8.24.2"

@@ -27,6 +27,38 @@ repos:
             build/.*|
             dist/.*
           )$
+  # Gitleaks secret scanner - runs alongside detect-secrets for defense-in-depth.
+  # detect-secrets uses .secrets.baseline for allowlisting; gitleaks uses .gitleaks.toml.
+  # Both hooks share the same exclude patterns to ensure consistent file coverage.
+  # The --config argument explicitly loads .gitleaks.toml to guarantee config consistency.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.2
+    hooks:
+      - id: gitleaks
+        args: ['--config', '.gitleaks.toml']
+        exclude: |
+          (?x)^(
+            \.venv.*|
+            node_modules/.*|
+            uv\.lock|
+            htmlcov/.*|
+            \.coverage.*|
+            openapi/.*|
+            \.review/.*|
+            \.tmp/.*|
+            \.worktrees/.*|
+            \.tasks/store/.*|
+            \.huggingface/.*|
+            \.serena/.*|
+            \.mypy_cache/.*|
+            \.pytest_cache/.*|
+            \.ruff_cache/.*|
+            \.git-rewrite/.*|
+            to_adapt/.*|
+            \.idea/.*|
+            build/.*|
+            dist/.*
+          )$
   - repo: local
     hooks:
       - id: project-lint
