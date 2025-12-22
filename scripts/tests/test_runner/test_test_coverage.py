@@ -4807,7 +4807,12 @@ coverage_type = "usecase"
         assert tier_names == expected_default_tiers + expected_custom_tiers
 
     def test_no_set_operations_in_new_format_path(self) -> None:
-        """_load_tiers_from_new_format should not use set/sorted operations in code."""
+        """_load_tiers_from_new_format should not use set/sorted operations in code.
+
+        Note: This regex-based source scan is intentionally brittle. If the helper
+        implementation legitimately requires set()/sorted() in the future, update
+        this test accordingly.
+        """
         import inspect
         import re
 
@@ -4836,7 +4841,12 @@ coverage_type = "usecase"
             )
 
     def test_no_set_operations_in_legacy_format_path(self) -> None:
-        """_load_tiers_from_legacy_format should not use set/sorted operations in code."""
+        """_load_tiers_from_legacy_format should not use set/sorted operations in code.
+
+        Note: This regex-based source scan is intentionally brittle. If the helper
+        implementation legitimately requires set()/sorted() in the future, update
+        this test accordingly.
+        """
         import inspect
         import re
 
