@@ -1,0 +1,32 @@
+# Gitleaks configuration for ai-workflow
+# Expected gitleaks version: v8.24.2
+title = "Gitleaks configuration for ai-workflow"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Global allowlist"
+paths = [
+    '''\.venv.*''',
+    '''node_modules/''',
+    '''uv\.lock''',
+    '''htmlcov/''',
+    '''\.coverage.*''',
+    '''openapi/''',
+    '''\.review/''',
+    '''\.tmp/''',
+    '''\.worktrees/''',
+    '''\.tasks/store/''',
+    '''\.huggingface/''',
+    '''\.serena/''',
+    '''\.mypy_cache/''',
+    '''\.pytest_cache/''',
+    '''\.ruff_cache/''',
+    '''\.git-rewrite/''',
+    '''to_adapt/''',
+    '''\.idea/''',
+    '''build/''',
+    '''dist/''',
+    '''\.secrets\.baseline''',
+]

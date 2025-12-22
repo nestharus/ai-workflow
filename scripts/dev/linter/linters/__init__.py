@@ -4,6 +4,7 @@ from scripts.dev.linter.linters.actionlint import ActionlintLinter
 from scripts.dev.linter.linters.checkov import CheckovLinter
 from scripts.dev.linter.linters.detect_secrets import DetectSecretsLinter
 from scripts.dev.linter.linters.dotenvlint import DotenvlintLinter
+from scripts.dev.linter.linters.gitleaks import GitleaksLinter
 from scripts.dev.linter.linters.hadolint import HadolintLinter
 from scripts.dev.linter.linters.mypy import MypyLinter
 from scripts.dev.linter.linters.pymarkdown import PymarkdownLinter
@@ -24,6 +25,7 @@ LINTERS = [
     DotenvlintLinter(),
     CheckovLinter(),
     DetectSecretsLinter(),
+    GitleaksLinter(),
     TrivyLinter(),
 ]
 
@@ -41,6 +43,7 @@ __all__ = [
     "CheckovLinter",
     "DetectSecretsLinter",
     "DotenvlintLinter",
+    "GitleaksLinter",
     "HadolintLinter",
     "MypyLinter",
     "PymarkdownLinter",

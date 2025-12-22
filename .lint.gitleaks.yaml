@@ -1,0 +1,57 @@
+# Lint configuration for gitleaks file filtering
+# These settings mirror .lint.detect-secrets.yaml for consistency
+
+# File extensions to exclude from scanning (binary and non-text files)
+# Must match .lint.detect-secrets.yaml excluded_extensions
+excluded_extensions:
+  - .pyc
+  - .pyo
+  - .so
+  - .dll
+  - .exe
+  - .bin
+  - .png
+  - .jpg
+  - .jpeg
+  - .gif
+  - .ico
+  - .svg
+  - .woff
+  - .woff2
+  - .ttf
+  - .eot
+  - .zip
+  - .tar
+  - .gz
+  - .bz2
+  - .db
+  - .sqlite
+  - .sqlite3
+
+# Specific file names to exclude from scanning
+# Must match .lint.detect-secrets.yaml excluded_names
+excluded_names:
+  - uv.lock
+  - .secrets.baseline
+
+# Directories to exclude (must match .pre-commit-config.yaml detect-secrets exclude)
+excluded_dirs:
+  - .venv
+  - node_modules
+  - htmlcov
+  - .coverage
+  - openapi
+  - .review
+  - .tmp
+  - .worktrees
+  - .tasks/store
+  - .huggingface
+  - .serena
+  - .mypy_cache
+  - .pytest_cache
+  - .ruff_cache
+  - .git-rewrite
+  - to_adapt
+  - .idea
+  - build
+  - dist
