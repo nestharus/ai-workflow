@@ -202,18 +202,20 @@ class LineBranchTestStrategy(TestStrategy):
         config: TestTierConfig,
         coverage_db_path: Path,
         repo_root: Path,
-        first_tier: bool,
+        tier_coverage_file: Path,
     ) -> None:
         """Initialize LineBranchTestStrategy.
 
         Args:
             config: Test tier configuration
-            coverage_db_path: Path to coverage database
+            coverage_db_path: Path to coverage database (SQLite for results)
             repo_root: Repository root path
-            first_tier: If True, this is the first tier (don't use --cov-append)
+            tier_coverage_file: Path to tier-specific coverage data file
+                (e.g., .coverage/data_unit). Each tier writes to an isolated
+                file to prevent cross-tier contamination.
         """
         super().__init__(config, coverage_db_path, repo_root)
-        self.first_tier = first_tier
+        self.tier_coverage_file = tier_coverage_file
 
     def run_tests(self) -> None:
         """Execute tests with coverage instrumentation.
@@ -226,8 +228,7 @@ class LineBranchTestStrategy(TestStrategy):
 
         Expected Behavior:
             - pytest command construction (--cov, --cov-branch, --cov-context=test, etc.)
-            - COVERAGE_FILE environment variable pointing to .coverage/data
-            - --cov-append logic for non-first tiers
+            - COVERAGE_FILE environment variable pointing to tier-specific file
             - JUnit XML path generation and parsing
             - Database writes via coverage_db.write_test_result()
             - Console logging format (separator lines, tier name, source paths)
@@ -235,9 +236,11 @@ class LineBranchTestStrategy(TestStrategy):
         # Set up junit XML output path
         junit_xml_path = self.coverage_db_path.parent / f"junit_{self.config.name}.xml"
 
-        # Set up coverage data file path (inside .coverage directory)
-        coverage_data_file = self.coverage_db_path.parent / "data"
-        cov_env = {"COVERAGE_FILE": str(coverage_data_file)}
+        # Each tier writes to isolated coverage file to prevent cross-tier contamination
+        cov_env = {"COVERAGE_FILE": str(self.tier_coverage_file)}
+
+        # Log coverage file for debugging isolation issues
+        print(f"[{self.config.name}] COVERAGE_FILE={self.tier_coverage_file}")
 
         # Build pytest command with coverage
         cov_args = [f"--cov={path}" for path in self.config.source_paths]
@@ -258,10 +261,6 @@ class LineBranchTestStrategy(TestStrategy):
             "-p",
             "no:randomly",
         ]
-
-        # Add --cov-append for all tiers except the first one
-        if not self.first_tier:
-            cmd.append("--cov-append")
 
         print(f"\n{'=' * 70}")
         print(f"Running {self.config.name} tests: {self.config.test_path}")
@@ -326,8 +325,8 @@ class LineBranchTestStrategy(TestStrategy):
         json_output_path = self.repo_root / ".coverage" / f"temp_{self.config.name}.json"
         json_output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        coverage_data_file = self.coverage_db_path.parent / "data"
-        cov_env = {"COVERAGE_FILE": str(coverage_data_file)}
+        # Uses tier-specific coverage file for isolated per-tier analysis
+        cov_env = {"COVERAGE_FILE": str(self.tier_coverage_file)}
 
         # Generate JSON report for this tier's coverage
         cov_report_cmd = [
@@ -803,33 +802,46 @@ def create_strategy(
     config: TestTierConfig,
     coverage_db_path: Path,
     repo_root: Path,
-    first_tier: bool = False,
+    tier_coverage_file: Path | None = None,
     use_cases: list[UseCase] | None = None,
 ) -> TestStrategy:
     """Create appropriate strategy based on coverage type.
 
-    This factory function examines the config.coverage_type and instantiates
-    the correct strategy class. main() should use this function rather than
-    instantiating strategies directly.
+    IMPORTANT INVARIANT: This factory function is the ONLY location in the
+    codebase where config.coverage_type is inspected to choose between
+    LineBranchTestStrategy and IntegrationTestStrategy. The orchestrator
+    (main()) must NOT branch on coverage_type or reference strategy subclasses
+    directly. This separation ensures:
+
+    1. main() remains a thin orchestrator focused on lifecycle coordination
+    2. Coverage-type-specific logic is encapsulated in strategy classes
+    3. New coverage types can be added by extending this factory alone
 
     Args:
         config: Test tier configuration
-        coverage_db_path: Path to coverage database
+        coverage_db_path: Path to coverage database (SQLite)
         repo_root: Repository root path
-        first_tier: If True, this is the first tier (don't use --cov-append).
-            Only relevant for LineBranchTestStrategy.
+        tier_coverage_file: Path to tier-specific coverage data file. Required for
+            line_branch coverage types. Each tier writes to an isolated file
+            (e.g., .coverage/data_unit) to prevent cross-tier contamination.
+            Not used by usecase strategies.
         use_cases: List of use cases (required for usecase coverage type).
-            Only relevant for IntegrationTestStrategy.
+            Not used by line_branch strategies.
 
     Returns:
-        TestStrategy instance for the given coverage type
+        TestStrategy instance for the given coverage type. The caller (main())
+        should treat this as an opaque TestStrategy and invoke only the
+        lifecycle methods (run_tests, collect_results, validate, build_summary).
 
     Raises:
-        ValueError: If coverage_type is unknown or if use_cases is not provided
-            for coverage_type='usecase'
+        ValueError: If coverage_type is unknown, if tier_coverage_file is not
+            provided for line_branch type, or if use_cases is not provided
+            for usecase type.
     """
     if config.coverage_type == "line_branch":
-        return LineBranchTestStrategy(config, coverage_db_path, repo_root, first_tier)
+        if tier_coverage_file is None:
+            raise ValueError("tier_coverage_file is required for line_branch coverage type")
+        return LineBranchTestStrategy(config, coverage_db_path, repo_root, tier_coverage_file)
     elif config.coverage_type == "usecase":
         if use_cases is None:
             raise ValueError("use_cases must be provided for coverage_type='usecase'")

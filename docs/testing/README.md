@@ -23,6 +23,163 @@ This validates all test tiers with appropriate coverage requirements.
 
 Coverage thresholds are configured in project settings.
 
+## Tier Configuration
+
+Test tiers are configured in `pyproject.toml` under `[tool.test_coverage]`. There are two
+supported configuration formats: the recommended **tiers subtable format** and the legacy
+**flat section format**.
+
+### Tiers Subtable Format (Recommended)
+
+Define complete tier configurations using `[tool.test_coverage.tiers.<tier_name>]` subtables.
+This format allows all tier properties to be specified in one place:
+
+```toml
+[tool.test_coverage.tiers.unit]
+test_path = "tests/unit"
+source_paths = ["app"]
+coverage_type = "line_branch"
+min_line_overall = 80.0
+min_branch_overall = 70.0
+min_line_per_function = 60.0
+min_branch_per_function = 50.0
+skip_private_functions = false
+service_layer_only = false
+exclude_class_fields = true
+
+[tool.test_coverage.tiers.integration]
+test_path = "tests/integration"
+source_paths = ["app"]
+coverage_type = "usecase"
+min_usecase = 100.0
+```
+
+**Required fields** (for all tiers in the new format - derived from `TestTierConfig`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `test_path` | `str` | Path to the test directory (e.g., `"tests/unit"`) |
+| `source_paths` | `list[str]` | Paths to source directories (e.g., `["app", "lib"]`) |
+| `coverage_type` | `str` | Either `"line_branch"` or `"usecase"` |
+
+> **Note**: The `name` field is derived automatically from the TOML key (e.g., `[tool.test_coverage.tiers.unit]` sets `name="unit"`).
+
+**Optional fields** (with defaults from `TestTierConfig`):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `min_line_overall` | `float` | `80.0` | Minimum overall line coverage percentage |
+| `min_branch_overall` | `float` | `70.0` | Minimum overall branch coverage percentage |
+| `min_line_per_function` | `float` | `60.0` | Minimum line coverage per function percentage |
+| `min_branch_per_function` | `float` | `50.0` | Minimum branch coverage per function percentage |
+| `min_usecase` | `float` | `100.0` | Minimum use-case coverage percentage (for `usecase` type) |
+| `skip_private_functions` | `bool` | `False` | Skip functions starting with `_` (except `__init__`, `__call__`) |
+| `service_layer_only` | `bool` | `False` | Only validate files in `app/services/` |
+| `exclude_class_fields` | `bool` | `True` | Exclude class field annotations from coverage |
+
+**Tier Ordering**: Tiers execute in the order they appear in the TOML file. TOML preserves
+insertion order, so the first `[tool.test_coverage.tiers.<name>]` section runs first. This
+is important when tiers depend on each other (e.g., running unit tests before component tests
+to establish baseline coverage).
+
+### Legacy Flat Section Format (Deprecated)
+
+The legacy format uses individual `[tool.test_coverage.<tier>]` sections. Built-in tiers
+(unit, component, integration, scripts) have path/type defaults in `DEFAULT_TIER_CONFIGS`;
+you only specify threshold overrides.
+
+```toml
+[tool.test_coverage.unit]
+min_line_overall = 80.0
+min_branch_overall = 70.0
+```
+
+When `get_test_tiers()` detects this legacy format (no `[tool.test_coverage.tiers]` section),
+it prints a deprecation warning to stderr recommending migration.
+
+See [Migrating to the New Tier Format](#migrating-to-the-new-tier-format) for instructions.
+
+## Migrating to the New Tier Format
+
+If your `pyproject.toml` uses the legacy `[tool.test_coverage.<tier>]` format, you will see
+this deprecation warning when running `uv run test-coverage`:
+
+```txt
+DEPRECATION WARNING: Using legacy tier configuration format.
+Consider migrating to [tool.test_coverage.tiers.<tier_name>] format.
+See docs/testing/README.md for migration instructions.
+```
+
+### Migration Steps
+
+1. **Create the tiers subtable structure**: For each existing `[tool.test_coverage.<tier>]`
+   section, create a corresponding `[tool.test_coverage.tiers.<tier>]` section.
+
+2. **Add required fields**: In the new format, all tiers must specify `test_path`,
+   `source_paths`, and `coverage_type`. Copy these from `DEFAULT_TIER_CONFIGS` in
+   `scripts/dev/test_runner/test_coverage.py` or use the reference values below.
+
+3. **Copy threshold values**: Move `min_line_overall`, `min_branch_overall`, etc. from the
+   legacy section to the new tiers subtable.
+
+4. **Remove legacy sections**: After verifying the new configuration works, remove or
+   comment out the old `[tool.test_coverage.<tier>]` sections.
+
+### Reference: Built-in Tier Defaults
+
+Use these values when migrating built-in tiers:
+
+| Tier | test_path | source_paths | coverage_type | skip_private_functions | service_layer_only |
+|------|-----------|--------------|---------------|------------------------|-------------------|
+| unit | `tests/unit` | `["app"]` | `line_branch` | `false` | `false` |
+| component | `tests/unit` | `["app/services"]` | `line_branch` | `true` | `true` |
+| integration | `tests/integration` | `["app"]` | `usecase` | `false` | `false` |
+| scripts | `scripts/tests` | `["scripts", "tools"]` | `line_branch` | `true` | `false` |
+
+### Example Migration
+
+**Before (legacy format):**
+
+```toml
+[tool.test_coverage.unit]
+min_line_overall = 80.0
+min_branch_overall = 70.0
+min_line_per_function = 60.0
+min_branch_per_function = 50.0
+
+[tool.test_coverage.integration]
+min_usecase = 100.0
+```
+
+**After (tiers subtable format):**
+
+```toml
+[tool.test_coverage.tiers.unit]
+test_path = "tests/unit"
+source_paths = ["app"]
+coverage_type = "line_branch"
+min_line_overall = 80.0
+min_branch_overall = 70.0
+min_line_per_function = 60.0
+min_branch_per_function = 50.0
+skip_private_functions = false
+service_layer_only = false
+exclude_class_fields = true
+
+[tool.test_coverage.tiers.integration]
+test_path = "tests/integration"
+source_paths = ["app"]
+coverage_type = "usecase"
+min_usecase = 100.0
+```
+
+### Validation
+
+After migration, run `uv run test-coverage` to verify:
+* No deprecation warning appears (confirms new format is detected)
+* All tiers execute with expected thresholds
+* Tier order matches your TOML file order
+
 ### --no-validate Behavior
 
 The `--no-validate` flag skips coverage threshold validation, but its effect differs between tier types:
