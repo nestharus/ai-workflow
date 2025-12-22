@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import sys
 
-from scripts.pr import linear_dao
+from scripts.clients.linear_client import LinearClientError, _get_default_client
 
 MAX_BRANCH_NAME_LENGTH = 50
 
@@ -26,7 +26,7 @@ def get_expected_branch_name_command(ticket_id: str) -> int:
         Exit code (0 for success).
     """
     try:
-        info = linear_dao.get_ticket_info(ticket_id)
+        info = _get_default_client().get_ticket_info(ticket_id)
         branch_name = info.get("branch_name")
 
         if not branch_name:
@@ -48,6 +48,6 @@ def get_expected_branch_name_command(ticket_id: str) -> int:
         )
         return 0
 
-    except linear_dao.LinearAPIError as e:
+    except LinearClientError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
