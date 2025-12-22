@@ -7,15 +7,15 @@ readme = "README.md"
 requires-python = ">=3.14.0,<3.15.0"
 # Allow patch-level updates; review dependencies monthly for minor/major releases.
 dependencies = [
-    "fastapi>=0.121.2,<0.122.0",
+    "fastapi>=0.121.3,<0.122.0",
     "uvicorn[standard]>=0.38.0,<0.39.0",
-    "orjson>=3.11.4,<3.12.0",
-    "pydantic>=2.12.4,<2.13.0",
+    "orjson>=3.11.5,<3.12.0",
+    "pydantic>=2.12.5,<2.13.0",
     "pydantic-settings>=2.12.0,<2.13.0",
-    "surrealdb>=1.0.6,<1.1.0",
+    "surrealdb>=1.0.7,<1.1.0",
     "elasticsearch>=9.2.0,<9.3.0",
     "anyio>=4.11.0,<4.12.0",
-    "duckdb>=1.4.2,<1.5.0",
+    "duckdb>=1.4.3,<1.5.0",
 ]
 
 [build-system]
@@ -45,8 +45,8 @@ test = [
 dev = [
     { include-group = "test" },
     "mypy>=1.18.2,<1.19.0",
-    "ruff>=0.14.5,<0.15",
-    "checkov>=3.2.494,<3.3",
+    "ruff>=0.14.10,<0.15",
+    "checkov>=3.2.495,<3.3",
     "pymarkdownlnt==0.9.33",
     "pre-commit>=4.4.0,<4.5",
     "hadolint-coatl>=2.14.0,<2.15.0",
@@ -58,7 +58,7 @@ dev = [
 # Knowledge management system dependencies (scripts/knowledge/)
 knowledge = [
     { include-group = "test" },
-    "duckdb>=1.4.2,<1.5.0",
+    "duckdb>=1.4.3,<1.5.0",
     "pyyaml>=6.0.3,<6.1.0",
     "spacy>=3.8.11,<3.9.0",
     "transformers>=4.57.3,<4.58.0",
@@ -424,4 +424,3 @@ min_branch_per_function = 50.0
 # min_branch_overall = 85.0             # Stricter than default (70.0)
 # min_line_per_function = 80.0          # Stricter than default (60.0)
 # min_branch_per_function = 70.0        # Stricter than default (50.0)
-
