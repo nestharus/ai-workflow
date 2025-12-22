@@ -43,8 +43,17 @@ from scripts.dev.linter.base import (
 )
 
 GITLEAKS_CLI_NOT_FOUND = (
-    "gitleaks CLI not found. Install with: brew install gitleaks (macOS) "
-    "or see https://github.com/gitleaks/gitleaks#installing"
+    "gitleaks CLI not found. Install with: brew install gitleaks (macOS/Linux) "
+    "or go install github.com/gitleaks/gitleaks/v8@v8.24.2"
+)
+GITLEAKS_CONFIG_MISSING = (
+    ".gitleaks.toml not found in repository root. "
+    "This config file is required for consistent secret detection rules. "
+    "Create the file or restore it from version control."
+)
+GITLEAKS_CONFIG_UNREADABLE = (
+    ".gitleaks.toml exists but cannot be read (permission denied). "
+    "Check file permissions and ensure it is readable."
 )
 LINT_GITLEAKS_CONFIG = REPO_ROOT / ".lint.gitleaks.yaml"
 GITLEAKS_CONFIG = REPO_ROOT / ".gitleaks.toml"
@@ -73,14 +82,24 @@ class GitleaksLinter(BaseLinter):
             print(GITLEAKS_CLI_NOT_FOUND, file=sys.stderr)
             return LinterResult(success=False, message=GITLEAKS_CLI_NOT_FOUND)
 
-        # Build base command with config if present
-        cmd = [gitleaks_bin, "dir"]
-        if GITLEAKS_CONFIG.exists():
-            cmd.extend(["--config", str(GITLEAKS_CONFIG)])
+        # Verify .gitleaks.toml config exists and is readable
+        if not GITLEAKS_CONFIG.exists():
+            print(GITLEAKS_CONFIG_MISSING, file=sys.stderr)
+            return LinterResult(success=False, message=GITLEAKS_CONFIG_MISSING)
+
+        try:
+            # Attempt to read the config to verify permissions
+            GITLEAKS_CONFIG.read_text()
+        except PermissionError:
+            print(GITLEAKS_CONFIG_UNREADABLE, file=sys.stderr)
+            return LinterResult(success=False, message=GITLEAKS_CONFIG_UNREADABLE)
+
+        # Build base command with config
+        cmd = [gitleaks_bin, "dir", "--config", str(GITLEAKS_CONFIG)]
 
         if files is not None:
-            # Load exclusion config from .lint.gitleaks.yaml
-            config = load_yaml_config(LINT_GITLEAKS_CONFIG)
+            # Load exclusion config from .lint.gitleaks.yaml (optional, defaults to empty)
+            config = load_yaml_config(LINT_GITLEAKS_CONFIG) if LINT_GITLEAKS_CONFIG.exists() else {}
             excluded_extensions = set(config.get("excluded_extensions", []))
             excluded_names = set(config.get("excluded_names", []))
             excluded_dirs = {REPO_ROOT / d for d in config.get("excluded_dirs", [])}
@@ -125,7 +144,7 @@ class GitleaksLinter(BaseLinter):
             if result.stdout:
                 print(result.stdout)
             if result.stderr:
-                print(result.stderr)
+                print(result.stderr, file=sys.stderr)
             return LinterResult(
                 success=False,
                 message="gitleaks found potential secrets",

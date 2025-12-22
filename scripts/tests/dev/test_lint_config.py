@@ -560,8 +560,9 @@ class TestRunDetectSecrets:
         """Should exclude binary file extensions (.pyc, .png, .db, etc.)."""
         # Create test files
         fs.create_file(
-            str(fake_repo / "script.py"), contents="API_KEY = 'test'"
-        )  # pragma: allowlist secret
+            str(fake_repo / "script.py"),
+            contents="API_KEY = 'test'",  # pragma: allowlist secret
+        )
         fs.create_file(str(fake_repo / "script.pyc"), contents=b"\x00\x01\x02")
         fs.create_file(str(fake_repo / "image.png"), contents=b"\x89PNG")
         fs.create_file(str(fake_repo / "data.db"), contents=b"SQLite")
@@ -1069,8 +1070,9 @@ class TestRunGitleaks:
         """Should exclude binary file extensions (.pyc, .png, .db, etc.)."""
         # Create test files
         fs.create_file(
-            str(fake_repo / "script.py"), contents="API_KEY = 'test'"
-        )  # pragma: allowlist secret
+            str(fake_repo / "script.py"),
+            contents="API_KEY = 'test'",  # pragma: allowlist secret
+        )
         fs.create_file(str(fake_repo / "script.pyc"), contents=b"\x00\x01\x02")
         fs.create_file(str(fake_repo / "image.png"), contents=b"\x89PNG")
         fs.create_file(str(fake_repo / "data.db"), contents=b"SQLite")
@@ -1157,8 +1159,9 @@ class TestRunGitleaks:
         fs.create_file(str(fake_repo / "main.py"), contents="print('hello')")
         fs.create_dir(str(fake_repo / ".tmp"))
         fs.create_file(
-            str(fake_repo / ".tmp" / "secret.py"), contents="API_KEY = 'test'"
-        )  # pragma: allowlist secret
+            str(fake_repo / ".tmp" / "secret.py"),
+            contents="API_KEY = 'test'",  # pragma: allowlist secret
+        )
         fs.create_dir(str(fake_repo / ".worktrees" / "branch"))
         fs.create_file(
             str(fake_repo / ".worktrees" / "branch" / "config.py"),
@@ -1282,6 +1285,54 @@ class TestRunGitleaks:
         # Result should indicate success
         assert result.success is True
 
+    def test_missing_lint_config_uses_defaults(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+    ) -> None:
+        """Should work without .lint.gitleaks.yaml by using empty defaults.
+
+        This ensures consistent behavior between file-filtered mode (which loads
+        exclusion config) and full-scan mode (which doesn't). When the config file
+        is missing, file-filtered mode should proceed without exclusions rather
+        than crashing.
+        """
+        # Create only .gitleaks.toml (not .lint.gitleaks.yaml)
+        gitleaks_toml = fake_repo / ".gitleaks.toml"
+        fs.create_file(str(gitleaks_toml), contents="[[ rules ]]")
+        fs.create_file(str(fake_repo / "test.py"), contents="print('hello')")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+
+        # Note: .lint.gitleaks.yaml does NOT exist
+        missing_lint_config = fake_repo / ".lint.gitleaks.yaml"
+
+        with (
+            patch("scripts.dev.linter.linters.gitleaks.REPO_ROOT", fake_repo),
+            patch("scripts.dev.linter.linters.gitleaks.GITLEAKS_CONFIG", gitleaks_toml),
+            patch(
+                "scripts.dev.linter.linters.gitleaks.LINT_GITLEAKS_CONFIG",
+                missing_lint_config,
+            ),
+            patch(
+                "scripts.dev.linter.linters.gitleaks.get_executable",
+                return_value="/usr/bin/gitleaks",
+            ),
+            patch("subprocess.run", return_value=mock_result) as mock_run,
+        ):
+            linter = GitleaksLinter()
+            # Should NOT raise an exception when .lint.gitleaks.yaml is missing
+            result = linter.run(files=["test.py"])
+
+        # Should succeed and scan the file
+        assert mock_run.called, "subprocess.run should be called"
+        assert result.success is True
+        cmd = mock_run.call_args[0][0]
+        assert any("test.py" in arg for arg in cmd), "test.py should be scanned"
+
     # --- Negative-path tests (configuration errors, binary availability, exit codes) ---
 
     def test_missing_gitleaks_binary_returns_failure_with_install_instructions(
@@ -1314,7 +1365,7 @@ class TestRunGitleaks:
         # Linter must return failure (not raise exception) with actionable message
         assert result.success is False
         assert "brew install gitleaks" in result.message
-        assert "https://github.com/gitleaks/gitleaks" in result.message
+        assert "go install github.com/gitleaks/gitleaks/v8@v8.24.2" in result.message
 
     def test_missing_gitleaks_binary_subprocess_filenotfound(
         self,
@@ -1358,8 +1409,11 @@ class TestRunGitleaks:
         self,
         fake_repo: Path,
         fs: FakeFilesystem,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Should return failure with helpful message when .gitleaks.toml is missing."""
+        from scripts.dev.linter.linters.gitleaks import GITLEAKS_CONFIG_MISSING
+
         # Create lint config but NOT .gitleaks.toml
         lint_config = fake_repo / ".lint.gitleaks.yaml"
         fs.create_file(
@@ -1367,11 +1421,6 @@ class TestRunGitleaks:
             contents="excluded_extensions: []\nexcluded_names: []\nexcluded_dirs: []\n",
         )
         fs.create_file(str(fake_repo / "test.py"), contents="print('hello')")
-
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = ""
-        mock_result.stderr = ""
 
         # The gitleaks.toml file does not exist
         missing_config = fake_repo / ".gitleaks.toml"
@@ -1384,16 +1433,73 @@ class TestRunGitleaks:
                 "scripts.dev.linter.linters.gitleaks.get_executable",
                 return_value="/usr/bin/gitleaks",
             ),
-            patch("subprocess.run", return_value=mock_result) as mock_run,
+            patch("subprocess.run") as mock_run,
         ):
             linter = GitleaksLinter()
-            linter.run(files=["test.py"])
+            result = linter.run(files=["test.py"])
 
-        # When config is missing, gitleaks still runs but without --config flag
-        # This test verifies the command doesn't include the missing config
-        assert mock_run.called
-        cmd = mock_run.call_args[0][0]
-        assert "--config" not in cmd, "Should not include --config when .gitleaks.toml is missing"
+        # When config is missing, linter should NOT call subprocess.run
+        assert not mock_run.called, "subprocess.run should not be called when config is missing"
+
+        # Linter should return failure with actionable message
+        assert result.success is False
+        assert result.message == GITLEAKS_CONFIG_MISSING
+        assert ".gitleaks.toml" in result.message
+        assert "restore" in result.message.lower() or "create" in result.message.lower()
+
+        # Should also print to stderr
+        captured = capsys.readouterr()
+        assert ".gitleaks.toml" in captured.err
+
+    def test_unreadable_gitleaks_config_returns_failure(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Should return failure with helpful message when .gitleaks.toml cannot be read."""
+        from scripts.dev.linter.linters.gitleaks import GITLEAKS_CONFIG_UNREADABLE
+
+        # Create lint config and .gitleaks.toml
+        lint_config = fake_repo / ".lint.gitleaks.yaml"
+        fs.create_file(
+            str(lint_config),
+            contents="excluded_extensions: []\nexcluded_names: []\nexcluded_dirs: []\n",
+        )
+        gitleaks_toml = fake_repo / ".gitleaks.toml"
+        fs.create_file(str(gitleaks_toml), contents="[[ rules ]]")
+        fs.create_file(str(fake_repo / "test.py"), contents="print('hello')")
+
+        # Create a mock config path that exists but raises PermissionError on read
+        mock_config = MagicMock()
+        mock_config.exists.return_value = True
+        mock_config.read_text.side_effect = PermissionError("Permission denied")
+        mock_config.__str__ = MagicMock(return_value=str(gitleaks_toml))
+
+        with (
+            patch("scripts.dev.linter.linters.gitleaks.REPO_ROOT", fake_repo),
+            patch("scripts.dev.linter.linters.gitleaks.GITLEAKS_CONFIG", mock_config),
+            patch("scripts.dev.linter.linters.gitleaks.LINT_GITLEAKS_CONFIG", lint_config),
+            patch(
+                "scripts.dev.linter.linters.gitleaks.get_executable",
+                return_value="/usr/bin/gitleaks",
+            ),
+            patch("subprocess.run") as mock_run,
+        ):
+            linter = GitleaksLinter()
+            result = linter.run(files=["test.py"])
+
+        # When config is unreadable, linter should NOT call subprocess.run
+        assert not mock_run.called, "subprocess.run should not be called when config is unreadable"
+
+        # Linter should return failure with actionable message
+        assert result.success is False
+        assert result.message == GITLEAKS_CONFIG_UNREADABLE
+        assert "permission" in result.message.lower()
+
+        # Should also print to stderr
+        captured = capsys.readouterr()
+        assert "permission" in captured.err.lower() or ".gitleaks.toml" in captured.err
 
     def test_exit_code_0_returns_success(
         self,
@@ -1435,8 +1541,9 @@ class TestRunGitleaks:
     ) -> None:
         """Exit code 1 should indicate secrets were found."""
         fs.create_file(
-            str(fake_repo / "secret.py"), contents="API_KEY = 'secret'"
-        )  # pragma: allowlist secret
+            str(fake_repo / "secret.py"),
+            contents="API_KEY = 'secret'",  # pragma: allowlist secret
+        )
 
         mock_result = MagicMock()
         mock_result.returncode = 1
