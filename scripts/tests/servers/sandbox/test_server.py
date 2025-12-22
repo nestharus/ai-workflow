@@ -547,6 +547,9 @@ class TestEarlyShutdown:
             patch(
                 "scripts.servers.sandbox.server.os.chmod",
             ),
+            patch(
+                "scripts.servers.sandbox.server.os.unlink",
+            ),
         ):
             # start() should return quickly because shutdown was already requested
             # The event should be set immediately

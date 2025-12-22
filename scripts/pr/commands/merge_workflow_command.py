@@ -97,13 +97,14 @@ def merge_workflow_command(
             # No remaining PRs, mark as Done
             print(f"No remaining open PRs. Marking {ticket_id} as Done...")
             try:
-                info = _get_default_client().get_ticket_info(ticket_id)
+                client = _get_default_client()
+                info = client.get_ticket_info(ticket_id)
                 team_id = info.get("team_id")
                 if team_id:
-                    done_state_id = _get_default_client().get_done_state_id(team_id)
+                    done_state_id = client.get_done_state_id(team_id)
                     issue_uuid = info.get("id")
                     if issue_uuid:
-                        _get_default_client().set_ticket_state(issue_uuid, done_state_id)
+                        client.set_ticket_state(issue_uuid, done_state_id)
                         print(f"Marked {ticket_id} as Done")
                     else:
                         errors.append(f"Could not get issue UUID for {ticket_id}")
