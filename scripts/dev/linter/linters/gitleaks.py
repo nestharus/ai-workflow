@@ -55,6 +55,8 @@ GITLEAKS_CONFIG_UNREADABLE = (
     ".gitleaks.toml exists but cannot be read (permission denied). "
     "Check file permissions and ensure it is readable."
 )
+GITLEAKS_TIMEOUT_SECONDS = 300  # 5 minute timeout to prevent indefinite hangs
+GITLEAKS_TIMEOUT_MSG = f"gitleaks scan timed out after {GITLEAKS_TIMEOUT_SECONDS // 60} minutes"
 LINT_GITLEAKS_CONFIG = REPO_ROOT / ".lint.gitleaks.yaml"
 GITLEAKS_CONFIG = REPO_ROOT / ".gitleaks.toml"
 
@@ -99,7 +101,14 @@ class GitleaksLinter(BaseLinter):
 
         if files is not None:
             # Load exclusion config from .lint.gitleaks.yaml (optional, defaults to empty)
-            config = load_yaml_config(LINT_GITLEAKS_CONFIG) if LINT_GITLEAKS_CONFIG.exists() else {}
+            config = {}
+            if LINT_GITLEAKS_CONFIG.exists():
+                try:
+                    config = load_yaml_config(LINT_GITLEAKS_CONFIG)
+                except Exception as e:
+                    msg = f"Invalid or unreadable {LINT_GITLEAKS_CONFIG.name}: {e}"
+                    print(msg, file=sys.stderr)
+                    return LinterResult(success=False, message=msg)
             excluded_extensions = set(config.get("excluded_extensions", []))
             excluded_names = set(config.get("excluded_names", []))
             excluded_dirs = {REPO_ROOT / d for d in config.get("excluded_dirs", [])}
@@ -130,7 +139,16 @@ class GitleaksLinter(BaseLinter):
 
         # Run gitleaks
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT))
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=str(REPO_ROOT),
+                timeout=GITLEAKS_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            print(GITLEAKS_TIMEOUT_MSG, file=sys.stderr)
+            return LinterResult(success=False, message=GITLEAKS_TIMEOUT_MSG)
         except FileNotFoundError:
             # Binary was found but execution failed (race condition or path issue)
             print(GITLEAKS_CLI_NOT_FOUND, file=sys.stderr)

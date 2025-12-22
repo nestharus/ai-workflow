@@ -1333,6 +1333,105 @@ class TestRunGitleaks:
         cmd = mock_run.call_args[0][0]
         assert any("test.py" in arg for arg in cmd), "test.py should be scanned"
 
+    def test_invalid_lint_config_returns_failure(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Should return failure with clear error when .lint.gitleaks.yaml is invalid YAML.
+
+        This ensures that malformed config files don't crash the linter with an unhandled
+        exception but instead return a LinterResult with success=False and clear message.
+        """
+        # Create .gitleaks.toml (required)
+        gitleaks_toml = fake_repo / ".gitleaks.toml"
+        fs.create_file(str(gitleaks_toml), contents="[[ rules ]]")
+        fs.create_file(str(fake_repo / "test.py"), contents="print('hello')")
+
+        # Create invalid YAML config
+        invalid_lint_config = fake_repo / ".lint.gitleaks.yaml"
+        fs.create_file(str(invalid_lint_config), contents="invalid: yaml: content: [")
+
+        with (
+            patch("scripts.dev.linter.linters.gitleaks.REPO_ROOT", fake_repo),
+            patch("scripts.dev.linter.linters.gitleaks.GITLEAKS_CONFIG", gitleaks_toml),
+            patch(
+                "scripts.dev.linter.linters.gitleaks.LINT_GITLEAKS_CONFIG",
+                invalid_lint_config,
+            ),
+            patch(
+                "scripts.dev.linter.linters.gitleaks.get_executable",
+                return_value="/usr/bin/gitleaks",
+            ),
+            patch("subprocess.run") as mock_run,
+        ):
+            linter = GitleaksLinter()
+            result = linter.run(files=["test.py"])
+
+        # subprocess.run should NOT be called when config is invalid
+        assert not mock_run.called, "subprocess.run should not be called when config is invalid"
+
+        # Linter should return failure with actionable message
+        assert result.success is False
+        assert ".lint.gitleaks.yaml" in result.message
+
+        # Should also print to stderr
+        captured = capsys.readouterr()
+        assert ".lint.gitleaks.yaml" in captured.err
+
+    def test_unreadable_lint_config_returns_failure(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Should return failure with clear error when .lint.gitleaks.yaml cannot be read.
+
+        This ensures permission errors on the lint config file are handled gracefully
+        rather than propagating as unhandled exceptions.
+        """
+        # Create .gitleaks.toml (required)
+        gitleaks_toml = fake_repo / ".gitleaks.toml"
+        fs.create_file(str(gitleaks_toml), contents="[[ rules ]]")
+        fs.create_file(str(fake_repo / "test.py"), contents="print('hello')")
+
+        # Create a mock config path that exists but raises PermissionError on load
+        mock_lint_config = MagicMock()
+        mock_lint_config.exists.return_value = True
+        mock_lint_config.name = ".lint.gitleaks.yaml"
+
+        with (
+            patch("scripts.dev.linter.linters.gitleaks.REPO_ROOT", fake_repo),
+            patch("scripts.dev.linter.linters.gitleaks.GITLEAKS_CONFIG", gitleaks_toml),
+            patch(
+                "scripts.dev.linter.linters.gitleaks.LINT_GITLEAKS_CONFIG",
+                mock_lint_config,
+            ),
+            patch(
+                "scripts.dev.linter.linters.gitleaks.get_executable",
+                return_value="/usr/bin/gitleaks",
+            ),
+            patch(
+                "scripts.dev.linter.linters.gitleaks.load_yaml_config",
+                side_effect=PermissionError("Permission denied"),
+            ),
+            patch("subprocess.run") as mock_run,
+        ):
+            linter = GitleaksLinter()
+            result = linter.run(files=["test.py"])
+
+        # subprocess.run should NOT be called when config is unreadable
+        assert not mock_run.called, "subprocess.run should not be called when config is unreadable"
+
+        # Linter should return failure with actionable message
+        assert result.success is False
+        assert ".lint.gitleaks.yaml" in result.message
+
+        # Should also print to stderr
+        captured = capsys.readouterr()
+        assert ".lint.gitleaks.yaml" in captured.err
+
     # --- Negative-path tests (configuration errors, binary availability, exit codes) ---
 
     def test_missing_gitleaks_binary_returns_failure_with_install_instructions(
@@ -1636,6 +1735,49 @@ class TestRunGitleaks:
         # Should mention version compatibility
         assert "version" in result.message.lower() or "v8" in result.message.lower()
 
+    def test_timeout_returns_failure_with_timeout_message(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        gitleaks_config: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Should return failure with clear message when gitleaks scan times out."""
+        import subprocess
+
+        from scripts.dev.linter.linters.gitleaks import GITLEAKS_TIMEOUT_MSG
+
+        fs.create_file(str(fake_repo / "test.py"), contents="print('hello')")
+
+        with (
+            patch("scripts.dev.linter.linters.gitleaks.REPO_ROOT", fake_repo),
+            patch("scripts.dev.linter.linters.gitleaks.GITLEAKS_CONFIG", gitleaks_config),
+            patch(
+                "scripts.dev.linter.linters.gitleaks.LINT_GITLEAKS_CONFIG",
+                fake_repo / ".lint.gitleaks.yaml",
+            ),
+            patch(
+                "scripts.dev.linter.linters.gitleaks.get_executable",
+                return_value="/usr/bin/gitleaks",
+            ),
+            patch(
+                "subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd="gitleaks", timeout=300),
+            ),
+        ):
+            linter = GitleaksLinter()
+            result = linter.run(files=["test.py"])
+
+        # Linter should return failure with timeout message
+        assert result.success is False
+        assert result.message == GITLEAKS_TIMEOUT_MSG
+        assert "timed out" in result.message.lower()
+        assert "5 minutes" in result.message
+
+        # Should also print to stderr
+        captured = capsys.readouterr()
+        assert "timed out" in captured.err.lower()
+
 
 # --- Cross-Tool Consistency Tests ---
 
@@ -1683,7 +1825,10 @@ class TestSecretScannerConsistency:
 
     def test_excluded_dirs_cover_precommit_patterns(self, gitleaks_config: dict) -> None:
         """Gitleaks excluded_dirs must cover all directories from pre-commit detect-secrets."""
-        # Canonical directories from .pre-commit-config.yaml detect-secrets exclude
+        # Canonical directories from .pre-commit-config.yaml detect-secrets exclude.
+        # MAINTAINER NOTE: Keep this set in sync with the detect-secrets hook's
+        # exclude regex in .pre-commit-config.yaml. If that config changes,
+        # update this set accordingly.
         canonical_dirs = {
             ".venv",
             "node_modules",
