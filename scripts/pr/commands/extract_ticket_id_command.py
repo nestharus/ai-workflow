@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import sys
 
-from scripts.pr import git_dao, linear_dao
+from scripts.clients.linear_client import LinearClientError, _get_default_client
+from scripts.pr import git_dao
 
 from .util import _extract_ticket_id_from_branch
 
@@ -48,7 +49,7 @@ def extract_ticket_id_command(branch_name: str | None = None) -> int:
 
     # Validate against Linear API
     try:
-        info = linear_dao.get_ticket_info(ticket_id)
+        info = _get_default_client().get_ticket_info(ticket_id)
         # If we get here without exception, ticket exists
         print(
             json.dumps(
@@ -62,7 +63,7 @@ def extract_ticket_id_command(branch_name: str | None = None) -> int:
             )
         )
         return 0
-    except linear_dao.LinearAPIError:
+    except LinearClientError:
         print(
             json.dumps(
                 {

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 
-from scripts.pr import linear_dao
+from scripts.clients.linear_client import LinearClientError, _get_default_client
 
 from .util import _is_valid_branch_name
 
@@ -25,7 +25,7 @@ def is_valid_branch_name_command(ticket_id: str, branch_name: str) -> int:
         Exit code (0 for valid, 1 for invalid or error).
     """
     try:
-        info = linear_dao.get_ticket_info(ticket_id)
+        info = _get_default_client().get_ticket_info(ticket_id)
         expected_base = info.get("branch_name")
 
         if not expected_base:
@@ -48,6 +48,6 @@ def is_valid_branch_name_command(ticket_id: str, branch_name: str) -> int:
 
         return 0 if is_valid else 1
 
-    except linear_dao.LinearAPIError as e:
+    except LinearClientError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1

@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from scripts.pr import git_dao, github_dao, linear_dao
+from scripts.clients.linear_client import LinearClientError, _get_default_client
+from scripts.pr import git_dao, github_dao
 
 from .util import _get_open_prs_for_ticket
 
@@ -82,7 +83,7 @@ def merge_workflow_command(
         remaining_prs: list[dict[str, Any]] = []
         try:
             remaining_prs = _get_open_prs_for_ticket(ticket_id, exclude_pr=pr_number)
-        except linear_dao.LinearAPIError as e:
+        except LinearClientError as e:
             errors.append(f"Error checking remaining PRs: {e}")
             print(f"Warning: {errors[-1]}", file=sys.stderr)
 
@@ -96,25 +97,21 @@ def merge_workflow_command(
             # No remaining PRs, mark as Done
             print(f"No remaining open PRs. Marking {ticket_id} as Done...")
             try:
-                info = linear_dao.get_ticket_info(ticket_id)
+                info = _get_default_client().get_ticket_info(ticket_id)
                 team_id = info.get("team_id")
                 if team_id:
-                    done_state_id = linear_dao.get_done_state_id(team_id)
+                    done_state_id = _get_default_client().get_done_state_id(team_id)
                     issue_uuid = info.get("id")
                     if issue_uuid:
-                        success = linear_dao.set_ticket_state(issue_uuid, done_state_id)
-                        if success:
-                            print(f"Marked {ticket_id} as Done")
-                        else:
-                            errors.append(f"Failed to mark {ticket_id} as Done")
-                            print(f"Warning: {errors[-1]}", file=sys.stderr)
+                        _get_default_client().set_ticket_state(issue_uuid, done_state_id)
+                        print(f"Marked {ticket_id} as Done")
                     else:
                         errors.append(f"Could not get issue UUID for {ticket_id}")
                         print(f"Warning: {errors[-1]}", file=sys.stderr)
                 else:
                     errors.append(f"Could not get team ID for {ticket_id}")
                     print(f"Warning: {errors[-1]}", file=sys.stderr)
-            except linear_dao.LinearAPIError as e:
+            except LinearClientError as e:
                 errors.append(f"Linear API error: {e}")
                 print(f"Warning: {errors[-1]}", file=sys.stderr)
 

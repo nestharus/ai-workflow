@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 
-from scripts.pr import linear_dao
+from scripts.clients.linear_client import LinearClient, LinearClientError
 
 
 def list_unresolved_comments_command(ticket_id: str) -> int:
@@ -18,10 +18,10 @@ def list_unresolved_comments_command(ticket_id: str) -> int:
         Exit code (0 for success).
     """
     try:
-        client = linear_dao.LinearClient()
+        client = LinearClient()
         result = client.list_unresolved_comments(ticket_id)
         print(json.dumps(result, indent=2))
         return 0
-    except linear_dao.LinearAPIError as e:
+    except LinearClientError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1

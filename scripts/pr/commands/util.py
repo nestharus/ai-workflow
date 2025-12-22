@@ -7,7 +7,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from scripts.pr import git_dao, github_dao, linear_dao
+from scripts.clients.linear_client import _get_default_client
+from scripts.pr import git_dao, github_dao
 
 MAX_BRANCH_NAME_LENGTH = 50
 
@@ -209,7 +210,7 @@ def _get_open_prs_for_ticket(ticket_id: str, exclude_pr: int | None = None) -> l
     Returns:
         List of dicts with 'url' and 'number' for each open PR.
     """
-    attachments = linear_dao.fetch_github_attachments(ticket_id)
+    attachments = _get_default_client().fetch_github_attachments(ticket_id)
 
     # Extract PR candidates from attachments
     pr_candidates: list[tuple[str, int]] = []

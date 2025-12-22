@@ -10,7 +10,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from scripts.pr import git_dao, github_dao, linear_dao
+from scripts.clients.linear_client import LinearClientError, _get_default_client
+from scripts.pr import git_dao, github_dao
 
 from .util import (
     _find_existing_branch_for_ticket,
@@ -53,7 +54,7 @@ def rebase_finish_command(identifier: str | None = None) -> int:
                 print(f"Error: Could not determine branch for PR #{pr_id}", file=sys.stderr)
                 return 1
         elif _looks_like_ticket_id(identifier):
-            info = linear_dao.get_ticket_info(identifier)
+            info = _get_default_client().get_ticket_info(identifier)
             linear_branch_name = info.get("branch_name")
             if not linear_branch_name:
                 print(f"Error: No branch name for ticket {identifier}", file=sys.stderr)
@@ -107,7 +108,7 @@ def rebase_finish_command(identifier: str | None = None) -> int:
         print(json.dumps(result, indent=2))
         return 0
 
-    except linear_dao.LinearAPIError as e:
+    except LinearClientError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
     except github_dao.GraphQLError as e:

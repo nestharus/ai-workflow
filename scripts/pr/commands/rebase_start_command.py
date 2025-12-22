@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from scripts.pr import git_dao, github_dao, linear_dao
+from scripts.clients.linear_client import LinearClientError, _get_default_client
+from scripts.pr import git_dao, github_dao
 
 MAX_BRANCH_NAME_LENGTH = 50
 
@@ -141,7 +142,7 @@ def rebase_start_command(identifier: str | None = None) -> int:
             pr_number = pr_id
 
         elif _looks_like_ticket_id(identifier):
-            info = linear_dao.get_ticket_info(identifier)
+            info = _get_default_client().get_ticket_info(identifier)
             linear_branch_name = info.get("branch_name")
 
             if not linear_branch_name:
@@ -153,7 +154,7 @@ def rebase_start_command(identifier: str | None = None) -> int:
                 branch_name = _get_expected_branch_name(linear_branch_name)
 
             # Try to get base_branch from PR if one exists
-            attachments = linear_dao.fetch_github_attachments(identifier)
+            attachments = _get_default_client().fetch_github_attachments(identifier)
             pr_number = None
             base_branch = "main"
             for attachment in attachments:
@@ -284,7 +285,7 @@ def rebase_start_command(identifier: str | None = None) -> int:
         print(json.dumps(result, indent=2))
         return 0
 
-    except linear_dao.LinearAPIError as e:
+    except LinearClientError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
     except github_dao.GraphQLError as e:

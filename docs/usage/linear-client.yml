@@ -6,10 +6,9 @@ scope: Developers using the Linear client for issue management and automation
 description: |
   Comprehensive guide for setting up and using the Linear client wrappers. This project
   provides a canonical Python LinearClient at scripts/clients/linear_client.py with direct
-  GraphQL support, plus a backwards-compatible facade at scripts/pr/linear_dao.py for
-  existing scripts.
+  GraphQL support.
 
-  For new code, prefer importing from scripts.clients.linear_client directly.
+  Import from scripts.clients.linear_client for all Linear API interactions.
 domain:
   - linear
   - automation
@@ -17,8 +16,6 @@ domain:
   - python
   - typescript
 primary_runtime_references:
-  - path: scripts/pr/linear_dao.py
-    description: Pure stdlib LinearClient using urllib/json (no external dependencies)
   - path: scripts/clients/linear_client.py
     description: Python wrapper for Linear TypeScript CLI scripts
   - path: scripts/clients/linear/src/client.ts
@@ -29,100 +26,36 @@ external_references:
   - url: https://linear.app/settings/api
     title: Linear API Settings
 
-two_client_distinction:
-  title: Two-Client Architecture
+client_architecture:
+  title: Single-Client Architecture
   summary: |
-    This project provides two LinearClient implementations with different backends,
-    trade-offs, and use cases. Choose the appropriate client based on your needs.
+    This project provides a single canonical LinearClient implementation at
+    scripts/clients/linear_client.py. This client uses TypeScript scripts
+    under the hood for full Linear SDK capabilities.
 
-  comparison_table:
-    headers:
-      - Class
-      - Location
-      - Role
-      - Use Case
-    rows:
-      - class: LinearClient
-        location: scripts/clients/linear_client.py
-        role: Canonical implementation
-        use_case: New Python code - direct GraphQL client with full API coverage
-
-      - class: LinearClient (re-export)
-        location: scripts/pr/linear_dao.py
-        role: Backwards-compatible facade
-        use_case: Existing PR tooling scripts only - re-exports from linear_client.py
-
-  decision_guide:
-    title: Quick Decision Checklist
-    summary: |
-      Use these rules of thumb to quickly determine which client to use:
-    rules:
-      - rule: "No Node.js available? Use stdlib client."
-        explanation: |
-          If your environment cannot run Node.js (e.g., minimal containers,
-          restricted CI), use scripts/pr/linear_dao.py
-      - rule: "Simple PR tooling or merge scripts? Use stdlib client."
-        explanation: |
-          For straightforward automation like updating ticket states or adding
-          comments during PR workflows, the stdlib client is simpler and faster
-      - rule: "CI/CD pipeline with minimal dependencies? Use stdlib client."
-        explanation: |
-          Reduces build times and avoids Node.js installation steps in
-          CI environments
-      - rule: "Need advanced SDK features or rich type information? Use Node client."
-        explanation: |
-          When you need the full Linear SDK capabilities, pagination abstractions,
-          or TypeScript type safety, use scripts/clients/linear_client.py
-      - rule: "Already have Node.js toolchain in your project? Use Node client."
-        explanation: If your project already uses Node.js and TypeScript, the Node client integrates more naturally
+  location: scripts/clients/linear_client.py
+  role: Canonical implementation
+  use_case: All Python code requiring Linear API access
 
   when_to_use:
-    canonical_client:
-      import: from scripts.clients.linear_client import LinearClient
-      description: |
-        Use this client for all new Python code. This is the canonical, single-source-of-truth
-        implementation with full API coverage. Ideal for:
-        - Any new Python scripts or automation
-        - PR tooling and merge scripts (new code)
-        - CI/CD pipelines
-        - All environments (no Node.js required)
+    import: from scripts.clients.linear_client import LinearClient
+    description: |
+      Use this client for all Python code. This is the canonical, single-source-of-truth
+      implementation with full API coverage. Ideal for:
+      - Any Python scripts or automation
+      - PR tooling and merge scripts
+      - CI/CD pipelines
 
-    facade_client:
-      import: from scripts.pr.linear_dao import LinearClient  # For existing scripts only
-      description: |
-        This is a backwards-compatible facade that re-exports LinearClient from
-        scripts.clients.linear_client. Use only for:
-        - Existing scripts that already import from linear_dao
-        - Gradual migration of legacy code
-
-        NOTE: New code should import directly from scripts.clients.linear_client.
-        The facade import is shown here only for documentation of existing code.
-
-  trade_offs:
-    stdlib_client:
-      name: stdlib LinearClient (linear_dao.py)
-      advantages:
-        - No external dependencies (pure Python stdlib)
-        - Simpler deployment - no Node.js runtime required
-        - Faster cold-start (no Node.js subprocess overhead)
-        - Smaller footprint
-      limitations:
-        - Limited to basic GraphQL operations
-        - Direct GraphQL API calls (no SDK abstractions)
-        - Manual pagination handling for some operations
-
-    node_client:
-      name: Node LinearClient (linear_client.py)
-      advantages:
-        - Full Linear SDK capabilities via TypeScript CLI
-        - Access to all SDK methods and types
-        - Automatic pagination and error handling from SDK
-        - Rich type information from SDK
-      limitations:
-        - Requires Node.js runtime (v18.0.0+)
-        - TypeScript compilation step required (npm run build)
-        - Additional subprocess overhead
-        - Larger dependency footprint
+  capabilities:
+    name: LinearClient (linear_client.py)
+    advantages:
+      - Full Linear SDK capabilities via TypeScript CLI
+      - Access to all SDK methods and types
+      - Automatic pagination and error handling from SDK
+      - Rich type information from SDK
+    requirements:
+      - Requires Node.js runtime (v18.0.0+)
+      - TypeScript compilation step required (npm run build)
 
 sections:
   - id: setup
@@ -228,11 +161,11 @@ sections:
 
   - id: python-api
     index: 4
-    title: LinearClient API Reference (scripts/clients/linear_client.py) - Canonical
+    title: LinearClient API Reference (scripts/clients/linear_client.py)
     category: api
     summary: |
       Complete reference for the canonical Python LinearClient. This is the single
-      source-of-truth implementation for Linear API access in Python. All new code
+      source-of-truth implementation for Linear API access in Python. All code
       should import from this module.
     items:
       - id: python-api-initialization
@@ -532,447 +465,8 @@ sections:
                   elif e.code == "UNAUTHORIZED":
                       print("Invalid API key")
 
-  - id: stdlib-api
-    index: 5
-    title: stdlib LinearClient API Reference (scripts/pr/linear_dao.py)
-    category: api
-    facade_notice: |
-      IMPORTANT: scripts/pr/linear_dao.py is now a thin, backwards-compatible facade
-      that re-exports LinearClient from scripts/clients/linear_client.py.
-
-      For new code, import directly from the canonical location:
-        from scripts.clients.linear_client import LinearClient, LinearClientError
-
-      The linear_dao module exists only to maintain compatibility with existing scripts.
-    summary: |
-      Reference for the backwards-compatible facade module. This module re-exports
-      LinearClient and related types from scripts/clients/linear_client.py.
-    items:
-      - id: stdlib-api-initialization
-        title: Client Initialization
-        examples:
-          - description: Initialize with explicit API key (PREFERRED - canonical import)
-            language: python
-            code: |
-              from scripts.clients.linear_client import LinearClient
-
-              client = LinearClient(api_key="lin_api_your_key_here")
-
-          - description: Initialize with explicit API key (legacy facade import - existing scripts only)
-            language: python
-            code: |
-              # LEGACY: For existing scripts only - new code should use scripts.clients.linear_client
-              # This import path is maintained for backwards compatibility
-              from scripts.pr.linear_dao import LinearClient
-
-              client = LinearClient(api_key="lin_api_your_key_here")
-
-          - description: Initialize from environment variable
-            language: python
-            code: |
-              from scripts.clients.linear_client import LinearClient
-
-              # LINEAR_API_KEY must be set in environment
-              client = LinearClient()
-
-          - description: Error handling for missing API key
-            language: python
-            code: |
-              from scripts.clients.linear_client import LinearClient, LinearClientError
-
-              try:
-                  client = LinearClient()
-              except LinearClientError as e:
-                  print(f"Error: {e.code} - {e.message}")
-                  # Error: MISSING_API_KEY - LINEAR_API_KEY must be provided or set in environment
-
-      - id: stdlib-api-list-teams
-        title: List Teams
-        method: list_teams(include_archived=False)
-        description: List all teams in the Linear workspace with full pagination support.
-        parameters:
-          - name: include_archived
-            type: bool
-            default: "False"
-            description: Whether to include archived teams
-        returns:
-          type: list[dict[str, Any]]
-          fields:
-            - id (str): Team UUID
-            - name (str): Team name
-            - key (str): Team key (e.g., "NES")
-            - description (str): Team description
-            - createdAt (str): ISO timestamp when team was created
-            - updatedAt (str): ISO timestamp when team was last updated
-            - archivedAt (str | None): ISO timestamp when archived
-            - private (bool): Whether the team is private
-            - timezone (str): Team timezone
-        example:
-          language: python
-          code: |
-            teams = client.list_teams()
-            for team in teams:
-                print(f"{team['key']}: {team['name']}")
-
-      - id: stdlib-api-list-projects
-        title: List Projects
-        method: list_projects(team_id=None, include_archived=False)
-        description: |
-          List all projects in the Linear workspace with full pagination support.
-          Optionally filter by team.
-        parameters:
-          - name: team_id
-            type: str | None
-            default: "None"
-            description: Optional team UUID, key, or name to filter projects
-          - name: include_archived
-            type: bool
-            default: "False"
-            description: Whether to include archived projects
-        returns:
-          type: list[dict[str, Any]]
-          fields:
-            - id (str): Project UUID
-            - name (str): Project name
-            - description (str): Project description
-            - url (str): Project URL
-            - slugId (str): Project slug ID
-            - startedAt (str | None): ISO timestamp when started
-            - completedAt (str | None): ISO timestamp when completed
-            - targetDate (str | None): Target completion date
-            - createdAt (str): ISO timestamp when created
-            - updatedAt (str): ISO timestamp when last updated
-            - archivedAt (str | None): ISO timestamp when archived
-            - state (str): Project state
-            - lead (dict | None): Project lead user info
-            - teams (dict): List of associated teams
-        example:
-          language: python
-          code: |
-            # List all projects
-            projects = client.list_projects()
-
-            # List projects for a specific team
-            projects = client.list_projects(team_id="NES")
-
-      - id: stdlib-api-create-issue
-        title: Create Issue
-        method: |
-          create_issue(title, team, description=None, assignee_id=None,
-                       project_id=None, priority=None, state_id=None,
-                       parent_id=None, label_ids=None)
-        description: Create a new issue in Linear.
-        parameters:
-          - name: title
-            type: str
-            required: true
-            description: The title of the issue
-          - name: team
-            type: str
-            required: true
-            description: Team identifier - UUID, team key (e.g., "NES"), or team name
-          - name: description
-            type: str | None
-            required: false
-            description: Issue description in Markdown format
-          - name: assignee_id
-            type: str | None
-            required: false
-            description: UUID of the user to assign the issue to
-          - name: project_id
-            type: str | None
-            required: false
-            description: UUID of the project to add the issue to
-          - name: priority
-            type: int | None
-            required: false
-            description: Priority level (0=No priority, 1=Urgent, 2=High, 3=Normal, 4=Low)
-          - name: state_id
-            type: str | None
-            required: false
-            description: UUID of the workflow state
-          - name: parent_id
-            type: str | None
-            required: false
-            description: UUID of the parent issue (for sub-issues)
-          - name: label_ids
-            type: list[str] | None
-            required: false
-            description: List of label UUIDs to apply
-        returns:
-          type: dict[str, Any]
-          fields:
-            - id (str): Issue UUID
-            - identifier (str): Issue identifier (e.g., "NES-123")
-            - title (str): Issue title
-            - url (str): Issue URL
-            - branchName (str): Suggested branch name
-        example:
-          language: python
-          code: |
-            issue = client.create_issue(
-                title="Implement user authentication",
-                team="NES",  # Can be UUID, key, or name
-                description="Add JWT-based authentication",
-                priority=2
-            )
-            print(f"Created: {issue['identifier']}")
-
-      - id: stdlib-api-update-issue
-        title: Update Issue
-        method: |
-          update_issue(issue_id, title=None, description=None, assignee_id=None,
-                       project_id=None, priority=None, state_id=None,
-                       parent_id=None, label_ids=None)
-        description: |
-          Update an existing issue in Linear. At least one field must be provided.
-        parameters:
-          - name: issue_id
-            type: str
-            required: true
-            description: UUID or identifier of the issue to update
-          - name: title
-            type: str | None
-            required: false
-            description: New title for the issue
-          - name: description
-            type: str | None
-            required: false
-            description: New description in Markdown format
-          - name: assignee_id
-            type: str | None
-            required: false
-            description: UUID of the user to assign
-          - name: project_id
-            type: str | None
-            required: false
-            description: UUID of the project
-          - name: priority
-            type: int | None
-            required: false
-            description: Priority level (0-4)
-          - name: state_id
-            type: str | None
-            required: false
-            description: UUID of the workflow state
-          - name: parent_id
-            type: str | None
-            required: false
-            description: UUID of the parent issue
-          - name: label_ids
-            type: list[str] | None
-            required: false
-            description: List of label UUIDs
-        returns:
-          type: dict[str, Any]
-          fields:
-            - id (str): Issue UUID
-            - identifier (str): Issue identifier
-            - title (str): Issue title
-            - url (str): Issue URL
-            - updatedAt (str): ISO timestamp when updated
-        example:
-          language: python
-          code: |
-            updated = client.update_issue(
-                issue_id="NES-24",
-                title="Updated title",
-                priority=1
-            )
-
-      - id: stdlib-api-create-comment
-        title: Create Comment
-        method: create_comment(issue_id, body)
-        description: Create a comment on a Linear issue.
-        parameters:
-          - name: issue_id
-            type: str
-            required: true
-            description: Issue identifier (e.g., "NES-123") or UUID
-          - name: body
-            type: str
-            required: true
-            description: Comment body in Markdown format
-        returns:
-          type: dict[str, Any]
-          fields:
-            - id (str): Comment UUID
-            - body (str): Comment body text
-            - createdAt (str): ISO timestamp when created
-            - issueId (str): UUID of the issue
-            - user (dict | None): User info (id, name, email)
-        example:
-          language: python
-          code: |
-            comment = client.create_comment(
-                issue_id="NES-24",
-                body="Implementation complete, ready for review"
-            )
-
-      - id: stdlib-api-list-comments
-        title: List Comments
-        method: list_comments(issue_id)
-        description: List all comments for a Linear issue with full pagination support.
-        parameters:
-          - name: issue_id
-            type: str
-            required: true
-            description: Issue identifier (e.g., "NES-123") or UUID
-        returns:
-          type: dict[str, Any]
-          fields:
-            - issueId (str): UUID of the issue
-            - issueIdentifier (str): Issue identifier (e.g., "NES-123")
-            - comments (list): List of comment dictionaries
-            - totalCount (int): Total number of comments
-        example:
-          language: python
-          code: |
-            result = client.list_comments("NES-24")
-            for comment in result['comments']:
-                print(f"{comment['user']['name']}: {comment['body']}")
-
-      - id: stdlib-api-fetch-github-attachments
-        title: Fetch GitHub Attachments
-        method: fetch_github_attachments(ticket_id)
-        description: Fetch all GitHub PR attachments for a ticket with pagination.
-        parameters:
-          - name: ticket_id
-            type: str
-            required: true
-            description: Linear ticket ID (e.g., "NES-123")
-        returns:
-          type: list[dict[str, Any]]
-          fields:
-            - url (str): GitHub PR URL
-            - title (str): Attachment title
-        example:
-          language: python
-          code: |
-            attachments = client.fetch_github_attachments("NES-24")
-            for att in attachments:
-                print(f"{att['title']}: {att['url']}")
-
-      - id: stdlib-api-get-ticket-info
-        title: Get Ticket Info
-        method: get_ticket_info(ticket_id)
-        description: Get basic ticket info from Linear.
-        parameters:
-          - name: ticket_id
-            type: str
-            required: true
-            description: Linear ticket ID (e.g., "NES-123")
-        returns:
-          type: dict[str, Any]
-          fields:
-            - id (str): Issue UUID
-            - identifier (str): Issue identifier
-            - title (str): Issue title
-            - branch_name (str): Suggested branch name
-            - state (str): Current state name
-            - state_type (str): State type (e.g., "completed")
-            - team_id (str): Team UUID
-        example:
-          language: python
-          code: |
-            info = client.get_ticket_info("NES-24")
-            print(f"State: {info['state']} ({info['state_type']})")
-
-      - id: stdlib-api-get-done-state-id
-        title: Get Done State ID
-        method: get_done_state_id(team_id)
-        description: Get the 'Done' workflow state ID for a team.
-        parameters:
-          - name: team_id
-            type: str
-            required: true
-            description: Linear team UUID
-        returns:
-          type: str
-          description: The workflow state ID for 'Done' state
-        example:
-          language: python
-          code: |
-            done_state_id = client.get_done_state_id(team_id)
-            print(f"Done state ID: {done_state_id}")
-
-      - id: stdlib-api-set-ticket-state
-        title: Set Ticket State
-        method: set_ticket_state(issue_uuid, state_id)
-        description: Update a Linear ticket's state.
-        parameters:
-          - name: issue_uuid
-            type: str
-            required: true
-            description: Linear issue UUID (not the identifier like NES-123)
-          - name: state_id
-            type: str
-            required: true
-            description: Target workflow state ID
-        returns:
-          type: dict[str, Any]
-          description: Dictionary containing the updated issue state with stateName key
-        raises:
-          - LinearClientError if the API call fails or update is unsuccessful
-        example:
-          language: python
-          code: |
-            # Get ticket info first to get UUIDs
-            info = client.get_ticket_info("NES-24")
-            done_id = client.get_done_state_id(info['team_id'])
-            result = client.set_ticket_state(info['id'], done_id)
-            print(f"State changed to: {result['stateName']}")
-
-      - id: stdlib-api-error-handling
-        title: Error Handling
-        description: |
-          All methods raise LinearAPIError on failure. LinearAPIError is now an alias
-          for LinearClientError from scripts.clients.linear_client. Error strings now
-          include a code prefix: "CODE: message" (e.g., "NOT_FOUND: Ticket not found:
-          INVALID-999"). Code that parses error messages should be updated accordingly.
-        exception:
-          name: LinearAPIError
-          parent: RuntimeError
-          description: |
-            Raised when any Linear API operation fails. This is an alias for
-            LinearClientError from scripts.clients.linear_client.
-          attributes:
-            - name: code
-              type: str
-              description: Error code identifying the type of error (e.g., "NOT_FOUND", "MISSING_API_KEY")
-            - name: message
-              type: str
-              description: Human-readable error message
-        error_format_note: |
-          LinearAPIError is now an alias for LinearClientError. Error strings now include
-          a code prefix: "CODE: message" (e.g., "MISSING_API_KEY: LINEAR_API_KEY environment
-          variable not set"). Code that parses error messages should be updated accordingly.
-        error_conditions:
-          - LINEAR_API_KEY environment variable not set
-          - HTTP errors from the Linear API
-          - Network connection failures
-          - Invalid or malformed API responses
-          - GraphQL errors returned by the API
-          - Resource not found (tickets, teams, etc.)
-        example:
-          language: python
-          code: |
-            # Preferred import for new code
-            from scripts.clients.linear_client import LinearClient, LinearClientError
-
-            # Or for existing scripts using the facade
-            from scripts.pr.linear_dao import LinearClient, LinearAPIError
-
-            client = LinearClient()
-            try:
-                info = client.get_ticket_info("INVALID-999")
-            except LinearClientError as e:  # or LinearAPIError (same class)
-                print(f"Error code: {e.code}")
-                print(f"Error message: {e.message}")
-                print(f"Full error: {e}")  # "NOT_FOUND: Ticket not found: INVALID-999"
-
   - id: python-cli
-    index: 6
+    index: 5
     title: Python CLI (uv run linear)
     category: api
     summary: Simple command-line interface for common Linear operations.
@@ -1026,7 +520,7 @@ sections:
             example: uv run linear create-comment NES-24 --body "Implementation complete"
 
   - id: typescript-cli
-    index: 7
+    index: 6
     title: TypeScript CLI Scripts
     category: api
     summary: Direct usage of TypeScript CLI scripts (advanced).
@@ -1126,7 +620,7 @@ sections:
             example: node dist/list-teams.js
 
   - id: migration-guide
-    index: 8
+    index: 7
     title: Migration Guide
     category: guide
     summary: Guidance for migrating from direct API calls to the Linear client.

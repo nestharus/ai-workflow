@@ -11,7 +11,8 @@ import json
 import sys
 from pathlib import Path
 
-from scripts.pr import git_dao, linear_dao
+from scripts.clients.linear_client import LinearClientError, _get_default_client
+from scripts.pr import git_dao
 
 from .util import (
     _find_existing_branch_for_ticket,
@@ -52,7 +53,7 @@ def checkout_worktree_command(identifier: str) -> int:
     if is_ticket_id:
         # Fetch branch name from Linear and find existing branch
         try:
-            info = linear_dao.get_ticket_info(identifier)
+            info = _get_default_client().get_ticket_info(identifier)
             linear_branch_name = info.get("branch_name")
             if not linear_branch_name:
                 print(
@@ -78,7 +79,7 @@ def checkout_worktree_command(identifier: str) -> int:
                     file=sys.stderr,
                 )
                 return 1
-        except linear_dao.LinearAPIError as e:
+        except LinearClientError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
     else:
