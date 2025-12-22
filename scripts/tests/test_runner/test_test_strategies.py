@@ -41,11 +41,12 @@ class TestCreateStrategyFactory:
         )
         db_path = tmp_path / "coverage.db"
 
-        strategy = create_strategy(config, db_path, tmp_path, first_tier=True)
+        tier_coverage_file = tmp_path / "data_unit"
+        strategy = create_strategy(config, db_path, tmp_path, tier_coverage_file=tier_coverage_file)
 
         assert isinstance(strategy, LineBranchTestStrategy)
         assert strategy.config == config
-        assert strategy.first_tier is True
+        assert strategy.tier_coverage_file == tier_coverage_file
 
     def test_creates_integration_strategy(self, tmp_path: Path) -> None:
         """Factory returns IntegrationTestStrategy for usecase type."""
@@ -112,7 +113,9 @@ class TestLineBranchTestStrategyLifecycle:
             min_line_per_function=80.0,
             min_branch_per_function=70.0,
         )
-        return LineBranchTestStrategy(config, tmp_path / "coverage.db", tmp_path, first_tier=True)
+        return LineBranchTestStrategy(
+            config, tmp_path / "coverage.db", tmp_path, tmp_path / "data_unit"
+        )
 
     def test_collect_results_before_run_tests_raises(
         self, strategy: LineBranchTestStrategy
@@ -237,7 +240,7 @@ class TestLineBranchTestStrategyBuildSummary:
             min_branch_per_function=70.0,
         )
         strategy = LineBranchTestStrategy(
-            config, tmp_path / "coverage.db", tmp_path, first_tier=True
+            config, tmp_path / "coverage.db", tmp_path, tmp_path / "data_unit"
         )
 
         # Manually set state as if lifecycle completed
@@ -299,7 +302,7 @@ class TestLineBranchTestStrategyBuildSummary:
             min_branch_per_function=70.0,
         )
         strategy = LineBranchTestStrategy(
-            config, tmp_path / "coverage.db", tmp_path, first_tier=True
+            config, tmp_path / "coverage.db", tmp_path, tmp_path / "data_unit"
         )
 
         # Set state as if lifecycle completed with passing coverage
@@ -343,7 +346,7 @@ class TestLineBranchTestStrategyBuildSummary:
             min_branch_per_function=70.0,
         )
         strategy = LineBranchTestStrategy(
-            config, tmp_path / "coverage.db", tmp_path, first_tier=True
+            config, tmp_path / "coverage.db", tmp_path, tmp_path / "data_unit"
         )
 
         strategy._tests_ran = True
@@ -386,7 +389,7 @@ class TestLineBranchTestStrategyBuildSummary:
             min_branch_per_function=70.0,
         )
         strategy = LineBranchTestStrategy(
-            config, tmp_path / "coverage.db", tmp_path, first_tier=True
+            config, tmp_path / "coverage.db", tmp_path, tmp_path / "data_unit"
         )
 
         strategy._tests_ran = True
@@ -580,7 +583,7 @@ class TestLineBranchTestStrategyValidationFailures:
             min_branch_per_function=70.0,
         )
         strategy = LineBranchTestStrategy(
-            config, tmp_path / "coverage.db", tmp_path, first_tier=True
+            config, tmp_path / "coverage.db", tmp_path, tmp_path / "data_unit"
         )
 
         # Set state as if lifecycle completed with low coverage
@@ -632,7 +635,7 @@ class TestLineBranchTestStrategyValidationFailures:
             min_branch_per_function=70.0,
         )
         strategy = LineBranchTestStrategy(
-            config, tmp_path / "coverage.db", tmp_path, first_tier=True
+            config, tmp_path / "coverage.db", tmp_path, tmp_path / "data_unit"
         )
 
         strategy._tests_ran = True
@@ -683,7 +686,7 @@ class TestLineBranchTestStrategyValidationFailures:
             min_branch_per_function=70.0,
         )
         strategy = LineBranchTestStrategy(
-            config, tmp_path / "coverage.db", tmp_path, first_tier=True
+            config, tmp_path / "coverage.db", tmp_path, tmp_path / "data_unit"
         )
 
         strategy._tests_ran = True
@@ -744,7 +747,7 @@ class TestLineBranchTestStrategyValidationFailures:
             min_branch_per_function=70.0,
         )
         strategy = LineBranchTestStrategy(
-            config, tmp_path / "coverage.db", tmp_path, first_tier=True
+            config, tmp_path / "coverage.db", tmp_path, tmp_path / "data_unit"
         )
 
         strategy._tests_ran = True

@@ -14,11 +14,10 @@ jobs:
           fetch-depth: 0
 
       - name: Check if PR branch is rebased on target
+        env:
+          TARGET_BRANCH: ${{ github.base_ref }}
+          PR_BRANCH: ${{ github.head_ref }}
         run: |
-          # Get the target branch (base)
-          TARGET_BRANCH="${{ github.base_ref }}"
-          PR_BRANCH="${{ github.head_ref }}"
-
           echo "Target branch: $TARGET_BRANCH"
           echo "PR branch: $PR_BRANCH"
 

@@ -12,6 +12,11 @@ coverage metrics for each testing level.
 | **Integration** | `tests/integration/` | Use-case | Use cases from YAML | Fast |
 | **Scripts** | `scripts/tests/` | Line/branch per function | `scripts/` | Fast |
 
+> **Configuration**: Tier paths, thresholds, and behavior are configured in `pyproject.toml`.
+> See [Tier Configuration](README.md#tier-configuration) for the full configuration reference
+> and [Migrating to the New Tier Format](README.md#migrating-to-the-new-tier-format) for
+> migration instructions if using the legacy format.
+
 ## Unit Tests
 
 * **Location**: `tests/unit/`
@@ -45,6 +50,31 @@ functions within services are implementation details and are excluded from cover
 
 Integration tests validate user-facing scenarios defined in the use-case registry. Each test must be
 linked to a use-case with `@pytest.mark.usecase("UC-XXX-NNN")`.
+
+### Custom Tiers
+
+You can define additional test tiers beyond the four built-in tiers. Custom tiers are useful for:
+* End-to-end (e2e) tests with different coverage requirements
+* Performance or smoke tests with separate threshold settings
+* Module-specific test suites
+
+Example custom tier configuration:
+
+```toml
+[tool.test_coverage.tiers.e2e]
+test_path = "tests/e2e"
+source_paths = ["app"]
+coverage_type = "usecase"
+min_usecase = 100.0
+```
+
+Run a specific custom tier with:
+
+```bash
+uv run test-coverage --tier e2e
+```
+
+See [Tier Configuration](README.md#tier-configuration) for required and optional fields.
 
 ## Coverage Rules
 

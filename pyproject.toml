@@ -311,18 +311,60 @@ source = [
     "scripts/",
 ]
 
-# Custom coverage settings used by test_coverage.py
+# ==============================================================================
+# TIER CONFIGURATION REFERENCE
+# ==============================================================================
 #
-# Each tier can configure:
+# DOCUMENTATION:
+# Full configuration reference: docs/testing/README.md#tier-configuration
+# Migration guide: docs/testing/README.md#migrating-to-the-new-tier-format
+#
+# ------------------------------------------------------------------------------
+# NEW FORMAT (recommended):
+# ------------------------------------------------------------------------------
+# Define complete tier configurations in [tool.test_coverage.tiers.<tier_name>]
+# All fields can be specified in one place:
+#
+# [tool.test_coverage.tiers.unit]
+# test_path = "tests/unit"
+# source_paths = ["app"]
+# coverage_type = "line_branch"
+# min_line_overall = 80.0
+# min_branch_overall = 70.0
+# min_line_per_function = 60.0
+# min_branch_per_function = 50.0
+# skip_private_functions = false
+# service_layer_only = false
+# exclude_class_fields = true
+#
+# For detailed documentation on configuration format and migration,
+# see docs/testing/README.md (Tier Configuration section).
+#
+# ------------------------------------------------------------------------------
+# LEGACY FORMAT (deprecated, still supported):
+# ------------------------------------------------------------------------------
+# Individual [tool.test_coverage.<tier>] sections with thresholds only.
+# Path/type defaults come from DEFAULT_TIER_CONFIGS in test_coverage.py.
+# See docs/testing/README.md for migration instructions.
+#
+# This file currently uses the LEGACY format for backward compatibility.
+# A deprecation warning is emitted when running test-coverage with this format.
+#
+# ==============================================================================
+#
+# AVAILABLE FIELDS (derived from TestTierConfig in test_coverage.py):
+# --------------------------------------------------------------------
 #   - test_path: Path to test directory (string)
 #   - source_paths: Paths to source directories (list of strings)
-#   - coverage_type: Type of coverage measurement (string)
-#   - min_line_overall, min_branch_overall: Overall coverage thresholds
-#   - min_line_per_function, min_branch_per_function: Per-function thresholds
-#   - min_usecase: Use-case coverage threshold (for usecase type)
-#   - skip_private_functions: Skip functions starting with _ (bool)
-#   - service_layer_only: Only validate app/services/ files (bool)
-#   - exclude_class_fields: Exclude class field annotations (bool)
+#   - coverage_type: Type of coverage measurement ("line_branch" or "usecase")
+#   - min_line_overall: Overall line coverage threshold (float, default: 80.0)
+#   - min_branch_overall: Overall branch coverage threshold (float, default: 70.0)
+#   - min_line_per_function: Per-function line coverage threshold (float, default: 60.0)
+#   - min_branch_per_function: Per-function branch coverage threshold (float, default: 50.0)
+#   - min_usecase: Use-case coverage threshold for usecase type (float, default: 100.0)
+#   - skip_private_functions: Skip functions starting with _ (bool, default: false)
+#   - service_layer_only: Only validate app/services/ files (bool, default: false)
+#   - exclude_class_fields: Exclude class field annotations (bool, default: true)
 #
 # BUILT-IN TIER DEFAULTS:
 # -----------------------
@@ -397,30 +439,84 @@ min_branch_overall = 70.0
 min_line_per_function = 60.0
 min_branch_per_function = 50.0
 
+# ==============================================================================
+# NEW FORMAT EXAMPLES (for migration reference)
+# ==============================================================================
+# The following commented-out sections show how to convert the legacy tier
+# configurations above to the recommended new format. To migrate, uncomment
+# the [tool.test_coverage.tiers] section and remove the legacy sections above.
+#
+# [tool.test_coverage.tiers.unit]
+# test_path = "tests/unit"
+# source_paths = ["app"]
+# coverage_type = "line_branch"
+# min_line_overall = 80.0
+# min_branch_overall = 70.0
+# min_line_per_function = 60.0
+# min_branch_per_function = 50.0
+# skip_private_functions = false
+# service_layer_only = false
+# exclude_class_fields = true
+#
+# [tool.test_coverage.tiers.component]
+# test_path = "tests/unit"
+# source_paths = ["app/services"]
+# coverage_type = "line_branch"
+# min_line_overall = 80.0
+# min_branch_overall = 70.0
+# min_line_per_function = 80.0
+# min_branch_per_function = 70.0
+# skip_private_functions = true
+# service_layer_only = true
+# exclude_class_fields = true
+#
+# [tool.test_coverage.tiers.integration]
+# test_path = "tests/integration"
+# source_paths = ["app"]
+# coverage_type = "usecase"
+# min_usecase = 100.0
+# skip_private_functions = false
+# service_layer_only = false
+# exclude_class_fields = true
+#
+# [tool.test_coverage.tiers.scripts]
+# test_path = "scripts/tests"
+# source_paths = ["scripts", "tools"]
+# coverage_type = "line_branch"
+# min_line_overall = 80.0
+# min_branch_overall = 70.0
+# min_line_per_function = 60.0
+# min_branch_per_function = 50.0
+# skip_private_functions = true
+# service_layer_only = false
+# exclude_class_fields = true
+#
+# ==============================================================================
+# CUSTOM TIER EXAMPLES (using new format)
+# ==============================================================================
+#
 # Example: Custom e2e tier (uncomment to enable)
 # Custom tiers MUST specify test_path, source_paths, and coverage_type.
 # Omitting any required field raises ValueError with a clear message listing
 # all missing fields. Invalid coverage_type values also raise ValueError.
 #
-# [tool.test_coverage.e2e]
-# test_path = "tests/e2e"           # REQUIRED for custom tiers
-# source_paths = ["app"]            # REQUIRED for custom tiers
-# coverage_type = "usecase"         # REQUIRED: must be "line_branch" or "usecase"
-# min_usecase = 100.0               # Optional: threshold for usecase coverage
-
-# Example: Custom tier mirroring built-in "unit" defaults
-# This shows how to explicitly set the same values as DEFAULT_TIER_CONFIGS["unit"]
-# in scripts/dev/test_runner/test_coverage.py. Useful when you want a variant of
-# the unit tier with different thresholds but identical path/type configuration.
+# [tool.test_coverage.tiers.e2e]
+# test_path = "tests/e2e"
+# source_paths = ["app"]
+# coverage_type = "usecase"
+# min_usecase = 100.0
 #
-# [tool.test_coverage.unit_strict]
-# test_path = "tests/unit"              # Same as DEFAULT_TIER_CONFIGS["unit"]
-# source_paths = ["app"]                # Same as DEFAULT_TIER_CONFIGS["unit"]
-# coverage_type = "line_branch"         # Same as DEFAULT_TIER_CONFIGS["unit"]
-# skip_private_functions = false        # Same as DEFAULT_TIER_CONFIGS["unit"]
-# service_layer_only = false            # Same as DEFAULT_TIER_CONFIGS["unit"]
-# exclude_class_fields = true           # Same as DEFAULT_TIER_CONFIGS["unit"]
-# min_line_overall = 90.0               # Stricter than default (80.0)
-# min_branch_overall = 85.0             # Stricter than default (70.0)
-# min_line_per_function = 80.0          # Stricter than default (60.0)
-# min_branch_per_function = 70.0        # Stricter than default (50.0)
+# Example: Custom tier with stricter thresholds
+# This shows how to create a variant of the unit tier with different thresholds.
+#
+# [tool.test_coverage.tiers.unit_strict]
+# test_path = "tests/unit"
+# source_paths = ["app"]
+# coverage_type = "line_branch"
+# min_line_overall = 90.0
+# min_branch_overall = 85.0
+# min_line_per_function = 80.0
+# min_branch_per_function = 70.0
+# skip_private_functions = false
+# service_layer_only = false
+# exclude_class_fields = true

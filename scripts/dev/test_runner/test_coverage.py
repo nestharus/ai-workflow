@@ -46,6 +46,7 @@ import ast
 import json
 import os
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,9 @@ except ImportError:
     import tomli as tomllib  # type: ignore[no-redef]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
+# Module-level flag to ensure deprecation warning is printed only once per process
+_legacy_format_warning_emitted: bool = False
 
 # Fallback defaults if pyproject.toml settings are missing
 DEFAULT_MIN_LINE_OVERALL = 80.0
@@ -217,6 +221,220 @@ DEFAULT_TIER_CONFIGS: dict[str, dict[str, Any]] = {
 VALID_COVERAGE_TYPES = {"line_branch", "usecase"}
 
 
+def _load_tiers_from_new_format(test_coverage: dict[str, Any]) -> dict[str, TestTierConfig] | None:
+    """Load tier configs from new [tool.test_coverage.tiers] format.
+
+    This function constructs TestTierConfig objects directly from TOML data
+    WITHOUT depending on CoverageSettings or load_coverage_settings().
+
+    IMPORTANT: Tier order is determined by TOML file order. This function
+    iterates directly over tiers_table.items() without sorting or set
+    conversion to preserve the exact order from tomllib.load().
+
+    Returns None if tiers section doesn't exist (triggers legacy fallback).
+    """
+    tiers_table = test_coverage.get("tiers")
+    if tiers_table is None:
+        return None
+
+    result: dict[str, TestTierConfig] = {}
+    # Iterate directly over items() - tomllib preserves TOML key order.
+    # Do NOT use set(), sorted(), or list(set(...)) here.
+    for tier_name, tier_data in tiers_table.items():
+        # Validate required fields
+        test_path = tier_data.get("test_path")
+        source_paths = tier_data.get("source_paths")
+        coverage_type = tier_data.get("coverage_type")
+
+        if not test_path or not source_paths or not coverage_type:
+            missing = [
+                f for f in ["test_path", "source_paths", "coverage_type"] if not tier_data.get(f)
+            ]
+            raise ValueError(f"Tier '{tier_name}' missing required fields: {', '.join(missing)}")
+
+        if coverage_type not in VALID_COVERAGE_TYPES:
+            raise ValueError(f"Invalid coverage_type '{coverage_type}' for tier '{tier_name}'")
+
+        # Construct TestTierConfig directly with defaults for optional fields
+        result[tier_name] = TestTierConfig(
+            name=tier_name,
+            test_path=test_path,
+            source_paths=source_paths,
+            coverage_type=coverage_type,
+            min_line_overall=tier_data.get("min_line_overall", DEFAULT_MIN_LINE_OVERALL),
+            min_branch_overall=tier_data.get("min_branch_overall", DEFAULT_MIN_BRANCH_OVERALL),
+            min_line_per_function=tier_data.get(
+                "min_line_per_function", DEFAULT_MIN_LINE_PER_FUNCTION
+            ),
+            min_branch_per_function=tier_data.get(
+                "min_branch_per_function", DEFAULT_MIN_BRANCH_PER_FUNCTION
+            ),
+            min_usecase=tier_data.get("min_usecase", DEFAULT_MIN_USECASE),
+            skip_private_functions=tier_data.get("skip_private_functions", False),
+            service_layer_only=tier_data.get("service_layer_only", False),
+            exclude_class_fields=tier_data.get("exclude_class_fields", True),
+        )
+    return result
+
+
+def _load_tiers_from_legacy_format(
+    test_coverage: dict[str, Any], *, quiet: bool = False
+) -> dict[str, TestTierConfig]:
+    """Load tier configs from legacy flat [tool.test_coverage.<tier>] sections.
+
+    This function reuses the existing load_coverage_settings() and get_test_tiers()
+    logic for backward compatibility with projects using flat tier sections.
+
+    CoverageSettings is used ONLY in this legacy path.
+
+    IMPORTANT: Tier order is deterministic:
+    1. Built-in tiers appear in DEFAULT_TIER_CONFIGS definition order
+    2. Custom tiers appear in their TOML file order (tomllib preserves order)
+
+    This function avoids set(), sorted(), and set union operators to preserve order.
+
+    Args:
+        test_coverage: The [tool.test_coverage] section from pyproject.toml.
+        quiet: If True, suppress the deprecation warning. Default is False.
+    """
+    global _legacy_format_warning_emitted
+    if not _legacy_format_warning_emitted and not quiet:
+        print(
+            "DEPRECATION WARNING: Using legacy tier configuration format "
+            "[tool.test_coverage.<tier>]. Consider migrating to "
+            "[tool.test_coverage.tiers.<tier_name>] format. "
+            "See docs/testing/README.md for migration instructions.",
+            file=sys.stderr,
+        )
+        _legacy_format_warning_emitted = True
+
+    # Discover all tier names using two-phase iteration to preserve order.
+    # Do NOT use set union or sorted() here.
+    all_tier_names_ordered: list[str] = []
+
+    # Phase 1: Add built-in tiers in DEFAULT_TIER_CONFIGS literal definition order
+    # This iterates the dict keys in their source code definition order.
+    for tier_name in DEFAULT_TIER_CONFIGS:
+        all_tier_names_ordered.append(tier_name)
+
+    # Phase 2: Add custom tiers in their TOML appearance order
+    # tomllib.load() returns dicts with keys in TOML file order.
+    for tier_name in test_coverage:
+        if tier_name not in DEFAULT_TIER_CONFIGS and tier_name != "tiers":
+            all_tier_names_ordered.append(tier_name)
+
+    result: dict[str, TestTierConfig] = {}
+    for tier_name in all_tier_names_ordered:
+        tier_data = test_coverage.get(tier_name, {})
+        defaults = DEFAULT_TIER_CONFIGS.get(tier_name, {})
+
+        # Derive path/type from TOML -> defaults
+        test_path = tier_data.get("test_path") or defaults.get("test_path")
+        source_paths = tier_data.get("source_paths") or defaults.get("source_paths")
+        coverage_type = tier_data.get("coverage_type") or defaults.get("coverage_type")
+
+        # Validate required fields for custom tiers
+        if not test_path or not source_paths or not coverage_type:
+            missing = []
+            if not test_path:
+                missing.append("test_path")
+            if not source_paths:
+                missing.append("source_paths")
+            if not coverage_type:
+                missing.append("coverage_type")
+            raise ValueError(
+                f"Custom tier '{tier_name}' is missing required fields: {', '.join(missing)}. "
+                f"All custom tiers in [tool.test_coverage.<tier>] must specify "
+                f"test_path, source_paths, and coverage_type."
+            )
+
+        if coverage_type not in VALID_COVERAGE_TYPES:
+            raise ValueError(f"Invalid coverage_type '{coverage_type}' for tier '{tier_name}'")
+
+        # Derive flags from TOML -> defaults
+        skip_private = tier_data.get("skip_private_functions")
+        if skip_private is None:
+            skip_private = defaults.get("skip_private_functions", False)
+        service_only = tier_data.get("service_layer_only")
+        if service_only is None:
+            service_only = defaults.get("service_layer_only", False)
+        exclude_fields = tier_data.get("exclude_class_fields")
+        if exclude_fields is None:
+            exclude_fields = defaults.get("exclude_class_fields", True)
+
+        result[tier_name] = TestTierConfig(
+            name=tier_name,
+            test_path=test_path,
+            source_paths=source_paths,
+            coverage_type=coverage_type,
+            min_line_overall=tier_data.get("min_line_overall", DEFAULT_MIN_LINE_OVERALL),
+            min_branch_overall=tier_data.get("min_branch_overall", DEFAULT_MIN_BRANCH_OVERALL),
+            min_line_per_function=tier_data.get(
+                "min_line_per_function", DEFAULT_MIN_LINE_PER_FUNCTION
+            ),
+            min_branch_per_function=tier_data.get(
+                "min_branch_per_function", DEFAULT_MIN_BRANCH_PER_FUNCTION
+            ),
+            min_usecase=tier_data.get("min_usecase", DEFAULT_MIN_USECASE),
+            skip_private_functions=skip_private,
+            service_layer_only=service_only,
+            exclude_class_fields=exclude_fields,
+        )
+
+    return result
+
+
+def load_tier_configs(
+    pyproject_path: Path | None = None, *, quiet: bool = False
+) -> dict[str, TestTierConfig]:
+    """Load tier configurations from pyproject.toml.
+
+    This is the single source of truth for loading tier configurations.
+    It supports two formats:
+
+    1. New format: [tool.test_coverage.tiers.<tier_name>] - constructs
+       TestTierConfig directly without CoverageSettings dependency.
+
+    2. Legacy format: [tool.test_coverage.<tier>] flat sections - reuses
+       existing load_coverage_settings()/get_test_tiers() logic.
+
+    Args:
+        pyproject_path: Path to pyproject.toml. Defaults to REPO_ROOT / "pyproject.toml".
+        quiet: If True, suppress the deprecation warning for legacy format. Default is False.
+
+    Returns:
+        Mapping of tier names to TestTierConfig objects, in execution order.
+
+    Raises:
+        ValueError: If a tier is missing required fields or has invalid coverage_type.
+    """
+    path = pyproject_path or REPO_ROOT / "pyproject.toml"
+    if not path.exists():
+        return _load_tiers_from_legacy_format({}, quiet=quiet)
+
+    with path.open("rb") as f:
+        data = tomllib.load(f)
+
+    test_coverage = data.get("tool", {}).get("test_coverage", {})
+
+    # Try new format first (no CoverageSettings dependency)
+    new_format_result = _load_tiers_from_new_format(test_coverage)
+    if new_format_result is not None:
+        # Log format detection and discovered tiers
+        tier_names = list(new_format_result.keys())
+        print("[tier-config] Using new tiers subtable format")
+        print(f"[tier-config] Discovered tiers (in order): {tier_names}")
+        return new_format_result
+
+    # Fall back to legacy format (uses CoverageSettings internally)
+    legacy_result = _load_tiers_from_legacy_format(test_coverage, quiet=quiet)
+    # Log format detection and discovered tiers
+    tier_names = list(legacy_result.keys())
+    print("[tier-config] Using legacy flat sections format")
+    print(f"[tier-config] Discovered tiers (in order): {tier_names}")
+    return legacy_result
+
+
 @dataclass
 class CoverageSettings:
     """All coverage settings loaded from pyproject.toml.
@@ -332,98 +550,16 @@ class UseCaseCoverageResult:
     coverage_pct: float
 
 
-def get_test_tiers() -> dict[str, TestTierConfig]:
-    """Get test tier configurations merging defaults with pyproject.toml settings.
+def get_test_tiers(*, quiet: bool = False) -> dict[str, TestTierConfig]:
+    """Get test tier configurations from pyproject.toml.
 
-    Path/type/flag values are derived from:
-      1. TierPathOverrides (from pyproject.toml) if not None
-      2. DEFAULT_TIER_CONFIGS if the tier exists there
-      3. Error for custom tiers missing required fields
+    This is a convenience wrapper around load_tier_configs() that uses the
+    default pyproject.toml path. For custom paths, use load_tier_configs() directly.
 
-    Threshold values come from TierSettings (which has its own defaults).
+    Args:
+        quiet: If True, suppress the deprecation warning for legacy format. Default is False.
     """
-    settings = get_settings()
-    result: dict[str, TestTierConfig] = {}
-
-    for tier_name in settings.thresholds:
-        thresholds = settings.thresholds[tier_name]
-        overrides = settings.path_overrides.get(tier_name, TierPathOverrides())
-        defaults = DEFAULT_TIER_CONFIGS.get(tier_name, {})
-
-        # Derive path/type from overrides -> defaults (NO inline defaults here)
-        test_path = (
-            overrides.test_path if overrides.test_path is not None else defaults.get("test_path")
-        )
-        source_paths = (
-            overrides.source_paths
-            if overrides.source_paths is not None
-            else defaults.get("source_paths")
-        )
-        coverage_type = (
-            overrides.coverage_type
-            if overrides.coverage_type is not None
-            else defaults.get("coverage_type")
-        )
-
-        # Validate required fields for custom tiers
-        # DESIGN DECISION: Raise ValueError for custom tiers missing required fields.
-        # Rationale: Silent skipping would hide configuration errors, making debugging
-        # difficult. An explicit error forces the user to fix or remove the misconfigured
-        # tier, ensuring all configured tiers are intentional and valid.
-        if not test_path or not source_paths or not coverage_type:
-            missing_fields = []
-            if not test_path:
-                missing_fields.append("test_path")
-            if not source_paths:
-                missing_fields.append("source_paths")
-            if not coverage_type:
-                missing_fields.append("coverage_type")
-            msg = (
-                f"Custom tier '{tier_name}' is missing required fields: "
-                f"{', '.join(missing_fields)}. All custom tiers in [tool.test_coverage.<tier>] "
-                f"must specify test_path, source_paths, and coverage_type."
-            )
-            raise ValueError(msg)
-
-        # Validate coverage_type
-        if coverage_type not in VALID_COVERAGE_TYPES:
-            raise ValueError(f"Invalid coverage_type '{coverage_type}' for tier '{tier_name}'")
-
-        # Derive flags from overrides -> defaults (NO inline defaults here)
-        skip_private = (
-            overrides.skip_private_functions
-            if overrides.skip_private_functions is not None
-            else defaults.get("skip_private_functions", False)
-        )
-        service_only = (
-            overrides.service_layer_only
-            if overrides.service_layer_only is not None
-            else defaults.get("service_layer_only", False)
-        )
-        exclude_fields = (
-            overrides.exclude_class_fields
-            if overrides.exclude_class_fields is not None
-            else defaults.get("exclude_class_fields", True)
-        )
-
-        result[tier_name] = TestTierConfig(
-            name=tier_name,
-            test_path=test_path,
-            source_paths=source_paths,
-            coverage_type=coverage_type,
-            # Thresholds from TierSettings (has its own defaults)
-            min_line_overall=thresholds.min_line_overall,
-            min_branch_overall=thresholds.min_branch_overall,
-            min_line_per_function=thresholds.min_line_per_function,
-            min_branch_per_function=thresholds.min_branch_per_function,
-            min_usecase=thresholds.min_usecase,
-            # Flags derived above
-            skip_private_functions=skip_private,
-            service_layer_only=service_only,
-            exclude_class_fields=exclude_fields,
-        )
-
-    return result
+    return load_tier_configs(quiet=quiet)
 
 
 def _run_command(
@@ -1239,11 +1375,6 @@ def main() -> int:
     coverage_dir.mkdir(parents=True, exist_ok=True)
     coverage_db_path = coverage_dir / "coverage.db"
 
-    # Set up coverage data file path (inside .coverage directory)
-    # pytest-cov uses .coverage as a file by default, but we use .coverage as a directory
-    coverage_data_file = coverage_dir / "data"
-    cov_env = {"COVERAGE_FILE": str(coverage_data_file)}
-
     # Initialize custom tables and clear previous run data
     coverage_db.init_custom_tables(coverage_db_path)
     coverage_db.clear_custom_tables(coverage_db_path)
@@ -1272,10 +1403,43 @@ def main() -> int:
     # Determine which tiers to run
     tiers_to_run = list(test_tiers.keys()) if args.tier == "all" else [args.tier]
 
+    # =============================================================================
+    # COVERAGE ISOLATION ARCHITECTURE
+    #
+    # Per-Tier Isolation:
+    #   Each tier writes coverage to an isolated file: .coverage/data_{tier_name}
+    #   This ensures tier-specific validation only considers lines executed by
+    #   that tier's tests, eliminating cross-tier contamination.
+    #
+    # Global Aggregation:
+    #   After all tiers complete, `coverage combine` merges per-tier files into
+    #   .coverage/data (the combined database). This combined database is used for:
+    #   - Missing-line analysis (generate_missing_line_details)
+    #   - Redundant test detection (detect_redundant_tests)
+    #
+    # Why This Design:
+    #   - Prevents coverage leakage: Lines covered by unit tests won't artificially
+    #     inflate component test coverage metrics
+    #   - Preserves global visibility: Missing-line reports show all uncovered lines
+    #     across the entire codebase, not just one tier
+    #   - Supports redundancy analysis: Detecting tests with no unique coverage
+    #     requires seeing all test contexts in one database
+    # =============================================================================
+
+    # Precompute tier-specific coverage file paths for isolation
+    tier_coverage_files: dict[str, Path] = {
+        tier_name: coverage_dir / f"data_{tier_name}" for tier_name in tiers_to_run
+    }
+
+    # Log tier-to-coverage-file mapping
+    print("\n[coverage-isolation] Tier coverage file mapping:")
+    for tier_name, cov_file in tier_coverage_files.items():
+        print(f"[coverage-isolation]   {tier_name} -> {cov_file}")
+
     # INVARIANT: This loop does not branch on config.coverage_type
     # Strategy instantiation and CLI threshold overrides
     strategies: list[TestStrategy] = []
-    for idx, tier_name in enumerate(tiers_to_run):
+    for tier_name in tiers_to_run:
         config = test_tiers[tier_name]
 
         # Apply CLI threshold overrides to each TestTierConfig
@@ -1286,12 +1450,13 @@ def main() -> int:
         if args.min_usecase != DEFAULT_MIN_USECASE:
             config.min_usecase = args.min_usecase
 
-        # Factory creates the correct strategy based on config.coverage_type internally
+        # main() passes all parameters - create_strategy() routes them appropriately
+        # based on config.coverage_type. main() does NOT branch on coverage type.
         strategy = create_strategy(
             config,
             coverage_db_path,
             REPO_ROOT,
-            first_tier=(idx == 0),
+            tier_coverage_file=tier_coverage_files[tier_name],
             use_cases=use_cases,
         )
         strategies.append(strategy)
@@ -1310,12 +1475,40 @@ def main() -> int:
         print("ERROR: No coverage results collected")
         return 1
 
+    # Combine per-tier coverage data into single database for global reports
+    # This combined database is used for missing-line analysis and redundant test detection
+    combined_coverage_file = coverage_dir / "data"
+    tier_data_files = [
+        str(tier_coverage_files[t]) for t in tiers_to_run if tier_coverage_files[t].exists()
+    ]
+    if tier_data_files:
+        print("\n" + "=" * 70)
+        print("Combining per-tier coverage data into single database...")
+        print("=" * 70)
+        # Log input files
+        print(f"[coverage-combine] Input files: {tier_data_files}")
+        print(f"[coverage-combine] Output file: {combined_coverage_file}")
+        combine_cmd = [
+            "uv",
+            "run",
+            "python",
+            "-m",
+            "coverage",
+            "combine",
+            "--keep",  # Keep source files after combining
+            *tier_data_files,
+        ]
+        combine_env = {"COVERAGE_FILE": str(combined_coverage_file)}
+        _run_command(combine_cmd, capture=True, env=combine_env)
+        print("[coverage-combine] Combine completed successfully")
+
     # Write run metadata
     coverage_db.write_run_metadata(coverage_db_path, REPO_ROOT)
 
     # Generate and write missing line details with context
-    # Generate JSON report from .coverage to extract missing lines
+    # Generate JSON report from combined coverage database to extract missing lines
     json_output_path = coverage_dir / "temp_missing_lines.json"
+    cov_env = {"COVERAGE_FILE": str(combined_coverage_file)}
     cov_report_cmd = [
         "uv",
         "run",
@@ -1353,13 +1546,13 @@ def main() -> int:
 
     # Run redundant test detection
     redundant_result: RedundantTestResult | None = None
-    if not args.skip_redundant_detection and coverage_data_file.exists():
-        # The coverage data file is now at .coverage/data (not .coverage which is a directory)
+    if not args.skip_redundant_detection and combined_coverage_file.exists():
+        # The coverage data file is now at .coverage/data (combined from all tiers)
         print("\n" + "=" * 70)
         print("Analyzing test coverage for redundant tests...")
         print("=" * 70)
         redundant_result = detect_redundant_tests(
-            coverage_data_file,
+            combined_coverage_file,  # Use combined database for global analysis
             include_partial=args.include_partial_redundant,
         )
 

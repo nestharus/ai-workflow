@@ -16,8 +16,8 @@ from scripts.dev.test_runner.test_coverage import (
     DEFAULT_MIN_LINE_OVERALL,
     DEFAULT_MIN_LINE_PER_FUNCTION,
     DEFAULT_MIN_USECASE,
+    DEFAULT_TIER_CONFIGS,
     CoverageResult,
-    CoverageSettings,
     FunctionCoverage,
     TestTierConfig,
     TierPathOverrides,
@@ -29,10 +29,13 @@ from scripts.dev.test_runner.test_coverage import (
     _get_class_field_lines,
     _is_in_service_layer,
     _is_private_function,
+    _load_tiers_from_legacy_format,
+    _load_tiers_from_new_format,
     calculate_usecase_coverage,
     collect_covered_usecases,
     get_test_tiers,
     load_coverage_settings,
+    load_tier_configs,
     load_use_cases,
     parse_args,
     print_summary,
@@ -228,7 +231,7 @@ some_setting = true
 
 
 class TestGetTestTiersDynamic:
-    """Tests for dynamic tier configuration in get_test_tiers()."""
+    """Tests for dynamic tier configuration in get_test_tiers() and load_tier_configs()."""
 
     def test_uses_default_tier_configs_when_no_overrides(self) -> None:
         """Should use DEFAULT_TIER_CONFIGS when path_overrides are None."""
@@ -237,128 +240,87 @@ class TestGetTestTiersDynamic:
         assert tiers["unit"].source_paths == ["app"]
         assert tiers["unit"].coverage_type == "line_branch"
 
-    def test_toml_overrides_default_tier_configs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_toml_overrides_default_tier_configs(self, tmp_path: Path) -> None:
         """TOML path overrides should take precedence over DEFAULT_TIER_CONFIGS."""
-        # Mock settings with path override for unit tier
-        mock_settings = CoverageSettings(
-            thresholds={"unit": TierSettings()},
-            path_overrides={
-                "unit": TierPathOverrides(
-                    test_path="tests/custom_unit",
-                    source_paths=["custom_app"],
-                    coverage_type="line_branch",
-                )
-            },
-        )
-        monkeypatch.setattr(
-            "scripts.dev.test_runner.test_coverage.get_settings", lambda: mock_settings
-        )
-        tiers = get_test_tiers()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.unit]
+test_path = "tests/custom_unit"
+source_paths = ["custom_app"]
+coverage_type = "line_branch"
+""")
+        tiers = load_tier_configs(pyproject)
         # TOML overrides should be used
         assert tiers["unit"].test_path == "tests/custom_unit"
         assert tiers["unit"].source_paths == ["custom_app"]
 
-    def test_custom_tier_with_all_required_fields(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_custom_tier_with_all_required_fields(self, tmp_path: Path) -> None:
         """Custom tier with all required fields should be available."""
-        # Mock settings to include custom tier with full path_overrides
-        mock_settings = CoverageSettings(
-            thresholds={"e2e": TierSettings(min_usecase=95.0)},
-            path_overrides={
-                "e2e": TierPathOverrides(
-                    test_path="tests/e2e",
-                    source_paths=["app"],
-                    coverage_type="usecase",
-                )
-            },
-        )
-        monkeypatch.setattr(
-            "scripts.dev.test_runner.test_coverage.get_settings", lambda: mock_settings
-        )
-        tiers = get_test_tiers()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.e2e]
+test_path = "tests/e2e"
+source_paths = ["app"]
+coverage_type = "usecase"
+min_usecase = 95.0
+""")
+        tiers = load_tier_configs(pyproject)
         assert "e2e" in tiers
         assert tiers["e2e"].test_path == "tests/e2e"
         assert tiers["e2e"].source_paths == ["app"]
         assert tiers["e2e"].coverage_type == "usecase"
         assert tiers["e2e"].min_usecase == 95.0
 
-    def test_custom_tier_missing_test_path_raises_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_custom_tier_missing_test_path_raises_error(self, tmp_path: Path) -> None:
         """Custom tier missing test_path should raise ValueError."""
-        # Mock settings with custom tier missing test_path
-        mock_settings = CoverageSettings(
-            thresholds={"e2e": TierSettings()},
-            path_overrides={
-                "e2e": TierPathOverrides(
-                    source_paths=["app"],
-                    coverage_type="usecase",
-                    # test_path is None
-                )
-            },
-        )
-        monkeypatch.setattr(
-            "scripts.dev.test_runner.test_coverage.get_settings", lambda: mock_settings
-        )
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.e2e]
+source_paths = ["app"]
+coverage_type = "usecase"
+# test_path is missing
+""")
         with pytest.raises(
             ValueError, match="Custom tier 'e2e' is missing required fields: test_path"
         ):
-            get_test_tiers()
+            load_tier_configs(pyproject)
 
-    def test_custom_tier_missing_source_paths_raises_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_custom_tier_missing_source_paths_raises_error(self, tmp_path: Path) -> None:
         """Custom tier missing source_paths should raise ValueError."""
-        mock_settings = CoverageSettings(
-            thresholds={"e2e": TierSettings()},
-            path_overrides={
-                "e2e": TierPathOverrides(
-                    test_path="tests/e2e",
-                    coverage_type="usecase",
-                    # source_paths is None
-                )
-            },
-        )
-        monkeypatch.setattr(
-            "scripts.dev.test_runner.test_coverage.get_settings", lambda: mock_settings
-        )
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.e2e]
+test_path = "tests/e2e"
+coverage_type = "usecase"
+# source_paths is missing
+""")
         with pytest.raises(
             ValueError, match="Custom tier 'e2e' is missing required fields: source_paths"
         ):
-            get_test_tiers()
+            load_tier_configs(pyproject)
 
-    def test_custom_tier_missing_coverage_type_raises_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_custom_tier_missing_coverage_type_raises_error(self, tmp_path: Path) -> None:
         """Custom tier missing coverage_type should raise ValueError."""
-        mock_settings = CoverageSettings(
-            thresholds={"e2e": TierSettings()},
-            path_overrides={
-                "e2e": TierPathOverrides(
-                    test_path="tests/e2e",
-                    source_paths=["app"],
-                    # coverage_type is None
-                )
-            },
-        )
-        monkeypatch.setattr(
-            "scripts.dev.test_runner.test_coverage.get_settings", lambda: mock_settings
-        )
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.e2e]
+test_path = "tests/e2e"
+source_paths = ["app"]
+# coverage_type is missing
+""")
         with pytest.raises(
             ValueError, match="Custom tier 'e2e' is missing required fields: coverage_type"
         ):
-            get_test_tiers()
+            load_tier_configs(pyproject)
 
-    def test_custom_tier_missing_multiple_fields_raises_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_custom_tier_missing_multiple_fields_raises_error(self, tmp_path: Path) -> None:
         """Custom tier missing multiple required fields should list all missing fields."""
-        mock_settings = CoverageSettings(
-            thresholds={"e2e": TierSettings()},
-            path_overrides={"e2e": TierPathOverrides()},  # All fields None
-        )
-        monkeypatch.setattr(
-            "scripts.dev.test_runner.test_coverage.get_settings", lambda: mock_settings
-        )
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.e2e]
+min_usecase = 100.0
+# All required fields are missing
+""")
         with pytest.raises(
             ValueError,
             match=(
@@ -366,25 +328,19 @@ class TestGetTestTiersDynamic:
                 r"test_path, source_paths, coverage_type"
             ),
         ):
-            get_test_tiers()
+            load_tier_configs(pyproject)
 
-    def test_invalid_coverage_type_raises_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_invalid_coverage_type_raises_error(self, tmp_path: Path) -> None:
         """Invalid coverage_type should raise ValueError."""
-        mock_settings = CoverageSettings(
-            thresholds={"e2e": TierSettings()},
-            path_overrides={
-                "e2e": TierPathOverrides(
-                    test_path="tests/e2e",
-                    source_paths=["app"],
-                    coverage_type="invalid_type",  # Invalid type
-                )
-            },
-        )
-        monkeypatch.setattr(
-            "scripts.dev.test_runner.test_coverage.get_settings", lambda: mock_settings
-        )
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.e2e]
+test_path = "tests/e2e"
+source_paths = ["app"]
+coverage_type = "invalid_type"
+""")
         with pytest.raises(ValueError, match="Invalid coverage_type 'invalid_type'"):
-            get_test_tiers()
+            load_tier_configs(pyproject)
 
 
 class TestMisconfiguredCustomTiers:
@@ -2907,7 +2863,7 @@ class TestLineBranchTierPassBehavior:
         )
         db_path = tmp_path / "coverage.db"
 
-        strategy = LineBranchTestStrategy(config, db_path, tmp_path, first_tier=True)
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tmp_path / "data_unit")
         # Simulate lifecycle without running actual tests
         strategy._tests_ran = True
         strategy._results_collected = True
@@ -2955,7 +2911,7 @@ class TestLineBranchTierPassBehavior:
         )
         db_path = tmp_path / "coverage.db"
 
-        strategy = LineBranchTestStrategy(config, db_path, tmp_path, first_tier=True)
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tmp_path / "data_unit")
         strategy._tests_ran = True
         strategy._results_collected = True
         strategy.test_summary = TestSummary(total=10, passed=10, failed=0, errors=0, skipped=0)
@@ -3002,7 +2958,7 @@ class TestLineBranchTierPassBehavior:
         )
         db_path = tmp_path / "coverage.db"
 
-        strategy = LineBranchTestStrategy(config, db_path, tmp_path, first_tier=True)
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tmp_path / "data_unit")
         strategy._tests_ran = True
         strategy._results_collected = True
         strategy.test_summary = TestSummary(total=10, passed=8, failed=2, errors=0, skipped=0)
@@ -3056,7 +3012,7 @@ class TestLineBranchTierPassBehavior:
         )
         db_path = tmp_path / "coverage.db"
 
-        strategy = LineBranchTestStrategy(config, db_path, tmp_path, first_tier=True)
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tmp_path / "data_unit")
         strategy._tests_ran = True
         strategy._results_collected = True
         strategy.test_summary = TestSummary(total=10, passed=10, failed=0, errors=0, skipped=0)
@@ -3107,7 +3063,7 @@ class TestLineBranchTierPassBehavior:
         )
         db_path = tmp_path / "coverage.db"
 
-        strategy = LineBranchTestStrategy(config, db_path, tmp_path, first_tier=True)
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tmp_path / "data_unit")
         strategy._tests_ran = True
         strategy._results_collected = True
         strategy.test_summary = TestSummary(total=10, passed=8, failed=2, errors=0, skipped=0)
@@ -3152,7 +3108,7 @@ class TestLineBranchTierPassBehavior:
         )
         db_path = tmp_path / "coverage.db"
 
-        strategy = LineBranchTestStrategy(config, db_path, tmp_path, first_tier=True)
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tmp_path / "data_unit")
         strategy._tests_ran = True
         strategy._results_collected = True
         strategy.test_summary = TestSummary(total=10, passed=7, failed=3, errors=0, skipped=0)
@@ -3367,7 +3323,7 @@ class TestCustomTierPassBehavior:
         )
         db_path = tmp_path / "coverage.db"
 
-        strategy = LineBranchTestStrategy(config, db_path, tmp_path, first_tier=True)
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tmp_path / "data_unit")
         strategy._tests_ran = True
         strategy._results_collected = True
         strategy.test_summary = TestSummary(total=5, passed=5, failed=0, errors=0, skipped=0)
@@ -3447,7 +3403,7 @@ class TestCustomTierPassBehavior:
         )
         db_path = tmp_path / "coverage.db"
 
-        strategy = LineBranchTestStrategy(config, db_path, tmp_path, first_tier=True)
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tmp_path / "data_unit")
         strategy._tests_ran = True
         strategy._results_collected = True
         # Test failure
@@ -3493,7 +3449,7 @@ class TestCustomTierPassBehavior:
         )
         db_path = tmp_path / "coverage.db"
 
-        strategy = LineBranchTestStrategy(config, db_path, tmp_path, first_tier=True)
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tmp_path / "data_unit")
         strategy._tests_ran = True
         strategy._results_collected = True
         strategy.test_summary = TestSummary(total=3, passed=3, failed=0, errors=0, skipped=0)
@@ -3558,7 +3514,7 @@ class TestNoValidateSemantics:
         )
         db_path = tmp_path / "coverage.db"
 
-        strategy = LineBranchTestStrategy(config, db_path, tmp_path, first_tier=True)
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tmp_path / "data_unit")
         strategy._tests_ran = True
         strategy._results_collected = True
         strategy.test_summary = TestSummary(total=5, passed=5, failed=0, errors=0, skipped=0)
@@ -4326,7 +4282,7 @@ class TestNoValidateBehavioralContract:
         )
         db_path = tmp_path / "coverage.db"
 
-        strategy = LineBranchTestStrategy(config, db_path, tmp_path, first_tier=True)
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tmp_path / "data_unit")
         strategy._tests_ran = True
         strategy._results_collected = True
         strategy.test_summary = TestSummary(total=5, passed=5, failed=0, errors=0, skipped=0)
@@ -4375,7 +4331,7 @@ class TestNoValidateBehavioralContract:
         )
         db_path = tmp_path / "coverage.db"
 
-        strategy = LineBranchTestStrategy(config, db_path, tmp_path, first_tier=True)
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tmp_path / "data_unit")
         strategy._tests_ran = True
         strategy._results_collected = True
         strategy.test_summary = TestSummary(
@@ -4474,7 +4430,7 @@ class TestNoValidateBehavioralContract:
         db_path = tmp_path / "coverage.db"
 
         lb_strategy = LineBranchTestStrategy(
-            custom_line_branch_config, db_path, tmp_path, first_tier=True
+            custom_line_branch_config, db_path, tmp_path, tmp_path / "data_e2e_strict"
         )
         lb_strategy._tests_ran = True
         lb_strategy._results_collected = True
@@ -4531,3 +4487,1013 @@ class TestNoValidateBehavioralContract:
 
         uc_summary = uc_strategy.build_summary()
         assert uc_summary["tier_pass"] == 1  # Always 1 for usecase with --no-validate
+
+
+# =============================================================================
+# load_tier_configs() TESTS
+# =============================================================================
+
+
+class TestLoadTierConfigs:
+    """Tests for the load_tier_configs() public API.
+
+    load_tier_configs() is the single source of truth for building
+    dict[str, TestTierConfig] from pyproject.toml. It supports two formats:
+
+    1. New format: [tool.test_coverage.tiers.<tier_name>] - constructs
+       TestTierConfig directly without CoverageSettings dependency.
+
+    2. Legacy format: [tool.test_coverage.<tier>] flat sections - uses
+       _load_tiers_from_legacy_format().
+    """
+
+    def test_load_tier_configs_new_format(self, tmp_path: Path) -> None:
+        """Should load tier configs from new [tool.test_coverage.tiers] format."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.tiers.alpha]
+test_path = "tests/alpha"
+source_paths = ["app"]
+coverage_type = "line_branch"
+min_line_per_function = 75.0
+
+[tool.test_coverage.tiers.beta]
+test_path = "tests/beta"
+source_paths = ["lib"]
+coverage_type = "usecase"
+min_usecase = 90.0
+""")
+        tiers = load_tier_configs(pyproject)
+
+        assert "alpha" in tiers
+        assert "beta" in tiers
+        assert tiers["alpha"].test_path == "tests/alpha"
+        assert tiers["alpha"].source_paths == ["app"]
+        assert tiers["alpha"].coverage_type == "line_branch"
+        assert tiers["alpha"].min_line_per_function == 75.0
+        assert tiers["beta"].test_path == "tests/beta"
+        assert tiers["beta"].source_paths == ["lib"]
+        assert tiers["beta"].coverage_type == "usecase"
+        assert tiers["beta"].min_usecase == 90.0
+
+    def test_load_tier_configs_legacy_format(self, tmp_path: Path) -> None:
+        """Should load tier configs from legacy flat sections."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.unit]
+min_line_per_function = 70.0
+
+[tool.test_coverage.e2e]
+test_path = "tests/e2e"
+source_paths = ["app"]
+coverage_type = "usecase"
+min_usecase = 95.0
+""")
+        tiers = load_tier_configs(pyproject)
+
+        # Default tiers should be present
+        assert "unit" in tiers
+        assert "component" in tiers
+        assert "integration" in tiers
+        assert "scripts" in tiers
+        # Custom tier should also be present
+        assert "e2e" in tiers
+        # Threshold override should be applied
+        assert tiers["unit"].min_line_per_function == 70.0
+        # Custom tier should have its values
+        assert tiers["e2e"].test_path == "tests/e2e"
+        assert tiers["e2e"].min_usecase == 95.0
+
+    def test_load_tier_configs_custom_path(self, tmp_path: Path) -> None:
+        """Should load from custom pyproject_path."""
+        custom_path = tmp_path / "custom" / "pyproject.toml"
+        custom_path.parent.mkdir(parents=True, exist_ok=True)
+        custom_path.write_text("""
+[tool.test_coverage.tiers.custom]
+test_path = "tests/custom"
+source_paths = ["custom"]
+coverage_type = "line_branch"
+""")
+        tiers = load_tier_configs(custom_path)
+
+        assert "custom" in tiers
+        assert tiers["custom"].test_path == "tests/custom"
+
+    def test_load_tier_configs_missing_file(self) -> None:
+        """Should return default tiers when pyproject.toml doesn't exist."""
+        tiers = load_tier_configs(Path("/nonexistent/pyproject.toml"))
+
+        # Should have default tiers from DEFAULT_TIER_CONFIGS
+        assert "unit" in tiers
+        assert "component" in tiers
+        assert "integration" in tiers
+        assert "scripts" in tiers
+
+    def test_load_tier_configs_validation_errors(self, tmp_path: Path) -> None:
+        """Should raise ValueError for missing required fields in new format."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.tiers.invalid]
+test_path = "tests/invalid"
+# Missing source_paths and coverage_type
+""")
+        with pytest.raises(ValueError) as exc_info:
+            load_tier_configs(pyproject)
+
+        error_msg = str(exc_info.value)
+        assert "invalid" in error_msg
+        assert "source_paths" in error_msg
+        assert "coverage_type" in error_msg
+
+    def test_new_format_does_not_use_coverage_settings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """New format should NOT call load_coverage_settings().
+
+        This test proves that _load_tiers_from_new_format() constructs
+        TestTierConfig directly without depending on CoverageSettings.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.tiers.test_tier]
+test_path = "tests/test"
+source_paths = ["app"]
+coverage_type = "line_branch"
+""")
+        # Mock load_coverage_settings to raise an exception
+        monkeypatch.setattr(
+            "scripts.dev.test_runner.test_coverage.load_coverage_settings",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("load_coverage_settings() should NOT be called for new format")
+            ),
+        )
+
+        # This should succeed because new format doesn't use load_coverage_settings
+        tiers = load_tier_configs(pyproject)
+        assert "test_tier" in tiers
+
+    def test_removing_tier_from_new_format_skips_execution(self, tmp_path: Path) -> None:
+        """Removing a tier from new format should cause it to be absent from results.
+
+        This validates success criterion #3 (Tier Removal Works).
+        """
+        from scripts.dev.test_runner import test_coverage
+
+        pyproject = tmp_path / "pyproject.toml"
+
+        # Step 1: Create pyproject.toml with two tiers
+        pyproject.write_text("""
+[tool.test_coverage.tiers.alpha]
+test_path = "tests/alpha"
+source_paths = ["app"]
+coverage_type = "line_branch"
+
+[tool.test_coverage.tiers.beta]
+test_path = "tests/beta"
+source_paths = ["app"]
+coverage_type = "line_branch"
+""")
+        tiers_v1 = load_tier_configs(pyproject)
+        assert "alpha" in tiers_v1
+        assert "beta" in tiers_v1
+
+        # Step 2: Rewrite pyproject.toml with only alpha tier
+        pyproject.write_text("""
+[tool.test_coverage.tiers.alpha]
+test_path = "tests/alpha"
+source_paths = ["app"]
+coverage_type = "line_branch"
+""")
+        # Reset cache
+        test_coverage._settings = None
+
+        # Step 3: Reload and verify beta is gone
+        tiers_v2 = load_tier_configs(pyproject)
+        assert "alpha" in tiers_v2
+        assert "beta" not in tiers_v2  # beta was removed
+
+
+class TestDefaultsAlignmentBetweenFormats:
+    """Tests ensuring new and legacy formats apply identical defaults."""
+
+    def test_defaults_alignment_between_new_and_legacy_paths(self, tmp_path: Path) -> None:
+        """Both new and legacy formats should apply identical defaults for optional fields."""
+        # Create new format fixture
+        new_format_pyproject = tmp_path / "new" / "pyproject.toml"
+        new_format_pyproject.parent.mkdir(parents=True, exist_ok=True)
+        new_format_pyproject.write_text("""
+[tool.test_coverage.tiers.test_tier]
+test_path = "tests/test"
+source_paths = ["app"]
+coverage_type = "line_branch"
+""")
+
+        # Create legacy format fixture
+        legacy_format_pyproject = tmp_path / "legacy" / "pyproject.toml"
+        legacy_format_pyproject.parent.mkdir(parents=True, exist_ok=True)
+        legacy_format_pyproject.write_text("""
+[tool.test_coverage.test_tier]
+test_path = "tests/test"
+source_paths = ["app"]
+coverage_type = "line_branch"
+""")
+
+        # Load using both formats
+        new_tiers = load_tier_configs(new_format_pyproject)
+        legacy_tiers = load_tier_configs(legacy_format_pyproject)
+
+        new_config = new_tiers["test_tier"]
+        legacy_config = legacy_tiers["test_tier"]
+
+        # Assert all optional fields have identical values
+        assert new_config.min_line_overall == DEFAULT_MIN_LINE_OVERALL
+        assert legacy_config.min_line_overall == DEFAULT_MIN_LINE_OVERALL
+
+        assert new_config.min_branch_overall == DEFAULT_MIN_BRANCH_OVERALL
+        assert legacy_config.min_branch_overall == DEFAULT_MIN_BRANCH_OVERALL
+
+        assert new_config.min_line_per_function == DEFAULT_MIN_LINE_PER_FUNCTION
+        assert legacy_config.min_line_per_function == DEFAULT_MIN_LINE_PER_FUNCTION
+
+        assert new_config.min_branch_per_function == DEFAULT_MIN_BRANCH_PER_FUNCTION
+        assert legacy_config.min_branch_per_function == DEFAULT_MIN_BRANCH_PER_FUNCTION
+
+        assert new_config.min_usecase == DEFAULT_MIN_USECASE
+        assert legacy_config.min_usecase == DEFAULT_MIN_USECASE
+
+        assert new_config.skip_private_functions is False
+        assert legacy_config.skip_private_functions is False
+
+        assert new_config.service_layer_only is False
+        assert legacy_config.service_layer_only is False
+
+        assert new_config.exclude_class_fields is True
+        assert legacy_config.exclude_class_fields is True
+
+
+class TestTierOrderPreservation:
+    """Tests verifying tier order preservation.
+
+    Implements Success Criterion 24: Tier order from TOML is preserved.
+    """
+
+    def test_load_tier_configs_new_format_preserves_toml_order(self, tmp_path: Path) -> None:
+        """New format should preserve tier order from TOML file."""
+        pyproject = tmp_path / "pyproject.toml"
+        # Define tiers in reverse alphabetical order to test order preservation
+        pyproject.write_text("""
+[tool.test_coverage.tiers.zebra]
+test_path = "tests/zebra"
+source_paths = ["app"]
+coverage_type = "line_branch"
+
+[tool.test_coverage.tiers.monkey]
+test_path = "tests/monkey"
+source_paths = ["app"]
+coverage_type = "line_branch"
+
+[tool.test_coverage.tiers.apple]
+test_path = "tests/apple"
+source_paths = ["app"]
+coverage_type = "line_branch"
+""")
+        tiers = load_tier_configs(pyproject)
+
+        # tomllib preserves order, so we expect zebra, monkey, apple
+        assert list(tiers.keys()) == ["zebra", "monkey", "apple"]
+
+    def test_load_tier_configs_legacy_format_respects_default_tier_configs_order(
+        self, tmp_path: Path
+    ) -> None:
+        """Legacy format should return built-in tiers in DEFAULT_TIER_CONFIGS order."""
+        pyproject = tmp_path / "pyproject.toml"
+        # Define legacy format with tiers in ANY order - should not affect output order
+        pyproject.write_text("""
+[tool.test_coverage.scripts]
+min_line_per_function = 70.0
+
+[tool.test_coverage.unit]
+min_line_per_function = 75.0
+""")
+        tiers = load_tier_configs(pyproject)
+
+        # Built-in tiers should appear in DEFAULT_TIER_CONFIGS order
+        tier_names = list(tiers.keys())
+        expected_order = list(DEFAULT_TIER_CONFIGS.keys())
+        assert tier_names == expected_order
+
+    def test_legacy_format_custom_tiers_appended_in_toml_order(self, tmp_path: Path) -> None:
+        """Legacy format should append custom tiers in TOML file order."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.smoke]
+test_path = "tests/smoke"
+source_paths = ["app"]
+coverage_type = "line_branch"
+
+[tool.test_coverage.e2e]
+test_path = "tests/e2e"
+source_paths = ["app"]
+coverage_type = "usecase"
+""")
+        tiers = load_tier_configs(pyproject)
+
+        tier_names = list(tiers.keys())
+        # Default tiers first in their canonical order
+        expected_default_tiers = list(DEFAULT_TIER_CONFIGS.keys())
+        # Then custom tiers in TOML appearance order
+        expected_custom_tiers = ["smoke", "e2e"]
+
+        assert tier_names == expected_default_tiers + expected_custom_tiers
+
+    def test_no_set_operations_in_new_format_path(self) -> None:
+        """_load_tiers_from_new_format should not use set/sorted operations in code.
+
+        Note: This regex-based source scan is intentionally brittle. If the helper
+        implementation legitimately requires set()/sorted() in the future, update
+        this test accordingly.
+        """
+        import inspect
+        import re
+
+        source = inspect.getsource(_load_tiers_from_new_format)
+
+        # Remove docstrings and comments to check only actual code
+        # Remove triple-quoted docstrings
+        code_only = re.sub(r'""".*?"""', "", source, flags=re.DOTALL)
+        code_only = re.sub(r"'''.*?'''", "", code_only, flags=re.DOTALL)
+        # Remove single-line comments
+        code_only = re.sub(r"#.*$", "", code_only, flags=re.MULTILINE)
+
+        # Check for forbidden patterns in code only
+        # These patterns would destroy dict ordering
+        forbidden_patterns = [
+            r"\bset\s*\(",  # set() call
+            r"\bsorted\s*\(",  # sorted() call
+            r"\|\s*set\b",  # | set union
+            r"\blist\s*\(\s*set\s*\(",  # list(set(...))
+        ]
+        for pattern in forbidden_patterns:
+            match = re.search(pattern, code_only)
+            assert match is None, (
+                f"_load_tiers_from_new_format() contains forbidden pattern '{pattern}' in code. "
+                "This operation destroys order preservation."
+            )
+
+    def test_no_set_operations_in_legacy_format_path(self) -> None:
+        """_load_tiers_from_legacy_format should not use set/sorted operations in code.
+
+        Note: This regex-based source scan is intentionally brittle. If the helper
+        implementation legitimately requires set()/sorted() in the future, update
+        this test accordingly.
+        """
+        import inspect
+        import re
+
+        source = inspect.getsource(_load_tiers_from_legacy_format)
+
+        # Remove docstrings and comments to check only actual code
+        code_only = re.sub(r'""".*?"""', "", source, flags=re.DOTALL)
+        code_only = re.sub(r"'''.*?'''", "", code_only, flags=re.DOTALL)
+        code_only = re.sub(r"#.*$", "", code_only, flags=re.MULTILINE)
+
+        # Check for forbidden patterns in code only
+        forbidden_patterns = [
+            r"\bset\s*\(",  # set() call
+            r"\bsorted\s*\(",  # sorted() call
+            r"\|\s*set\b",  # | set union
+            r"\blist\s*\(\s*set\s*\(",  # list(set(...))
+        ]
+        for pattern in forbidden_patterns:
+            match = re.search(pattern, code_only)
+            assert match is None, (
+                f"_load_tiers_from_legacy_format() contains forbidden pattern '{pattern}' in code. "
+                "This operation destroys order preservation."
+            )
+
+    def test_tiers_to_run_preserves_order_in_main(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """main() should execute tiers in the order returned by get_test_tiers()."""
+        from unittest.mock import MagicMock, patch
+
+        from scripts.dev.test_runner.test_coverage import main
+
+        # Create mock tier configs in a specific non-alphabetical order
+        mock_config_z = TestTierConfig(
+            name="z_tier",
+            test_path="tests/z",
+            source_paths=["app"],
+            coverage_type="line_branch",
+        )
+        mock_config_a = TestTierConfig(
+            name="a_tier",
+            test_path="tests/a",
+            source_paths=["app"],
+            coverage_type="line_branch",
+        )
+        mock_config_m = TestTierConfig(
+            name="m_tier",
+            test_path="tests/m",
+            source_paths=["app"],
+            coverage_type="line_branch",
+        )
+
+        # Return tiers in specific order: z, a, m
+        ordered_tiers = {"z_tier": mock_config_z, "a_tier": mock_config_a, "m_tier": mock_config_m}
+
+        # Track the order strategies are created
+        created_order: list[str] = []
+
+        def mock_create_strategy(config: TestTierConfig, *args: Any, **kwargs: Any) -> MagicMock:
+            created_order.append(config.name)
+            strategy = MagicMock()
+            strategy.config = config
+            strategy.coverage_result = None
+            strategy.usecase_result = None
+            strategy.validate.return_value = []
+            strategy.build_summary.return_value = {"tier_pass": True}
+            return strategy
+
+        # Set up paths
+        coverage_dir = tmp_path / ".coverage"
+        coverage_dir.mkdir(parents=True, exist_ok=True)
+        (coverage_dir / "data").touch()
+
+        # Create minimal use_cases.yaml
+        use_cases_dir = tmp_path / "tests" / "docs"
+        use_cases_dir.mkdir(parents=True, exist_ok=True)
+        (use_cases_dir / "use_cases.yaml").write_text("use_cases: []")
+
+        test_args = [
+            "test_coverage.py",
+            "--tier",
+            "all",
+            "--no-validate",
+            "--skip-redundant-detection",
+        ]
+        monkeypatch.setattr("sys.argv", test_args)
+        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
+
+        with (
+            patch(
+                "scripts.dev.test_runner.test_coverage.get_test_tiers",
+                return_value=ordered_tiers,
+            ),
+            patch(
+                "scripts.dev.test_runner.test_strategies.create_strategy",
+                side_effect=mock_create_strategy,
+            ),
+            patch("scripts.dev.test_runner.test_coverage._run_command"),
+            patch("scripts.dev.test_runner.coverage_db.init_custom_tables"),
+            patch("scripts.dev.test_runner.coverage_db.clear_custom_tables"),
+            patch("scripts.dev.test_runner.coverage_db.write_usecase_registry"),
+            patch("scripts.dev.test_runner.coverage_db.write_run_metadata"),
+            patch("scripts.dev.test_runner.coverage_db.write_tier_summary"),
+        ):
+            main()
+
+        # Assert strategies were created in the exact order of the dict keys
+        assert created_order == ["z_tier", "a_tier", "m_tier"], (
+            f"Strategies should be created in dict key order ['z_tier', 'a_tier', 'm_tier'], "
+            f"but got {created_order}"
+        )
+
+
+# =============================================================================
+# CREATE_STRATEGY FACTORY INVARIANT TESTS
+# =============================================================================
+
+
+class TestCreateStrategyInvariant:
+    """Tests verifying create_strategy() is the single location for coverage type dispatch.
+
+    These tests ensure:
+    1. create_strategy() returns the correct strategy subclass based on coverage_type
+    2. Proper validation of required parameters for each coverage type
+    3. Appropriate error handling for unknown coverage types
+    """
+
+    def test_create_strategy_dispatches_line_branch_type(self, tmp_path: Path) -> None:
+        """create_strategy() with coverage_type='line_branch' returns LineBranchTestStrategy."""
+        from scripts.dev.test_runner.test_strategies import (
+            LineBranchTestStrategy,
+            create_strategy,
+        )
+
+        config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            coverage_type="line_branch",
+        )
+        db_path = tmp_path / "coverage.db"
+        tier_coverage_file = tmp_path / "data_unit"
+
+        strategy = create_strategy(config, db_path, tmp_path, tier_coverage_file=tier_coverage_file)
+
+        assert isinstance(strategy, LineBranchTestStrategy)
+
+    def test_create_strategy_dispatches_usecase_type(self, tmp_path: Path) -> None:
+        """create_strategy() with coverage_type='usecase' returns IntegrationTestStrategy."""
+        from scripts.dev.test_runner.test_strategies import (
+            IntegrationTestStrategy,
+            create_strategy,
+        )
+
+        config = TestTierConfig(
+            name="integration",
+            test_path="tests/integration",
+            source_paths=["app"],
+            coverage_type="usecase",
+        )
+        db_path = tmp_path / "coverage.db"
+        use_cases = [UseCase("UC-1", "/api", "GET", "Test", "integration")]
+
+        strategy = create_strategy(config, db_path, tmp_path, use_cases=use_cases)
+
+        assert isinstance(strategy, IntegrationTestStrategy)
+
+    def test_create_strategy_requires_tier_coverage_file_for_line_branch(
+        self, tmp_path: Path
+    ) -> None:
+        """create_strategy() raises ValueError when tier_coverage_file is None for line_branch."""
+        from scripts.dev.test_runner.test_strategies import create_strategy
+
+        config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            coverage_type="line_branch",
+        )
+        db_path = tmp_path / "coverage.db"
+
+        with pytest.raises(ValueError) as exc_info:
+            create_strategy(config, db_path, tmp_path, tier_coverage_file=None)
+
+        assert "tier_coverage_file is required" in str(exc_info.value)
+
+    def test_create_strategy_requires_use_cases_for_usecase(self, tmp_path: Path) -> None:
+        """create_strategy() raises ValueError when use_cases is None for usecase coverage type."""
+        from scripts.dev.test_runner.test_strategies import create_strategy
+
+        config = TestTierConfig(
+            name="integration",
+            test_path="tests/integration",
+            source_paths=["app"],
+            coverage_type="usecase",
+        )
+        db_path = tmp_path / "coverage.db"
+
+        with pytest.raises(ValueError) as exc_info:
+            create_strategy(config, db_path, tmp_path, use_cases=None)
+
+        assert "use_cases must be provided" in str(exc_info.value)
+
+    def test_create_strategy_rejects_unknown_coverage_type(self, tmp_path: Path) -> None:
+        """create_strategy() raises ValueError for unknown coverage_type."""
+        from scripts.dev.test_runner.test_strategies import create_strategy
+
+        config = TestTierConfig(
+            name="unknown",
+            test_path="tests/unknown",
+            source_paths=["app"],
+            coverage_type="unknown_type",
+        )
+        db_path = tmp_path / "coverage.db"
+
+        with pytest.raises(ValueError) as exc_info:
+            create_strategy(config, db_path, tmp_path)
+
+        assert "Unknown coverage type" in str(exc_info.value)
+
+
+# =============================================================================
+# COVERAGE ISOLATION PER TIER TESTS
+# =============================================================================
+
+
+class TestCoverageIsolationPerTier:
+    """Tests verifying each tier uses isolated coverage files during validation.
+
+    These tests ensure:
+    1. LineBranchTestStrategy uses tier-specific coverage file (not .coverage/data)
+    2. --cov-append flag is NOT used (each tier writes fresh coverage)
+    3. Per-tier JSON reports are generated from tier-specific coverage files
+    """
+
+    def test_per_tier_isolation_no_cov_append(self, tmp_path: Path) -> None:
+        """LineBranchTestStrategy.run_tests() should NOT use --cov-append flag."""
+        from unittest.mock import patch
+
+        from scripts.dev.test_runner.test_strategies import LineBranchTestStrategy
+
+        config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            coverage_type="line_branch",
+        )
+        db_path = tmp_path / "coverage.db"
+        tier_coverage_file = tmp_path / "data_unit"
+
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tier_coverage_file)
+
+        captured_cmd: list[str] = []
+        captured_env: dict[str, str] = {}
+
+        def mock_run_command(
+            cmd: list[str], capture: bool = True, env: dict[str, str] | None = None
+        ) -> Any:
+            nonlocal captured_cmd, captured_env
+            captured_cmd = cmd
+            captured_env = env or {}
+            # Return a mock result object
+            from unittest.mock import MagicMock
+
+            result = MagicMock()
+            result.returncode = 0
+            return result
+
+        with patch(
+            "scripts.dev.test_runner.test_strategies._run_command", side_effect=mock_run_command
+        ):
+            strategy.run_tests()
+
+        # Verify --cov-append is NOT in the command
+        assert "--cov-append" not in captured_cmd, (
+            "run_tests() should NOT use --cov-append flag. "
+            "Each tier writes to isolated coverage files."
+        )
+
+        # Verify COVERAGE_FILE env var is set to tier-specific path
+        assert "COVERAGE_FILE" in captured_env
+        assert captured_env["COVERAGE_FILE"] == str(tier_coverage_file), (
+            f"COVERAGE_FILE should be '{tier_coverage_file}', "
+            f"but was '{captured_env['COVERAGE_FILE']}'"
+        )
+
+    def test_run_tests_uses_tier_coverage_file(self, tmp_path: Path) -> None:
+        """LineBranchTestStrategy.run_tests() should use tier-specific coverage file path."""
+        from unittest.mock import MagicMock, patch
+
+        from scripts.dev.test_runner.test_strategies import LineBranchTestStrategy
+
+        config = TestTierConfig(
+            name="component",
+            test_path="tests/unit",
+            source_paths=["app/services"],
+            coverage_type="line_branch",
+        )
+        db_path = tmp_path / "coverage.db"
+        tier_coverage_file = tmp_path / "data_component"
+
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tier_coverage_file)
+
+        captured_env: dict[str, str] = {}
+
+        def mock_run_command(
+            cmd: list[str], capture: bool = True, env: dict[str, str] | None = None
+        ) -> Any:
+            nonlocal captured_env
+            captured_env = env or {}
+            result = MagicMock()
+            result.returncode = 0
+            return result
+
+        with patch(
+            "scripts.dev.test_runner.test_strategies._run_command", side_effect=mock_run_command
+        ):
+            strategy.run_tests()
+
+        # Verify COVERAGE_FILE points to tier-specific path
+        assert captured_env.get("COVERAGE_FILE") == str(tier_coverage_file)
+        # Verify it does NOT point to the combined coverage file
+        assert captured_env.get("COVERAGE_FILE") != str(tmp_path / "data")
+
+    def test_collect_results_uses_tier_coverage_file(self, tmp_path: Path) -> None:
+        """LineBranchTestStrategy.collect_results() should use tier-specific coverage file."""
+        import json
+        from unittest.mock import MagicMock, patch
+
+        from scripts.dev.test_runner.test_strategies import LineBranchTestStrategy
+
+        config = TestTierConfig(
+            name="scripts",
+            test_path="scripts/tests",
+            source_paths=["scripts"],
+            coverage_type="line_branch",
+        )
+        coverage_dir = tmp_path / ".coverage"
+        coverage_dir.mkdir(parents=True, exist_ok=True)
+        db_path = coverage_dir / "coverage.db"
+        tier_coverage_file = coverage_dir / "data_scripts"
+
+        strategy = LineBranchTestStrategy(config, db_path, tmp_path, tier_coverage_file)
+        strategy._tests_ran = True  # Simulate run_tests() was called
+
+        captured_env: dict[str, str] = {}
+
+        def mock_run_command(
+            cmd: list[str], capture: bool = True, env: dict[str, str] | None = None
+        ) -> Any:
+            nonlocal captured_env
+            captured_env = env or {}
+
+            # Create the JSON file that collect_results() expects
+            if "json" in cmd:
+                json_path = coverage_dir / f"temp_{config.name}.json"
+                json_path.write_text(
+                    json.dumps(
+                        {
+                            "totals": {
+                                "num_statements": 100,
+                                "covered_lines": 80,
+                                "missing_lines": 20,
+                                "percent_covered": 80.0,
+                                "num_branches": 50,
+                                "covered_branches": 40,
+                                "num_partial_branches": 5,
+                                "missing_branches": 5,
+                                "percent_covered_branches": 80.0,
+                            },
+                            "files": {},
+                        }
+                    )
+                )
+            result = MagicMock()
+            result.returncode = 0
+            return result
+
+        with (
+            patch(
+                "scripts.dev.test_runner.test_strategies._run_command",
+                side_effect=mock_run_command,
+            ),
+            patch("scripts.dev.test_runner.coverage_db.write_tier_config"),
+        ):
+            strategy.collect_results()
+
+        # Verify COVERAGE_FILE points to tier-specific path for JSON generation
+        assert captured_env.get("COVERAGE_FILE") == str(tier_coverage_file)
+
+
+# =============================================================================
+# COVERAGE COMBINE TESTS
+# =============================================================================
+
+
+class TestCoverageCombine:
+    """Tests verifying coverage combine produces combined database for global reports."""
+
+    def test_coverage_combine_produces_combined_database(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """main() should run coverage combine to merge per-tier files after all tiers complete."""
+        from unittest.mock import MagicMock, patch
+
+        from scripts.dev.test_runner.test_coverage import main
+
+        # Set up paths
+        coverage_dir = tmp_path / ".coverage"
+        coverage_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create mock tier configs
+        mock_unit_config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            coverage_type="line_branch",
+        )
+        mock_component_config = TestTierConfig(
+            name="component",
+            test_path="tests/unit",
+            source_paths=["app/services"],
+            coverage_type="line_branch",
+        )
+
+        # Create mock strategies
+        def create_mock_strategy(config: TestTierConfig, *args: Any, **kwargs: Any) -> MagicMock:
+            strategy = MagicMock()
+            strategy.config = config
+            strategy.coverage_result = CoverageResult(
+                suite_name=config.name,
+                total_lines=100,
+                covered_lines=80,
+                missing_lines=20,
+                line_coverage_pct=80.0,
+                total_branches=50,
+                covered_branches=40,
+                missing_branches=10,
+                branch_coverage_pct=80.0,
+                files={},
+                functions={},
+            )
+            strategy.usecase_result = None
+            strategy.validate.return_value = []
+            strategy.build_summary.return_value = {"tier_pass": 1}
+            return strategy
+
+        # Track coverage combine calls
+        combine_cmd_called = False
+        combine_files: list[str] = []
+
+        def mock_run_command(
+            cmd: list[str], capture: bool = True, env: dict[str, str] | None = None
+        ) -> Any:
+            nonlocal combine_cmd_called, combine_files
+            if "combine" in cmd:
+                combine_cmd_called = True
+                # Extract the data files from the command
+                combine_files = [arg for arg in cmd if arg.startswith(str(coverage_dir))]
+            result = MagicMock()
+            result.returncode = 0
+            return result
+
+        # Create use_cases.yaml
+        use_cases_dir = tmp_path / "tests" / "docs"
+        use_cases_dir.mkdir(parents=True, exist_ok=True)
+        (use_cases_dir / "use_cases.yaml").write_text("use_cases: []")
+
+        # Create tier coverage data files (simulate they exist after running tests)
+        (coverage_dir / "data_unit").touch()
+        (coverage_dir / "data_component").touch()
+
+        test_args = [
+            "test_coverage.py",
+            "--tier",
+            "all",
+            "--no-validate",
+            "--skip-redundant-detection",
+        ]
+        monkeypatch.setattr("sys.argv", test_args)
+        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
+
+        with (
+            patch(
+                "scripts.dev.test_runner.test_coverage.get_test_tiers",
+                return_value={"unit": mock_unit_config, "component": mock_component_config},
+            ),
+            patch(
+                "scripts.dev.test_runner.test_strategies.create_strategy",
+                side_effect=create_mock_strategy,
+            ),
+            patch(
+                "scripts.dev.test_runner.test_coverage._run_command",
+                side_effect=mock_run_command,
+            ),
+            patch("scripts.dev.test_runner.coverage_db.init_custom_tables"),
+            patch("scripts.dev.test_runner.coverage_db.clear_custom_tables"),
+            patch("scripts.dev.test_runner.coverage_db.write_usecase_registry"),
+            patch("scripts.dev.test_runner.coverage_db.write_run_metadata"),
+            patch("scripts.dev.test_runner.coverage_db.write_tier_summary"),
+        ):
+            main()
+
+        # Verify coverage combine was called
+        assert combine_cmd_called, "coverage combine should be called after all tiers complete"
+
+        # Verify both tier data files were passed to combine
+        assert len(combine_files) == 2, f"Expected 2 tier data files, got {len(combine_files)}"
+        assert any("data_unit" in f for f in combine_files)
+        assert any("data_component" in f for f in combine_files)
+
+
+class TestDeprecationWarning:
+    """Tests for deprecation warning when legacy tier configuration format is used."""
+
+    @pytest.fixture(autouse=True)
+    def reset_legacy_warning_flag(self) -> Generator[None]:
+        """Reset the legacy format warning flag before each test."""
+        from scripts.dev.test_runner import test_coverage
+
+        test_coverage._legacy_format_warning_emitted = False
+        yield
+        test_coverage._legacy_format_warning_emitted = False
+
+    def test_legacy_format_prints_deprecation_warning_via_load_tier_configs(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should print deprecation warning when legacy format is used via load_tier_configs()."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.unit]
+min_line_per_function = 70.0
+""")
+        load_tier_configs(pyproject)
+
+        captured = capsys.readouterr()
+        assert "DEPRECATION WARNING: Using legacy tier configuration format" in captured.err
+        assert "[tool.test_coverage.<tier>]" in captured.err
+        assert "[tool.test_coverage.tiers.<tier_name>]" in captured.err
+
+    def test_legacy_format_prints_deprecation_warning_via_get_test_tiers(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should print deprecation warning when legacy format is used via get_test_tiers()."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.unit]
+min_line_per_function = 70.0
+""")
+        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
+        from scripts.dev.test_runner import test_coverage
+
+        test_coverage._settings = None
+
+        get_test_tiers()
+
+        captured = capsys.readouterr()
+        assert "DEPRECATION WARNING: Using legacy tier configuration format" in captured.err
+
+    def test_new_format_no_deprecation_warning(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should NOT print deprecation warning when new format is used."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.tiers.unit]
+test_path = "tests/unit"
+source_paths = ["app"]
+coverage_type = "line_branch"
+min_line_per_function = 70.0
+""")
+        load_tier_configs(pyproject)
+
+        captured = capsys.readouterr()
+        assert "DEPRECATION WARNING" not in captured.err
+
+    def test_deprecation_warning_printed_only_once_load_tier_configs(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should print deprecation warning only once for multiple load_tier_configs() calls."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.unit]
+min_line_per_function = 70.0
+""")
+        # Call multiple times
+        load_tier_configs(pyproject)
+        load_tier_configs(pyproject)
+        load_tier_configs(pyproject)
+
+        captured = capsys.readouterr()
+        # Count occurrences of the warning
+        warning_count = captured.err.count("DEPRECATION WARNING: Using legacy tier configuration")
+        assert warning_count == 1, f"Expected exactly 1 warning, got {warning_count}"
+
+    def test_deprecation_warning_printed_only_once_across_both_functions(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deprecation warning should print only once across both functions."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.unit]
+min_line_per_function = 70.0
+""")
+        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
+        from scripts.dev.test_runner import test_coverage
+
+        test_coverage._settings = None
+
+        # Call load_tier_configs first (warning should appear)
+        load_tier_configs(pyproject)
+        # Then call get_test_tiers (no additional warning should appear)
+        get_test_tiers()
+
+        captured = capsys.readouterr()
+        warning_count = captured.err.count("DEPRECATION WARNING: Using legacy tier configuration")
+        assert warning_count == 1, f"Expected exactly 1 warning, got {warning_count}"
+
+    def test_deprecation_warning_suppressed_with_quiet_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should NOT print deprecation warning when quiet=True."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.unit]
+min_line_per_function = 70.0
+""")
+        load_tier_configs(pyproject, quiet=True)
+
+        captured = capsys.readouterr()
+        assert "DEPRECATION WARNING" not in captured.err
+
+    def test_deprecation_warning_suppressed_with_quiet_flag_via_get_test_tiers(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should NOT print deprecation warning when quiet=True via get_test_tiers()."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.test_coverage.unit]
+min_line_per_function = 70.0
+""")
+        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
+        from scripts.dev.test_runner import test_coverage
+
+        test_coverage._settings = None
+
+        get_test_tiers(quiet=True)
+
+        captured = capsys.readouterr()
+        assert "DEPRECATION WARNING" not in captured.err
