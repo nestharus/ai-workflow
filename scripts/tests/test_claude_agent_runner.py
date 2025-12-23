@@ -305,8 +305,9 @@ class TestClaudeRunner:
         mock_result.stdout = ""
         mock_result.stderr = "Error"
 
-        with patch("subprocess.run", return_value=mock_result), pytest.raises(
-            RuntimeError, match="exit code 1"
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(RuntimeError, match="exit code 1"),
         ):
             runner.run("Test prompt")
 

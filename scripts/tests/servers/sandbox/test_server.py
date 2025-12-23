@@ -10,7 +10,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from scripts.servers.sandbox.protocol import RebaseRequest, StatusRequest
+from scripts.servers.sandbox.protocol import (
+    ConflictResponse,
+    RebaseRequest,
+    StatusRequest,
+    SuccessResponse,
+)
 from scripts.servers.sandbox.server import (
     MAX_HISTORY_SIZE,
     OperationStatus,
@@ -996,6 +1001,126 @@ class TestRunServer:
         captured_handler()
 
         mock_server_instance.shutdown.assert_called()
+
+
+class TestQueueIsolationWithConflicts:
+    """Tests for queue isolation when operations have conflicts."""
+
+    @pytest.mark.asyncio
+    async def test_operations_processed_sequentially(self) -> None:
+        """Verify operations are processed sequentially, not concurrently."""
+        from unittest.mock import patch
+
+        from scripts.servers.sandbox.server import QueuedOperation
+
+        server = SandboxServer(repo_path=Path("/tmp"))
+        server.operation_queue = asyncio.Queue()
+        server._shutdown_event = asyncio.Event()
+        server.sandbox_path = Path("/tmp/sandbox")
+
+        execution_order = []
+
+        def mock_execute_op(request):
+            execution_order.append(request.request_id)
+            response = SuccessResponse(
+                request_id=request.request_id,
+                result={"message": "Done"},
+            )
+            return response.to_json()
+
+        with patch.object(server, "_execute_operation", side_effect=mock_execute_op):
+            # Add two operations
+            response_queue_1: asyncio.Queue[str] = asyncio.Queue()
+            queued_op_1 = QueuedOperation(
+                request_id="op-1",
+                request=RebaseRequest(request_id="op-1", branch="feature-1", target="main"),
+                response_queue=response_queue_1,
+            )
+            await server.operation_queue.put(queued_op_1)
+            server.operation_history["op-1"] = OperationStatus(request_id="op-1", status="pending")
+
+            response_queue_2: asyncio.Queue[str] = asyncio.Queue()
+            queued_op_2 = QueuedOperation(
+                request_id="op-2",
+                request=RebaseRequest(request_id="op-2", branch="feature-2", target="main"),
+                response_queue=response_queue_2,
+            )
+            await server.operation_queue.put(queued_op_2)
+            server.operation_history["op-2"] = OperationStatus(request_id="op-2", status="pending")
+
+            # Start processor
+            process_task = asyncio.create_task(server._process_queue())
+
+            # Wait for both to complete
+            await asyncio.wait_for(response_queue_1.get(), timeout=1.0)
+            await asyncio.wait_for(response_queue_2.get(), timeout=1.0)
+
+            # Verify sequential execution
+            assert len(execution_order) == 2
+            assert execution_order[0] == "op-1"
+            assert execution_order[1] == "op-2"
+
+            process_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await process_task
+
+    @pytest.mark.asyncio
+    async def test_queue_maintains_order(self) -> None:
+        """Verify the queue maintains FIFO order."""
+        from unittest.mock import patch
+
+        from scripts.servers.sandbox.server import QueuedOperation
+
+        server = SandboxServer(repo_path=Path("/tmp"))
+        server.operation_queue = asyncio.Queue()
+        server._shutdown_event = asyncio.Event()
+        server.sandbox_path = Path("/tmp/sandbox")
+
+        execution_order = []
+
+        def mock_execute_op(request):
+            execution_order.append(request.request_id)
+            response = SuccessResponse(
+                request_id=request.request_id,
+                result={"message": "Done"},
+            )
+            return response.to_json()
+
+        with patch.object(server, "_execute_operation", side_effect=mock_execute_op):
+            # Add multiple operations in order
+            for i in range(3):
+                response_queue: asyncio.Queue[str] = asyncio.Queue()
+                queued_op = QueuedOperation(
+                    request_id=f"op-{i}",
+                    request=RebaseRequest(
+                        request_id=f"op-{i}", branch=f"feature-{i}", target="main"
+                    ),
+                    response_queue=response_queue,
+                )
+                await server.operation_queue.put(queued_op)
+                server.operation_history[f"op-{i}"] = OperationStatus(
+                    request_id=f"op-{i}", status="pending"
+                )
+
+            # Start processor
+            process_task = asyncio.create_task(server._process_queue())
+
+            # Wait for all to complete
+            for _i in range(3):
+                response_queue = asyncio.Queue()
+                # This won't actually get the responses, but we need to wait
+                await asyncio.sleep(0.05)
+
+            # Give time for all to process
+            await asyncio.sleep(0.3)
+
+            # Verify FIFO order
+            assert len(execution_order) == 3
+            assert execution_order == ["op-0", "op-1", "op-2"]
+
+            process_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await process_task
 
 
 class TestMainFunction:

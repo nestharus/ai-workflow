@@ -8,6 +8,7 @@ from scripts.dev.linter.base import (
     BaseLinter,
     LinterResult,
     get_executable,
+    is_path_included,
     load_yaml_config,
     run_checked,
 )
@@ -45,15 +46,20 @@ class DetectSecretsLinter(BaseLinter):
         uv_exe = get_executable("uv", UV_CLI_REQUIRED)
 
         if files is not None:
-            # Load exclusion config from .lint.detect-secrets.yaml
+            # Load config from .lint.detect-secrets.yaml
             config = load_yaml_config(LINT_DETECT_SECRETS_CONFIG)
             excluded_extensions = set(config.get("excluded_extensions", []))
             excluded_names = set(config.get("excluded_names", []))
+            included_paths = config.get("included_paths", [])
 
             scannable_files = [
                 f
                 for f in files
-                if not any(f.endswith(ext) for ext in excluded_extensions)
+                # Check inclusion via glob patterns
+                if (not included_paths or is_path_included(f, included_paths))
+                # Check extension exclusion
+                and not any(f.endswith(ext) for ext in excluded_extensions)
+                # Check name exclusion
                 and Path(f).name not in excluded_names
             ]
 

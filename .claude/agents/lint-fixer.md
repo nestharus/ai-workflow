@@ -80,10 +80,11 @@ worktree path directly.
 
 When `--changed-only` is specified:
 1. Detect changed files (uncommitted first, then last commit)
-2. For linters that support `--files` (ruff, mypy, hadolint, pymarkdown, yamllint,
-   actionlint, dotenvlint, detect-secrets), pass the changed files
-3. Skip linters that don't support file filtering (scripts, checkov, trivy) or skip
-   them if no relevant files changed
+2. For all linters that support `--files`, pass the changed files:
+   - ruff, mypy, hadolint, pymarkdown, yamllint, actionlint, dotenvlint,
+     detect-secrets, gitleaks, scripts, checkov, trivy
+3. Each linter will internally skip itself if none of the files it checks are
+   in the changed files list
 
 ### 1. Run gen_openapi (required before lint, skip if --changed-only)
 
@@ -118,7 +119,8 @@ if [ -z "$CHANGED_FILES" ]; then
     CHANGED_FILES=$(git diff --name-only HEAD~1..HEAD)
 fi
 
-# Run linters with --files flag (only those that support it)
+# Run all linters with --files flag
+uv run lint scripts --files $CHANGED_FILES
 uv run lint ruff --files $CHANGED_FILES
 uv run lint mypy --files $CHANGED_FILES
 uv run lint hadolint --files $CHANGED_FILES
@@ -126,8 +128,10 @@ uv run lint pymarkdown --files $CHANGED_FILES
 uv run lint yamllint --files $CHANGED_FILES
 uv run lint actionlint --files $CHANGED_FILES
 uv run lint dotenvlint --files $CHANGED_FILES
+uv run lint checkov --files $CHANGED_FILES
 uv run lint detect-secrets --files $CHANGED_FILES
 uv run lint gitleaks --files $CHANGED_FILES
+uv run lint trivy --files $CHANGED_FILES
 ```
 
 ### 3. Fix and iterate

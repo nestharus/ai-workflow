@@ -209,6 +209,7 @@ convention = "google"
     "TRY003",    # Allow inline exception messages
     "ANN401",    # Allow Any type annotations
     "E501",      # Line length in test data strings (CSV, fixtures)
+    "W293",      # Blank line whitespace in test data strings
     "ANN",       # Type annotations not needed in test helpers
     "F401",      # Conditionally unused imports (e.g., torch with try/except)
 ]
@@ -226,6 +227,7 @@ convention = "google"
     "ANN401",    # Allow Any type annotations
     "E402",      # Allow late imports (after sys.path manipulation)
     "E501",      # Line length in test data strings
+    "W293",      # Blank line whitespace in test data strings
     "ANN",       # Type annotations not needed in test helpers
     "F401",      # Conditionally unused imports
 ]

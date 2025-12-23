@@ -446,16 +446,21 @@ class TestInvokeFactExtractor:
 
     def test_raises_error_when_claude_not_found(self) -> None:
         """Should raise FactExtractorError when claude CLI is not found."""
-        with patch("shutil.which", return_value=None), pytest.raises(
-            FactExtractorError, match="Claude CLI not found"
+        with (
+            patch("shutil.which", return_value=None),
+            pytest.raises(FactExtractorError, match="Claude CLI not found"),
         ):
             invoke_fact_extractor("Test sentence.", "entity")
 
     def test_raises_error_on_timeout(self) -> None:
         """Should raise FactExtractorError on subprocess timeout."""
-        with patch("shutil.which", return_value="/usr/bin/claude"), patch(
-            "subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=120)
-        ), pytest.raises(FactExtractorError, match="timed out"):
+        with (
+            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch(
+                "subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=120)
+            ),
+            pytest.raises(FactExtractorError, match="timed out"),
+        ):
             invoke_fact_extractor("Test sentence.", "entity")
 
     def test_raises_error_on_non_zero_exit(self) -> None:
@@ -464,8 +469,9 @@ class TestInvokeFactExtractor:
             mock_result = MagicMock()
             mock_result.returncode = 1
             mock_result.stderr = "Error message"
-            with patch("subprocess.run", return_value=mock_result), pytest.raises(
-                FactExtractorError, match="non-zero exit code"
+            with (
+                patch("subprocess.run", return_value=mock_result),
+                pytest.raises(FactExtractorError, match="non-zero exit code"),
             ):
                 invoke_fact_extractor("Test sentence.", "entity")
 
@@ -475,8 +481,9 @@ class TestInvokeFactExtractor:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = ""
-            with patch("subprocess.run", return_value=mock_result), pytest.raises(
-                FactExtractorError, match="empty output"
+            with (
+                patch("subprocess.run", return_value=mock_result),
+                pytest.raises(FactExtractorError, match="empty output"),
             ):
                 invoke_fact_extractor("Test sentence.", "entity")
 
@@ -486,8 +493,9 @@ class TestInvokeFactExtractor:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = "No JSON here, just plain text."
-            with patch("subprocess.run", return_value=mock_result), pytest.raises(
-                FactExtractorError, match="No JSON found"
+            with (
+                patch("subprocess.run", return_value=mock_result),
+                pytest.raises(FactExtractorError, match="No JSON found"),
             ):
                 invoke_fact_extractor("Test sentence.", "entity")
 
@@ -497,8 +505,9 @@ class TestInvokeFactExtractor:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = "{invalid json}"
-            with patch("subprocess.run", return_value=mock_result), pytest.raises(
-                FactExtractorError, match="Invalid JSON"
+            with (
+                patch("subprocess.run", return_value=mock_result),
+                pytest.raises(FactExtractorError, match="Invalid JSON"),
             ):
                 invoke_fact_extractor("Test sentence.", "entity")
 
@@ -511,8 +520,9 @@ class TestInvokeFactExtractor:
             mock_result.returncode = 0
             # Missing required fields
             mock_result.stdout = json.dumps({"entity": "test"})
-            with patch("subprocess.run", return_value=mock_result), pytest.raises(
-                FactExtractorError, match="Missing required fields"
+            with (
+                patch("subprocess.run", return_value=mock_result),
+                pytest.raises(FactExtractorError, match="Missing required fields"),
             ):
                 invoke_fact_extractor("Test sentence.", "entity")
 
@@ -540,9 +550,11 @@ class TestInvokeFactExtractor:
 
     def test_raises_error_on_subprocess_error(self) -> None:
         """Should raise FactExtractorError on SubprocessError."""
-        with patch("shutil.which", return_value="/usr/bin/claude"), patch(
-            "subprocess.run", side_effect=subprocess.SubprocessError("Subprocess failed")
-        ), pytest.raises(FactExtractorError, match="invocation failed"):
+        with (
+            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", side_effect=subprocess.SubprocessError("Subprocess failed")),
+            pytest.raises(FactExtractorError, match="invocation failed"),
+        ):
             invoke_fact_extractor("Test sentence.", "entity")
 
 

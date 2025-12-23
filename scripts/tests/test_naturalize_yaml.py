@@ -53,7 +53,7 @@ class TestProcessYamlFile:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("type: rule\ntext: Follow this rule.\n")
 
-        changed, _stats = process_yaml_file(yaml_file)
+        changed, stats = process_yaml_file(yaml_file)
 
         assert changed is True
         assert stats["types_removed"] == 1
@@ -68,7 +68,7 @@ class TestProcessYamlFile:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("type: text\ntext: Some text content.\n")
 
-        changed, _stats = process_yaml_file(yaml_file)
+        changed, stats = process_yaml_file(yaml_file)
 
         assert changed is True
         assert stats["types_removed"] == 1
@@ -83,7 +83,7 @@ class TestProcessYamlFile:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("type: step\ntext: Step 1\n---\ntype: note\ntext: Note content\n")
 
-        changed, _stats = process_yaml_file(yaml_file)
+        changed, stats = process_yaml_file(yaml_file)
 
         assert changed is True
         assert "step" in stats["text_renamed"]
@@ -93,7 +93,7 @@ class TestProcessYamlFile:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("type: rule\nother: value\n")
 
-        changed, _stats = process_yaml_file(yaml_file)
+        changed, stats = process_yaml_file(yaml_file)
 
         assert changed is True
         assert stats["types_removed"] == 1
@@ -104,7 +104,7 @@ class TestProcessYamlFile:
         # Need extra line before title so range includes line 0
         yaml_file.write_text("section: test\ntitle: Coding Rules\nitems:\n  - item1\n")
 
-        changed, _stats = process_yaml_file(yaml_file)
+        changed, stats = process_yaml_file(yaml_file)
 
         assert changed is True
         assert stats["items_renamed"] == 1
@@ -118,7 +118,7 @@ class TestProcessYamlFile:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("section: test\ncategory: Anti-patterns\nitems:\n  - bad practice\n")
 
-        changed, _stats = process_yaml_file(yaml_file)
+        changed, stats = process_yaml_file(yaml_file)
 
         assert changed is True
         assert stats["items_renamed"] == 1
@@ -185,7 +185,7 @@ class TestProcessYamlFile:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("- name: Item 1\n  value: test\n")
 
-        changed, _stats = process_yaml_file(yaml_file)
+        changed, stats = process_yaml_file(yaml_file)
 
         assert changed is True
         assert stats["ids_added"] == 1
@@ -234,7 +234,7 @@ class TestProcessYamlFile:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("type: rule\ntext: Rule content\ntype: note\ntext: Note content\n")
 
-        changed, _stats = process_yaml_file(yaml_file)
+        changed, stats = process_yaml_file(yaml_file)
 
         assert changed is True
         assert stats["types_removed"] == 2
@@ -244,7 +244,7 @@ class TestProcessYamlFile:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("  type: definition\n  text: Definition content\n")
 
-        changed, _stats = process_yaml_file(yaml_file)
+        changed, stats = process_yaml_file(yaml_file)
 
         assert changed is True
         assert "definition" in stats["text_renamed"]
@@ -255,9 +255,10 @@ class TestMain:
 
     def test_returns_error_with_no_arguments(self) -> None:
         """Should return 1 when no file arguments provided."""
-        with mock.patch("sys.argv", ["naturalize_yaml.py"]), mock.patch(
-            "sys.stdout", new_callable=StringIO
-        ) as mock_stdout:
+        with (
+            mock.patch("sys.argv", ["naturalize_yaml.py"]),
+            mock.patch("sys.stdout", new_callable=StringIO) as mock_stdout,
+        ):
             result = main()
 
         assert result == 1
@@ -265,9 +266,11 @@ class TestMain:
 
     def test_handles_nonexistent_file(self) -> None:
         """Should print error for nonexistent file and continue."""
-        with mock.patch("sys.argv", ["prog", "/nonexistent/file.yml"]), mock.patch(
-            "sys.stderr", new_callable=StringIO
-        ) as mock_stderr, mock.patch("sys.stdout", new_callable=StringIO):
+        with (
+            mock.patch("sys.argv", ["prog", "/nonexistent/file.yml"]),
+            mock.patch("sys.stderr", new_callable=StringIO) as mock_stderr,
+            mock.patch("sys.stdout", new_callable=StringIO),
+        ):
             result = main()
 
         assert result == 0
@@ -278,9 +281,10 @@ class TestMain:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("key: value\n")
 
-        with mock.patch("sys.argv", ["prog", str(yaml_file)]), mock.patch(
-            "sys.stdout", new_callable=StringIO
-        ) as mock_stdout:
+        with (
+            mock.patch("sys.argv", ["prog", str(yaml_file)]),
+            mock.patch("sys.stdout", new_callable=StringIO) as mock_stdout,
+        ):
             result = main()
 
         assert result == 0
@@ -294,9 +298,10 @@ class TestMain:
         file1.write_text("type: rule\ntext: Rule 1\n")
         file2.write_text("type: note\ntext: Note 1\n")
 
-        with mock.patch("sys.argv", ["prog", str(file1), str(file2)]), mock.patch(
-            "sys.stdout", new_callable=StringIO
-        ) as mock_stdout:
+        with (
+            mock.patch("sys.argv", ["prog", str(file1), str(file2)]),
+            mock.patch("sys.stdout", new_callable=StringIO) as mock_stdout,
+        ):
             result = main()
 
         assert result == 0
@@ -308,9 +313,10 @@ class TestMain:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("type: rule\ntext: Rule content\n")
 
-        with mock.patch("sys.argv", ["prog", str(yaml_file)]), mock.patch(
-            "sys.stdout", new_callable=StringIO
-        ) as mock_stdout:
+        with (
+            mock.patch("sys.argv", ["prog", str(yaml_file)]),
+            mock.patch("sys.stdout", new_callable=StringIO) as mock_stdout,
+        ):
             result = main()
 
         assert result == 0
@@ -323,9 +329,10 @@ class TestMain:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("type: rule\ntext: Rule content\n")
 
-        with mock.patch("sys.argv", ["prog", str(yaml_file)]), mock.patch(
-            "sys.stdout", new_callable=StringIO
-        ) as mock_stdout:
+        with (
+            mock.patch("sys.argv", ["prog", str(yaml_file)]),
+            mock.patch("sys.stdout", new_callable=StringIO) as mock_stdout,
+        ):
             main()
 
         output = mock_stdout.getvalue()
@@ -336,9 +343,10 @@ class TestMain:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("title: Rules\nitems:\n  - item1\n")
 
-        with mock.patch("sys.argv", ["prog", str(yaml_file)]), mock.patch(
-            "sys.stdout", new_callable=StringIO
-        ) as mock_stdout:
+        with (
+            mock.patch("sys.argv", ["prog", str(yaml_file)]),
+            mock.patch("sys.stdout", new_callable=StringIO) as mock_stdout,
+        ):
             main()
 
         output = mock_stdout.getvalue()
@@ -349,9 +357,10 @@ class TestMain:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("- name: Item 1\n  value: test\n")
 
-        with mock.patch("sys.argv", ["prog", str(yaml_file)]), mock.patch(
-            "sys.stdout", new_callable=StringIO
-        ) as mock_stdout:
+        with (
+            mock.patch("sys.argv", ["prog", str(yaml_file)]),
+            mock.patch("sys.stdout", new_callable=StringIO) as mock_stdout,
+        ):
             main()
 
         output = mock_stdout.getvalue()
@@ -362,10 +371,13 @@ class TestMain:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("key: value\n")
 
-        with mock.patch("sys.argv", ["prog", str(yaml_file)]), mock.patch(
-            "scripts.naturalize_yaml.process_yaml_file", side_effect=ValueError("Test error")
-        ), mock.patch("sys.stderr", new_callable=StringIO) as mock_stderr, mock.patch(
-            "sys.stdout", new_callable=StringIO
+        with (
+            mock.patch("sys.argv", ["prog", str(yaml_file)]),
+            mock.patch(
+                "scripts.naturalize_yaml.process_yaml_file", side_effect=ValueError("Test error")
+            ),
+            mock.patch("sys.stderr", new_callable=StringIO) as mock_stderr,
+            mock.patch("sys.stdout", new_callable=StringIO),
         ):
             result = main()
 
@@ -379,9 +391,10 @@ class TestMain:
         file1.write_text("type: rule\ntext: Rule 1\n")
         file2.write_text("type: rule\ntext: Rule 2\n")
 
-        with mock.patch("sys.argv", ["prog", str(file1), str(file2)]), mock.patch(
-            "sys.stdout", new_callable=StringIO
-        ) as mock_stdout:
+        with (
+            mock.patch("sys.argv", ["prog", str(file1), str(file2)]),
+            mock.patch("sys.stdout", new_callable=StringIO) as mock_stdout,
+        ):
             result = main()
 
         assert result == 0
@@ -394,9 +407,10 @@ class TestMain:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text("key: value\n")
 
-        with mock.patch("sys.argv", ["prog", str(yaml_file)]), mock.patch(
-            "sys.stdout", new_callable=StringIO
-        ) as mock_stdout:
+        with (
+            mock.patch("sys.argv", ["prog", str(yaml_file)]),
+            mock.patch("sys.stdout", new_callable=StringIO) as mock_stdout,
+        ):
             main()
 
         output = mock_stdout.getvalue()

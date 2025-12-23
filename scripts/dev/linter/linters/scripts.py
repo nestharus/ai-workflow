@@ -16,7 +16,7 @@ class ScriptsLinter(BaseLinter):
     """Validate pyproject.toml script entry point naming conventions."""
 
     name = "scripts"
-    supports_file_filtering = False
+    supports_file_filtering = True
 
     def run(self, files: list[str] | None = None) -> LinterResult:
         """Run the scripts linter.
@@ -25,11 +25,18 @@ class ScriptsLinter(BaseLinter):
         a module prefix to the required script name prefix.
 
         Args:
-            files: Ignored (this linter does not support file filtering).
+            files: Optional list of files to filter. Only runs if pyproject.toml
+                   is in the files list.
 
         Returns:
             LinterResult indicating success/failure.
         """
+        # If files are specified, only run if pyproject.toml is in the list
+        if files is not None:
+            if "pyproject.toml" not in files and "scripts/pyproject.toml" not in files:
+                print("pyproject.toml not in changed files, skipping scripts linter.")
+                return LinterResult(success=True)
+
         # Load configuration
         config = load_yaml_config(LINT_SCRIPTS_CONFIG)
         if not isinstance(config, dict):

@@ -19,17 +19,25 @@ class CheckovLinter(BaseLinter):
     """Run checkov on OpenAPI schema."""
 
     name = "checkov"
-    supports_file_filtering = False
+    supports_file_filtering = True
 
     def run(self, files: list[str] | None = None) -> LinterResult:
         """Run checkov on OpenAPI schema.
 
         Args:
-            files: Ignored (this linter does not support file filtering).
+            files: Optional list of files to filter. Only runs if any openapi.json
+                   file is in the files list.
 
         Returns:
             LinterResult indicating success/failure.
         """
+        # If files are specified, only run if any openapi.json file is in the list
+        if files is not None:
+            has_openapi = any(f.endswith("openapi.json") for f in files)
+            if not has_openapi:
+                print("No openapi.json file in changed files, skipping checkov linter.")
+                return LinterResult(success=True)
+
         if not OPENAPI_SCHEMA.exists():
             print(
                 f"OpenAPI schema missing at {OPENAPI_SCHEMA}. Run `uv run app.api.generate` first.",

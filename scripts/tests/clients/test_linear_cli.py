@@ -466,9 +466,10 @@ Content
             mock_client.get_issue.side_effect = LinearClientError("NOT_FOUND", "Issue not found")
             mock_client_class.return_value = mock_client
 
-            with patch.object(sys, "argv", ["linear", "get-issue", "NES-999"]), pytest.raises(
-                SystemExit
-            ) as exc_info:
+            with (
+                patch.object(sys, "argv", ["linear", "get-issue", "NES-999"]),
+                pytest.raises(SystemExit) as exc_info,
+            ):
                 main()
 
             assert exc_info.value.code == 1

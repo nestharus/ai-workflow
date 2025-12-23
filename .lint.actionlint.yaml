@@ -1,16 +1,14 @@
 # Lint script configuration for actionlint
 # See: https://github.com/rhysd/actionlint/blob/main/docs/config.md
+# Uses glob patterns following coderabbit path_filters format
 
-# Directories to exclude when searching for workflow files
-# (consistent with .lint.hadolint.yaml and .lint.yamllint.yaml)
-exclude_dirs:
-  - .tasks/store  # Generated task files
-  - .tmp          # Temporary files (may contain cloned repos with workflows)
-  - .worktrees    # Git worktrees (contain full repo checkouts with .github/workflows/)
-  - .git-rewrite  # Temporary git operation files
+# Paths to include for GitHub Actions workflow linting
+included_paths:
+  - ".github/workflows/**"
 
-# Patterns to ignore (passed as -ignore flags)
-ignore: []
-# Example patterns:
-# - "SC2086:"  # Ignore specific shellcheck warning
-# - 'label "self-hosted" is unknown'  # Ignore custom runner labels
+# Exclusion patterns (following coderabbit format with ! prefix)
+excludes:
+  - "!.tasks/store/**"
+  - "!.tmp/**"
+  - "!.worktrees/**"
+  - "!.git-rewrite/**"

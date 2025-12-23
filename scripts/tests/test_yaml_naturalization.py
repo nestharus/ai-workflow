@@ -187,7 +187,7 @@ class TestNaturalizeYamlFile:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text(yaml_content)
 
-        stats = naturalize_yaml_file(yaml_file)
+        _stats = naturalize_yaml_file(yaml_file)
 
         result = yaml_file.read_text()
         assert "reference: See document X" in result
@@ -207,7 +207,7 @@ class TestNaturalizeYamlFile:
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text(yaml_content)
 
-        stats = naturalize_yaml_file(yaml_file)
+        _stats = naturalize_yaml_file(yaml_file)
 
         result = yaml_file.read_text()
         assert "warning: This is a warning" in result
@@ -245,7 +245,7 @@ class TestNaturalizeYamlFile:
 
         stats = naturalize_yaml_file(yaml_file)
 
-        result = yaml_file.read_text()
+        _result = yaml_file.read_text()
         # type is removed but text stays as text since unknown type
         assert stats["types_removed"] == 1
         # text should not be renamed for unknown types
@@ -305,7 +305,7 @@ class TestMain:
                 # Actually we just need to run with patched values
 
                 # Store original values
-                original_content = yaml_file.read_text()
+                _original_content = yaml_file.read_text()
 
                 # Call naturalize_yaml_file directly
                 stats = naturalize_yaml_file(yaml_file)

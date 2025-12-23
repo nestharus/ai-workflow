@@ -7,6 +7,7 @@ from scripts.dev.linter.base import (
     BaseLinter,
     LinterResult,
     get_executable,
+    is_path_included,
     load_yaml_config,
     run_checked,
 )
@@ -33,16 +34,25 @@ class HadolintLinter(BaseLinter):
         """
         hadolint_exe = get_executable("hadolint", HADOLINT_CLI_REQUIRED)
         config = load_yaml_config(LINT_HADOLINT_CONFIG)
-        exclude_dirs = {REPO_ROOT / d for d in config.get("exclude_dirs", [])}
+        included_paths = config.get("included_paths", [])
+        excludes = config.get("excludes", [])
+        glob_patterns = included_paths + excludes
 
         if files is not None:
-            # Filter to only Dockerfile files
-            dockerfiles = [Path(f) for f in files if Path(f).name == "Dockerfile"]
+            # Filter to only Dockerfile files that match glob patterns
+            dockerfiles = [
+                Path(f)
+                for f in files
+                if Path(f).name == "Dockerfile"
+                and is_path_included(f, glob_patterns)
+            ]
         else:
+            # Find all Dockerfiles and filter by glob patterns
             dockerfiles = [
                 path
                 for path in REPO_ROOT.rglob("Dockerfile")
-                if path.is_file() and not any(excluded in path.parents for excluded in exclude_dirs)
+                if path.is_file()
+                and is_path_included(str(path.relative_to(REPO_ROOT)), glob_patterns)
             ]
 
         if not dockerfiles:

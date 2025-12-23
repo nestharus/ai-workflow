@@ -1,25 +1,38 @@
 # Lint script configuration for yamllint
-# Directories to exclude when searching for YAML files
+# Uses glob patterns following coderabbit path_filters format
 
-exclude_dirs:
-  - .venv
-  - .venv2
-  - __pycache__
-  - .mypy_cache
-  - .pytest_cache
-  - .ruff_cache
-  - .sonar
-  - .review
-  - .tasks/store  # Generated task files
-  - .tmp
-  - .worktrees
-  - .git-rewrite
-  - .idea
-  - .git
-  - .github  # Workflows linted by actionlint instead (see docs/usage/actionlint.yml)
-  - .huggingface
-  - .cache
-  - .uv-cache
-  - node_modules
-  # Exclude timestamped YAML originals in .knowledge/originals/
-  - .knowledge
+# Paths to include for YAML linting
+included_paths:
+  - "*"
+  - "app/**"
+  - "tests/**"
+  - "scripts/**"
+  - ".ai/**"
+  - ".claude/**"
+  - ".github/**"
+  - "agents/**"
+
+# Exclusion patterns (following coderabbit format with ! prefix)
+excludes:
+  - "!**/__pycache__/**"
+  - "!**/.pyc"
+  - "!.venv/**"
+  - "!.venv*"
+  - "!.mypy_cache/**"
+  - "!.pytest_cache/**"
+  - "!.ruff_cache/**"
+  - "!.sonar/**"
+  - "!.review/**"
+  - "!.tasks/store/**"
+  - "!.tmp/**"
+  - "!.worktrees/**"
+  - "!.git-rewrite/**"
+  - "!.idea/**"
+  - "!.idea*"
+  - "!.git/**"
+  - "!.github/workflows/**"  # Linted by actionlint instead
+  - "!.huggingface/**"
+  - "!.cache/**"
+  - "!.uv-cache/**"
+  - "!node_modules/**"
+  - "!.knowledge/**"

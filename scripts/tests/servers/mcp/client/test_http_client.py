@@ -109,22 +109,25 @@ class TestHttpMCPClientInit:
 
     def test_raises_for_non_string_socket_path(self) -> None:
         """Should raise MCPClientError when socket_path is not a string."""
-        with patch.dict(os.environ, {}, clear=True), pytest.raises(
-            MCPClientError, match="socket_path must be a string path"
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            pytest.raises(MCPClientError, match="socket_path must be a string path"),
         ):
             HttpMCPClient(socket_path=123)  # type: ignore[arg-type]
 
     def test_raises_for_non_string_base_url(self) -> None:
         """Should raise MCPClientError when base_url is not a string."""
-        with patch.dict(os.environ, {}, clear=True), pytest.raises(
-            MCPClientError, match="base_url must be a string URL"
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            pytest.raises(MCPClientError, match="base_url must be a string URL"),
         ):
             HttpMCPClient(base_url=123)  # type: ignore[arg-type]
 
     def test_raises_for_empty_base_url(self) -> None:
         """Should raise MCPClientError when base_url is empty after stripping."""
-        with patch.dict(os.environ, {}, clear=True), pytest.raises(
-            MCPClientError, match="Invalid base_url: empty"
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            pytest.raises(MCPClientError, match="Invalid base_url: empty"),
         ):
             HttpMCPClient(base_url="   ")
 
@@ -239,8 +242,9 @@ class TestHttpMCPClientCallServerTool:
             client = HttpMCPClient(base_url="http://localhost:8080")
 
         mock_response = {"result": "string instead of dict"}
-        with patch.object(client, "_request_json", return_value=mock_response), pytest.raises(
-            MCPClientError, match="Invalid result type.*expected dict.*got str"
+        with (
+            patch.object(client, "_request_json", return_value=mock_response),
+            pytest.raises(MCPClientError, match=r"Invalid result type.*expected dict.*got str"),
         ):
             client.call_server_tool("my-server", "test-tool", {})
 
@@ -250,8 +254,9 @@ class TestHttpMCPClientCallServerTool:
             client = HttpMCPClient(base_url="http://localhost:8080")
 
         mock_response = {"result": ["item1", "item2"]}
-        with patch.object(client, "_request_json", return_value=mock_response), pytest.raises(
-            MCPClientError, match="Invalid result type.*expected dict.*got list"
+        with (
+            patch.object(client, "_request_json", return_value=mock_response),
+            pytest.raises(MCPClientError, match=r"Invalid result type.*expected dict.*got list"),
         ):
             client.call_server_tool("my-server", "test-tool", {})
 
@@ -384,8 +389,9 @@ class TestHttpMCPClientRequestJson:
         mock_result = MagicMock()
         mock_result.returncode = 7  # Connection refused
 
-        with patch("subprocess.run", return_value=mock_result), pytest.raises(
-            MCPClientError, match="Cannot connect to mcp-bridge"
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(MCPClientError, match="Cannot connect to mcp-bridge"),
         ):
             client._request_json("GET", "http://localhost:8080/test")
 
@@ -397,8 +403,9 @@ class TestHttpMCPClientRequestJson:
         mock_result = MagicMock()
         mock_result.returncode = 7  # Connection refused
 
-        with patch("subprocess.run", return_value=mock_result), pytest.raises(
-            MCPClientError, match="Socket not available"
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(MCPClientError, match="Socket not available"),
         ):
             client._request_json("GET", "http://localhost/test")
 
@@ -410,8 +417,9 @@ class TestHttpMCPClientRequestJson:
         mock_result = MagicMock()
         mock_result.returncode = 28  # Timeout
 
-        with patch("subprocess.run", return_value=mock_result), pytest.raises(
-            MCPClientError, match="timed out"
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(MCPClientError, match="timed out"),
         ):
             client._request_json("GET", "http://localhost:8080/test")
 
@@ -424,8 +432,9 @@ class TestHttpMCPClientRequestJson:
         mock_result.returncode = 0
         mock_result.stdout = ""
 
-        with patch("subprocess.run", return_value=mock_result), pytest.raises(
-            MCPClientError, match="Empty response"
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(MCPClientError, match="Empty response"),
         ):
             client._request_json("GET", "http://localhost:8080/test")
 
@@ -438,8 +447,9 @@ class TestHttpMCPClientRequestJson:
         mock_result.returncode = 0
         mock_result.stdout = "not valid json"
 
-        with patch("subprocess.run", return_value=mock_result), pytest.raises(
-            MCPClientError, match="Invalid JSON response"
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(MCPClientError, match="Invalid JSON response"),
         ):
             client._request_json("GET", "http://localhost:8080/test")
 
@@ -452,7 +462,8 @@ class TestHttpMCPClientRequestJson:
         mock_result.returncode = 0
         mock_result.stdout = '["list", "not", "object"]'
 
-        with patch("subprocess.run", return_value=mock_result), pytest.raises(
-            MCPClientError, match="Invalid response type"
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(MCPClientError, match="Invalid response type"),
         ):
             client._request_json("GET", "http://localhost:8080/test")

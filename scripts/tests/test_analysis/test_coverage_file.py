@@ -440,8 +440,9 @@ class TestMain:
     def test_main_uses_default_db_path(self, temp_db: Path) -> None:
         """Test main uses default db path when --db not specified (line 201)."""
         # Mock DEFAULT_COVERAGE_DB_PATH to point to our temp db
-        with patch("scripts.dev.test_analysis.coverage_file.DEFAULT_COVERAGE_DB_PATH", temp_db), patch(
-            "sys.argv", ["coverage-file", "app/services/test.py", "--json"]
+        with (
+            patch("scripts.dev.test_analysis.coverage_file.DEFAULT_COVERAGE_DB_PATH", temp_db),
+            patch("sys.argv", ["coverage-file", "app/services/test.py", "--json"]),
         ):
             captured_output = io.StringIO()
             with patch("sys.stdout", captured_output):
@@ -451,9 +452,12 @@ class TestMain:
 
     def test_main_exception_during_get_file_details(self, temp_db: Path) -> None:
         """Test main handles exceptions from get_file_details (lines 211-215)."""
-        with patch("sys.argv", ["coverage-file", "app/services/test.py", "--db", str(temp_db)]), patch(
-            "scripts.dev.test_analysis.coverage_file.get_file_details",
-            side_effect=Exception("Database error"),
+        with (
+            patch("sys.argv", ["coverage-file", "app/services/test.py", "--db", str(temp_db)]),
+            patch(
+                "scripts.dev.test_analysis.coverage_file.get_file_details",
+                side_effect=Exception("Database error"),
+            ),
         ):
             captured_stderr = io.StringIO()
             with patch("sys.stderr", captured_stderr):

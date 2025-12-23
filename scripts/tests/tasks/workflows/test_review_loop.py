@@ -735,7 +735,7 @@ issues: []
 """
 
         call_count = [0]
-        original_parse = None
+        _original_parse = None
 
         def patched_parse_yaml_after_marker(output: str, marker: str) -> dict:
             """Raise ValueError on second call with REVIEW marker (simulating failure)."""

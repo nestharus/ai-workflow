@@ -102,7 +102,7 @@ other: value
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text(yaml_content)
 
-        success, _num_fixes = fix_yaml_file(yaml_file)
+        success, num_fixes = fix_yaml_file(yaml_file)
 
         assert success is True
         assert num_fixes == 1  # File was changed
@@ -138,7 +138,7 @@ other: data
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text(yaml_content)
 
-        success, _num_fixes = fix_yaml_file(yaml_file)
+        success, num_fixes = fix_yaml_file(yaml_file)
 
         assert success is True
         assert num_fixes == 0
@@ -153,7 +153,7 @@ other: data
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text(yaml_content)
 
-        success, _num_fixes = fix_yaml_file(yaml_file)
+        success, num_fixes = fix_yaml_file(yaml_file)
 
         assert success is True
         assert num_fixes == 1
@@ -188,7 +188,7 @@ content: |
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text(yaml_content)
 
-        success, _num_fixes = fix_yaml_file(yaml_file)
+        success, num_fixes = fix_yaml_file(yaml_file)
 
         assert success is True
         # Should fix two long lines
@@ -449,7 +449,7 @@ class TestMain:
         # Mock fix_yaml_file to return an error
         import scripts.fix_yaml_line_length as module
 
-        original_fix = module.fix_yaml_file
+        _original_fix = module.fix_yaml_file
 
         def mock_fix(path: Path, dry_run: bool = False) -> tuple[bool, int]:
             return (False, 0)
@@ -519,7 +519,7 @@ description: Short description
         yaml_file = tmp_path / "test.yml"
         yaml_file.write_text(yaml_content)
 
-        success, _num_fixes = fix_yaml_file(yaml_file)
+        success, num_fixes = fix_yaml_file(yaml_file)
 
         assert success is True
         assert num_fixes == 1  # File was changed

@@ -16,9 +16,10 @@ class TestMCPSSEClientCallTool:
         """Test call_tool calls _initialize when not initialized (line 288-289)."""
         client = MCPSSEClient("http://test.local/sse")
 
-        with patch.object(client, "_initialize") as mock_init, patch.object(
-            client, "_send_request"
-        ) as mock_send:
+        with (
+            patch.object(client, "_initialize") as mock_init,
+            patch.object(client, "_send_request") as mock_send,
+        ):
             mock_send.return_value = {"result": "success"}
 
             result = client.call_tool("test_tool", {"arg": "value"})
@@ -36,9 +37,10 @@ class TestMCPSSEClientCallTool:
         client = MCPSSEClient("http://test.local/sse")
         client._initialized = True
 
-        with patch.object(client, "_initialize") as mock_init, patch.object(
-            client, "_send_request"
-        ) as mock_send:
+        with (
+            patch.object(client, "_initialize") as mock_init,
+            patch.object(client, "_send_request") as mock_send,
+        ):
             mock_send.return_value = {"data": "result"}
 
             result = client.call_tool("tool", {})
@@ -83,9 +85,10 @@ class TestMCPSSEClientListTools:
         """Test list_tools calls _initialize when not initialized (line 311-312)."""
         client = MCPSSEClient("http://test.local/sse")
 
-        with patch.object(client, "_initialize") as mock_init, patch.object(
-            client, "_send_request"
-        ) as mock_send:
+        with (
+            patch.object(client, "_initialize") as mock_init,
+            patch.object(client, "_send_request") as mock_send,
+        ):
             mock_send.return_value = {"tools": []}
 
             result = client.list_tools()
@@ -103,9 +106,10 @@ class TestMCPSSEClientListTools:
         client = MCPSSEClient("http://test.local/sse")
         client._initialized = True
 
-        with patch.object(client, "_initialize") as mock_init, patch.object(
-            client, "_send_request"
-        ) as mock_send:
+        with (
+            patch.object(client, "_initialize") as mock_init,
+            patch.object(client, "_send_request") as mock_send,
+        ):
             mock_send.return_value = {"tools": [{"name": "tool1"}]}
 
             result = client.list_tools()

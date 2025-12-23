@@ -87,7 +87,8 @@ If you are unsure whether the lint-fixer was successful:
 
 **Changed-only mode** (with `--changed-only`):
 
-1. Run linters with `--files` flag using the `$CHANGED_FILES` from Step 0:
+1. Run all linters with `--files` flag using the `$CHANGED_FILES` from Step 0:
+   * `uv run lint scripts --files $CHANGED_FILES`
    * `uv run lint ruff --files $CHANGED_FILES`
    * `uv run lint mypy --files $CHANGED_FILES`
    * `uv run lint hadolint --files $CHANGED_FILES`
@@ -95,9 +96,12 @@ If you are unsure whether the lint-fixer was successful:
    * `uv run lint yamllint --files $CHANGED_FILES`
    * `uv run lint actionlint --files $CHANGED_FILES`
    * `uv run lint dotenvlint --files $CHANGED_FILES`
+   * `uv run lint checkov --files $CHANGED_FILES`
    * `uv run lint detect-secrets --files $CHANGED_FILES`
    * `uv run lint gitleaks --files $CHANGED_FILES`
-   * Note: `scripts`, `checkov`, and `trivy` linters do not support `--files` and are skipped in changed-only mode
+   * `uv run lint trivy --files $CHANGED_FILES`
+   * Note: All linters now support `--files` and will internally skip themselves if
+     none of the files they check are in the changed files list
 2. Review the output for errors and warnings
 3. If errors or warnings exist, return to Step 1
 4. If no errors and no warnings remain, you are done

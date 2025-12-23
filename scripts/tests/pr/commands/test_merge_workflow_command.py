@@ -313,9 +313,7 @@ class TestMergeWorkflowCommandTicketState:
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
-            patch(
-                "scripts.pr.commands.merge_workflow_command._get_default_client"
-            ) as mock_client_fn,
+            patch("scripts.pr.commands.merge_workflow_command._get_default_client"),
         ):
             mock_gh.merge_pr.return_value = True
             mock_git.remove_worktree.return_value = (True, "")

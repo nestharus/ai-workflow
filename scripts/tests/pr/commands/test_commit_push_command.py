@@ -52,8 +52,9 @@ class TestCommitPushCommand:
         worktree = tmp_path / "worktree"
         worktree.mkdir()
 
-        with patch("scripts.pr.git_dao.get_status", return_value=("M file.txt", None)), patch(
-            "scripts.pr.git_dao.stage_all", return_value=False
+        with (
+            patch("scripts.pr.git_dao.get_status", return_value=("M file.txt", None)),
+            patch("scripts.pr.git_dao.stage_all", return_value=False),
         ):
             result = commit_push_command(worktree, "Test commit")
 
@@ -66,9 +67,11 @@ class TestCommitPushCommand:
         worktree = tmp_path / "worktree"
         worktree.mkdir()
 
-        with patch("scripts.pr.git_dao.get_status", return_value=("M file.txt", None)), patch(
-            "scripts.pr.git_dao.stage_all", return_value=True
-        ), patch("scripts.pr.git_dao.commit", return_value=False):
+        with (
+            patch("scripts.pr.git_dao.get_status", return_value=("M file.txt", None)),
+            patch("scripts.pr.git_dao.stage_all", return_value=True),
+            patch("scripts.pr.git_dao.commit", return_value=False),
+        ):
             result = commit_push_command(worktree, "Test commit")
 
         assert result == 1
@@ -80,10 +83,11 @@ class TestCommitPushCommand:
         worktree = tmp_path / "worktree"
         worktree.mkdir()
 
-        with patch("scripts.pr.git_dao.get_status", return_value=("M file.txt", None)), patch(
-            "scripts.pr.git_dao.stage_all", return_value=True
-        ), patch("scripts.pr.git_dao.commit", return_value=True), patch(
-            "scripts.pr.git_dao.push", return_value=(False, "Push rejected")
+        with (
+            patch("scripts.pr.git_dao.get_status", return_value=("M file.txt", None)),
+            patch("scripts.pr.git_dao.stage_all", return_value=True),
+            patch("scripts.pr.git_dao.commit", return_value=True),
+            patch("scripts.pr.git_dao.push", return_value=(False, "Push rejected")),
         ):
             result = commit_push_command(worktree, "Test commit")
 
@@ -96,10 +100,11 @@ class TestCommitPushCommand:
         worktree = tmp_path / "worktree"
         worktree.mkdir()
 
-        with patch("scripts.pr.git_dao.get_status", return_value=("M file.txt", None)), patch(
-            "scripts.pr.git_dao.stage_all", return_value=True
-        ), patch("scripts.pr.git_dao.commit", return_value=True), patch(
-            "scripts.pr.git_dao.push", return_value=(True, "")
+        with (
+            patch("scripts.pr.git_dao.get_status", return_value=("M file.txt", None)),
+            patch("scripts.pr.git_dao.stage_all", return_value=True),
+            patch("scripts.pr.git_dao.commit", return_value=True),
+            patch("scripts.pr.git_dao.push", return_value=(True, "")),
         ):
             result = commit_push_command(worktree, "Test commit message")
 
@@ -115,11 +120,12 @@ class TestCommitPushCommand:
         worktree = tmp_path / "worktree"
         worktree.mkdir()
 
-        with patch("scripts.pr.git_dao.get_status", return_value=("M file.txt", None)), patch(
-            "scripts.pr.git_dao.stage_all", return_value=True
-        ), patch("scripts.pr.git_dao.commit", return_value=True), patch(
-            "scripts.pr.git_dao.push", return_value=(True, "")
-        ) as mock_push:
+        with (
+            patch("scripts.pr.git_dao.get_status", return_value=("M file.txt", None)),
+            patch("scripts.pr.git_dao.stage_all", return_value=True),
+            patch("scripts.pr.git_dao.commit", return_value=True),
+            patch("scripts.pr.git_dao.push", return_value=(True, "")) as mock_push,
+        ):
             result = commit_push_command(worktree, "Test commit", set_upstream=True)
             mock_push.assert_called_once_with(worktree, set_upstream=True)
 

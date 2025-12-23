@@ -1,20 +1,23 @@
 # Lint script driver configuration for dotenv-linter
-# NOTE: This is configuration for the lint.py driver, NOT dotenv-linter's native config
-# Patterns to scan for .env files
+# Uses glob patterns following coderabbit path_filters format
 
+# Patterns to scan for .env files
 targets:
   - .env.example
   - .env.*.example
 
-exclude_patterns:
-  - .env.local          # Local secrets excluded
-  - .env.*.local        # Environment-specific local overrides
+# Paths to include in scanning (glob patterns)
+included_paths:
+  - "*"
+  - "app/**"
+  - "tests/**"
+  - "scripts/**"
+  - ".ai/**"
+  - ".claude/**"
+  - ".github/**"
+  - "agents/**"
 
-exclude_dirs:
-  - .venv
-  - .venv2
-  - .tasks/store
-  - .tmp
-  - .worktrees
-  - .git-rewrite
-  - node_modules
+# Exclusion patterns (following coderabbit format with ! prefix)
+exclude_patterns:
+  - "!*.local"  # Exclude all .env.local files
+  - "!*.env.*.local"

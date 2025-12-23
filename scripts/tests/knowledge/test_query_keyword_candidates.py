@@ -724,10 +724,13 @@ class TestMain:
         csv_path.write_text(f"{header}\n")
 
         # Mock sys.argv to provide arguments
-        with mock.patch(
-            "sys.argv",
-            ["prog", "--knowledge-path", str(tmp_path / ".knowledge"), "--format", "text"],
-        ), mock.patch("sys.stdout", new_callable=StringIO):
+        with (
+            mock.patch(
+                "sys.argv",
+                ["prog", "--knowledge-path", str(tmp_path / ".knowledge"), "--format", "text"],
+            ),
+            mock.patch("sys.stdout", new_callable=StringIO),
+        ):
             result = main()
 
         assert result == 0
@@ -735,8 +738,9 @@ class TestMain:
     def test_main_returns_error_on_missing_csv(self, tmp_path: Path) -> None:
         """Should return 1 when CSV is missing."""
         # Mock sys.argv with non-existent path
-        with mock.patch("sys.argv", ["prog", "--knowledge-path", str(tmp_path / "nonexistent")]), mock.patch(
-            "sys.stderr", new_callable=StringIO
+        with (
+            mock.patch("sys.argv", ["prog", "--knowledge-path", str(tmp_path / "nonexistent")]),
+            mock.patch("sys.stderr", new_callable=StringIO),
         ):
             result = main()
 

@@ -141,9 +141,10 @@ class TestMCPStdioManagerInit:
 
     def test_init_catches_non_mcp_exception(self) -> None:
         """Should wrap non-MCPError exceptions during init."""
-        with mock.patch("subprocess.Popen", side_effect=RuntimeError("Test runtime error")), pytest.raises(
-            MCPError
-        ) as exc_info:
+        with (
+            mock.patch("subprocess.Popen", side_effect=RuntimeError("Test runtime error")),
+            pytest.raises(MCPError) as exc_info,
+        ):
             MCPStdioManager(command="echo test")
 
         assert "Failed to start MCP server" in str(exc_info.value)
@@ -153,7 +154,10 @@ class TestMCPStdioManagerInit:
         """Should re-raise MCPError without wrapping."""
         mock_proc = MockProcess(poll_result=1)  # Exit immediately
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), pytest.raises(MCPError) as exc_info:
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            pytest.raises(MCPError) as exc_info,
+        ):
             MCPStdioManager(command="echo test", startup_timeout=0.1)
 
         assert "exited immediately" in str(exc_info.value)
@@ -173,8 +177,9 @@ class TestMCPStdioManagerCallTool:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
             # Reset for call_tool tests
@@ -205,16 +210,18 @@ class TestMCPStdioManagerCallTool:
         # Kill the process
         mock_manager._proc._poll_result = 1
 
-        # Set up restart responses
-        init_response = {
+        # Set up restart responses (unused but sets up mock state)
+        _init_response = {
             "jsonrpc": "2.0",
             "id": 2,  # Next request ID
             "result": {"capabilities": {}},
         }
 
-        with mock.patch.object(mock_manager, "_start_subprocess"), mock.patch.object(
-            mock_manager, "_do_initialize_unlocked"
-        ), pytest.raises(MCPProviderCrashedError):
+        with (
+            mock.patch.object(mock_manager, "_start_subprocess"),
+            mock.patch.object(mock_manager, "_do_initialize_unlocked"),
+            pytest.raises(MCPProviderCrashedError),
+        ):
             mock_manager.call_tool("test_tool", {})
 
     def test_call_tool_returns_result(self) -> None:
@@ -232,8 +239,9 @@ class TestMCPStdioManagerCallTool:
 
         mock_proc = MockProcess(responses=[init_response, tool_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
             result = manager.call_tool("test_tool", {"arg": "value"})
@@ -255,8 +263,9 @@ class TestMCPStdioManagerCallTool:
 
         mock_proc = MockProcess(responses=[init_response, error_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -281,8 +290,9 @@ class TestMCPStdioManagerCallTool:
 
         mock_proc = MockProcess(responses=[init_response, error_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -306,8 +316,9 @@ class TestMCPStdioManagerCallTool:
 
         mock_proc = MockProcess(responses=[init_response, bad_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -331,8 +342,9 @@ class TestMCPStdioManagerCallTool:
 
         mock_proc = MockProcess(responses=[init_response, bad_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -355,8 +367,9 @@ class TestMCPStdioManagerListTools:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -382,17 +395,20 @@ class TestMCPStdioManagerListTools:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
             # Kill the process
             mock_proc._poll_result = 1
 
-            with mock.patch.object(manager, "_start_subprocess"), mock.patch.object(
-                manager, "_do_initialize_unlocked"
-            ), pytest.raises(MCPProviderCrashedError):
+            with (
+                mock.patch.object(manager, "_start_subprocess"),
+                mock.patch.object(manager, "_do_initialize_unlocked"),
+                pytest.raises(MCPProviderCrashedError),
+            ):
                 manager.list_tools()
 
     def test_list_tools_returns_tools(self) -> None:
@@ -410,8 +426,9 @@ class TestMCPStdioManagerListTools:
 
         mock_proc = MockProcess(responses=[init_response, tools_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
             result = manager.list_tools()
@@ -429,8 +446,9 @@ class TestMCPStdioManagerListTools:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -439,10 +457,11 @@ class TestMCPStdioManagerListTools:
                 mock_proc._poll_result = 1  # Crash
                 raise MCPError("Simulated error")
 
-            with mock.patch.object(manager, "_send_request_unlocked", side_effect=mock_send), mock.patch.object(
-                manager, "_start_subprocess"
-            ), mock.patch.object(manager, "_do_initialize_unlocked"), pytest.raises(
-                MCPProviderCrashedError
+            with (
+                mock.patch.object(manager, "_send_request_unlocked", side_effect=mock_send),
+                mock.patch.object(manager, "_start_subprocess"),
+                mock.patch.object(manager, "_do_initialize_unlocked"),
+                pytest.raises(MCPProviderCrashedError),
             ):
                 manager.list_tools()
 
@@ -456,15 +475,19 @@ class TestMCPStdioManagerListTools:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
             # Make _send_request_unlocked raise but keep server alive
-            with mock.patch.object(
-                manager, "_send_request_unlocked", side_effect=MCPError("Simulated error")
-            ), pytest.raises(MCPError) as exc_info:
+            with (
+                mock.patch.object(
+                    manager, "_send_request_unlocked", side_effect=MCPError("Simulated error")
+                ),
+                pytest.raises(MCPError) as exc_info,
+            ):
                 manager.list_tools()
 
             assert "Simulated error" in str(exc_info.value)
@@ -483,8 +506,9 @@ class TestMCPStdioManagerClose:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
             manager.close()
@@ -505,8 +529,9 @@ class TestCallToolCrashRecovery:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -517,9 +542,10 @@ class TestCallToolCrashRecovery:
             def failing_start() -> None:
                 raise MCPError("Restart failed")
 
-            with mock.patch.object(manager, "_start_subprocess", side_effect=failing_start), pytest.raises(
-                MCPError
-            ) as exc_info:
+            with (
+                mock.patch.object(manager, "_start_subprocess", side_effect=failing_start),
+                pytest.raises(MCPError) as exc_info,
+            ):
                 manager.call_tool("test_tool", {})
 
             assert "Restart failed" in str(exc_info.value)
@@ -534,8 +560,9 @@ class TestCallToolCrashRecovery:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -557,8 +584,9 @@ class TestCallToolCrashRecovery:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -567,9 +595,10 @@ class TestCallToolCrashRecovery:
             class NonSerializable:
                 pass
 
-            with mock.patch("json.dumps", side_effect=TypeError("Not serializable")), pytest.raises(
-                MCPError
-            ) as exc_info:
+            with (
+                mock.patch("json.dumps", side_effect=TypeError("Not serializable")),
+                pytest.raises(MCPError) as exc_info,
+            ):
                 manager.call_tool("test_tool", {"bad": NonSerializable()})
 
             assert "Failed to serialize request" in str(exc_info.value)
@@ -589,8 +618,9 @@ class TestCallToolCrashRecovery:
 
         mock_proc = MockProcess(responses=[init_response, tool_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -612,8 +642,9 @@ class TestCallToolCrashRecovery:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -635,8 +666,9 @@ class TestCallToolCrashRecovery:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -644,8 +676,9 @@ class TestCallToolCrashRecovery:
             def timeout_read(*args: Any, **kwargs: Any) -> None:
                 raise MCPTimeoutError("Timed out")
 
-            with mock.patch.object(manager, "_read_response", side_effect=timeout_read), pytest.raises(
-                MCPTimeoutError
+            with (
+                mock.patch.object(manager, "_read_response", side_effect=timeout_read),
+                pytest.raises(MCPTimeoutError),
             ):
                 manager.call_tool("test_tool", {}, timeout=0.1)
 
@@ -659,15 +692,17 @@ class TestCallToolCrashRecovery:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
             # Make _read_response return a non-dict
-            with mock.patch.object(manager, "_read_response", return_value="not a dict"), pytest.raises(
-                MCPError
-            ) as exc_info:
+            with (
+                mock.patch.object(manager, "_read_response", return_value="not a dict"),
+                pytest.raises(MCPError) as exc_info,
+            ):
                 manager.call_tool("test_tool", {})
 
             assert "Invalid JSON-RPC response type" in str(exc_info.value)
@@ -691,8 +726,9 @@ class TestCallToolCrashRecovery:
 
         mock_proc = MockProcess(responses=[init_response, notification, tool_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -726,8 +762,9 @@ class TestCallToolCrashRecovery:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -751,8 +788,9 @@ class TestCallToolCrashRecovery:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -761,10 +799,11 @@ class TestCallToolCrashRecovery:
                 mock_proc._poll_result = 1  # Crash
                 raise MCPError("I/O error")
 
-            with mock.patch.object(manager, "_read_response", side_effect=crash_and_error), mock.patch.object(
-                manager, "_start_subprocess"
-            ), mock.patch.object(manager, "_do_initialize_unlocked"), pytest.raises(
-                MCPProviderCrashedError
+            with (
+                mock.patch.object(manager, "_read_response", side_effect=crash_and_error),
+                mock.patch.object(manager, "_start_subprocess"),
+                mock.patch.object(manager, "_do_initialize_unlocked"),
+                pytest.raises(MCPProviderCrashedError),
             ):
                 manager.call_tool("test_tool", {})
 
@@ -778,8 +817,9 @@ class TestCallToolCrashRecovery:
 
         mock_proc = MockProcess(responses=[init_response])
 
-        with mock.patch("subprocess.Popen", return_value=mock_proc), mock.patch(
-            "select.select", return_value=([mock_proc.stdout], [], [])
+        with (
+            mock.patch("subprocess.Popen", return_value=mock_proc),
+            mock.patch("select.select", return_value=([mock_proc.stdout], [], [])),
         ):
             manager = MCPStdioManager(command="echo test", startup_timeout=0.1)
 
@@ -792,9 +832,11 @@ class TestCallToolCrashRecovery:
             def failing_start() -> None:
                 raise MCPError("Restart failed")
 
-            with mock.patch.object(manager, "_read_response", side_effect=crash_and_error), mock.patch.object(
-                manager, "_start_subprocess", side_effect=failing_start
-            ), pytest.raises(MCPError) as exc_info:
+            with (
+                mock.patch.object(manager, "_read_response", side_effect=crash_and_error),
+                mock.patch.object(manager, "_start_subprocess", side_effect=failing_start),
+                pytest.raises(MCPError) as exc_info,
+            ):
                 manager.call_tool("test_tool", {})
 
             assert "Restart failed" in str(exc_info.value)

@@ -1,5 +1,5 @@
 # Lint script configuration for pyproject.toml [project.scripts] naming conventions
-# Each rule maps a module prefix to the required script name prefix.
+# Uses glob patterns following coderabbit path_filters format
 
 # Rules for script entry point naming conventions:
 # Scripts whose module path starts with the key must have names starting with the value.
@@ -7,3 +7,7 @@ prefix_rules:
   scripts.knowledge.: knowledge.
   scripts.dev.review.: review.
   scripts.app.: app.
+
+# Paths to include for script validation
+included_paths:
+  - "pyproject.toml"

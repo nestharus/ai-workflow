@@ -40,7 +40,7 @@ class TestPromoteWorktreeCommand:
 
     def test_creates_sandbox_from_current_branch(self, tmp_path: Path, capsys) -> None:
         """Should create sandbox using current branch when no identifier."""
-        sandbox_path = tmp_path / ".git" / "rebase-sandbox" / "feature-branch"
+        _sandbox_path = tmp_path / ".git" / "rebase-sandbox" / "feature-branch"
 
         with (
             patch("scripts.pr.commands.promote_worktree_command.git_dao") as mock_git,
@@ -112,7 +112,7 @@ class TestPromoteWorktreeCommand:
         """Should fetch ticket info when identifier is a ticket ID."""
         with (
             patch("scripts.pr.commands.promote_worktree_command.git_dao") as mock_git,
-            patch("scripts.pr.commands.promote_worktree_command.github_dao") as mock_github,
+            patch("scripts.pr.commands.promote_worktree_command.github_dao"),
             patch(
                 "scripts.pr.commands.promote_worktree_command._get_default_client"
             ) as mock_linear,

@@ -43,12 +43,15 @@ class TestExtractTicketIdCommand:
         mock_client = MagicMock()
         mock_client.get_ticket_info.return_value = {"title": "Fix bug in parser"}
 
-        with patch(
-            "scripts.pr.commands.extract_ticket_id_command._extract_ticket_id_from_branch",
-            return_value="NES-123",
-        ), patch(
-            "scripts.pr.commands.extract_ticket_id_command._get_default_client",
-            return_value=mock_client,
+        with (
+            patch(
+                "scripts.pr.commands.extract_ticket_id_command._extract_ticket_id_from_branch",
+                return_value="NES-123",
+            ),
+            patch(
+                "scripts.pr.commands.extract_ticket_id_command._get_default_client",
+                return_value=mock_client,
+            ),
         ):
             result = extract_ticket_id_command("mrasolomon/nes-123-fix-bug")
 
@@ -67,12 +70,15 @@ class TestExtractTicketIdCommand:
         mock_client = MagicMock()
         mock_client.get_ticket_info.side_effect = LinearClientError("NOT_FOUND", "Not found")
 
-        with patch(
-            "scripts.pr.commands.extract_ticket_id_command._extract_ticket_id_from_branch",
-            return_value="NES-999",
-        ), patch(
-            "scripts.pr.commands.extract_ticket_id_command._get_default_client",
-            return_value=mock_client,
+        with (
+            patch(
+                "scripts.pr.commands.extract_ticket_id_command._extract_ticket_id_from_branch",
+                return_value="NES-999",
+            ),
+            patch(
+                "scripts.pr.commands.extract_ticket_id_command._get_default_client",
+                return_value=mock_client,
+            ),
         ):
             result = extract_ticket_id_command("nes-999-nonexistent")
 
@@ -89,12 +95,16 @@ class TestExtractTicketIdCommand:
         mock_client = MagicMock()
         mock_client.get_ticket_info.return_value = {"title": "Feature"}
 
-        with patch("scripts.pr.git_dao.get_current_branch", return_value="nes-456-feature"), patch(
-            "scripts.pr.commands.extract_ticket_id_command._extract_ticket_id_from_branch",
-            return_value="NES-456",
-        ), patch(
-            "scripts.pr.commands.extract_ticket_id_command._get_default_client",
-            return_value=mock_client,
+        with (
+            patch("scripts.pr.git_dao.get_current_branch", return_value="nes-456-feature"),
+            patch(
+                "scripts.pr.commands.extract_ticket_id_command._extract_ticket_id_from_branch",
+                return_value="NES-456",
+            ),
+            patch(
+                "scripts.pr.commands.extract_ticket_id_command._get_default_client",
+                return_value=mock_client,
+            ),
         ):
             result = extract_ticket_id_command(None)
 
@@ -109,12 +119,15 @@ class TestExtractTicketIdCommand:
         mock_client = MagicMock()
         mock_client.get_ticket_info.return_value = {"title": "Bug fix"}
 
-        with patch(
-            "scripts.pr.commands.extract_ticket_id_command._extract_ticket_id_from_branch",
-            return_value="PROJ-789",
-        ), patch(
-            "scripts.pr.commands.extract_ticket_id_command._get_default_client",
-            return_value=mock_client,
+        with (
+            patch(
+                "scripts.pr.commands.extract_ticket_id_command._extract_ticket_id_from_branch",
+                return_value="PROJ-789",
+            ),
+            patch(
+                "scripts.pr.commands.extract_ticket_id_command._get_default_client",
+                return_value=mock_client,
+            ),
         ):
             result = extract_ticket_id_command("feature/proj-789-bug-fix")
 
@@ -130,12 +143,15 @@ class TestExtractTicketIdCommand:
         mock_client.get_ticket_info.return_value = {"title": "Test"}
 
         with patch("scripts.pr.git_dao.get_current_branch") as mock_current:
-            with patch(
-                "scripts.pr.commands.extract_ticket_id_command._extract_ticket_id_from_branch",
-                return_value="ABC-111",
-            ), patch(
-                "scripts.pr.commands.extract_ticket_id_command._get_default_client",
-                return_value=mock_client,
+            with (
+                patch(
+                    "scripts.pr.commands.extract_ticket_id_command._extract_ticket_id_from_branch",
+                    return_value="ABC-111",
+                ),
+                patch(
+                    "scripts.pr.commands.extract_ticket_id_command._get_default_client",
+                    return_value=mock_client,
+                ),
             ):
                 result = extract_ticket_id_command("abc-111-test")
 

@@ -1,8 +1,7 @@
 # Lint configuration for gitleaks file filtering
-# These settings mirror .lint.detect-secrets.yaml for consistency
+# Uses glob patterns following coderabbit path_filters format
 
-# File extensions to exclude from scanning (binary and non-text files)
-# Must match .lint.detect-secrets.yaml excluded_extensions
+# File extensions to exclude (binary/non-text files)
 excluded_extensions:
   - .pyc
   - .pyo
@@ -28,30 +27,19 @@ excluded_extensions:
   - .sqlite
   - .sqlite3
 
-# Specific file names to exclude from scanning
-# Must match .lint.detect-secrets.yaml excluded_names
+# Specific file names to exclude
 excluded_names:
   - uv.lock
   - .secrets.baseline
 
-# Directories to exclude (must match .pre-commit-config.yaml detect-secrets exclude)
-excluded_dirs:
-  - .venv
-  - node_modules
-  - htmlcov
-  - .coverage
-  - openapi
-  - .review
-  - .tmp
-  - .worktrees
-  - .tasks/store
-  - .huggingface
-  - .serena
-  - .mypy_cache
-  - .pytest_cache
-  - .ruff_cache
-  - .git-rewrite
-  - to_adapt
-  - .idea
-  - build
-  - dist
+# Paths to include in scanning (glob patterns, following coderabbit format)
+# Patterns without ! are inclusions, patterns with ! are exclusions
+included_paths:
+  - "*"
+  - "app/**"
+  - "tests/**"
+  - "scripts/**"
+  - ".ai/**"
+  - ".claude/**"
+  - ".github/**"
+  - "agents/**"

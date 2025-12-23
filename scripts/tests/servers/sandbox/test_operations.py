@@ -32,6 +32,67 @@ def make_completed_process(
     )
 
 
+    @pytest.mark.asyncio
+    async def test_sync_refuses_when_rebase_in_progress(self, tmp_path: Path) -> None:
+        """sync_sandbox_branch should refuse to sync when rebase is in progress."""
+        from unittest.mock import patch
+        
+        # Create a mock sandbox
+        sandbox_path = tmp_path / "sandbox"
+        sandbox_path.mkdir()
+        
+        # Mock _run_git to simulate git commands
+        def mock_run_git(args, cwd=None):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            
+            # Simulate git commands
+            if args == ["git", "fetch", "origin"]:
+                return result
+            elif args == ["git", "rev-parse", "--git-dir"]:
+                result.returncode = 0
+                result.stdout = str(sandbox_path / ".git")
+                return result
+            elif args == ["git", "rev-parse", "--verify", "--quiet", ".git/rebase-merge/HEAD"]:
+                # Simulate rebase in progress (this command succeeds)
+                result.returncode = 0
+                result.stdout = "abc123"
+                return result
+            elif args == ["git", "remote", "get-url", "origin"]:
+                result.returncode = 0
+                result.stdout = "https://github.com/test/repo.git"
+                return result
+            elif args == ["git", "config", "--", "user.name"]:
+                result.returncode = 0
+                result.stdout = "Test User"
+                return result
+            elif args == ["git", "config", "--", "user.email"]:
+                result.returncode = 0
+                result.stdout = "test@example.com"
+                return result
+            elif args == ["git", "init"]:
+                return result
+            
+            return result
+        
+        with patch("scripts.servers.sandbox.operations._run_git", side_effect=mock_run_git):
+            from scripts.servers.sandbox.operations import ensure_sandbox_exists, sync_sandbox_branch
+            
+            # Ensure sandbox exists
+            ensure_sandbox_exists(tmp_path)
+            
+            # Try to sync while rebase is in progress
+            success, error = sync_sandbox_branch(sandbox_path, "feature-branch")
+            
+            # Should fail because rebase is in progress
+            assert not success
+            assert "rebase in progress" in error.lower()
+            
+            # Verify that abort was NOT called (we never got to that point)
+            # If we had, the test would have continued to the abort calls
+
 class TestEnsureSandboxExists:
     """Tests for ensure_sandbox_exists function."""
 
@@ -405,6 +466,8 @@ class TestSyncSandboxBranch:
             mock_run.side_effect = [
                 # git fetch origin
                 make_completed_process(),
+                # git rebase check (no rebase in progress)
+                make_completed_process(returncode=1),  # No rebase in progress
                 # git rebase --abort (cleanup)
                 make_completed_process(),
                 # git merge --abort (cleanup)
@@ -428,6 +491,8 @@ class TestSyncSandboxBranch:
             mock_run.side_effect = [
                 # git fetch origin
                 make_completed_process(),
+                # git rebase check (no rebase in progress)
+                make_completed_process(returncode=1),  # No rebase in progress
                 # git rebase --abort (cleanup)
                 make_completed_process(),
                 # git merge --abort (cleanup)
@@ -459,6 +524,8 @@ class TestSyncSandboxBranch:
             mock_run.side_effect = [
                 # git fetch origin
                 make_completed_process(),
+                # git rebase check (no rebase in progress)
+                make_completed_process(returncode=1),  # No rebase in progress
                 # git rebase --abort (cleanup)
                 make_completed_process(),
                 # git merge --abort (cleanup)
@@ -483,6 +550,8 @@ class TestSyncSandboxBranch:
             mock_run.side_effect = [
                 # git fetch origin
                 make_completed_process(),
+                # git rebase check (no rebase in progress)
+                make_completed_process(returncode=1),  # No rebase in progress
                 # git rebase --abort (cleanup)
                 make_completed_process(),
                 # git merge --abort (cleanup)
@@ -517,6 +586,8 @@ class TestSyncSandboxBranch:
             mock_run.side_effect = [
                 # git fetch origin
                 make_completed_process(),
+                # git rebase check (no rebase in progress)
+                make_completed_process(returncode=1),  # No rebase in progress
                 # git rebase --abort (cleanup)
                 make_completed_process(),
                 # git merge --abort (cleanup)
@@ -544,6 +615,8 @@ class TestSyncSandboxBranch:
             mock_run.side_effect = [
                 # git fetch origin
                 make_completed_process(),
+                # git rebase check (no rebase in progress)
+                make_completed_process(returncode=1),  # No rebase in progress
                 # git rebase --abort (cleanup)
                 make_completed_process(),
                 # git merge --abort (cleanup)
@@ -571,6 +644,8 @@ class TestSyncSandboxBranch:
             mock_run.side_effect = [
                 # git fetch origin
                 make_completed_process(),
+                # git rebase check (no rebase in progress)
+                make_completed_process(returncode=1),  # No rebase in progress
                 # git rebase --abort (cleanup)
                 make_completed_process(),
                 # git merge --abort (cleanup)
@@ -586,6 +661,25 @@ class TestSyncSandboxBranch:
             assert success is True
             assert error == ""
             assert not tasks_dir.exists()
+
+    def test_refuses_sync_when_rebase_in_progress(self, tmp_path: Path) -> None:
+        """Refuse to sync when a rebase is in progress."""
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
+            mock_run.side_effect = [
+                # git fetch origin
+                make_completed_process(),
+                # git rebase check (rebase IS in progress)
+                make_completed_process(returncode=0),  # Rebase in progress
+            ]
+
+            success, error = sync_sandbox_branch(tmp_path, "feature-x")
+
+            # Should fail because rebase is in progress
+            assert success is False
+            assert "rebase in progress" in error.lower()
+
+            # Verify that abort was NOT called (we returned early)
+            assert mock_run.call_count == 2  # Only fetch and rebase check
 
 
 class TestGetConflicts:
@@ -660,6 +754,25 @@ class TestGetConflicts:
             conflicts = get_conflicts(tmp_path)
 
             assert conflicts == ["file1.py", "file2.py"]
+
+    def test_refuses_sync_when_rebase_in_progress(self, tmp_path: Path) -> None:
+        """Refuse to sync when a rebase is in progress."""
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
+            mock_run.side_effect = [
+                # git fetch origin
+                make_completed_process(),
+                # git rebase check (rebase IS in progress)
+                make_completed_process(returncode=0),  # Rebase in progress
+            ]
+
+            success, error = sync_sandbox_branch(tmp_path, "feature-x")
+
+            # Should fail because rebase is in progress
+            assert success is False
+            assert "rebase in progress" in error.lower()
+
+            # Verify that abort was NOT called (we returned early)
+            assert mock_run.call_count == 2  # Only fetch and rebase check
 
 
 class TestRebaseInSandbox:
@@ -796,6 +909,25 @@ class TestRebaseInSandbox:
             assert result.has_conflicts is False
             assert "rebase failed" in result.error
             assert "rebase error" in result.error
+
+    def test_refuses_sync_when_rebase_in_progress(self, tmp_path: Path) -> None:
+        """Refuse to sync when a rebase is in progress."""
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
+            mock_run.side_effect = [
+                # git fetch origin
+                make_completed_process(),
+                # git rebase check (rebase IS in progress)
+                make_completed_process(returncode=0),  # Rebase in progress
+            ]
+
+            success, error = sync_sandbox_branch(tmp_path, "feature-x")
+
+            # Should fail because rebase is in progress
+            assert success is False
+            assert "rebase in progress" in error.lower()
+
+            # Verify that abort was NOT called (we returned early)
+            assert mock_run.call_count == 2  # Only fetch and rebase check
 
 
 class TestMergeInSandbox:

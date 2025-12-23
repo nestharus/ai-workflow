@@ -16,15 +16,17 @@ class TestParseArgs:
 
     def test_requires_agent(self) -> None:
         """Should require --agent argument."""
-        with patch.object(sys, "argv", ["script", "--prompt", "test prompt"]), pytest.raises(
-            SystemExit
+        with (
+            patch.object(sys, "argv", ["script", "--prompt", "test prompt"]),
+            pytest.raises(SystemExit),
         ):
             parse_args()
 
     def test_requires_prompt(self) -> None:
         """Should require --prompt argument."""
-        with patch.object(sys, "argv", ["script", "--agent", "test-agent"]), pytest.raises(
-            SystemExit
+        with (
+            patch.object(sys, "argv", ["script", "--agent", "test-agent"]),
+            pytest.raises(SystemExit),
         ):
             parse_args()
 

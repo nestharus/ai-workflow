@@ -1306,7 +1306,7 @@ data:
                 contents=yaml_content,
             )
             # Mock _resolve_element_and_field to return empty facts
-            original_resolve = validate_artifact_kinds._resolve_element_and_field
+            _original_resolve = validate_artifact_kinds._resolve_element_and_field
 
             def mock_resolve(data, source_file, element_id, field_path):
                 return {"id": element_id}, [], None  # Empty facts list

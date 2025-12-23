@@ -48,11 +48,15 @@ class TestCheckoutWorktreeCommand:
         mock_client = MagicMock()
         mock_client.get_ticket_info.return_value = {"branch_name": None}
 
-        with patch(
-            "scripts.pr.commands.checkout_worktree_command._looks_like_ticket_id", return_value=True
-        ), patch(
-            "scripts.pr.commands.checkout_worktree_command._get_default_client",
-            return_value=mock_client,
+        with (
+            patch(
+                "scripts.pr.commands.checkout_worktree_command._looks_like_ticket_id",
+                return_value=True,
+            ),
+            patch(
+                "scripts.pr.commands.checkout_worktree_command._get_default_client",
+                return_value=mock_client,
+            ),
         ):
             result = checkout_worktree_command("NES-123")
 
@@ -67,17 +71,23 @@ class TestCheckoutWorktreeCommand:
         mock_client = MagicMock()
         mock_client.get_ticket_info.return_value = {"branch_name": "mrasolomon/nes-123-feature"}
 
-        with patch(
-            "scripts.pr.commands.checkout_worktree_command._looks_like_ticket_id", return_value=True
-        ), patch(
-            "scripts.pr.commands.checkout_worktree_command._get_default_client",
-            return_value=mock_client,
-        ), patch(
-            "scripts.pr.commands.checkout_worktree_command._find_existing_branch_for_ticket",
-            return_value=None,
-        ), patch(
-            "scripts.pr.commands.checkout_worktree_command._get_expected_branch_name",
-            return_value="mrasolomon/nes-123-feature",
+        with (
+            patch(
+                "scripts.pr.commands.checkout_worktree_command._looks_like_ticket_id",
+                return_value=True,
+            ),
+            patch(
+                "scripts.pr.commands.checkout_worktree_command._get_default_client",
+                return_value=mock_client,
+            ),
+            patch(
+                "scripts.pr.commands.checkout_worktree_command._find_existing_branch_for_ticket",
+                return_value=None,
+            ),
+            patch(
+                "scripts.pr.commands.checkout_worktree_command._get_expected_branch_name",
+                return_value="mrasolomon/nes-123-feature",
+            ),
         ):
             result = checkout_worktree_command("NES-123")
 
@@ -92,11 +102,15 @@ class TestCheckoutWorktreeCommand:
         mock_client = MagicMock()
         mock_client.get_ticket_info.side_effect = LinearClientError("API_ERROR", "API error")
 
-        with patch(
-            "scripts.pr.commands.checkout_worktree_command._looks_like_ticket_id", return_value=True
-        ), patch(
-            "scripts.pr.commands.checkout_worktree_command._get_default_client",
-            return_value=mock_client,
+        with (
+            patch(
+                "scripts.pr.commands.checkout_worktree_command._looks_like_ticket_id",
+                return_value=True,
+            ),
+            patch(
+                "scripts.pr.commands.checkout_worktree_command._get_default_client",
+                return_value=mock_client,
+            ),
         ):
             result = checkout_worktree_command("NES-123")
 
@@ -201,14 +215,19 @@ class TestCheckoutWorktreeCommand:
         mock_git_dao.worktree_exists.return_value = False
         mock_git_dao.create_worktree.return_value = (True, "")
 
-        with patch(
-            "scripts.pr.commands.checkout_worktree_command._looks_like_ticket_id", return_value=True
-        ), patch(
-            "scripts.pr.commands.checkout_worktree_command._get_default_client",
-            return_value=mock_client,
-        ), patch(
-            "scripts.pr.commands.checkout_worktree_command._find_existing_branch_for_ticket",
-            return_value="mrasolomon/nes-123-feature",
+        with (
+            patch(
+                "scripts.pr.commands.checkout_worktree_command._looks_like_ticket_id",
+                return_value=True,
+            ),
+            patch(
+                "scripts.pr.commands.checkout_worktree_command._get_default_client",
+                return_value=mock_client,
+            ),
+            patch(
+                "scripts.pr.commands.checkout_worktree_command._find_existing_branch_for_ticket",
+                return_value="mrasolomon/nes-123-feature",
+            ),
         ):
             result = checkout_worktree_command("NES-123")
 

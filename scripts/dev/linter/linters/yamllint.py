@@ -1,16 +1,19 @@
 """Yamllint YAML linter."""
 
+from pathlib import Path
+
 from scripts.dev.linter.base import (
     REPO_ROOT,
     BaseLinter,
     LinterResult,
     get_executable,
-    is_path_excluded,
+    is_path_included,
     load_yaml_config,
     run_checked,
 )
 
 UV_CLI_REQUIRED = "uv CLI required to run lint"
+YAMLLINT_CONFIG = REPO_ROOT / ".yamllint"
 LINT_YAMLLINT_CONFIG = REPO_ROOT / ".lint.yamllint.yaml"
 
 
@@ -29,29 +32,46 @@ class YamllintLinter(BaseLinter):
         Returns:
             LinterResult indicating success/failure.
         """
-        uv_exe = get_executable("uv", UV_CLI_REQUIRED)
+        yamllint_exe = get_executable("yamllint", UV_CLI_REQUIRED)
         config = load_yaml_config(LINT_YAMLLINT_CONFIG)
-        exclude_dirs = {REPO_ROOT / d for d in config.get("exclude_dirs", [])}
+        included_paths = config.get("included_paths", [])
+        excludes = config.get("excludes", [])
+        glob_patterns = included_paths + excludes
 
         if files is not None:
-            yaml_files = [f for f in files if f.endswith(".yml") or f.endswith(".yaml")]
-            if not yaml_files:
-                print("No YAML files to check with yamllint")
-                return LinterResult(success=True)
-        else:
+            # Filter to YAML files that match glob patterns
             yaml_files = [
-                str(path)
-                for path in REPO_ROOT.rglob("*.yml")
-                if path.is_file() and not is_path_excluded(path, exclude_dirs)
+                Path(f)
+                for f in files
+                if (f.endswith(".yaml") or f.endswith(".yml"))
+                and is_path_included(f, glob_patterns)
             ]
-            yaml_files.extend(
-                str(path)
+        else:
+            # Find all YAML files and filter by glob patterns
+            yaml_files = [
+                path
                 for path in REPO_ROOT.rglob("*.yaml")
-                if path.is_file() and not is_path_excluded(path, exclude_dirs)
+                if path.is_file()
+                and is_path_included(str(path.relative_to(REPO_ROOT)), glob_patterns)
+            ]
+            # Also check .yml files
+            yaml_files.extend(
+                path
+                for path in REPO_ROOT.rglob("*.yml")
+                if path.is_file()
+                and is_path_included(str(path.relative_to(REPO_ROOT)), glob_patterns)
             )
 
-        if yaml_files:
-            yamllint_config = str(REPO_ROOT / ".yamllint.yaml")
-            run_checked([uv_exe, "run", "yamllint", "-c", yamllint_config, *yaml_files])
+        if not yaml_files:
+            print("No YAML files found for yamllint scan")
+        else:
+            run_checked(
+                [
+                    yamllint_exe,
+                    "-c",
+                    str(YAMLLINT_CONFIG),
+                    *[str(path) for path in yaml_files],
+                ]
+            )
 
         return LinterResult(success=True)

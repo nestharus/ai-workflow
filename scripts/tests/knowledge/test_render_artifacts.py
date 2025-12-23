@@ -79,9 +79,10 @@ class TestMain:
 
         manifests = [_create_manifest()]
 
-        with patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests), patch.object(
-            render_artifacts, "_render_manifest"
-        ) as mock_render:
+        with (
+            patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests),
+            patch.object(render_artifacts, "_render_manifest") as mock_render,
+        ):
             mock_render.return_value = (True, True, None)
 
             result = render_artifacts.main(
@@ -113,9 +114,10 @@ class TestMain:
 
         manifests = [_create_manifest()]
 
-        with patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests), patch.object(
-            render_artifacts, "_render_manifest"
-        ) as mock_render:
+        with (
+            patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests),
+            patch.object(render_artifacts, "_render_manifest") as mock_render,
+        ):
             mock_render.return_value = (False, False, None)
 
             result = render_artifacts.main(
@@ -148,9 +150,10 @@ class TestMain:
 
         manifests = [_create_manifest()]
 
-        with patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests), patch.object(
-            render_artifacts, "_render_manifest"
-        ) as mock_render:
+        with (
+            patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests),
+            patch.object(render_artifacts, "_render_manifest") as mock_render,
+        ):
             mock_render.return_value = (True, False, None)  # render OK, validation failed
 
             result = render_artifacts.main(
@@ -193,9 +196,10 @@ class TestMain:
             similarity_score=0.95,
         )
 
-        with patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests), patch.object(
-            render_artifacts, "execute_artifact_lifecycle"
-        ) as mock_lifecycle:
+        with (
+            patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests),
+            patch.object(render_artifacts, "execute_artifact_lifecycle") as mock_lifecycle,
+        ):
             mock_lifecycle.return_value = (Path("/rendered/test.txt"), mock_validation)
 
             result = render_artifacts.main(
@@ -237,9 +241,10 @@ class TestMain:
             similarity_score=0.50,
         )
 
-        with patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests), patch.object(
-            render_artifacts, "execute_artifact_lifecycle"
-        ) as mock_lifecycle:
+        with (
+            patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests),
+            patch.object(render_artifacts, "execute_artifact_lifecycle") as mock_lifecycle,
+        ):
             mock_lifecycle.return_value = (Path("/rendered/test.txt"), mock_validation)
 
             result = render_artifacts.main(
@@ -278,9 +283,10 @@ class TestMain:
             )
         ]
 
-        with patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests), patch.object(
-            render_artifacts, "execute_artifact_lifecycle"
-        ) as mock_lifecycle:
+        with (
+            patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests),
+            patch.object(render_artifacts, "execute_artifact_lifecycle") as mock_lifecycle,
+        ):
             mock_lifecycle.return_value = (None, None)  # Skipped
 
             result = render_artifacts.main(
@@ -313,9 +319,10 @@ class TestMain:
 
         manifests = [_create_manifest()]
 
-        with patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests), patch.object(
-            render_artifacts, "execute_artifact_lifecycle"
-        ) as mock_lifecycle:
+        with (
+            patch.object(render_artifacts, "list_artifact_manifests", return_value=manifests),
+            patch.object(render_artifacts, "execute_artifact_lifecycle") as mock_lifecycle,
+        ):
             mock_lifecycle.side_effect = RuntimeError("Lifecycle failed")
 
             result = render_artifacts.main(

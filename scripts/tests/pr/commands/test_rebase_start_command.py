@@ -440,7 +440,7 @@ class TestRebaseStartCommand:
         """Should fetch ticket info when identifier is a ticket ID."""
         with (
             patch("scripts.pr.commands.rebase_start_command.git_dao") as mock_git,
-            patch("scripts.pr.commands.rebase_start_command.github_dao") as mock_github,
+            patch("scripts.pr.commands.rebase_start_command.github_dao"),
             patch("scripts.pr.commands.rebase_start_command._get_default_client") as mock_linear,
             patch("pathlib.Path.cwd", return_value=tmp_path),
         ):

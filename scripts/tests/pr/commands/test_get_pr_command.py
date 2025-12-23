@@ -246,7 +246,6 @@ class TestGetPrCommandTicketId:
 
         with (
             patch("scripts.pr.commands.get_pr_command.git_dao") as mock_git,
-            patch("scripts.pr.commands.get_pr_command.github_dao") as mock_gh,
             patch("scripts.pr.commands.get_pr_command._looks_like_pr_id") as mock_pr_id,
             patch("scripts.pr.commands.get_pr_command._looks_like_ticket_id") as mock_ticket_id,
             patch(

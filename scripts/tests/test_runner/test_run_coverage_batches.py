@@ -147,7 +147,7 @@ class TestRunTestCoverage:
             mock_sqlite3.connect.return_value = mock_conn
 
             with mock.patch.dict("sys.modules", {"sqlite3": mock_sqlite3}):
-                result = run_test_coverage()
+                _result = run_test_coverage()
 
         mock_run.assert_called_once()
         call_args = mock_run.call_args[0][0]
@@ -167,7 +167,7 @@ class TestRunTestCoverage:
             mock_sqlite3.connect.return_value = mock_conn
 
             with mock.patch.dict("sys.modules", {"sqlite3": mock_sqlite3}):
-                result = run_test_coverage(tier="unit")
+                _result = run_test_coverage(tier="unit")
 
         call_args = mock_run.call_args[0][0]
         assert "--tier" in call_args
@@ -232,7 +232,7 @@ class TestRunBatching:
             ) as mock_exists:
                 mock_exists.return_value = False
 
-                result = run_batching(None)
+                _result = run_batching(None)
 
         mock_run.assert_called_once()
         call_args = mock_run.call_args[0][0]
@@ -337,9 +337,12 @@ class TestMain:
 
     def test_main_parses_arguments(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that main parses command line arguments."""
-        with mock.patch("sys.argv", ["run_coverage_batches.py", "--dry-run"]), mock.patch(
-            "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
-        ) as mock_coverage:
+        with (
+            mock.patch("sys.argv", ["run_coverage_batches.py", "--dry-run"]),
+            mock.patch(
+                "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
+            ) as mock_coverage,
+        ):
             mock_coverage.return_value = {"unit": {"failing": 0, "total": 10, "pass": True}}
 
             main()
@@ -349,9 +352,12 @@ class TestMain:
 
     def test_main_exits_when_all_pass(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that main exits when all tiers pass."""
-        with mock.patch("sys.argv", ["run_coverage_batches.py"]), mock.patch(
-            "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
-        ) as mock_coverage:
+        with (
+            mock.patch("sys.argv", ["run_coverage_batches.py"]),
+            mock.patch(
+                "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
+            ) as mock_coverage,
+        ):
             mock_coverage.return_value = {"unit": {"failing": 0, "total": 10, "pass": True}}
 
             main()
@@ -361,9 +367,12 @@ class TestMain:
 
     def test_main_exits_when_no_batches(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that main exits when no batches to process."""
-        with mock.patch("sys.argv", ["run_coverage_batches.py"]), mock.patch(
-            "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
-        ) as mock_coverage:
+        with (
+            mock.patch("sys.argv", ["run_coverage_batches.py"]),
+            mock.patch(
+                "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
+            ) as mock_coverage,
+        ):
             mock_coverage.return_value = {"unit": {"failing": 5, "total": 10, "pass": False}}
             with mock.patch(
                 "scripts.dev.test_runner.run_coverage_batches.run_batching"
@@ -377,9 +386,12 @@ class TestMain:
 
     def test_main_exits_when_zero_batches(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that main exits when manifest has zero batches."""
-        with mock.patch("sys.argv", ["run_coverage_batches.py"]), mock.patch(
-            "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
-        ) as mock_coverage:
+        with (
+            mock.patch("sys.argv", ["run_coverage_batches.py"]),
+            mock.patch(
+                "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
+            ) as mock_coverage,
+        ):
             mock_coverage.return_value = {"unit": {"failing": 5, "total": 10, "pass": False}}
             with mock.patch(
                 "scripts.dev.test_runner.run_coverage_batches.run_batching"
@@ -397,9 +409,12 @@ class TestMain:
 
     def test_main_dry_run_shows_commands(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that main shows commands in dry run mode."""
-        with mock.patch("sys.argv", ["run_coverage_batches.py", "--dry-run"]), mock.patch(
-            "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
-        ) as mock_coverage:
+        with (
+            mock.patch("sys.argv", ["run_coverage_batches.py", "--dry-run"]),
+            mock.patch(
+                "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
+            ) as mock_coverage,
+        ):
             mock_coverage.return_value = {"unit": {"failing": 5, "total": 10, "pass": False}}
             with mock.patch(
                 "scripts.dev.test_runner.run_coverage_batches.run_batching"
@@ -418,9 +433,12 @@ class TestMain:
 
     def test_main_shows_agent_instructions(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that main shows agent instructions when not dry run."""
-        with mock.patch("sys.argv", ["run_coverage_batches.py"]), mock.patch(
-            "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
-        ) as mock_coverage:
+        with (
+            mock.patch("sys.argv", ["run_coverage_batches.py"]),
+            mock.patch(
+                "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
+            ) as mock_coverage,
+        ):
             mock_coverage.return_value = {"unit": {"failing": 5, "total": 10, "pass": False}}
             with mock.patch(
                 "scripts.dev.test_runner.run_coverage_batches.run_batching"
@@ -439,9 +457,12 @@ class TestMain:
 
     def test_main_with_tier_filter(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test main with tier filter."""
-        with mock.patch("sys.argv", ["run_coverage_batches.py", "--tier", "unit"]), mock.patch(
-            "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
-        ) as mock_coverage:
+        with (
+            mock.patch("sys.argv", ["run_coverage_batches.py", "--tier", "unit"]),
+            mock.patch(
+                "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
+            ) as mock_coverage,
+        ):
             mock_coverage.return_value = {"unit": {"failing": 0, "total": 10, "pass": True}}
 
             main()
@@ -451,9 +472,12 @@ class TestMain:
 
     def test_main_with_parallel_option(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test main with parallel agents option."""
-        with mock.patch("sys.argv", ["run_coverage_batches.py", "--parallel", "8"]), mock.patch(
-            "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
-        ) as mock_coverage:
+        with (
+            mock.patch("sys.argv", ["run_coverage_batches.py", "--parallel", "8"]),
+            mock.patch(
+                "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
+            ) as mock_coverage,
+        ):
             mock_coverage.return_value = {"unit": {"failing": 0, "total": 10, "pass": True}}
 
             main()
@@ -463,9 +487,12 @@ class TestMain:
 
     def test_main_with_max_iterations(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test main with max iterations option."""
-        with mock.patch("sys.argv", ["run_coverage_batches.py", "--max-iterations", "3"]), mock.patch(
-            "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
-        ) as mock_coverage:
+        with (
+            mock.patch("sys.argv", ["run_coverage_batches.py", "--max-iterations", "3"]),
+            mock.patch(
+                "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
+            ) as mock_coverage,
+        ):
             mock_coverage.return_value = {"unit": {"failing": 0, "total": 10, "pass": True}}
 
             main()
@@ -475,9 +502,12 @@ class TestMain:
 
     def test_main_with_batch_size(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test main with batch size option."""
-        with mock.patch("sys.argv", ["run_coverage_batches.py", "--batch-size", "20"]), mock.patch(
-            "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
-        ) as mock_coverage:
+        with (
+            mock.patch("sys.argv", ["run_coverage_batches.py", "--batch-size", "20"]),
+            mock.patch(
+                "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
+            ) as mock_coverage,
+        ):
             mock_coverage.return_value = {"unit": {"failing": 0, "total": 10, "pass": True}}
 
             main()
@@ -487,11 +517,15 @@ class TestMain:
 
     def test_main_limits_agents_to_parallel_count(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that main limits agents to parallel count."""
-        with mock.patch("sys.argv", ["run_coverage_batches.py", "--parallel", "2"]), mock.patch(
-            "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
-        ) as mock_coverage, mock.patch(
-            "scripts.dev.test_runner.run_coverage_batches.run_batching"
-        ) as mock_batching:
+        with (
+            mock.patch("sys.argv", ["run_coverage_batches.py", "--parallel", "2"]),
+            mock.patch(
+                "scripts.dev.test_runner.run_coverage_batches.run_test_coverage"
+            ) as mock_coverage,
+            mock.patch(
+                "scripts.dev.test_runner.run_coverage_batches.run_batching"
+            ) as mock_batching,
+        ):
             mock_coverage.return_value = {"unit": {"failing": 5, "total": 10, "pass": False}}
             mock_batching.return_value = {
                 "total_batches": 5,

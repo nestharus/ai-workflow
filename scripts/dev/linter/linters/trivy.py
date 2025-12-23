@@ -23,7 +23,7 @@ class TrivyLinter(BaseLinter):
     """Run Trivy security scans for filesystem and Docker image."""
 
     name = "trivy"
-    supports_file_filtering = False
+    supports_file_filtering = True
 
     def run(self, files: list[str] | None = None) -> LinterResult:
         """Run Trivy security scans.
@@ -38,11 +38,23 @@ class TrivyLinter(BaseLinter):
         vulnerabilities already need attention.
 
         Args:
-            files: Ignored (this linter does not support file filtering).
+            files: Optional list of files to filter. Only runs if uv.lock or
+                   any Dockerfile file is in the files list.
 
         Returns:
             LinterResult indicating success/failure.
         """
+        # If files are specified, only run if uv.lock or any Dockerfile is in the list
+        if files is not None:
+            has_uv_lock = any(f.endswith("uv.lock") for f in files)
+            has_dockerfile = any(
+                f.endswith("Dockerfile") or "Dockerfile" in f
+                for f in files
+            )
+            if not (has_uv_lock or has_dockerfile):
+                print("No uv.lock or Dockerfile in changed files, skipping trivy linter.")
+                return LinterResult(success=True)
+
         trivy_exe = get_executable("trivy", TRIVY_CLI_REQUIRED)
         config = load_yaml_config(LINT_TRIVY_CONFIG)
 

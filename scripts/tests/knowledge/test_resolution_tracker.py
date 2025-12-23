@@ -141,9 +141,10 @@ description: This is a test element.
                 split_file=[split_file],
                 knowledge_path=Path(".knowledge"),
             )
-            with patch.object(resolution_tracker, "REPO_ROOT", tmp_path), patch.object(
-                resolution_tracker, "extract_text_for_id"
-            ) as mock_extract:
+            with (
+                patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+                patch.object(resolution_tracker, "extract_text_for_id") as mock_extract,
+            ):
                 mock_extract.side_effect = FileNotFoundError("File not found")
                 result = resolution_tracker.main()
 
@@ -167,11 +168,11 @@ description: This is a test element.
                 split_file=[tmp_path / "nonexistent_split.yml"],  # Doesn't exist
                 knowledge_path=knowledge_path,
             )
-            with patch.object(resolution_tracker, "REPO_ROOT", tmp_path), patch.object(
-                resolution_tracker, "extract_text_for_id"
-            ) as mock_extract, patch.object(
-                resolution_tracker, "compute_element_content_hash"
-            ) as mock_hash:
+            with (
+                patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+                patch.object(resolution_tracker, "extract_text_for_id") as mock_extract,
+                patch.object(resolution_tracker, "compute_element_content_hash") as mock_hash,
+            ):
                 mock_extract.return_value = "id: test-id\nvalue: data"
                 mock_hash.return_value = "abc123"
                 result = resolution_tracker.main()
@@ -208,11 +209,11 @@ description: This is a test element.
                 split_file=[split_file],  # Outside repo
                 knowledge_path=knowledge_path,
             )
-            with patch.object(resolution_tracker, "REPO_ROOT", repo_root), patch.object(
-                resolution_tracker, "extract_text_for_id"
-            ) as mock_extract, patch.object(
-                resolution_tracker, "compute_element_content_hash"
-            ) as mock_hash:
+            with (
+                patch.object(resolution_tracker, "REPO_ROOT", repo_root),
+                patch.object(resolution_tracker, "extract_text_for_id") as mock_extract,
+                patch.object(resolution_tracker, "compute_element_content_hash") as mock_hash,
+            ):
                 mock_extract.return_value = "id: test-id\nvalue: data"
                 mock_hash.return_value = "abc123"
                 result = resolution_tracker.main()
@@ -249,11 +250,11 @@ description: This is a test element.
                 split_file=[Path("split.yml")],
                 knowledge_path=knowledge_path,
             )
-            with patch.object(resolution_tracker, "REPO_ROOT", tmp_path), patch.object(
-                resolution_tracker, "extract_text_for_id", side_effect=mock_extract
-            ), patch.object(
-                resolution_tracker, "compute_element_content_hash"
-            ) as mock_hash:
+            with (
+                patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+                patch.object(resolution_tracker, "extract_text_for_id", side_effect=mock_extract),
+                patch.object(resolution_tracker, "compute_element_content_hash") as mock_hash,
+            ):
                 mock_hash.return_value = "abc123"
                 result = resolution_tracker.main()
 
@@ -289,11 +290,11 @@ description: This is a test element.
                 split_file=[Path("split.yml")],
                 knowledge_path=knowledge_path,
             )
-            with patch.object(resolution_tracker, "REPO_ROOT", tmp_path), patch.object(
-                resolution_tracker, "extract_text_for_id", side_effect=mock_extract
-            ), patch.object(
-                resolution_tracker, "compute_element_content_hash"
-            ) as mock_hash:
+            with (
+                patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+                patch.object(resolution_tracker, "extract_text_for_id", side_effect=mock_extract),
+                patch.object(resolution_tracker, "compute_element_content_hash") as mock_hash,
+            ):
                 mock_hash.return_value = "abc123"
                 result = resolution_tracker.main()
 
@@ -660,13 +661,12 @@ class TestMainSuccessPath:
                 split_file=[Path("split.yml")],
                 knowledge_path=knowledge_path,
             )
-            with patch.object(resolution_tracker, "REPO_ROOT", tmp_path), patch.object(
-                resolution_tracker, "extract_text_for_id"
-            ) as mock_extract, patch.object(
-                resolution_tracker, "compute_element_content_hash"
-            ) as mock_hash, patch.object(
-                resolution_tracker, "is_already_resolved"
-            ) as mock_resolved:
+            with (
+                patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+                patch.object(resolution_tracker, "extract_text_for_id") as mock_extract,
+                patch.object(resolution_tracker, "compute_element_content_hash") as mock_hash,
+                patch.object(resolution_tracker, "is_already_resolved") as mock_resolved,
+            ):
                 mock_extract.return_value = "id: test-id\nvalue: data"
                 mock_hash.return_value = "abc123"
                 mock_resolved.return_value = True
@@ -695,11 +695,12 @@ class TestMainSuccessPath:
                 split_file=[Path("split.yml")],
                 knowledge_path=knowledge_path,
             )
-            with patch.object(resolution_tracker, "REPO_ROOT", tmp_path), patch.object(
-                resolution_tracker, "extract_text_for_id"
-            ) as mock_extract, patch.object(
-                resolution_tracker, "compute_element_content_hash"
-            ) as mock_hash, patch.object(resolution_tracker, "parse_yaml_file") as mock_parse_yaml:
+            with (
+                patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+                patch.object(resolution_tracker, "extract_text_for_id") as mock_extract,
+                patch.object(resolution_tracker, "compute_element_content_hash") as mock_hash,
+                patch.object(resolution_tracker, "parse_yaml_file") as mock_parse_yaml,
+            ):
                 mock_extract.return_value = "id: test-id\nvalue: data"
                 mock_hash.return_value = "abc123"
                 mock_parse_yaml.return_value = {"id": "test-id"}
@@ -736,11 +737,12 @@ class TestMainSuccessPath:
                 split_file=split_files,
                 knowledge_path=knowledge_path,
             )
-            with patch.object(resolution_tracker, "REPO_ROOT", tmp_path), patch.object(
-                resolution_tracker, "extract_text_for_id"
-            ) as mock_extract, patch.object(
-                resolution_tracker, "compute_element_content_hash"
-            ) as mock_hash, patch.object(resolution_tracker, "parse_yaml_file") as mock_parse_yaml:
+            with (
+                patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+                patch.object(resolution_tracker, "extract_text_for_id") as mock_extract,
+                patch.object(resolution_tracker, "compute_element_content_hash") as mock_hash,
+                patch.object(resolution_tracker, "parse_yaml_file") as mock_parse_yaml,
+            ):
                 mock_extract.return_value = "id: test-id\nvalue: data"
                 mock_hash.return_value = "abc123"
                 mock_parse_yaml.return_value = {"id": "test-id"}
@@ -771,11 +773,12 @@ class TestMainSuccessPath:
                 split_file=[Path("split.yml")],
                 knowledge_path=knowledge_path,  # absolute
             )
-            with patch.object(resolution_tracker, "REPO_ROOT", tmp_path), patch.object(
-                resolution_tracker, "extract_text_for_id"
-            ) as mock_extract, patch.object(
-                resolution_tracker, "compute_element_content_hash"
-            ) as mock_hash, patch.object(resolution_tracker, "parse_yaml_file") as mock_parse_yaml:
+            with (
+                patch.object(resolution_tracker, "REPO_ROOT", tmp_path),
+                patch.object(resolution_tracker, "extract_text_for_id") as mock_extract,
+                patch.object(resolution_tracker, "compute_element_content_hash") as mock_hash,
+                patch.object(resolution_tracker, "parse_yaml_file") as mock_parse_yaml,
+            ):
                 mock_extract.return_value = "id: test-id\nvalue: data"
                 mock_hash.return_value = "abc123"
                 mock_parse_yaml.return_value = {"id": "test-id"}

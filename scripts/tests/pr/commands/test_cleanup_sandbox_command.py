@@ -84,9 +84,12 @@ class TestCleanupSandboxCommand:
         with patch(f"{MODULE}.git_dao") as mock_git:
             mock_git.get_repo_root.return_value = repo_root
             mock_git.remove_shared_clone.return_value = (True, "")
-            with patch(f"{MODULE}._get_default_client", return_value=mock_client), patch(
-                f"{MODULE}._find_existing_branch_for_ticket",
-                return_value="mrasolomon/nes-123-feature",
+            with (
+                patch(f"{MODULE}._get_default_client", return_value=mock_client),
+                patch(
+                    f"{MODULE}._find_existing_branch_for_ticket",
+                    return_value="mrasolomon/nes-123-feature",
+                ),
             ):
                 result = cleanup_sandbox_command("NES-123")
 
@@ -110,11 +113,13 @@ class TestCleanupSandboxCommand:
         with patch(f"{MODULE}.git_dao") as mock_git:
             mock_git.get_repo_root.return_value = repo_root
             mock_git.remove_shared_clone.return_value = (True, "")
-            with patch(f"{MODULE}._get_default_client", return_value=mock_client), patch(
-                f"{MODULE}._find_existing_branch_for_ticket", return_value=None
-            ), patch(
-                f"{MODULE}._get_expected_branch_name",
-                return_value="mrasolomon/nes-123-feature",
+            with (
+                patch(f"{MODULE}._get_default_client", return_value=mock_client),
+                patch(f"{MODULE}._find_existing_branch_for_ticket", return_value=None),
+                patch(
+                    f"{MODULE}._get_expected_branch_name",
+                    return_value="mrasolomon/nes-123-feature",
+                ),
             ):
                 result = cleanup_sandbox_command("NES-123")
 

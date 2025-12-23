@@ -1,22 +1,12 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-.uv-cache/
-
-# C extensions
 *.so
-
-# Distribution / packaging
-build/
-dist/
-*.egg-info/
-pip-wheel-metadata/
+.uv-cache/
+.pyright/
 
 # Virtual environments
-# if on windows AI runs in WSL and IDE runs on Windows
-# WSL uses python linux and windows uses windows linux
-# they each need their own .venv
 .venv*/
 venv/
 env/
@@ -24,67 +14,58 @@ ENV/
 env.bak/
 venv.bak/
 
-# Pyright
-.pyright/
+# Build / distribution
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Claude Code local settings (machine-specific)
-.claude/settings.local.json
-
-# Unit test / coverage reports
-.coverage
-.coverage/
-coverage.xml
-htmlcov/
-.cache/
-nosetests.xml
-
-# Static analysis
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
-.sonar/
-.review/
-# .tasks/store/ contains generated task files (ignored)
-# .tasks/agents/ and other subdirs are tracked
-.tasks/store/
-openapi/
-
-# IDEs and editors
+# IDEs
 .idea*/
 .vscode/
 *.sublime-project
 *.sublime-workspace
 
-# OS files
+# OS
 .DS_Store
 Thumbs.db
 
-# Database files
-*.duckdb
-*.duckdb.wal
+# Coverage / testing
+.coverage*
+coverage.xml
+htmlcov/
+.cache/
+nosetests.xml
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Misc
-*.log
+# Output / generated
+openapi/
+.sonar/
+.review/
+.tmp/
+.worktrees/
+.git-rewrite/
+.audit/
+out/
+
+# Local config / secrets
 .env
 .env.local
 .env.*.local
-out/
-.knowledge/knowledge.duckdb
+.claude/settings.local.json
 
-# Knowledge migration artifacts - track structure, ignore data
+# Knowledge base data (track structure, ignore data files)
+.knowledge/knowledge.duckdb
+.knowledge/*.duckdb.wal
 .knowledge/**/*.csv
 .knowledge/originals/*.yml
 .knowledge/originals/*.yaml
 **/surgeon_logs/
 
+# Misc
+*.log
+*.duckdb
+*.duckdb.wal
 to_adapt/
-
-# Temporary and worktree directories
-.tmp/
-.worktrees/
-.git-rewrite/
-.audit/

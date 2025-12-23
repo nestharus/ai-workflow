@@ -205,10 +205,19 @@ def sync_sandbox_branch(sandbox_path: Path, branch: str) -> tuple[bool, str]:
     if result.returncode != 0:
         return False, f"fetch failed: {result.stderr}"
 
-    # Abort any in-progress rebase
+    # Check if there's an active rebase in progress before aborting
+    # This prevents aborting rebases that are waiting for conflict resolution
+    rebase_check = _run_git(
+        ["git", "rev-parse", "--verify", "--quiet", ".git/rebase-merge/HEAD"],
+        cwd=sandbox_path,
+    )
+    if rebase_check is not None and rebase_check.returncode == 0:
+        return False, "Cannot sync: rebase in progress (operation may be resolving conflicts)"
+
+    # Abort any in-progress rebase (only if none is active)
     _run_git(["git", "rebase", "--abort"], cwd=sandbox_path)
 
-    # Abort any in-progress merge
+    # Abort any in-progress merge (only if none is active)
     _run_git(["git", "merge", "--abort"], cwd=sandbox_path)
 
     # Check if branch exists locally

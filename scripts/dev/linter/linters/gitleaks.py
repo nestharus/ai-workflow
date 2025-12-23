@@ -38,7 +38,7 @@ from scripts.dev.linter.base import (
     BaseLinter,
     LinterResult,
     get_executable,
-    is_path_excluded,
+    is_path_included,
     load_yaml_config,
 )
 
@@ -96,8 +96,8 @@ class GitleaksLinter(BaseLinter):
             print(GITLEAKS_CONFIG_UNREADABLE, file=sys.stderr)
             return LinterResult(success=False, message=GITLEAKS_CONFIG_UNREADABLE)
 
-        # Build base command with config
-        cmd = [gitleaks_bin, "dir", "--config", str(GITLEAKS_CONFIG)]
+        # Build base command with config and verbose output
+        cmd = [gitleaks_bin, "dir", "--config", str(GITLEAKS_CONFIG), "-v"]
 
         if files is not None:
             # Load exclusion config from .lint.gitleaks.yaml (optional, defaults to empty)
@@ -111,19 +111,19 @@ class GitleaksLinter(BaseLinter):
                     return LinterResult(success=False, message=msg)
             excluded_extensions = set(config.get("excluded_extensions", []))
             excluded_names = set(config.get("excluded_names", []))
-            excluded_dirs = {REPO_ROOT / d for d in config.get("excluded_dirs", [])}
+            included_paths = config.get("included_paths", [])
 
             scannable_files = []
             for f in files:
                 file_path = Path(f)
+                # Check if file is in an included path (restrictive mode)
+                if included_paths and not is_path_included(f, included_paths):
+                    continue
                 # Check extension exclusion
                 if any(f.endswith(ext) for ext in excluded_extensions):
                     continue
                 # Check name exclusion
                 if file_path.name in excluded_names:
-                    continue
-                # Check directory exclusion
-                if is_path_excluded(REPO_ROOT / f, excluded_dirs):
                     continue
                 scannable_files.append(f)
 

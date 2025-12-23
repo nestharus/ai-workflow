@@ -149,9 +149,11 @@ class TestTrackAdditionsMain:
                 },
                 [comparisons_dir / "failed.csv"],  # One failed path
             )
-            with patch.object(track_additions, "ensure_csv_exists"), patch.object(
-                track_additions, "is_already_tracked", return_value=False
-            ), patch.object(track_additions, "append_addition"):
+            with (
+                patch.object(track_additions, "ensure_csv_exists"),
+                patch.object(track_additions, "is_already_tracked", return_value=False),
+                patch.object(track_additions, "append_addition"),
+            ):
                 result = track_additions.track_additions_main(args)
 
         assert result == 0
@@ -187,9 +189,11 @@ class TestTrackAdditionsMain:
                 {"pattern1": pattern_additions},
                 [],  # No failed paths
             )
-            with patch.object(track_additions, "ensure_csv_exists"), patch.object(
-                track_additions, "is_already_tracked", side_effect=mock_is_tracked
-            ), patch.object(track_additions, "append_addition"):
+            with (
+                patch.object(track_additions, "ensure_csv_exists"),
+                patch.object(track_additions, "is_already_tracked", side_effect=mock_is_tracked),
+                patch.object(track_additions, "append_addition"),
+            ):
                 result = track_additions.track_additions_main(args)
 
         assert result == 0

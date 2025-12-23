@@ -97,7 +97,10 @@ class TestLoadConfig:
 
     def test_load_config_no_file_found_returns_empty(self):
         """Test that load_config with no config file found returns empty config."""
-        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"MCP_CONFIG_PATH": ""}):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch.dict(os.environ, {"MCP_CONFIG_PATH": ""}),
+        ):
             # Use tmpdir as base to avoid finding real config files
             original_cwd = os.getcwd()
             try:
@@ -233,11 +236,13 @@ mcpServers:
 """)
             f.flush()
             try:
-                with patch.dict(os.environ, {"TEST_API_KEY": "secret123"}):
+                with patch.dict(
+                    os.environ, {"TEST_API_KEY": "secret123"}
+                ):  # pragma: allowlist secret
                     config = load_config(f.name)
                     server = config.servers["test-server"]
                     assert isinstance(server, StdioServerConfig)
-                    assert server.env["API_KEY"] == "secret123"
+                    assert server.env["API_KEY"] == "secret123"  # pragma: allowlist secret
             finally:
                 os.unlink(f.name)
 

@@ -180,8 +180,9 @@ class TestGetClipboardLinux:
 
     def test_get_clipboard_linux_no_tools_raises(self) -> None:
         """Test that FileNotFoundError is raised when neither xclip nor xsel is found."""
-        with patch("shutil.which", return_value=None), pytest.raises(
-            FileNotFoundError, match="Neither xclip nor xsel found"
+        with (
+            patch("shutil.which", return_value=None),
+            pytest.raises(FileNotFoundError, match="Neither xclip nor xsel found"),
         ):
             get_clipboard_linux()
 
@@ -742,7 +743,7 @@ Add utility functions.
             patch("sys.argv", ["clipboard_to_plan"]),
         ):
             # We need to patch Path(__file__) to return our test path
-            original_path = Path
+            _original_path = Path
 
             class MockPath(type(Path())):
                 pass

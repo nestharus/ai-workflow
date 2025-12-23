@@ -1022,9 +1022,10 @@ class TestMainTrack:
 
     def test_calls_track_variants_main(self) -> None:
         """Should parse args and call track_variants_main."""
-        with patch("scripts.knowledge.variant_resolver.parse_args") as mock_parse, patch(
-            "scripts.knowledge.variant_resolver.track_variants_main"
-        ) as mock_main:
+        with (
+            patch("scripts.knowledge.variant_resolver.parse_args") as mock_parse,
+            patch("scripts.knowledge.variant_resolver.track_variants_main") as mock_main,
+        ):
             mock_parse.return_value = argparse.Namespace(
                 knowledge_path=Path(".knowledge"),
                 model="test/model",
@@ -1044,9 +1045,10 @@ class TestMainApply:
 
     def test_calls_apply_variant_decisions_main(self) -> None:
         """Should parse args and call apply_variant_decisions_main."""
-        with patch("scripts.knowledge.variant_resolver.parse_apply_args") as mock_parse, patch(
-            "scripts.knowledge.variant_resolver.apply_variant_decisions_main"
-        ) as mock_main:
+        with (
+            patch("scripts.knowledge.variant_resolver.parse_apply_args") as mock_parse,
+            patch("scripts.knowledge.variant_resolver.apply_variant_decisions_main") as mock_main,
+        ):
             mock_parse.return_value = argparse.Namespace(
                 knowledge_path=Path(".knowledge"),
                 dry_run=False,
