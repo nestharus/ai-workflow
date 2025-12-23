@@ -253,6 +253,59 @@ class TestSendRebaseWait:
 
             assert isinstance(response, ProgressResponse)
 
+    def test_verbose_output_for_queued_response(self, capsys) -> None:
+        """Print queued position when verbose=True."""
+        with (
+            patch("scripts.servers.sandbox.client._connect") as mock_connect,
+            patch("scripts.servers.sandbox.client._wait_for_completion") as mock_wait,
+        ):
+            mock_socket = MagicMock()
+            mock_connect.return_value = mock_socket
+
+            queued_json = '{"status": "queued", "request_id": "test", "position": 5}\n'
+            mock_socket.recv.return_value = queued_json.encode()
+
+            mock_wait.return_value = SuccessResponse(request_id="test", result={})
+
+            send_rebase(
+                branch="feature-x",
+                target="main",
+                socket_path="/tmp/test.sock",
+                wait=True,
+                verbose=True,
+            )
+
+            captured = capsys.readouterr()
+            assert "queued" in captured.out.lower()
+            assert "5" in captured.out
+
+    def test_verbose_output_for_progress_response(self, capsys) -> None:
+        """Print progress message when verbose=True."""
+        with (
+            patch("scripts.servers.sandbox.client._connect") as mock_connect,
+            patch("scripts.servers.sandbox.client._wait_for_completion") as mock_wait,
+        ):
+            mock_socket = MagicMock()
+            mock_connect.return_value = mock_socket
+
+            progress_json = (
+                '{"status": "in_progress", "request_id": "test", "message": "Rebasing..."}\n'
+            )
+            mock_socket.recv.return_value = progress_json.encode()
+
+            mock_wait.return_value = SuccessResponse(request_id="test", result={})
+
+            send_rebase(
+                branch="feature-x",
+                target="main",
+                socket_path="/tmp/test.sock",
+                wait=True,
+                verbose=True,
+            )
+
+            captured = capsys.readouterr()
+            assert "Rebasing" in captured.out
+
 
 class TestSendRebaseInvalidResponse:
     """Tests for send_rebase handling invalid server responses."""
@@ -390,6 +443,59 @@ class TestSendMergeWait:
             )
 
             assert isinstance(response, ProgressResponse)
+
+    def test_verbose_output_for_queued_response(self, capsys) -> None:
+        """Print queued position when verbose=True."""
+        with (
+            patch("scripts.servers.sandbox.client._connect") as mock_connect,
+            patch("scripts.servers.sandbox.client._wait_for_completion") as mock_wait,
+        ):
+            mock_socket = MagicMock()
+            mock_connect.return_value = mock_socket
+
+            queued_json = '{"status": "queued", "request_id": "test", "position": 3}\n'
+            mock_socket.recv.return_value = queued_json.encode()
+
+            mock_wait.return_value = SuccessResponse(request_id="test", result={})
+
+            send_merge(
+                branch="feature-x",
+                target="main",
+                socket_path="/tmp/test.sock",
+                wait=True,
+                verbose=True,
+            )
+
+            captured = capsys.readouterr()
+            assert "queued" in captured.out.lower()
+            assert "3" in captured.out
+
+    def test_verbose_output_for_progress_response(self, capsys) -> None:
+        """Print progress message when verbose=True."""
+        with (
+            patch("scripts.servers.sandbox.client._connect") as mock_connect,
+            patch("scripts.servers.sandbox.client._wait_for_completion") as mock_wait,
+        ):
+            mock_socket = MagicMock()
+            mock_connect.return_value = mock_socket
+
+            progress_json = (
+                '{"status": "in_progress", "request_id": "test", "message": "Merging..."}\n'
+            )
+            mock_socket.recv.return_value = progress_json.encode()
+
+            mock_wait.return_value = SuccessResponse(request_id="test", result={})
+
+            send_merge(
+                branch="feature-x",
+                target="main",
+                socket_path="/tmp/test.sock",
+                wait=True,
+                verbose=True,
+            )
+
+            captured = capsys.readouterr()
+            assert "Merging" in captured.out
 
 
 class TestSendMergeInvalidResponse:
@@ -540,6 +646,20 @@ class TestFormatResponse:
         assert "SUCCESS" in output
         assert "done" in output
 
+    def test_format_success_without_message_field(self) -> None:
+        """Format success response when result has no 'message' field."""
+        response = SuccessResponse(
+            request_id="test",
+            result={"data": "some_value", "count": 42},
+        )
+
+        output = format_response(response)
+
+        assert "SUCCESS" in output
+        # Should JSON dump the result
+        assert "data" in output
+        assert "some_value" in output
+
     def test_format_conflict(self) -> None:
         """Format conflict response."""
         response = ConflictResponse(
@@ -587,6 +707,16 @@ class TestFormatResponse:
 
         assert "IN PROGRESS" in output
         assert "Working on it" in output
+
+    def test_format_unknown_response_type(self) -> None:
+        """Format unknown response type."""
+        # Create a mock response that doesn't match any known type
+        unknown_response = MagicMock()
+        unknown_response.__class__.__name__ = "UnknownResponse"
+
+        output = format_response(unknown_response)
+
+        assert "UNKNOWN" in output
 
 
 class TestWaitForCompletion:
@@ -962,3 +1092,64 @@ class TestMainMergeExitCodes:
             exit_code = main()
 
             assert exit_code == 1
+
+
+class TestMainSandboxClientError:
+    """Tests for main() handling SandboxClientError."""
+
+    def test_rebase_returns_one_on_sandbox_client_error(self, capsys) -> None:
+        """Return exit code 1 and print error when SandboxClientError is raised."""
+        from scripts.servers.sandbox.client import main
+
+        with (
+            patch(
+                "sys.argv",
+                ["client", "rebase", "--branch", "feature", "--target", "main"],
+            ),
+            patch("scripts.servers.sandbox.client.send_rebase") as mock_send_rebase,
+        ):
+            mock_send_rebase.side_effect = SandboxClientError("Server not running")
+
+            exit_code = main()
+
+            assert exit_code == 1
+            captured = capsys.readouterr()
+            assert "Error" in captured.err
+            assert "Server not running" in captured.err
+
+    def test_merge_returns_one_on_sandbox_client_error(self, capsys) -> None:
+        """Return exit code 1 and print error when SandboxClientError is raised."""
+        from scripts.servers.sandbox.client import main
+
+        with (
+            patch(
+                "sys.argv",
+                ["client", "merge", "--branch", "feature", "--target", "main"],
+            ),
+            patch("scripts.servers.sandbox.client.send_merge") as mock_send_merge,
+        ):
+            mock_send_merge.side_effect = SandboxClientError("Connection refused")
+
+            exit_code = main()
+
+            assert exit_code == 1
+            captured = capsys.readouterr()
+            assert "Error" in captured.err
+            assert "Connection refused" in captured.err
+
+    def test_status_returns_one_on_sandbox_client_error(self, capsys) -> None:
+        """Return exit code 1 and print error when SandboxClientError is raised."""
+        from scripts.servers.sandbox.client import main
+
+        with (
+            patch("sys.argv", ["client", "status", "--request-id", "test-id"]),
+            patch("scripts.servers.sandbox.client.get_status") as mock_get_status,
+        ):
+            mock_get_status.side_effect = SandboxClientError("Socket not found")
+
+            exit_code = main()
+
+            assert exit_code == 1
+            captured = capsys.readouterr()
+            assert "Error" in captured.err
+            assert "Socket not found" in captured.err

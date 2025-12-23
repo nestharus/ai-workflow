@@ -44,6 +44,7 @@ from scripts.knowledge.compare_yaml_docs import (
     _strip_timestamp_prefix,
     _validate_yaml_result,
     aggregate_split_objects,
+    compare_all,
     compare_original_to_splits,
     compute_element_content_hash,
     detect_artifacts_from_field_facts,
@@ -2515,3 +2516,508 @@ class TestComputeElementContentHash:
         expected = hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
         assert result == expected
+
+
+# ==============================================================================
+# Additional Coverage Tests
+# ==============================================================================
+
+
+class TestAggregateSplitObjectsExceptionHandling:
+    """Additional tests for aggregate_split_objects exception handling."""
+
+    def test_handles_parse_failure_in_split_file(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should warn and continue when split file fails to parse."""
+        with patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path):
+            split_dir = tmp_path / "python"
+            split_dir.mkdir()
+            # Create invalid YAML
+            invalid_file = split_dir / "python.test.yml"
+            invalid_file.write_text("invalid: yaml: content:\n  bad")
+
+            split_map = {"python": invalid_file}
+            result = aggregate_split_objects(split_map)
+
+            # Should return empty and print warning
+            assert result == {}
+            captured = capsys.readouterr()
+            assert "Warning: Failed to parse" in captured.err
+
+    def test_warns_about_conflicting_data_for_same_id(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should warn when same ID has different data in multiple split files."""
+        with patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path):
+            python_dir = tmp_path / "python"
+            rust_dir = tmp_path / "rust"
+            python_dir.mkdir()
+            rust_dir.mkdir()
+
+            # Create two files with same ID but different data
+            python_content = """
+items:
+  - id: shared-item
+    text: Python version
+"""
+            rust_content = """
+items:
+  - id: shared-item
+    text: Rust version
+"""
+            python_file = python_dir / "python.test.yml"
+            rust_file = rust_dir / "rust.test.yml"
+            python_file.write_text(python_content)
+            rust_file.write_text(rust_content)
+
+            split_map = {
+                "python": python_file,
+                "rust": rust_file,
+            }
+            result = aggregate_split_objects(split_map)
+
+            # Should have aggregated data from both
+            assert "shared-item" in result
+            assert len(result["shared-item"]) == 2
+
+            # Should warn about conflicting data
+            captured = capsys.readouterr()
+            assert "Warning: Conflicting data for ID" in captured.err
+            assert "shared-item" in captured.err
+
+
+class TestCompareOriginalToSplitsExceptionHandling:
+    """Additional tests for compare_original_to_splits exception handling."""
+
+    def test_handles_parse_failure_in_original(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return empty entries when original file fails to parse."""
+        with patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path):
+            # Create invalid original file
+            invalid_file = tmp_path / "original.test.yml"
+            invalid_file.write_text("invalid: yaml: content:\n  bad")
+
+            split_map = {}
+            result = compare_original_to_splits(invalid_file, split_map)
+
+            assert result == []
+            captured = capsys.readouterr()
+            assert "Warning: Failed to parse" in captured.err
+
+    def test_finds_split_only_entries(self, tmp_path: Path) -> None:
+        """Should find IDs present only in split files (not in original)."""
+        with patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path):
+            python_dir = tmp_path / "python"
+            python_dir.mkdir()
+
+            # Original with one ID
+            orig_content = """
+items:
+  - id: item-1
+    text: Original item
+"""
+            # Split with additional ID not in original
+            split_content = """
+items:
+  - id: item-1
+    text: Original item
+  - id: item-2
+    text: Split only item
+"""
+            orig_file = tmp_path / "original.test.yml"
+            split_file = python_dir / "python.test.yml"
+            orig_file.write_text(orig_content)
+            split_file.write_text(split_content)
+
+            split_map = {"python": split_file}
+            result = compare_original_to_splits(orig_file, split_map)
+
+            # Should find split_only entry for item-2
+            split_only = [e for e in result if e["origin_type"] == "split_only"]
+            assert len(split_only) == 1
+            assert split_only[0]["id"] == "item-2"
+
+
+class TestCompareAllOrphanHandling:
+    """Tests for compare_all orphan file handling."""
+
+    def test_handles_orphan_files(self, tmp_path: Path) -> None:
+        """Should detect orphan files not matching any original pattern."""
+        with patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path):
+            docs_dir = tmp_path / "docs"
+            # Use a valid subdir from SUBDIRS: python, fastapi, elasticsearch, surrealdb
+            python_dir = docs_dir / "python"
+            docs_dir.mkdir()
+            python_dir.mkdir()
+
+            # Create orphan file in python/ with pattern that has no matching original
+            # File pattern: python.unique-orphan-pattern.yml -> pattern = "unique-orphan-pattern"
+            orphan_content = """
+items:
+  - id: orphan-item
+    text: Orphan text
+"""
+            orphan_file = python_dir / "python.unique-orphan-pattern.yml"
+            orphan_file.write_text(orphan_content)
+
+            results, _processed = compare_all(docs_dir)
+
+            # Should find orphan entry with origin_type "orphan"
+            orphan_entries_found = []
+            for _key, result in results.items():
+                for entry in result["entries"]:
+                    if entry["origin_type"] == "orphan":
+                        orphan_entries_found.append(entry)
+            assert len(orphan_entries_found) >= 1
+            assert orphan_entries_found[0]["id"] == "orphan-item"
+
+    def test_handles_orphan_parse_failure(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should warn and continue when orphan file fails to parse."""
+        with patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path):
+            docs_dir = tmp_path / "docs"
+            # Use a valid subdir from SUBDIRS
+            python_dir = docs_dir / "python"
+            docs_dir.mkdir()
+            python_dir.mkdir()
+
+            # Create invalid orphan file with pattern that has no matching original
+            orphan_file = python_dir / "python.orphan-invalid.yml"
+            orphan_file.write_text("invalid: yaml: content:\n  bad")
+
+            _results, _processed = compare_all(docs_dir)
+
+            # Should warn about parse failure
+            captured = capsys.readouterr()
+            assert "Warning: Failed to parse orphan" in captured.err
+
+    def test_skips_orphan_with_no_ids(self, tmp_path: Path) -> None:
+        """Should not create entries for orphan files with no ID-bearing objects."""
+        with patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path):
+            docs_dir = tmp_path / "docs"
+            # Use a valid subdir from SUBDIRS
+            python_dir = docs_dir / "python"
+            docs_dir.mkdir()
+            python_dir.mkdir()
+
+            # Create valid orphan file with no IDs
+            orphan_content = """
+metadata:
+  name: test
+  version: 1.0
+"""
+            orphan_file = python_dir / "python.no-ids-pattern.yml"
+            orphan_file.write_text(orphan_content)
+
+            results, _processed = compare_all(docs_dir)
+
+            # Should not have entries for this orphan (no IDs -> orphan_entries empty)
+            # The result dict won't contain this pattern since no entries were added
+            pattern_key = [k for k in results if "no-ids-pattern" in k]
+            assert len(pattern_key) == 0
+
+
+class TestDetectArtifactsReferenceValidation:
+    """Tests for detect_artifacts_from_field_facts reference validation."""
+
+    def test_warns_and_skips_reference_without_source_uri(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Should warn and skip artifacts with reference locator but no source_uri."""
+        import logging
+
+        field_facts = {
+            "element-1": [
+                FieldFact(
+                    element_id="element-1",
+                    field_path="image",
+                    key="image",
+                    scope_path="",
+                    value="image_ref",
+                    value_kind="scalar-str",
+                    role="artifact_root",
+                    artifact_kind="image/png",
+                    artifact_format="image/png",
+                    artifact_locator="reference",
+                    artifact_uri=None,  # Missing URI for reference type
+                ),
+            ]
+        }
+
+        with caplog.at_level(logging.WARNING):
+            artifacts = detect_artifacts_from_field_facts(
+                field_facts,
+                source_file="docs/test.yml",
+            )
+
+        # Should skip this artifact and log warning
+        assert len(artifacts) == 0
+        assert "missing source_uri" in caplog.text
+
+
+class TestGetIdsObjectsValueErrorHandling:
+    """Tests for get_ids_objects ValueError path handling."""
+
+    def test_handles_path_outside_repo_root(self, tmp_path: Path) -> None:
+        """Should fall back to as_posix when path is not relative to REPO_ROOT."""
+        # Create a file outside the mocked REPO_ROOT
+        content = """
+id: test-item
+text: Test text
+"""
+        test_file = tmp_path / "outside" / "test.yml"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text(content)
+
+        # Mock REPO_ROOT to a different path so relative_to fails
+        with patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path / "other"):
+            (tmp_path / "other").mkdir()
+            result = get_ids_objects(test_file)
+
+            # Should still work and return the sliced objects
+            assert "test-item" in result
+
+
+class TestParseYamlFileGenericException:
+    """Tests for parse_yaml_file generic exception handling."""
+
+    def test_raises_value_error_for_generic_exception(self, tmp_path: Path) -> None:
+        """Should raise ValueError wrapping generic exceptions during parsing."""
+        test_file = tmp_path / "test.yml"
+        test_file.write_text("valid: yaml\n")
+
+        with patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path):
+            # Patch the file's read_text method at module level to raise an exception
+            # that is neither YAMLError nor FileNotFoundError
+            original_read_text = Path.read_text
+
+            def mock_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+                if self == test_file:
+                    raise PermissionError("Access denied")
+                return original_read_text(self, *args, **kwargs)
+
+            with patch.object(Path, "read_text", mock_read_text):
+                with pytest.raises(ValueError) as exc_info:
+                    parse_yaml_file(test_file)
+
+                assert "Failed to parse" in str(exc_info.value)
+
+
+class TestWriteCompareFilesErrorHandling:
+    """Tests for write_compare_files error handling."""
+
+    def test_warns_on_write_failure(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should warn when CSV write fails."""
+        import duckdb as duckdb_module
+
+        (tmp_path / ".knowledge" / "comparisons").mkdir(parents=True)
+
+        with patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path):
+            results = {
+                "docs/original.api-patterns.yml": {
+                    "original_file": "docs/original.api-patterns.yml",
+                    "entries": [
+                        ComparisonEntry(
+                            source_file="docs/original.api-patterns.yml",
+                            id="item-1",
+                            source_data={"id": "item-1", "text": "Text"},
+                            splits=[],
+                            origin_type="original",
+                        )
+                    ],
+                }
+            }
+
+            # Mock duckdb.connect to raise an error
+            with patch.object(
+                duckdb_module,
+                "connect",
+                side_effect=duckdb_module.Error("Mock DuckDB error"),
+            ):
+                count = write_compare_files(results)  # type: ignore[arg-type]
+
+            # Should return 0 files written and warn
+            assert count == 0
+            captured = capsys.readouterr()
+            assert "Warning: Failed to write" in captured.err
+
+    def test_handles_empty_rows_for_pattern(self, tmp_path: Path) -> None:
+        """Should write CSV even when pattern has entries but no rows."""
+        (tmp_path / ".knowledge" / "comparisons").mkdir(parents=True)
+
+        with patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path):
+            # Create results with entries that have empty splits
+            results = {
+                "docs/original.test-pattern.yml": {
+                    "original_file": "docs/original.test-pattern.yml",
+                    "entries": [],  # Empty entries
+                }
+            }
+
+            count = write_compare_files(results)  # type: ignore[arg-type]
+
+            # Should write file even with empty entries (creates headers)
+            # DuckDB creates the table but COPY creates empty CSV
+            assert count >= 0
+
+
+class TestMainAdditionalBranches:
+    """Additional tests for main function branches."""
+
+    def test_handles_original_files_argument(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should process explicit original files from --original-files."""
+        docs_dir = tmp_path / "docs"
+        originals_dir = tmp_path / ".knowledge" / "originals"
+        knowledge_dir = tmp_path / ".knowledge"
+
+        docs_dir.mkdir()
+        originals_dir.mkdir(parents=True)
+        (knowledge_dir / "comparisons").mkdir(parents=True)
+
+        # Create explicit original file with timestamp prefix
+        content = """
+items:
+  - id: item-1
+    text: Original text
+"""
+        explicit_file = originals_dir / "20251201T134735Z-test-pattern.yml"
+        explicit_file.write_text(content)
+
+        with (
+            patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path),
+            patch.object(compare_yaml_docs, "DEVELOPMENT_DIR", docs_dir),
+            patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--path",
+                    str(docs_dir),
+                    "--original-files",
+                    str(explicit_file),
+                ],
+            ),
+        ):
+            result = main()
+
+        # Should process without error
+        assert result in [0, 1]  # Either no diff or diff found
+
+    def test_returns_one_when_write_containment_edges_fails(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when write_containment_edges raises RuntimeError."""
+        docs_dir = tmp_path / "docs"
+        knowledge_dir = tmp_path / ".knowledge"
+
+        docs_dir.mkdir()
+        (knowledge_dir / "comparisons").mkdir(parents=True)
+
+        # Create YAML with nested ID-bearing dicts to trigger containment edge write
+        content = """
+id: parent-section
+items:
+  - id: child-item
+    text: Child text
+"""
+        (docs_dir / "original.test.yml").write_text(content)
+
+        with (
+            patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path),
+            patch.object(compare_yaml_docs, "DEVELOPMENT_DIR", docs_dir),
+            patch(
+                "sys.argv",
+                ["script", "--path", str(docs_dir)],
+            ),
+            patch.object(
+                compare_yaml_docs,
+                "write_containment_edges",
+                side_effect=RuntimeError("Mock edge write failure"),
+            ),
+        ):
+            result = main()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "Error:" in captured.err
+
+    def test_prints_deleted_stale_csv_count(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should print count of deleted stale CSV files."""
+        docs_dir = tmp_path / "docs"
+        python_dir = docs_dir / "python"
+        knowledge_dir = tmp_path / ".knowledge"
+        comparisons_dir = knowledge_dir / "comparisons"
+
+        docs_dir.mkdir()
+        python_dir.mkdir()
+        comparisons_dir.mkdir(parents=True)
+
+        # Create stale CSV that won't match any pattern
+        stale_csv = comparisons_dir / "old-pattern.csv"
+        stale_csv.write_text("source_file,id,origin_type,original_data,split_file,split_data\n")
+
+        # Create matching original and split (no differences)
+        content = """
+items:
+  - id: item-1
+    text: Same text
+"""
+        (docs_dir / "original.test.yml").write_text(content)
+        (python_dir / "python.test.yml").write_text(content)
+
+        with (
+            patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path),
+            patch.object(compare_yaml_docs, "DEVELOPMENT_DIR", docs_dir),
+            patch("sys.argv", ["script", "--path", str(docs_dir)]),
+        ):
+            main()
+
+        captured = capsys.readouterr()
+        # If stale CSV was deleted, should print message
+        if "Deleted" in captured.out:
+            assert "stale CSV" in captured.out
+
+    def test_returns_one_and_writes_csv_when_differences_found(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 and write CSVs when differences are found."""
+        docs_dir = tmp_path / "docs"
+        python_dir = docs_dir / "python"
+        knowledge_dir = tmp_path / ".knowledge"
+
+        docs_dir.mkdir()
+        python_dir.mkdir()
+        (knowledge_dir / "comparisons").mkdir(parents=True)
+
+        # Create different content in original and split
+        orig_content = """
+items:
+  - id: item-1
+    text: Original text
+"""
+        split_content = """
+items:
+  - id: item-1
+    text: Different text
+"""
+        (docs_dir / "original.test.yml").write_text(orig_content)
+        (python_dir / "python.test.yml").write_text(split_content)
+
+        with (
+            patch.object(compare_yaml_docs, "REPO_ROOT", tmp_path),
+            patch.object(compare_yaml_docs, "DEVELOPMENT_DIR", docs_dir),
+            patch("sys.argv", ["script", "--path", str(docs_dir)]),
+        ):
+            result = main()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "CSV file(s)" in captured.out

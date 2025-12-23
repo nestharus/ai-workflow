@@ -45,7 +45,7 @@ import sys
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import yaml
 
@@ -774,8 +774,8 @@ def extract_artifact_facts(
                 target_facts=target_facts,
                 anchor_facts=[],
                 artifact_id=artifact_id,
-                qwen_model=qwen_model,
-                qwen_tokenizer=qwen_tokenizer,
+                qwen_model=cast("PreTrainedModel", qwen_model),
+                qwen_tokenizer=cast("PreTrainedTokenizer", qwen_tokenizer),
                 knowledge_path=knowledge_path,
             )
 

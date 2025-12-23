@@ -30,18 +30,11 @@ import argparse
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import duckdb
 
 from scripts.dev.utils import REPO_ROOT
-
-if TYPE_CHECKING:
-    import torch
-    from transformers import (
-        AutoModelForSequenceClassification,
-        AutoTokenizer,
-    )
 
 
 def get_unscored_candidates(csv_path: Path) -> list[dict[str, str]]:
@@ -130,7 +123,9 @@ def load_reranker_model(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
+        model_name, trust_remote_code=True
+    )
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name,
         trust_remote_code=True,
@@ -143,9 +138,9 @@ def load_reranker_model(
 
 
 def score_batch(
-    model: AutoModelForSequenceClassification,
-    tokenizer: AutoTokenizer,
-    device: torch.device,
+    model: Any,
+    tokenizer: Any,
+    device: Any,
     pairs: list[tuple[str, str]],
 ) -> list[float]:
     """Score a batch of (query, document) pairs using the reranker.

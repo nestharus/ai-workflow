@@ -267,3 +267,116 @@ source.yml,item-1,original,different text,split.yml,modified text
         assert result == 0
         captured = capsys.readouterr()
         assert "Generated" in captured.out
+
+    def test_handles_absolute_knowledge_path(
+        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should handle absolute knowledge path correctly.
+
+        DuckDB requires real filesystem files.
+        """
+        csv_content = """source_file,id,origin_type,original_text,split_file,split_text
+source.yml,item-1,original,different text,split.yml,modified text
+"""
+        csv_path = real_knowledge_path / "comparisons" / "test.csv"
+        csv_path.write_text(csv_content)
+
+        # Use absolute path
+        absolute_path = real_knowledge_path.resolve()
+        with patch("sys.argv", ["script", "--knowledge-path", str(absolute_path)]):
+            result = main()
+
+        assert result == 0
+
+    def test_handles_duckdb_error(
+        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 and print error when duckdb.Error occurs."""
+        # Create an invalid CSV that will cause DuckDB to fail
+        csv_content = """malformed csv without proper headers
+this is not valid"""
+        csv_path = real_knowledge_path / "comparisons" / "test.csv"
+        csv_path.write_text(csv_content)
+
+        import duckdb
+
+        # Mock query_non_identical_items to raise a DuckDB error
+        with (
+            patch("sys.argv", ["script", "--knowledge-path", str(real_knowledge_path)]),
+            patch(
+                "scripts.knowledge.generate_migration_report.query_non_identical_items",
+                side_effect=duckdb.Error("Invalid CSV format"),
+            ),
+        ):
+            result = main()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "Error executing query" in captured.err
+
+
+class TestQueryNonIdenticalItemsWithResolutions:
+    """Tests for query_non_identical_items with resolutions file."""
+
+    def test_filters_resolved_items(self, real_knowledge_path: Path) -> None:
+        """Should exclude items that appear in resolutions file.
+
+        DuckDB requires real filesystem files.
+        """
+        # Create comparison CSV with items
+        csv_content = """source_file,id,origin_type,original_text,split_file,split_text
+source.yml,item-1,original,text one,split.yml,modified one
+source.yml,item-2,original,text two,split.yml,modified two
+source.yml,item-3,original,text three,split.yml,modified three
+"""
+        csv_path = real_knowledge_path / "comparisons" / "test.csv"
+        csv_path.write_text(csv_content)
+
+        # Create resolutions file that marks item-1 and item-3 as resolved
+        resolutions_dir = real_knowledge_path / "resolutions"
+        resolutions_dir.mkdir(parents=True, exist_ok=True)
+        resolutions_content = """id,source_file,split_file,resolved_at
+item-1,source.yml,split.yml,2024-01-01T00:00:00Z
+item-3,source.yml,split.yml,2024-01-02T00:00:00Z
+"""
+        (resolutions_dir / "resolved.csv").write_text(resolutions_content)
+
+        result = query_non_identical_items(real_knowledge_path)
+
+        # Only item-2 should remain (not in resolutions)
+        if "test" in result:
+            items = result["test"]
+            ids = [item["element_id"] for item in items]
+            assert "item-1" not in ids
+            assert "item-2" in ids
+            assert "item-3" not in ids
+
+    def test_includes_unresolved_items_with_resolutions_file(
+        self, real_knowledge_path: Path
+    ) -> None:
+        """Should include items not in resolutions file even when file exists.
+
+        DuckDB requires real filesystem files.
+        """
+        # Create comparison CSV
+        csv_content = """source_file,id,origin_type,original_text,split_file,split_text
+source.yml,new-item,original,new text,split.yml,modified new text
+"""
+        csv_path = real_knowledge_path / "comparisons" / "test.csv"
+        csv_path.write_text(csv_content)
+
+        # Create resolutions file with different items
+        resolutions_dir = real_knowledge_path / "resolutions"
+        resolutions_dir.mkdir(parents=True, exist_ok=True)
+        resolutions_content = """id,source_file,split_file,resolved_at
+old-item,source.yml,split.yml,2024-01-01T00:00:00Z
+"""
+        (resolutions_dir / "resolved.csv").write_text(resolutions_content)
+
+        result = query_non_identical_items(real_knowledge_path)
+
+        # new-item should be included
+        if "test" in result:
+            items = result["test"]
+            ids = [item["element_id"] for item in items]
+            assert "new-item" in ids

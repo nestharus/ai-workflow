@@ -20,6 +20,7 @@ from scripts.dev.ensure_dev_env import (
     _try_atomic_create_lock,
     acquire_lock,
     check_docker_available,
+    ensure_socket_directories,
     get_container_health,
     is_pid_running,
     main,
@@ -378,6 +379,51 @@ class TestEnsureSingleSocketDirectory:
         assert mode == 0o1777
 
 
+class TestEnsureSocketDirectories:
+    """Tests for ensure_socket_directories function."""
+
+    def test_creates_all_socket_directories(self, fs: FakeFilesystem) -> None:
+        """Should iterate through CONTAINERS and create all socket directories."""
+        # Define test containers with different socket paths
+        test_containers = [
+            ("container-1", Path("/tmp/sockets-1")),
+            ("container-2", Path("/tmp/sockets-2")),
+        ]
+
+        # Clean up any existing directories
+        for _, socket_dir in test_containers:
+            if socket_dir.exists():
+                socket_dir.rmdir()
+
+        with patch.object(ensure_dev_env, "CONTAINERS", test_containers):
+            ensure_socket_directories()
+
+        # Verify both directories were created
+        for _, socket_dir in test_containers:
+            assert socket_dir.exists()
+            assert socket_dir.is_dir()
+            mode = socket_dir.stat().st_mode & 0o7777
+            assert mode == 0o1777
+
+    def test_calls_ensure_single_for_each_container(self, fs: FakeFilesystem) -> None:
+        """Should call _ensure_single_socket_directory for each container."""
+        test_containers = [
+            ("mcp-bridge", Path("/tmp/mcp-sockets")),
+            ("sandbox-server", Path("/tmp/sandbox-sockets")),
+        ]
+
+        with (
+            patch.object(ensure_dev_env, "CONTAINERS", test_containers),
+            patch.object(ensure_dev_env, "_ensure_single_socket_directory") as mock_ensure,
+        ):
+            ensure_socket_directories()
+
+        # Verify _ensure_single_socket_directory was called for each socket path
+        assert mock_ensure.call_count == 2
+        mock_ensure.assert_any_call(Path("/tmp/mcp-sockets"))
+        mock_ensure.assert_any_call(Path("/tmp/sandbox-sockets"))
+
+
 class TestGetContainerHealth:
     """Tests for get_container_health function."""
 
@@ -559,6 +605,51 @@ class TestWaitForHealthy:
         assert "test-container=" in log_message
         assert "timed out" in log_message
         assert "=" in log_message  # Container names are shown with status
+
+    def test_skips_already_healthy_containers(self) -> None:
+        """Should skip health check for containers already marked as healthy."""
+        # Use two containers - first becomes healthy immediately,
+        # second becomes healthy on second iteration
+        test_containers = [
+            ("container-1", Path("/tmp/sockets-1")),
+            ("container-2", Path("/tmp/sockets-2")),
+        ]
+
+        # Track which containers are checked
+        health_check_calls: list[str] = []
+
+        def mock_get_health(container_name: str, timeout: float | None = None) -> str:
+            health_check_calls.append(container_name)
+            # container-1 is immediately healthy
+            # container-2 is starting first, healthy second time
+            if container_name == "container-1":
+                return "healthy"
+            elif container_name == "container-2":
+                # Return "starting" for first call, "healthy" for second
+                count = sum(1 for c in health_check_calls if c == "container-2")
+                return "healthy" if count > 1 else "starting"
+            return ""
+
+        # Time values for two loop iterations
+        # Iteration 1: check both containers
+        # Iteration 2: container-1 is skipped (already healthy), only container-2 checked
+        monotonic_values = [0.0, 0.0, 2.0, 2.0, 2.0, 4.0, 4.0]
+        monotonic_iter = iter(monotonic_values)
+
+        with (
+            patch.object(ensure_dev_env, "CONTAINERS", test_containers),
+            patch.object(ensure_dev_env, "get_container_health", side_effect=mock_get_health),
+            patch("time.monotonic", side_effect=lambda: next(monotonic_iter)),
+            patch("time.sleep"),
+            patch.object(ensure_dev_env, "log"),
+        ):
+            result = wait_for_healthy()
+
+        assert result is True
+        # container-1 should be checked once, then skipped
+        # container-2 should be checked twice (starting, then healthy)
+        assert health_check_calls.count("container-1") == 1
+        assert health_check_calls.count("container-2") == 2
 
 
 class TestMain:

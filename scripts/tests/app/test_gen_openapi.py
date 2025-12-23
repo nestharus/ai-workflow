@@ -111,6 +111,21 @@ class TestMain:
         captured = capsys.readouterr()
         assert "SURREALDB_USER" in captured.err
 
+    def test_proceeds_with_credentials_in_non_local_env(self) -> None:
+        """Should proceed when credentials are set in non-local environment."""
+        with (
+            patch.dict(
+                os.environ,
+                {"SURREALDB_USER": "ci-user", "SURREALDB_PASS": "ci-pass"},
+                clear=True,
+            ),
+            patch("scripts.app.gen_openapi._is_local_environment", return_value=False),
+            patch("scripts.app.gen_openapi._generate_openapi"),
+        ):
+            result = main()
+
+        assert result == 0
+
     def test_returns_zero_on_success(self) -> None:
         """Should return 0 on successful generation."""
         with (
@@ -285,6 +300,16 @@ class TestWriteSchema:
         write_schema(schema, output_path)
 
         assert output_path.exists()
+
+    def test_raises_serialization_error_for_unserializable_data(self, tmp_path: Path) -> None:
+        """Test write_schema raises SchemaSerializationError for unserializable data."""
+        output_path = tmp_path / "schema.json"
+        # Create a schema with a circular reference which orjson cannot serialize
+        schema: dict[str, Any] = {"openapi": "3.1.0"}
+        schema["self_reference"] = schema  # Circular reference
+
+        with pytest.raises(SchemaSerializationError):
+            write_schema(schema, output_path)
 
 
 class TestParseArgs:

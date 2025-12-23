@@ -6,6 +6,19 @@ This module defines the Strategy pattern for test execution:
 - IntegrationTestStrategy: For integration tier (use-case coverage)
 - create_strategy: Factory function to instantiate the appropriate strategy
 
+PATTERN-BASED CONFIGURATION:
+Source paths in tier configurations use glob patterns with negation support:
+- Patterns without '!' add matching files to coverage measurement
+- Patterns with '!' prefix remove matching files from coverage measurement
+- Patterns are processed in order for fine-grained control
+
+Example in pyproject.toml:
+    [tool.test_coverage.tiers.unit]
+    source_paths = ["app/**/*.py", "!app/**/__init__.py", "!app/api/**/router.py"]
+
+The get_coverage_source_args() function converts these patterns to coverage.py
+--source and --omit arguments automatically.
+
 IMPORT STRUCTURE (to avoid circular dependencies):
 - This module imports dataclasses and helpers FROM test_coverage.py
 - This module imports coverage_db module
@@ -43,11 +56,11 @@ from scripts.dev.test_runner.test_coverage import (
     UseCase,
     UseCaseCoverageResult,
     _calculate_function_coverage,
-    _is_in_service_layer,
     _is_private_function,
     _run_command,
     _scan_tests_for_usecases,
     calculate_usecase_coverage,
+    get_coverage_source_args,
 )
 
 
@@ -242,29 +255,47 @@ class LineBranchTestStrategy(TestStrategy):
         # Log coverage file for debugging isolation issues
         print(f"[{self.config.name}] COVERAGE_FILE={self.tier_coverage_file}")
 
-        # Build pytest command with coverage
-        cov_args = [f"--cov={path}" for path in self.config.source_paths]
+        # Build pytest command with coverage using coverage.py run instead of pytest-cov.
+        # This avoids pytest-cov's subprocess coverage collection which can create
+        # parallel files with mismatched branch/statement settings, causing
+        # "Can't combine branch coverage data with statement data" errors.
+
+        # Convert glob patterns to coverage.py arguments
+        source_dirs, omit_patterns = get_coverage_source_args(self.config, self.repo_root)
+
         cmd = [
             "uv",
             "run",
             "python",
             "-m",
-            "pytest",
-            self.config.test_path,
-            *cov_args,
-            "--cov-branch",
-            "--cov-context=test",
-            "--cov-report=term-missing",
-            "--cov-fail-under=0",
-            f"--junitxml={junit_xml_path}",
-            "-q",
-            "-p",
-            "no:randomly",
+            "coverage",
+            "run",
+            "--branch",
+            f"--source={','.join(source_dirs)}",
+            "--context=test",
         ]
+
+        # Add omit patterns if any negation patterns were specified
+        if omit_patterns:
+            cmd.append(f"--omit={','.join(omit_patterns)}")
+
+        cmd.extend(
+            [
+                "-m",
+                "pytest",
+                self.config.test_path,
+                f"--junitxml={junit_xml_path}",
+                "-q",
+                "-p",
+                "no:randomly",
+            ]
+        )
 
         print(f"\n{'=' * 70}")
         print(f"Running {self.config.name} tests: {self.config.test_path}")
         print(f"Measuring coverage for: {', '.join(self.config.source_paths)}")
+        if omit_patterns:
+            print(f"Excluding patterns: {', '.join(omit_patterns)}")
         print("=" * 70)
 
         result = _run_command(cmd, capture=False, env=cov_env)
@@ -293,6 +324,18 @@ class LineBranchTestStrategy(TestStrategy):
                 f"\nWARNING: {self.config.name} tests had failures (exit code {result.returncode})"
             )
 
+        # Generate coverage report to console (similar to pytest-cov --cov-report=term-missing)
+        report_cmd = [
+            "uv",
+            "run",
+            "python",
+            "-m",
+            "coverage",
+            "report",
+            "--show-missing",
+        ]
+        _run_command(report_cmd, capture=False, env=cov_env)
+
         self._tests_ran = True
 
     def collect_results(self) -> None:
@@ -308,7 +351,6 @@ class LineBranchTestStrategy(TestStrategy):
         Expected Behavior:
             - JSON report generation via coverage json command
             - Per-file iteration over coverage_data["files"]
-            - service_layer_only filter applied before _calculate_function_coverage
             - skip_private_functions filter applied to individual functions
             - Database writes via coverage_db.write_tier_config() and
               write_function_coverage()
@@ -356,10 +398,6 @@ class LineBranchTestStrategy(TestStrategy):
         files_data = coverage_data.get("files", {})
 
         for file_path in files_data:
-            # For component tests, only include service layer files
-            if self.config.service_layer_only and not _is_in_service_layer(file_path):
-                continue
-
             func_coverages = _calculate_function_coverage(
                 file_path,
                 coverage_data,
@@ -369,10 +407,6 @@ class LineBranchTestStrategy(TestStrategy):
             for fc in func_coverages:
                 # Skip private functions if configured
                 if self.config.skip_private_functions and _is_private_function(fc.name):
-                    continue
-
-                # For service-layer-only mode, skip non-service files
-                if self.config.service_layer_only and not _is_in_service_layer(fc.file_path):
                     continue
 
                 all_function_coverages.append(fc)
@@ -397,8 +431,8 @@ class LineBranchTestStrategy(TestStrategy):
                 self.coverage_db_path,
                 self.config.name,
                 all_function_coverages,
-                self.config.min_line_per_function,
-                self.config.min_branch_per_function,
+                self.config.min_line_per_function or 0.0,
+                self.config.min_branch_per_function or 0.0,
             )
 
         # Clean up temporary JSON file
@@ -451,14 +485,9 @@ class LineBranchTestStrategy(TestStrategy):
         # Inline logic from validate_line_branch_coverage() (lines 921-946)
         for func_key, func_data in self.coverage_result.functions.items():
             func_name = func_data["name"]
-            file_path = func_data["file"]
 
             # Skip private functions if configured
             if self.config.skip_private_functions and _is_private_function(func_name):
-                continue
-
-            # For service-layer-only mode, skip non-service files
-            if self.config.service_layer_only and not _is_in_service_layer(file_path):
                 continue
 
             line_cov = func_data["line_coverage"]
@@ -725,8 +754,20 @@ class IntegrationTestStrategy(TestStrategy):
             msg = "usecase_result is None - collect_results() did not complete successfully"
             raise RuntimeError(msg)
 
+        # CRITICAL: Fail immediately if no use-cases are defined
+        # This prevents 100% pass with 0/0 cases - must have explicit failures
+        if self.usecase_result.total_cases == 0:
+            self._failures.append(
+                f"{self.config.name}: No use-cases defined. "
+                f"Use-case coverage requires at least one use-case in the registry."
+            )
+            return self._failures
+
         # Inline logic from validate_usecase_coverage() (lines 961-969)
-        if self.usecase_result.coverage_pct < self.config.min_usecase:
+        if (
+            self.config.min_usecase is not None
+            and self.usecase_result.coverage_pct < self.config.min_usecase
+        ):
             # Main failure message - EXACT format
             self._failures.append(
                 f"{self.config.name}: Use-case coverage {self.usecase_result.coverage_pct:.1f}% "

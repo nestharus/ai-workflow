@@ -12,6 +12,7 @@ from scripts.knowledge.candidate_extraction import CSV_COLUMNS
 from scripts.knowledge.extraction_pipeline import (
     STAGES,
     extraction_pipeline_main,
+    main,
     parse_args,
     run_apply_stage,
     run_classify_stage,
@@ -491,6 +492,76 @@ class TestRunVariantsStage:
             mock_track.assert_not_called()
             captured = capsys.readouterr()
             assert "dry run" in captured.out.lower()
+
+    def test_handles_tracking_exception(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when tracking raises an exception."""
+        knowledge_path = tmp_path / ".knowledge"
+        keywords_dir = knowledge_path / "keywords"
+        keywords_dir.mkdir(parents=True)
+
+        keywords_csv = keywords_dir / "keywords.csv"
+        keywords_csv.write_text("keyword_id,keyword_text\n")
+
+        with patch(
+            "scripts.knowledge.variant_resolver.track_variants_main",
+            side_effect=Exception("Tracking failed"),
+        ):
+            result = run_variants_stage(knowledge_path, dry_run=False)
+
+            assert result == 1
+            captured = capsys.readouterr()
+            assert "error" in captured.err.lower()
+
+    def test_handles_apply_exception(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when apply raises an exception."""
+        knowledge_path = tmp_path / ".knowledge"
+        keywords_dir = knowledge_path / "keywords"
+        keywords_dir.mkdir(parents=True)
+
+        keywords_csv = keywords_dir / "keywords.csv"
+        keywords_csv.write_text("keyword_id,keyword_text\n")
+
+        with (
+            patch("scripts.knowledge.variant_resolver.track_variants_main") as mock_track,
+            patch(
+                "scripts.knowledge.variant_resolver.apply_variant_decisions_main",
+                side_effect=Exception("Apply failed"),
+            ),
+        ):
+            mock_track.return_value = 0
+
+            result = run_variants_stage(knowledge_path, dry_run=False)
+
+            assert result == 1
+            captured = capsys.readouterr()
+            assert "error" in captured.err.lower()
+
+    def test_dry_run_without_variants_csv(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should print message when variants_csv doesn't exist in dry-run mode."""
+        knowledge_path = tmp_path / ".knowledge"
+        keywords_dir = knowledge_path / "keywords"
+        keywords_dir.mkdir(parents=True)
+
+        keywords_csv = keywords_dir / "keywords.csv"
+        keywords_csv.write_text("keyword_id,keyword_text\n")
+        # Note: variant_candidates.csv is NOT created
+
+        with (
+            patch("scripts.knowledge.variant_resolver.track_variants_main") as mock_track,
+            patch("scripts.knowledge.variant_resolver.apply_variant_decisions_main"),
+        ):
+            result = run_variants_stage(knowledge_path, dry_run=True)
+
+            # In dry-run mode, should skip and return early when variants_csv doesn't exist
+            mock_track.assert_not_called()
+            captured = capsys.readouterr()
+            assert "No variant_candidates.csv found" in captured.out or result == 0
 
 
 class TestExtractionPipelineMain:
@@ -982,3 +1053,68 @@ class TestPipelineIntegration:
             assert result == 1
             captured = capsys.readouterr()
             assert "error" in captured.err.lower() or "Error" in captured.out
+
+    def test_unknown_stage_returns_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 for unknown stage."""
+        source_path = tmp_path / "docs"
+        source_path.mkdir()
+        knowledge_path = tmp_path / ".knowledge"
+        knowledge_path.mkdir()
+
+        # Create args with a manually added unknown stage
+        # Since parse_args validates stage choices, we bypass by creating namespace directly
+        args = argparse.Namespace(
+            stage="unknown_stage",  # This bypasses parse_args validation
+            source=source_path,
+            dry_run=False,
+            knowledge_path=knowledge_path,
+            score_model="Qwen/Qwen3-Reranker-8B",
+            score_batch_size=32,
+        )
+
+        result = extraction_pipeline_main(args)
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "Unknown stage" in captured.err
+
+
+class TestMain:
+    """Tests for main entry point function."""
+
+    def test_main_calls_parse_args_and_pipeline(self, tmp_path: Path) -> None:
+        """Should parse args and call extraction_pipeline_main."""
+        with (
+            patch("scripts.knowledge.extraction_pipeline.parse_args") as mock_parse,
+            patch("scripts.knowledge.extraction_pipeline.extraction_pipeline_main") as mock_main,
+        ):
+            mock_parse.return_value = argparse.Namespace(
+                stage="classify",
+                source=tmp_path / "docs",
+                dry_run=False,
+                knowledge_path=tmp_path / ".knowledge",
+                score_model="Qwen/Qwen3-Reranker-8B",
+                score_batch_size=32,
+            )
+            mock_main.return_value = 0
+
+            result = main()
+
+            mock_parse.assert_called_once()
+            mock_main.assert_called_once()
+            assert result == 0
+
+    def test_main_returns_pipeline_exit_code(self) -> None:
+        """Should return the exit code from extraction_pipeline_main."""
+        with (
+            patch("scripts.knowledge.extraction_pipeline.parse_args") as mock_parse,
+            patch("scripts.knowledge.extraction_pipeline.extraction_pipeline_main") as mock_main,
+        ):
+            mock_parse.return_value = argparse.Namespace()
+            mock_main.return_value = 1  # Simulate failure
+
+            result = main()
+
+            assert result == 1

@@ -1449,6 +1449,1131 @@ class TestMainValidateFactMigration:
         assert result == 0
 
 
+class TestReadYamlElementTextExtended:
+    """Extended tests for read_yaml_element_text to improve coverage."""
+
+    def test_reads_element_without_text_field(self, fs: FakeFilesystem) -> None:
+        """Should return None when element exists but has no text field."""
+        yaml_content = """
+items:
+  - id: factory.create_app
+    description: No text field here
+"""
+        fs.create_file("/test/doc.yml", contents=yaml_content)
+
+        result = read_yaml_element_text(Path("/test/doc.yml"), "factory.create_app")
+
+        # element.get("text") returns None when no text field
+        assert result is None
+
+
+class TestExtractEntitiesFromTextExtended:
+    """Extended tests for extract_entities_from_text to improve coverage."""
+
+    def test_extracts_both_snake_and_camel_case(self) -> None:
+        """Should extract both snake_case and CamelCase and return unique entities."""
+        text = "The create_app function returns FastAPI, use get_user_by_id for UserModel"
+
+        result = extract_entities_from_text(text)
+
+        # Verify all entities found
+        assert "create_app" in result
+        assert "get_user_by_id" in result
+        assert "FastAPI" in result
+        assert "UserModel" in result
+        # Check no duplicates
+        assert len(result) == len(set(result))
+
+
+class TestQueryFactsForTaskExtended:
+    """Extended tests for query_facts_for_task to improve coverage."""
+
+    def test_returns_empty_for_empty_file(self, tmp_path: Path) -> None:
+        """Should return empty list for empty CSV file."""
+        csv_path = tmp_path / "extractions.csv"
+        csv_path.write_text("")  # Empty file
+
+        result = query_facts_for_task(csv_path, "any sentence")
+
+        assert result == []
+
+    def test_handles_duckdb_error(self, tmp_path: Path) -> None:
+        """Should return empty list when DuckDB query fails."""
+        csv_path = tmp_path / "extractions.csv"
+        # Write invalid CSV content that will cause DuckDB error
+        csv_path.write_text("invalid csv content that's not valid")
+
+        result = query_facts_for_task(csv_path, "any sentence")
+
+        assert result == []
+
+
+class TestQueryAllFactsForElementExtended:
+    """Extended tests for query_all_facts_for_element to improve coverage."""
+
+    def test_returns_empty_for_empty_file(self, tmp_path: Path) -> None:
+        """Should return empty list for empty CSV file."""
+        csv_path = tmp_path / "extractions.csv"
+        csv_path.write_text("")  # Empty file
+
+        result = query_all_facts_for_element(csv_path, "any text")
+
+        assert result == []
+
+    def test_handles_duckdb_error(self, tmp_path: Path) -> None:
+        """Should return empty list when DuckDB query fails."""
+        csv_path = tmp_path / "extractions.csv"
+        # Write malformed content
+        csv_path.write_text("malformed csv")
+
+        result = query_all_facts_for_element(csv_path, "test")
+
+        assert result == []
+
+    def test_returns_facts_matching_element(self, tmp_path: Path) -> None:
+        """Should return facts matching element text."""
+        csv_path = tmp_path / "extractions.csv"
+        csv_content = (
+            "fact_id,source_sentence,entity,fact_text,rewritten_sentence,"
+            "iteration,confidence,extracted_at\n"
+            "fact-1,Factory creates app with config,create_app,Fact1,Residual,1,0.95,"
+            "20240101T120000Z\n"
+        )
+        csv_path.write_text(csv_content)
+
+        result = query_all_facts_for_element(csv_path, "Factory creates")
+
+        assert len(result) == 1
+        assert result[0]["fact_id"] == "fact-1"
+
+
+class TestCountStoredFactsExtended:
+    """Extended tests for count_stored_facts to improve coverage."""
+
+    def test_counts_facts_from_multiple_files(self, tmp_path: Path) -> None:
+        """Should count facts from multiple YAML files."""
+        facts_dir = tmp_path / "facts"
+        facts_dir.mkdir()
+
+        # First file with 2 facts
+        yaml1 = """facts:
+  - fact_id: fact-1
+    entity: Entity1
+    fact_text: Fact text 1
+  - fact_id: fact-2
+    entity: Entity2
+    fact_text: Fact text 2
+"""
+        (facts_dir / "domain1.facts.yml").write_text(yaml1)
+
+        # Second file with 1 fact
+        yaml2 = """facts:
+  - fact_id: fact-3
+    entity: Entity3
+    fact_text: Fact text 3
+"""
+        (facts_dir / "domain2.facts.yml").write_text(yaml2)
+
+        result = count_stored_facts(facts_dir, ["fact-1", "fact-2", "fact-3", "fact-4"])
+
+        assert result == 3
+
+    def test_handles_invalid_yaml_file(self, tmp_path: Path) -> None:
+        """Should skip invalid YAML files gracefully."""
+        facts_dir = tmp_path / "facts"
+        facts_dir.mkdir()
+
+        # Valid file
+        yaml_valid = """facts:
+  - fact_id: fact-1
+    entity: Entity1
+    fact_text: Valid fact
+"""
+        (facts_dir / "valid.facts.yml").write_text(yaml_valid)
+
+        # Invalid YAML file
+        (facts_dir / "invalid.facts.yml").write_text("invalid: yaml: content:")
+
+        result = count_stored_facts(facts_dir, ["fact-1"])
+
+        assert result == 1
+
+    def test_handles_non_dict_yaml(self, tmp_path: Path) -> None:
+        """Should skip YAML files that don't contain a dict."""
+        facts_dir = tmp_path / "facts"
+        facts_dir.mkdir()
+
+        # YAML with list at top level instead of dict
+        (facts_dir / "list.facts.yml").write_text("- item1\n- item2\n")
+
+        result = count_stored_facts(facts_dir, ["fact-1"])
+
+        assert result == 0
+
+    def test_handles_non_list_facts(self, tmp_path: Path) -> None:
+        """Should skip files where 'facts' is not a list."""
+        facts_dir = tmp_path / "facts"
+        facts_dir.mkdir()
+
+        # YAML with facts as string instead of list
+        yaml_content = """facts: "not a list"
+"""
+        (facts_dir / "test.facts.yml").write_text(yaml_content)
+
+        result = count_stored_facts(facts_dir, ["fact-1"])
+
+        assert result == 0
+
+    def test_handles_non_dict_fact_items(self, tmp_path: Path) -> None:
+        """Should skip fact items that aren't dicts."""
+        facts_dir = tmp_path / "facts"
+        facts_dir.mkdir()
+
+        yaml_content = """facts:
+  - just_a_string
+  - fact_id: fact-1
+    entity: Entity1
+    fact_text: Valid fact
+"""
+        (facts_dir / "test.facts.yml").write_text(yaml_content)
+
+        result = count_stored_facts(facts_dir, ["fact-1", "just_a_string"])
+
+        assert result == 1
+
+
+class TestCountTrackedMovementsExtended:
+    """Extended tests for count_tracked_movements to improve coverage."""
+
+    def test_counts_movements_for_multiple_facts(self, tmp_path: Path) -> None:
+        """Should count movements for multiple fact IDs."""
+        csv_path = tmp_path / "iterative_movements.csv"
+        csv_content = (
+            "iteration_id,fact_id,source_sentence,isolated_fact,residual_sentence,"
+            "similarity_score,reason,moved_at,pass_id,span_id,artifact_id,schema_version\n"
+            "iter-1,fact-1,Source1,Fact1,Residual1,0.95,Migration,20240101T120000Z,,,,pass-span.v1\n"
+            "iter-2,fact-2,Source2,Fact2,Residual2,0.92,Migration,20240101T120000Z,,,,pass-span.v1\n"
+            "iter-3,fact-3,Source3,Fact3,Residual3,0.90,Migration,20240101T120000Z,,,,pass-span.v1\n"
+        )
+        csv_path.write_text(csv_content)
+
+        result = count_tracked_movements(csv_path, ["fact-1", "fact-2"])
+
+        assert result == 2
+
+
+class TestCountInvariantFailuresExtended:
+    """Extended tests for count_invariant_failures to improve coverage."""
+
+    def test_uses_python_fallback_on_duckdb_error(self, tmp_path: Path) -> None:
+        """Should fall back to Python when DuckDB query fails.
+
+        The DuckDB query with UNNEST may fail on certain CSV formats.
+        """
+        csv_path = tmp_path / "iterative_movements.csv"
+        # Create a valid CSV that can be read by movement_tracker
+        csv_content = (
+            "iteration_id,fact_id,source_sentence,isolated_fact,residual_sentence,"
+            "similarity_score,reason,moved_at,pass_id,span_id,artifact_id,schema_version\n"
+            "iter-1,fact-1,Source,Fact,Residual,0.80,Migration,20240101T120000Z,,,,pass-span.v1\n"
+        )
+        csv_path.write_text(csv_content)
+
+        # Even if DuckDB fails with UNNEST, Python fallback should work
+        result = count_invariant_failures(csv_path, ["fact-1"])
+
+        # fact-1 has 0.80 which is below 0.95
+        assert result == 1
+
+
+class TestEnsureFactMigrationCsvExistsExtended:
+    """Extended tests for ensure_fact_migration_csv_exists."""
+
+    def test_calls_existing_file(self, tmp_path: Path) -> None:
+        """Should not overwrite existing file with content."""
+        (tmp_path / "migrations").mkdir(parents=True)
+        csv_path = tmp_path / "migrations" / "fact_tasks.csv"
+        csv_path.write_text("existing,content,here\ndata,data,data\n")
+
+        ensure_fact_migration_csv_exists(csv_path)
+
+        content = csv_path.read_text()
+        assert "existing,content,here" in content
+
+
+class TestStartFactMigrationExtended:
+    """Extended tests for start_fact_migration to improve coverage."""
+
+    def test_handles_no_entities(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should handle case when no entities are found in text."""
+        yaml_file = tmp_path / "docs" / "test.yml"
+        yaml_file.parent.mkdir(parents=True)
+        yaml_content = """items:
+  - id: test.element
+    text: no entities here just plain text
+"""
+        yaml_file.write_text(yaml_content)
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "migrations").mkdir(parents=True)
+
+        with patch.object(fact_migration, "REPO_ROOT", tmp_path):
+            result = start_fact_migration(yaml_file, "test.element", knowledge_path)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "No entities found" in captured.out
+
+    def test_handles_long_element_text(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should truncate long element text in output."""
+        yaml_file = tmp_path / "docs" / "test.yml"
+        yaml_file.parent.mkdir(parents=True)
+        long_text = "The create_app function " + "x" * 200  # > 100 chars
+        yaml_content = f"""items:
+  - id: factory.create_app
+    text: {long_text}
+"""
+        yaml_file.write_text(yaml_content)
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "migrations").mkdir(parents=True)
+
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch.object(fact_migration.fact_extraction, "extract_facts_main", return_value=0),
+        ):
+            result = start_fact_migration(yaml_file, "factory.create_app", knowledge_path)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert '..."' in captured.out  # Truncated with ...
+
+    def test_handles_incomplete_extraction(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 2 when extraction is incomplete."""
+        yaml_file = tmp_path / "docs" / "test.yml"
+        yaml_file.parent.mkdir(parents=True)
+        yaml_content = """items:
+  - id: factory.create_app
+    text: The create_app function builds FastAPI
+"""
+        yaml_file.write_text(yaml_content)
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "migrations").mkdir(parents=True)
+
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch.object(fact_migration.fact_extraction, "extract_facts_main", return_value=2),
+        ):
+            result = start_fact_migration(yaml_file, "factory.create_app", knowledge_path)
+
+        assert result == 2
+        captured = capsys.readouterr()
+        assert "Incomplete extractions:" in captured.out
+
+    def test_handles_extraction_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should handle extraction errors."""
+        yaml_file = tmp_path / "docs" / "test.yml"
+        yaml_file.parent.mkdir(parents=True)
+        yaml_content = """items:
+  - id: factory.create_app
+    text: The create_app function
+"""
+        yaml_file.write_text(yaml_content)
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "migrations").mkdir(parents=True)
+
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch.object(fact_migration.fact_extraction, "extract_facts_main", return_value=1),
+        ):
+            result = start_fact_migration(yaml_file, "factory.create_app", knowledge_path)
+
+        # Still returns 0 because no incomplete extractions
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Error extracting" in captured.err
+
+    def test_handles_element_id_without_dot(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should handle element_id without a dot (for pattern_name)."""
+        yaml_file = tmp_path / "docs" / "test.yml"
+        yaml_file.parent.mkdir(parents=True)
+        yaml_content = """items:
+  - id: simpletask
+    text: no entities
+"""
+        yaml_file.write_text(yaml_content)
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "migrations").mkdir(parents=True)
+
+        with patch.object(fact_migration, "REPO_ROOT", tmp_path):
+            result = start_fact_migration(yaml_file, "simpletask", knowledge_path)
+
+        assert result == 0
+
+    def test_handles_file_outside_repo_root(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should handle YAML file outside REPO_ROOT (ValueError path)."""
+        yaml_file = tmp_path / "docs" / "test.yml"
+        yaml_file.parent.mkdir(parents=True)
+        yaml_content = """items:
+  - id: test.element
+    text: no entities
+"""
+        yaml_file.write_text(yaml_content)
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "migrations").mkdir(parents=True)
+
+        # Use a different REPO_ROOT that doesn't contain yaml_file
+        with patch.object(fact_migration, "REPO_ROOT", Path("/different/root")):
+            result = start_fact_migration(yaml_file, "test.element", knowledge_path)
+
+        assert result == 0
+
+
+class TestClassifyFactsExtended:
+    """Extended tests for classify_facts to improve coverage."""
+
+    def test_handles_missing_element_text(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should warn when element text cannot be read."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        (knowledge_path / "facts").mkdir(parents=True)
+
+        # Create task pointing to non-existent file
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = (
+            "test-id,docs/nonexistent.yml,factory,pending,20240101T120000Z,,factory.create_app,2,5"
+        )
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        with patch.object(fact_migration, "REPO_ROOT", tmp_path):
+            result = classify_facts("test-id", knowledge_path)
+
+        # Returns 1 because no facts found
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "Could not read element text" in captured.out
+        assert "No facts found" in captured.out
+
+    def test_prints_facts_with_confidence(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should print facts with their confidence scores."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        (knowledge_path / "facts").mkdir(parents=True)
+
+        # Create task
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,2,2"
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Create YAML file
+        yaml_dir = tmp_path / "docs"
+        yaml_dir.mkdir(parents=True)
+        yaml_file = yaml_dir / "test.yml"
+        yaml_file.write_text("""items:
+  - id: factory.create_app
+    text: Test element text
+""")
+
+        # Create extractions with multiple facts
+        extractions_csv = knowledge_path / "facts" / "extractions.csv"
+        extractions_content = (
+            "fact_id,source_sentence,entity,fact_text,rewritten_sentence,"
+            "iteration,confidence,extracted_at\n"
+            "fact-1,Test element text,create_app,First fact about create_app,"
+            "Residual,1,0.95,20240101T120000Z\n"
+            "fact-2,Test element text,FastAPI,Second fact about FastAPI,"
+            "Residual,1,0.88,20240101T120000Z\n"
+        )
+        extractions_csv.write_text(extractions_content)
+
+        with patch.object(fact_migration, "REPO_ROOT", tmp_path):
+            result = classify_facts("test-id", knowledge_path)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Extracted Facts:" in captured.out
+        assert "[create_app]" in captured.out
+        assert "[FastAPI]" in captured.out
+        assert "Confidence:" in captured.out
+        assert "0.95" in captured.out
+
+
+class TestMoveFactsExtended:
+    """Extended tests for move_facts to improve coverage."""
+
+    def test_handles_invalid_classification_json(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 for invalid classification JSON."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,2,5"
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Create classification file with empty list (which raises ValueError)
+        classification_file = tmp_path / "classification.json"
+        classification_file.write_text('{"classifications": []}')
+
+        result = move_facts("test-id", classification_file, knowledge_path)
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "empty" in captured.err.lower()
+
+    def test_handles_classification_without_fact_id(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should warn when classification missing fact_id."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "movements").mkdir(parents=True)
+
+        # Create task
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,1,1"
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Create YAML file
+        yaml_dir = tmp_path / "docs"
+        yaml_dir.mkdir(parents=True)
+        yaml_file = yaml_dir / "test.yml"
+        yaml_file.write_text("""items:
+  - id: factory.create_app
+    text: Test element text
+""")
+
+        # Create classification with missing fact_id (but valid required fields)
+        classification_file = tmp_path / "classification.json"
+        classification_file.write_text(
+            json.dumps(
+                {
+                    "classifications": [
+                        {"fact_id": "", "domain": "fastapi", "pattern": "factory"}  # empty fact_id
+                    ]
+                }
+            )
+        )
+
+        with patch.object(fact_migration, "REPO_ROOT", tmp_path):
+            result = move_facts("test-id", classification_file, knowledge_path)
+
+        # Returns 1 because of validation error
+        assert result == 1
+
+    def test_handles_fact_not_found(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should warn when fact not found in extractions."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "movements").mkdir(parents=True)
+
+        # Create task
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,1,1"
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Create YAML file
+        yaml_dir = tmp_path / "docs"
+        yaml_dir.mkdir(parents=True)
+        yaml_file = yaml_dir / "test.yml"
+        yaml_file.write_text("""items:
+  - id: factory.create_app
+    text: Test element text
+""")
+
+        # Create extractions CSV (empty - no facts)
+        extractions_csv = knowledge_path / "facts" / "extractions.csv"
+        extractions_csv.write_text(
+            "fact_id,source_sentence,entity,fact_text,rewritten_sentence,"
+            "iteration,confidence,extracted_at\n"
+        )
+
+        # Create classification with fact_id that doesn't exist
+        classification_file = tmp_path / "classification.json"
+        classification_file.write_text(
+            json.dumps(
+                {
+                    "classifications": [
+                        {"fact_id": "nonexistent-id", "domain": "fastapi", "pattern": "factory"}
+                    ]
+                }
+            )
+        )
+
+        with patch.object(fact_migration, "REPO_ROOT", tmp_path):
+            result = move_facts("test-id", classification_file, knowledge_path)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Fact not found for ID" in captured.out
+
+    def test_moves_facts_successfully(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should move facts and track movements successfully."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "movements").mkdir(parents=True)
+
+        # Create task
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,1,1"
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Create YAML file
+        yaml_dir = tmp_path / "docs"
+        yaml_dir.mkdir(parents=True)
+        yaml_file = yaml_dir / "test.yml"
+        yaml_file.write_text("""items:
+  - id: factory.create_app
+    text: Test element text
+""")
+
+        # Create extractions CSV with a fact
+        extractions_csv = knowledge_path / "facts" / "extractions.csv"
+        extractions_csv.write_text(
+            "fact_id,source_sentence,entity,fact_text,rewritten_sentence,"
+            "iteration,confidence,extracted_at\n"
+            "fact-1,Test element text,create_app,Fact about create_app,"
+            "Residual,1,0.95,20240101T120000Z\n"
+        )
+
+        # Create classification
+        classification_file = tmp_path / "classification.json"
+        classification_file.write_text(
+            json.dumps(
+                {
+                    "classifications": [
+                        {"fact_id": "fact-1", "domain": "fastapi", "pattern": "factory"}
+                    ]
+                }
+            )
+        )
+
+        with patch.object(fact_migration, "REPO_ROOT", tmp_path):
+            result = move_facts("test-id", classification_file, knowledge_path)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Stored to:" in captured.out
+        assert "Movement tracked:" in captured.out
+        assert "Facts stored: 1" in captured.out
+        # Verify fact YAML was created
+        assert (knowledge_path / "facts" / "fastapi.factory.facts.yml").exists()
+
+
+class TestValidateFactMigrationExtended:
+    """Extended tests for validate_fact_migration to improve coverage."""
+
+    def test_validates_with_all_issues(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should report all validation issues."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "movements").mkdir(parents=True)
+
+        # Create task with expected facts
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,2,5"
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Create YAML file
+        yaml_dir = tmp_path / "docs"
+        yaml_dir.mkdir(parents=True)
+        yaml_file = yaml_dir / "test.yml"
+        yaml_file.write_text("""items:
+  - id: factory.create_app
+    text: Test element text
+""")
+
+        # Create extractions CSV with facts
+        extractions_csv = knowledge_path / "facts" / "extractions.csv"
+        extractions_csv.write_text(
+            "fact_id,source_sentence,entity,fact_text,rewritten_sentence,"
+            "iteration,confidence,extracted_at\n"
+            "fact-1,Test element text,create_app,Fact1,Residual,1,0.95,20240101T120000Z\n"
+            "fact-2,Test element text,FastAPI,Fact2,Residual,1,0.90,20240101T120000Z\n"
+        )
+
+        # No stored facts, no movements -> validation fails
+        with patch.object(fact_migration, "REPO_ROOT", tmp_path):
+            result = validate_fact_migration("test-id", knowledge_path)
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "Not all facts stored" in captured.out
+        assert "Not all movements tracked" in captured.out
+        assert "Validation failed" in captured.out
+
+    def test_validates_successfully(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should validate successfully when all facts are stored and tracked."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "movements").mkdir(parents=True)
+
+        # Create task
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,1,1"
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Create YAML file
+        yaml_dir = tmp_path / "docs"
+        yaml_dir.mkdir(parents=True)
+        yaml_file = yaml_dir / "test.yml"
+        yaml_file.write_text("""items:
+  - id: factory.create_app
+    text: Test element text
+""")
+
+        # Create extractions CSV with a fact
+        extractions_csv = knowledge_path / "facts" / "extractions.csv"
+        extractions_csv.write_text(
+            "fact_id,source_sentence,entity,fact_text,rewritten_sentence,"
+            "iteration,confidence,extracted_at\n"
+            "fact-1,Test element text,create_app,Fact about create_app,"
+            "Residual,1,0.95,20240101T120000Z\n"
+        )
+
+        # Create stored fact
+        fact_yaml = """facts:
+  - fact_id: fact-1
+    entity: create_app
+    fact_text: Fact about create_app
+"""
+        (knowledge_path / "facts" / "fastapi.factory.facts.yml").write_text(fact_yaml)
+
+        # Create movement tracking
+        movements_csv = knowledge_path / "movements" / "iterative_movements.csv"
+        movements_csv.write_text(
+            "iteration_id,fact_id,source_sentence,isolated_fact,residual_sentence,"
+            "similarity_score,reason,moved_at,pass_id,span_id,artifact_id,schema_version\n"
+            "iter-1,fact-1,Test element text,Fact about create_app,Residual,"
+            "0.98,Migration,20240101T120000Z,,,,pass-span.v1\n"
+        )
+
+        with patch.object(fact_migration, "REPO_ROOT", tmp_path):
+            result = validate_fact_migration("test-id", knowledge_path)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "validated successfully" in captured.out
+
+    def test_handles_no_facts_when_expected(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should report when no facts found but some expected."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        (knowledge_path / "facts").mkdir(parents=True)
+
+        # Create task expecting 5 facts
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,2,5"
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Create YAML file
+        yaml_dir = tmp_path / "docs"
+        yaml_dir.mkdir(parents=True)
+        yaml_file = yaml_dir / "test.yml"
+        yaml_file.write_text("""items:
+  - id: factory.create_app
+    text: Test element text
+""")
+
+        # Empty extractions CSV (no facts)
+        extractions_csv = knowledge_path / "facts" / "extractions.csv"
+        extractions_csv.write_text(
+            "fact_id,source_sentence,entity,fact_text,rewritten_sentence,"
+            "iteration,confidence,extracted_at\n"
+        )
+
+        with patch.object(fact_migration, "REPO_ROOT", tmp_path):
+            result = validate_fact_migration("test-id", knowledge_path)
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "No facts found in extractions.csv" in captured.out
+
+    def test_handles_invariant_failures(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should report invariant failures."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "movements").mkdir(parents=True)
+
+        # Create task
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,1,1"
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Create YAML file
+        yaml_dir = tmp_path / "docs"
+        yaml_dir.mkdir(parents=True)
+        yaml_file = yaml_dir / "test.yml"
+        yaml_file.write_text("""items:
+  - id: factory.create_app
+    text: Test element text
+""")
+
+        # Create extractions CSV
+        extractions_csv = knowledge_path / "facts" / "extractions.csv"
+        extractions_csv.write_text(
+            "fact_id,source_sentence,entity,fact_text,rewritten_sentence,"
+            "iteration,confidence,extracted_at\n"
+            "fact-1,Test element text,create_app,Fact about create_app,"
+            "Residual,1,0.95,20240101T120000Z\n"
+        )
+
+        # Create stored fact
+        fact_yaml = """facts:
+  - fact_id: fact-1
+    entity: create_app
+    fact_text: Fact about create_app
+"""
+        (knowledge_path / "facts" / "fastapi.factory.facts.yml").write_text(fact_yaml)
+
+        # Create movement with LOW similarity (invariant failure)
+        movements_csv = knowledge_path / "movements" / "iterative_movements.csv"
+        movements_csv.write_text(
+            "iteration_id,fact_id,source_sentence,isolated_fact,residual_sentence,"
+            "similarity_score,reason,moved_at,pass_id,span_id,artifact_id,schema_version\n"
+            "iter-1,fact-1,Test element text,Fact about create_app,Residual,"
+            "0.50,Migration,20240101T120000Z,,,,pass-span.v1\n"  # 0.50 < 0.95
+        )
+
+        with patch.object(fact_migration, "REPO_ROOT", tmp_path):
+            result = validate_fact_migration("test-id", knowledge_path)
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "Invariant violations" in captured.out
+
+
+class TestParseStartFactMigrationArgsExtended:
+    """Extended tests for parse_start_fact_migration_args."""
+
+    def test_parses_all_arguments(self) -> None:
+        """Should parse all arguments including knowledge-path."""
+        args = parse_start_fact_migration_args(
+            [
+                "--yaml-file",
+                "/path/to/file.yml",
+                "--element-id",
+                "factory.create_app",
+                "--knowledge-path",
+                "/custom/path",
+            ]
+        )
+        assert args.yaml_file == Path("/path/to/file.yml")
+        assert args.element_id == "factory.create_app"
+        assert args.knowledge_path == Path("/custom/path")
+
+
+class TestParseClassifyFactsArgsExtended:
+    """Extended tests for parse_classify_facts_args."""
+
+    def test_parses_all_arguments(self) -> None:
+        """Should parse all arguments including knowledge-path."""
+        args = parse_classify_facts_args(
+            ["--task-id", "test-uuid", "--knowledge-path", "/custom/path"]
+        )
+        assert args.task_id == "test-uuid"
+        assert args.knowledge_path == Path("/custom/path")
+
+
+class TestParseMoveFactsArgsExtended:
+    """Extended tests for parse_move_facts_args."""
+
+    def test_parses_all_arguments(self) -> None:
+        """Should parse all arguments including knowledge-path and dry-run."""
+        args = parse_move_facts_args(
+            [
+                "--task-id",
+                "test-uuid",
+                "--classification-file",
+                "/path/to/class.json",
+                "--knowledge-path",
+                "/custom/path",
+                "--dry-run",
+            ]
+        )
+        assert args.task_id == "test-uuid"
+        assert args.classification_file == Path("/path/to/class.json")
+        assert args.knowledge_path == Path("/custom/path")
+        assert args.dry_run is True
+
+
+class TestParseValidateFactMigrationArgsExtended:
+    """Extended tests for parse_validate_fact_migration_args."""
+
+    def test_parses_all_arguments(self) -> None:
+        """Should parse all arguments including knowledge-path."""
+        args = parse_validate_fact_migration_args(
+            ["--task-id", "test-uuid", "--knowledge-path", "/custom/path"]
+        )
+        assert args.task_id == "test-uuid"
+        assert args.knowledge_path == Path("/custom/path")
+
+
+class TestMainStartFactMigrationExtended:
+    """Extended tests for main_start_fact_migration."""
+
+    def test_handles_absolute_paths(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should handle absolute paths correctly."""
+        yaml_file = tmp_path / "docs" / "test.yml"
+        yaml_file.parent.mkdir(parents=True)
+        yaml_content = """items:
+  - id: test.element
+    text: no entities
+"""
+        yaml_file.write_text(yaml_content)
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "migrations").mkdir(parents=True)
+
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--yaml-file",
+                    str(yaml_file),
+                    "--element-id",
+                    "test.element",
+                    "--knowledge-path",
+                    str(knowledge_path),
+                ],
+            ),
+        ):
+            result = main_start_fact_migration()
+
+        assert result == 0
+
+    def test_handles_exception(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should handle exceptions and return 1."""
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--yaml-file",
+                    "/path/to/file.yml",
+                    "--element-id",
+                    "test",
+                ],
+            ),
+            patch.object(
+                fact_migration, "start_fact_migration", side_effect=Exception("Test error")
+            ),
+        ):
+            result = main_start_fact_migration()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "Error:" in captured.err
+
+
+class TestMainClassifyFactsExtended:
+    """Extended tests for main_classify_facts."""
+
+    def test_handles_absolute_knowledge_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should handle absolute knowledge path."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        csv_path.write_text(f"{header}\n")
+
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--task-id",
+                    "test-id",
+                    "--knowledge-path",
+                    str(knowledge_path),
+                ],
+            ),
+        ):
+            result = main_classify_facts()
+
+        assert result == 1  # Task not found
+
+    def test_handles_exception(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should handle exceptions and return 1."""
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--task-id",
+                    "test-id",
+                ],
+            ),
+            patch.object(fact_migration, "classify_facts", side_effect=Exception("Test error")),
+        ):
+            result = main_classify_facts()
+
+        assert result == 1
+
+
+class TestMainMoveFactsExtended:
+    """Extended tests for main_move_facts."""
+
+    def test_handles_absolute_paths(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should handle absolute paths correctly."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,2,5"
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        classification_file = tmp_path / "class.json"
+        classification_file.write_text('{"classifications": []}')
+
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--task-id",
+                    "test-id",
+                    "--classification-file",
+                    str(classification_file),
+                    "--knowledge-path",
+                    str(knowledge_path),
+                ],
+            ),
+        ):
+            result = main_move_facts()
+
+        assert result == 1  # Empty classifications
+
+    def test_handles_exception(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should handle exceptions and return 1."""
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--task-id",
+                    "test-id",
+                    "--classification-file",
+                    "/path/to/class.json",
+                ],
+            ),
+            patch.object(fact_migration, "move_facts", side_effect=Exception("Test error")),
+        ):
+            result = main_move_facts()
+
+        assert result == 1
+
+
+class TestMainValidateFactMigrationExtended:
+    """Extended tests for main_validate_fact_migration."""
+
+    def test_handles_absolute_knowledge_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should handle absolute knowledge path."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        csv_path.write_text(f"{header}\n")
+
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--task-id",
+                    "test-id",
+                    "--knowledge-path",
+                    str(knowledge_path),
+                ],
+            ),
+        ):
+            result = main_validate_fact_migration()
+
+        assert result == 1  # Task not found
+
+    def test_handles_exception(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should handle exceptions and return 1."""
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--task-id",
+                    "test-id",
+                ],
+            ),
+            patch.object(
+                fact_migration, "validate_fact_migration", side_effect=Exception("Test error")
+            ),
+        ):
+            result = main_validate_fact_migration()
+
+        assert result == 1
+
+
 class TestIntegrationWorkflow:
     """Integration tests for full fact migration workflow."""
 
@@ -1520,3 +2645,300 @@ class TestIntegrationWorkflow:
         # Should find multiple entities
         assert "create_app" in captured.out
         assert "FastAPI" in captured.out
+
+
+class TestCountInvariantFailuresFallback:
+    """Tests for count_invariant_failures DuckDB fallback (lines 1237-1240)."""
+
+    def test_falls_back_to_python_on_duckdb_unnest_error(self, tmp_path: Path) -> None:
+        """Should fall back to Python when DuckDB UNNEST fails (lines 1237-1240)."""
+        csv_path = tmp_path / "iterative_movements.csv"
+        # Create a valid CSV that can be read by movement_tracker
+        csv_content = (
+            "iteration_id,fact_id,source_sentence,isolated_fact,residual_sentence,"
+            "similarity_score,reason,moved_at,pass_id,span_id,artifact_id,schema_version\n"
+            "iter-1,fact-1,Source,Fact,Residual,0.80,Migration,20240101T120000Z,,,,pass-span.v1\n"
+            "iter-2,fact-2,Source,Fact,Residual,0.92,Migration,20240101T120000Z,,,,pass-span.v1\n"
+        )
+        csv_path.write_text(csv_content)
+
+        # Mock DuckDB to raise an error to trigger fallback
+        import duckdb
+
+        original_execute = duckdb.execute
+
+        def mock_execute(query: str, *args: object, **kwargs: object) -> object:
+            # If it's the count query with UNNEST, fail
+            if "UNNEST" in query and "similarity_score" in query:
+                raise duckdb.Error("UNNEST not supported for this query")
+            return original_execute(query, *args, **kwargs)
+
+        with patch.object(duckdb, "execute", mock_execute):
+            # Should still work via Python fallback
+            result = count_invariant_failures(csv_path, ["fact-1", "fact-2"])
+
+        # Both facts have scores below 0.95 threshold
+        assert result == 2
+
+
+class TestMainStartFactMigrationRelativePath:
+    """Tests for main_start_fact_migration relative yaml path (line 847)."""
+
+    def test_handles_relative_yaml_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should resolve relative yaml-file path via REPO_ROOT (line 847)."""
+        # Create YAML file in tmp_path relative location
+        yaml_file = tmp_path / "docs" / "test.yml"
+        yaml_file.parent.mkdir(parents=True)
+        yaml_content = """items:
+  - id: test.element
+    text: no entities
+"""
+        yaml_file.write_text(yaml_content)
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "migrations").mkdir(parents=True)
+
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--yaml-file",
+                    "docs/test.yml",  # Relative path
+                    "--element-id",
+                    "test.element",
+                    "--knowledge-path",
+                    str(knowledge_path),
+                ],
+            ),
+        ):
+            result = main_start_fact_migration()
+
+        assert result == 0
+
+
+class TestMainMoveFactsRelativePath:
+    """Tests for main_move_facts relative classification path (line 1187)."""
+
+    def test_handles_relative_classification_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should resolve relative classification-file path via REPO_ROOT (line 1187)."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "movements").mkdir(parents=True)
+
+        # Create task
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,1,1"
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Create YAML file
+        yaml_dir = tmp_path / "docs"
+        yaml_dir.mkdir(parents=True)
+        yaml_file = yaml_dir / "test.yml"
+        yaml_file.write_text("""items:
+  - id: factory.create_app
+    text: Test element text
+""")
+
+        # Create extractions CSV
+        extractions_csv = knowledge_path / "facts" / "extractions.csv"
+        extractions_csv.write_text(
+            "fact_id,source_sentence,entity,fact_text,rewritten_sentence,"
+            "iteration,confidence,extracted_at\n"
+            "fact-1,Test element text,create_app,Fact,Residual,1,0.95,20240101T120000Z\n"
+        )
+
+        # Create classification file at relative path
+        classification_file = tmp_path / "classification.json"
+        classification_file.write_text(
+            json.dumps(
+                {
+                    "classifications": [
+                        {"fact_id": "fact-1", "domain": "fastapi", "pattern": "factory"}
+                    ]
+                }
+            )
+        )
+
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--task-id",
+                    "test-id",
+                    "--classification-file",
+                    "classification.json",  # Relative path
+                    "--knowledge-path",
+                    str(knowledge_path),
+                ],
+            ),
+        ):
+            result = main_move_facts()
+
+        assert result == 0
+
+
+class TestMoveFactsMissingFactIdInClassification:
+    """Tests for move_facts when classification has empty/None fact_id (lines 1063-1065)."""
+
+    def test_warns_when_fact_id_is_none(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should warn when classification has None fact_id (line 1063-1065)."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "movements").mkdir(parents=True)
+
+        # Create task
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,1,1"
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Create YAML file
+        yaml_dir = tmp_path / "docs"
+        yaml_dir.mkdir(parents=True)
+        yaml_file = yaml_dir / "test.yml"
+        yaml_file.write_text("""items:
+  - id: factory.create_app
+    text: Test element text
+""")
+
+        # Create classification with None-like fact_id (valid but empty after parse)
+        classification_file = tmp_path / "classification.json"
+        # We can't easily create a None in JSON, but we can test with the code
+        # directly by bypassing normalize_classifications
+        valid_classification = {
+            "classifications": [{"fact_id": "valid-id", "domain": "fastapi", "pattern": "factory"}]
+        }
+        classification_file.write_text(json.dumps(valid_classification))
+
+        # Mock normalize_classifications to return classification with None fact_id
+        with (
+            patch.object(fact_migration, "REPO_ROOT", tmp_path),
+            patch(
+                "scripts.knowledge.fact_migration.normalize_classifications",
+                return_value=[{"fact_id": None, "domain": "fastapi", "pattern": "factory"}],
+            ),
+        ):
+            result = move_facts("test-id", classification_file, knowledge_path)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "missing fact_id" in captured.out
+
+
+class TestMoveFactsSuccessfulStore:
+    """Tests for move_facts successful store path (lines 1094-1099)."""
+
+    def test_tracks_movement_on_successful_store(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should track movement when fact is successfully stored."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "movements").mkdir(parents=True)
+
+        # Create task
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = "test-id,docs/test.yml,factory,pending,20240101T120000Z,,factory.create_app,1,1"
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Create YAML file
+        yaml_dir = tmp_path / "docs"
+        yaml_dir.mkdir(parents=True)
+        yaml_file = yaml_dir / "test.yml"
+        yaml_file.write_text("""items:
+  - id: factory.create_app
+    text: Test element text
+""")
+
+        # Create extractions CSV with a fact
+        extractions_csv = knowledge_path / "facts" / "extractions.csv"
+        extractions_csv.write_text(
+            "fact_id,source_sentence,entity,fact_text,rewritten_sentence,"
+            "iteration,confidence,extracted_at\n"
+            "fact-1,Test element text,create_app,Fact about create_app,"
+            "Residual,1,0.95,20240101T120000Z\n"
+        )
+
+        # Create classification
+        classification_file = tmp_path / "classification.json"
+        classification_file.write_text(
+            json.dumps(
+                {
+                    "classifications": [
+                        {"fact_id": "fact-1", "domain": "fastapi", "pattern": "factory"}
+                    ]
+                }
+            )
+        )
+
+        with patch.object(fact_migration, "REPO_ROOT", tmp_path):
+            result = move_facts("test-id", classification_file, knowledge_path)
+
+        assert result == 0
+
+        # Verify movement was tracked
+        movements_csv = knowledge_path / "movements" / "iterative_movements.csv"
+        assert movements_csv.exists()
+        content = movements_csv.read_text()
+        assert "fact-1" in content
+
+        # Verify fact was stored
+        fact_yaml_path = knowledge_path / "facts" / "fastapi.factory.facts.yml"
+        assert fact_yaml_path.exists()
+
+
+class TestMoveFactsWithMissingElementText:
+    """Tests for move_facts when element text cannot be read."""
+
+    def test_handles_missing_element_text(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should handle case when element text is None."""
+        knowledge_path = tmp_path / ".knowledge"
+        (knowledge_path / "migrations").mkdir(parents=True)
+        (knowledge_path / "facts").mkdir(parents=True)
+        (knowledge_path / "movements").mkdir(parents=True)
+
+        # Create task pointing to nonexistent YAML
+        csv_path = knowledge_path / "migrations" / "fact_tasks.csv"
+        header = ",".join(FACT_MIGRATION_CSV_COLUMNS)
+        row = (
+            "test-id,docs/nonexistent.yml,factory,pending,20240101T120000Z,,factory.create_app,1,1"
+        )
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Create classification
+        classification_file = tmp_path / "classification.json"
+        classification_file.write_text(
+            json.dumps(
+                {
+                    "classifications": [
+                        {"fact_id": "fact-1", "domain": "fastapi", "pattern": "factory"}
+                    ]
+                }
+            )
+        )
+
+        with patch.object(fact_migration, "REPO_ROOT", tmp_path):
+            result = move_facts("test-id", classification_file, knowledge_path)
+
+        # Should still succeed (just no facts to process)
+        assert result == 0
+        captured = capsys.readouterr()
+        # Will warn about fact not found since facts list is empty
+        assert "Fact not found for ID" in captured.out

@@ -147,6 +147,22 @@ class TestParseYamlFile:
         with pytest.raises(FileNotFoundError):
             parse_yaml_file(Path("/nonexistent.yml"))
 
+    def test_raises_valueerror_for_other_exceptions(self, fs: FakeFilesystem) -> None:
+        """Should raise ValueError for other parsing exceptions (covers lines 135-138)."""
+        # Create a file that will cause an unexpected exception during read
+        fs.create_file("/fake/test.yml", contents="key: value\n")
+
+        with (
+            patch.object(grep_yml_ids, "REPO_ROOT", Path("/fake")),
+            patch(
+                "pathlib.Path.read_text", side_effect=UnicodeDecodeError("utf-8", b"", 0, 1, "test")
+            ),
+        ):
+            with pytest.raises(ValueError) as exc_info:
+                parse_yaml_file(Path("/fake/test.yml"))
+
+            assert "Failed to parse" in str(exc_info.value)
+
 
 class TestSearchStructure:
     """Tests for _search_structure function."""

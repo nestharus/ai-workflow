@@ -692,6 +692,89 @@ reason: Cannot make further changes
         assert result.history[1].addressed_issues == []
 
 
+class TestReviewLoopFeedbackYamlFallback:
+    """Tests for feedback YAML fallback when re-parsing fails."""
+
+    @pytest.mark.asyncio
+    async def test_uses_raw_output_when_yaml_extraction_fails(self) -> None:
+        """Should use raw stdout when YAML re-extraction fails for feedback.
+
+        This tests the fallback in lines 354-356 where if _parse_yaml_after_marker
+        fails when extracting review YAML for the plan-reviser, the raw stdout is used.
+        """
+        # Create review output that will parse as FEEDBACK the first time
+        # but fail the second time (simulated via mock)
+        feedback_result = MagicMock()
+        # Output that parses to FEEDBACK but contains corrupt YAML
+        # This scenario is simulated via patching _parse_yaml_after_marker
+        feedback_result.stdout = """REVIEW:
+status: FEEDBACK
+issues:
+  - id: SR-1-001
+    category: missing_detail
+    description: Issue
+    location: Plan 1
+    severity: high
+    suggestion: Fix it
+"""
+
+        # Revision result: REVISED
+        revised_result = MagicMock()
+        revised_result.stdout = """REVISION:
+status: REVISED
+addressed_issues:
+  - SR-1-001
+revision_summary: Fixed issue
+"""
+
+        # Approved after revision
+        approved_result = MagicMock()
+        approved_result.stdout = """REVIEW:
+status: APPROVED
+issues: []
+"""
+
+        call_count = [0]
+        original_parse = None
+
+        def patched_parse_yaml_after_marker(output: str, marker: str) -> dict:
+            """Raise ValueError on second call with REVIEW marker (simulating failure)."""
+            nonlocal call_count
+            call_count[0] += 1
+            # First call is in _parse_review_output - let it succeed
+            # Second call is in the feedback extraction block - make it fail
+            if marker == "REVIEW:" and call_count[0] == 2:
+                raise ValueError("Simulated YAML parse failure")
+            # For all other calls, use normal import
+            import yaml
+
+            marker_index = output.find(marker)
+            if marker_index == -1:
+                raise ValueError(f"Marker '{marker}' not found in agent output")
+            yaml_text = output[marker_index + len(marker) :].strip()
+            return yaml.safe_load(yaml_text)
+
+        with (
+            patch(
+                "scripts.tasks.workflows.review_loop._run_tasks_agent",
+                side_effect=[feedback_result, revised_result, approved_result],
+            ),
+            patch(
+                "scripts.tasks.workflows.review_loop._parse_yaml_after_marker",
+                side_effect=patched_parse_yaml_after_marker,
+            ),
+        ):
+            result = await run_strategy_planner_review_loop(
+                strategy_path="/tmp/strategy.md",
+                plan_path="/tmp/plan.md",
+                max_iterations=5,
+            )
+
+        # Should still complete successfully
+        assert result.status == "approved"
+        assert result.iterations == 2
+
+
 class TestReviewIterationDataclass:
     """Tests for ReviewIteration dataclass."""
 

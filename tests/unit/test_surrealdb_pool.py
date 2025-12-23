@@ -480,3 +480,33 @@ class TestSurrealDBExceptions:
         exc = UnsupportedSchemaVersionError(version="99")
         assert "99" in str(exc)
         assert "unsupported" in str(exc).lower() or "schema" in str(exc).lower()
+
+
+class TestSurrealDBPoolAcquireTimeout:
+    """Tests for acquire timeout handling in SurrealDBPool."""
+
+    @pytest.mark.asyncio
+    async def test_acquire_raises_timeout_error_when_queue_empty(self) -> None:
+        """Test that acquire raises TimeoutError when waiting for connection times out."""
+
+        from app.infrastructure.surrealdb.pool import SurrealDBPool
+
+        pool = SurrealDBPool(
+            dsn="ws://localhost:8000/rpc",
+            namespace="test_ns",
+            database="test_db",
+            user="root",
+            password="root",
+            size=1,
+            acquire_timeout=0.1,  # Short timeout for testing
+        )
+        pool._initialized = True
+
+        # Block the queue.get() to simulate timeout by patching asyncio.wait_for
+        with patch("app.infrastructure.surrealdb.pool.asyncio.wait_for") as mock_wait_for:
+            # Make wait_for raise TimeoutError immediately
+            mock_wait_for.side_effect = TimeoutError("Connection acquire timed out")
+
+            with pytest.raises(TimeoutError, match="Connection acquire timed out"):
+                async with pool.acquire():
+                    pass

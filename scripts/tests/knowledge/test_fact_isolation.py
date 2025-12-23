@@ -923,6 +923,157 @@ class TestIsolateEntityFactsMain:
 
             assert result == 0
 
+    def test_handles_relative_output_path(self, tmp_path: Path) -> None:
+        """Resolve relative output path from REPO_ROOT (covers line 428, branches [425, 428])."""
+        knowledge_path = tmp_path / ".knowledge"
+        facts_dir = knowledge_path / "facts"
+        facts_dir.mkdir(parents=True)
+        csv_path = facts_dir / "extractions.csv"
+
+        # Create CSV with extraction results
+        header = ",".join(FACT_CSV_COLUMNS)
+        row = _make_fact_row(
+            source_sentence="Test sentence with FastAPI.",
+            entity="FastAPI",
+            fact_text="FastAPI is a framework",
+            rewritten_sentence="Test sentence.",
+        )
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        args = argparse.Namespace(
+            sentence="Test sentence with FastAPI.",
+            entity="FastAPI",
+            knowledge_path=knowledge_path,
+            dry_run=False,
+            model="Qwen/Qwen3-Embedding-0.6B",
+            output=Path("relative/output.csv"),  # Relative path
+        )
+
+        with (
+            patch.object(fact_isolation, "REPO_ROOT", tmp_path),
+            patch.object(fact_isolation.fact_extraction, "extract_facts_main") as mock_extract,
+            patch.object(fact_isolation, "load_qwen_embedding_model") as mock_load,
+            patch.object(fact_isolation, "compute_semantic_similarity", return_value=0.98),
+        ):
+            mock_extract.return_value = 0
+            mock_load.return_value = (MagicMock(), MagicMock())
+
+            isolate_entity_facts_main(args)
+
+            # Should resolve to REPO_ROOT / relative/output.csv
+            expected_output = tmp_path / "relative" / "output.csv"
+            assert expected_output.exists()
+
+    def test_handles_embedding_model_load_failure(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should handle embedding model load failure (covers lines 492-493)."""
+        knowledge_path = tmp_path / ".knowledge"
+        facts_dir = knowledge_path / "facts"
+        facts_dir.mkdir(parents=True)
+        csv_path = facts_dir / "extractions.csv"
+
+        header = ",".join(FACT_CSV_COLUMNS)
+        row = _make_fact_row(
+            source_sentence="Test sentence with FastAPI.",
+            entity="FastAPI",
+            fact_text="FastAPI is fast",
+            rewritten_sentence="Test sentence.",
+        )
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        args = argparse.Namespace(
+            sentence="Test sentence with FastAPI.",
+            entity="FastAPI",
+            knowledge_path=knowledge_path,
+            dry_run=False,
+            model="Qwen/Qwen3-Embedding-0.6B",
+            output=None,
+        )
+
+        with (
+            patch.object(fact_isolation.fact_extraction, "extract_facts_main") as mock_extract,
+            patch.object(fact_isolation, "load_qwen_embedding_model") as mock_load,
+        ):
+            mock_extract.return_value = 0
+            mock_load.side_effect = Exception("Model load failed")
+
+            isolate_entity_facts_main(args)
+
+            # Should continue with validation but without semantic similarity
+            captured = capsys.readouterr()
+            assert "Could not load embedding model" in captured.err
+
+    def test_prints_empty_residual_message(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should print (empty) when residual is empty (covers line 513, branch [510,513])."""
+        knowledge_path = tmp_path / ".knowledge"
+        facts_dir = knowledge_path / "facts"
+        facts_dir.mkdir(parents=True)
+        csv_path = facts_dir / "extractions.csv"
+
+        # Create a CSV with empty string for rewritten_sentence (residual)
+        # Note: Empty string in CSV should be represented properly
+        header = ",".join(FACT_CSV_COLUMNS)
+        # Create row with empty residual - need to quote empty string properly
+        row_parts = [
+            "fact-1",  # fact_id
+            '"FastAPI is a framework."',  # source_sentence
+            "FastAPI",  # entity
+            '"FastAPI is a framework"',  # fact_text
+            '""',  # rewritten_sentence - empty string quoted
+            "1",  # iteration
+            "0.95",  # confidence
+            "20240101T120000Z",  # extracted_at
+        ]
+        row = ",".join(row_parts)
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        args = argparse.Namespace(
+            sentence="FastAPI is a framework.",
+            entity="FastAPI",
+            knowledge_path=knowledge_path,
+            dry_run=False,
+            model="Qwen/Qwen3-Embedding-0.6B",
+            output=None,
+        )
+
+        mock_movement_record = {
+            "fact_id": "fact-12345678",
+            "iteration": 1,
+            "entity": "FastAPI",
+            "before_sentence": "FastAPI is a framework.",
+            "isolated_fact": "FastAPI is a framework",
+            "after_sentence": "",
+        }
+
+        with (
+            patch.object(fact_isolation.fact_extraction, "extract_facts_main") as mock_extract,
+            patch.object(fact_isolation, "load_qwen_embedding_model") as mock_load,
+            patch.object(fact_isolation, "compute_semantic_similarity", return_value=0.98),
+            patch.object(fact_isolation, "validate_isolation") as mock_validate,
+            patch.object(
+                fact_isolation, "prepare_movement_records", return_value=[mock_movement_record]
+            ),
+            patch.object(fact_isolation, "write_isolation_records"),
+        ):
+            mock_extract.return_value = 0
+            mock_load.return_value = (MagicMock(), MagicMock())
+            mock_validate.return_value = ValidationResult(
+                extraction_complete=True,
+                entity_absent=True,
+                information_preserved=True,
+                semantic_similarity=0.98,
+                total_facts=1,
+            )
+
+            isolate_entity_facts_main(args)
+
+            captured = capsys.readouterr()
+            # The test verifies "(empty)" is printed for empty residual
+            assert "Residual: (empty)" in captured.out
+
 
 class TestMainFunction:
     """Tests for main entry point function."""

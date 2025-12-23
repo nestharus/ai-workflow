@@ -620,3 +620,712 @@ kinds:
         )
         exit_code = main(["--knowledge-path", "/fake/.knowledge", "--strict"])
         assert exit_code == 1
+
+    def test_json_report_write_error(self, fs: FakeFilesystem, capsys) -> None:
+        """Should handle OSError when writing JSON report (lines 819-820)."""
+        fs.create_dir("/fake/.knowledge/artifacts")
+        registry_content = """
+kinds:
+  - kind_id: test/kind
+    content_form: text
+    structure_pattern:
+      root_path: sections[*].text
+    extraction_contract:
+      contributors: []
+    rendering_contract:
+      render_plan_id: test.v1
+"""
+        fs.create_file(
+            "/fake/.knowledge/artifacts/kinds.yml",
+            contents=registry_content,
+        )
+        # Create output directory
+        fs.create_dir("/fake/output")
+
+        def failing_write_text(self, data, encoding=None):
+            if "report.json" in str(self):
+                raise OSError("Permission denied")
+            # Fall through to real pyfakefs write
+            path_str = str(self)
+            fs.create_file(path_str, contents=data)
+
+        # Patch at the module level
+        with (
+            patch.object(validate_artifact_kinds, "REPO_ROOT", Path("/fake")),
+            patch("pathlib.Path.write_text", failing_write_text),
+        ):
+            exit_code = main(
+                [
+                    "--knowledge-path",
+                    "/fake/.knowledge",
+                    "--json-report",
+                    "/fake/output/report.json",
+                ]
+            )
+
+        captured = capsys.readouterr()
+        assert "Error writing JSON report" in captured.err
+        # Should still return 0 since registry is valid
+        assert exit_code == 0
+
+    def test_main_with_no_warnings(self, fs: FakeFilesystem) -> None:
+        """Should pass when there are no warnings (branch 829->835)."""
+        fs.create_dir("/fake/.knowledge/artifacts")
+        # Create a valid registry with examples that exist
+        registry_content = """
+kinds:
+  - kind_id: test/kind
+    content_form: text
+    structure_pattern:
+      root_path: sections[*].text
+    extraction_contract:
+      contributors: []
+    rendering_contract: {}
+    examples:
+      - source_file: docs/test.yml
+        element_id: test-element
+"""
+        fs.create_file(
+            "/fake/.knowledge/artifacts/kinds.yml",
+            contents=registry_content,
+        )
+        fs.create_dir("/fake/docs")
+        fs.create_file("/fake/docs/test.yml", contents="test: value\n")
+
+        with patch.object(validate_artifact_kinds, "REPO_ROOT", Path("/fake")):
+            exit_code = main(["--knowledge-path", "/fake/.knowledge"])
+
+        # Should pass with warnings only
+        assert exit_code == 0
+
+
+class TestLoadRegistryAdditional:
+    """Additional tests for load_registry function."""
+
+    def test_os_error_reading_file(self, fs: FakeFilesystem) -> None:
+        """Should return error message on OSError (lines 168-169)."""
+        fs.create_dir("/fake/.knowledge/artifacts")
+        fs.create_file(
+            "/fake/.knowledge/artifacts/kinds.yml",
+            contents="kinds: []\n",
+        )
+
+        def mock_read_text(self, encoding=None):
+            """Mock that raises OSError."""
+            raise OSError("Disk read error")
+
+        # Patch at the module level using pathlib.Path.read_text
+        with patch("pathlib.Path.read_text", mock_read_text):
+            kinds, error = load_registry(Path("/fake/.knowledge"))
+
+        assert kinds == []
+        assert "Failed to read registry file" in error
+
+    def test_kinds_not_a_list(self, fs: FakeFilesystem) -> None:
+        """Should return error when kinds is not a list (line 176)."""
+        fs.create_dir("/fake/.knowledge/artifacts")
+        fs.create_file(
+            "/fake/.knowledge/artifacts/kinds.yml",
+            contents="kinds: {invalid: mapping}\n",
+        )
+        kinds, error = load_registry(Path("/fake/.knowledge"))
+        assert kinds == []
+        assert "'kinds' must be a list" in error
+
+
+class TestValidateSchemaAdditional:
+    """Additional tests for validate_schema function."""
+
+    def test_entry_not_dict(self) -> None:
+        """Should error when entry is not a dict (lines 199-200)."""
+        kinds = [
+            "not_a_dict",  # type: ignore[list-item]
+            123,  # type: ignore[list-item]
+        ]
+        result = ValidationResult()
+        validate_schema(kinds, result)  # type: ignore[arg-type]
+        assert result.passed is False
+        assert any("Entry must be a mapping/dict" in e.message for e in result.errors)
+
+    def test_missing_kind_id(self) -> None:
+        """Should error when kind_id is missing (lines 204-205)."""
+        kinds = [
+            {
+                # No kind_id
+                "content_form": "text",
+                "structure_pattern": {},
+                "extraction_contract": {},
+                "rendering_contract": {},
+            }
+        ]
+        result = ValidationResult()
+        validate_schema(kinds, result)
+        assert result.passed is False
+        assert any("Missing required field 'kind_id'" in e.message for e in result.errors)
+
+    def test_aliases_not_a_list(self) -> None:
+        """Should handle aliases that are not a list (branch 222->232)."""
+        kinds = [
+            {
+                "kind_id": "test/kind",
+                "content_form": "text",
+                "structure_pattern": {},
+                "extraction_contract": {},
+                "rendering_contract": {},
+                "aliases": "not_a_list",  # Invalid aliases type
+            }
+        ]
+        result = ValidationResult()
+        validate_schema(kinds, result)
+        # Should not add alias errors since aliases is not a list
+        assert all("Alias target" not in e.message for e in result.errors)
+
+    def test_rendering_contract_not_dict(self) -> None:
+        """Should handle rendering_contract not being a dict (branch 233->197)."""
+        kinds = [
+            {
+                "kind_id": "test/kind",
+                "content_form": "text",
+                "structure_pattern": {},
+                "extraction_contract": {},
+                "rendering_contract": "not_a_dict",  # Not a dict
+            }
+        ]
+        result = ValidationResult()
+        validate_schema(kinds, result)
+        # Should just pass without render_plan warning
+        assert result.passed is True
+
+
+class TestValidateStructurePatternDeterminismAdditional:
+    """Additional tests for validate_structure_pattern_determinism function."""
+
+    def test_non_dict_kind_skipped(self) -> None:
+        """Should skip non-dict kinds (line 262)."""
+        kinds = [
+            "not_a_dict",  # type: ignore[list-item]
+            {"kind_id": "valid/kind", "structure_pattern": {}},
+        ]
+        result = ValidationResult()
+        validate_structure_pattern_determinism(kinds, result)  # type: ignore[arg-type]
+        assert result.passed is True
+
+    def test_structure_pattern_not_dict(self) -> None:
+        """Should error when structure_pattern is not a dict (lines 268-269)."""
+        kinds = [
+            {
+                "kind_id": "test/kind",
+                "structure_pattern": "not_a_dict",
+            }
+        ]
+        result = ValidationResult()
+        validate_structure_pattern_determinism(kinds, result)
+        assert result.passed is False
+        assert any("Must be a mapping/dict" in e.message for e in result.errors)
+
+    def test_sibling_constraint_not_dict(self) -> None:
+        """Should error when sibling_constraint is not a dict (lines 285, 290)."""
+        kinds = [
+            {
+                "kind_id": "test/kind",
+                "structure_pattern": {
+                    "sibling_constraints": [
+                        "not_a_dict",  # type: ignore[list-item]
+                    ],
+                },
+            }
+        ]
+        result = ValidationResult()
+        validate_structure_pattern_determinism(kinds, result)
+        assert result.passed is False
+        assert any("Constraint must be a mapping/dict" in e.message for e in result.errors)
+
+    def test_sibling_constraint_missing_key(self) -> None:
+        """Should error when sibling constraint is missing key (lines 293)."""
+        kinds = [
+            {
+                "kind_id": "test/kind",
+                "structure_pattern": {
+                    "sibling_constraints": [
+                        {"equals": "value"},  # Missing 'key' field
+                    ],
+                },
+            }
+        ]
+        result = ValidationResult()
+        validate_structure_pattern_determinism(kinds, result)
+        assert result.passed is False
+        assert any("Missing required 'key' field" in e.message for e in result.errors)
+
+    def test_starts_with_any_not_a_list(self) -> None:
+        """Should error when starts_with_any is not a list (lines 329)."""
+        kinds = [
+            {
+                "kind_id": "test/kind",
+                "structure_pattern": {
+                    "content_sniff": {
+                        "starts_with_any": "not_a_list",
+                    },
+                },
+            }
+        ]
+        result = ValidationResult()
+        validate_structure_pattern_determinism(kinds, result)
+        assert result.passed is False
+        assert any("Must be a list of strings" in e.message for e in result.errors)
+
+    def test_starts_with_any_non_string_item(self) -> None:
+        """Should error when starts_with_any contains non-strings (lines 335-337)."""
+        kinds = [
+            {
+                "kind_id": "test/kind",
+                "structure_pattern": {
+                    "content_sniff": {
+                        "starts_with_any": ["valid", 123, None],  # type: ignore[list-item]
+                    },
+                },
+            }
+        ]
+        result = ValidationResult()
+        validate_structure_pattern_determinism(kinds, result)
+        assert result.passed is False
+        assert any("Must be a string" in e.message for e in result.errors)
+
+    def test_sibling_constraints_not_a_list(self) -> None:
+        """Should handle sibling_constraints not being a list (branch 282->312)."""
+        kinds = [
+            {
+                "kind_id": "test/kind",
+                "structure_pattern": {
+                    "sibling_constraints": "not_a_list",
+                },
+            }
+        ]
+        result = ValidationResult()
+        validate_structure_pattern_determinism(kinds, result)
+        # Should not crash, just skip validation
+        assert result.passed is True
+
+    def test_content_sniff_not_a_dict(self) -> None:
+        """Should handle content_sniff not being a dict (branch 313->260)."""
+        kinds = [
+            {
+                "kind_id": "test/kind",
+                "structure_pattern": {
+                    "content_sniff": "not_a_dict",
+                },
+            }
+        ]
+        result = ValidationResult()
+        validate_structure_pattern_determinism(kinds, result)
+        # Should not crash, just skip validation
+        assert result.passed is True
+
+
+class TestComputePatternSignatureAdditional:
+    """Additional tests for compute_pattern_signature function."""
+
+    def test_pattern_not_dict(self) -> None:
+        """Should return empty string when pattern is not a dict (line 594)."""
+        kind = {"structure_pattern": "not_a_dict"}
+        sig = compute_pattern_signature(kind)
+        assert sig == ""
+
+    def test_content_sniff_starts_with_any_list(self) -> None:
+        """Should handle content_sniff.starts_with_any as list (lines 617-620)."""
+        kind = {
+            "structure_pattern": {
+                "content_sniff": {
+                    "starts_with_any": ["prefix1", "prefix2"],
+                }
+            }
+        }
+        sig = compute_pattern_signature(kind)
+        assert "sniff.starts_with_any=" in sig
+        assert "prefix1" in sig
+        assert "prefix2" in sig
+
+    def test_content_sniff_matches_string(self) -> None:
+        """Should handle content_sniff.matches as string (lines 617-620, val not list)."""
+        kind = {
+            "structure_pattern": {
+                "content_sniff": {
+                    "matches": "^test.*",
+                }
+            }
+        }
+        sig = compute_pattern_signature(kind)
+        assert "sniff.matches=^test.*" in sig
+
+    def test_empty_sibling_constraints(self) -> None:
+        """Should handle empty sibling_constraints (branch 605->613)."""
+        kind = {
+            "structure_pattern": {
+                "sibling_constraints": [],
+            }
+        }
+        sig = compute_pattern_signature(kind)
+        assert sig == ""
+
+    def test_sibling_constraints_non_dict_item(self) -> None:
+        """Should skip non-dict items in sibling_constraints (branch 607->606)."""
+        kind = {
+            "structure_pattern": {
+                "sibling_constraints": [
+                    "not_a_dict",  # type: ignore[list-item]
+                    {"key": "type", "equals": "code"},
+                ],
+            }
+        }
+        sig = compute_pattern_signature(kind)
+        # Should still include the valid constraint
+        assert "sibling.type.equals=code" in sig
+
+    def test_empty_content_sniff(self) -> None:
+        """Should handle empty content_sniff (branch 614->622)."""
+        kind = {
+            "structure_pattern": {
+                "content_sniff": {},
+            }
+        }
+        sig = compute_pattern_signature(kind)
+        assert sig == ""
+
+
+class TestValidateDuplicatesAdditional:
+    """Additional tests for validate_duplicates function."""
+
+    def test_non_dict_kind_skipped(self) -> None:
+        """Should skip non-dict kinds (line 673)."""
+        kinds = [
+            "not_a_dict",  # type: ignore[list-item]
+            {
+                "kind_id": "valid/kind",
+                "structure_pattern": {"root_path": "sections[*].text"},
+            },
+        ]
+        result = ValidationResult()
+        validate_duplicates(kinds, result)  # type: ignore[arg-type]
+        # Should not crash, still works with valid kind
+        assert result.passed is True
+
+    def test_duplicate_pair_check_skipped(self) -> None:
+        """Should skip already-checked pairs (line 710)."""
+        # Create kinds that would generate multiple pair checks
+        kinds = [
+            {
+                "kind_id": "kind/a",
+                "structure_pattern": {"root_path": "path.a"},
+            },
+            {
+                "kind_id": "kind/b",
+                "structure_pattern": {"root_path": "path.b"},
+            },
+            {
+                "kind_id": "kind/c",
+                "structure_pattern": {"root_path": "path.c"},
+            },
+        ]
+        result = ValidationResult()
+        validate_duplicates(kinds, result)
+        # All different, should pass without duplicates
+        assert result.passed is True
+
+
+class TestValidateRegistryAdditional:
+    """Additional tests for validate_registry function."""
+
+    def test_load_error_returns_early(self, fs: FakeFilesystem) -> None:
+        """Should return early with error when load fails (lines 742-743)."""
+        fs.create_dir("/fake/.knowledge/artifacts")
+        # No kinds.yml file - will trigger error
+        result = validate_registry(Path("/fake/.knowledge"))
+        assert result.passed is False
+        assert any("not found" in e.message for e in result.errors)
+
+    def test_strict_mode_upgrades_warnings_to_errors(self, fs: FakeFilesystem) -> None:
+        """Should upgrade warnings to errors in strict mode (lines 759-761)."""
+        fs.create_dir("/fake/.knowledge/artifacts")
+        # Create registry with a valid kind that has a render_plan_id (generates warning)
+        registry_content = """
+kinds:
+  - kind_id: test/kind
+    content_form: text
+    structure_pattern:
+      root_path: sections[*].text
+    extraction_contract:
+      contributors: []
+    rendering_contract:
+      render_plan_id: test.v1
+"""
+        fs.create_file(
+            "/fake/.knowledge/artifacts/kinds.yml",
+            contents=registry_content,
+        )
+
+        with patch.object(validate_artifact_kinds, "REPO_ROOT", Path("/fake")):
+            result = validate_registry(Path("/fake/.knowledge"), strict=True)
+
+        # In strict mode, warnings become errors
+        assert result.passed is False
+        # Warnings list should be empty after being converted to errors
+        assert len(result.warnings) == 0
+        # Check that warnings were converted to errors with [strict] prefix
+        assert any("[strict]" in e.message for e in result.errors)
+
+
+class TestValidateSamplesAdditional:
+    """Additional tests for validate_samples function."""
+
+    def test_non_dict_kind_skipped(self) -> None:
+        """Should skip non-dict kinds (line 474)."""
+        kinds = [
+            "not_a_dict",  # type: ignore[list-item]
+            {
+                "kind_id": "valid/kind",
+                "examples": [],
+            },
+        ]
+        result = ValidationResult()
+        validate_samples(kinds, result)  # type: ignore[arg-type]
+        # Should not crash, should warn about no samples
+        assert result.passed is True
+
+    def test_examples_not_a_list(self) -> None:
+        """Should error when examples is not a list (lines 488-489)."""
+        kinds = [
+            {
+                "kind_id": "test/kind",
+                "examples": "not_a_list",
+            }
+        ]
+        result = ValidationResult()
+        validate_samples(kinds, result)
+        assert result.passed is False
+        assert any("Must be a list" in e.message for e in result.errors)
+
+    def test_example_not_a_dict(self) -> None:
+        """Should error when example is not a dict (lines 493, 498)."""
+        kinds = [
+            {
+                "kind_id": "test/kind",
+                "examples": [
+                    "not_a_dict",  # type: ignore[list-item]
+                ],
+            }
+        ]
+        result = ValidationResult()
+        validate_samples(kinds, result)
+        assert result.passed is False
+        assert any("Sample must be a mapping/dict" in e.message for e in result.errors)
+
+    def test_strict_source_file_not_found(self, fs: FakeFilesystem) -> None:
+        """Should error in strict mode when source file not found (line 513)."""
+        with patch.object(validate_artifact_kinds, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake")
+            kinds = [
+                {
+                    "kind_id": "test/kind",
+                    "examples": [
+                        {
+                            "source_file": "docs/nonexistent.yml",
+                            "element_id": "test-element",
+                        },
+                    ],
+                }
+            ]
+            result = ValidationResult()
+            validate_samples(kinds, result, strict=True)
+            assert result.passed is False
+            assert any("Sample source file not found" in e.message for e in result.errors)
+
+    def test_missing_element_id_warns(self, fs: FakeFilesystem) -> None:
+        """Should warn when element_id is missing (lines 528, 533)."""
+        with patch.object(validate_artifact_kinds, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake/docs")
+            fs.create_file("/fake/docs/test.yml", contents="test: value\n")
+            kinds = [
+                {
+                    "kind_id": "test/kind",
+                    "examples": [
+                        {
+                            "source_file": "docs/test.yml",
+                            # Missing element_id
+                        },
+                    ],
+                }
+            ]
+            result = ValidationResult()
+            validate_samples(kinds, result)
+            assert result.passed is True
+            assert any("No element_id specified" in w.message for w in result.warnings)
+
+    def test_yaml_parse_error_warns(self, fs: FakeFilesystem) -> None:
+        """Should warn when YAML parsing fails (lines 541-543, 549)."""
+        with patch.object(validate_artifact_kinds, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake/docs")
+            fs.create_file("/fake/docs/test.yml", contents="invalid: yaml: [")
+            kinds = [
+                {
+                    "kind_id": "test/kind",
+                    "examples": [
+                        {
+                            "source_file": "docs/test.yml",
+                            "element_id": "test-element",
+                        },
+                    ],
+                }
+            ]
+            result = ValidationResult()
+            validate_samples(kinds, result)
+            assert result.passed is True
+            assert any("Failed to parse sample file" in w.message for w in result.warnings)
+
+    def test_yaml_parse_error_strict_errors(self, fs: FakeFilesystem) -> None:
+        """Should error in strict mode when YAML parsing fails (lines 542-543)."""
+        with patch.object(validate_artifact_kinds, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake/docs")
+            fs.create_file("/fake/docs/test.yml", contents="invalid: yaml: [")
+            kinds = [
+                {
+                    "kind_id": "test/kind",
+                    "examples": [
+                        {
+                            "source_file": "docs/test.yml",
+                            "element_id": "test-element",
+                        },
+                    ],
+                }
+            ]
+            result = ValidationResult()
+            validate_samples(kinds, result, strict=True)
+            assert result.passed is False
+            assert any("Failed to parse sample file" in e.message for e in result.errors)
+
+    def test_element_not_found_warns(self, fs: FakeFilesystem) -> None:
+        """Should warn when element_id not found (lines 561, 563-574)."""
+        with patch.object(validate_artifact_kinds, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake/docs")
+            fs.create_file(
+                "/fake/docs/test.yml",
+                contents="kinds:\n  - kind_id: other-kind\n    value: test\n",
+            )
+            kinds = [
+                {
+                    "kind_id": "test/kind",
+                    "examples": [
+                        {
+                            "source_file": "docs/test.yml",
+                            "element_id": "nonexistent-element",
+                        },
+                    ],
+                }
+            ]
+            result = ValidationResult()
+            validate_samples(kinds, result)
+            assert result.passed is True
+            # Should warn about element not found
+            assert any("not found" in w.message.lower() for w in result.warnings)
+
+    def test_element_not_found_strict_errors(self, fs: FakeFilesystem) -> None:
+        """Should error in strict mode when element_id not found (lines 562-563)."""
+        with patch.object(validate_artifact_kinds, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake/docs")
+            fs.create_file(
+                "/fake/docs/test.yml",
+                contents="kinds:\n  - kind_id: other-kind\n    value: test\n",
+            )
+            kinds = [
+                {
+                    "kind_id": "test/kind",
+                    "examples": [
+                        {
+                            "source_file": "docs/test.yml",
+                            "element_id": "nonexistent-element",
+                        },
+                    ],
+                }
+            ]
+            result = ValidationResult()
+            validate_samples(kinds, result, strict=True)
+            assert result.passed is False
+
+    def test_valid_sample_with_element_facts(self, fs: FakeFilesystem) -> None:
+        """Should validate sample extraction when element facts exist (lines 577-578)."""
+        with patch.object(validate_artifact_kinds, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake/docs")
+            # Create a valid YAML file with an element that can be extracted
+            # The 'id' field is required for extract_ids_and_objects to find it
+            yaml_content = """
+kinds:
+  - id: test-element
+    value: test
+    description: Test description
+"""
+            fs.create_file(
+                "/fake/docs/test.yml",
+                contents=yaml_content,
+            )
+            kinds = [
+                {
+                    "kind_id": "test/kind",
+                    "structure_pattern": {
+                        "required_fields": ["value"],
+                    },
+                    "extraction_contract": {
+                        "contributors": [
+                            {"field_path": "value"},
+                        ],
+                    },
+                    "examples": [
+                        {
+                            "source_file": "docs/test.yml",
+                            "element_id": "test-element",
+                        },
+                    ],
+                }
+            ]
+            result = ValidationResult()
+            validate_samples(kinds, result)
+            # Should not add errors for the element (may add warnings for no samples elsewhere)
+            assert result.passed is True
+
+    def test_sample_with_empty_element_facts(self, fs: FakeFilesystem) -> None:
+        """Should skip validation when element_facts is empty (branch 577->491)."""
+        with patch.object(validate_artifact_kinds, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake/docs")
+            # Create YAML file but return empty facts by using a format that doesn't produce facts
+            yaml_content = """
+data:
+  items:
+    - name: test-element
+      value: test
+"""
+            fs.create_file(
+                "/fake/docs/test.yml",
+                contents=yaml_content,
+            )
+            # Mock _resolve_element_and_field to return empty facts
+            original_resolve = validate_artifact_kinds._resolve_element_and_field
+
+            def mock_resolve(data, source_file, element_id, field_path):
+                return {"id": element_id}, [], None  # Empty facts list
+
+            kinds = [
+                {
+                    "kind_id": "test/kind",
+                    "structure_pattern": {},
+                    "extraction_contract": {},
+                    "examples": [
+                        {
+                            "source_file": "docs/test.yml",
+                            "element_id": "test-element",
+                        },
+                    ],
+                }
+            ]
+            result = ValidationResult()
+            with patch.object(validate_artifact_kinds, "_resolve_element_and_field", mock_resolve):
+                validate_samples(kinds, result)
+            # Should pass since no errors were added
+            assert result.passed is True

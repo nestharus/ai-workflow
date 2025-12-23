@@ -92,7 +92,7 @@ class SurrealDBPool:
         created: list[AsyncSurrealConnection] = []
         try:
             for _ in range(self._size):
-                conn = AsyncSurreal(self._dsn)
+                conn = cast("AsyncSurrealConnection", AsyncSurreal(self._dsn))
                 await conn.connect()
                 await conn.signin({"username": self._user, "password": self._password})
                 await conn.use(self._namespace, self._database)

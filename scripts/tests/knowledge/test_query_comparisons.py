@@ -126,6 +126,55 @@ class TestBuildQuery:
 
         assert "UNION ALL" in query
 
+    def test_query_with_source_file_filter(self, fs: FakeFilesystem) -> None:
+        """Should include source_file filter in query.
+
+        This covers lines 102-104 where source_file filter is applied.
+        """
+        fs.create_file("/knowledge/comparisons/test.csv", contents="")
+
+        query, params = build_query(
+            [Path("/knowledge/comparisons/test.csv")], source_file="app/core/factory.py"
+        )
+
+        assert "source_file = ?" in query
+        assert "app/core/factory.py" in params
+
+    def test_query_with_split_file_filter(self, fs: FakeFilesystem) -> None:
+        """Should include split_file filter in query.
+
+        This covers lines 106-108 where split_file filter is applied.
+        """
+        fs.create_file("/knowledge/comparisons/test.csv", contents="")
+
+        query, params = build_query(
+            [Path("/knowledge/comparisons/test.csv")], split_file="split/patterns.yml"
+        )
+
+        assert "split_file = ?" in query
+        assert "split/patterns.yml" in params
+
+    def test_query_with_all_filters_combined(self, fs: FakeFilesystem) -> None:
+        """Should combine all filters correctly."""
+        fs.create_file("/knowledge/comparisons/test.csv", contents="")
+
+        query, params = build_query(
+            [Path("/knowledge/comparisons/test.csv")],
+            element_id="item-1",
+            origin_type="original",
+            source_file="source.yml",
+            split_file="split.yml",
+        )
+
+        assert "id = ?" in query
+        assert "origin_type = ?" in query
+        assert "source_file = ?" in query
+        assert "split_file = ?" in query
+        assert "item-1" in params
+        assert "original" in params
+        assert "source.yml" in params
+        assert "split.yml" in params
+
 
 class TestFormatResults:
     """Tests for format_results function."""
@@ -273,3 +322,55 @@ source.yml,item-1,original,text1,split.yml,text2
         assert result == 0
         captured = capsys.readouterr()
         assert "row(s) returned" in captured.out
+
+    def test_handles_absolute_knowledge_path(
+        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should handle absolute knowledge path correctly.
+
+        This covers line 284-285 (then branch) where path.is_absolute() is True.
+        """
+        csv_content = """source_file,id,origin_type,original_text,split_file,split_text
+source.yml,item-1,original,text1,split.yml,text2
+"""
+        csv_path = real_knowledge_path / "comparisons" / "test.csv"
+        csv_path.write_text(csv_content)
+
+        # Use an absolute path
+        absolute_path = real_knowledge_path.resolve()
+        assert absolute_path.is_absolute()
+
+        with patch("sys.argv", ["script", "--knowledge-path", str(absolute_path)]):
+            result = main()
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "row(s) returned" in captured.out
+
+    def test_returns_one_on_duckdb_error(
+        self, real_knowledge_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when DuckDB query fails.
+
+        This covers lines 306-308 where duckdb.Error is caught.
+        """
+        import duckdb
+
+        # Create a valid CSV file so query_comparisons finds it
+        csv_path = real_knowledge_path / "comparisons" / "test.csv"
+        csv_path.write_text("source_file,id,origin_type,original_text,split_file,split_text\n")
+
+        # Mock duckdb.execute to raise a DuckDB error
+        with (
+            patch("sys.argv", ["script", "--knowledge-path", str(real_knowledge_path)]),
+            patch(
+                "scripts.knowledge.query_comparisons.duckdb.execute",
+                side_effect=duckdb.Error("Simulated DuckDB error"),
+            ),
+        ):
+            result = main()
+
+        # Should fail due to query error
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "Error" in captured.err

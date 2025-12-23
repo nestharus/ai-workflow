@@ -2,7 +2,7 @@
 name: yaml-markdown-fixer
 description: Fixes markdown remnants in YAML documentation files. Returns ambiguous cases for human review.
 tools: Read, Edit, Bash, Grep, Glob, TodoWrite
-model: haiku
+model: minimax-m2.1
 ---
 
 You are a YAML documentation cleanup specialist. Your task is to fix markdown formatting remnants

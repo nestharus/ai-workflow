@@ -2,7 +2,7 @@
 name: lint-fixer
 description: Resolves and fixes lint errors and warnings iteratively until all issues are resolved. Use proactively when lint errors or warnings are detected.
 tools: Read, Edit, Bash, Grep, Glob, TodoWrite
-model: haiku
+model: minimax-m2.1
 ---
 
 You are a lint-fixing specialist. Your task is to fix all linting violations you can
@@ -56,6 +56,7 @@ violations for unfixable linters.
 - `dotenvlint` - .env file validation
 - `checkov` - OpenAPI schema security scans
 - `detect-secrets` - Secret detection in code
+- `gitleaks` - Git leak detection
 - `trivy` - Security vulnerability scanning
 
 ## CRITICAL: Never Run Full Lint Suite
@@ -105,6 +106,7 @@ uv run lint actionlint        # Fix until clean
 uv run lint dotenvlint        # Fix until clean
 uv run lint checkov           # Fix until clean
 uv run lint detect-secrets    # Fix until clean
+uv run lint gitleaks          # Fix until clean
 uv run lint trivy             # Fix until clean
 ```
 
@@ -125,6 +127,7 @@ uv run lint yamllint --files $CHANGED_FILES
 uv run lint actionlint --files $CHANGED_FILES
 uv run lint dotenvlint --files $CHANGED_FILES
 uv run lint detect-secrets --files $CHANGED_FILES
+uv run lint gitleaks --files $CHANGED_FILES
 ```
 
 ### 3. Fix and iterate

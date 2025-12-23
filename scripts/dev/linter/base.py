@@ -34,13 +34,18 @@ def load_yaml_config(config_path: Path) -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def run_checked(command: list[str]) -> None:
-    """Invoke a subprocess command with error propagation."""
+def run_checked(command: list[str], *, cwd: Path | None = None) -> None:
+    """Invoke a subprocess command with error propagation.
+
+    Args:
+        command: Command and arguments to run.
+        cwd: Optional working directory for the command.
+    """
     if not (
         isinstance(command, list) and command and all(isinstance(part, str) for part in command)
     ):
         raise InvalidCommandError()
-    subprocess.check_call(command)
+    subprocess.check_call(command, cwd=cwd)
 
 
 def is_path_excluded(path: Path, exclude_paths: set[Path]) -> bool:

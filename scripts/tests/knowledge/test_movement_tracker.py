@@ -906,3 +906,470 @@ class TestQueryIterativeMovementsMain:
         assert "Full source sentence here" in captured.out
         assert "Extracted fact text" in captured.out
         assert "Residual after extraction" in captured.out
+
+    def test_returns_one_for_missing_csv(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when CSV file doesn't exist."""
+        args = MagicMock()
+        args.knowledge_path = tmp_path
+        args.entity = "test"
+        args.fact_id = None
+
+        result = query_iterative_movements_main(args)
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "CSV not found" in captured.err
+
+    def test_returns_zero_for_no_results(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 0 and print message when no results found."""
+        # Create empty CSV with header
+        (tmp_path / "movements").mkdir(parents=True)
+        csv_path = tmp_path / "movements" / "iterative_movements.csv"
+        header = ",".join(ITERATIVE_CSV_COLUMNS)
+        csv_path.write_text(f"{header}\n")
+
+        args = MagicMock()
+        args.knowledge_path = tmp_path
+        args.entity = "nonexistent_entity"
+        args.fact_id = None
+        args.verbose = False
+
+        result = query_iterative_movements_main(args)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "No matching iterative movements found" in captured.out
+
+    def test_prints_separator_between_verbose_records(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should print newline separator between multiple verbose records."""
+        # Create test CSV with multiple records
+        (tmp_path / "movements").mkdir(parents=True)
+        csv_path = tmp_path / "movements" / "iterative_movements.csv"
+        header = ",".join(ITERATIVE_CSV_COLUMNS)
+        rows = [
+            header,
+            (
+                "iter-1,fact-1,Sentence one,Fact one,Residual one,0.98,Reason one,"
+                "20240101T120000Z,,,,pass-span.v1"
+            ),
+            (
+                "iter-2,fact-1,Sentence two,Fact two,Residual two,0.95,Reason two,"
+                "20240101T120001Z,,,,pass-span.v1"
+            ),
+        ]
+        csv_path.write_text("\n".join(rows) + "\n")
+
+        args = MagicMock()
+        args.knowledge_path = tmp_path
+        args.entity = None
+        args.fact_id = "fact-1"
+        args.verbose = True
+
+        result = query_iterative_movements_main(args)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        # Check for multiple records in verbose output
+        assert "--- Record 1 ---" in captured.out
+        assert "--- Record 2 ---" in captured.out
+        assert "2 record(s)" in captured.out
+
+    def test_uses_absolute_knowledge_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should use absolute knowledge path when provided."""
+        # Create test CSV with absolute path
+        abs_knowledge_path = tmp_path / "absolute_knowledge"
+        (abs_knowledge_path / "movements").mkdir(parents=True)
+        csv_path = abs_knowledge_path / "movements" / "iterative_movements.csv"
+        header = ",".join(ITERATIVE_CSV_COLUMNS)
+        rows = [
+            header,
+            (
+                "iter-abs,fact-abs,Absolute test sentence,Fact from abs,Residual from abs,"
+                "0.99,Reason,20240101T120000Z,,,,pass-span.v1"
+            ),
+        ]
+        csv_path.write_text("\n".join(rows) + "\n")
+
+        args = MagicMock()
+        # Use absolute path directly - tmp_path is already absolute
+        args.knowledge_path = abs_knowledge_path
+        args.entity = "Absolute test"
+        args.fact_id = None
+        args.verbose = False
+
+        result = query_iterative_movements_main(args)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "iter-abs" in captured.out
+
+
+class TestRecordIterativeMovementMainExtended:
+    """Extended tests for record_iterative_movement_main function."""
+
+    def test_uses_absolute_knowledge_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should use absolute knowledge path when provided."""
+        abs_knowledge_path = tmp_path / "absolute_knowledge"
+        args = MagicMock()
+        # Use absolute path directly - tmp_path is already absolute
+        args.knowledge_path = abs_knowledge_path
+        args.fact_id = "uuid-abs"
+        args.before = "Absolute test sentence"
+        args.fact = "Absolute fact"
+        args.after = "Absolute residual"
+        args.reason = "Fact extraction"
+        args.model = "test-model"
+        args.pass_id = None
+        args.span_id = None
+        args.artifact_id = None
+
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        with (
+            patch(
+                "scripts.knowledge.movement_tracker.load_qwen_embedding_model",
+                return_value=(mock_model, mock_tokenizer),
+            ),
+            patch(
+                "scripts.knowledge.movement_tracker.compute_similarity_score",
+                return_value=0.98,
+            ),
+        ):
+            result = record_iterative_movement_main(args)
+
+        assert result == 0
+        # Verify CSV was created in absolute path
+        csv_path = abs_knowledge_path / "movements" / "iterative_movements.csv"
+        assert csv_path.exists()
+
+    def test_uses_explicit_pass_span_artifact_ids(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should use explicit pass_id, span_id, artifact_id when provided."""
+        args = MagicMock()
+        args.knowledge_path = tmp_path
+        args.fact_id = "uuid-explicit"
+        args.before = "Artifact level sentence"
+        args.fact = "Artifact level fact"
+        args.after = "Artifact level residual"
+        args.reason = "Artifact extraction"
+        args.model = "test-model"
+        # Provide explicit IDs for artifact-level extraction
+        args.pass_id = "pass-001"
+        args.span_id = "span-001"
+        args.artifact_id = "artifact-001"
+
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        with (
+            patch(
+                "scripts.knowledge.movement_tracker.load_qwen_embedding_model",
+                return_value=(mock_model, mock_tokenizer),
+            ),
+            patch(
+                "scripts.knowledge.movement_tracker.compute_similarity_score",
+                return_value=0.98,
+            ),
+        ):
+            result = record_iterative_movement_main(args)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Iterative movement recorded" in captured.out
+
+        # Verify the record contains explicit IDs
+        csv_path = tmp_path / "movements" / "iterative_movements.csv"
+        content = csv_path.read_text()
+        assert "pass-001" in content
+        assert "span-001" in content
+        assert "artifact-001" in content
+
+
+class TestMainExtended:
+    """Extended tests for main function covering additional branches."""
+
+    def test_uses_absolute_knowledge_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should use absolute knowledge path when provided."""
+        # Create files
+        (tmp_path / "source.yml").write_text("content")
+        (tmp_path / "target.yml").write_text("content")
+        abs_knowledge_path = tmp_path / "abs_knowledge"
+
+        with (
+            patch.object(movement_tracker, "REPO_ROOT", tmp_path),
+            patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "source.yml",
+                    "--target-file",
+                    "target.yml",
+                    "--reason",
+                    "Reason",
+                    "--coverage",
+                    "Coverage",
+                    "--before-text",
+                    "Before",
+                    "--after-text-source",
+                    "After",
+                    "--target-before",
+                    "Target before",
+                    "--target-after",
+                    "Target after",
+                    "--knowledge-path",
+                    str(abs_knowledge_path),
+                ],
+            ),
+        ):
+            result = main()
+
+        assert result == 0
+        # Verify CSV was created in absolute knowledge path
+        csv_path = abs_knowledge_path / "movements" / "movements.csv"
+        assert csv_path.exists()
+
+    def test_returns_one_for_source_outside_repo(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when source file is outside repository."""
+        with patch.object(movement_tracker, "REPO_ROOT", Path("/fake/repo")):
+            fs.create_dir("/fake/repo")
+            # Create source outside repo
+            fs.create_file("/outside/source.yml", contents="content")
+            # Create target inside repo
+            fs.create_file("/fake/repo/target.yml", contents="content")
+
+            with patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "/outside/source.yml",
+                    "--target-file",
+                    "target.yml",
+                    "--reason",
+                    "Reason",
+                    "--coverage",
+                    "Coverage",
+                    "--before-text",
+                    "Before",
+                    "--after-text-source",
+                    "After",
+                    "--target-before",
+                    "Target before",
+                    "--target-after",
+                    "Target after",
+                ],
+            ):
+                result = main()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "must be within repository" in captured.err
+
+    def test_returns_one_for_target_outside_repo(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return 1 when target file is outside repository."""
+        with patch.object(movement_tracker, "REPO_ROOT", Path("/fake/repo")):
+            fs.create_dir("/fake/repo")
+            # Create source inside repo
+            fs.create_file("/fake/repo/source.yml", contents="content")
+            # Create target outside repo
+            fs.create_file("/outside/target.yml", contents="content")
+
+            with patch(
+                "sys.argv",
+                [
+                    "script",
+                    "--id",
+                    "item-1",
+                    "--source-file",
+                    "source.yml",
+                    "--target-file",
+                    "/outside/target.yml",
+                    "--reason",
+                    "Reason",
+                    "--coverage",
+                    "Coverage",
+                    "--before-text",
+                    "Before",
+                    "--after-text-source",
+                    "After",
+                    "--target-before",
+                    "Target before",
+                    "--target-after",
+                    "Target after",
+                ],
+            ):
+                result = main()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "must be within repository" in captured.err
+
+
+class TestQueryIterativeMovementsEmptyFile:
+    """Tests for query_iterative_movements with empty/missing files."""
+
+    def test_returns_empty_for_nonexistent_file(self, tmp_path: Path) -> None:
+        """Should return empty list when file doesn't exist."""
+        csv_path = tmp_path / "movements" / "nonexistent.csv"
+
+        results = query_iterative_movements(csv_path, entity="test")
+
+        assert results == []
+
+    def test_returns_empty_for_empty_file(self, tmp_path: Path) -> None:
+        """Should return empty list when file is empty (size 0)."""
+        (tmp_path / "movements").mkdir(parents=True)
+        csv_path = tmp_path / "movements" / "iterative_movements.csv"
+        csv_path.write_text("")  # Empty file
+
+        results = query_iterative_movements(csv_path, entity="test")
+
+        assert results == []
+
+
+class TestQueryIterativeMovementsMainRelativePath:
+    """Tests for query_iterative_movements_main with relative paths."""
+
+    def test_uses_relative_knowledge_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should resolve relative knowledge path via REPO_ROOT."""
+        # Create test CSV within the fake REPO_ROOT
+        (tmp_path / ".knowledge" / "movements").mkdir(parents=True)
+        csv_path = tmp_path / ".knowledge" / "movements" / "iterative_movements.csv"
+        header = ",".join(ITERATIVE_CSV_COLUMNS)
+        rows = [
+            header,
+            (
+                "iter-rel,fact-rel,Relative path sentence,Fact from rel,Residual from rel,"
+                "0.97,Reason,20240101T120000Z,,,,pass-span.v1"
+            ),
+        ]
+        csv_path.write_text("\n".join(rows) + "\n")
+
+        args = MagicMock()
+        # Use relative path - must patch REPO_ROOT to resolve correctly
+        args.knowledge_path = Path(".knowledge")
+        args.entity = "Relative path"
+        args.fact_id = None
+        args.verbose = False
+
+        with patch.object(movement_tracker, "REPO_ROOT", tmp_path):
+            result = query_iterative_movements_main(args)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "iter-rel" in captured.out
+
+
+class TestRecordIterativeMovementMainRelativePath:
+    """Tests for record_iterative_movement_main with relative paths."""
+
+    def test_uses_relative_knowledge_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should resolve relative knowledge path via REPO_ROOT."""
+        args = MagicMock()
+        # Use relative path - must patch REPO_ROOT to resolve correctly
+        args.knowledge_path = Path(".knowledge")
+        args.fact_id = "uuid-rel"
+        args.before = "Relative path sentence"
+        args.fact = "Relative fact"
+        args.after = "Relative residual"
+        args.reason = "Fact extraction"
+        args.model = "test-model"
+        args.pass_id = None
+        args.span_id = None
+        args.artifact_id = None
+
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        with (
+            patch.object(movement_tracker, "REPO_ROOT", tmp_path),
+            patch(
+                "scripts.knowledge.movement_tracker.load_qwen_embedding_model",
+                return_value=(mock_model, mock_tokenizer),
+            ),
+            patch(
+                "scripts.knowledge.movement_tracker.compute_similarity_score",
+                return_value=0.98,
+            ),
+        ):
+            result = record_iterative_movement_main(args)
+
+        assert result == 0
+        # Verify CSV was created in relative path resolved via REPO_ROOT
+        csv_path = tmp_path / ".knowledge" / "movements" / "iterative_movements.csv"
+        assert csv_path.exists()
+
+
+class TestMainRecordIterativeEntryPoint:
+    """Tests for main_record_iterative entry point function."""
+
+    def test_parses_args_and_calls_main(self) -> None:
+        """Should parse args and call record_iterative_movement_main."""
+        from scripts.knowledge.movement_tracker import main_record_iterative
+
+        with (
+            patch("scripts.knowledge.movement_tracker.parse_record_iterative_args") as mock_parse,
+            patch(
+                "scripts.knowledge.movement_tracker.record_iterative_movement_main",
+                return_value=0,
+            ) as mock_main,
+        ):
+            mock_args = MagicMock()
+            mock_parse.return_value = mock_args
+
+            result = main_record_iterative()
+
+            mock_parse.assert_called_once()
+            mock_main.assert_called_once_with(mock_args)
+            assert result == 0
+
+
+class TestMainQueryIterativeEntryPoint:
+    """Tests for main_query_iterative entry point function."""
+
+    def test_parses_args_and_calls_main(self) -> None:
+        """Should parse args and call query_iterative_movements_main."""
+        from scripts.knowledge.movement_tracker import main_query_iterative
+
+        with (
+            patch("scripts.knowledge.movement_tracker.parse_query_iterative_args") as mock_parse,
+            patch(
+                "scripts.knowledge.movement_tracker.query_iterative_movements_main",
+                return_value=0,
+            ) as mock_main,
+        ):
+            mock_args = MagicMock()
+            mock_parse.return_value = mock_args
+
+            result = main_query_iterative()
+
+            mock_parse.assert_called_once()
+            mock_main.assert_called_once_with(mock_args)
+            assert result == 0

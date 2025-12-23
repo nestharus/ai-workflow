@@ -278,6 +278,90 @@ class TestLinearClientCreateIssue:
 
         assert result["identifier"] == "NES-100"
 
+    def test_create_issue_with_all_optional_params(self, mocker: MockerFixture) -> None:
+        """Create issue with all optional parameters."""
+        # First call: list_teams for team resolution
+        teams_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": "team-uuid-123", "name": "Nexus", "key": "NES"},
+                    ],
+                }
+            }
+        }
+        # Second call: issueCreate mutation
+        create_response = {
+            "data": {
+                "issueCreate": {
+                    "success": True,
+                    "issue": {
+                        "id": "new-issue-789",
+                        "identifier": "NES-101",
+                        "title": "Full Issue",
+                        "url": "https://linear.app/issue/NES-101",
+                        "branchName": "nes-101-full-issue",
+                    },
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(teams_response),
+            create_mock_response(create_response),
+        ]
+
+        client = LinearClient(api_key="test_key")
+        result = client.create_issue(
+            team="NES",
+            title="Full Issue",
+            description="Full description",
+            assignee_id="assignee-uuid",
+            project_id="project-uuid",
+            priority=1,
+            state_id="state-uuid",
+            parent_id="parent-uuid",
+            label_ids=["label-1", "label-2"],
+        )
+
+        assert result["identifier"] == "NES-101"
+
+    def test_create_issue_failure(self, mocker: MockerFixture) -> None:
+        """Raise error when issueCreate returns success=False."""
+        teams_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": "team-uuid-123", "name": "Nexus", "key": "NES"},
+                    ],
+                }
+            }
+        }
+        create_response = {
+            "data": {
+                "issueCreate": {
+                    "success": False,
+                    "issue": None,
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(teams_response),
+            create_mock_response(create_response),
+        ]
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.create_issue(team="NES", title="Failing Issue")
+
+        assert exc_info.value.code == "API_ERROR"
+        assert "Failed to create issue" in exc_info.value.message
+
 
 class TestLinearClientUpdateIssue:
     """Test the update_issue method."""
@@ -346,6 +430,88 @@ class TestLinearClientUpdateIssue:
 
         assert exc_info.value.code == "NO_UPDATES"
         assert "At least one field must be provided" in exc_info.value.message
+
+    def test_update_issue_with_all_optional_params(self, mocker: MockerFixture) -> None:
+        """Update issue with all optional parameters."""
+        mock_response = {
+            "data": {
+                "issueUpdate": {
+                    "success": True,
+                    "issue": {
+                        "id": "issue-123",
+                        "identifier": "NES-24",
+                        "title": "Full Update Title",
+                        "url": "https://linear.app/issue/NES-24",
+                        "updatedAt": "2025-01-03T00:00:00Z",
+                    },
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test_key")
+        result = client.update_issue(
+            issue_id="NES-24",
+            title="Full Update Title",
+            description="Updated description",
+            assignee_id="assignee-uuid",
+            project_id="project-uuid",
+            priority=2,
+            state_id="state-uuid",
+            parent_id="parent-uuid",
+            label_ids=["label-1", "label-2"],
+        )
+
+        assert result["title"] == "Full Update Title"
+
+    def test_update_issue_with_status_alias(self, mocker: MockerFixture) -> None:
+        """Update issue using status (backwards compat alias for state_id)."""
+        mock_response = {
+            "data": {
+                "issueUpdate": {
+                    "success": True,
+                    "issue": {
+                        "id": "issue-123",
+                        "identifier": "NES-24",
+                        "title": "Issue",
+                        "url": "https://linear.app/issue/NES-24",
+                        "updatedAt": "2025-01-03T00:00:00Z",
+                    },
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test_key")
+        # Using status parameter instead of state_id
+        result = client.update_issue(issue_id="NES-24", status="some-state-uuid")
+
+        assert result["identifier"] == "NES-24"
+
+    def test_update_issue_failure(self, mocker: MockerFixture) -> None:
+        """Raise error when issueUpdate returns success=False."""
+        mock_response = {
+            "data": {
+                "issueUpdate": {
+                    "success": False,
+                    "issue": None,
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.update_issue(issue_id="NES-24", title="Failing Update")
+
+        assert exc_info.value.code == "API_ERROR"
+        assert "Failed to update issue" in exc_info.value.message
 
 
 class TestLinearClientComments:
@@ -449,6 +615,228 @@ class TestLinearClientComments:
 
         assert result["id"] == "comment-new"
         assert result["body"] == "New comment"
+
+    def test_list_comments_with_pagination(self, mocker: MockerFixture) -> None:
+        """List comments handles pagination correctly."""
+        page1_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-123",
+                    "identifier": "NES-24",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                        "nodes": [
+                            {
+                                "id": "comment-1",
+                                "body": "First comment",
+                                "createdAt": "2025-01-01T00:00:00Z",
+                                "updatedAt": "2025-01-01T00:00:00Z",
+                                "user": None,
+                            },
+                        ],
+                    },
+                }
+            }
+        }
+        page2_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-123",
+                    "identifier": "NES-24",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [
+                            {
+                                "id": "comment-2",
+                                "body": "Second comment",
+                                "createdAt": "2025-01-02T00:00:00Z",
+                                "updatedAt": "2025-01-02T00:00:00Z",
+                                "user": {
+                                    "id": "user-1",
+                                    "name": "Test User",
+                                    "email": "test@example.com",
+                                },
+                            },
+                        ],
+                    },
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(page1_response),
+            create_mock_response(page2_response),
+        ]
+
+        client = LinearClient(api_key="test_key")
+        result = client.list_comments("NES-24")
+
+        assert len(result["comments"]) == 2
+        assert result["comments"][0]["id"] == "comment-1"
+        assert result["comments"][1]["id"] == "comment-2"
+        # Verify cursor was used - second call should include 'after' variable
+        assert mock_urlopen.call_count == 2
+
+    def test_list_comments_not_found(self, mocker: MockerFixture) -> None:
+        """Raise NOT_FOUND error when issue does not exist."""
+        mock_response = {"data": {"issue": None}}
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.list_comments("INVALID-999")
+
+        assert exc_info.value.code == "NOT_FOUND"
+        assert "Issue not found" in exc_info.value.message
+
+    def test_list_comments_pagination_error(self, mocker: MockerFixture) -> None:
+        """Raise PAGINATION_ERROR when pagination does not advance."""
+        page1_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-123",
+                    "identifier": "NES-24",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                        "nodes": [
+                            {
+                                "id": "comment-1",
+                                "body": "First comment",
+                                "createdAt": "2025-01-01T00:00:00Z",
+                                "updatedAt": "2025-01-01T00:00:00Z",
+                                "user": None,
+                            },
+                        ],
+                    },
+                }
+            }
+        }
+        # Same cursor returned - pagination does not advance
+        page2_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-123",
+                    "identifier": "NES-24",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                        "nodes": [],
+                    },
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(page1_response),
+            create_mock_response(page2_response),
+        ]
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.list_comments("NES-24")
+
+        assert exc_info.value.code == "PAGINATION_ERROR"
+        assert "Pagination did not advance" in exc_info.value.message
+
+    def test_list_comments_pagination_error_no_cursor(self, mocker: MockerFixture) -> None:
+        """Raise PAGINATION_ERROR when hasNextPage but no endCursor."""
+        mock_response = {
+            "data": {
+                "issue": {
+                    "id": "issue-123",
+                    "identifier": "NES-24",
+                    "comments": {
+                        "pageInfo": {"hasNextPage": True, "endCursor": None},
+                        "nodes": [
+                            {
+                                "id": "comment-1",
+                                "body": "First comment",
+                                "createdAt": "2025-01-01T00:00:00Z",
+                                "updatedAt": "2025-01-01T00:00:00Z",
+                                "user": None,
+                            },
+                        ],
+                    },
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.list_comments("NES-24")
+
+        assert exc_info.value.code == "PAGINATION_ERROR"
+
+    def test_create_comment_failure(self, mocker: MockerFixture) -> None:
+        """Raise error when commentCreate returns success=False."""
+        mock_response = {
+            "data": {
+                "commentCreate": {
+                    "success": False,
+                    "comment": None,
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.create_comment(issue_id="NES-24", body="Failing comment")
+
+        assert exc_info.value.code == "API_ERROR"
+        assert "Failed to create comment" in exc_info.value.message
+
+    def test_create_comment_not_dict_response(self, mocker: MockerFixture) -> None:
+        """Raise error when commentCreate is not a dict."""
+        mock_response = {
+            "data": {
+                "commentCreate": None  # Not a dict
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.create_comment(issue_id="NES-24", body="Test comment")
+
+        assert exc_info.value.code == "API_ERROR"
+        assert "Failed to create comment" in exc_info.value.message
+
+    def test_create_comment_without_user(self, mocker: MockerFixture) -> None:
+        """Create comment without user data (user_data is None)."""
+        mock_response = {
+            "data": {
+                "commentCreate": {
+                    "success": True,
+                    "comment": {
+                        "id": "comment-new",
+                        "body": "System comment",
+                        "createdAt": "2025-01-03T00:00:00Z",
+                        "issue": {"id": "issue-123"},
+                        "user": None,
+                    },
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test_key")
+        result = client.create_comment(issue_id="NES-24", body="System comment")
+
+        assert result["id"] == "comment-new"
+        assert result["user"] is None
 
 
 class TestLinearClientListProjects:
@@ -561,6 +949,161 @@ class TestLinearClientListProjects:
         assert projects[0]["teams"][1]["key"] == "DES"
         assert isinstance(projects[1]["teams"], list)
         assert len(projects[1]["teams"]) == 1
+
+    def test_list_projects_with_team_filter(self, mocker: MockerFixture) -> None:
+        """List projects filtered by team ID."""
+        # First call: list_teams for team resolution
+        teams_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": "team-uuid-123", "name": "Nexus", "key": "NES"},
+                    ],
+                }
+            }
+        }
+        # Second call: list projects with team filter
+        projects_response = {
+            "data": {
+                "projects": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {
+                            "id": "project-1",
+                            "name": "Team Project",
+                            "teams": {
+                                "nodes": [{"id": "team-uuid-123", "name": "Nexus", "key": "NES"}]
+                            },
+                        },
+                    ],
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(teams_response),
+            create_mock_response(projects_response),
+        ]
+
+        client = LinearClient(api_key="test_key")
+        projects = client.list_projects(team_id="NES")
+
+        assert len(projects) == 1
+        assert projects[0]["name"] == "Team Project"
+
+    def test_list_projects_team_not_found(self, mocker: MockerFixture) -> None:
+        """Raise NOT_FOUND when team does not exist."""
+        teams_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": "team-uuid-123", "name": "Nexus", "key": "NES"},
+                    ],
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(teams_response)
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.list_projects(team_id="NONEXISTENT")
+
+        assert exc_info.value.code == "NOT_FOUND"
+        assert "Team not found" in exc_info.value.message
+
+    def test_list_projects_with_pagination(self, mocker: MockerFixture) -> None:
+        """List projects handles pagination correctly."""
+        page1_response = {
+            "data": {
+                "projects": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                    "nodes": [
+                        {"id": "project-1", "name": "Project 1"},
+                    ],
+                }
+            }
+        }
+        page2_response = {
+            "data": {
+                "projects": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": "project-2", "name": "Project 2"},
+                    ],
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(page1_response),
+            create_mock_response(page2_response),
+        ]
+
+        client = LinearClient(api_key="test_key")
+        projects = client.list_projects()
+
+        assert len(projects) == 2
+        assert projects[0]["id"] == "project-1"
+        assert projects[1]["id"] == "project-2"
+
+    def test_list_projects_pagination_error(self, mocker: MockerFixture) -> None:
+        """Raise PAGINATION_ERROR when pagination does not advance."""
+        page1_response = {
+            "data": {
+                "projects": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                    "nodes": [{"id": "project-1", "name": "Project 1"}],
+                }
+            }
+        }
+        # Same cursor returned - pagination does not advance
+        page2_response = {
+            "data": {
+                "projects": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                    "nodes": [],
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(page1_response),
+            create_mock_response(page2_response),
+        ]
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.list_projects()
+
+        assert exc_info.value.code == "PAGINATION_ERROR"
+        assert "Pagination did not advance" in exc_info.value.message
+
+    def test_list_projects_pagination_error_no_cursor(self, mocker: MockerFixture) -> None:
+        """Raise PAGINATION_ERROR when hasNextPage but no endCursor."""
+        mock_response = {
+            "data": {
+                "projects": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": None},
+                    "nodes": [{"id": "project-1", "name": "Project 1"}],
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.list_projects()
+
+        assert exc_info.value.code == "PAGINATION_ERROR"
 
 
 class TestLinearClientListTeams:
@@ -712,6 +1255,96 @@ class TestLinearClientListTeams:
         client.list_teams(include_archived=False)
         client.list_teams(include_archived=True)
         assert mock_urlopen.call_count == 2  # No additional calls
+
+    def test_list_teams_with_pagination(self, mocker: MockerFixture) -> None:
+        """List teams handles pagination correctly."""
+        page1_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                    "nodes": [
+                        {"id": "team-1", "name": "Team 1", "key": "T1"},
+                    ],
+                }
+            }
+        }
+        page2_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": "team-2", "name": "Team 2", "key": "T2"},
+                    ],
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(page1_response),
+            create_mock_response(page2_response),
+        ]
+
+        client = LinearClient(api_key="test_key")
+        teams = client.list_teams()
+
+        assert len(teams) == 2
+        assert teams[0]["id"] == "team-1"
+        assert teams[1]["id"] == "team-2"
+        assert mock_urlopen.call_count == 2
+
+    def test_list_teams_pagination_error(self, mocker: MockerFixture) -> None:
+        """Raise PAGINATION_ERROR when pagination does not advance."""
+        page1_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                    "nodes": [{"id": "team-1", "name": "Team 1", "key": "T1"}],
+                }
+            }
+        }
+        # Same cursor returned - pagination does not advance
+        page2_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                    "nodes": [],
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.side_effect = [
+            create_mock_response(page1_response),
+            create_mock_response(page2_response),
+        ]
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.list_teams()
+
+        assert exc_info.value.code == "PAGINATION_ERROR"
+        assert "Pagination did not advance" in exc_info.value.message
+
+    def test_list_teams_pagination_error_no_cursor(self, mocker: MockerFixture) -> None:
+        """Raise PAGINATION_ERROR when hasNextPage but no endCursor."""
+        mock_response = {
+            "data": {
+                "teams": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": None},
+                    "nodes": [{"id": "team-1", "name": "Team 1", "key": "T1"}],
+                }
+            }
+        }
+
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+        mock_urlopen.return_value = create_mock_response(mock_response)
+
+        client = LinearClient(api_key="test_key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.list_teams()
+
+        assert exc_info.value.code == "PAGINATION_ERROR"
 
 
 class TestLinearClientErrorHandling:
@@ -1576,6 +2209,68 @@ class TestFetchGitHubAttachments:
         assert len(attachments) == 2
         assert attachments[0]["url"] == "https://github.com/org/repo/pull/1"
         assert attachments[1]["url"] == "https://github.com/org/repo/pull/2"
+
+    def test_fetch_attachments_pagination_error(self, mocker: MockerFixture) -> None:
+        """Raise PAGINATION_ERROR when pagination does not advance."""
+        page1_response = create_mock_response(
+            {
+                "data": {
+                    "issue": {
+                        "attachments": {
+                            "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                            "nodes": [
+                                {"url": "https://github.com/org/repo/pull/1", "title": "PR #1"}
+                            ],
+                        }
+                    }
+                }
+            }
+        )
+        # Same cursor returned - pagination does not advance
+        page2_response = create_mock_response(
+            {
+                "data": {
+                    "issue": {
+                        "attachments": {
+                            "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                            "nodes": [],
+                        }
+                    }
+                }
+            }
+        )
+        mocker.patch("urllib.request.urlopen", side_effect=[page1_response, page2_response])
+
+        client = LinearClient(api_key="test-key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.fetch_github_attachments("NES-123")
+
+        assert exc_info.value.code == "PAGINATION_ERROR"
+        assert "Pagination did not advance" in exc_info.value.message
+
+    def test_fetch_attachments_pagination_error_no_cursor(self, mocker: MockerFixture) -> None:
+        """Raise PAGINATION_ERROR when hasNextPage but no endCursor."""
+        mock_response = create_mock_response(
+            {
+                "data": {
+                    "issue": {
+                        "attachments": {
+                            "pageInfo": {"hasNextPage": True, "endCursor": None},
+                            "nodes": [
+                                {"url": "https://github.com/org/repo/pull/1", "title": "PR #1"}
+                            ],
+                        }
+                    }
+                }
+            }
+        )
+        mocker.patch("urllib.request.urlopen", return_value=mock_response)
+
+        client = LinearClient(api_key="test-key")
+        with pytest.raises(LinearClientError) as exc_info:
+            client.fetch_github_attachments("NES-123")
+
+        assert exc_info.value.code == "PAGINATION_ERROR"
 
 
 class TestResolveTeamId:

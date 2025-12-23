@@ -20,6 +20,23 @@ from scripts.knowledge.residue_manager import (
 class TestSaveResidueSnapshot:
     """Tests for save_residue_snapshot function."""
 
+    def test_saves_with_relative_knowledge_path(self, tmp_path: Path) -> None:
+        """Should convert relative knowledge_path to absolute using REPO_ROOT."""
+        with patch("scripts.knowledge.residue_manager.REPO_ROOT", tmp_path):
+            # Pass a relative path - it should be joined with REPO_ROOT
+            result = save_residue_snapshot(
+                "artifact-rel",
+                "Text with relative path",
+                "before",
+                knowledge_path=Path("subdir/.knowledge"),
+            )
+
+            assert result.exists()
+            assert result.name == "artifact-rel.before.txt"
+            assert result.read_text() == "Text with relative path"
+            # Should be under tmp_path/subdir/.knowledge/facts/residue
+            assert tmp_path in result.parents
+
     def test_saves_before_snapshot(self, tmp_path: Path) -> None:
         """Should save before snapshot with correct filename."""
         knowledge_path = tmp_path / ".knowledge"
@@ -122,6 +139,41 @@ class TestSaveResidueSnapshot:
 class TestLoadResidueSnapshot:
     """Tests for load_residue_snapshot function."""
 
+    def test_loads_with_default_knowledge_path(self, tmp_path: Path) -> None:
+        """Should use default .knowledge path when not specified."""
+        with patch("scripts.knowledge.residue_manager.REPO_ROOT", tmp_path):
+            # First save a snapshot using default path
+            save_residue_snapshot(
+                "artifact-default",
+                "Default path content",
+                "before",
+            )
+
+            # Load without specifying knowledge_path
+            result = load_residue_snapshot("artifact-default", "before")
+
+            assert result == "Default path content"
+
+    def test_loads_with_relative_knowledge_path(self, tmp_path: Path) -> None:
+        """Should convert relative knowledge_path to absolute using REPO_ROOT."""
+        with patch("scripts.knowledge.residue_manager.REPO_ROOT", tmp_path):
+            # First save with relative path
+            save_residue_snapshot(
+                "artifact-rel",
+                "Relative path content",
+                "before",
+                knowledge_path=Path("subdir/.knowledge"),
+            )
+
+            # Load with the same relative path
+            result = load_residue_snapshot(
+                "artifact-rel",
+                "before",
+                knowledge_path=Path("subdir/.knowledge"),
+            )
+
+            assert result == "Relative path content"
+
     def test_loads_before_snapshot(self, tmp_path: Path) -> None:
         """Should load before snapshot content."""
         knowledge_path = tmp_path / ".knowledge"
@@ -204,6 +256,41 @@ class TestLoadResidueSnapshot:
 class TestListResidueSnapshots:
     """Tests for list_residue_snapshots function."""
 
+    def test_lists_with_default_knowledge_path(self, tmp_path: Path) -> None:
+        """Should use default .knowledge path when not specified."""
+        with patch("scripts.knowledge.residue_manager.REPO_ROOT", tmp_path):
+            # First save snapshots using default path
+            save_residue_snapshot("artifact-default", "before", "before")
+            save_residue_snapshot("artifact-default", "after", "after")
+
+            # List without specifying knowledge_path
+            result = list_residue_snapshots("artifact-default")
+
+            assert len(result) == 2
+            filenames = [p.name for p in result]
+            assert "artifact-default.before.txt" in filenames
+            assert "artifact-default.after.txt" in filenames
+
+    def test_lists_with_relative_knowledge_path(self, tmp_path: Path) -> None:
+        """Should convert relative knowledge_path to absolute using REPO_ROOT."""
+        with patch("scripts.knowledge.residue_manager.REPO_ROOT", tmp_path):
+            # First save with relative path
+            save_residue_snapshot(
+                "artifact-rel",
+                "before",
+                "before",
+                knowledge_path=Path("subdir/.knowledge"),
+            )
+
+            # List with the same relative path
+            result = list_residue_snapshots(
+                "artifact-rel",
+                knowledge_path=Path("subdir/.knowledge"),
+            )
+
+            assert len(result) == 1
+            assert result[0].name == "artifact-rel.before.txt"
+
     def test_returns_empty_for_no_snapshots(self, tmp_path: Path) -> None:
         """Should return empty list when no snapshots exist."""
         knowledge_path = tmp_path / ".knowledge"
@@ -269,6 +356,45 @@ class TestListResidueSnapshots:
 
 class TestDeleteResidueSnapshot:
     """Tests for delete_residue_snapshot function."""
+
+    def test_deletes_with_default_knowledge_path(self, tmp_path: Path) -> None:
+        """Should use default .knowledge path when not specified."""
+        with patch("scripts.knowledge.residue_manager.REPO_ROOT", tmp_path):
+            # First save a snapshot using default path
+            snapshot_path = save_residue_snapshot(
+                "artifact-default",
+                "text",
+                "before",
+            )
+            assert snapshot_path.exists()
+
+            # Delete without specifying knowledge_path
+            result = delete_residue_snapshot("artifact-default", "before")
+
+            assert result is True
+            assert not snapshot_path.exists()
+
+    def test_deletes_with_relative_knowledge_path(self, tmp_path: Path) -> None:
+        """Should convert relative knowledge_path to absolute using REPO_ROOT."""
+        with patch("scripts.knowledge.residue_manager.REPO_ROOT", tmp_path):
+            # First save with relative path
+            snapshot_path = save_residue_snapshot(
+                "artifact-rel",
+                "text",
+                "before",
+                knowledge_path=Path("subdir/.knowledge"),
+            )
+            assert snapshot_path.exists()
+
+            # Delete with the same relative path
+            result = delete_residue_snapshot(
+                "artifact-rel",
+                "before",
+                knowledge_path=Path("subdir/.knowledge"),
+            )
+
+            assert result is True
+            assert not snapshot_path.exists()
 
     def test_deletes_existing_snapshot(self, tmp_path: Path) -> None:
         """Should delete snapshot and return True."""
@@ -436,3 +562,30 @@ class TestGetSnapshotMetadata:
         result = get_snapshot_metadata("artifact-123", knowledge_path=knowledge_path)
 
         assert result["before"]["size"] == len(content.encode("utf-8"))
+
+    def test_skips_malformed_snapshot_filenames(self, tmp_path: Path) -> None:
+        """Should skip files that don't match expected snapshot patterns."""
+        knowledge_path = tmp_path / ".knowledge"
+        residue_dir = knowledge_path / "facts" / "residue"
+        residue_dir.mkdir(parents=True)
+
+        # Create a valid before snapshot
+        save_residue_snapshot(
+            "artifact-123",
+            "valid content",
+            "before",
+            knowledge_path=knowledge_path,
+        )
+
+        # Create a malformed file that matches artifact prefix but has
+        # only one part when split by "." (before the .txt extension)
+        # The glob will find "artifact-123.*" files, so we create artifact-123.txt
+        # which after removing .txt becomes just "artifact-123" - one part
+        malformed_file = residue_dir / "artifact-123.txt"
+        malformed_file.write_text("malformed", encoding="utf-8")
+
+        result = get_snapshot_metadata("artifact-123", knowledge_path=knowledge_path)
+
+        # Should only include the valid "before" snapshot, not the malformed one
+        assert "before" in result
+        assert len(result) == 1  # Only the "before" snapshot

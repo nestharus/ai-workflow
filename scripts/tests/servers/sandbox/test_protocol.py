@@ -323,6 +323,30 @@ class TestErrorResponse:
         assert response.request_id == "test-id"
         assert response.message == "Something went wrong"
 
+    def test_from_dict_missing_request_id_raises_error(self) -> None:
+        """Test that missing request_id raises ValueError."""
+        data = {
+            "status": "error",
+            "message": "Something went wrong",
+            # Missing request_id
+        }
+
+        with pytest.raises(ValueError, match="Missing 'request_id' in error response"):
+            ErrorResponse.from_dict(data)
+
+    def test_from_dict_missing_message_uses_default(self) -> None:
+        """Test that missing message defaults to 'Unknown error'."""
+        data = {
+            "status": "error",
+            "request_id": "test-id",
+            # Missing message
+        }
+
+        response = ErrorResponse.from_dict(data)
+
+        assert response.request_id == "test-id"
+        assert response.message == "Unknown error"
+
 
 class TestParseRequest:
     """Tests for parse_request function."""

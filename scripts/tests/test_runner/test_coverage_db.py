@@ -107,7 +107,7 @@ class TestTableCreation:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
         write_tier_config(initialized_db, "unit", tier_config)
 
@@ -180,13 +180,11 @@ class TestTierConfigOps:
             name="unit",
             test_path="tests/unit",
             source_paths=["app", "scripts"],
-            coverage_type="line_branch",
             min_line_overall=80.0,
             min_branch_overall=70.0,
             min_line_per_function=75.0,
             min_branch_per_function=65.0,
             skip_private_functions=True,
-            service_layer_only=False,
         )
         write_tier_config(initialized_db, "unit", config)
 
@@ -207,7 +205,6 @@ class TestTierConfigOps:
         assert row["min_line_per_function"] == 75.0
         assert row["min_branch_per_function"] == 65.0
         assert row["skip_private_functions"] == 1
-        assert row["service_layer_only"] == 0
 
     def test_get_tier_config(self, initialized_db: Path) -> None:
         """Test retrieving tier configuration."""
@@ -215,7 +212,6 @@ class TestTierConfigOps:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=90.0,
         )
         write_tier_config(initialized_db, "integration", config)
@@ -228,7 +224,6 @@ class TestTierConfigOps:
         assert result["source_paths"] == ["app"]
         assert result["min_usecase"] == 90.0
         assert result["skip_private_functions"] is False
-        assert result["service_layer_only"] is False
 
     def test_get_tier_config_not_found(self, initialized_db: Path) -> None:
         """Test retrieving non-existent tier configuration."""

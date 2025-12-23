@@ -295,3 +295,162 @@ class TestMain:
         captured = capsys.readouterr()
         assert "Files processed:" in captured.out
         assert "Artifacts detected:" in captured.out
+
+    def test_prints_manifests_created(
+        self, fs: FakeFilesystem, capsys: CaptureFixture[str]
+    ) -> None:
+        """Should print manifests created count when create_manifests=True (covers line 325)."""
+        yaml_content = {"id": "test", "text": "sequenceDiagram\n  A->>B: Hello"}
+        fs.create_file("/fake/docs/test.yml", contents=yaml.safe_dump(yaml_content))
+        fs.create_dir("/fake/.knowledge/artifacts")
+
+        with (
+            patch("scripts.knowledge.detect_artifacts.REPO_ROOT", Path("/fake")),
+            patch(
+                "scripts.knowledge.detect_artifacts._detect_from_file",
+                return_value=([], 2, 0),  # 2 manifests created
+            ),
+        ):
+            result = main(
+                [
+                    "--source-files",
+                    "/fake/docs/test.yml",
+                    "--artifacts-dir",
+                    "/fake/.knowledge/artifacts",
+                    "--create-manifests",
+                ]
+            )
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Manifests created: 2" in captured.out
+
+    def test_prints_skipped_by_v1(self, fs: FakeFilesystem, capsys: CaptureFixture[str]) -> None:
+        """Should print skipped by V1 rule count (covers lines 326-327)."""
+        yaml_content = {"id": "test", "text": "content"}
+        fs.create_file("/fake/docs/test.yml", contents=yaml.safe_dump(yaml_content))
+        fs.create_dir("/fake/.knowledge/artifacts")
+
+        with (
+            patch("scripts.knowledge.detect_artifacts.REPO_ROOT", Path("/fake")),
+            patch(
+                "scripts.knowledge.detect_artifacts._detect_from_file",
+                return_value=([], 0, 3),  # 3 skipped by V1
+            ),
+        ):
+            result = main(
+                [
+                    "--source-files",
+                    "/fake/docs/test.yml",
+                    "--artifacts-dir",
+                    "/fake/.knowledge/artifacts",
+                    "--v1-only",
+                    "--no-create-manifests",
+                ]
+            )
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Skipped by V1 rule: 3" in captured.out
+
+    def test_prints_kinds_summary(self, fs: FakeFilesystem, capsys: CaptureFixture[str]) -> None:
+        """Should print artifacts by kind summary (covers lines 334-337)."""
+        yaml_content = {"id": "test", "text": "content"}
+        fs.create_file("/fake/docs/test.yml", contents=yaml.safe_dump(yaml_content))
+        fs.create_dir("/fake/.knowledge/artifacts")
+
+        artifacts = [
+            Artifact(
+                artifact_id="abc123",
+                artifact_kind="diagram/mermaid.sequence",
+                artifact_format="text/x-mermaid",
+                source_file="docs/test.yml",
+                source_element_id="element-1",
+                field_path="text",
+                source_locator="inline",
+                source_uri=None,
+                render_engine="text_llm",
+                render_plan_id="diagram.mermaid.sequence.v1",
+                projection_version="fieldfacts.v2",
+            ),
+            Artifact(
+                artifact_id="xyz789",
+                artifact_kind="diagram/mermaid.sequence",
+                artifact_format="text/x-mermaid",
+                source_file="docs/test.yml",
+                source_element_id="element-2",
+                field_path="text2",
+                source_locator="inline",
+                source_uri=None,
+                render_engine="text_llm",
+                render_plan_id="diagram.mermaid.sequence.v1",
+                projection_version="fieldfacts.v2",
+            ),
+        ]
+
+        with (
+            patch("scripts.knowledge.detect_artifacts.REPO_ROOT", Path("/fake")),
+            patch(
+                "scripts.knowledge.detect_artifacts._detect_from_file",
+                return_value=(artifacts, 0, 0),
+            ),
+        ):
+            result = main(
+                [
+                    "--source-files",
+                    "/fake/docs/test.yml",
+                    "--artifacts-dir",
+                    "/fake/.knowledge/artifacts",
+                    "--no-create-manifests",
+                ]
+            )
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Artifacts by kind:" in captured.out
+        assert "diagram/mermaid.sequence: 2" in captured.out
+
+    def test_outputs_json_format(self, fs: FakeFilesystem, capsys: CaptureFixture[str]) -> None:
+        """Should output JSON when format=json (covers lines 340-343)."""
+        yaml_content = {"id": "test", "text": "content"}
+        fs.create_file("/fake/docs/test.yml", contents=yaml.safe_dump(yaml_content))
+        fs.create_dir("/fake/.knowledge/artifacts")
+
+        artifact = Artifact(
+            artifact_id="abc123",
+            artifact_kind="prose/paragraph",
+            artifact_format="text/markdown",
+            source_file="docs/test.yml",
+            source_element_id="element-1",
+            field_path="text",
+            source_locator="inline",
+            source_uri=None,
+            render_engine="text_llm",
+            render_plan_id="prose.paragraph.v1",
+            projection_version="fieldfacts.v2",
+        )
+
+        with (
+            patch("scripts.knowledge.detect_artifacts.REPO_ROOT", Path("/fake")),
+            patch(
+                "scripts.knowledge.detect_artifacts._detect_from_file",
+                return_value=([artifact], 0, 0),
+            ),
+        ):
+            result = main(
+                [
+                    "--source-files",
+                    "/fake/docs/test.yml",
+                    "--artifacts-dir",
+                    "/fake/.knowledge/artifacts",
+                    "--no-create-manifests",
+                    "--output-format",
+                    "json",
+                ]
+            )
+
+        assert result == 0
+        captured = capsys.readouterr()
+        # Should contain JSON output with artifact_id
+        assert "abc123" in captured.out
+        assert "prose/paragraph" in captured.out

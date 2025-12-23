@@ -14,6 +14,8 @@ from scripts.dev.linter.base import (
 
 UV_CLI_REQUIRED = "uv CLI required to run lint"
 SECRETS_BASELINE = REPO_ROOT / ".secrets.baseline"
+# Relative path for detect-secrets to avoid machine-specific absolute paths in baseline
+SECRETS_BASELINE_RELATIVE = ".secrets.baseline"
 LINT_DETECT_SECRETS_CONFIG = REPO_ROOT / ".lint.detect-secrets.yaml"
 
 
@@ -72,6 +74,7 @@ class DetectSecretsLinter(BaseLinter):
             )
         else:
             # Scan all files and compare against baseline
+            # Use relative path and cwd to avoid machine-specific paths in baseline
             run_checked(
                 [
                     uv_exe,
@@ -79,8 +82,9 @@ class DetectSecretsLinter(BaseLinter):
                     "detect-secrets",
                     "scan",
                     "--baseline",
-                    str(SECRETS_BASELINE),
-                ]
+                    SECRETS_BASELINE_RELATIVE,
+                ],
+                cwd=REPO_ROOT,
             )
 
         return LinterResult(success=True)

@@ -17,7 +17,17 @@ from fastapi.testclient import TestClient
 
 from app.api.v1 import dependencies as api_dependencies
 from app.core import dependencies as core_dependencies
-from app.core.errors import DomainValidationError, ResourceNotFoundError, UnauthorizedError
+from app.core.errors import (
+    DomainError,
+    DomainValidationError,
+    ResourceNotFoundError,
+    UnauthorizedError,
+)
+from app.core.exceptions import (
+    _sanitize_validation_errors,
+    domain_exception_handler,
+    validation_exception_handler,
+)
 from app.core.factory import create_app
 from app.core.settings import Settings
 
@@ -281,3 +291,166 @@ class TestAllErrorResponsesHaveConsistentStructure:
             assert payload["code"] in valid_codes, (
                 f"{error_type} error has invalid code: {payload['code']}"
             )
+
+
+class TestSanitizeValidationErrors:
+    """Tests for _sanitize_validation_errors function."""
+
+    def test_sanitize_with_json_serializable_context(self) -> None:
+        """Test that JSON-serializable context values are preserved."""
+        errors = [
+            {
+                "loc": ["body", "field"],
+                "msg": "Invalid value",
+                "type": "value_error",
+                "ctx": {"pattern": r"^[a-z]+$", "limit": 100},
+            }
+        ]
+
+        result = _sanitize_validation_errors(errors)
+
+        assert len(result) == 1
+        assert result[0].ctx is not None
+        assert result[0].ctx["pattern"] == r"^[a-z]+$"
+        assert result[0].ctx["limit"] == 100
+
+    def test_sanitize_with_non_serializable_context_converts_to_string(self) -> None:
+        """Test that non-JSON-serializable context values are converted to string."""
+
+        class CustomObject:
+            def __str__(self) -> str:
+                return "custom_repr"
+
+        errors = [
+            {
+                "loc": ["body", "field"],
+                "msg": "Invalid value",
+                "type": "value_error",
+                "ctx": {"custom": CustomObject()},
+            }
+        ]
+
+        result = _sanitize_validation_errors(errors)
+
+        assert len(result) == 1
+        assert result[0].ctx is not None
+        assert result[0].ctx["custom"] == "custom_repr"
+
+    def test_sanitize_truncates_at_max_validation_errors(self) -> None:
+        """Test that sanitization stops at MAX_VALIDATION_ERRORS limit."""
+        from app.contracts.example_contract import MAX_VALIDATION_ERRORS
+
+        # Create more errors than the limit
+        errors = [
+            {"loc": ["body", f"field{i}"], "msg": f"Error {i}", "type": "value_error"}
+            for i in range(MAX_VALIDATION_ERRORS + 10)
+        ]
+
+        result = _sanitize_validation_errors(errors)
+
+        assert len(result) == MAX_VALIDATION_ERRORS
+
+    def test_sanitize_with_no_context(self) -> None:
+        """Test that errors without context are handled correctly."""
+        errors = [{"loc": ["body", "field"], "msg": "Field required", "type": "missing"}]
+
+        result = _sanitize_validation_errors(errors)
+
+        assert len(result) == 1
+        assert result[0].ctx is None
+
+
+class TestValidationExceptionHandlerEdgeCases:
+    """Tests for validation_exception_handler edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_validation_handler_raises_typeerror_for_wrong_exception_type(
+        self,
+    ) -> None:
+        """Test that validation handler raises TypeError for non-RequestValidationError."""
+        from unittest.mock import Mock
+
+        mock_request = Mock()
+
+        with pytest.raises(TypeError):
+            await validation_exception_handler(mock_request, ValueError("wrong type"))
+
+    @pytest.mark.asyncio
+    async def test_validation_handler_with_non_fastapi_app(self) -> None:
+        """Test validation handler when app is not FastAPI instance."""
+        from unittest.mock import Mock
+
+        from fastapi.exceptions import RequestValidationError
+
+        # Create a mock request with a non-FastAPI app
+        mock_app = object()  # Not a FastAPI instance
+        mock_request = Mock()
+        mock_request.app = mock_app
+        mock_request.method = "POST"
+        mock_request.url = Mock()
+        mock_request.url.path = "/test"
+
+        # Create a RequestValidationError
+        exc = RequestValidationError(
+            errors=[{"loc": ["body", "field"], "msg": "test error", "type": "value_error"}]
+        )
+
+        # Call handler - should not error even with non-FastAPI app
+        response = await validation_exception_handler(mock_request, exc)
+
+        assert response.status_code == 400
+
+    def test_validation_error_with_invalid_json_body(self, error_test_client: TestClient) -> None:
+        """Verify validation handler handles invalid JSON body gracefully."""
+        # Enable error body echoing for this test
+        error_test_client.app.state.settings.include_error_body = True
+        api_prefix = error_test_client.app.state.settings.api_prefix
+
+        # Send raw bytes that are not valid JSON
+        response = error_test_client.post(
+            f"{api_prefix}/examples/process",
+            content=b"not valid json {{{",
+            headers={"Content-Type": "application/json"},
+        )
+
+        # Should still return 400 validation error, but body parsing would fail silently
+        assert response.status_code == 400
+        payload = response.json()
+        assert payload["code"] == "VALIDATION_ERROR"
+
+
+class TestDomainExceptionHandlerEdgeCases:
+    """Tests for domain_exception_handler edge cases."""
+
+    def test_domain_handler_raises_typeerror_for_wrong_exception_type(self) -> None:
+        """Test that domain handler raises TypeError for non-DomainError."""
+        from unittest.mock import Mock
+
+        mock_request = Mock()
+
+        with pytest.raises(TypeError):
+            domain_exception_handler(mock_request, ValueError("wrong type"))
+
+    def test_domain_handler_handles_generic_domain_error(
+        self, error_test_client: TestClient
+    ) -> None:
+        """Verify generic DomainError (not a subclass) returns INTERNAL_ERROR."""
+        api_prefix = error_test_client.app.state.settings.api_prefix
+
+        # Mock the service to raise a generic DomainError
+        mock_service = AsyncMock()
+        mock_service.process.side_effect = DomainError("Generic domain error")
+
+        error_test_client.app.dependency_overrides[api_dependencies.get_example_service] = (
+            lambda: mock_service
+        )
+        response = error_test_client.post(
+            f"{api_prefix}/examples/process",
+            json={"message": "test", "type": "info"},
+        )
+
+        assert response.status_code == 500
+        payload = response.json()
+
+        assert payload["code"] == "INTERNAL_ERROR"
+        assert payload["statusCode"] == 500

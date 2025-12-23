@@ -256,6 +256,33 @@ ImportError: No module named 'missing'
         assert results[0].message == "Test failed"
         assert results[0].traceback == ""
 
+    def test_classname_converted_path_ends_with_py(self, fs: FakeFilesystem) -> None:
+        """Test branch [99,101] where class_path ends with .py after conversion.
+
+        The replace(".", "/") converts all dots to slashes. For the branch to NOT add .py,
+        the converted path must already end with ".py". This requires a classname like
+        "test_modulepy" which after conversion stays "test_modulepy" and does NOT end
+        with ".py", so the branch is actually always taken for real-world classnames.
+
+        This test verifies the normal path where .py IS added (branch [99,100]).
+        Note: Branch [99,101] (not adding .py) is effectively dead code since any
+        classname with ".py" gets the dot converted to "/" making it "/py" not ".py".
+        """
+        # Standard classname format - always needs .py added after dot conversion
+        xml_content = """<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="pytest" tests="1" errors="0" failures="0" skipped="0" time="0.1">
+    <testcase classname="tests.unit.test_main" name="test_example" time="0.1"/>
+</testsuite>
+"""
+        fs.create_file("/junit.xml", contents=xml_content)
+
+        results, _summary = parse_junit_xml(Path("/junit.xml"))
+
+        assert len(results) == 1
+        # After replace(".", "/"), "tests.unit.test_main" -> "tests/unit/test_main"
+        # Does NOT end with ".py", so ".py" is added
+        assert results[0].test_name == "tests/unit/test_main.py::test_example"
+
     def test_real_world_pytest_format(self, fs: FakeFilesystem) -> None:
         """Should parse real pytest-generated junit XML format."""
         xml_content = """<?xml version="1.0" encoding="utf-8"?>

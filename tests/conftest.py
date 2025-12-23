@@ -28,6 +28,24 @@ from fastapi.testclient import TestClient
 from app.core.factory import create_app
 from app.core.settings import Settings
 
+# --- Patch thinc's fix_random_seed to handle seeds >= 2**32 ---
+# pytest-randomly may pass seeds that exceed numpy's 32-bit limit.
+# thinc registers a pytest_randomly.random_seeder entry point that calls
+# numpy.random.seed() directly without constraining the seed value.
+# This patch applies modulo 2**32 to prevent ValueError.
+try:
+    import thinc.util as _thinc_util  # type: ignore[import-not-found]
+
+    _original_fix_random_seed = _thinc_util.fix_random_seed
+
+    def _patched_fix_random_seed(seed: int = 0) -> None:
+        """Wrapper that constrains seed to 32-bit range for numpy compatibility."""
+        _original_fix_random_seed(seed % (2**32))
+
+    _thinc_util.fix_random_seed = _patched_fix_random_seed
+except ImportError:
+    pass  # thinc not installed, no patch needed
+
 logger = logging.getLogger(__name__)
 
 

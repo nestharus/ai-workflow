@@ -37,7 +37,7 @@ class TestCreateStrategyFactory:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
         db_path = tmp_path / "coverage.db"
 
@@ -54,7 +54,7 @@ class TestCreateStrategyFactory:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
+            min_usecase=100.0,
         )
         use_cases = [
             UseCase(
@@ -72,17 +72,17 @@ class TestCreateStrategyFactory:
         assert isinstance(strategy, IntegrationTestStrategy)
         assert strategy.use_cases == use_cases
 
-    def test_raises_for_unknown_coverage_type(self, tmp_path: Path) -> None:
-        """Factory raises ValueError for unknown coverage type."""
+    def test_raises_for_missing_thresholds(self, tmp_path: Path) -> None:
+        """Factory raises ValueError when config has no coverage thresholds set."""
         config = TestTierConfig(
             name="unknown",
             test_path="tests",
             source_paths=["app"],
-            coverage_type="unknown_type",
+            # No thresholds set - this will cause coverage_type property to raise
         )
         db_path = tmp_path / "coverage.db"
 
-        with pytest.raises(ValueError, match="Unknown coverage type"):
+        with pytest.raises(ValueError, match="has no coverage thresholds set"):
             create_strategy(config, db_path, tmp_path)
 
     def test_raises_for_usecase_without_use_cases(self, tmp_path: Path) -> None:
@@ -91,7 +91,7 @@ class TestCreateStrategyFactory:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
+            min_usecase=100.0,
         )
         db_path = tmp_path / "coverage.db"
 
@@ -109,7 +109,6 @@ class TestLineBranchTestStrategyLifecycle:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=70.0,
         )
@@ -181,7 +180,6 @@ class TestIntegrationTestStrategyLifecycle:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=100.0,
         )
         use_cases = [
@@ -235,7 +233,6 @@ class TestLineBranchTestStrategyBuildSummary:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=70.0,
         )
@@ -297,7 +294,6 @@ class TestLineBranchTestStrategyBuildSummary:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=70.0,
         )
@@ -341,7 +337,6 @@ class TestLineBranchTestStrategyBuildSummary:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=70.0,
         )
@@ -384,7 +379,6 @@ class TestLineBranchTestStrategyBuildSummary:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=70.0,
         )
@@ -431,7 +425,6 @@ class TestIntegrationTestStrategyBuildSummary:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=100.0,
         )
         use_cases: list[UseCase] = []
@@ -479,7 +472,6 @@ class TestIntegrationTestStrategyBuildSummary:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=80.0,
         )
         use_cases: list[UseCase] = []
@@ -506,7 +498,6 @@ class TestIntegrationTestStrategyBuildSummary:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=100.0,
         )
         use_cases: list[UseCase] = []
@@ -543,7 +534,6 @@ class TestIntegrationTestStrategyBuildSummary:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=100.0,  # Threshold is 100%
         )
         use_cases: list[UseCase] = []
@@ -578,7 +568,6 @@ class TestLineBranchTestStrategyValidationFailures:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=70.0,
         )
@@ -630,7 +619,6 @@ class TestLineBranchTestStrategyValidationFailures:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=70.0,
         )
@@ -681,7 +669,6 @@ class TestLineBranchTestStrategyValidationFailures:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=70.0,
         )
@@ -742,7 +729,6 @@ class TestLineBranchTestStrategyValidationFailures:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=70.0,
         )
@@ -793,7 +779,6 @@ class TestIntegrationTestStrategyValidationFailures:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=100.0,
         )
         use_cases: list[UseCase] = []
@@ -823,7 +808,6 @@ class TestIntegrationTestStrategyValidationFailures:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=100.0,
         )
         use_cases: list[UseCase] = []
@@ -858,7 +842,6 @@ class TestIntegrationTestStrategyValidationFailures:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=80.0,
         )
         use_cases: list[UseCase] = []
@@ -877,3 +860,200 @@ class TestIntegrationTestStrategyValidationFailures:
         failures = strategy.validate()
 
         assert failures == []
+
+
+class TestIntegrationTestStrategyCollectResults:
+    """Tests for IntegrationTestStrategy.collect_results() method."""
+
+    def test_collect_results_scans_usecases_and_writes_coverage(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """collect_results() scans for use-case markers and writes to database.
+
+        This covers lines 699-730 in test_strategies.py.
+        """
+        from scripts.dev.test_runner import coverage_db
+        from scripts.dev.test_runner import test_strategies as ts
+
+        config = TestTierConfig(
+            name="integration",
+            test_path="tests/integration",
+            source_paths=["app"],
+            min_usecase=100.0,
+        )
+        use_cases = [
+            UseCase(
+                id="UC-INT-001",
+                endpoint="/test",
+                method="GET",
+                description="Test use case 1",
+                test_tier="integration",
+            ),
+            UseCase(
+                id="UC-INT-002",
+                endpoint="/test2",
+                method="POST",
+                description="Test use case 2",
+                test_tier="integration",
+            ),
+        ]
+        db_path = tmp_path / "coverage.db"
+        strategy = IntegrationTestStrategy(config, db_path, tmp_path, use_cases)
+
+        # Mark tests as run
+        strategy._tests_ran = True
+
+        # Mock _scan_tests_for_usecases to return coverage for first use case
+        mock_scan_result = {
+            "UC-INT-001": [
+                {"file": "tests/integration/test_api.py", "test_function": "test_get_api"}
+            ]
+        }
+        monkeypatch.setattr(ts, "_scan_tests_for_usecases", lambda *args: mock_scan_result)
+
+        # Mock write_usecase_coverage to track calls
+        written_usecases = []
+
+        def mock_write_usecase_coverage(db_path, uc_id, covered, test_file, test_function):
+            written_usecases.append(
+                {
+                    "uc_id": uc_id,
+                    "covered": covered,
+                    "test_file": test_file,
+                    "test_function": test_function,
+                }
+            )
+
+        monkeypatch.setattr(coverage_db, "write_usecase_coverage", mock_write_usecase_coverage)
+        monkeypatch.setattr(coverage_db, "write_tier_config", lambda *args: None)
+
+        # Call collect_results
+        strategy.collect_results()
+
+        # Verify state
+        assert strategy._results_collected is True
+        assert strategy.usecase_result is not None
+        assert strategy.usecase_result.total_cases == 2
+        assert strategy.usecase_result.covered_cases == 1
+
+        # Verify write_usecase_coverage was called for both use cases
+        assert len(written_usecases) == 2
+
+        # First use case should be covered
+        covered_uc = next(uc for uc in written_usecases if uc["uc_id"] == "UC-INT-001")
+        assert covered_uc["covered"] is True
+        assert covered_uc["test_file"] == "tests/integration/test_api.py"
+        assert covered_uc["test_function"] == "test_get_api"
+
+        # Second use case should not be covered
+        uncovered_uc = next(uc for uc in written_usecases if uc["uc_id"] == "UC-INT-002")
+        assert uncovered_uc["covered"] is False
+        assert uncovered_uc["test_file"] is None
+        assert uncovered_uc["test_function"] is None
+
+
+class TestIntegrationTestStrategyValidateWithNullResult:
+    """Tests for IntegrationTestStrategy.validate() with None usecase_result."""
+
+    def test_validate_raises_when_usecase_result_is_none(self, tmp_path: Path) -> None:
+        """validate() raises RuntimeError when usecase_result is None.
+
+        This covers lines 753-755 in test_strategies.py.
+        """
+        config = TestTierConfig(
+            name="integration",
+            test_path="tests/integration",
+            source_paths=["app"],
+            min_usecase=100.0,
+        )
+        use_cases: list[UseCase] = []
+        strategy = IntegrationTestStrategy(config, tmp_path / "coverage.db", tmp_path, use_cases)
+
+        # Set _results_collected to True but leave usecase_result as None
+        # This simulates a scenario where collect_results partially completed
+        strategy._tests_ran = True
+        strategy._results_collected = True
+        strategy.usecase_result = None
+
+        with pytest.raises(
+            RuntimeError, match=r"usecase_result is None.*collect_results.*did not complete"
+        ):
+            strategy.validate()
+
+
+class TestIntegrationTestStrategyBuildSummaryWithNullResult:
+    """Tests for IntegrationTestStrategy.build_summary() with None usecase_result."""
+
+    def test_build_summary_raises_when_usecase_result_is_none(self, tmp_path: Path) -> None:
+        """build_summary() raises RuntimeError when usecase_result is None.
+
+        This covers lines 806-808 in test_strategies.py.
+        """
+        config = TestTierConfig(
+            name="integration",
+            test_path="tests/integration",
+            source_paths=["app"],
+            min_usecase=100.0,
+        )
+        use_cases: list[UseCase] = []
+        strategy = IntegrationTestStrategy(config, tmp_path / "coverage.db", tmp_path, use_cases)
+
+        # Set _results_collected to True but leave usecase_result as None
+        strategy._tests_ran = True
+        strategy._results_collected = True
+        strategy.usecase_result = None
+
+        with pytest.raises(
+            RuntimeError, match=r"usecase_result is None.*collect_results.*did not complete"
+        ):
+            strategy.build_summary()
+
+
+class TestCreateStrategyUnknownType:
+    """Tests for create_strategy() with unknown coverage types."""
+
+    def test_create_strategy_raises_for_unknown_coverage_type(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """create_strategy() raises ValueError for unknown coverage type.
+
+        This covers lines 891-892 in test_strategies.py.
+        """
+        # Create a config that would have an unknown coverage type
+        # We need to manually set coverage_type by overriding the property
+        config = TestTierConfig(
+            name="unknown",
+            test_path="tests/unknown",
+            source_paths=["app"],
+            min_line_per_function=80.0,
+        )
+
+        # Monkeypatch the coverage_type property to return an unknown type
+        monkeypatch.setattr(TestTierConfig, "coverage_type", property(lambda self: "unknown_type"))
+
+        db_path = tmp_path / "coverage.db"
+
+        with pytest.raises(ValueError, match=r"Unknown coverage type: unknown_type"):
+            create_strategy(config, db_path, tmp_path, tier_coverage_file=tmp_path / "data")
+
+
+class TestCreateStrategyMissingTierCoverageFile:
+    """Tests for create_strategy() with missing tier_coverage_file."""
+
+    def test_create_strategy_raises_when_tier_coverage_file_missing_for_line_branch(
+        self, tmp_path: Path
+    ) -> None:
+        """create_strategy() raises ValueError when tier_coverage_file is missing.
+
+        This covers the validation at line 883-884 in test_strategies.py.
+        """
+        config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            min_line_per_function=80.0,
+        )
+        db_path = tmp_path / "coverage.db"
+
+        with pytest.raises(ValueError, match=r"tier_coverage_file is required"):
+            create_strategy(config, db_path, tmp_path, tier_coverage_file=None)

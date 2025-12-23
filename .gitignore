@@ -79,6 +79,7 @@ out/
 .knowledge/**/*.csv
 .knowledge/originals/*.yml
 .knowledge/originals/*.yaml
+**/surgeon_logs/
 
 to_adapt/
 

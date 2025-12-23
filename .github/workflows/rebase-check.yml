@@ -22,12 +22,12 @@ jobs:
           echo "PR branch: $PR_BRANCH"
 
           # Fetch all branches
-          git fetch origin $TARGET_BRANCH
-          git fetch origin $PR_BRANCH
+          git fetch origin "$TARGET_BRANCH"
+          git fetch origin "$PR_BRANCH"
 
           # Get the merge base (common ancestor)
-          MERGE_BASE=$(git merge-base origin/$TARGET_BRANCH origin/$PR_BRANCH)
-          TARGET_HEAD=$(git rev-parse origin/$TARGET_BRANCH)
+          MERGE_BASE=$(git merge-base "origin/$TARGET_BRANCH" "origin/$PR_BRANCH")
+          TARGET_HEAD=$(git rev-parse "origin/$TARGET_BRANCH")
 
           echo "Merge base: $MERGE_BASE"
           echo "Target HEAD: $TARGET_HEAD"

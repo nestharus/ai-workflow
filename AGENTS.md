@@ -328,7 +328,7 @@ git config --global commit.gpgsign true
 **Key location**: `~/.gnupg/` (RSA 4096-bit, no passphrase)
 
 **GitHub verification**: The public key must be added to GitHub at
-https://github.com/settings/keys for signatures to show as "Verified".
+[https://github.com/settings/keys](https://github.com/settings/keys) for signatures to show as "Verified".
 
 To export the public key:
 

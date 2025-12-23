@@ -75,7 +75,12 @@ If you are unsure whether the lint-fixer was successful:
    * `uv run lint hadolint` - Dockerfile linting
    * `uv run lint pymarkdown` - Markdown validation
    * `uv run lint yamllint` - YAML validation
+   * `uv run lint actionlint` - GitHub Actions workflow linting
+   * `uv run lint dotenvlint` - .env file validation
    * `uv run lint checkov` - OpenAPI schema security scans
+   * `uv run lint detect-secrets` - Secret detection in code
+   * `uv run lint gitleaks` - Git leak detection
+   * `uv run lint trivy` - Security vulnerability scanning
 2. Review the output for errors and warnings
 3. If errors or warnings exist, return to Step 1
 4. If no errors and no warnings remain, you are done
@@ -88,7 +93,11 @@ If you are unsure whether the lint-fixer was successful:
    * `uv run lint hadolint --files $CHANGED_FILES`
    * `uv run lint pymarkdown --files $CHANGED_FILES`
    * `uv run lint yamllint --files $CHANGED_FILES`
-   * Note: `scripts` and `checkov` linters do not support `--files` and are skipped in changed-only mode
+   * `uv run lint actionlint --files $CHANGED_FILES`
+   * `uv run lint dotenvlint --files $CHANGED_FILES`
+   * `uv run lint detect-secrets --files $CHANGED_FILES`
+   * `uv run lint gitleaks --files $CHANGED_FILES`
+   * Note: `scripts`, `checkov`, and `trivy` linters do not support `--files` and are skipped in changed-only mode
 2. Review the output for errors and warnings
 3. If errors or warnings exist, return to Step 1
 4. If no errors and no warnings remain, you are done

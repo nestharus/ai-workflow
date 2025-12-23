@@ -303,6 +303,57 @@ class TestValidateNormalizedRowsByDiscriminator:
         assert passed is False
         assert "Headers mismatch" in mismatch
 
+    def test_handles_empty_table_with_header_only(self) -> None:
+        """Verify handling of table with only header (less than 2 lines after split)."""
+        source = "| method |"  # Only header, no separator or data
+        rendered = "| method |"
+
+        # parse_markdown_table returns ([], []) for tables with < 2 lines
+        _headers, _rows = [], []
+        similarity, passed, _mismatch = _validate_normalized_rows_by_discriminator(source, rendered)
+
+        # Both are empty, so they match
+        assert passed is True
+        assert similarity == 1.0
+
+    def test_handles_empty_line_in_table_data(self) -> None:
+        """Verify empty lines in table data are skipped."""
+        source = """| method | default |
+|--------|---------|
+| GET | true |
+
+| POST | false |"""
+
+        rendered = """| method | default |
+|--------|---------|
+| GET | true |
+| POST | false |"""
+
+        similarity, passed, _mismatch = _validate_normalized_rows_by_discriminator(source, rendered)
+
+        # Empty line should be skipped, both tables have same data
+        assert passed is True
+        assert similarity == 1.0
+
+    def test_handles_separator_like_line_in_data(self) -> None:
+        """Verify lines starting with |- are skipped (separator lines)."""
+        source = """| method | default |
+|--------|---------|
+| GET | true |
+|--------|---------|
+| POST | false |"""
+
+        rendered = """| method | default |
+|--------|---------|
+| GET | true |
+| POST | false |"""
+
+        similarity, passed, _mismatch = _validate_normalized_rows_by_discriminator(source, rendered)
+
+        # The extra separator line should be skipped
+        assert passed is True
+        assert similarity == 1.0
+
 
 class TestValidateStructureAndLeafText:
     """Tests for _validate_structure_and_leaf_text function."""
@@ -349,6 +400,46 @@ nested:
         assert similarity == 0.0
         assert passed is False
         assert "parse error" in mismatch.lower()
+
+    def test_type_mismatch_between_dict_and_list(self) -> None:
+        """Verify type mismatch between dict and list is detected."""
+        source = "key:\n  - item1\n  - item2"  # key is a list
+        rendered = "key:\n  subkey: value"  # key is a dict
+
+        _similarity, passed, mismatch = _validate_structure_and_leaf_text(source, rendered)
+
+        assert passed is False
+        assert "type mismatch" in mismatch
+
+    def test_list_length_mismatch(self) -> None:
+        """Verify list length mismatch is detected."""
+        source = "items:\n  - a\n  - b\n  - c"
+        rendered = "items:\n  - a\n  - b"
+
+        _similarity, passed, mismatch = _validate_structure_and_leaf_text(source, rendered)
+
+        assert passed is False
+        assert "length mismatch" in mismatch
+
+    def test_list_item_comparison(self) -> None:
+        """Verify list items are compared recursively."""
+        source = "items:\n  - name: item1\n  - name: item2"
+        rendered = "items:\n  - name: item1\n  - name: different"
+
+        _similarity, passed, mismatch = _validate_structure_and_leaf_text(source, rendered)
+
+        assert passed is False
+        assert "value mismatch" in mismatch
+
+    def test_nested_list_comparison(self) -> None:
+        """Verify nested lists are compared correctly."""
+        source = "nested:\n  list:\n    - 1\n    - 2"
+        rendered = "nested:\n  list:\n    - 1\n    - 3"
+
+        _similarity, passed, mismatch = _validate_structure_and_leaf_text(source, rendered)
+
+        assert passed is False
+        assert "value mismatch" in mismatch
 
 
 class TestValidateNormalizedDiff:
@@ -614,3 +705,87 @@ class TestValidateArtifact:
                 "source text",
                 "invalid_comparator",  # type: ignore[arg-type]
             )
+
+    def test_validates_with_normalized_rows_by_discriminator(
+        self, fs: FakeFilesystem, sample_manifest: dict[str, Any]
+    ) -> None:
+        """Verify validation with normalized_rows_by_discriminator comparator."""
+        table = """| method | default |
+|--------|---------|
+| GET | true |
+| POST | false |"""
+
+        rendered_path = Path("/fake/rendered/table.md")
+        fs.create_file(rendered_path, contents=table)
+
+        result = validate_artifact(
+            sample_manifest,
+            rendered_path,
+            table,
+            "normalized_rows_by_discriminator",
+        )
+
+        assert result.similarity_score == 1.0
+        assert result.passed is True
+
+    def test_validates_with_structure_and_leaf_text(
+        self, fs: FakeFilesystem, sample_manifest: dict[str, Any]
+    ) -> None:
+        """Verify validation with structure_and_leaf_text comparator."""
+        yaml_content = "key: value\nnested:\n  field: content"
+
+        rendered_path = Path("/fake/rendered/schema.yml")
+        fs.create_file(rendered_path, contents=yaml_content)
+
+        result = validate_artifact(
+            sample_manifest,
+            rendered_path,
+            yaml_content,
+            "structure_and_leaf_text",
+        )
+
+        assert result.similarity_score == 1.0
+        assert result.passed is True
+
+    def test_validates_with_normalized_diff(
+        self, fs: FakeFilesystem, sample_manifest: dict[str, Any]
+    ) -> None:
+        """Verify validation with normalized_diff comparator."""
+        content = """Some prose here.
+
+```python
+def hello():
+    print("Hello")
+```"""
+
+        rendered_path = Path("/fake/rendered/code.md")
+        fs.create_file(rendered_path, contents=content)
+
+        result = validate_artifact(
+            sample_manifest,
+            rendered_path,
+            content,
+            "normalized_diff",
+        )
+
+        assert result.similarity_score == 1.0
+        assert result.passed is True
+
+    def test_validates_with_exact_normalized(
+        self, fs: FakeFilesystem, sample_manifest: dict[str, Any]
+    ) -> None:
+        """Verify validation with exact_normalized comparator."""
+        diagram = "graph TD\n    A-->B"
+
+        rendered_path = Path("/fake/rendered/diagram.mmd")
+        fs.create_file(rendered_path, contents=diagram)
+
+        result = validate_artifact(
+            sample_manifest,
+            rendered_path,
+            diagram,
+            "exact_normalized",
+        )
+
+        assert result.similarity_score == 1.0
+        assert result.passed is True

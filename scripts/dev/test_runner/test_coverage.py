@@ -5,6 +5,7 @@ This module provides:
 - Separate coverage between scripts/tests/ and tests/
 - Per-function line and branch coverage validation
 - Use-case coverage tracking for integration tests
+- Glob pattern matching with negation support for source_paths
 
 Test Tier Coverage Requirements:
 - Unit tests (tests/unit/): 80% line/branch per function across app/ (excluding class fields)
@@ -17,6 +18,29 @@ Coverage Calculation:
 - Per-function coverage: Each function must individually meet the threshold
 - Class fields (Pydantic model fields in contracts) are excluded
 - Files with no functions can have 0% coverage (valid)
+
+Glob Pattern Matching with Negation:
+    Source paths in tier configurations support glob patterns with negation using '!' prefix:
+
+    Example in pyproject.toml:
+        [tool.test_coverage.tiers.unit]
+        source_paths = ["app/**/*.py", "!app/**/__init__.py"]
+
+    Pattern Processing:
+        - Patterns without '!' add matching files to coverage measurement
+        - Patterns with '!' remove matching files from coverage measurement
+        - Patterns are processed in order for fine-grained control
+
+    Implementation Functions:
+        - expand_source_patterns(): Expands patterns to actual file paths (for debugging)
+        - get_coverage_source_args(): Converts patterns to coverage.py --source and --omit args
+
+    Example Conversions:
+        Input:  ["app/**/*.py", "!app/**/__init__.py", "!app/api/**/router.py"]
+        Output: --source=app --omit=app/**/__init__.py,app/api/**/router.py
+
+        Input:  ["scripts/**/*.py", "!scripts/tests/**/*.py"]
+        Output: --source=scripts --omit=scripts/tests/**/*.py
 
 --no-validate Behavior:
     The --no-validate flag skips coverage threshold validation, but its effect differs
@@ -46,8 +70,7 @@ import ast
 import json
 import os
 import subprocess
-import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -60,15 +83,25 @@ except ImportError:
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-# Module-level flag to ensure deprecation warning is printed only once per process
-_legacy_format_warning_emitted: bool = False
-
-# Fallback defaults if pyproject.toml settings are missing
+# Default threshold values if not specified in pyproject.toml
 DEFAULT_MIN_LINE_OVERALL = 80.0
 DEFAULT_MIN_BRANCH_OVERALL = 70.0
 DEFAULT_MIN_LINE_PER_FUNCTION = 60.0
 DEFAULT_MIN_BRANCH_PER_FUNCTION = 50.0
 DEFAULT_MIN_USECASE = 100.0
+
+# Valid tier configuration properties
+VALID_TIER_PROPERTIES = {
+    "test_path",
+    "source_paths",
+    "min_line_overall",
+    "min_branch_overall",
+    "min_line_per_function",
+    "min_branch_per_function",
+    "min_usecase",
+    "skip_private_functions",
+    "exclude_class_fields",
+}
 
 
 # Define dataclasses early to avoid circular import with coverage_db
@@ -115,20 +148,54 @@ class UseCase:
 
 @dataclass
 class TestTierConfig:
-    """Configuration for a test tier."""
+    """Configuration for a test tier.
+
+    Coverage type is determined dynamically based on which threshold fields are populated:
+    - If min_line_per_function or min_branch_per_function is set: coverage_type = "line_branch"
+    - If min_usecase is set: coverage_type = "usecase"
+    - If both are set, line_branch takes priority
+
+    Source path exclusions are specified using '!' prefix in source_paths, not via exclude_patterns.
+    """
 
     name: str
     test_path: str
     source_paths: list[str]
-    coverage_type: str  # "line_branch" or "usecase"
-    min_line_overall: float = DEFAULT_MIN_LINE_OVERALL
-    min_branch_overall: float = DEFAULT_MIN_BRANCH_OVERALL
-    min_line_per_function: float = DEFAULT_MIN_LINE_PER_FUNCTION
-    min_branch_per_function: float = DEFAULT_MIN_BRANCH_PER_FUNCTION
-    min_usecase: float = DEFAULT_MIN_USECASE
+    min_line_overall: float | None = None
+    min_branch_overall: float | None = None
+    min_line_per_function: float | None = None
+    min_branch_per_function: float | None = None
+    min_usecase: float | None = None
     skip_private_functions: bool = False
-    service_layer_only: bool = False
     exclude_class_fields: bool = True
+
+    @property
+    def coverage_type(self) -> str:
+        """Infer coverage type from which threshold fields are populated.
+
+        Returns:
+            "line_branch" if line or branch per-function thresholds are set
+            "usecase" if usecase threshold is set
+            "line_branch" if both are set (line_branch takes priority)
+
+        Raises:
+            ValueError: If no threshold fields are set
+        """
+        has_line_branch = (
+            self.min_line_per_function is not None or self.min_branch_per_function is not None
+        )
+        has_usecase = self.min_usecase is not None
+
+        if has_line_branch:
+            return "line_branch"
+        elif has_usecase:
+            return "usecase"
+        else:
+            raise ValueError(
+                f"Tier '{self.name}' has no coverage thresholds set. "
+                "At least one of min_line_per_function, min_branch_per_function, "
+                "or min_usecase must be set."
+            )
 
 
 # Import modules after dataclass definitions to avoid circular imports
@@ -139,377 +206,256 @@ from scripts.dev.test_runner.redundant_test_detector import (
 )
 
 
-@dataclass
-class TierSettings:
-    """Threshold settings for a single test tier loaded from pyproject.toml.
+def load_tier_configs(pyproject_path: Path | None = None) -> dict[str, TestTierConfig]:
+    """Load tier configurations from pyproject.toml.
 
-    This dataclass is responsible ONLY for coverage threshold values. It does NOT
-    contain path/type configuration (test_path, source_paths, coverage_type, flags).
+    This is the single source of truth for loading tier configurations.
+    All tiers must be defined in [tool.test_coverage.tiers.<tier_name>] sections
+    with explicit test_path and source_paths fields.
 
-    Path and type defaults are defined in DEFAULT_TIER_CONFIGS. If pyproject.toml
-    specifies path/type overrides, they are parsed separately in load_coverage_settings()
-    and stored in TierPathOverrides, not here.
-
-    Attributes:
-        min_line_overall: Minimum overall line coverage percentage.
-        min_branch_overall: Minimum overall branch coverage percentage.
-        min_line_per_function: Minimum per-function line coverage percentage.
-        min_branch_per_function: Minimum per-function branch coverage percentage.
-        min_usecase: Minimum use-case coverage percentage (for usecase tiers).
-    """
-
-    min_line_overall: float = DEFAULT_MIN_LINE_OVERALL
-    min_branch_overall: float = DEFAULT_MIN_BRANCH_OVERALL
-    min_line_per_function: float = DEFAULT_MIN_LINE_PER_FUNCTION
-    min_branch_per_function: float = DEFAULT_MIN_BRANCH_PER_FUNCTION
-    min_usecase: float = DEFAULT_MIN_USECASE
-
-
-@dataclass
-class TierPathOverrides:
-    """Optional path/type overrides from pyproject.toml for a tier.
-
-    These fields are all optional. When None, get_test_tiers() falls back to
-    DEFAULT_TIER_CONFIGS for the corresponding value.
-    """
-
-    test_path: str | None = None
-    source_paths: list[str] | None = None
-    coverage_type: str | None = None
-    skip_private_functions: bool | None = None
-    service_layer_only: bool | None = None
-    exclude_class_fields: bool | None = None
-
-
-# Single source of truth for path/type/flag defaults per tier.
-# Custom tiers not in this mapping must provide all required fields via TOML.
-DEFAULT_TIER_CONFIGS: dict[str, dict[str, Any]] = {
-    "unit": {
-        "test_path": "tests/unit",
-        "source_paths": ["app"],
-        "coverage_type": "line_branch",
-        "skip_private_functions": False,
-        "service_layer_only": False,
-        "exclude_class_fields": True,
-    },
-    "component": {
-        "test_path": "tests/unit",
-        "source_paths": ["app/services"],
-        "coverage_type": "line_branch",
-        "skip_private_functions": True,
-        "service_layer_only": True,
-        "exclude_class_fields": True,
-    },
-    "integration": {
-        "test_path": "tests/integration",
-        "source_paths": ["app"],
-        "coverage_type": "usecase",
-        "skip_private_functions": False,
-        "service_layer_only": False,
-        "exclude_class_fields": True,
-    },
-    "scripts": {
-        "test_path": "scripts/tests",
-        "source_paths": ["scripts", "tools"],
-        "coverage_type": "line_branch",
-        "skip_private_functions": True,
-        "service_layer_only": False,
-        "exclude_class_fields": True,
-    },
-}
-
-VALID_COVERAGE_TYPES = {"line_branch", "usecase"}
-
-
-def _load_tiers_from_new_format(test_coverage: dict[str, Any]) -> dict[str, TestTierConfig] | None:
-    """Load tier configs from new [tool.test_coverage.tiers] format.
-
-    This function constructs TestTierConfig objects directly from TOML data
-    WITHOUT depending on CoverageSettings or load_coverage_settings().
+    Coverage type is inferred from which threshold fields are populated:
+    - min_line_per_function or min_branch_per_function -> "line_branch"
+    - min_usecase -> "usecase"
 
     IMPORTANT: Tier order is determined by TOML file order. This function
     iterates directly over tiers_table.items() without sorting or set
     conversion to preserve the exact order from tomllib.load().
 
-    Returns None if tiers section doesn't exist (triggers legacy fallback).
-    """
-    tiers_table = test_coverage.get("tiers")
-    if tiers_table is None:
-        return None
-
-    result: dict[str, TestTierConfig] = {}
-    # Iterate directly over items() - tomllib preserves TOML key order.
-    # Do NOT use set(), sorted(), or list(set(...)) here.
-    for tier_name, tier_data in tiers_table.items():
-        # Validate required fields
-        test_path = tier_data.get("test_path")
-        source_paths = tier_data.get("source_paths")
-        coverage_type = tier_data.get("coverage_type")
-
-        if not test_path or not source_paths or not coverage_type:
-            missing = [
-                f for f in ["test_path", "source_paths", "coverage_type"] if not tier_data.get(f)
-            ]
-            raise ValueError(f"Tier '{tier_name}' missing required fields: {', '.join(missing)}")
-
-        if coverage_type not in VALID_COVERAGE_TYPES:
-            raise ValueError(f"Invalid coverage_type '{coverage_type}' for tier '{tier_name}'")
-
-        # Construct TestTierConfig directly with defaults for optional fields
-        result[tier_name] = TestTierConfig(
-            name=tier_name,
-            test_path=test_path,
-            source_paths=source_paths,
-            coverage_type=coverage_type,
-            min_line_overall=tier_data.get("min_line_overall", DEFAULT_MIN_LINE_OVERALL),
-            min_branch_overall=tier_data.get("min_branch_overall", DEFAULT_MIN_BRANCH_OVERALL),
-            min_line_per_function=tier_data.get(
-                "min_line_per_function", DEFAULT_MIN_LINE_PER_FUNCTION
-            ),
-            min_branch_per_function=tier_data.get(
-                "min_branch_per_function", DEFAULT_MIN_BRANCH_PER_FUNCTION
-            ),
-            min_usecase=tier_data.get("min_usecase", DEFAULT_MIN_USECASE),
-            skip_private_functions=tier_data.get("skip_private_functions", False),
-            service_layer_only=tier_data.get("service_layer_only", False),
-            exclude_class_fields=tier_data.get("exclude_class_fields", True),
-        )
-    return result
-
-
-def _load_tiers_from_legacy_format(
-    test_coverage: dict[str, Any], *, quiet: bool = False
-) -> dict[str, TestTierConfig]:
-    """Load tier configs from legacy flat [tool.test_coverage.<tier>] sections.
-
-    This function reuses the existing load_coverage_settings() and get_test_tiers()
-    logic for backward compatibility with projects using flat tier sections.
-
-    CoverageSettings is used ONLY in this legacy path.
-
-    IMPORTANT: Tier order is deterministic:
-    1. Built-in tiers appear in DEFAULT_TIER_CONFIGS definition order
-    2. Custom tiers appear in their TOML file order (tomllib preserves order)
-
-    This function avoids set(), sorted(), and set union operators to preserve order.
-
-    Args:
-        test_coverage: The [tool.test_coverage] section from pyproject.toml.
-        quiet: If True, suppress the deprecation warning. Default is False.
-    """
-    global _legacy_format_warning_emitted
-    if not _legacy_format_warning_emitted and not quiet:
-        print(
-            "DEPRECATION WARNING: Using legacy tier configuration format "
-            "[tool.test_coverage.<tier>]. Consider migrating to "
-            "[tool.test_coverage.tiers.<tier_name>] format. "
-            "See docs/testing/README.md for migration instructions.",
-            file=sys.stderr,
-        )
-        _legacy_format_warning_emitted = True
-
-    # Discover all tier names using two-phase iteration to preserve order.
-    # Do NOT use set union or sorted() here.
-    all_tier_names_ordered: list[str] = []
-
-    # Phase 1: Add built-in tiers in DEFAULT_TIER_CONFIGS literal definition order
-    # This iterates the dict keys in their source code definition order.
-    for tier_name in DEFAULT_TIER_CONFIGS:
-        all_tier_names_ordered.append(tier_name)
-
-    # Phase 2: Add custom tiers in their TOML appearance order
-    # tomllib.load() returns dicts with keys in TOML file order.
-    for tier_name in test_coverage:
-        if tier_name not in DEFAULT_TIER_CONFIGS and tier_name != "tiers":
-            all_tier_names_ordered.append(tier_name)
-
-    result: dict[str, TestTierConfig] = {}
-    for tier_name in all_tier_names_ordered:
-        tier_data = test_coverage.get(tier_name, {})
-        defaults = DEFAULT_TIER_CONFIGS.get(tier_name, {})
-
-        # Derive path/type from TOML -> defaults
-        test_path = tier_data.get("test_path") or defaults.get("test_path")
-        source_paths = tier_data.get("source_paths") or defaults.get("source_paths")
-        coverage_type = tier_data.get("coverage_type") or defaults.get("coverage_type")
-
-        # Validate required fields for custom tiers
-        if not test_path or not source_paths or not coverage_type:
-            missing = []
-            if not test_path:
-                missing.append("test_path")
-            if not source_paths:
-                missing.append("source_paths")
-            if not coverage_type:
-                missing.append("coverage_type")
-            raise ValueError(
-                f"Custom tier '{tier_name}' is missing required fields: {', '.join(missing)}. "
-                f"All custom tiers in [tool.test_coverage.<tier>] must specify "
-                f"test_path, source_paths, and coverage_type."
-            )
-
-        if coverage_type not in VALID_COVERAGE_TYPES:
-            raise ValueError(f"Invalid coverage_type '{coverage_type}' for tier '{tier_name}'")
-
-        # Derive flags from TOML -> defaults
-        skip_private = tier_data.get("skip_private_functions")
-        if skip_private is None:
-            skip_private = defaults.get("skip_private_functions", False)
-        service_only = tier_data.get("service_layer_only")
-        if service_only is None:
-            service_only = defaults.get("service_layer_only", False)
-        exclude_fields = tier_data.get("exclude_class_fields")
-        if exclude_fields is None:
-            exclude_fields = defaults.get("exclude_class_fields", True)
-
-        result[tier_name] = TestTierConfig(
-            name=tier_name,
-            test_path=test_path,
-            source_paths=source_paths,
-            coverage_type=coverage_type,
-            min_line_overall=tier_data.get("min_line_overall", DEFAULT_MIN_LINE_OVERALL),
-            min_branch_overall=tier_data.get("min_branch_overall", DEFAULT_MIN_BRANCH_OVERALL),
-            min_line_per_function=tier_data.get(
-                "min_line_per_function", DEFAULT_MIN_LINE_PER_FUNCTION
-            ),
-            min_branch_per_function=tier_data.get(
-                "min_branch_per_function", DEFAULT_MIN_BRANCH_PER_FUNCTION
-            ),
-            min_usecase=tier_data.get("min_usecase", DEFAULT_MIN_USECASE),
-            skip_private_functions=skip_private,
-            service_layer_only=service_only,
-            exclude_class_fields=exclude_fields,
-        )
-
-    return result
-
-
-def load_tier_configs(
-    pyproject_path: Path | None = None, *, quiet: bool = False
-) -> dict[str, TestTierConfig]:
-    """Load tier configurations from pyproject.toml.
-
-    This is the single source of truth for loading tier configurations.
-    It supports two formats:
-
-    1. New format: [tool.test_coverage.tiers.<tier_name>] - constructs
-       TestTierConfig directly without CoverageSettings dependency.
-
-    2. Legacy format: [tool.test_coverage.<tier>] flat sections - reuses
-       existing load_coverage_settings()/get_test_tiers() logic.
+    Validation:
+    - Checks for unknown properties against VALID_TIER_PROPERTIES
+    - Validates required fields (test_path, source_paths)
+    - Ensures at least one threshold type is set (line/branch or usecase)
+    - Logs the inferred coverage type for each tier
 
     Args:
         pyproject_path: Path to pyproject.toml. Defaults to REPO_ROOT / "pyproject.toml".
-        quiet: If True, suppress the deprecation warning for legacy format. Default is False.
 
     Returns:
         Mapping of tier names to TestTierConfig objects, in execution order.
 
     Raises:
-        ValueError: If a tier is missing required fields or has invalid coverage_type.
+        ValueError: If pyproject.toml is missing, has no tiers configured,
+            if a tier contains unknown properties, is missing required fields,
+            or has no coverage thresholds set.
     """
     path = pyproject_path or REPO_ROOT / "pyproject.toml"
     if not path.exists():
-        return _load_tiers_from_legacy_format({}, quiet=quiet)
+        raise ValueError(f"pyproject.toml not found at {path}")
 
     with path.open("rb") as f:
         data = tomllib.load(f)
 
     test_coverage = data.get("tool", {}).get("test_coverage", {})
+    tiers_table = test_coverage.get("tiers")
 
-    # Try new format first (no CoverageSettings dependency)
-    new_format_result = _load_tiers_from_new_format(test_coverage)
-    if new_format_result is not None:
-        # Log format detection and discovered tiers
-        tier_names = list(new_format_result.keys())
-        print("[tier-config] Using new tiers subtable format")
-        print(f"[tier-config] Discovered tiers (in order): {tier_names}")
-        return new_format_result
+    if tiers_table is None:
+        raise ValueError(
+            "No [tool.test_coverage.tiers] section found in pyproject.toml. "
+            "All tiers must be defined in [tool.test_coverage.tiers.<tier_name>] sections."
+        )
 
-    # Fall back to legacy format (uses CoverageSettings internally)
-    legacy_result = _load_tiers_from_legacy_format(test_coverage, quiet=quiet)
-    # Log format detection and discovered tiers
-    tier_names = list(legacy_result.keys())
-    print("[tier-config] Using legacy flat sections format")
+    result: dict[str, TestTierConfig] = {}
+    # Iterate directly over items() - tomllib preserves TOML key order.
+    # Do NOT use set(), sorted(), or list(set(...)) here.
+    for tier_name, tier_data in tiers_table.items():
+        # Validate for unknown properties without using set() to preserve order
+        unknown_props = [key for key in tier_data if key not in VALID_TIER_PROPERTIES]
+        if unknown_props:
+            raise ValueError(
+                f"Tier '{tier_name}' contains unknown properties: "
+                f"{', '.join(unknown_props)}. "
+                f"Valid properties are: {', '.join(VALID_TIER_PROPERTIES)}"
+            )
+
+        # Validate required fields
+        test_path = tier_data.get("test_path")
+        source_paths = tier_data.get("source_paths")
+
+        if not test_path or not source_paths:
+            missing = [f for f in ["test_path", "source_paths"] if not tier_data.get(f)]
+            raise ValueError(f"Tier '{tier_name}' missing required fields: {', '.join(missing)}")
+
+        # Validate at least one threshold type is set
+        has_line_branch = (
+            tier_data.get("min_line_per_function") is not None
+            or tier_data.get("min_branch_per_function") is not None
+        )
+        has_usecase = tier_data.get("min_usecase") is not None
+
+        if not has_line_branch and not has_usecase:
+            raise ValueError(
+                f"Tier '{tier_name}' has no coverage thresholds set. "
+                "At least one of min_line_per_function, min_branch_per_function, "
+                "or min_usecase must be set."
+            )
+
+        # Construct TestTierConfig directly with None defaults for threshold fields
+        config = TestTierConfig(
+            name=tier_name,
+            test_path=test_path,
+            source_paths=source_paths,
+            min_line_overall=tier_data.get("min_line_overall"),
+            min_branch_overall=tier_data.get("min_branch_overall"),
+            min_line_per_function=tier_data.get("min_line_per_function"),
+            min_branch_per_function=tier_data.get("min_branch_per_function"),
+            min_usecase=tier_data.get("min_usecase"),
+            skip_private_functions=tier_data.get("skip_private_functions", False),
+            exclude_class_fields=tier_data.get("exclude_class_fields", True),
+        )
+
+        # Log which coverage type was inferred for this tier
+        print(
+            f"[tier-config] Tier '{tier_name}' configured with "
+            f"coverage_type='{config.coverage_type}'"
+        )
+
+        result[tier_name] = config
+
+    # Log discovered tiers
+    tier_names = list(result.keys())
     print(f"[tier-config] Discovered tiers (in order): {tier_names}")
-    return legacy_result
+    return result
 
 
-@dataclass
-class CoverageSettings:
-    """All coverage settings loaded from pyproject.toml.
+def expand_source_patterns(patterns: list[str], repo_root: Path) -> set[str]:
+    """Expand glob patterns with negation support to a set of file paths.
 
-    Attributes:
-        thresholds: Mapping of tier name to threshold settings.
-        path_overrides: Mapping of tier name to optional path/type overrides.
+    Takes a list of patterns where:
+    - Patterns without '!' prefix add matching files to the result
+    - Patterns with '!' prefix remove matching files from the result
+
+    Patterns are processed in order, allowing for fine-grained control over
+    what files are included in coverage measurement.
+
+    This function is useful for debugging coverage configuration or when you need
+    to know the exact set of files that will be measured. For normal coverage
+    execution, use get_coverage_source_args() instead, which generates the
+    appropriate --source and --omit arguments for coverage.py.
+
+    Args:
+        patterns: List of glob patterns like ["app/**/*.py", "!app/**/__init__.py"]
+        repo_root: Repository root path to resolve patterns against
+
+    Returns:
+        Set of relative file paths (strings) that match the patterns after
+        applying all inclusions and exclusions. Paths use forward slashes (/)
+        for consistency across platforms.
+
+    Examples:
+        >>> patterns = ["app/**/*.py", "!app/**/__init__.py"]
+        >>> expand_source_patterns(patterns, Path("/repo"))
+        {'app/models.py', 'app/services/foo.py', ...}  # excludes __init__.py files
+
+        >>> patterns = ["app/**/*.py", "!app/api/**/*.py", "app/api/health.py"]
+        >>> expand_source_patterns(patterns, Path("/repo"))
+        # Includes all app/*.py except app/api/*.py, but then adds back app/api/health.py
+
+    Edge Cases:
+        - Empty patterns list returns empty set
+        - Patterns that match no files contribute nothing to the result
+        - Only files (not directories) are included in the result
+        - Paths outside repo_root are silently skipped
     """
+    result: set[str] = set()
 
-    thresholds: dict[str, TierSettings] = field(default_factory=dict)
-    path_overrides: dict[str, TierPathOverrides] = field(default_factory=dict)
+    for pattern in patterns:
+        is_negation = pattern.startswith("!")
+        glob_pattern = pattern[1:] if is_negation else pattern
 
+        # Use pathlib's glob to find matching files
+        # glob_pattern is relative to repo_root
+        matches = repo_root.glob(glob_pattern)
 
-def load_coverage_settings(pyproject_path: Path | None = None) -> CoverageSettings:
-    """Load coverage settings from pyproject.toml."""
-    path = pyproject_path or REPO_ROOT / "pyproject.toml"
-    if not path.exists():
-        return CoverageSettings()
+        # Convert to relative paths (strings) from repo_root
+        matched_files = set()
+        for path in matches:
+            if path.is_file():  # Only include actual files, not directories
+                try:
+                    rel_path = str(path.relative_to(repo_root))
+                    # Normalize path separators to forward slashes for consistency
+                    rel_path = rel_path.replace("\\", "/")
+                    matched_files.add(rel_path)
+                except ValueError:
+                    # Path is not relative to repo_root, skip it
+                    continue
 
-    with path.open("rb") as f:
-        data = tomllib.load(f)
+        # Apply pattern based on negation flag
+        if is_negation:
+            result -= matched_files
+        else:
+            result |= matched_files
 
-    test_coverage = data.get("tool", {}).get("test_coverage", {})
-
-    # Default tier names derived from DEFAULT_TIER_CONFIGS to avoid duplication
-    DEFAULT_TIER_NAMES = list(DEFAULT_TIER_CONFIGS.keys())
-
-    # Discover all tier names from pyproject.toml
-    all_tier_names = set(DEFAULT_TIER_NAMES) | set(test_coverage.keys())
-
-    def load_thresholds(name: str) -> TierSettings:
-        tier_data = test_coverage.get(name, {})
-        return TierSettings(
-            min_line_overall=tier_data.get("min_line_overall", DEFAULT_MIN_LINE_OVERALL),
-            min_branch_overall=tier_data.get("min_branch_overall", DEFAULT_MIN_BRANCH_OVERALL),
-            min_line_per_function=tier_data.get(
-                "min_line_per_function", DEFAULT_MIN_LINE_PER_FUNCTION
-            ),
-            min_branch_per_function=tier_data.get(
-                "min_branch_per_function", DEFAULT_MIN_BRANCH_PER_FUNCTION
-            ),
-            min_usecase=tier_data.get("min_usecase", DEFAULT_MIN_USECASE),
-        )
-
-    def load_path_overrides(name: str) -> TierPathOverrides:
-        tier_data = test_coverage.get(name, {})
-        return TierPathOverrides(
-            test_path=tier_data.get("test_path"),
-            source_paths=tier_data.get("source_paths"),
-            coverage_type=tier_data.get("coverage_type"),
-            skip_private_functions=tier_data.get("skip_private_functions"),
-            service_layer_only=tier_data.get("service_layer_only"),
-            exclude_class_fields=tier_data.get("exclude_class_fields"),
-        )
-
-    thresholds = {name: load_thresholds(name) for name in all_tier_names}
-    path_overrides = {name: load_path_overrides(name) for name in all_tier_names}
-
-    return CoverageSettings(thresholds=thresholds, path_overrides=path_overrides)
+    return result
 
 
-# Load settings at module level (can be reloaded for testing)
-_settings: CoverageSettings | None = None
+def get_coverage_source_args(
+    config: TestTierConfig, repo_root: Path
+) -> tuple[list[str], list[str]]:
+    """Convert glob patterns with negation to coverage.py --source and --omit args.
 
+    coverage.py uses directory-based --source and file-based --omit patterns.
+    This function extracts base directories from include patterns and converts
+    negation patterns to --omit patterns.
 
-def get_settings() -> CoverageSettings:
-    """Get cached coverage settings."""
-    global _settings
-    if _settings is None:
-        _settings = load_coverage_settings()
-    return _settings
+    The conversion handles the semantic difference between our pattern syntax
+    and coverage.py's argument model:
+    - Our patterns: "app/**/*.py" means "all Python files under app/"
+    - coverage.py --source: Expects base directories like "app"
+    - coverage.py --omit: Expects file patterns like "app/**/__init__.py"
 
+    Args:
+        config: Test tier configuration with source_paths containing patterns
+            like ["app/**/*.py", "!app/**/__init__.py"]
+        repo_root: Repository root path (currently unused, reserved for future use)
 
-# Service layer path pattern (relative to repo root)
-SERVICE_LAYER_PATH = "app/services"
+    Returns:
+        Tuple of (source_dirs, omit_patterns):
+        - source_dirs: Sorted list of base directories for --source argument
+        - omit_patterns: List of glob patterns for --omit argument (order preserved)
+
+    Examples:
+        >>> config.source_paths = ["app/**/*.py", "!app/**/__init__.py", "!app/api/**/router.py"]
+        >>> get_coverage_source_args(config, Path("/repo"))
+        (['app'], ['app/**/__init__.py', 'app/api/**/router.py'])
+
+        >>> config.source_paths = ["app/services/**/*.py", "app/models/**/*.py", "!**/__init__.py"]
+        >>> get_coverage_source_args(config, Path("/repo"))
+        (['app/models', 'app/services'], ['**/__init__.py'])
+
+    Edge Cases:
+        - Patterns with no base directory (e.g., "**/*.py") are ignored for --source
+        - Multiple patterns can resolve to the same base directory (deduplicated)
+        - Negation patterns are passed through to --omit unchanged (except removing '!')
+    """
+    source_dirs: set[str] = set()
+    omit_patterns: list[str] = []
+
+    for pattern in config.source_paths:
+        is_negation = pattern.startswith("!")
+        glob_pattern = pattern[1:] if is_negation else pattern
+
+        if is_negation:
+            # Convert negation pattern to omit pattern (just remove the '!' prefix)
+            omit_patterns.append(glob_pattern)
+        else:
+            # Extract base directory from glob pattern
+            # Examples:
+            #   "app/**/*.py" -> "app"
+            #   "scripts/**/*.py" -> "scripts"
+            #   "app/services/**/*.py" -> "app/services"
+            parts = glob_pattern.split("/")
+            # Find the first part that doesn't contain glob characters
+            base_parts = []
+            for part in parts:
+                if "*" in part or "?" in part or "[" in part:
+                    break
+                base_parts.append(part)
+
+            if base_parts:
+                base_dir = "/".join(base_parts)
+                source_dirs.add(base_dir)
+
+    return sorted(source_dirs), omit_patterns
 
 
 def is_excluded_path(file_path: str) -> bool:
@@ -550,16 +496,13 @@ class UseCaseCoverageResult:
     coverage_pct: float
 
 
-def get_test_tiers(*, quiet: bool = False) -> dict[str, TestTierConfig]:
+def get_test_tiers() -> dict[str, TestTierConfig]:
     """Get test tier configurations from pyproject.toml.
 
     This is a convenience wrapper around load_tier_configs() that uses the
     default pyproject.toml path. For custom paths, use load_tier_configs() directly.
-
-    Args:
-        quiet: If True, suppress the deprecation warning for legacy format. Default is False.
     """
-    return load_tier_configs(quiet=quiet)
+    return load_tier_configs()
 
 
 def _run_command(
@@ -778,11 +721,6 @@ def _is_private_function(func_name: str) -> bool:
     if not func_name.startswith("_"):
         return False
     return func_name not in ("__init__", "__call__")
-
-
-def _is_in_service_layer(file_path: str) -> bool:
-    """Check if a file is in the service layer."""
-    return file_path.startswith(SERVICE_LAYER_PATH)
 
 
 def load_use_cases(use_cases_path: Path) -> list[UseCase]:
@@ -1049,26 +987,25 @@ def validate_line_branch_coverage(
 
     for func_key, func_data in result.functions.items():
         func_name = func_data["name"]
-        file_path = func_data["file"]
 
         # Skip private functions if configured
         if config.skip_private_functions and _is_private_function(func_name):
             continue
 
-        # For service-layer-only mode, skip non-service files
-        if config.service_layer_only and not _is_in_service_layer(file_path):
-            continue
-
         line_cov = func_data["line_coverage"]
         branch_cov = func_data["branch_coverage"]
 
-        if line_cov < config.min_line_per_function:
+        if config.min_line_per_function is not None and line_cov < config.min_line_per_function:
             failures.append(
                 f"{config.name}: Function {func_key} line coverage "
                 f"{line_cov:.1f}% < {config.min_line_per_function:.1f}% minimum"
             )
 
-        if branch_cov < config.min_branch_per_function and func_data.get("missing_branches"):
+        if (
+            config.min_branch_per_function is not None
+            and branch_cov < config.min_branch_per_function
+            and func_data.get("missing_branches")
+        ):
             failures.append(
                 f"{config.name}: Function {func_key} branch coverage "
                 f"{branch_cov:.1f}% < {config.min_branch_per_function:.1f}% minimum"
@@ -1100,7 +1037,7 @@ def validate_usecase_coverage(
     """
     failures: list[str] = []
 
-    if uc_result.coverage_pct < config.min_usecase:
+    if config.min_usecase is not None and uc_result.coverage_pct < config.min_usecase:
         failures.append(
             f"{config.name}: Use-case coverage {uc_result.coverage_pct:.1f}% "
             f"< {config.min_usecase:.1f}% minimum"

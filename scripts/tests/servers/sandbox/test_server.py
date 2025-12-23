@@ -817,3 +817,248 @@ class TestCancellationBeforePush:
         # Response should indicate success
         parsed = json.loads(response)
         assert parsed["status"] == "success"
+
+
+class TestStartSandboxInitializationError:
+    """Tests for start() handling sandbox initialization errors."""
+
+    @pytest.mark.asyncio
+    async def test_start_raises_on_sandbox_initialization_error(self) -> None:
+        """start() should raise RuntimeError if ensure_sandbox_exists fails."""
+        from unittest.mock import patch
+
+        server = SandboxServer(repo_path=Path("/tmp"))
+
+        with (
+            patch(
+                "scripts.servers.sandbox.server.ensure_sandbox_exists",
+                side_effect=RuntimeError("Sandbox initialization failed"),
+            ),
+            pytest.raises(RuntimeError, match="Sandbox initialization failed"),
+        ):
+            await server.start()
+
+
+class TestRunServer:
+    """Tests for run_server function."""
+
+    @pytest.mark.asyncio
+    async def test_run_server_creates_server_and_calls_start(self) -> None:
+        """run_server should create SandboxServer and call start."""
+        from unittest.mock import AsyncMock, patch
+
+        mock_server_instance = MagicMock()
+        mock_server_instance.start = AsyncMock()
+        mock_server_instance.shutdown = MagicMock()
+
+        with patch(
+            "scripts.servers.sandbox.server.SandboxServer",
+            return_value=mock_server_instance,
+        ) as mock_server_class:
+            from scripts.servers.sandbox.server import run_server
+
+            await run_server("/tmp/test.sock", "/repo")
+
+        mock_server_class.assert_called_once_with(
+            repo_path=Path("/repo"),
+            socket_path="/tmp/test.sock",
+        )
+        mock_server_instance.start.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_run_server_registers_signal_handlers(self) -> None:
+        """run_server should register SIGTERM and SIGINT signal handlers."""
+        from unittest.mock import AsyncMock, patch
+
+        mock_server_instance = MagicMock()
+        mock_server_instance.start = AsyncMock()
+        mock_server_instance.shutdown = MagicMock()
+
+        registered_signals = []
+
+        def mock_add_signal_handler(sig: int, handler: object) -> None:
+            registered_signals.append(sig)
+
+        with (
+            patch(
+                "scripts.servers.sandbox.server.SandboxServer",
+                return_value=mock_server_instance,
+            ),
+            patch("asyncio.get_running_loop") as mock_get_loop,
+        ):
+            mock_loop = MagicMock()
+            mock_loop.add_signal_handler = mock_add_signal_handler
+            mock_get_loop.return_value = mock_loop
+
+            from scripts.servers.sandbox.server import run_server
+
+            await run_server("/tmp/test.sock", "/repo")
+
+        import signal as sig_module
+
+        assert sig_module.SIGTERM in registered_signals
+        assert sig_module.SIGINT in registered_signals
+
+    @pytest.mark.asyncio
+    async def test_run_server_handles_signal_handler_not_implemented(self) -> None:
+        """run_server should handle NotImplementedError for signal handlers."""
+        from unittest.mock import AsyncMock, patch
+
+        mock_server_instance = MagicMock()
+        mock_server_instance.start = AsyncMock()
+        mock_server_instance.shutdown = MagicMock()
+
+        def mock_add_signal_handler_not_impl(sig: int, handler: object) -> None:
+            raise NotImplementedError("Signal handlers not supported on this platform")
+
+        with (
+            patch(
+                "scripts.servers.sandbox.server.SandboxServer",
+                return_value=mock_server_instance,
+            ),
+            patch("asyncio.get_running_loop") as mock_get_loop,
+        ):
+            mock_loop = MagicMock()
+            mock_loop.add_signal_handler = mock_add_signal_handler_not_impl
+            mock_get_loop.return_value = mock_loop
+
+            from scripts.servers.sandbox.server import run_server
+
+            # Should not raise - NotImplementedError is caught and logged
+            await run_server("/tmp/test.sock", "/repo")
+
+        mock_server_instance.start.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_run_server_handles_signal_handler_runtime_error(self) -> None:
+        """run_server should handle RuntimeError for signal handlers."""
+        from unittest.mock import AsyncMock, patch
+
+        mock_server_instance = MagicMock()
+        mock_server_instance.start = AsyncMock()
+        mock_server_instance.shutdown = MagicMock()
+
+        def mock_add_signal_handler_runtime_err(sig: int, handler: object) -> None:
+            raise RuntimeError("Signal handler error")
+
+        with (
+            patch(
+                "scripts.servers.sandbox.server.SandboxServer",
+                return_value=mock_server_instance,
+            ),
+            patch("asyncio.get_running_loop") as mock_get_loop,
+        ):
+            mock_loop = MagicMock()
+            mock_loop.add_signal_handler = mock_add_signal_handler_runtime_err
+            mock_get_loop.return_value = mock_loop
+
+            from scripts.servers.sandbox.server import run_server
+
+            # Should not raise - RuntimeError is caught and logged
+            await run_server("/tmp/test.sock", "/repo")
+
+        mock_server_instance.start.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_signal_calls_shutdown(self) -> None:
+        """The handle_signal function should call server.shutdown()."""
+        from unittest.mock import AsyncMock, patch
+
+        mock_server_instance = MagicMock()
+        mock_server_instance.start = AsyncMock()
+        mock_server_instance.shutdown = MagicMock()
+
+        captured_handler = None
+
+        def mock_add_signal_handler(sig: int, handler: object) -> None:
+            nonlocal captured_handler
+            # Capture the first handler (SIGTERM)
+            if captured_handler is None:
+                captured_handler = handler
+
+        with (
+            patch(
+                "scripts.servers.sandbox.server.SandboxServer",
+                return_value=mock_server_instance,
+            ),
+            patch("asyncio.get_running_loop") as mock_get_loop,
+        ):
+            mock_loop = MagicMock()
+            mock_loop.add_signal_handler = mock_add_signal_handler
+            mock_get_loop.return_value = mock_loop
+
+            from scripts.servers.sandbox.server import run_server
+
+            await run_server("/tmp/test.sock", "/repo")
+
+        # Now call the captured handler to test handle_signal
+        assert captured_handler is not None
+        captured_handler()
+
+        mock_server_instance.shutdown.assert_called()
+
+
+class TestMainFunction:
+    """Tests for main function."""
+
+    def test_main_configures_logging_and_runs_server(self) -> None:
+        """main should configure logging and run the server."""
+        from unittest.mock import patch
+
+        with (
+            patch("scripts.servers.sandbox.server._configure_logging") as mock_config_logging,
+            patch("scripts.servers.sandbox.server.asyncio.run") as mock_asyncio_run,
+            patch.dict(
+                "os.environ",
+                {"SANDBOX_SOCKET_PATH": "/custom/socket.sock", "SANDBOX_REPO_PATH": "/custom/repo"},
+            ),
+        ):
+            from scripts.servers.sandbox.server import main
+
+            main()
+
+        mock_config_logging.assert_called_once()
+        mock_asyncio_run.assert_called_once()
+
+    def test_main_uses_default_paths_when_env_not_set(self) -> None:
+        """main should use default paths when environment variables are not set."""
+        from unittest.mock import patch
+
+        captured_args = []
+
+        def capture_run_server(coro: object) -> None:
+            # Extract args from coroutine if needed
+            captured_args.append(coro)
+
+        with (
+            patch("scripts.servers.sandbox.server._configure_logging"),
+            patch("scripts.servers.sandbox.server.asyncio.run", side_effect=capture_run_server),
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            # Remove env vars if present
+            import os
+
+            os.environ.pop("SANDBOX_SOCKET_PATH", None)
+            os.environ.pop("SANDBOX_REPO_PATH", None)
+
+            from scripts.servers.sandbox.server import main
+
+            main()
+
+        # Verify asyncio.run was called (the coroutine was created with default paths)
+        assert len(captured_args) == 1
+
+    def test_main_handles_keyboard_interrupt(self) -> None:
+        """main should handle KeyboardInterrupt gracefully."""
+        from unittest.mock import patch
+
+        with (
+            patch("scripts.servers.sandbox.server._configure_logging"),
+            patch("scripts.servers.sandbox.server.asyncio.run", side_effect=KeyboardInterrupt()),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            from scripts.servers.sandbox.server import main
+
+            main()
+
+        assert exc_info.value.code == 0

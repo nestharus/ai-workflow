@@ -177,7 +177,9 @@ def load_qwen_embedding_model(
     """
     from transformers import AutoModel, AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
+        model_name, trust_remote_code=True
+    )
     model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
     model.eval()
     return model, tokenizer

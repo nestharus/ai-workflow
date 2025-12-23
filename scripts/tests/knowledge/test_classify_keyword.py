@@ -795,3 +795,100 @@ class TestClassifyKeywordMain:
 
         result = classify_keyword_main(args)
         assert result == 0
+
+    def test_returns_error_when_update_fails(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should return 1 when update_candidate_classification returns False."""
+        knowledge_path = tmp_path / ".knowledge"
+        keywords_dir = knowledge_path / "keywords"
+        keywords_dir.mkdir(parents=True)
+        csv_path = keywords_dir / "candidates.csv"
+
+        header = ",".join(CSV_COLUMNS)
+        row = _make_csv_row(
+            "cand-1",
+            "docs/test.yml",
+            "elem1",
+            "Test sentence",
+            "FastAPI",
+        )
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Mock update_candidate_classification to return False
+        from scripts.knowledge import classify_keyword
+
+        monkeypatch.setattr(
+            classify_keyword, "update_candidate_classification", lambda *args, **kwargs: False
+        )
+
+        args = parse_args(
+            [
+                "--id",
+                "cand-1",
+                "--keep",
+                "true",
+                "--confidence",
+                "0.9",
+                "--reason",
+                "Test",
+                "--knowledge-path",
+                str(knowledge_path),
+            ]
+        )
+
+        result = classify_keyword_main(args)
+        assert result == 1
+
+        captured = capsys.readouterr()
+        assert "Failed to update candidate" in captured.err
+
+
+class TestMain:
+    """Tests for main entry point function."""
+
+    def test_main_calls_parse_args_and_classify_keyword_main(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should call parse_args and classify_keyword_main."""
+        knowledge_path = tmp_path / ".knowledge"
+        keywords_dir = knowledge_path / "keywords"
+        keywords_dir.mkdir(parents=True)
+        csv_path = keywords_dir / "candidates.csv"
+
+        header = ",".join(CSV_COLUMNS)
+        row = _make_csv_row(
+            "cand-1",
+            "docs/test.yml",
+            "elem1",
+            "Test sentence",
+            "FastAPI",
+        )
+        csv_path.write_text(f"{header}\n{row}\n")
+
+        # Import main function
+        # Patch sys.argv
+        import sys
+
+        from scripts.knowledge.classify_keyword import main
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "script",
+                "--id",
+                "cand-1",
+                "--keep",
+                "true",
+                "--confidence",
+                "0.9",
+                "--reason",
+                "Test reason",
+                "--knowledge-path",
+                str(knowledge_path),
+            ],
+        )
+
+        result = main()
+        assert result == 0

@@ -220,3 +220,19 @@ class TestMain:
             result = main([])
 
         assert result == 0
+
+    def test_uses_base_commit_argument(self, fs: FakeFilesystem) -> None:
+        """Should use --base-commit argument (covers line 83, branch [82,83])."""
+        fs.create_dir(".review")
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/coderabbit"),
+            patch("scripts.dev.review.coderabbit_review.run_command_with_tee") as mock_tee,
+        ):
+            mock_tee.return_value = 0
+
+            main(["--base-commit", "abc123def456"])
+
+            call_args = mock_tee.call_args[0][0]
+            assert "--base-commit" in call_args
+            assert "abc123def456" in call_args

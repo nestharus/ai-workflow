@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import contextlib
-from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -16,25 +15,18 @@ from scripts.dev.test_runner.test_coverage import (
     DEFAULT_MIN_LINE_OVERALL,
     DEFAULT_MIN_LINE_PER_FUNCTION,
     DEFAULT_MIN_USECASE,
-    DEFAULT_TIER_CONFIGS,
     CoverageResult,
     FunctionCoverage,
     TestTierConfig,
-    TierPathOverrides,
-    TierSettings,
     UseCase,
     UseCaseCoverageResult,
     _calculate_function_coverage,
     _extract_functions_from_file,
     _get_class_field_lines,
-    _is_in_service_layer,
     _is_private_function,
-    _load_tiers_from_legacy_format,
-    _load_tiers_from_new_format,
     calculate_usecase_coverage,
     collect_covered_usecases,
     get_test_tiers,
-    load_coverage_settings,
     load_tier_configs,
     load_use_cases,
     parse_args,
@@ -45,29 +37,6 @@ from scripts.dev.test_runner.test_coverage import (
 
 if TYPE_CHECKING:
     from pyfakefs.fake_filesystem import FakeFilesystem
-
-
-@pytest.fixture(autouse=True)
-def clear_settings_cache() -> Generator[None]:
-    """Reset module-level settings cache before and after each test.
-
-    This fixture intentionally resets ``scripts.dev.test_runner.test_coverage._settings``
-    to ``None`` before and after each test. This ensures that tests exercising
-    dynamic coverage settings always reload configuration from the current
-    ``pyproject.toml`` (or fake filesystem equivalent), rather than using stale
-    cached values from previous tests.
-
-    Note:
-        This fixture mutates module-level state. If additional test modules need
-        this behavior, consider moving it to a shared ``conftest.py`` under
-        ``scripts/tests/test_runner/`` so cross-module impact is explicit and
-        discoverable.
-    """
-    from scripts.dev.test_runner import test_coverage
-
-    test_coverage._settings = None
-    yield
-    test_coverage._settings = None
 
 
 class TestDefaultThresholds:
@@ -94,487 +63,162 @@ class TestDefaultThresholds:
         assert DEFAULT_MIN_USECASE == 100.0
 
 
-class TestTierSettingsThresholdsOnly:
-    """Tests confirming TierSettings only contains threshold fields."""
+class TestLoadTierConfigsValidation:
+    """Tests for tier configuration validation.
 
-    def test_tier_settings_has_only_threshold_fields(self) -> None:
-        """TierSettings should NOT have path/type fields."""
-        settings = TierSettings()
-        # Should have threshold fields
-        assert hasattr(settings, "min_line_overall")
-        assert hasattr(settings, "min_branch_overall")
-        assert hasattr(settings, "min_line_per_function")
-        assert hasattr(settings, "min_branch_per_function")
-        assert hasattr(settings, "min_usecase")
-        # Should NOT have path/type fields
-        assert not hasattr(settings, "test_path")
-        assert not hasattr(settings, "source_paths")
-        assert not hasattr(settings, "coverage_type")
-
-    def test_tier_settings_defaults(self) -> None:
-        """TierSettings should have correct default threshold values."""
-        settings = TierSettings()
-        assert settings.min_line_overall == DEFAULT_MIN_LINE_OVERALL
-        assert settings.min_branch_overall == DEFAULT_MIN_BRANCH_OVERALL
-        assert settings.min_line_per_function == DEFAULT_MIN_LINE_PER_FUNCTION
-        assert settings.min_branch_per_function == DEFAULT_MIN_BRANCH_PER_FUNCTION
-        assert settings.min_usecase == DEFAULT_MIN_USECASE
-
-    def test_tier_settings_custom_values(self) -> None:
-        """TierSettings should accept custom threshold values."""
-        settings = TierSettings(
-            min_line_overall=90.0,
-            min_branch_overall=85.0,
-            min_line_per_function=75.0,
-            min_branch_per_function=70.0,
-            min_usecase=95.0,
-        )
-        assert settings.min_line_overall == 90.0
-        assert settings.min_branch_overall == 85.0
-        assert settings.min_line_per_function == 75.0
-        assert settings.min_branch_per_function == 70.0
-        assert settings.min_usecase == 95.0
-
-
-class TestTierPathOverrides:
-    """Tests for TierPathOverrides optional path/type fields."""
-
-    def test_path_overrides_all_none_by_default(self) -> None:
-        """All fields should be None by default."""
-        overrides = TierPathOverrides()
-        assert overrides.test_path is None
-        assert overrides.source_paths is None
-        assert overrides.coverage_type is None
-        assert overrides.skip_private_functions is None
-        assert overrides.service_layer_only is None
-        assert overrides.exclude_class_fields is None
-
-    def test_path_overrides_with_custom_values(self) -> None:
-        """Should accept custom path/type values."""
-        overrides = TierPathOverrides(
-            test_path="tests/custom",
-            source_paths=["custom/"],
-            coverage_type="line_branch",
-        )
-        assert overrides.test_path == "tests/custom"
-        assert overrides.source_paths == ["custom/"]
-        assert overrides.coverage_type == "line_branch"
-
-    def test_path_overrides_with_flag_values(self) -> None:
-        """Should accept custom flag values."""
-        overrides = TierPathOverrides(
-            skip_private_functions=True,
-            service_layer_only=True,
-            exclude_class_fields=False,
-        )
-        assert overrides.skip_private_functions is True
-        assert overrides.service_layer_only is True
-        assert overrides.exclude_class_fields is False
-
-
-class TestLoadCoverageSettingsDynamic:
-    """Tests for dynamic tier loading from pyproject.toml."""
-
-    def test_loads_custom_tier_from_toml(self, fs: FakeFilesystem) -> None:
-        """Should load custom tier definition from pyproject.toml."""
-        toml_content = """
-[tool.test_coverage.e2e]
-test_path = "tests/e2e"
-source_paths = ["app"]
-coverage_type = "usecase"
-min_usecase = 100.0
-"""
-        fs.create_file("/pyproject.toml", contents=toml_content)
-        settings = load_coverage_settings(Path("/pyproject.toml"))
-        # Thresholds container
-        assert "e2e" in settings.thresholds
-        assert settings.thresholds["e2e"].min_usecase == 100.0
-        # Path overrides container
-        assert "e2e" in settings.path_overrides
-        assert settings.path_overrides["e2e"].test_path == "tests/e2e"
-        assert settings.path_overrides["e2e"].coverage_type == "usecase"
-
-    def test_threshold_only_override(self, fs: FakeFilesystem) -> None:
-        """Should load threshold override while path_overrides are None."""
-        toml_content = """
-[tool.test_coverage.unit]
-min_line_per_function = 70.0
-"""
-        fs.create_file("/pyproject.toml", contents=toml_content)
-        settings = load_coverage_settings(Path("/pyproject.toml"))
-        # Threshold from toml
-        assert settings.thresholds["unit"].min_line_per_function == 70.0
-        # Path overrides should be None (use DEFAULT_TIER_CONFIGS)
-        assert settings.path_overrides["unit"].test_path is None
-
-    def test_loads_default_tiers_when_no_toml_section(self, fs: FakeFilesystem) -> None:
-        """Should load default tier names even with empty tool.test_coverage."""
-        toml_content = """
-[tool.other_tool]
-some_setting = true
-"""
-        fs.create_file("/pyproject.toml", contents=toml_content)
-        settings = load_coverage_settings(Path("/pyproject.toml"))
-        # Default tiers should still be present with default thresholds
-        assert "unit" in settings.thresholds
-        assert "component" in settings.thresholds
-        assert "integration" in settings.thresholds
-        assert "scripts" in settings.thresholds
-        # With default values
-        assert settings.thresholds["unit"].min_line_per_function == DEFAULT_MIN_LINE_PER_FUNCTION
-
-    def test_returns_empty_settings_when_no_file(self) -> None:
-        """Should return empty CoverageSettings when pyproject.toml doesn't exist."""
-        settings = load_coverage_settings(Path("/nonexistent/pyproject.toml"))
-        assert settings.thresholds == {}
-        assert settings.path_overrides == {}
-
-
-class TestGetTestTiersDynamic:
-    """Tests for dynamic tier configuration in get_test_tiers() and load_tier_configs()."""
-
-    def test_uses_default_tier_configs_when_no_overrides(self) -> None:
-        """Should use DEFAULT_TIER_CONFIGS when path_overrides are None."""
-        tiers = get_test_tiers()
-        assert tiers["unit"].test_path == "tests/unit"
-        assert tiers["unit"].source_paths == ["app"]
-        assert tiers["unit"].coverage_type == "line_branch"
-
-    def test_toml_overrides_default_tier_configs(self, tmp_path: Path) -> None:
-        """TOML path overrides should take precedence over DEFAULT_TIER_CONFIGS."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.unit]
-test_path = "tests/custom_unit"
-source_paths = ["custom_app"]
-coverage_type = "line_branch"
-""")
-        tiers = load_tier_configs(pyproject)
-        # TOML overrides should be used
-        assert tiers["unit"].test_path == "tests/custom_unit"
-        assert tiers["unit"].source_paths == ["custom_app"]
-
-    def test_custom_tier_with_all_required_fields(self, tmp_path: Path) -> None:
-        """Custom tier with all required fields should be available."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.e2e]
-test_path = "tests/e2e"
-source_paths = ["app"]
-coverage_type = "usecase"
-min_usecase = 95.0
-""")
-        tiers = load_tier_configs(pyproject)
-        assert "e2e" in tiers
-        assert tiers["e2e"].test_path == "tests/e2e"
-        assert tiers["e2e"].source_paths == ["app"]
-        assert tiers["e2e"].coverage_type == "usecase"
-        assert tiers["e2e"].min_usecase == 95.0
-
-    def test_custom_tier_missing_test_path_raises_error(self, tmp_path: Path) -> None:
-        """Custom tier missing test_path should raise ValueError."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.e2e]
-source_paths = ["app"]
-coverage_type = "usecase"
-# test_path is missing
-""")
-        with pytest.raises(
-            ValueError, match="Custom tier 'e2e' is missing required fields: test_path"
-        ):
-            load_tier_configs(pyproject)
-
-    def test_custom_tier_missing_source_paths_raises_error(self, tmp_path: Path) -> None:
-        """Custom tier missing source_paths should raise ValueError."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.e2e]
-test_path = "tests/e2e"
-coverage_type = "usecase"
-# source_paths is missing
-""")
-        with pytest.raises(
-            ValueError, match="Custom tier 'e2e' is missing required fields: source_paths"
-        ):
-            load_tier_configs(pyproject)
-
-    def test_custom_tier_missing_coverage_type_raises_error(self, tmp_path: Path) -> None:
-        """Custom tier missing coverage_type should raise ValueError."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.e2e]
-test_path = "tests/e2e"
-source_paths = ["app"]
-# coverage_type is missing
-""")
-        with pytest.raises(
-            ValueError, match="Custom tier 'e2e' is missing required fields: coverage_type"
-        ):
-            load_tier_configs(pyproject)
-
-    def test_custom_tier_missing_multiple_fields_raises_error(self, tmp_path: Path) -> None:
-        """Custom tier missing multiple required fields should list all missing fields."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.e2e]
-min_usecase = 100.0
-# All required fields are missing
-""")
-        with pytest.raises(
-            ValueError,
-            match=(
-                r"Custom tier 'e2e' is missing required fields: "
-                r"test_path, source_paths, coverage_type"
-            ),
-        ):
-            load_tier_configs(pyproject)
-
-    def test_invalid_coverage_type_raises_error(self, tmp_path: Path) -> None:
-        """Invalid coverage_type should raise ValueError."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.e2e]
-test_path = "tests/e2e"
-source_paths = ["app"]
-coverage_type = "invalid_type"
-""")
-        with pytest.raises(ValueError, match="Invalid coverage_type 'invalid_type'"):
-            load_tier_configs(pyproject)
-
-
-class TestMisconfiguredCustomTiers:
-    """Tests for custom tiers with missing required fields.
-
-    These tests verify that get_test_tiers() raises ValueError with a
-    descriptive message when a custom tier (not in DEFAULT_TIER_CONFIGS)
-    is missing test_path, source_paths, or coverage_type.
+    These tests verify that load_tier_configs() raises ValueError with a
+    descriptive message when a tier is missing required fields or has
+    invalid values.
 
     Tests use temporary pyproject.toml files to simulate real-world
     misconfiguration scenarios.
     """
 
-    def test_custom_tier_missing_test_path_raises_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Custom tier missing test_path should raise ValueError."""
+    def test_tier_missing_test_path_raises_error(self, tmp_path: Path) -> None:
+        """Tier missing test_path should raise ValueError."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.test_coverage.e2e]
+[tool.test_coverage.tiers.e2e]
 source_paths = ["app"]
-coverage_type = "usecase"
 min_usecase = 100.0
 # test_path is missing
 """)
-        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
-
-        test_coverage._settings = None
-
         with pytest.raises(ValueError) as exc_info:
-            get_test_tiers()
-        assert "Custom tier 'e2e' is missing required fields: test_path" in str(exc_info.value)
+            load_tier_configs(pyproject)
+        assert "Tier 'e2e' missing required fields: test_path" in str(exc_info.value)
 
-    def test_custom_tier_missing_source_paths_raises_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Custom tier missing source_paths should raise ValueError."""
+    def test_tier_missing_source_paths_raises_error(self, tmp_path: Path) -> None:
+        """Tier missing source_paths should raise ValueError."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.test_coverage.e2e]
+[tool.test_coverage.tiers.e2e]
 test_path = "tests/e2e"
-coverage_type = "usecase"
 min_usecase = 100.0
 # source_paths is missing
 """)
-        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
-
-        test_coverage._settings = None
-
         with pytest.raises(ValueError) as exc_info:
-            get_test_tiers()
-        assert "Custom tier 'e2e' is missing required fields: source_paths" in str(exc_info.value)
+            load_tier_configs(pyproject)
+        assert "Tier 'e2e' missing required fields: source_paths" in str(exc_info.value)
 
-    def test_custom_tier_missing_coverage_type_raises_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Custom tier missing coverage_type should raise ValueError."""
+    def test_tier_missing_all_thresholds_raises_error(self, tmp_path: Path) -> None:
+        """Tier missing all threshold fields should raise ValueError."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.test_coverage.e2e]
+[tool.test_coverage.tiers.e2e]
 test_path = "tests/e2e"
 source_paths = ["app"]
-min_usecase = 100.0
-# coverage_type is missing
+# All threshold fields are missing
 """)
-        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
-
-        test_coverage._settings = None
-
         with pytest.raises(ValueError) as exc_info:
-            get_test_tiers()
-        assert "Custom tier 'e2e' is missing required fields: coverage_type" in str(exc_info.value)
+            load_tier_configs(pyproject)
+        assert "Tier 'e2e' has no coverage thresholds set" in str(exc_info.value)
 
-    def test_custom_tier_missing_multiple_fields_raises_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Custom tier missing multiple required fields should list all missing fields."""
+    def test_tier_missing_multiple_fields_raises_error(self, tmp_path: Path) -> None:
+        """Tier missing multiple required fields should list all missing fields."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.test_coverage.e2e]
+[tool.test_coverage.tiers.e2e]
 min_usecase = 100.0
-# All required fields are missing: test_path, source_paths, coverage_type
+# Required fields test_path and source_paths are missing
 """)
-        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
-
-        test_coverage._settings = None
-
         with pytest.raises(ValueError) as exc_info:
-            get_test_tiers()
+            load_tier_configs(pyproject)
         error_msg = str(exc_info.value)
-        assert "Custom tier 'e2e' is missing required fields:" in error_msg
+        assert "Tier 'e2e' missing required fields:" in error_msg
         assert "test_path" in error_msg
         assert "source_paths" in error_msg
-        assert "coverage_type" in error_msg
 
-    def test_custom_tier_with_empty_source_paths_raises_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Custom tier with empty source_paths array should raise ValueError."""
+    def test_tier_with_empty_source_paths_raises_error(self, tmp_path: Path) -> None:
+        """Tier with empty source_paths array should raise ValueError."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.test_coverage.e2e]
+[tool.test_coverage.tiers.e2e]
 test_path = "tests/e2e"
 source_paths = []
-coverage_type = "usecase"
+min_usecase = 100.0
 """)
-        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
-
-        test_coverage._settings = None
-
         with pytest.raises(ValueError) as exc_info:
-            get_test_tiers()
+            load_tier_configs(pyproject)
         assert "source_paths" in str(exc_info.value)
 
-    def test_custom_tier_with_empty_test_path_raises_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Custom tier with empty test_path string should raise ValueError."""
+    def test_tier_with_empty_test_path_raises_error(self, tmp_path: Path) -> None:
+        """Tier with empty test_path string should raise ValueError."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.test_coverage.e2e]
+[tool.test_coverage.tiers.e2e]
 test_path = ""
 source_paths = ["app"]
-coverage_type = "usecase"
+min_usecase = 100.0
 """)
-        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
-
-        test_coverage._settings = None
-
         with pytest.raises(ValueError) as exc_info:
-            get_test_tiers()
+            load_tier_configs(pyproject)
         assert "test_path" in str(exc_info.value)
 
-    def test_invalid_coverage_type_raises_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Invalid coverage_type should raise ValueError with descriptive message."""
+    def test_invalid_property_raises_error(self, tmp_path: Path) -> None:
+        """Unknown property should raise ValueError with descriptive message."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.test_coverage.e2e]
+[tool.test_coverage.tiers.e2e]
 test_path = "tests/e2e"
 source_paths = ["app"]
-coverage_type = "invalid_type"
+min_usecase = 100.0
+invalid_property = "value"
 """)
-        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
-
-        test_coverage._settings = None
-
         with pytest.raises(ValueError) as exc_info:
-            get_test_tiers()
+            load_tier_configs(pyproject)
         error_msg = str(exc_info.value)
-        assert "Invalid coverage_type 'invalid_type'" in error_msg
-        assert "e2e" in error_msg
+        assert "Tier 'e2e' contains unknown properties" in error_msg
+        assert "invalid_property" in error_msg
 
-    def test_default_tier_override_does_not_require_all_fields(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Default tier (e.g., 'unit') should not require path fields in TOML.
-
-        Default tiers have path/type defaults in DEFAULT_TIER_CONFIGS, so
-        TOML can specify only threshold overrides without error.
-        """
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.unit]
-min_line_per_function = 70.0
-# No test_path, source_paths, coverage_type - should use DEFAULT_TIER_CONFIGS
-""")
-        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
-
-        test_coverage._settings = None
-
-        # Should NOT raise - unit has defaults in DEFAULT_TIER_CONFIGS
-        tiers = get_test_tiers()
-        assert "unit" in tiers
-        assert tiers["unit"].test_path == "tests/unit"  # From DEFAULT_TIER_CONFIGS
-        assert tiers["unit"].min_line_per_function == 70.0  # From TOML override
-
-    def test_error_message_is_actionable(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_error_message_is_actionable(self, tmp_path: Path) -> None:
         """Error message should explain what fields are required and for which tier."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.test_coverage.my_custom_tier]
-min_line_overall = 80.0
+[tool.test_coverage.tiers.my_custom_tier]
+# Missing all required fields
 """)
-        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
-
-        test_coverage._settings = None
-
         with pytest.raises(ValueError) as exc_info:
-            get_test_tiers()
+            load_tier_configs(pyproject)
         error_msg = str(exc_info.value)
         # Should mention the tier name
         assert "my_custom_tier" in error_msg
         # Should explain required fields
         assert "test_path" in error_msg
         assert "source_paths" in error_msg
-        assert "coverage_type" in error_msg
 
-    def test_custom_tier_with_all_required_fields_succeeds(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Custom tier with all required fields should be created successfully."""
+    def test_tier_with_all_required_fields_succeeds(self, tmp_path: Path) -> None:
+        """Tier with all required fields should be created successfully."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.test_coverage.e2e]
+[tool.test_coverage.tiers.e2e]
 test_path = "tests/e2e"
 source_paths = ["app", "lib"]
-coverage_type = "usecase"
 min_usecase = 95.0
 """)
-        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
-
-        test_coverage._settings = None
-
-        # Should NOT raise
-        tiers = get_test_tiers()
+        tiers = load_tier_configs(pyproject)
         assert "e2e" in tiers
         assert tiers["e2e"].test_path == "tests/e2e"
         assert tiers["e2e"].source_paths == ["app", "lib"]
         assert tiers["e2e"].coverage_type == "usecase"
         assert tiers["e2e"].min_usecase == 95.0
+
+    def test_missing_tiers_section_raises_error(self, tmp_path: Path) -> None:
+        """Missing [tool.test_coverage.tiers] section should raise ValueError."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.other_section]
+some_setting = true
+""")
+        with pytest.raises(ValueError) as exc_info:
+            load_tier_configs(pyproject)
+        assert "No [tool.test_coverage.tiers] section found" in str(exc_info.value)
+
+    def test_missing_pyproject_raises_error(self, tmp_path: Path) -> None:
+        """Missing pyproject.toml should raise ValueError."""
+        nonexistent = tmp_path / "nonexistent" / "pyproject.toml"
+        with pytest.raises(ValueError) as exc_info:
+            load_tier_configs(nonexistent)
+        assert "pyproject.toml not found" in str(exc_info.value)
 
 
 class TestMainMisconfiguredTierHandling:
@@ -677,43 +321,67 @@ class TestTestTiers:
         tiers = get_test_tiers()
         config = tiers["unit"]
         assert config.test_path == "tests/unit"
-        assert config.source_paths == ["app"]
+        # source_paths now uses glob patterns
+        assert config.source_paths == ["app/**/*.py", "!app/**/__init__.py"]
         assert config.coverage_type == "line_branch"
         assert config.skip_private_functions is False
-        assert config.service_layer_only is False
+        # service_layer_only field should not exist
+        assert not hasattr(config, "service_layer_only")
         # coverage_file field should be removed
         assert not hasattr(config, "coverage_file")
 
     def test_component_tier_config(self) -> None:
-        """Component tier should target service layer only."""
+        """Component tier should use usecase coverage with tests/component path."""
         tiers = get_test_tiers()
         config = tiers["component"]
-        assert config.source_paths == ["app/services"]
-        assert config.coverage_type == "line_branch"
+        assert config.test_path == "tests/component"
+        # source_paths now uses glob patterns
+        assert config.source_paths == ["app/services/**/*.py", "!app/services/**/__init__.py"]
+        assert config.coverage_type == "usecase"
+        assert config.min_usecase == 100.0
         assert config.skip_private_functions is True
-        assert config.service_layer_only is True
+        # service_layer_only field should not exist
+        assert not hasattr(config, "service_layer_only")
         # coverage_file field should be removed
         assert not hasattr(config, "coverage_file")
 
     def test_integration_tier_config(self) -> None:
-        """Integration tier should use use-case coverage."""
+        """Integration tier should use use-case coverage for API endpoints."""
         tiers = get_test_tiers()
         config = tiers["integration"]
         assert config.test_path == "tests/integration"
+        # source_paths now uses glob patterns with negations
+        assert config.source_paths == [
+            "app/api/**/*.py",
+            "!app/api/**/__init__.py",
+            "!app/api/**/router.py",
+            "!app/api/**/dependencies.py",
+        ]
         assert config.coverage_type == "usecase"
+        # exclude_patterns has been replaced with negation patterns in source_paths
+        assert not hasattr(config, "exclude_patterns")
         # coverage_file field should be removed
         assert not hasattr(config, "coverage_file")
+        # service_layer_only field should be removed
+        assert not hasattr(config, "service_layer_only")
 
     def test_scripts_tier_config(self) -> None:
-        """Scripts tier should target scripts/ and tools/."""
+        """Scripts tier should target scripts/."""
         tiers = get_test_tiers()
         config = tiers["scripts"]
         assert config.test_path == "scripts/tests"
-        assert config.source_paths == ["scripts", "tools"]
+        # source_paths now uses glob patterns
+        assert config.source_paths == [
+            "scripts/**/*.py",
+            "!scripts/**/__init__.py",
+            "!scripts/tests/**/*.py",
+        ]
         assert config.coverage_type == "line_branch"
         assert config.skip_private_functions is True
         # coverage_file field should be removed
         assert not hasattr(config, "coverage_file")
+        # service_layer_only field should be removed
+        assert not hasattr(config, "service_layer_only")
 
 
 class TestIsPrivateFunction:
@@ -743,26 +411,6 @@ class TestIsPrivateFunction:
         """Other dunder methods should be private."""
         assert _is_private_function("__repr__") is True
         assert _is_private_function("__str__") is True
-
-
-class TestIsInServiceLayer:
-    """Tests for _is_in_service_layer helper."""
-
-    def test_service_file_in_service_layer(self) -> None:
-        """Files in app/services/ should be in service layer."""
-        assert _is_in_service_layer("app/services/example_service.py") is True
-
-    def test_nested_service_file(self) -> None:
-        """Nested files in app/services/ should be in service layer."""
-        assert _is_in_service_layer("app/services/v1/user_service.py") is True
-
-    def test_api_file_not_in_service_layer(self) -> None:
-        """Files in app/api/ should not be in service layer."""
-        assert _is_in_service_layer("app/api/routes.py") is False
-
-    def test_repository_not_in_service_layer(self) -> None:
-        """Files in app/repositories/ should not be in service layer."""
-        assert _is_in_service_layer("app/repositories/example.py") is False
 
 
 class TestGetClassFieldLines:
@@ -1130,7 +778,6 @@ class TestValidateLineBranchCoverage:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=80.0,
         )
@@ -1166,7 +813,6 @@ class TestValidateLineBranchCoverage:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=80.0,
         )
@@ -1203,7 +849,6 @@ class TestValidateLineBranchCoverage:
             name="scripts",
             test_path="scripts/tests",
             source_paths=["scripts"],
-            coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=80.0,
             skip_private_functions=True,
@@ -1240,7 +885,6 @@ class TestValidateLineBranchCoverage:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=80.0,
             min_branch_per_function=80.0,
             skip_private_functions=False,
@@ -1272,52 +916,6 @@ class TestValidateLineBranchCoverage:
         assert len(failures) == 1
         assert "_private_func" in failures[0]
 
-    def test_service_layer_only_filter(self) -> None:
-        """Should only validate service layer files when configured."""
-        config = TestTierConfig(
-            name="component",
-            test_path="tests/unit",
-            source_paths=["app/services"],
-            coverage_type="line_branch",
-            min_line_per_function=80.0,
-            min_branch_per_function=80.0,
-            service_layer_only=True,
-            skip_private_functions=True,
-        )
-        result = CoverageResult(
-            suite_name="component",
-            total_lines=100,
-            covered_lines=85,
-            missing_lines=15,
-            line_coverage_pct=85.0,
-            total_branches=50,
-            covered_branches=45,
-            missing_branches=5,
-            branch_coverage_pct=90.0,
-            files={},
-            functions={
-                "app/api/routes.py::low_func": {
-                    "name": "low_func",
-                    "file": "app/api/routes.py",  # Not service layer
-                    "line_coverage": 10.0,
-                    "branch_coverage": 10.0,
-                    "missing_branches": [],
-                },
-                "app/services/user.py::service_func": {
-                    "name": "service_func",
-                    "file": "app/services/user.py",  # Service layer
-                    "line_coverage": 85.0,
-                    "branch_coverage": 90.0,
-                    "missing_branches": [],
-                },
-            },
-        )
-
-        failures = validate_line_branch_coverage(result, config)
-
-        # Should not fail because non-service file is excluded
-        assert failures == []
-
 
 class TestValidateUsecaseCoverage:
     """Tests for validate_usecase_coverage function."""
@@ -1328,7 +926,6 @@ class TestValidateUsecaseCoverage:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=100.0,
         )
         uc_result = UseCaseCoverageResult(
@@ -1349,7 +946,6 @@ class TestValidateUsecaseCoverage:
             name="e2e",
             test_path="tests/e2e",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=100.0,
         )
         uc_result = UseCaseCoverageResult(
@@ -1617,7 +1213,7 @@ class TestPrintSummary:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
         result = CoverageResult(
             suite_name="unit",
@@ -1646,7 +1242,7 @@ class TestPrintSummary:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
+            min_usecase=100.0,
         )
         uc_result = UseCaseCoverageResult(
             tier="integration",
@@ -2686,7 +2282,7 @@ class TestMainJSONReportIntegration:
             name="scripts",
             test_path="scripts/tests",
             source_paths=["scripts/"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
         mock_coverage_result = CoverageResult(
             suite_name="scripts",
@@ -2713,7 +2309,7 @@ class TestMainJSONReportIntegration:
             name="integration",
             test_path="tests/integration",
             source_paths=["app/"],
-            coverage_type="usecase",
+            min_usecase=100.0,
         )
         mock_usecase_result = UseCaseCoverageResult(
             tier="integration",
@@ -2857,7 +2453,6 @@ class TestLineBranchTierPassBehavior:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=60.0,
             min_branch_per_function=50.0,
         )
@@ -2905,7 +2500,6 @@ class TestLineBranchTierPassBehavior:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=90.0,  # High threshold to cause failure
             min_branch_per_function=50.0,
         )
@@ -2952,7 +2546,6 @@ class TestLineBranchTierPassBehavior:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=60.0,
             min_branch_per_function=50.0,
         )
@@ -3006,7 +2599,6 @@ class TestLineBranchTierPassBehavior:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=90.0,  # High threshold - would fail if validate() called
             min_branch_per_function=50.0,
         )
@@ -3057,7 +2649,6 @@ class TestLineBranchTierPassBehavior:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=90.0,  # High threshold - irrelevant here
             min_branch_per_function=50.0,
         )
@@ -3102,7 +2693,6 @@ class TestLineBranchTierPassBehavior:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=90.0,  # High threshold to cause failure
             min_branch_per_function=50.0,
         )
@@ -3164,7 +2754,6 @@ class TestIntegrationTierPassBehavior:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=100.0,
         )
         use_cases = [
@@ -3198,7 +2787,6 @@ class TestIntegrationTierPassBehavior:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=100.0,
         )
         use_cases = [
@@ -3238,7 +2826,6 @@ class TestIntegrationTierPassBehavior:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=100.0,
         )
         use_cases = [
@@ -3270,7 +2857,6 @@ class TestIntegrationTierPassBehavior:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=50.0,  # 50% threshold
         )
         use_cases = [
@@ -3317,7 +2903,6 @@ class TestCustomTierPassBehavior:
             name="e2e_lines",  # Custom tier name
             test_path="tests/e2e",
             source_paths=["app/e2e"],
-            coverage_type="line_branch",
             min_line_per_function=70.0,
             min_branch_per_function=60.0,
         )
@@ -3363,7 +2948,6 @@ class TestCustomTierPassBehavior:
             name="smoke",  # Custom tier name
             test_path="tests/smoke",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=80.0,  # Lower threshold for smoke tests
         )
         use_cases = [
@@ -3397,7 +2981,6 @@ class TestCustomTierPassBehavior:
             name="perf_tests",  # Another custom tier name
             test_path="tests/perf",
             source_paths=["app/perf"],
-            coverage_type="line_branch",
             min_line_per_function=50.0,
             min_branch_per_function=40.0,
         )
@@ -3443,7 +3026,6 @@ class TestCustomTierPassBehavior:
             name="custom_strict",  # Custom tier with strict thresholds
             test_path="tests/custom",
             source_paths=["app/custom"],
-            coverage_type="line_branch",
             min_line_per_function=95.0,  # Very high threshold
             min_branch_per_function=90.0,
         )
@@ -3508,7 +3090,6 @@ class TestNoValidateSemantics:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=100.0,  # Impossible threshold
             min_branch_per_function=100.0,
         )
@@ -3553,7 +3134,6 @@ class TestNoValidateSemantics:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=100.0,  # Requires all use cases covered
         )
         use_cases = [
@@ -3637,7 +3217,7 @@ class TestMainTierPassEndToEnd:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
 
         # Mock parse_args to return our test configuration
@@ -3747,7 +3327,7 @@ class TestMainTierPassEndToEnd:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
 
         monkeypatch.setattr(
@@ -3853,7 +3433,7 @@ class TestMainTierPassEndToEnd:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
 
         monkeypatch.setattr(
@@ -3947,7 +3527,7 @@ class TestMainTierPassEndToEnd:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
+            min_usecase=100.0,
         )
 
         monkeypatch.setattr(
@@ -4038,10 +3618,9 @@ class TestMainCustomTierPassEndToEnd:
         # Create custom tier in temporary pyproject.toml
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.test_coverage.e2e]
+[tool.test_coverage.tiers.e2e]
 test_path = "tests/e2e"
 source_paths = ["app"]
-coverage_type = "line_branch"
 min_line_per_function = 70.0
 min_branch_per_function = 60.0
 """)
@@ -4051,9 +3630,6 @@ min_branch_per_function = 60.0
         coverage_dir.mkdir(parents=True, exist_ok=True)
 
         monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
-
-        test_coverage._settings = None
 
         monkeypatch.setattr(
             "scripts.dev.test_runner.test_coverage.parse_args",
@@ -4078,7 +3654,7 @@ min_branch_per_function = 60.0
             name="e2e",
             test_path="tests/e2e",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
         mock_strategy.coverage_result = CoverageResult(
             suite_name="e2e",
@@ -4150,10 +3726,9 @@ min_branch_per_function = 60.0
         # Create custom usecase tier
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.test_coverage.smoke]
+[tool.test_coverage.tiers.smoke]
 test_path = "tests/smoke"
 source_paths = ["app"]
-coverage_type = "usecase"
 min_usecase = 100.0
 """)
 
@@ -4162,9 +3737,6 @@ min_usecase = 100.0
         coverage_dir.mkdir(parents=True, exist_ok=True)
 
         monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
-
-        test_coverage._settings = None
 
         monkeypatch.setattr(
             "scripts.dev.test_runner.test_coverage.parse_args",
@@ -4189,7 +3761,7 @@ min_usecase = 100.0
             name="smoke",
             test_path="tests/smoke",
             source_paths=["app"],
-            coverage_type="usecase",
+            min_usecase=100.0,
         )
         mock_strategy.coverage_result = None
         mock_strategy.usecase_result = UseCaseCoverageResult(
@@ -4276,7 +3848,6 @@ class TestNoValidateBehavioralContract:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=100.0,  # Impossibly high threshold
             min_branch_per_function=100.0,
         )
@@ -4325,7 +3896,6 @@ class TestNoValidateBehavioralContract:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
             min_line_per_function=100.0,
             min_branch_per_function=100.0,
         )
@@ -4375,7 +3945,6 @@ class TestNoValidateBehavioralContract:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
             min_usecase=100.0,  # Requires all use cases covered
         )
         use_cases = [
@@ -4423,7 +3992,6 @@ class TestNoValidateBehavioralContract:
             name="e2e_strict",  # Custom tier
             test_path="tests/e2e",
             source_paths=["app/e2e"],
-            coverage_type="line_branch",
             min_line_per_function=99.0,
             min_branch_per_function=99.0,
         )
@@ -4466,7 +4034,6 @@ class TestNoValidateBehavioralContract:
             name="api_smoke",  # Custom tier
             test_path="tests/api",
             source_paths=["app/api"],
-            coverage_type="usecase",
             min_usecase=100.0,
         )
         use_cases = [
@@ -4498,29 +4065,22 @@ class TestLoadTierConfigs:
     """Tests for the load_tier_configs() public API.
 
     load_tier_configs() is the single source of truth for building
-    dict[str, TestTierConfig] from pyproject.toml. It supports two formats:
-
-    1. New format: [tool.test_coverage.tiers.<tier_name>] - constructs
-       TestTierConfig directly without CoverageSettings dependency.
-
-    2. Legacy format: [tool.test_coverage.<tier>] flat sections - uses
-       _load_tiers_from_legacy_format().
+    dict[str, TestTierConfig] from pyproject.toml. All tiers must be defined
+    in [tool.test_coverage.tiers.<tier_name>] sections.
     """
 
-    def test_load_tier_configs_new_format(self, tmp_path: Path) -> None:
-        """Should load tier configs from new [tool.test_coverage.tiers] format."""
+    def test_load_tier_configs_multiple_tiers(self, tmp_path: Path) -> None:
+        """Should load tier configs from [tool.test_coverage.tiers] format."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
 [tool.test_coverage.tiers.alpha]
 test_path = "tests/alpha"
 source_paths = ["app"]
-coverage_type = "line_branch"
 min_line_per_function = 75.0
 
 [tool.test_coverage.tiers.beta]
 test_path = "tests/beta"
 source_paths = ["lib"]
-coverage_type = "usecase"
 min_usecase = 90.0
 """)
         tiers = load_tier_configs(pyproject)
@@ -4536,34 +4096,6 @@ min_usecase = 90.0
         assert tiers["beta"].coverage_type == "usecase"
         assert tiers["beta"].min_usecase == 90.0
 
-    def test_load_tier_configs_legacy_format(self, tmp_path: Path) -> None:
-        """Should load tier configs from legacy flat sections."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.unit]
-min_line_per_function = 70.0
-
-[tool.test_coverage.e2e]
-test_path = "tests/e2e"
-source_paths = ["app"]
-coverage_type = "usecase"
-min_usecase = 95.0
-""")
-        tiers = load_tier_configs(pyproject)
-
-        # Default tiers should be present
-        assert "unit" in tiers
-        assert "component" in tiers
-        assert "integration" in tiers
-        assert "scripts" in tiers
-        # Custom tier should also be present
-        assert "e2e" in tiers
-        # Threshold override should be applied
-        assert tiers["unit"].min_line_per_function == 70.0
-        # Custom tier should have its values
-        assert tiers["e2e"].test_path == "tests/e2e"
-        assert tiers["e2e"].min_usecase == 95.0
-
     def test_load_tier_configs_custom_path(self, tmp_path: Path) -> None:
         """Should load from custom pyproject_path."""
         custom_path = tmp_path / "custom" / "pyproject.toml"
@@ -4572,30 +4104,26 @@ min_usecase = 95.0
 [tool.test_coverage.tiers.custom]
 test_path = "tests/custom"
 source_paths = ["custom"]
-coverage_type = "line_branch"
+min_line_per_function = 80.0
 """)
         tiers = load_tier_configs(custom_path)
 
         assert "custom" in tiers
         assert tiers["custom"].test_path == "tests/custom"
 
-    def test_load_tier_configs_missing_file(self) -> None:
-        """Should return default tiers when pyproject.toml doesn't exist."""
-        tiers = load_tier_configs(Path("/nonexistent/pyproject.toml"))
-
-        # Should have default tiers from DEFAULT_TIER_CONFIGS
-        assert "unit" in tiers
-        assert "component" in tiers
-        assert "integration" in tiers
-        assert "scripts" in tiers
+    def test_load_tier_configs_missing_file_raises_error(self) -> None:
+        """Should raise ValueError when pyproject.toml doesn't exist."""
+        with pytest.raises(ValueError) as exc_info:
+            load_tier_configs(Path("/nonexistent/pyproject.toml"))
+        assert "pyproject.toml not found" in str(exc_info.value)
 
     def test_load_tier_configs_validation_errors(self, tmp_path: Path) -> None:
-        """Should raise ValueError for missing required fields in new format."""
+        """Should raise ValueError for missing required fields."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
 [tool.test_coverage.tiers.invalid]
 test_path = "tests/invalid"
-# Missing source_paths and coverage_type
+# Missing source_paths
 """)
         with pytest.raises(ValueError) as exc_info:
             load_tier_configs(pyproject)
@@ -4603,42 +4131,9 @@ test_path = "tests/invalid"
         error_msg = str(exc_info.value)
         assert "invalid" in error_msg
         assert "source_paths" in error_msg
-        assert "coverage_type" in error_msg
 
-    def test_new_format_does_not_use_coverage_settings(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """New format should NOT call load_coverage_settings().
-
-        This test proves that _load_tiers_from_new_format() constructs
-        TestTierConfig directly without depending on CoverageSettings.
-        """
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.tiers.test_tier]
-test_path = "tests/test"
-source_paths = ["app"]
-coverage_type = "line_branch"
-""")
-        # Mock load_coverage_settings to raise an exception
-        monkeypatch.setattr(
-            "scripts.dev.test_runner.test_coverage.load_coverage_settings",
-            lambda *args, **kwargs: (_ for _ in ()).throw(
-                AssertionError("load_coverage_settings() should NOT be called for new format")
-            ),
-        )
-
-        # This should succeed because new format doesn't use load_coverage_settings
-        tiers = load_tier_configs(pyproject)
-        assert "test_tier" in tiers
-
-    def test_removing_tier_from_new_format_skips_execution(self, tmp_path: Path) -> None:
-        """Removing a tier from new format should cause it to be absent from results.
-
-        This validates success criterion #3 (Tier Removal Works).
-        """
-        from scripts.dev.test_runner import test_coverage
-
+    def test_removing_tier_skips_execution(self, tmp_path: Path) -> None:
+        """Removing a tier from config should cause it to be absent from results."""
         pyproject = tmp_path / "pyproject.toml"
 
         # Step 1: Create pyproject.toml with two tiers
@@ -4646,12 +4141,12 @@ coverage_type = "line_branch"
 [tool.test_coverage.tiers.alpha]
 test_path = "tests/alpha"
 source_paths = ["app"]
-coverage_type = "line_branch"
+min_line_per_function = 80.0
 
 [tool.test_coverage.tiers.beta]
 test_path = "tests/beta"
 source_paths = ["app"]
-coverage_type = "line_branch"
+min_line_per_function = 80.0
 """)
         tiers_v1 = load_tier_configs(pyproject)
         assert "alpha" in tiers_v1
@@ -4662,10 +4157,8 @@ coverage_type = "line_branch"
 [tool.test_coverage.tiers.alpha]
 test_path = "tests/alpha"
 source_paths = ["app"]
-coverage_type = "line_branch"
+min_line_per_function = 80.0
 """)
-        # Reset cache
-        test_coverage._settings = None
 
         # Step 3: Reload and verify beta is gone
         tiers_v2 = load_tier_configs(pyproject)
@@ -4673,150 +4166,48 @@ coverage_type = "line_branch"
         assert "beta" not in tiers_v2  # beta was removed
 
 
-class TestDefaultsAlignmentBetweenFormats:
-    """Tests ensuring new and legacy formats apply identical defaults."""
-
-    def test_defaults_alignment_between_new_and_legacy_paths(self, tmp_path: Path) -> None:
-        """Both new and legacy formats should apply identical defaults for optional fields."""
-        # Create new format fixture
-        new_format_pyproject = tmp_path / "new" / "pyproject.toml"
-        new_format_pyproject.parent.mkdir(parents=True, exist_ok=True)
-        new_format_pyproject.write_text("""
-[tool.test_coverage.tiers.test_tier]
-test_path = "tests/test"
-source_paths = ["app"]
-coverage_type = "line_branch"
-""")
-
-        # Create legacy format fixture
-        legacy_format_pyproject = tmp_path / "legacy" / "pyproject.toml"
-        legacy_format_pyproject.parent.mkdir(parents=True, exist_ok=True)
-        legacy_format_pyproject.write_text("""
-[tool.test_coverage.test_tier]
-test_path = "tests/test"
-source_paths = ["app"]
-coverage_type = "line_branch"
-""")
-
-        # Load using both formats
-        new_tiers = load_tier_configs(new_format_pyproject)
-        legacy_tiers = load_tier_configs(legacy_format_pyproject)
-
-        new_config = new_tiers["test_tier"]
-        legacy_config = legacy_tiers["test_tier"]
-
-        # Assert all optional fields have identical values
-        assert new_config.min_line_overall == DEFAULT_MIN_LINE_OVERALL
-        assert legacy_config.min_line_overall == DEFAULT_MIN_LINE_OVERALL
-
-        assert new_config.min_branch_overall == DEFAULT_MIN_BRANCH_OVERALL
-        assert legacy_config.min_branch_overall == DEFAULT_MIN_BRANCH_OVERALL
-
-        assert new_config.min_line_per_function == DEFAULT_MIN_LINE_PER_FUNCTION
-        assert legacy_config.min_line_per_function == DEFAULT_MIN_LINE_PER_FUNCTION
-
-        assert new_config.min_branch_per_function == DEFAULT_MIN_BRANCH_PER_FUNCTION
-        assert legacy_config.min_branch_per_function == DEFAULT_MIN_BRANCH_PER_FUNCTION
-
-        assert new_config.min_usecase == DEFAULT_MIN_USECASE
-        assert legacy_config.min_usecase == DEFAULT_MIN_USECASE
-
-        assert new_config.skip_private_functions is False
-        assert legacy_config.skip_private_functions is False
-
-        assert new_config.service_layer_only is False
-        assert legacy_config.service_layer_only is False
-
-        assert new_config.exclude_class_fields is True
-        assert legacy_config.exclude_class_fields is True
-
-
 class TestTierOrderPreservation:
     """Tests verifying tier order preservation.
 
-    Implements Success Criterion 24: Tier order from TOML is preserved.
+    Tier order from TOML is preserved using tomllib's order preservation.
     """
 
-    def test_load_tier_configs_new_format_preserves_toml_order(self, tmp_path: Path) -> None:
-        """New format should preserve tier order from TOML file."""
+    def test_load_tier_configs_preserves_toml_order(self, tmp_path: Path) -> None:
+        """Should preserve tier order from TOML file."""
         pyproject = tmp_path / "pyproject.toml"
         # Define tiers in reverse alphabetical order to test order preservation
         pyproject.write_text("""
 [tool.test_coverage.tiers.zebra]
 test_path = "tests/zebra"
 source_paths = ["app"]
-coverage_type = "line_branch"
+min_line_per_function = 80.0
 
 [tool.test_coverage.tiers.monkey]
 test_path = "tests/monkey"
 source_paths = ["app"]
-coverage_type = "line_branch"
+min_line_per_function = 80.0
 
 [tool.test_coverage.tiers.apple]
 test_path = "tests/apple"
 source_paths = ["app"]
-coverage_type = "line_branch"
+min_line_per_function = 80.0
 """)
         tiers = load_tier_configs(pyproject)
 
         # tomllib preserves order, so we expect zebra, monkey, apple
         assert list(tiers.keys()) == ["zebra", "monkey", "apple"]
 
-    def test_load_tier_configs_legacy_format_respects_default_tier_configs_order(
-        self, tmp_path: Path
-    ) -> None:
-        """Legacy format should return built-in tiers in DEFAULT_TIER_CONFIGS order."""
-        pyproject = tmp_path / "pyproject.toml"
-        # Define legacy format with tiers in ANY order - should not affect output order
-        pyproject.write_text("""
-[tool.test_coverage.scripts]
-min_line_per_function = 70.0
+    def test_no_set_operations_in_load_tier_configs(self) -> None:
+        """load_tier_configs should not use set/sorted operations in code.
 
-[tool.test_coverage.unit]
-min_line_per_function = 75.0
-""")
-        tiers = load_tier_configs(pyproject)
-
-        # Built-in tiers should appear in DEFAULT_TIER_CONFIGS order
-        tier_names = list(tiers.keys())
-        expected_order = list(DEFAULT_TIER_CONFIGS.keys())
-        assert tier_names == expected_order
-
-    def test_legacy_format_custom_tiers_appended_in_toml_order(self, tmp_path: Path) -> None:
-        """Legacy format should append custom tiers in TOML file order."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.smoke]
-test_path = "tests/smoke"
-source_paths = ["app"]
-coverage_type = "line_branch"
-
-[tool.test_coverage.e2e]
-test_path = "tests/e2e"
-source_paths = ["app"]
-coverage_type = "usecase"
-""")
-        tiers = load_tier_configs(pyproject)
-
-        tier_names = list(tiers.keys())
-        # Default tiers first in their canonical order
-        expected_default_tiers = list(DEFAULT_TIER_CONFIGS.keys())
-        # Then custom tiers in TOML appearance order
-        expected_custom_tiers = ["smoke", "e2e"]
-
-        assert tier_names == expected_default_tiers + expected_custom_tiers
-
-    def test_no_set_operations_in_new_format_path(self) -> None:
-        """_load_tiers_from_new_format should not use set/sorted operations in code.
-
-        Note: This regex-based source scan is intentionally brittle. If the helper
+        Note: This regex-based source scan is intentionally brittle. If the
         implementation legitimately requires set()/sorted() in the future, update
         this test accordingly.
         """
         import inspect
         import re
 
-        source = inspect.getsource(_load_tiers_from_new_format)
+        source = inspect.getsource(load_tier_configs)
 
         # Remove docstrings and comments to check only actual code
         # Remove triple-quoted docstrings
@@ -4836,38 +4227,7 @@ coverage_type = "usecase"
         for pattern in forbidden_patterns:
             match = re.search(pattern, code_only)
             assert match is None, (
-                f"_load_tiers_from_new_format() contains forbidden pattern '{pattern}' in code. "
-                "This operation destroys order preservation."
-            )
-
-    def test_no_set_operations_in_legacy_format_path(self) -> None:
-        """_load_tiers_from_legacy_format should not use set/sorted operations in code.
-
-        Note: This regex-based source scan is intentionally brittle. If the helper
-        implementation legitimately requires set()/sorted() in the future, update
-        this test accordingly.
-        """
-        import inspect
-        import re
-
-        source = inspect.getsource(_load_tiers_from_legacy_format)
-
-        # Remove docstrings and comments to check only actual code
-        code_only = re.sub(r'""".*?"""', "", source, flags=re.DOTALL)
-        code_only = re.sub(r"'''.*?'''", "", code_only, flags=re.DOTALL)
-        code_only = re.sub(r"#.*$", "", code_only, flags=re.MULTILINE)
-
-        # Check for forbidden patterns in code only
-        forbidden_patterns = [
-            r"\bset\s*\(",  # set() call
-            r"\bsorted\s*\(",  # sorted() call
-            r"\|\s*set\b",  # | set union
-            r"\blist\s*\(\s*set\s*\(",  # list(set(...))
-        ]
-        for pattern in forbidden_patterns:
-            match = re.search(pattern, code_only)
-            assert match is None, (
-                f"_load_tiers_from_legacy_format() contains forbidden pattern '{pattern}' in code. "
+                f"load_tier_configs() contains forbidden pattern '{pattern}' in code. "
                 "This operation destroys order preservation."
             )
 
@@ -4884,19 +4244,19 @@ coverage_type = "usecase"
             name="z_tier",
             test_path="tests/z",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
         mock_config_a = TestTierConfig(
             name="a_tier",
             test_path="tests/a",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
         mock_config_m = TestTierConfig(
             name="m_tier",
             test_path="tests/m",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
 
         # Return tiers in specific order: z, a, m
@@ -4985,7 +4345,7 @@ class TestCreateStrategyInvariant:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
         db_path = tmp_path / "coverage.db"
         tier_coverage_file = tmp_path / "data_unit"
@@ -5005,7 +4365,7 @@ class TestCreateStrategyInvariant:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
+            min_usecase=100.0,
         )
         db_path = tmp_path / "coverage.db"
         use_cases = [UseCase("UC-1", "/api", "GET", "Test", "integration")]
@@ -5024,7 +4384,7 @@ class TestCreateStrategyInvariant:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
         db_path = tmp_path / "coverage.db"
 
@@ -5041,7 +4401,7 @@ class TestCreateStrategyInvariant:
             name="integration",
             test_path="tests/integration",
             source_paths=["app"],
-            coverage_type="usecase",
+            min_usecase=100.0,
         )
         db_path = tmp_path / "coverage.db"
 
@@ -5050,22 +4410,22 @@ class TestCreateStrategyInvariant:
 
         assert "use_cases must be provided" in str(exc_info.value)
 
-    def test_create_strategy_rejects_unknown_coverage_type(self, tmp_path: Path) -> None:
-        """create_strategy() raises ValueError for unknown coverage_type."""
+    def test_create_strategy_rejects_missing_thresholds(self, tmp_path: Path) -> None:
+        """create_strategy() raises ValueError when config has no coverage thresholds."""
         from scripts.dev.test_runner.test_strategies import create_strategy
 
         config = TestTierConfig(
             name="unknown",
             test_path="tests/unknown",
             source_paths=["app"],
-            coverage_type="unknown_type",
+            # No thresholds - coverage_type property will raise
         )
         db_path = tmp_path / "coverage.db"
 
         with pytest.raises(ValueError) as exc_info:
             create_strategy(config, db_path, tmp_path)
 
-        assert "Unknown coverage type" in str(exc_info.value)
+        assert "has no coverage thresholds set" in str(exc_info.value)
 
 
 # =============================================================================
@@ -5092,7 +4452,7 @@ class TestCoverageIsolationPerTier:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
         db_path = tmp_path / "coverage.db"
         tier_coverage_file = tmp_path / "data_unit"
@@ -5143,7 +4503,7 @@ class TestCoverageIsolationPerTier:
             name="component",
             test_path="tests/unit",
             source_paths=["app/services"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
         db_path = tmp_path / "coverage.db"
         tier_coverage_file = tmp_path / "data_component"
@@ -5182,7 +4542,7 @@ class TestCoverageIsolationPerTier:
             name="scripts",
             test_path="scripts/tests",
             source_paths=["scripts"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
         coverage_dir = tmp_path / ".coverage"
         coverage_dir.mkdir(parents=True, exist_ok=True)
@@ -5263,13 +4623,13 @@ class TestCoverageCombine:
             name="unit",
             test_path="tests/unit",
             source_paths=["app"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
         mock_component_config = TestTierConfig(
             name="component",
             test_path="tests/unit",
             source_paths=["app/services"],
-            coverage_type="line_branch",
+            min_line_per_function=80.0,
         )
 
         # Create mock strategies
@@ -5359,141 +4719,1193 @@ class TestCoverageCombine:
         assert any("data_component" in f for f in combine_files)
 
 
-class TestDeprecationWarning:
-    """Tests for deprecation warning when legacy tier configuration format is used."""
+class TestComponentTierUsecaseRequirement:
+    """Tests for component tier usecase coverage requirement.
 
-    @pytest.fixture(autouse=True)
-    def reset_legacy_warning_flag(self) -> Generator[None]:
-        """Reset the legacy format warning flag before each test."""
-        from scripts.dev.test_runner import test_coverage
+    Component tier now uses usecase coverage (not line_branch) and MUST FAIL
+    when no use-cases are defined (total_cases == 0). This is different from
+    100% pass with 0/0 cases - it must be an explicit failure.
+    """
 
-        test_coverage._legacy_format_warning_emitted = False
-        yield
-        test_coverage._legacy_format_warning_emitted = False
+    def test_usecase_tier_fails_when_no_usecases_defined(self) -> None:
+        """Usecase tier should fail when total_cases is 0."""
+        from scripts.dev.test_runner.test_strategies import IntegrationTestStrategy
 
-    def test_legacy_format_prints_deprecation_warning_via_load_tier_configs(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Should print deprecation warning when legacy format is used via load_tier_configs()."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.unit]
-min_line_per_function = 70.0
-""")
-        load_tier_configs(pyproject)
+        config = TestTierConfig(
+            name="component",
+            test_path="tests/component",
+            source_paths=["app/services"],
+            min_usecase=100.0,
+        )
+
+        # Create strategy with empty use cases
+        strategy = IntegrationTestStrategy(
+            config=config,
+            coverage_db_path=Path("/fake/db"),
+            repo_root=Path("/fake/root"),
+            use_cases=[],  # No use cases defined
+        )
+
+        # Simulate that tests ran and results were collected
+        strategy._tests_ran = True
+        strategy._results_collected = True
+        strategy.usecase_result = UseCaseCoverageResult(
+            tier="component",
+            total_cases=0,  # No use-cases defined
+            covered_cases=0,
+            uncovered_cases=[],
+            coverage_pct=100.0,  # Would be 100% with 0/0, but should still fail
+        )
+
+        # validate() should return failures because no use-cases are defined
+        failures = strategy.validate()
+
+        assert len(failures) == 1
+        assert "No use-cases defined" in failures[0]
+        assert "component" in failures[0]
+
+    def test_usecase_tier_passes_when_usecases_defined_and_covered(self) -> None:
+        """Usecase tier should pass when use-cases exist and are covered."""
+        from scripts.dev.test_runner.test_strategies import IntegrationTestStrategy
+
+        config = TestTierConfig(
+            name="component",
+            test_path="tests/component",
+            source_paths=["app/services"],
+            min_usecase=100.0,
+        )
+
+        strategy = IntegrationTestStrategy(
+            config=config,
+            coverage_db_path=Path("/fake/db"),
+            repo_root=Path("/fake/root"),
+            use_cases=[
+                UseCase(
+                    id="UC-SVC-001",
+                    endpoint="/api/service",
+                    method="GET",
+                    description="Test service",
+                    test_tier="component",
+                )
+            ],
+        )
+
+        # Simulate that tests ran and results were collected
+        strategy._tests_ran = True
+        strategy._results_collected = True
+        strategy.usecase_result = UseCaseCoverageResult(
+            tier="component",
+            total_cases=1,
+            covered_cases=1,
+            uncovered_cases=[],
+            coverage_pct=100.0,
+        )
+
+        failures = strategy.validate()
+
+        assert failures == []
+
+    def test_usecase_tier_fails_when_coverage_below_threshold(self) -> None:
+        """Usecase tier should fail when coverage is below threshold."""
+        from scripts.dev.test_runner.test_strategies import IntegrationTestStrategy
+
+        config = TestTierConfig(
+            name="component",
+            test_path="tests/component",
+            source_paths=["app/services"],
+            min_usecase=100.0,
+        )
+
+        strategy = IntegrationTestStrategy(
+            config=config,
+            coverage_db_path=Path("/fake/db"),
+            repo_root=Path("/fake/root"),
+            use_cases=[],
+        )
+
+        # Simulate that tests ran and results were collected
+        strategy._tests_ran = True
+        strategy._results_collected = True
+        strategy.usecase_result = UseCaseCoverageResult(
+            tier="component",
+            total_cases=2,
+            covered_cases=1,
+            uncovered_cases=["UC-SVC-002"],
+            coverage_pct=50.0,
+        )
+
+        failures = strategy.validate()
+
+        assert len(failures) >= 1
+        assert "50.0%" in failures[0]
+        assert "100.0%" in failures[0]
+
+
+# =============================================================================
+# ADDITIONAL COVERAGE IMPROVEMENT TESTS
+# =============================================================================
+
+
+class TestCoverageTypeProperty:
+    """Tests for TestTierConfig.coverage_type property."""
+
+    def test_coverage_type_returns_line_branch_when_min_line_set(self) -> None:
+        """coverage_type should be 'line_branch' when min_line_per_function is set."""
+        config = TestTierConfig(
+            name="test",
+            test_path="tests",
+            source_paths=["app"],
+            min_line_per_function=80.0,
+        )
+        assert config.coverage_type == "line_branch"
+
+    def test_coverage_type_returns_line_branch_when_min_branch_set(self) -> None:
+        """coverage_type should be 'line_branch' when only min_branch_per_function is set."""
+        config = TestTierConfig(
+            name="test",
+            test_path="tests",
+            source_paths=["app"],
+            min_branch_per_function=70.0,
+        )
+        assert config.coverage_type == "line_branch"
+
+    def test_coverage_type_returns_usecase_when_min_usecase_set(self) -> None:
+        """coverage_type should be 'usecase' when min_usecase is set."""
+        config = TestTierConfig(
+            name="test",
+            test_path="tests",
+            source_paths=["app"],
+            min_usecase=100.0,
+        )
+        assert config.coverage_type == "usecase"
+
+    def test_coverage_type_prioritizes_line_branch_over_usecase(self) -> None:
+        """coverage_type should be 'line_branch' when both types are set."""
+        config = TestTierConfig(
+            name="test",
+            test_path="tests",
+            source_paths=["app"],
+            min_line_per_function=80.0,
+            min_usecase=100.0,
+        )
+        assert config.coverage_type == "line_branch"
+
+    def test_coverage_type_raises_when_no_thresholds(self) -> None:
+        """coverage_type should raise ValueError when no thresholds are set."""
+        config = TestTierConfig(
+            name="test",
+            test_path="tests",
+            source_paths=["app"],
+        )
+        with pytest.raises(ValueError) as exc_info:
+            _ = config.coverage_type
+        assert "no coverage thresholds set" in str(exc_info.value)
+
+
+class TestExpandSourcePatterns:
+    """Tests for expand_source_patterns function."""
+
+    def test_expands_single_pattern(self, fs: FakeFilesystem) -> None:
+        """Should expand a single glob pattern to file paths."""
+        from scripts.dev.test_runner.test_coverage import expand_source_patterns
+
+        fs.create_dir("/repo/app")
+        fs.create_file("/repo/app/module.py", contents="# module")
+        fs.create_file("/repo/app/utils.py", contents="# utils")
+
+        result = expand_source_patterns(["app/*.py"], Path("/repo"))
+
+        assert "app/module.py" in result
+        assert "app/utils.py" in result
+
+    def test_expands_recursive_pattern(self, fs: FakeFilesystem) -> None:
+        """Should expand recursive glob pattern **/*.py."""
+        from scripts.dev.test_runner.test_coverage import expand_source_patterns
+
+        fs.create_dir("/repo/app/sub")
+        fs.create_file("/repo/app/main.py", contents="# main")
+        fs.create_file("/repo/app/sub/nested.py", contents="# nested")
+
+        result = expand_source_patterns(["app/**/*.py"], Path("/repo"))
+
+        assert "app/main.py" in result
+        assert "app/sub/nested.py" in result
+
+    def test_handles_negation_pattern(self, fs: FakeFilesystem) -> None:
+        """Should exclude files matching negation patterns."""
+        from scripts.dev.test_runner.test_coverage import expand_source_patterns
+
+        fs.create_dir("/repo/app")
+        fs.create_file("/repo/app/module.py", contents="# module")
+        fs.create_file("/repo/app/__init__.py", contents="# init")
+
+        result = expand_source_patterns(["app/*.py", "!app/__init__.py"], Path("/repo"))
+
+        assert "app/module.py" in result
+        assert "app/__init__.py" not in result
+
+    def test_handles_empty_patterns(self) -> None:
+        """Should return empty set for empty patterns list."""
+        from scripts.dev.test_runner.test_coverage import expand_source_patterns
+
+        result = expand_source_patterns([], Path("/repo"))
+
+        assert result == set()
+
+    def test_excludes_directories(self, fs: FakeFilesystem) -> None:
+        """Should only include files, not directories."""
+        from scripts.dev.test_runner.test_coverage import expand_source_patterns
+
+        fs.create_dir("/repo/app/subdir")
+        fs.create_file("/repo/app/module.py", contents="# module")
+
+        result = expand_source_patterns(["app/*"], Path("/repo"))
+
+        assert "app/module.py" in result
+        # Directories should not be in the result
+
+
+class TestGetCoverageSourceArgs:
+    """Tests for get_coverage_source_args function."""
+
+    def test_extracts_base_directory_from_pattern(self) -> None:
+        """Should extract base directory from glob pattern."""
+        from scripts.dev.test_runner.test_coverage import get_coverage_source_args
+
+        config = TestTierConfig(
+            name="test",
+            test_path="tests",
+            source_paths=["app/**/*.py"],
+            min_line_per_function=80.0,
+        )
+
+        source_dirs, omit_patterns = get_coverage_source_args(config, Path("/repo"))
+
+        assert "app" in source_dirs
+        assert omit_patterns == []
+
+    def test_handles_negation_as_omit(self) -> None:
+        """Should convert negation patterns to omit patterns."""
+        from scripts.dev.test_runner.test_coverage import get_coverage_source_args
+
+        config = TestTierConfig(
+            name="test",
+            test_path="tests",
+            source_paths=["app/**/*.py", "!app/__init__.py"],
+            min_line_per_function=80.0,
+        )
+
+        source_dirs, omit_patterns = get_coverage_source_args(config, Path("/repo"))
+
+        assert "app" in source_dirs
+        assert "app/__init__.py" in omit_patterns
+
+    def test_handles_multiple_patterns(self) -> None:
+        """Should handle multiple source patterns."""
+        from scripts.dev.test_runner.test_coverage import get_coverage_source_args
+
+        config = TestTierConfig(
+            name="test",
+            test_path="tests",
+            source_paths=["app/**/*.py", "lib/**/*.py", "!**/__init__.py"],
+            min_line_per_function=80.0,
+        )
+
+        source_dirs, omit_patterns = get_coverage_source_args(config, Path("/repo"))
+
+        assert "app" in source_dirs
+        assert "lib" in source_dirs
+        assert "**/__init__.py" in omit_patterns
+
+    def test_extracts_nested_base_directory(self) -> None:
+        """Should extract nested base directory from pattern like app/services/**/*.py."""
+        from scripts.dev.test_runner.test_coverage import get_coverage_source_args
+
+        config = TestTierConfig(
+            name="test",
+            test_path="tests",
+            source_paths=["app/services/**/*.py"],
+            min_line_per_function=80.0,
+        )
+
+        source_dirs, _omit_patterns = get_coverage_source_args(config, Path("/repo"))
+
+        assert "app/services" in source_dirs
+
+    def test_handles_pattern_starting_with_glob(self) -> None:
+        """Should handle patterns like **/*.py (no base directory)."""
+        from scripts.dev.test_runner.test_coverage import get_coverage_source_args
+
+        config = TestTierConfig(
+            name="test",
+            test_path="tests",
+            source_paths=["**/*.py"],
+            min_line_per_function=80.0,
+        )
+
+        source_dirs, _omit_patterns = get_coverage_source_args(config, Path("/repo"))
+
+        # Pattern starting with ** has no base parts
+        assert source_dirs == []
+
+
+class TestLoadUseCasesExtended:
+    """Extended tests for load_use_cases function."""
+
+    def test_loads_multiple_features(self, fs: FakeFilesystem) -> None:
+        """Should load use cases from multiple features."""
+        from scripts.dev.test_runner.test_coverage import load_use_cases
+
+        yaml_content = """
+version: "1.0"
+features:
+  health:
+    name: Health Checks
+    use_cases:
+      - id: UC-HEALTH-001
+        endpoint: /health
+        method: GET
+        description: Health check
+        test_tier: integration
+  api:
+    name: API Tests
+    use_cases:
+      - id: UC-API-001
+        endpoint: /api/v1/resource
+        method: POST
+        description: Create resource
+        test_tier: e2e
+"""
+        fs.create_file("/use_cases.yaml", contents=yaml_content)
+
+        result = load_use_cases(Path("/use_cases.yaml"))
+
+        assert len(result) == 2
+        ids = [uc.id for uc in result]
+        assert "UC-HEALTH-001" in ids
+        assert "UC-API-001" in ids
+
+    def test_handles_feature_with_multiple_usecases(self, fs: FakeFilesystem) -> None:
+        """Should load all use cases within a single feature."""
+        from scripts.dev.test_runner.test_coverage import load_use_cases
+
+        yaml_content = """
+version: "1.0"
+features:
+  crud:
+    name: CRUD Operations
+    use_cases:
+      - id: UC-CRUD-001
+        endpoint: /items
+        method: GET
+        description: List items
+        test_tier: integration
+      - id: UC-CRUD-002
+        endpoint: /items
+        method: POST
+        description: Create item
+        test_tier: integration
+      - id: UC-CRUD-003
+        endpoint: /items/{id}
+        method: DELETE
+        description: Delete item
+        test_tier: integration
+"""
+        fs.create_file("/use_cases.yaml", contents=yaml_content)
+
+        result = load_use_cases(Path("/use_cases.yaml"))
+
+        assert len(result) == 3
+        assert result[0].id == "UC-CRUD-001"
+        assert result[1].id == "UC-CRUD-002"
+        assert result[2].id == "UC-CRUD-003"
+
+
+class TestCollectCoveredUsecasesExtended:
+    """Extended tests for collect_covered_usecases function."""
+
+    def test_collects_from_nested_directories(self, fs: FakeFilesystem) -> None:
+        """Should collect use cases from nested test directories."""
+        test_content = """
+import pytest
+
+@pytest.mark.usecase("UC-NESTED-001")
+def test_nested():
+    pass
+"""
+        fs.create_dir("/tests/integration/api")
+        fs.create_file("/tests/integration/api/test_nested.py", contents=test_content)
+
+        result = collect_covered_usecases("/tests/integration")
+
+        assert "UC-NESTED-001" in result
+
+    def test_ignores_non_test_files(self, fs: FakeFilesystem) -> None:
+        """Should only scan files starting with test_."""
+        test_content = """
+import pytest
+
+@pytest.mark.usecase("UC-IGNORED-001")
+def test_ignored():
+    pass
+"""
+        fs.create_dir("/tests/integration")
+        fs.create_file("/tests/integration/helper.py", contents=test_content)
+
+        result = collect_covered_usecases("/tests/integration")
+
+        assert "UC-IGNORED-001" not in result
+
+
+class TestCalculateUsecaseCoverageExtended:
+    """Extended tests for calculate_usecase_coverage function."""
+
+    def test_handles_empty_tier(self) -> None:
+        """Should handle tier with no use cases."""
+        use_cases: list[UseCase] = []
+        covered_ids: set[str] = set()
+
+        result = calculate_usecase_coverage("integration", use_cases, covered_ids)
+
+        assert result.total_cases == 0
+        assert result.covered_cases == 0
+        assert result.coverage_pct == 100.0  # 100% when no cases
+
+    def test_filters_by_tier(self) -> None:
+        """Should only count use cases for the specified tier."""
+        use_cases = [
+            UseCase("UC-1", "/a", "GET", "Test 1", "integration"),
+            UseCase("UC-2", "/b", "GET", "Test 2", "e2e"),
+            UseCase("UC-3", "/c", "GET", "Test 3", "integration"),
+        ]
+        covered_ids = {"UC-1", "UC-2", "UC-3"}
+
+        result = calculate_usecase_coverage("integration", use_cases, covered_ids)
+
+        assert result.total_cases == 2  # Only integration tier
+        assert result.covered_cases == 2
+        assert result.coverage_pct == 100.0
+
+
+class TestValidateLineBranchCoverageExtended:
+    """Extended tests for validate_line_branch_coverage function."""
+
+    def test_validates_branch_coverage_with_missing_branches(self) -> None:
+        """Should fail when branch coverage is below threshold with missing branches."""
+        config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            min_line_per_function=60.0,
+            min_branch_per_function=80.0,
+        )
+        result = CoverageResult(
+            suite_name="unit",
+            total_lines=100,
+            covered_lines=85,
+            missing_lines=15,
+            line_coverage_pct=85.0,
+            total_branches=50,
+            covered_branches=30,
+            missing_branches=20,
+            branch_coverage_pct=60.0,
+            files={},
+            functions={
+                "test.py::func": {
+                    "name": "func",
+                    "file": "test.py",
+                    "line_coverage": 85.0,
+                    "branch_coverage": 50.0,  # Below 80% threshold
+                    "missing_branches": [(10, 15), (20, 25)],  # Has missing branches
+                }
+            },
+        )
+
+        failures = validate_line_branch_coverage(result, config)
+
+        assert len(failures) == 1
+        assert "branch coverage" in failures[0].lower()
+
+    def test_skips_branch_validation_without_missing_branches(self) -> None:
+        """Should skip branch validation when no missing branches exist."""
+        config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            min_line_per_function=60.0,
+            min_branch_per_function=80.0,
+        )
+        result = CoverageResult(
+            suite_name="unit",
+            total_lines=100,
+            covered_lines=85,
+            missing_lines=15,
+            line_coverage_pct=85.0,
+            total_branches=50,
+            covered_branches=30,
+            missing_branches=20,
+            branch_coverage_pct=60.0,
+            files={},
+            functions={
+                "test.py::func": {
+                    "name": "func",
+                    "file": "test.py",
+                    "line_coverage": 85.0,
+                    "branch_coverage": 50.0,
+                    "missing_branches": [],  # No missing branches
+                }
+            },
+        )
+
+        failures = validate_line_branch_coverage(result, config)
+
+        # Should pass because no missing branches
+        assert failures == []
+
+    def test_reports_multiple_function_failures(self) -> None:
+        """Should report failures for multiple functions."""
+        config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            min_line_per_function=80.0,
+            min_branch_per_function=70.0,
+        )
+        result = CoverageResult(
+            suite_name="unit",
+            total_lines=100,
+            covered_lines=70,
+            missing_lines=30,
+            line_coverage_pct=70.0,
+            total_branches=50,
+            covered_branches=35,
+            missing_branches=15,
+            branch_coverage_pct=70.0,
+            files={},
+            functions={
+                "test.py::func1": {
+                    "name": "func1",
+                    "file": "test.py",
+                    "line_coverage": 50.0,  # Below threshold
+                    "branch_coverage": 90.0,
+                    "missing_branches": [],
+                },
+                "test.py::func2": {
+                    "name": "func2",
+                    "file": "test.py",
+                    "line_coverage": 40.0,  # Below threshold
+                    "branch_coverage": 90.0,
+                    "missing_branches": [],
+                },
+            },
+        )
+
+        failures = validate_line_branch_coverage(result, config)
+
+        assert len(failures) == 2
+
+
+class TestValidateUsecaseCoverageExtended:
+    """Extended tests for validate_usecase_coverage function."""
+
+    def test_reports_uncovered_cases_up_to_10(self) -> None:
+        """Should report up to 10 uncovered cases."""
+        config = TestTierConfig(
+            name="integration",
+            test_path="tests/integration",
+            source_paths=["app"],
+            min_usecase=100.0,
+        )
+        uc_result = UseCaseCoverageResult(
+            tier="integration",
+            total_cases=15,
+            covered_cases=3,
+            uncovered_cases=[f"UC-{i}" for i in range(1, 13)],  # 12 uncovered
+            coverage_pct=20.0,
+        )
+
+        failures = validate_usecase_coverage(uc_result, config)
+
+        # First failure is the main message
+        assert len(failures) >= 1
+        assert "20.0%" in failures[0]
+
+        # Should list up to 10 uncovered cases
+        uncovered_messages = [f for f in failures if "Uncovered:" in f]
+        assert len(uncovered_messages) <= 10
+
+        # Should have truncation message
+        more_messages = [f for f in failures if "more" in f]
+        assert len(more_messages) == 1
+
+    def test_passes_when_no_threshold_set(self) -> None:
+        """Should pass when min_usecase is None."""
+        config = TestTierConfig(
+            name="integration",
+            test_path="tests/integration",
+            source_paths=["app"],
+            min_line_per_function=80.0,  # Different threshold type
+        )
+        uc_result = UseCaseCoverageResult(
+            tier="integration",
+            total_cases=10,
+            covered_cases=5,
+            uncovered_cases=["UC-1", "UC-2", "UC-3", "UC-4", "UC-5"],
+            coverage_pct=50.0,
+        )
+
+        failures = validate_usecase_coverage(uc_result, config)
+
+        # Should pass because min_usecase is None
+        assert failures == []
+
+
+class TestGenerateMissingLineDetailsExtended:
+    """Extended tests for generate_missing_line_details function."""
+
+    def test_handles_invalid_branch_arc_format(self, fs: FakeFilesystem) -> None:
+        """Should skip invalid branch arc formats."""
+        from scripts.dev.test_runner.test_coverage import generate_missing_line_details
+
+        code = """def test_func():
+    x = 1
+    y = 2
+    return x + y
+"""
+        fs.create_dir("/repo")
+        fs.create_file("/repo/test.py", contents=code)
+
+        coverage_data = {
+            "files": {
+                "test.py": {
+                    "executed_lines": [1, 2],
+                    "missing_lines": [3, 4],
+                    "missing_branches": [
+                        [2, 3],  # Valid
+                        "invalid",  # Invalid - not a list/tuple
+                        [1],  # Invalid - wrong length
+                    ],
+                }
+            }
+        }
+
+        results = generate_missing_line_details(coverage_data, Path("/repo"))
+
+        assert len(results) == 2
+
+    def test_handles_out_of_bounds_line_numbers(self, fs: FakeFilesystem) -> None:
+        """Should handle line numbers outside file range."""
+        from scripts.dev.test_runner.test_coverage import generate_missing_line_details
+
+        code = """def test_func():
+    return 1
+"""
+        fs.create_dir("/repo")
+        fs.create_file("/repo/test.py", contents=code)
+
+        coverage_data = {
+            "files": {
+                "test.py": {
+                    "executed_lines": [1],
+                    "missing_lines": [100],  # Line 100 doesn't exist
+                    "missing_branches": [],
+                }
+            }
+        }
+
+        results = generate_missing_line_details(coverage_data, Path("/repo"))
+
+        assert len(results) == 1
+        assert results[0].line_number == 100
+        assert results[0].content == ""  # Empty content for out of bounds
+
+    def test_includes_branch_exit_info(self, fs: FakeFilesystem) -> None:
+        """Should include missing branch exit information for missing lines."""
+        from scripts.dev.test_runner.test_coverage import generate_missing_line_details
+
+        code = """def test_func():
+    if True:
+        x = 1
+    else:
+        x = 2
+    return x
+"""
+        fs.create_dir("/repo")
+        fs.create_file("/repo/test.py", contents=code)
+
+        # Line 2 (the if statement) has a branch to line 4 (else block)
+        # Include line 2 in missing_lines so it appears in results
+        coverage_data = {
+            "files": {
+                "test.py": {
+                    "executed_lines": [1, 3],
+                    "missing_lines": [2, 4, 5],  # Include line 2 which has branch
+                    "missing_branches": [[2, 4]],  # Branch from line 2 to 4
+                }
+            }
+        }
+
+        results = generate_missing_line_details(coverage_data, Path("/repo"))
+
+        # Line 2 should appear in results with branch exit info
+        line_2_results = [r for r in results if r.line_number == 2]
+        assert len(line_2_results) == 1
+        # Line 2 should have branch exit info pointing to line 4
+        assert 4 in line_2_results[0].missing_branch_exits
+
+
+class TestPrintSummaryExtended:
+    """Extended tests for print_summary function."""
+
+    def test_prints_low_coverage_functions(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should print functions with coverage below threshold."""
+        config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            min_line_per_function=80.0,
+        )
+        result = CoverageResult(
+            suite_name="unit",
+            total_lines=100,
+            covered_lines=70,
+            missing_lines=30,
+            line_coverage_pct=70.0,
+            total_branches=50,
+            covered_branches=35,
+            missing_branches=15,
+            branch_coverage_pct=70.0,
+            files={},
+            functions={
+                "app/module.py::low_func": {
+                    "name": "low_func",
+                    "file": "app/module.py",
+                    "line_coverage": 50.0,  # Below 80%
+                    "branch_coverage": 70.0,
+                }
+            },
+        )
+
+        print_summary([(config, result)], [])
 
         captured = capsys.readouterr()
-        assert "DEPRECATION WARNING: Using legacy tier configuration format" in captured.err
-        assert "[tool.test_coverage.<tier>]" in captured.err
-        assert "[tool.test_coverage.tiers.<tier_name>]" in captured.err
+        assert "Functions below 80% line coverage" in captured.out
+        assert "low_func" in captured.out
 
-    def test_legacy_format_prints_deprecation_warning_via_get_test_tiers(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    def test_truncates_low_coverage_functions_list(
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Should print deprecation warning when legacy format is used via get_test_tiers()."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.unit]
-min_line_per_function = 70.0
-""")
-        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
+        """Should truncate list of low coverage functions to 10."""
+        config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            min_line_per_function=80.0,
+        )
+        # Create 15 low coverage functions
+        functions = {}
+        for i in range(15):
+            functions[f"app/mod.py::func{i}"] = {
+                "name": f"func{i}",
+                "file": "app/mod.py",
+                "line_coverage": 30.0,
+                "branch_coverage": 70.0,
+            }
+        result = CoverageResult(
+            suite_name="unit",
+            total_lines=100,
+            covered_lines=70,
+            missing_lines=30,
+            line_coverage_pct=70.0,
+            total_branches=50,
+            covered_branches=35,
+            missing_branches=15,
+            branch_coverage_pct=70.0,
+            files={},
+            functions=functions,
+        )
 
-        test_coverage._settings = None
-
-        get_test_tiers()
+        print_summary([(config, result)], [])
 
         captured = capsys.readouterr()
-        assert "DEPRECATION WARNING: Using legacy tier configuration format" in captured.err
+        assert "... and 5 more" in captured.out
 
-    def test_new_format_no_deprecation_warning(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Should NOT print deprecation warning when new format is used."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.tiers.unit]
-test_path = "tests/unit"
-source_paths = ["app"]
-coverage_type = "line_branch"
-min_line_per_function = 70.0
-""")
-        load_tier_configs(pyproject)
+    def test_prints_uncovered_usecases_truncated(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should truncate list of uncovered use cases to 10."""
+        config = TestTierConfig(
+            name="integration",
+            test_path="tests/integration",
+            source_paths=["app"],
+            min_usecase=100.0,
+        )
+        uc_result = UseCaseCoverageResult(
+            tier="integration",
+            total_cases=15,
+            covered_cases=0,
+            uncovered_cases=[f"UC-{i}" for i in range(15)],
+            coverage_pct=0.0,
+        )
 
-        captured = capsys.readouterr()
-        assert "DEPRECATION WARNING" not in captured.err
-
-    def test_deprecation_warning_printed_only_once_load_tier_configs(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Should print deprecation warning only once for multiple load_tier_configs() calls."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.unit]
-min_line_per_function = 70.0
-""")
-        # Call multiple times
-        load_tier_configs(pyproject)
-        load_tier_configs(pyproject)
-        load_tier_configs(pyproject)
+        print_summary([], [(config, uc_result)])
 
         captured = capsys.readouterr()
-        # Count occurrences of the warning
-        warning_count = captured.err.count("DEPRECATION WARNING: Using legacy tier configuration")
-        assert warning_count == 1, f"Expected exactly 1 warning, got {warning_count}"
+        assert "... and 5 more" in captured.out
 
-    def test_deprecation_warning_printed_only_once_across_both_functions(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Deprecation warning should print only once across both functions."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.unit]
-min_line_per_function = 70.0
-""")
-        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
+    def test_prints_redundant_test_results(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should print redundant test analysis."""
+        from scripts.dev.test_runner.redundant_test_detector import RedundantTestResult
 
-        test_coverage._settings = None
+        config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            min_line_per_function=80.0,
+        )
+        result = CoverageResult(
+            suite_name="unit",
+            total_lines=100,
+            covered_lines=80,
+            missing_lines=20,
+            line_coverage_pct=80.0,
+            total_branches=50,
+            covered_branches=40,
+            missing_branches=10,
+            branch_coverage_pct=80.0,
+            files={},
+            functions={},
+        )
+        redundant = RedundantTestResult(
+            summary={
+                "total_tests": 50,
+                "tests_with_unique_coverage": 45,
+                "redundant_tests": 5,
+            },
+            redundant_tests=[
+                {"test_name": "test_redundant_1"},
+                {"test_name": "test_redundant_2"},
+            ],
+            total_tests=50,
+            tests_with_unique_coverage=45,
+        )
 
-        # Call load_tier_configs first (warning should appear)
-        load_tier_configs(pyproject)
-        # Then call get_test_tiers (no additional warning should appear)
-        get_test_tiers()
-
-        captured = capsys.readouterr()
-        warning_count = captured.err.count("DEPRECATION WARNING: Using legacy tier configuration")
-        assert warning_count == 1, f"Expected exactly 1 warning, got {warning_count}"
-
-    def test_deprecation_warning_suppressed_with_quiet_flag(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Should NOT print deprecation warning when quiet=True."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.unit]
-min_line_per_function = 70.0
-""")
-        load_tier_configs(pyproject, quiet=True)
-
-        captured = capsys.readouterr()
-        assert "DEPRECATION WARNING" not in captured.err
-
-    def test_deprecation_warning_suppressed_with_quiet_flag_via_get_test_tiers(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Should NOT print deprecation warning when quiet=True via get_test_tiers()."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.test_coverage.unit]
-min_line_per_function = 70.0
-""")
-        monkeypatch.setattr("scripts.dev.test_runner.test_coverage.REPO_ROOT", tmp_path)
-        from scripts.dev.test_runner import test_coverage
-
-        test_coverage._settings = None
-
-        get_test_tiers(quiet=True)
+        print_summary([(config, result)], [], redundant)
 
         captured = capsys.readouterr()
-        assert "DEPRECATION WARNING" not in captured.err
+        assert "REDUNDANT TEST ANALYSIS" in captured.out
+        assert "Total tests analyzed" in captured.out
+        assert "test_redundant_1" in captured.out
+
+    def test_prints_redundant_test_error(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should print error message when redundant analysis fails."""
+        from scripts.dev.test_runner.redundant_test_detector import RedundantTestResult
+
+        config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            min_line_per_function=80.0,
+        )
+        result = CoverageResult(
+            suite_name="unit",
+            total_lines=100,
+            covered_lines=80,
+            missing_lines=20,
+            line_coverage_pct=80.0,
+            total_branches=50,
+            covered_branches=40,
+            missing_branches=10,
+            branch_coverage_pct=80.0,
+            files={},
+            functions={},
+        )
+        redundant = RedundantTestResult(
+            summary={"error": "Could not analyze coverage data"},
+            redundant_tests=[],
+            total_tests=0,
+            tests_with_unique_coverage=0,
+        )
+
+        print_summary([(config, result)], [], redundant)
+
+        captured = capsys.readouterr()
+        assert "Could not analyze coverage data" in captured.out
+
+    def test_prints_redundant_tests_truncated(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should truncate list of redundant tests to 15 with remaining count."""
+        from scripts.dev.test_runner.redundant_test_detector import RedundantTestResult
+
+        config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            min_line_per_function=80.0,
+        )
+        result = CoverageResult(
+            suite_name="unit",
+            total_lines=100,
+            covered_lines=80,
+            missing_lines=20,
+            line_coverage_pct=80.0,
+            total_branches=50,
+            covered_branches=40,
+            missing_branches=10,
+            branch_coverage_pct=80.0,
+            files={},
+            functions={},
+        )
+        # Create 20 redundant tests (more than 15 to trigger truncation)
+        redundant_tests = [{"test_name": f"test_redundant_{i}"} for i in range(20)]
+        redundant = RedundantTestResult(
+            summary={
+                "total_tests": 100,
+                "tests_with_unique_coverage": 80,
+                "redundant_tests": 20,
+            },
+            redundant_tests=redundant_tests,
+            total_tests=100,
+            tests_with_unique_coverage=80,
+        )
+
+        print_summary([(config, result)], [], redundant)
+
+        captured = capsys.readouterr()
+        # Should show "... and 5 more" since we have 20 tests and only show 15
+        assert "... and 5 more" in captured.out
+        # Verify some tests are shown
+        assert "test_redundant_0" in captured.out
+        assert "test_redundant_14" in captured.out
+
+    def test_prints_usecase_summary_with_no_uncovered_cases(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should print use-case summary without uncovered cases section when all covered."""
+        config = TestTierConfig(
+            name="integration",
+            test_path="tests/integration",
+            source_paths=["app"],
+            min_usecase=100.0,
+        )
+        uc_result = UseCaseCoverageResult(
+            tier="integration",
+            total_cases=10,
+            covered_cases=10,
+            uncovered_cases=[],  # All cases covered
+            coverage_pct=100.0,
+        )
+
+        print_summary([], [(config, uc_result)])
+
+        captured = capsys.readouterr()
+        assert "INTEGRATION TEST SUITE" in captured.out
+        # Should NOT print "Uncovered use cases:" when list is empty
+        assert "Uncovered use cases:" not in captured.out
+
+    def test_prints_redundant_no_tests(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should not print redundant tests section when list is empty."""
+        from scripts.dev.test_runner.redundant_test_detector import RedundantTestResult
+
+        config = TestTierConfig(
+            name="unit",
+            test_path="tests/unit",
+            source_paths=["app"],
+            min_line_per_function=80.0,
+        )
+        result = CoverageResult(
+            suite_name="unit",
+            total_lines=100,
+            covered_lines=80,
+            missing_lines=20,
+            line_coverage_pct=80.0,
+            total_branches=50,
+            covered_branches=40,
+            missing_branches=10,
+            branch_coverage_pct=80.0,
+            files={},
+            functions={},
+        )
+        redundant = RedundantTestResult(
+            summary={
+                "total_tests": 50,
+                "tests_with_unique_coverage": 50,
+                "redundant_tests": 0,
+            },
+            redundant_tests=[],  # No redundant tests
+            total_tests=50,
+            tests_with_unique_coverage=50,
+        )
+
+        print_summary([(config, result)], [], redundant)
+
+        captured = capsys.readouterr()
+        # Should show redundant test analysis
+        assert "REDUNDANT TEST ANALYSIS" in captured.out
+        # But should NOT show "candidates for removal" since list is empty
+        assert "candidates for removal" not in captured.out
+
+
+class TestParseArgsExtended:
+    """Extended tests for parse_args to cover all options."""
+
+    def test_skip_redundant_detection_flag(self) -> None:
+        """Should accept skip-redundant-detection flag."""
+        args = parse_args(["--skip-redundant-detection"])
+        assert args.skip_redundant_detection is True
+
+    def test_include_partial_redundant_flag(self) -> None:
+        """Should accept include-partial-redundant flag."""
+        args = parse_args(["--include-partial-redundant"])
+        assert args.include_partial_redundant is True
+
+    def test_all_flags_together(self) -> None:
+        """Should accept all flags together."""
+        args = parse_args(
+            [
+                "--tier",
+                "unit",
+                "--min-line",
+                "90",
+                "--min-branch",
+                "85",
+                "--min-usecase",
+                "95",
+                "--no-validate",
+                "--json-report",
+                "/tmp/report.json",
+                "--skip-redundant-detection",
+                "--include-partial-redundant",
+            ]
+        )
+        assert args.tier == "unit"
+        assert args.min_line == 90.0
+        assert args.min_branch == 85.0
+        assert args.min_usecase == 95.0
+        assert args.no_validate is True
+        assert args.json_report == Path("/tmp/report.json")
+        assert args.skip_redundant_detection is True
+        assert args.include_partial_redundant is True
+
+
+class TestUsecaseMarkerVisitorExtended:
+    """Extended tests for _UsecaseMarkerVisitor."""
+
+    def test_initializes_with_empty_found(self) -> None:
+        """Should initialize with empty found dict."""
+        from scripts.dev.test_runner.test_coverage import _UsecaseMarkerVisitor
+
+        visitor = _UsecaseMarkerVisitor("tests/test_file.py")
+
+        assert visitor.rel_path == "tests/test_file.py"
+        assert visitor.found == {}
+
+    def test_handles_keyword_argument_id(self) -> None:
+        """Should extract use case from id keyword argument."""
+        from scripts.dev.test_runner.test_coverage import _UsecaseMarkerVisitor
+
+        code = """
+import pytest
+
+@pytest.mark.usecase(id="UC-KW-001")
+def test_with_keyword():
+    pass
+"""
+        tree = ast.parse(code)
+        visitor = _UsecaseMarkerVisitor("tests/test_kw.py")
+        visitor.visit(tree)
+
+        assert "UC-KW-001" in visitor.found
+
+    def test_handles_function_without_decorators(self) -> None:
+        """Should not find use cases for functions without decorators."""
+        from scripts.dev.test_runner.test_coverage import _UsecaseMarkerVisitor
+
+        code = """
+def test_no_decorator():
+    pass
+"""
+        tree = ast.parse(code)
+        visitor = _UsecaseMarkerVisitor("tests/test_bare.py")
+        visitor.visit(tree)
+
+        assert visitor.found == {}
+
+
+class TestFunctionVisitorClassDef:
+    """Tests for FunctionVisitor.visit_ClassDef inside _extract_functions_from_file."""
+
+    def test_extracts_methods_from_class(self, fs: FakeFilesystem) -> None:
+        """Should extract methods from inside a class and mark is_method=True."""
+        code = """
+class MyClass:
+    def method_one(self):
+        pass
+
+    def method_two(self):
+        pass
+
+def standalone():
+    pass
+"""
+        fs.create_file("/test.py", contents=code)
+
+        result = _extract_functions_from_file(Path("/test.py"))
+
+        # Should have 3 functions
+        assert len(result) == 3
+
+        # Find method_one
+        method_one = next((f for f in result if f[0] == "method_one"), None)
+        assert method_one is not None
+        assert method_one[3] is True  # is_method
+
+        # Find standalone
+        standalone = next((f for f in result if f[0] == "standalone"), None)
+        assert standalone is not None
+        assert standalone[3] is False  # not is_method
+
+    def test_handles_nested_classes(self, fs: FakeFilesystem) -> None:
+        """Should handle methods in nested classes."""
+        code = """
+class Outer:
+    def outer_method(self):
+        pass
+
+    class Inner:
+        def inner_method(self):
+            pass
+"""
+        fs.create_file("/test.py", contents=code)
+
+        result = _extract_functions_from_file(Path("/test.py"))
+
+        # Should have 2 methods
+        assert len(result) == 2
+
+        # Both should be marked as methods
+        for _name, _start, _end, is_method in result:
+            assert is_method is True
+
+
+class TestGetTestTiersWrapper:
+    """Tests for get_test_tiers wrapper function."""
+
+    def test_calls_load_tier_configs_with_default_path(self) -> None:
+        """Should call load_tier_configs with default pyproject.toml path."""
+        # This test verifies the function works by calling the actual implementation
+        tiers = get_test_tiers()
+
+        # Should return the tiers from the actual pyproject.toml
+        assert isinstance(tiers, dict)
+        # The actual project has these tiers
+        assert "unit" in tiers or "scripts" in tiers
+
+
+class TestIsExcludedPath:
+    """Tests for is_excluded_path function."""
+
+    def test_always_returns_false(self) -> None:
+        """is_excluded_path should always return False (no exclusions)."""
+        from scripts.dev.test_runner.test_coverage import is_excluded_path
+
+        assert is_excluded_path("app/module.py") is False
+        assert is_excluded_path("tests/test_something.py") is False
+        assert is_excluded_path("scripts/tool.py") is False

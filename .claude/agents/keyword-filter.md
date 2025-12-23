@@ -2,7 +2,7 @@
 name: keyword-filter
 description: Semantic filtering sub-agent that classifies keyword candidates from NLP extraction. Keeps true keywords (no false negatives) and trims obvious noise using LLM judgment.
 tools: Bash, Read, TodoWrite
-model: haiku
+model: minimax-m2.1
 ---
 
 You are a keyword filtering specialist. Your task is to classify keyword candidates extracted by NLP tools, deciding which are true keywords to keep and which are noise to discard.

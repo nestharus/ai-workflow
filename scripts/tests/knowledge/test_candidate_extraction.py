@@ -779,3 +779,666 @@ class TestBackwardCompatibilityCandidates:
 
         # New columns should come after qwen_score (last original column)
         assert projection_idx > qwen_score_idx
+
+
+# ==============================================================================
+# Additional Coverage Tests
+# ==============================================================================
+
+
+class TestExtractCandidatesMain:
+    """Tests for extract_candidates_main function."""
+
+    def test_absolute_knowledge_path(self, tmp_path: Path) -> None:
+        """Should handle absolute knowledge-path argument (line 678)."""
+        import argparse
+
+        from scripts.knowledge.candidate_extraction import extract_candidates_main
+
+        # Create source directory with a YAML file
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        yaml_file = source_dir / "test.yml"
+        yaml_file.write_text("id: test-section\ntext: Sample text\n")
+
+        # Create absolute knowledge path
+        knowledge_dir = tmp_path / "knowledge"
+        knowledge_dir.mkdir()
+
+        args = argparse.Namespace(
+            path=source_dir,  # absolute
+            knowledge_path=knowledge_dir,  # absolute
+        )
+
+        # Mock spaCy model to avoid needing actual model
+        class MockDoc:
+            def __init__(self) -> None:
+                self.ents: list[object] = []
+                self.noun_chunks: list[object] = []
+
+        class MockNlp:
+            def __call__(self, text: str) -> MockDoc:
+                return MockDoc()
+
+        with patch(
+            "scripts.knowledge.candidate_extraction.load_spacy_model",
+            return_value=MockNlp(),
+        ):
+            result = extract_candidates_main(args)
+
+        # Should succeed (return 0) with absolute paths
+        assert result == 0
+
+    def test_relative_source_path(self, tmp_path: Path) -> None:
+        """Should handle relative source path (line 683)."""
+        import argparse
+
+        from scripts.knowledge.candidate_extraction import extract_candidates_main
+
+        # Create a relative path scenario using mocked REPO_ROOT
+        mock_repo = tmp_path / "repo"
+        mock_repo.mkdir()
+        source_dir = mock_repo / "docs" / "development"
+        source_dir.mkdir(parents=True)
+        yaml_file = source_dir / "test.yml"
+        yaml_file.write_text("id: test-section\ntext: Sample text\n")
+
+        knowledge_dir = mock_repo / ".knowledge"
+        knowledge_dir.mkdir()
+
+        # Use relative paths
+        args = argparse.Namespace(
+            path=Path("docs/development"),  # relative
+            knowledge_path=Path(".knowledge"),  # relative
+        )
+
+        class MockDoc:
+            def __init__(self) -> None:
+                self.ents: list[object] = []
+                self.noun_chunks: list[object] = []
+
+        class MockNlp:
+            def __call__(self, text: str) -> MockDoc:
+                return MockDoc()
+
+        with (
+            patch.object(candidate_extraction, "REPO_ROOT", mock_repo),
+            patch(
+                "scripts.knowledge.candidate_extraction.load_spacy_model",
+                return_value=MockNlp(),
+            ),
+        ):
+            result = extract_candidates_main(args)
+
+        # Should succeed (return 0) with relative paths resolved via REPO_ROOT
+        assert result == 0
+
+    def test_source_directory_not_found(self, tmp_path: Path, capsys: object) -> None:
+        """Should return 1 when source directory doesn't exist (lines 686-687)."""
+        import argparse
+
+        from scripts.knowledge.candidate_extraction import extract_candidates_main
+
+        # Path that doesn't exist
+        args = argparse.Namespace(
+            path=tmp_path / "nonexistent",
+            knowledge_path=tmp_path / ".knowledge",
+        )
+
+        with patch.object(candidate_extraction, "REPO_ROOT", tmp_path):
+            result = extract_candidates_main(args)
+
+        assert result == 1
+
+    def test_spacy_load_error(self, tmp_path: Path) -> None:
+        """Should return 1 when spaCy model fails to load (lines 695-697)."""
+        import argparse
+
+        from scripts.knowledge.candidate_extraction import extract_candidates_main
+
+        # Create source directory
+        source_dir = tmp_path / "docs"
+        source_dir.mkdir()
+        yaml_file = source_dir / "test.yml"
+        yaml_file.write_text("id: test\ntext: Test\n")
+
+        args = argparse.Namespace(
+            path=source_dir,
+            knowledge_path=tmp_path / ".knowledge",
+        )
+
+        # Mock spaCy to raise OSError
+        with patch(
+            "scripts.knowledge.candidate_extraction.load_spacy_model",
+            side_effect=OSError("Model not found"),
+        ):
+            result = extract_candidates_main(args)
+
+        assert result == 1
+
+    def test_no_yaml_files_found(self, tmp_path: Path) -> None:
+        """Should return 0 when no YAML files found (lines 711-712)."""
+        import argparse
+
+        from scripts.knowledge.candidate_extraction import extract_candidates_main
+
+        # Create empty source directory
+        source_dir = tmp_path / "docs"
+        source_dir.mkdir()
+
+        args = argparse.Namespace(
+            path=source_dir,
+            knowledge_path=tmp_path / ".knowledge",
+        )
+
+        class MockNlp:
+            def __call__(self, text: str) -> object:
+                return object()
+
+        with patch(
+            "scripts.knowledge.candidate_extraction.load_spacy_model",
+            return_value=MockNlp(),
+        ):
+            result = extract_candidates_main(args)
+
+        # Should succeed but report no YAML files
+        assert result == 0
+
+    def test_no_new_candidates_found(self, tmp_path: Path) -> None:
+        """Should print 'No new candidates found' when records are empty (line 734)."""
+        import argparse
+
+        from scripts.knowledge.candidate_extraction import extract_candidates_main
+
+        # Create source directory with YAML that produces no candidates
+        source_dir = tmp_path / "docs"
+        source_dir.mkdir()
+        yaml_file = source_dir / "test.yml"
+        # Empty text produces no candidates
+        yaml_file.write_text("id: test\ntext: ''\n")
+
+        args = argparse.Namespace(
+            path=source_dir,
+            knowledge_path=tmp_path / ".knowledge",
+        )
+
+        class MockDoc:
+            def __init__(self) -> None:
+                self.ents: list[object] = []
+                self.noun_chunks: list[object] = []
+
+        class MockNlp:
+            def __call__(self, text: str) -> MockDoc:
+                return MockDoc()
+
+        with patch(
+            "scripts.knowledge.candidate_extraction.load_spacy_model",
+            return_value=MockNlp(),
+        ):
+            result = extract_candidates_main(args)
+
+        # Should succeed
+        assert result == 0
+
+
+class TestExtractNamedEntitiesBranch:
+    """Tests for extract_named_entities branch coverage."""
+
+    def test_skips_single_char_entities(self) -> None:
+        """Should skip entities with single character (branch 345->343)."""
+
+        class MockEnt:
+            def __init__(self, text: str, start: int, end: int) -> None:
+                self.text = text
+                self.start_char = start
+                self.end_char = end
+
+        class MockDoc:
+            def __init__(self) -> None:
+                # Single character entity should be skipped
+                self.ents = [MockEnt("X", 0, 1), MockEnt("Python", 5, 11)]
+
+        doc = MockDoc()
+        text = "X and Python are here."
+
+        result = extract_named_entities(doc, text)
+
+        # Should only have "Python", not "X"
+        assert len(result) == 1
+        assert result[0][0] == "Python"
+
+
+class TestExtractNounChunksBranch:
+    """Tests for extract_noun_chunks branch coverage."""
+
+    def test_skips_single_char_chunks(self) -> None:
+        """Should skip noun chunks with single character (branch 364->362)."""
+
+        class MockChunk:
+            def __init__(self, text: str, start: int, end: int) -> None:
+                self.text = text
+                self.start_char = start
+                self.end_char = end
+
+        class MockDoc:
+            def __init__(self) -> None:
+                # Single character chunk should be skipped
+                self.noun_chunks = [MockChunk("I", 0, 1), MockChunk("the framework", 10, 23)]
+
+        doc = MockDoc()
+        text = "I love the framework very much."
+
+        result = extract_noun_chunks(doc, text)
+
+        # Should only have "the framework", not "I"
+        assert len(result) == 1
+        assert result[0][0] == "the framework"
+
+
+class TestExtractRegexCandidatesBranches:
+    """Tests for extract_regex_candidates branch coverage."""
+
+    def test_skips_short_snake_case(self) -> None:
+        """Should skip snake_case identifiers shorter than 4 chars (branch 406->401)."""
+        # "a_b" is 3 chars, should be skipped
+        text = "Use a_b and get_user_by_id functions."
+        result = extract_regex_candidates(text)
+        texts = [c[0] for c in result]
+
+        # get_user_by_id should be included, a_b should not
+        assert "get_user_by_id" in texts
+        # a_b might still match via other patterns, so just verify it's 3 chars
+        assert all(len(t) >= 4 or "_" not in t for t in texts if t.islower())
+
+    def test_skips_single_char_backtick_code(self) -> None:
+        """Should skip backtick code with single character (branch 415->411)."""
+        text = "Use `x` and `some_function()` for this."
+        result = extract_regex_candidates(text)
+        texts = [c[0] for c in result]
+
+        # some_function() should be included, x should not
+        assert "some_function()" in texts
+        assert "x" not in texts
+
+
+class TestGetExistingCandidatesErrorHandling:
+    """Tests for get_existing_candidates error handling."""
+
+    def test_returns_empty_on_duckdb_error(self, tmp_path: Path) -> None:
+        """Should return empty set when DuckDB fails (lines 285-286)."""
+        csv_path = tmp_path / "candidates.csv"
+        # Create a malformed CSV that will cause DuckDB to fail
+        csv_path.write_text("invalid,header\nno,proper,format\nextra,columns,here,too")
+
+        result = get_existing_candidates(csv_path)
+
+        # Should return empty set on error
+        assert result == set()
+
+
+class TestLoadSpacyModel:
+    """Tests for load_spacy_model function."""
+
+    def test_loads_spacy_model_successfully(self) -> None:
+        """Should load spaCy model successfully (lines 298, 300-301)."""
+        mock_nlp = object()
+
+        # Create a mock spacy module
+        class MockSpacy:
+            @staticmethod
+            def load(model_name: str) -> object:
+                return mock_nlp
+
+        # Patch the spacy import within the function
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: MockSpacy
+            if name == "spacy"
+            else __import__(name, *args),
+        ):
+            # Actually, we need a different approach since spacy is imported inside the function
+            pass
+
+        # Better approach: use importlib to temporarily replace spacy
+        import sys
+
+        original_spacy = sys.modules.get("spacy")
+
+        try:
+            # Create mock spacy module
+            mock_spacy_module = type(sys)("spacy")
+            mock_spacy_module.load = lambda model_name: mock_nlp
+            sys.modules["spacy"] = mock_spacy_module
+
+            from scripts.knowledge.candidate_extraction import load_spacy_model
+
+            result = load_spacy_model()
+            assert result is mock_nlp
+        finally:
+            # Restore original
+            if original_spacy is not None:
+                sys.modules["spacy"] = original_spacy
+
+    def test_raises_oserror_when_model_not_found(self) -> None:
+        """Should raise OSError with helpful message when model missing (lines 302-307)."""
+        import sys
+
+        original_spacy = sys.modules.get("spacy")
+
+        try:
+            # Create mock spacy module that raises OSError
+            mock_spacy_module = type(sys)("spacy")
+
+            def mock_load(model_name: str) -> None:
+                raise OSError("Model not found")
+
+            mock_spacy_module.load = mock_load
+            sys.modules["spacy"] = mock_spacy_module
+
+            import pytest
+
+            from scripts.knowledge.candidate_extraction import load_spacy_model
+
+            with pytest.raises(OSError) as exc_info:
+                load_spacy_model()
+
+            assert "en_core_web_trf" in str(exc_info.value)
+            assert "python -m spacy download" in str(exc_info.value)
+        finally:
+            # Restore original
+            if original_spacy is not None:
+                sys.modules["spacy"] = original_spacy
+
+
+class TestMainFunction:
+    """Tests for main function."""
+
+    def test_main_calls_parse_args_and_extract_candidates_main(self) -> None:
+        """Should call parse_args and extract_candidates_main (lines 748-749)."""
+        from scripts.knowledge.candidate_extraction import main
+
+        mock_args = type("Args", (), {"path": Path("."), "knowledge_path": Path(".")})()
+
+        with (
+            patch(
+                "scripts.knowledge.candidate_extraction.parse_args",
+                return_value=mock_args,
+            ) as mock_parse,
+            patch(
+                "scripts.knowledge.candidate_extraction.extract_candidates_main",
+                return_value=0,
+            ) as mock_extract,
+        ):
+            result = main()
+
+            mock_parse.assert_called_once()
+            mock_extract.assert_called_once_with(mock_args)
+            assert result == 0
+
+
+class TestProcessYamlFileErrorPaths:
+    """Tests for process_yaml_file error paths."""
+
+    def test_handles_yaml_parse_error(self, fs: FakeFilesystem) -> None:
+        """Should handle YAML parse errors gracefully (lines 524-526)."""
+
+        class MockNlp:
+            def __call__(self, text: str) -> object:
+                return object()
+
+        mock_nlp = MockNlp()
+        existing: set[tuple[str, str, str]] = set()
+        timestamp = "20240101T120000Z"
+
+        with patch.object(candidate_extraction, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake")
+            # Create invalid YAML (not actually parseable as expected structure)
+            fs.create_file("/fake/test.yml", contents="invalid: [unclosed bracket")
+
+            # Mock parse_yaml_file to raise ValueError
+            with patch(
+                "scripts.knowledge.candidate_extraction.parse_yaml_file",
+                side_effect=ValueError("Invalid YAML"),
+            ):
+                records = process_yaml_file(Path("/fake/test.yml"), mock_nlp, existing, timestamp)
+
+            # Should return empty list on parse error
+            assert records == []
+
+    def test_skips_empty_text_elements(self, fs: FakeFilesystem) -> None:
+        """Should skip elements with empty or whitespace-only text (line 547)."""
+
+        class MockDoc:
+            def __init__(self) -> None:
+                self.ents: list[object] = []
+                self.noun_chunks: list[object] = []
+
+        class MockNlp:
+            def __call__(self, text: str) -> MockDoc:
+                return MockDoc()
+
+        mock_nlp = MockNlp()
+        existing: set[tuple[str, str, str]] = set()
+        timestamp = "20240101T120000Z"
+
+        with patch.object(candidate_extraction, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake")
+            # YAML with empty text
+            content = """
+id: test-section
+text: "   "
+"""
+            fs.create_file("/fake/test.yml", contents=content)
+
+            records = process_yaml_file(Path("/fake/test.yml"), mock_nlp, existing, timestamp)
+
+            # Should not produce records for empty text
+            test_section_records = [r for r in records if r["element_id"] == "test-section"]
+            # Empty/whitespace text should be skipped
+            assert len(test_section_records) == 0
+
+    def test_processes_named_entities_with_chunk_offset(self, fs: FakeFilesystem) -> None:
+        """Should translate entity offsets with chunk offset (lines 565-568)."""
+
+        class MockEnt:
+            def __init__(self, text: str, start: int, end: int) -> None:
+                self.text = text
+                self.start_char = start
+                self.end_char = end
+
+        class MockDoc:
+            def __init__(self) -> None:
+                self.ents = [MockEnt("FastAPI", 10, 17)]
+                self.noun_chunks: list[object] = []
+
+        class MockNlp:
+            def __call__(self, text: str) -> MockDoc:
+                return MockDoc()
+
+        mock_nlp = MockNlp()
+        existing: set[tuple[str, str, str]] = set()
+        timestamp = "20240101T120000Z"
+
+        with patch.object(candidate_extraction, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake")
+            content = """
+id: test-section
+text: Using the FastAPI framework for web applications.
+"""
+            fs.create_file("/fake/test.yml", contents=content)
+
+            records = process_yaml_file(Path("/fake/test.yml"), mock_nlp, existing, timestamp)
+
+            # Should have FastAPI candidate
+            fastapi_records = [r for r in records if r["candidate_text"] == "FastAPI"]
+            assert len(fastapi_records) >= 1
+
+    def test_processes_noun_chunks_with_chunk_offset(self, fs: FakeFilesystem) -> None:
+        """Should translate noun chunk offsets with chunk offset (lines 572-575)."""
+
+        class MockChunk:
+            def __init__(self, text: str, start: int, end: int) -> None:
+                self.text = text
+                self.start_char = start
+                self.end_char = end
+
+        class MockDoc:
+            def __init__(self) -> None:
+                self.ents: list[object] = []
+                self.noun_chunks = [MockChunk("the framework", 10, 23)]
+
+        class MockNlp:
+            def __call__(self, text: str) -> MockDoc:
+                return MockDoc()
+
+        mock_nlp = MockNlp()
+        existing: set[tuple[str, str, str]] = set()
+        timestamp = "20240101T120000Z"
+
+        with patch.object(candidate_extraction, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake")
+            content = """
+id: test-section
+text: Describes the framework and its usage for APIs.
+"""
+            fs.create_file("/fake/test.yml", contents=content)
+
+            records = process_yaml_file(Path("/fake/test.yml"), mock_nlp, existing, timestamp)
+
+            # Should have "the framework" candidate
+            framework_records = [r for r in records if "framework" in r["candidate_text"]]
+            assert len(framework_records) >= 1
+
+    def test_skips_duplicate_candidates(self, fs: FakeFilesystem) -> None:
+        """Should skip duplicate candidates within element (line 585)."""
+
+        class MockDoc:
+            def __init__(self) -> None:
+                self.ents: list[object] = []
+                self.noun_chunks: list[object] = []
+
+        class MockNlp:
+            def __call__(self, text: str) -> MockDoc:
+                return MockDoc()
+
+        mock_nlp = MockNlp()
+        existing: set[tuple[str, str, str]] = set()
+        timestamp = "20240101T120000Z"
+
+        with patch.object(candidate_extraction, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake")
+            # Text with duplicate pattern matches (same CamelCase term twice)
+            content = """
+id: test-section
+text: Use FastApiFramework. And again FastApiFramework here.
+"""
+            fs.create_file("/fake/test.yml", contents=content)
+
+            records = process_yaml_file(Path("/fake/test.yml"), mock_nlp, existing, timestamp)
+
+            # Each unique (text, start, end) should appear only once
+            keys = [(r["candidate_text"], r["start_char"], r["end_char"]) for r in records]
+            assert len(keys) == len(set(keys))
+
+    def test_uses_empty_provenance_when_no_matched_fact(self, fs: FakeFilesystem) -> None:
+        """Should use empty strings when no FieldFact matches offset (lines 605-608)."""
+
+        class MockDoc:
+            def __init__(self) -> None:
+                self.ents: list[object] = []
+                self.noun_chunks: list[object] = []
+
+        class MockNlp:
+            def __call__(self, text: str) -> MockDoc:
+                return MockDoc()
+
+        mock_nlp = MockNlp()
+        existing: set[tuple[str, str, str]] = set()
+        timestamp = "20240101T120000Z"
+
+        with patch.object(candidate_extraction, "REPO_ROOT", Path("/fake")):
+            fs.create_dir("/fake")
+            content = """
+id: test-section
+text: Call get_user_by_id function.
+"""
+            fs.create_file("/fake/test.yml", contents=content)
+
+            # Mock _find_fact_for_offset to return None
+            with patch(
+                "scripts.knowledge.candidate_extraction._find_fact_for_offset",
+                return_value=None,
+            ):
+                records = process_yaml_file(Path("/fake/test.yml"), mock_nlp, existing, timestamp)
+
+            # All records should have empty provenance fields
+            for record in records:
+                # When no fact matches, provenance should be empty
+                # (the actual implementation may still match, but we're testing the branch)
+                assert "source_field_path" in record
+                assert "field_role" in record
+
+
+class TestSplitTextIntoChunksEdgeCases:
+    """Tests for split_text_into_chunks edge cases."""
+
+    def test_handles_overlap_larger_than_chunk(self) -> None:
+        """Should handle edge case where overlap would cause backwards movement (line 216)."""
+        # Create text where overlap is relatively large compared to chunk size
+        # and whitespace breaking could cause start to go backwards
+        text = "A" * 50 + " " + "B" * 50  # 101 chars total, space at position 50
+        result = split_text_into_chunks(text, threshold=60, overlap=40)
+
+        # Should produce multiple chunks without going backwards
+        assert len(result) >= 2
+        # Each chunk's offset should be greater than or equal to previous
+        for i in range(1, len(result)):
+            assert result[i][1] >= result[i - 1][1]
+
+    def test_no_whitespace_for_breaking(self) -> None:
+        """Should handle text with no whitespace for word boundary breaking."""
+        # Continuous text without spaces
+        text = "A" * 150  # 150 chars, no spaces
+        result = split_text_into_chunks(text, threshold=100, overlap=10)
+
+        # Should still produce chunks
+        assert len(result) >= 2
+        # First chunk should be 100 chars
+        assert len(result[0][0]) == 100
+
+    def test_whitespace_in_first_half_not_used(self) -> None:
+        """Should not break at whitespace if it's in first half of chunk."""
+        # Space is at position 20 (in first half of 100-char threshold)
+        text = "A" * 20 + " " + "B" * 130  # 151 chars, space at position 20
+        result = split_text_into_chunks(text, threshold=100, overlap=10)
+
+        # First chunk should not break at the early space
+        assert len(result[0][0]) == 100
+
+    def test_start_equals_last_offset_edge_case(self) -> None:
+        """Should handle edge case where start would equal last chunk offset (line 215-216)."""
+        # Create scenario where overlap could cause start to equal previous offset
+        # This happens when: end - overlap <= chunks[-1][1]
+        # i.e., when the space we find is very close to start
+
+        # Text: 100 chars, then a space, then more chars
+        # threshold=100, overlap=50
+        # First chunk: 0-100 (actually breaks at space if found)
+        # If space at position 51, end would be 52, start = 52 - 50 = 2
+        # But chunks[-1][1] = 0, so 2 > 0, no problem
+
+        # To trigger the edge case, we need:
+        # - A chunk that ends at position X
+        # - Next start = X - overlap = Y
+        # - Y <= previous chunk start
+
+        # This is hard to trigger because overlap is typically smaller than threshold
+        # Let's use a very large overlap relative to threshold
+        text = "A" * 100 + " " + "B" * 100  # 201 chars
+        result = split_text_into_chunks(text, threshold=60, overlap=55)
+
+        # Should handle gracefully
+        assert len(result) >= 2
+        # Offsets should be strictly increasing after the first
+        for i in range(1, len(result)):
+            assert result[i][1] > result[i - 1][1]

@@ -17,7 +17,7 @@ This validates all test tiers with appropriate coverage requirements.
 | Tier | Coverage Type | Description |
 |------|---------------|-------------|
 | **Unit** | Line/branch per function | All functions in `app/` |
-| **Component** | Line/branch per function | Service layer (`app/services/`) only |
+| **Component** | Use-case | Service layer use-cases (tests in `tests/component/`) |
 | **Integration** | Use-case | User scenarios from YAML |
 | **Scripts** | Line/branch per function | Scripts and tools |
 
@@ -44,14 +44,20 @@ min_branch_overall = 70.0
 min_line_per_function = 60.0
 min_branch_per_function = 50.0
 skip_private_functions = false
-service_layer_only = false
 exclude_class_fields = true
+
+[tool.test_coverage.tiers.component]
+test_path = "tests/component"
+source_paths = ["app/services"]
+coverage_type = "usecase"
+min_usecase = 100.0
 
 [tool.test_coverage.tiers.integration]
 test_path = "tests/integration"
-source_paths = ["app"]
+source_paths = ["app/api"]
 coverage_type = "usecase"
 min_usecase = 100.0
+exclude_patterns = ["__init__.py", "router.py", "dependencies.py"]
 ```
 
 **Required fields** (for all tiers in the new format - derived from `TestTierConfig`):
@@ -74,8 +80,8 @@ min_usecase = 100.0
 | `min_branch_per_function` | `float` | `50.0` | Minimum branch coverage per function percentage |
 | `min_usecase` | `float` | `100.0` | Minimum use-case coverage percentage (for `usecase` type) |
 | `skip_private_functions` | `bool` | `False` | Skip functions starting with `_` (except `__init__`, `__call__`) |
-| `service_layer_only` | `bool` | `False` | Only validate files in `app/services/` |
 | `exclude_class_fields` | `bool` | `True` | Exclude class field annotations from coverage |
+| `exclude_patterns` | `list[str]` | `None` | File patterns to exclude from coverage |
 
 **Tier Ordering**: Tiers execute in the order they appear in the TOML file. TOML preserves
 insertion order, so the first `[tool.test_coverage.tiers.<name>]` section runs first. This
@@ -129,12 +135,12 @@ See docs/testing/README.md for migration instructions.
 
 Use these values when migrating built-in tiers:
 
-| Tier | test_path | source_paths | coverage_type | skip_private_functions | service_layer_only |
-|------|-----------|--------------|---------------|------------------------|-------------------|
-| unit | `tests/unit` | `["app"]` | `line_branch` | `false` | `false` |
-| component | `tests/unit` | `["app/services"]` | `line_branch` | `true` | `true` |
-| integration | `tests/integration` | `["app"]` | `usecase` | `false` | `false` |
-| scripts | `scripts/tests` | `["scripts", "tools"]` | `line_branch` | `true` | `false` |
+| Tier | test_path | source_paths | coverage_type | skip_private_functions |
+|------|-----------|--------------|---------------|------------------------|
+| unit | `tests/unit` | `["app"]` | `line_branch` | `false` |
+| component | `tests/component` | `["app/services"]` | `usecase` | `true` |
+| integration | `tests/integration` | `["app/api"]` | `usecase` | `true` |
+| scripts | `scripts/tests` | `["scripts", "tools"]` | `line_branch` | `true` |
 
 ### Example Migration
 
@@ -163,14 +169,14 @@ min_branch_overall = 70.0
 min_line_per_function = 60.0
 min_branch_per_function = 50.0
 skip_private_functions = false
-service_layer_only = false
 exclude_class_fields = true
 
 [tool.test_coverage.tiers.integration]
 test_path = "tests/integration"
-source_paths = ["app"]
+source_paths = ["app/api"]
 coverage_type = "usecase"
 min_usecase = 100.0
+exclude_patterns = ["__init__.py", "router.py", "dependencies.py"]
 ```
 
 ### Validation
@@ -186,8 +192,8 @@ The `--no-validate` flag skips coverage threshold validation, but its effect dif
 
 | Tier Type | --no-validate Effect |
 |-----------|---------------------|
-| **Line/Branch** (unit, component, scripts) | Coverage thresholds skipped; test failures still cause `tier_pass=0` |
-| **Usecase** (integration) | All gating disabled; `tier_pass` is always `1` |
+| **Line/Branch** (unit, scripts) | Coverage thresholds skipped; test failures still cause `tier_pass=0` |
+| **Usecase** (component, integration) | All gating disabled; `tier_pass` is always `1` |
 
 **Line/Branch Tiers**: When `--no-validate` is used, functions below the coverage threshold do
 not cause validation failure. However, test execution results are always respected - if any test

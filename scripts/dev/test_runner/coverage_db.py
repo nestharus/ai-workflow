@@ -38,8 +38,7 @@ CREATE TABLE IF NOT EXISTS cc_tier_config (
     min_line_per_function REAL,
     min_branch_per_function REAL,
     min_usecase REAL,
-    skip_private_functions INTEGER DEFAULT 0,
-    service_layer_only INTEGER DEFAULT 0
+    skip_private_functions INTEGER DEFAULT 0
 );
 
 -- Per-function coverage with pass/fail flags
@@ -206,6 +205,9 @@ def write_run_metadata(db_path: Path, repo_root: Path) -> None:
 def write_tier_config(db_path: Path, tier: str, config: TestTierConfig) -> None:
     """Write tier configuration to the database.
 
+    The coverage_type is computed from the config's coverage_type property,
+    which is dynamically determined based on which threshold fields are populated.
+
     Args:
         db_path: Path to the .coverage database file
         tier: Tier name (e.g., 'unit', 'integration')
@@ -219,12 +221,12 @@ def write_tier_config(db_path: Path, tier: str, config: TestTierConfig) -> None:
                 tier, coverage_type, test_path, source_paths,
                 min_line_overall, min_branch_overall,
                 min_line_per_function, min_branch_per_function,
-                min_usecase, skip_private_functions, service_layer_only
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                min_usecase, skip_private_functions
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tier,
-                config.coverage_type,
+                config.coverage_type,  # Uses the computed property
                 config.test_path,
                 json.dumps(config.source_paths),
                 config.min_line_overall,
@@ -233,7 +235,6 @@ def write_tier_config(db_path: Path, tier: str, config: TestTierConfig) -> None:
                 config.min_branch_per_function,
                 config.min_usecase,
                 1 if config.skip_private_functions else 0,
-                1 if config.service_layer_only else 0,
             ),
         )
         conn.commit()
@@ -785,7 +786,7 @@ def get_tier_config(db_path: Path, tier: str) -> dict[str, Any]:
                 tier, coverage_type, test_path, source_paths,
                 min_line_overall, min_branch_overall,
                 min_line_per_function, min_branch_per_function,
-                min_usecase, skip_private_functions, service_layer_only
+                min_usecase, skip_private_functions
             FROM cc_tier_config
             WHERE tier = ?
             """,
@@ -794,13 +795,12 @@ def get_tier_config(db_path: Path, tier: str) -> dict[str, Any]:
         row = cursor.fetchone()
         if row:
             result = dict(row)
-            # Parse JSON field
+            # Parse JSON fields
             result["source_paths"] = (
                 json.loads(result["source_paths"]) if result["source_paths"] else []
             )
             # Convert integers to booleans
             result["skip_private_functions"] = bool(result["skip_private_functions"])
-            result["service_layer_only"] = bool(result["service_layer_only"])
     except sqlite3.OperationalError:
         # Table doesn't exist
         pass

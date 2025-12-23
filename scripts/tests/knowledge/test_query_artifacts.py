@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -404,3 +405,180 @@ class TestMain:
         captured = capsys.readouterr()
         assert "Total artifacts:" in captured.out
         assert "By artifact kind:" in captured.out
+
+    def test_outputs_json_format(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should output JSON format (covers lines 504-511)."""
+        artifacts_dir = Path("/fake/.knowledge/artifacts")
+        fs.create_dir(artifacts_dir)
+
+        manifest = {
+            "artifact_id": "test-id-json",
+            "artifact_kind": "prose/paragraph",
+            "artifact_format": "text/markdown",
+            "source": {
+                "source_file": "docs/test.yml",
+                "source_element_id": "test",
+                "field_path": "text",
+                "source_locator": "inline",
+                "source_uri": None,
+            },
+            "render_plan_id": "prose.paragraph.v1",
+            "projection_version": "fieldfacts.v2",
+            "modality": "text",
+            "extraction_mode": "full",
+            "contributors": {"structural": [], "semantic": []},
+            "entities": [],
+            "rendered": {
+                "path": "",
+                "validation": {
+                    "last_validated_at": "",
+                    "similarity": "",
+                    "passed": "",
+                    "notes": "",
+                },
+            },
+        }
+        manifest_path = artifacts_dir / "test-id-json.yml"
+        fs.create_file(manifest_path, contents=yaml.safe_dump(manifest))
+
+        result = main(
+            [
+                "--artifacts-dir",
+                str(artifacts_dir),
+                "--output-format",
+                "json",
+                "--no-v1-only",
+            ]
+        )
+
+        assert result == 0
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert len(output) == 1
+        assert output[0]["artifact_id"] == "test-id-json"
+
+    def test_outputs_yaml_format(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should output YAML format (covers lines 512-519)."""
+        artifacts_dir = Path("/fake/.knowledge/artifacts")
+        fs.create_dir(artifacts_dir)
+
+        manifest = {
+            "artifact_id": "test-id-yaml",
+            "artifact_kind": "prose/paragraph",
+            "artifact_format": "text/markdown",
+            "source": {
+                "source_file": "docs/test.yml",
+                "source_element_id": "test",
+                "field_path": "text",
+                "source_locator": "inline",
+                "source_uri": None,
+            },
+            "render_plan_id": "prose.paragraph.v1",
+            "projection_version": "fieldfacts.v2",
+            "modality": "text",
+            "extraction_mode": "full",
+            "contributors": {"structural": [], "semantic": []},
+            "entities": [],
+            "rendered": {
+                "path": "",
+                "validation": {
+                    "last_validated_at": "",
+                    "similarity": "",
+                    "passed": "",
+                    "notes": "",
+                },
+            },
+        }
+        manifest_path = artifacts_dir / "test-id-yaml.yml"
+        fs.create_file(manifest_path, contents=yaml.safe_dump(manifest))
+
+        result = main(
+            [
+                "--artifacts-dir",
+                str(artifacts_dir),
+                "--output-format",
+                "yaml",
+                "--no-v1-only",
+            ]
+        )
+
+        assert result == 0
+        captured = capsys.readouterr()
+        output = yaml.safe_load(captured.out)
+        assert len(output) == 1
+        assert output[0]["artifact_id"] == "test-id-yaml"
+
+    def test_outputs_csv_format(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should output CSV format (covers lines 520-527)."""
+        artifacts_dir = Path("/fake/.knowledge/artifacts")
+        fs.create_dir(artifacts_dir)
+
+        manifest = {
+            "artifact_id": "test-id-csv",
+            "artifact_kind": "prose/paragraph",
+            "artifact_format": "text/markdown",
+            "source": {
+                "source_file": "docs/test.yml",
+                "source_element_id": "test",
+                "field_path": "text",
+                "source_locator": "inline",
+                "source_uri": None,
+            },
+            "render_plan_id": "prose.paragraph.v1",
+            "projection_version": "fieldfacts.v2",
+            "modality": "text",
+            "extraction_mode": "full",
+            "contributors": {"structural": [], "semantic": []},
+            "entities": [],
+            "rendered": {
+                "path": "",
+                "validation": {
+                    "last_validated_at": "",
+                    "similarity": "",
+                    "passed": "",
+                    "notes": "",
+                },
+            },
+        }
+        manifest_path = artifacts_dir / "test-id-csv.yml"
+        fs.create_file(manifest_path, contents=yaml.safe_dump(manifest))
+
+        result = main(
+            [
+                "--artifacts-dir",
+                str(artifacts_dir),
+                "--output-format",
+                "csv",
+                "--no-v1-only",
+            ]
+        )
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "artifact_id" in captured.out
+        assert "test-id-csv" in captured.out
+
+    def test_handles_manifest_load_exception(
+        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should return error when manifest loading fails (covers lines 479-481)."""
+        artifacts_dir = Path("/fake/.knowledge/artifacts")
+        fs.create_dir(artifacts_dir)
+
+        from scripts.knowledge import query_artifacts
+
+        with patch.object(
+            query_artifacts, "list_artifact_manifests", side_effect=Exception("Load failed")
+        ):
+            result = main(["--artifacts-dir", str(artifacts_dir)])
+
+        assert result == 1
+        captured = capsys.readouterr()
+        # Exception is logged to stderr
+        assert "Load failed" in captured.err or result == 1

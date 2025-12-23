@@ -149,6 +149,40 @@ class TestDuckDBClient:
         assert path == str(tmp_path / "test.csv")
 
 
+class TestValidateCsvFilename:
+    """Tests for _validate_csv_filename validation."""
+
+    def test_empty_filename_raises_value_error(self, tmp_path: Path) -> None:
+        """Test that empty filename raises ValueError."""
+        client = DuckDBClient(csv_data_path=tmp_path)
+        with pytest.raises(ValueError, match="cannot be empty"):
+            client.get_csv_path("")
+
+    def test_path_traversal_with_double_dot_raises_value_error(self, tmp_path: Path) -> None:
+        """Test that path traversal with .. raises ValueError."""
+        client = DuckDBClient(csv_data_path=tmp_path)
+        with pytest.raises(ValueError, match="path traversal detected"):
+            client.get_csv_path("../test.csv")
+
+    def test_path_traversal_with_forward_slash_raises_value_error(self, tmp_path: Path) -> None:
+        """Test that path with / raises ValueError."""
+        client = DuckDBClient(csv_data_path=tmp_path)
+        with pytest.raises(ValueError, match="path traversal detected"):
+            client.get_csv_path("subdir/test.csv")
+
+    def test_path_traversal_with_backslash_raises_value_error(self, tmp_path: Path) -> None:
+        """Test that path with \\ raises ValueError."""
+        client = DuckDBClient(csv_data_path=tmp_path)
+        with pytest.raises(ValueError, match="path traversal detected"):
+            client.get_csv_path("subdir\\test.csv")
+
+    def test_non_csv_extension_raises_value_error(self, tmp_path: Path) -> None:
+        """Test that non-.csv extension raises ValueError."""
+        client = DuckDBClient(csv_data_path=tmp_path)
+        with pytest.raises(ValueError, match=r"must end with \.csv"):
+            client.get_csv_path("test.txt")
+
+
 class TestCreateDuckDBClient:
     """Tests for create_duckdb_client factory function."""
 
@@ -188,3 +222,66 @@ class TestDuckDBExceptions:
         """Test DuckDBQueryError stores custom message."""
         exc = DuckDBQueryError("Query failed")
         assert "Query failed" in str(exc)
+
+
+class TestDuckDBQueryInternalErrors:
+    """Tests for internal query error handling paths."""
+
+    @pytest.mark.asyncio
+    async def test_query_reraises_duckdb_not_initialized_from_inner_check(
+        self, tmp_path: Path
+    ) -> None:
+        """Test that query re-raises DuckDBNotInitializedError from _query_sync."""
+        client = DuckDBClient(csv_data_path=tmp_path)
+        # Manually set initialized to True but leave connection None to trigger inner check
+        client._initialized = True
+        client._connection = None
+
+        with pytest.raises(DuckDBNotInitializedError):
+            await client.query("SELECT 1")
+
+    @pytest.mark.asyncio
+    async def test_query_wraps_generic_exception_in_query_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that query wraps generic exceptions in DuckDBQueryError."""
+        import anyio
+
+        client = DuckDBClient(csv_data_path=tmp_path)
+        await client.init()
+
+        # Mock anyio.to_thread.run_sync to raise a generic exception
+        async def failing_run_sync(fn: object, *args: object, **kwargs: object) -> None:
+            raise RuntimeError("Simulated failure")
+
+        monkeypatch.setattr(anyio.to_thread, "run_sync", failing_run_sync)
+
+        try:
+            with pytest.raises(DuckDBQueryError, match="Simulated failure"):
+                await client.query("SELECT 1")
+        finally:
+            # Restore original before close
+            monkeypatch.undo()
+            await client.close()
+
+
+class TestDuckDBInitErrors:
+    """Tests for initialization error handling paths."""
+
+    @pytest.mark.asyncio
+    async def test_init_wraps_generic_exception_in_connection_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that init wraps generic exceptions in DuckDBConnectionError."""
+        import duckdb as duckdb_module
+
+        client = DuckDBClient(csv_data_path=tmp_path)
+
+        # Mock duckdb.connect to raise a generic exception
+        def failing_connect(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("Connection failed unexpectedly")
+
+        monkeypatch.setattr(duckdb_module, "connect", failing_connect)
+
+        with pytest.raises(DuckDBConnectionError, match="Connection failed unexpectedly"):
+            await client.init()

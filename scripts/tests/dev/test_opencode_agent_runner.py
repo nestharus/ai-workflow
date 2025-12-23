@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scripts.dev.opencode_agent_runner import (
+    OpencodeRunner,
     main,
     parse_args,
     run_agent,
@@ -171,3 +172,93 @@ class TestMain:
         command = call_args[0][0]
         assert "my-agent" in command
         assert "my prompt" in command
+
+
+class TestOpencodeRunner:
+    """Tests for OpencodeRunner class."""
+
+    def test_run_returns_output_on_success(self) -> None:
+        """Should return output when agent succeeds (covers lines 73-77, branch [75,77])."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Agent output here"
+        mock_result.stderr = ""
+
+        agent_config = {
+            "model": "gpt-4",
+            "provider": "opencode",
+            "name": "test-agent",
+            "_system_prompt": "You are a test agent.",
+        }
+
+        runner = OpencodeRunner(agent_config)
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = runner.run("test prompt")
+
+        assert result == "Agent output here"
+
+    def test_run_raises_on_failure(self) -> None:
+        """Should raise RuntimeError when agent fails (covers branch [75,76])."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        mock_result.stderr = "Error occurred"
+
+        agent_config = {
+            "model": "gpt-4",
+            "provider": "opencode",
+            "name": "test-agent",
+            "_system_prompt": "You are a test agent.",
+        }
+
+        runner = OpencodeRunner(agent_config)
+
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(RuntimeError, match="OpenCode agent failed with exit code 1"),
+        ):
+            runner.run("test prompt")
+
+    def test_run_uses_agent_name_from_config(self) -> None:
+        """Should use agent name from config when running (covers line 73)."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "output"
+        mock_result.stderr = ""
+
+        agent_config = {
+            "model": "gpt-4",
+            "provider": "opencode",
+            "name": "my-custom-agent",
+            "_system_prompt": "System prompt here.",
+        }
+
+        runner = OpencodeRunner(agent_config)
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            runner.run("test prompt")
+
+        call_args = mock_run.call_args[0][0]
+        assert "my-custom-agent" in call_args
+
+    def test_run_with_empty_agent_name(self) -> None:
+        """Should handle empty agent name."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "output"
+        mock_result.stderr = ""
+
+        agent_config = {
+            "model": "gpt-4",
+            "provider": "opencode",
+            "name": "",
+            "_system_prompt": "System prompt.",
+        }
+
+        runner = OpencodeRunner(agent_config)
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = runner.run("test prompt")
+
+        assert result == "output"

@@ -1,4 +1,4 @@
----
+ ---
 name: test-debugger
 description: Debugs and fixes failing tests in a worktree. Runs tests, identifies failures, and applies fixes.
 tools: Read, Edit, Bash, Grep, Glob, TodoWrite, mcp__firecrawl__firecrawl_search, mcp__firecrawl__firecrawl_scrape

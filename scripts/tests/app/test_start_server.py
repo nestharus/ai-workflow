@@ -584,6 +584,53 @@ class TestPerformHealthCheck:
         ):
             perform_health_check("127.0.0.1", 8000, mock_process)
 
+    def test_handles_missing_status_key(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should handle payload with no status key (branch at line 334)."""
+        mock_process = MagicMock()
+        mock_process.poll.return_value = None  # Running
+
+        # Response with no "status" key - triggers branch at 334 where status != "ok"
+        mock_response_no_status = MagicMock()
+        mock_response_no_status.status = 200
+        mock_response_no_status.read.return_value = b'{"other": "data"}'
+        mock_response_no_status.__enter__ = MagicMock(return_value=mock_response_no_status)
+        mock_response_no_status.__exit__ = MagicMock(return_value=False)
+
+        mock_response_ok = MagicMock()
+        mock_response_ok.status = 200
+        mock_response_ok.read.return_value = b'{"status": "ok"}'
+        mock_response_ok.__enter__ = MagicMock(return_value=mock_response_ok)
+        mock_response_ok.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch("time.sleep"),
+            patch(
+                "urllib.request.urlopen",
+                side_effect=[mock_response_no_status, mock_response_ok],
+            ),
+        ):
+            perform_health_check("127.0.0.1", 8000, mock_process)
+
+        captured = capsys.readouterr()
+        # Should still succeed after retry
+        assert "healthy" in captured.out
+
+    def test_loop_iterates_all_attempts_on_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test that the for loop at line 321 iterates through all attempts."""
+        mock_process = MagicMock()
+        mock_process.poll.side_effect = [None, None, 0]  # Running, then exit on final
+
+        # All attempts fail with connection errors until exhausted
+        with (
+            patch("time.sleep"),
+            patch(
+                "urllib.request.urlopen",
+                side_effect=[OSError("Connection refused")] * HEALTH_CHECK_RETRIES,
+            ),
+            pytest.raises(SystemExit),
+        ):
+            perform_health_check("127.0.0.1", 8000, mock_process)
+
 
 class TestFormatHealthProbeHostNonIpv6Colon:
     """Tests for non-IPv6 hosts with colons in _format_health_probe_host."""

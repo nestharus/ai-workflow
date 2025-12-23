@@ -73,6 +73,31 @@ class TestElasticsearchWrapper:
             assert wrapper._initialized is True
 
     @pytest.mark.asyncio
+    async def test_init_not_initialized_when_ping_returns_false(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test that init() marks client as not initialized when ping returns False."""
+        import logging
+
+        with patch("app.infrastructure.elasticsearch.client.Elasticsearch") as mock_es:
+            mock_client = MagicMock()
+            mock_client.ping.return_value = False
+            mock_es.return_value = mock_client
+
+            wrapper = ElasticsearchWrapper(
+                hosts="http://localhost:9200",
+                connections_per_node=10,
+                request_timeout=30,
+                number_of_shards=1,
+                number_of_replicas=0,
+            )
+            with caplog.at_level(logging.WARNING):
+                await wrapper.init()
+
+            assert wrapper._initialized is False
+            assert "ping returned False" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_close_marks_as_not_initialized(self) -> None:
         """Test that close() marks the client as not initialized."""
         with patch("app.infrastructure.elasticsearch.client.Elasticsearch") as mock_es:

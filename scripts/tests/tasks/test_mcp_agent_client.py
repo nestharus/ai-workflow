@@ -1525,3 +1525,202 @@ class TestTimeoutFloorBehavior:
         assert abs(boundary_timeout - 1.0) < 0.1, (
             f"Expected timeout ~1.0s at boundary, got {boundary_timeout}"
         )
+
+
+class TestMissingCoverage:
+    """Tests to cover missing lines and branches for complete coverage."""
+
+    def test_cmd_list_invalid_structured_content(self) -> None:
+        """Test cmd_list handles non-dict structuredContent (line 398-399).
+
+        When structuredContent is present but not a dict, it should fail
+        with an appropriate error message.
+        """
+        fake_client = FakeHttpMCPClient(tool_responses=[{"structuredContent": "not a dict"}])
+        result = cmd_list(fake_client)  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "Invalid response format" in result["error"]
+
+    def test_cmd_wait_execute_command_invalid_structured_content(
+        self, mock_time_sleep: Any
+    ) -> None:
+        """Test cmd_wait handles non-dict structuredContent from execute_command (line 313-314).
+
+        When execute_command returns non-dict structuredContent, it should fail
+        with an appropriate error message.
+        """
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[{"structuredContent": ["not", "a", "dict"]}]
+        )
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        assert result["status"] == "failed"
+        assert "Invalid response format" in result["error"]
+
+    def test_cmd_wait_get_job_status_invalid_structured_content(self, mock_time_sleep: Any) -> None:
+        """Test cmd_wait handles non-dict structuredContent from get_job_status (line 340-341).
+
+        When get_job_status returns non-dict structuredContent, it should fail
+        with an appropriate error message.
+        """
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"job_id": "job-1"},  # execute_command response
+                {"structuredContent": 12345},  # get_job_status with invalid content
+            ]
+        )
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        assert result["status"] == "failed"
+        assert result["job_id"] == "job-1"
+        assert "Invalid response format" in result["error"]
+
+    def test_cmd_wait_timeout_while_fetching_output(self, mock_time_sleep: Any) -> None:
+        """Test cmd_wait timeout during get_job_output (line 350-351).
+
+        When the deadline expires after job completes but before fetching output,
+        it should return status='timeout'.
+
+        Timeline of time.monotonic() calls in cmd_wait:
+        1. Line 278: deadline = time.monotonic() + max_seconds -> 100.0 + 10 = 110.0
+        2. Line 296 (in get_remaining_timeout via line 302): remaining = deadline - time.monotonic() -> 110.0 - 100.0 = 10.0
+        3. Line 296 (in get_remaining_timeout via line 322): remaining = deadline - time.monotonic() -> 110.0 - 100.0 = 10.0
+        4. Line 296 (in get_remaining_timeout via line 349): remaining = deadline - time.monotonic() -> 110.0 - 200.0 = -90 (expired!)
+
+        Call 4 happens INSIDE the if block at line 348, which is checking remaining for get_job_output.
+        """
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"job_id": "job-1"},  # execute_command response
+                {"status": "completed", "exit_code": 0},  # get_job_status response
+            ]
+        )
+
+        # Mock time to expire deadline right after get_job_status (when checking for get_job_output)
+        call_count = [0]
+
+        def mock_monotonic() -> float:
+            call_count[0] += 1
+            # Calls 1-3: within deadline (deadline calc, pre-execute check, pre-loop check)
+            if call_count[0] <= 3:
+                return 100.0
+            # Call 4: get_remaining_timeout() for get_job_output (line 349) - deadline expired!
+            return 200.0
+
+        with patch(
+            "scripts.dev.mcp_agent_client.time.monotonic",
+            side_effect=mock_monotonic,
+        ):
+            result = cmd_wait(
+                fake_client,  # type: ignore[arg-type]
+                command="echo test",
+                job_id=None,
+                max_seconds=10,
+                poll_interval=0.01,
+            )
+
+        assert result["status"] == "timeout"
+        assert result["job_id"] == "job-1"
+        assert "fetching output" in result["error"]
+
+    def test_cmd_wait_get_job_output_invalid_structured_content(self, mock_time_sleep: Any) -> None:
+        """Test cmd_wait handles non-dict structuredContent from get_job_output (line 359-360).
+
+        When get_job_output returns non-dict structuredContent, it should fail
+        with an appropriate error message.
+        """
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[
+                {"job_id": "job-1"},  # execute_command response
+                {"status": "completed", "exit_code": 0},  # get_job_status response
+                {"structuredContent": True},  # get_job_output with invalid content
+            ]
+        )
+        result = cmd_wait(
+            fake_client,  # type: ignore[arg-type]
+            command="echo test",
+            job_id=None,
+            max_seconds=60,
+            poll_interval=0.01,
+        )
+        assert result["status"] == "failed"
+        assert result["job_id"] == "job-1"
+        assert "Invalid response format" in result["error"]
+
+    def test_main_wait_mode_missing_args(self, mocker: Any) -> None:
+        """Test main exits with error when wait mode has neither command nor job-id (line 510-511).
+
+        When wait mode is called without --command or --job-id, parser.error should be called.
+        """
+        mocker.patch("sys.argv", ["mcp_agent_client", "wait"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        # parser.error causes SystemExit with code 2
+        assert exc_info.value.code == 2
+
+    def test_main_value_error_exception(self, mocker: Any) -> None:
+        """Test main handles ValueError exception (lines 544-547).
+
+        When a ValueError is raised during execution, it should be caught
+        and return exit code 1.
+        """
+        mocker.patch(
+            "scripts.dev.mcp_agent_client.get_mcp_client",
+            side_effect=ValueError("Invalid configuration"),
+        )
+        mocker.patch("sys.argv", ["mcp_agent_client", "list"])
+
+        exit_code = main()
+
+        assert exit_code == 1
+
+    def test_main_keyboard_interrupt(self, mocker: Any, capsys: Any) -> None:
+        """Test main handles KeyboardInterrupt (lines 549-552).
+
+        When KeyboardInterrupt is raised, it should return exit code 130.
+        """
+        mocker.patch(
+            "scripts.dev.mcp_agent_client.get_mcp_client",
+            side_effect=KeyboardInterrupt(),
+        )
+        mocker.patch("sys.argv", ["mcp_agent_client", "list"])
+
+        exit_code = main()
+
+        assert exit_code == 130
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["status"] == "failed"
+        assert "Interrupted" in output["error"]
+
+    def test_main_mcp_client_error_exception(self, mocker: Any, capsys: Any) -> None:
+        """Test main handles MCPClientError at top level (lines 539-542).
+
+        When MCPClientError is raised from get_mcp_client, it should be caught
+        and return exit code 1.
+        """
+        mocker.patch(
+            "scripts.dev.mcp_agent_client.get_mcp_client",
+            side_effect=MCPClientError("Failed to initialize client"),
+        )
+        mocker.patch("sys.argv", ["mcp_agent_client", "list"])
+
+        exit_code = main()
+
+        assert exit_code == 1
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["status"] == "failed"
+        assert "Failed to initialize client" in output["error"]

@@ -6,7 +6,12 @@ from app.contracts.errors import (
     HTTPValidationError,
     ValidationErrorDetail,
 )
-from app.core.errors import DomainValidationError, ResourceNotFoundError, UnauthorizedError
+from app.core.errors import (
+    DomainError,
+    DomainValidationError,
+    ResourceNotFoundError,
+    UnauthorizedError,
+)
 
 
 def test_from_domain_resource_not_found_defaults() -> None:
@@ -41,6 +46,29 @@ def test_from_domain_unauthorized_defaults() -> None:
     assert error.code is ErrorCode.UNAUTHORIZED
     assert error.status_code == 401
     assert error.message == "Unauthorized"
+
+
+def test_from_domain_generic_domain_error_returns_internal_error() -> None:
+    """Test that a generic DomainError (not a subclass) returns INTERNAL_ERROR."""
+    # Create a generic DomainError (not a specific subclass)
+    generic_error = DomainError("Something went wrong")
+
+    error = AppError.from_domain(generic_error)
+
+    assert error.code is ErrorCode.INTERNAL_ERROR
+    assert error.status_code == 500
+    assert error.message == "Something went wrong"
+
+
+def test_from_domain_generic_domain_error_with_empty_message() -> None:
+    """Test that a generic DomainError with empty message uses default."""
+    generic_error = DomainError()
+
+    error = AppError.from_domain(generic_error)
+
+    assert error.code is ErrorCode.INTERNAL_ERROR
+    assert error.status_code == 500
+    assert error.message == "Unexpected error"
 
 
 def test_internal_error_factory() -> None:

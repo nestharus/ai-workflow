@@ -8,6 +8,7 @@ from scripts.knowledge.passes_manager import (
     PASSES_CSV_COLUMNS,
     PassRecord,
     append_pass,
+    backfill_legacy_passes,
     count_passes,
     ensure_passes_csv_exists,
     get_pass_by_id,
@@ -217,6 +218,87 @@ class TestQueryPasses:
         assert len(result) == 1
         assert result[0]["entity_id"] == "target-entity"
 
+    def test_filters_by_artifact_and_entity_id(self, tmp_path: Path) -> None:
+        """Should filter passes by both artifact_id AND entity_id when both provided.
+
+        This covers lines 151-152 and 157 where both filters are applied.
+        """
+        csv_path = tmp_path / "passes.csv"
+        ensure_passes_csv_exists(csv_path)
+
+        # Add three records: one matching both, one matching artifact only, one matching entity only
+        record1 = PassRecord(
+            pass_id="pass-001",
+            artifact_id="artifact-A",
+            entity_id="entity-X",
+            entity_mention="entityX",
+            span_id="span-1",
+            chunk_id="artifact-A:pass1:span-1",
+            span_before="before",
+            span_after="after",
+            facts_removed="[]",
+            similarity_score="0.9",
+            status="success",
+            failure_reason="",
+            created_at="2024-01-01T00:00:00Z",
+        )
+        record2 = PassRecord(
+            pass_id="pass-002",
+            artifact_id="artifact-A",
+            entity_id="entity-Y",
+            entity_mention="entityY",
+            span_id="span-2",
+            chunk_id="artifact-A:pass2:span-2",
+            span_before="before2",
+            span_after="after2",
+            facts_removed="[]",
+            similarity_score="0.85",
+            status="success",
+            failure_reason="",
+            created_at="2024-01-01T00:00:01Z",
+        )
+        record3 = PassRecord(
+            pass_id="pass-003",
+            artifact_id="artifact-B",
+            entity_id="entity-X",
+            entity_mention="entityX",
+            span_id="span-3",
+            chunk_id="artifact-B:pass1:span-3",
+            span_before="before3",
+            span_after="after3",
+            facts_removed="[]",
+            similarity_score="0.8",
+            status="success",
+            failure_reason="",
+            created_at="2024-01-01T00:00:02Z",
+        )
+
+        append_pass(csv_path, record1)
+        append_pass(csv_path, record2)
+        append_pass(csv_path, record3)
+
+        # Query with both filters - should only return the one matching BOTH
+        result = query_passes(csv_path, artifact_id="artifact-A", entity_id="entity-X")
+
+        assert len(result) == 1
+        assert result[0]["pass_id"] == "pass-001"
+        assert result[0]["artifact_id"] == "artifact-A"
+        assert result[0]["entity_id"] == "entity-X"
+
+    def test_returns_empty_on_duckdb_error(self, tmp_path: Path) -> None:
+        """Should return empty list when DuckDB query fails.
+
+        This covers lines 180-182 where DuckDB error is caught and empty list returned.
+        """
+        csv_path = tmp_path / "invalid.csv"
+        # Write invalid CSV content that will cause DuckDB to fail
+        csv_path.write_text("this is not a valid csv\nwith mismatched,columns,here,too,many")
+
+        result = query_passes(csv_path)
+
+        # Should return empty list instead of raising
+        assert result == []
+
     def test_returns_all_passes_when_no_filter(self, tmp_path: Path) -> None:
         """Should return all passes when no filters provided."""
         csv_path = tmp_path / "passes.csv"
@@ -402,3 +484,94 @@ class TestCountPasses:
         assert result_a == 3
         assert result_b == 2
         assert result_all == 5
+
+
+class TestBackfillLegacyPasses:
+    """Tests for backfill_legacy_passes function."""
+
+    def test_returns_zero_for_missing_extractions(self, tmp_path: Path) -> None:
+        """Should return 0 when extractions CSV doesn't exist."""
+        passes_csv = tmp_path / "passes.csv"
+        extractions_csv = tmp_path / "nonexistent_extractions.csv"
+
+        result = backfill_legacy_passes(passes_csv, extractions_csv)
+
+        assert result == 0
+
+    def test_returns_zero_for_empty_extractions(self, tmp_path: Path) -> None:
+        """Should return 0 for empty extractions CSV."""
+        passes_csv = tmp_path / "passes.csv"
+        extractions_csv = tmp_path / "extractions.csv"
+        extractions_csv.write_text("")
+
+        result = backfill_legacy_passes(passes_csv, extractions_csv)
+
+        assert result == 0
+
+    def test_backfills_from_legacy_extractions(self, tmp_path: Path) -> None:
+        """Should create pass records from legacy extractions CSV.
+
+        This covers lines 257-313 of backfill_legacy_passes.
+        """
+        passes_csv = tmp_path / "passes.csv"
+        extractions_csv = tmp_path / "extractions.csv"
+
+        # Create legacy extractions CSV with required columns
+        extractions_csv.write_text(
+            "fact_id,source_sentence,entity,fact_text,rewritten_sentence,confidence,extracted_at\n"
+            "fact-001,The create_app function is important.,create_app,create_app is a factory,The function is important.,0.95,2024-01-01T00:00:00Z\n"
+            "fact-002,FastAPI is fast.,FastAPI,FastAPI is a web framework,It is fast.,0.9,2024-01-01T00:00:01Z\n"
+        )
+
+        result = backfill_legacy_passes(passes_csv, extractions_csv)
+
+        assert result == 2
+        assert passes_csv.exists()
+
+        # Verify the passes were created
+        passes = query_passes(passes_csv)
+        assert len(passes) == 2
+
+        # Check first pass
+        pass1 = get_pass_by_id(passes_csv, "fact-001")
+        assert pass1 is not None
+        assert pass1["entity_id"] == "create_app"
+        assert pass1["entity_mention"] == "create_app"
+        assert pass1["span_before"] == "The create_app function is important."
+        assert pass1["span_after"] == "The function is important."
+        assert pass1["status"] == "legacy_backfill"
+
+    def test_skips_already_existing_passes(self, tmp_path: Path) -> None:
+        """Should skip passes that already exist in the CSV."""
+        passes_csv = tmp_path / "passes.csv"
+        extractions_csv = tmp_path / "extractions.csv"
+
+        # Create legacy extractions CSV
+        extractions_csv.write_text(
+            "fact_id,source_sentence,entity,fact_text,rewritten_sentence,confidence,extracted_at\n"
+            "fact-001,The create_app function is important.,create_app,create_app is a factory,The function is important.,0.95,2024-01-01T00:00:00Z\n"
+        )
+
+        # First backfill
+        result1 = backfill_legacy_passes(passes_csv, extractions_csv)
+        assert result1 == 1
+
+        # Second backfill should skip existing
+        result2 = backfill_legacy_passes(passes_csv, extractions_csv)
+        assert result2 == 0
+
+        # Only one pass should exist
+        passes = query_passes(passes_csv)
+        assert len(passes) == 1
+
+    def test_handles_duckdb_read_error(self, tmp_path: Path) -> None:
+        """Should return 0 when DuckDB fails to read extractions CSV."""
+        passes_csv = tmp_path / "passes.csv"
+        extractions_csv = tmp_path / "extractions.csv"
+
+        # Write invalid CSV that will cause DuckDB to fail
+        extractions_csv.write_text("invalid csv content without proper columns")
+
+        result = backfill_legacy_passes(passes_csv, extractions_csv)
+
+        assert result == 0

@@ -1,7 +1,7 @@
 ---
 name: audit-step-extractor
 description: Extracts individual steps from implementation plans
-model: haiku
+model: minimax-m2.1
 tools: Read, Write, Glob
 ---
 

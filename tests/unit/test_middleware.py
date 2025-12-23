@@ -35,10 +35,14 @@ def _mock_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _fake_elasticsearch_wrapper(settings: Settings) -> _DummyResource:
         return _DummyResource()
 
+    async def _fake_duckdb_client(settings: Settings) -> _DummyResource:
+        return _DummyResource()
+
     monkeypatch.setattr("app.core.factory.create_surrealdb_pool", _fake_surreal_pool)
     monkeypatch.setattr(
         "app.core.factory.create_elasticsearch_wrapper", _fake_elasticsearch_wrapper
     )
+    monkeypatch.setattr("app.core.factory.create_duckdb_client", _fake_duckdb_client)
 
 
 def _add_test_route(app: FastAPI) -> None:
@@ -537,3 +541,70 @@ def test_rate_limit_record_request_increments_count_in_window() -> None:
 
     # Count should have incremented
     assert middleware._request_counts[client_ip] == 4
+
+
+def test_rate_limit_init_raises_for_invalid_requests_per_window() -> None:
+    """Test RateLimitingMiddleware raises for zero/negative requests_per_window."""
+    from app.core.middleware import InvalidRateLimitConfig, RateLimitingMiddleware
+
+    async def dummy_app(scope: dict, receive: object, send: object) -> None:
+        pass
+
+    with pytest.raises(InvalidRateLimitConfig, match="requests_per_window"):
+        RateLimitingMiddleware(dummy_app, requests_per_window=0, window_seconds=60)
+
+    with pytest.raises(InvalidRateLimitConfig, match="requests_per_window"):
+        RateLimitingMiddleware(dummy_app, requests_per_window=-1, window_seconds=60)
+
+
+def test_rate_limit_init_raises_for_invalid_window_seconds() -> None:
+    """Test RateLimitingMiddleware raises for zero/negative window_seconds."""
+    from app.core.middleware import InvalidRateLimitConfig, RateLimitingMiddleware
+
+    async def dummy_app(scope: dict, receive: object, send: object) -> None:
+        pass
+
+    with pytest.raises(InvalidRateLimitConfig, match="window_seconds"):
+        RateLimitingMiddleware(dummy_app, requests_per_window=10, window_seconds=0)
+
+    with pytest.raises(InvalidRateLimitConfig, match="window_seconds"):
+        RateLimitingMiddleware(dummy_app, requests_per_window=10, window_seconds=-1)
+
+
+def test_cors_middleware_applied_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that CORS middleware is added when cors_enabled is True."""
+    _mock_external_dependencies(monkeypatch)
+    settings = _build_settings(
+        cors_enabled=True,
+        cors_allow_origins=["http://localhost:3000"],
+    )
+    app = create_app(settings)
+    _add_test_route(app)
+
+    # Check the app has CORS middleware registered by verifying CORS headers
+    with TestClient(app) as client:
+        response = client.options(
+            "/echo",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        # CORS preflight should return access-control-allow-origin header
+        assert "access-control-allow-origin" in response.headers
+
+
+def test_openapi_schema_cached_on_second_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that OpenAPI schema is cached and returned on subsequent calls."""
+    _mock_external_dependencies(monkeypatch)
+    settings = _build_settings()
+    app = create_app(settings)
+
+    # First call generates the schema
+    schema1 = app.openapi()
+
+    # Second call should return the cached schema (same object)
+    schema2 = app.openapi()
+
+    assert schema1 is schema2
+    assert app.openapi_schema is not None
