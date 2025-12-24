@@ -44,6 +44,27 @@ def guarded_<operation>(input: T) -> R:
 4. **Flat structure**: Guards reduce nesting
 5. **Meaningful errors**: Guard failures explain why
 
+## No Control Flow Flexibility
+
+Guards do NOT have the control flow flexibility afforded to other patterns (no loops, no list comprehensions). Guards are strictly simple if-statements at the top of a function. Each guard checks exactly ONE condition with a simple expression.
+
+```python
+# OK: simple condition
+if not repo.is_initialized():
+    raise GuardError("Repository not initialized")
+
+# NOT OK: loop in guard
+for item in items:  # Guards don't iterate
+    if not item.valid:
+        raise GuardError("Invalid item")
+
+# NOT OK: complex expression
+if not (repo.initialized and repo.has_remote and repo.clean):  # Too complex
+    raise GuardError("Repository not ready")
+```
+
+If you need to validate collections or complex conditions, delegate to a validator function and guard on its result.
+
 ## CREATE Example
 
 ```python

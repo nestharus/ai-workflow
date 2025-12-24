@@ -64,11 +64,19 @@ while true; do
         "error") echo "Error: $(echo "$action" | jq -r '.message')"; exit 1 ;;
 
         "call_decomposer")
-            Task(subagent_type="decomposer", prompt="workspace: .tmp/design/$ticket_id")
+            # Spawn one decomposer per unit IN PARALLEL
+            # target_units is an array like ["root"] or ["root.1", "root.2"]
+            history_prompt=$(echo "$action" | jq -r '.prompt // ""')
+            target_units=$(echo "$action" | jq -r '.target_units[]')
+            for unit_id in $target_units; do
+                Task(subagent_type="decomposer", prompt="workspace: .tmp/design/$ticket_id unit: $unit_id $history_prompt")
+            done
+            # All decomposer tasks run in parallel, wait for all to complete
             ;;
 
         "call_layer_reviewer")
-            Task(subagent_type="layer-reviewer", prompt="workspace: .tmp/design/$ticket_id")
+            history_prompt=$(echo "$action" | jq -r '.prompt // ""')
+            Task(subagent_type="layer-reviewer", prompt="workspace: .tmp/design/$ticket_id $history_prompt")
             ;;
 
         "call_design_refactorer")

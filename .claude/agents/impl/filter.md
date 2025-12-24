@@ -43,6 +43,10 @@ A filter is part of stream processing:
 4. **Composable**: Can chain with other stream operations
 5. **Clear naming**: `filter_<what_is_being_filtered>`
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## CREATE Example
 
 ```python

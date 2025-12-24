@@ -45,6 +45,10 @@ For iterating through elements, use **Walker** instead.
 4. **Clear naming**: `extract_<what_is_being_extracted>`
 5. **Pure function**: Typically no side effects
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## CREATE Example
 
 ```python

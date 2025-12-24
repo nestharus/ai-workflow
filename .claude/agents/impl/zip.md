@@ -44,6 +44,10 @@ For building from parts (not streams), use **Builder** instead.
 4. **Shortest wins**: Stops when shortest stream exhausts (default)
 5. **Clear naming**: `zip_<what_is_being_combined>`
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## CREATE Example
 
 ```python

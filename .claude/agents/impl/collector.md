@@ -41,6 +41,10 @@ For building data in general (not from iterables), use **Builder** instead.
 4. **Clear naming**: `collect_<into_what>` or `collect_<what>`
 5. **Eager**: Processes all elements immediately
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## CREATE Example
 
 ```python

@@ -42,6 +42,10 @@ For getting data in general, use **Extractor** instead.
 4. **Encapsulation**: Part of class/module encapsulation
 5. **Clear naming**: `get_<field_name>`
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## CREATE Example
 
 ```python

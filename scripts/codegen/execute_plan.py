@@ -138,13 +138,15 @@ class ExecutePlanStateMachine:
         """
         # Prepare test plans for the implementor
         test_plans: list[dict[str, Any]] = []
-        for cap_id, plan in self.state.test_plans.items():
+        for _cap_id, plan in self.state.test_plans.items():
             test_plans.append(plan.to_dict())
 
-        self.state.write_agent_input({
-            "test_plans": test_plans,
-            "worktree_path": self.state.worktree_path,
-        })
+        self.state.write_agent_input(
+            {
+                "test_plans": test_plans,
+                "worktree_path": self.state.worktree_path,
+            }
+        )
 
         self.state.write_next_action(ActionType.CALL_TEST_IMPLEMENTOR)
 
@@ -200,10 +202,12 @@ class ExecutePlanStateMachine:
                 "children": unit.children,
             }
 
-        self.state.write_agent_input({
-            "units": units_input,
-            "worktree_path": self.state.worktree_path,
-        })
+        self.state.write_agent_input(
+            {
+                "units": units_input,
+                "worktree_path": self.state.worktree_path,
+            }
+        )
 
     def _handle_layer_test(self) -> None:
         """Run tests for current layer's units.
@@ -245,13 +249,19 @@ class ExecutePlanStateMachine:
         # Get failing tests from layer_execution
         layer_exec = self.state.layer_execution.get(self.state.current_layer, {})
         failing_tests = layer_exec.get("failing_tests", [])
+        debug_worktree_path = layer_exec.get("debug_worktree") or self.state.worktree_path
 
-        self.state.write_next_action(ActionType.CALL_DEBUG_FIXER)
-        self.state.write_agent_input({
-            "failing_tests": failing_tests,
-            "worktree_path": self.state.worktree_path,
-            "layer": self.state.current_layer,
-        })
+        self.state.write_next_action(
+            ActionType.CALL_DEBUG_FIXER,
+            worktree_path=debug_worktree_path,
+        )
+        self.state.write_agent_input(
+            {
+                "failing_tests": failing_tests,
+                "worktree_path": debug_worktree_path,
+                "layer": self.state.current_layer,
+            }
+        )
 
     def _handle_debug_refactor(self) -> None:
         """Refactor debug fix into building blocks.
@@ -259,14 +269,20 @@ class ExecutePlanStateMachine:
         The solution-refactorer takes the ad-hoc fix and restructures it
         to follow building block patterns.
         """
-        self.state.write_next_action(ActionType.CALL_SOLUTION_REFACTORER)
-        self.state.write_agent_input({
-            "worktree_path": self.state.worktree_path,
-            "layer": self.state.current_layer,
-            "debug_changes": self.state.layer_execution.get(
-                self.state.current_layer, {}
-            ).get("debug_changes", {}),
-        })
+        layer_exec = self.state.layer_execution.get(self.state.current_layer, {})
+        debug_worktree_path = layer_exec.get("debug_worktree") or self.state.worktree_path
+
+        self.state.write_next_action(
+            ActionType.CALL_SOLUTION_REFACTORER,
+            worktree_path=debug_worktree_path,
+        )
+        self.state.write_agent_input(
+            {
+                "worktree_path": debug_worktree_path,
+                "layer": self.state.current_layer,
+                "debug_changes": layer_exec.get("debug_changes", {}),
+            }
+        )
 
     def _handle_debug_replan(self) -> None:
         """Replan affected capabilities at current layer.
@@ -277,24 +293,32 @@ class ExecutePlanStateMachine:
         # Get affected capability IDs from debug changes
         layer_exec = self.state.layer_execution.get(self.state.current_layer, {})
         affected_caps = layer_exec.get("affected_capabilities", [])
+        debug_worktree_path = layer_exec.get("debug_worktree") or self.state.worktree_path
 
         # Collect capability data
         capabilities: list[dict[str, Any]] = []
         for cap_id in affected_caps:
             if cap_id in self.state.test_plans:
                 plan = self.state.test_plans[cap_id]
-                capabilities.append({
-                    "id": cap_id,
-                    "capability_id": plan.capability_id,
-                    "affected": True,
-                })
+                capabilities.append(
+                    {
+                        "id": cap_id,
+                        "capability_id": plan.capability_id,
+                        "affected": True,
+                    }
+                )
 
-        self.state.write_next_action(ActionType.REPLAN_LAYER)
-        self.state.write_agent_input({
-            "capabilities": capabilities,
-            "layer": self.state.current_layer,
-            "worktree_path": self.state.worktree_path,
-        })
+        self.state.write_next_action(
+            ActionType.REPLAN_LAYER,
+            worktree_path=debug_worktree_path,
+        )
+        self.state.write_agent_input(
+            {
+                "capabilities": capabilities,
+                "layer": self.state.current_layer,
+                "worktree_path": debug_worktree_path,
+            }
+        )
 
     def _handle_debug_regenerate(self) -> None:
         """Regenerate affected tests and code after replanning.
@@ -304,6 +328,7 @@ class ExecutePlanStateMachine:
         """
         layer_exec = self.state.layer_execution.get(self.state.current_layer, {})
         affected_caps = layer_exec.get("affected_capabilities", [])
+        debug_worktree_path = layer_exec.get("debug_worktree") or self.state.worktree_path
 
         # Get test plans that need regeneration
         test_plans = []
@@ -311,12 +336,17 @@ class ExecutePlanStateMachine:
             if cap_id in self.state.test_plans:
                 test_plans.append(self.state.test_plans[cap_id].to_dict())
 
-        self.state.write_next_action(ActionType.CALL_TEST_IMPLEMENTOR)
-        self.state.write_agent_input({
-            "test_plans": test_plans,
-            "worktree_path": self.state.worktree_path,
-            "mode": "regenerate",
-        })
+        self.state.write_next_action(
+            ActionType.CALL_TEST_IMPLEMENTOR,
+            worktree_path=debug_worktree_path,
+        )
+        self.state.write_agent_input(
+            {
+                "test_plans": test_plans,
+                "worktree_path": debug_worktree_path,
+                "mode": "regenerate",
+            }
+        )
 
     def _handle_layer_complete(self) -> None:
         """Handle layer completion - move up or finish.
@@ -331,10 +361,12 @@ class ExecutePlanStateMachine:
             # Check if we need to replan parent layers
             # This is for bigger refactoring after layer completion
             self.state.write_next_action(ActionType.REPLAN_PARENT_LAYERS)
-            self.state.write_agent_input({
-                "completed_layer": self.state.current_layer,
-                "debug_changes": layer_exec.get("debug_changes", {}),
-            })
+            self.state.write_agent_input(
+                {
+                    "completed_layer": self.state.current_layer,
+                    "debug_changes": layer_exec.get("debug_changes", {}),
+                }
+            )
         else:
             # No replanning needed, move to next layer or finish
             self._advance_layer()
@@ -540,17 +572,20 @@ class ExecutePlanStateMachine:
         layer = self.state.current_layer
         if layer not in self.state.layer_execution:
             self.state.layer_execution[layer] = {}
+        layer_exec = self.state.layer_execution[layer]
 
         if passed:
             # All tests passed - layer complete
-            self.state.layer_execution[layer]["status"] = "complete"
+            layer_exec["status"] = "complete"
             self.state.phase = "layer_complete"
         else:
             # Tests failed - enter debug loop
-            self.state.layer_execution[layer]["status"] = "debugging"
-            self.state.layer_execution[layer]["failing_tests"] = failing_tests
-            debug_iter = self.state.layer_execution[layer].get("debug_iteration", 0)
-            self.state.layer_execution[layer]["debug_iteration"] = debug_iter + 1
+            layer_exec["status"] = "debugging"
+            layer_exec["failing_tests"] = failing_tests
+            debug_iter = layer_exec.get("debug_iteration", 0)
+            layer_exec["debug_iteration"] = debug_iter + 1
+            layer_exec["units_completed"] = []
+            layer_exec["units_failed"] = []
             self.state.phase = "debug_create_worktree"
 
         self.state.save()
@@ -609,9 +644,7 @@ class ExecutePlanStateMachine:
             self.state.layer_execution[layer] = {}
 
         # Store refactored changes
-        self.state.layer_execution[layer]["refactored_changes"] = output.get(
-            "refactored", {}
-        )
+        self.state.layer_execution[layer]["refactored_changes"] = output.get("refactored", {})
 
         # Move to replan phase
         self.state.phase = "debug_replan"
@@ -654,6 +687,7 @@ class ExecutePlanStateMachine:
                 unit = self.state.units[unit_id]
                 if "plan" in change:
                     from scripts.planner.state import UnitPlan
+
                     unit.plan = UnitPlan.from_dict(change["plan"])
 
         # Move to next layer or finish
@@ -703,7 +737,10 @@ class ExecutePlanStateMachine:
         """
         layer = self.layer_manager.compute_unit_depth(unit_id)
         if layer in self.state.layer_execution:
-            completed = self.state.layer_execution[layer].get("units_completed", [])
+            layer_exec = self.state.layer_execution[layer]
+            if layer_exec.get("status") == "debugging":
+                return True
+            completed = layer_exec.get("units_completed", [])
             if unit_id in completed:
                 return False
         return True

@@ -10,6 +10,7 @@ All communication happens through files in the workspace directory:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -274,12 +275,8 @@ class Unit:
         if data.get("plan"):
             plan = UnitPlan.from_dict(data["plan"])
 
-        expected_caps = [
-            Capability.from_dict(c) for c in data.get("expected_capabilities", [])
-        ]
-        provided_caps = [
-            Capability.from_dict(c) for c in data.get("provided_capabilities", [])
-        ]
+        expected_caps = [Capability.from_dict(c) for c in data.get("expected_capabilities", [])]
+        provided_caps = [Capability.from_dict(c) for c in data.get("provided_capabilities", [])]
 
         return cls(
             id=data["id"],
@@ -324,6 +321,163 @@ class ExploredPath:
             rationale=data["rationale"],
             status=data["status"],
             sub_units=data.get("sub_units", []),
+        )
+
+
+def summarize_plan(plan_data: dict[str, Any]) -> dict[str, Any]:
+    """Create canonical summary of a plan for history tracking.
+
+    Extracts key structural information (unit IDs, titles, descriptions)
+    to enable semantic duplicate detection without exact text matching.
+
+    Args:
+        plan_data: Plan data from decomposer/refactorer output
+
+    Returns:
+        Canonical summary dict with units list
+    """
+
+    def summarize_specification(specification: Any) -> str:
+        summary_text = ""
+        if isinstance(specification, dict):
+            purpose = specification.get("purpose", "")
+            if isinstance(purpose, str):
+                summary_text = purpose
+            if not summary_text:
+                location = specification.get("location", "")
+                if isinstance(location, str):
+                    summary_text = location
+                if not summary_text and specification:
+                    summary_text = str(specification)
+        elif isinstance(specification, str):
+            summary_text = specification
+        return summary_text
+
+    def summarize_units(units: list[dict[str, Any]]) -> list[dict[str, str]]:
+        summaries: list[dict[str, str]] = []
+        for unit in units:
+            if not isinstance(unit, dict):
+                continue
+            unit_id = unit.get("id")
+            if not isinstance(unit_id, str):
+                unit_id = ""
+            title = unit.get("title")
+            if not isinstance(title, str) or not title:
+                description = unit.get("description")
+                title = description if isinstance(description, str) else ""
+            description = unit.get("description", "")
+            if not isinstance(description, str):
+                description = ""
+            summaries.append(
+                {
+                    "id": unit_id,
+                    "title": title,
+                    "description": description[:100],
+                }
+            )
+        return summaries
+
+    units: list[dict[str, Any]] = []
+
+    paths = plan_data.get("paths", [])
+    if isinstance(paths, list) and paths:
+        for path in paths:
+            if not isinstance(path, dict):
+                continue
+            sub_units = path.get("sub_units", [])
+            if isinstance(sub_units, list):
+                units.extend([unit for unit in sub_units if isinstance(unit, dict)])
+
+    if not units:
+        children = plan_data.get("children", [])
+        if isinstance(children, list) and children:
+            units.extend([unit for unit in children if isinstance(unit, dict)])
+
+    if not units:
+        changes = plan_data.get("changes", [])
+        if isinstance(changes, list) and changes:
+            for change in changes:
+                if not isinstance(change, dict):
+                    continue
+                change_type = change.get("type")
+                if change_type == "add":
+                    unit = change.get("unit")
+                    if isinstance(unit, dict):
+                        units.append(unit)
+                elif change_type == "update":
+                    update_unit: dict[str, Any] = {"id": change.get("unit_id")}
+                    if "title" in change:
+                        update_unit["title"] = change.get("title")
+                    if "description" in change:
+                        update_unit["description"] = change.get("description")
+                    if not update_unit.get("description"):
+                        summary_text = summarize_specification(change.get("plan"))
+                        if not summary_text:
+                            summary_text = summarize_specification(change.get("specification"))
+                        if summary_text:
+                            update_unit["description"] = summary_text
+                    units.append(update_unit)
+
+    if not units and (plan_data.get("is_atomic") or plan_data.get("specification")):
+        summary_text = summarize_specification(plan_data.get("specification", ""))
+        unit_id = plan_data.get("unit_id")
+        units.append(
+            {
+                "id": unit_id if isinstance(unit_id, str) else "",
+                "description": summary_text,
+            }
+        )
+
+    return {"units": summarize_units(units)}
+
+
+@dataclass
+class Branch:
+    """A Tree-of-Thought branch with its own layer history.
+
+    Each branch maintains independent layers, plan history, and can spawn
+    sub-branches for nested exploration paths.
+    """
+
+    branch_id: str
+    layers: dict[int, list[str]] = field(default_factory=dict)
+    history: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    sub_branches: dict[str, Branch] = field(default_factory=dict)
+    status: Literal["exploring", "selected", "pruned", "replanning"] = "exploring"
+    confidence: float = 1.0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for YAML serialization."""
+        result: dict[str, Any] = {
+            "branch_id": self.branch_id,
+            "status": self.status,
+            "confidence": self.confidence,
+        }
+        if self.layers:
+            result["layers"] = self.layers
+        if self.history:
+            result["history"] = self.history
+        if self.sub_branches:
+            result["sub_branches"] = {
+                sub_id: sub_branch.to_dict() for sub_id, sub_branch in self.sub_branches.items()
+            }
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Branch:
+        """Create from dictionary loaded from YAML."""
+        # Recursively parse sub-branches
+        sub_branches: dict[str, Branch] = {}
+        for sub_id, sub_data in data.get("sub_branches", {}).items():
+            sub_branches[sub_id] = cls.from_dict(sub_data)
+
+        return cls(
+            branch_id=data["branch_id"],
+            layers=data.get("layers", {}),
+            history=data.get("history", {}),
+            sub_branches=sub_branches,
+            status=data.get("status", "exploring"),
+            confidence=data.get("confidence", 1.0),
         )
 
 
@@ -419,14 +573,18 @@ class DesignState:
     # State Machine
     phase: str = "init"
     current_layer: int = 0
+    review_target_layer: int | None = None
     iteration: int = 1
 
-    # Unit Tree
-    layers: dict[int, list[str]] = field(default_factory=lambda: {0: ["root"]})
+    # Unit Tree (with Tree-of-Thought branching)
+    branches: dict[str, Branch] = field(
+        default_factory=lambda: {"main": Branch(branch_id="main", layers={0: ["root"]})}
+    )
     units: dict[str, Unit] = field(default_factory=dict)
 
     # Tree-of-Thought
     explored_paths: dict[str, dict[str, ExploredPath]] = field(default_factory=dict)
+    branch_reports: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # Capabilities and Tests
     # Test plans mapped by capability_id
@@ -488,7 +646,9 @@ class DesignState:
             )
 
     def write_next_action(
-        self, action_type: ActionType, **kwargs: str | int | float | bool | list | dict | None
+        self,
+        action_type: ActionType,
+        **kwargs: str | int | float | bool | list[Any] | dict[str, Any] | None,
     ) -> None:
         """Write next action for orchestrator.
 
@@ -513,27 +673,82 @@ class DesignState:
         with action_path.open(encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
 
-    def write_agent_input(self, data: dict[str, Any]) -> None:
+    def write_agent_input(self, data: dict[str, Any], unit_id: str | None = None) -> None:
         """Write input for agent.
 
         Args:
-            data: Data to write to agent_input.yaml
+            data: Data to write
+            unit_id: Optional unit ID for per-unit input files
         """
-        input_path = self.workspace / "agent_input.yaml"
+        if unit_id:
+            # Per-unit input file in inputs/ subdirectory
+            inputs_dir = self.workspace / "inputs"
+            inputs_dir.mkdir(exist_ok=True)
+            input_path = inputs_dir / f"{unit_id}.yaml"
+        else:
+            # Legacy single input file
+            input_path = self.workspace / "agent_input.yaml"
         with input_path.open("w", encoding="utf-8") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
-    def read_agent_output(self) -> dict[str, Any]:
+    def write_agent_input_json(self, data: dict[str, Any]) -> None:
+        """Write JSON input for agent."""
+        input_path = self.workspace / "agent_input.json"
+        with input_path.open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    def read_agent_output(self, unit_id: str | None = None) -> dict[str, Any]:
         """Read output from agent.
 
+        Args:
+            unit_id: Optional unit ID for per-unit output files
+
         Returns:
-            Contents of agent_output.yaml
+            Contents of the output file
         """
-        output_path = self.workspace / "agent_output.yaml"
+        if unit_id:
+            # Per-unit output file in outputs/ subdirectory
+            output_path = self.workspace / "outputs" / f"{unit_id}.yaml"
+        else:
+            # Legacy single output file
+            output_path = self.workspace / "agent_output.yaml"
         if not output_path.exists():
             return {}
         with output_path.open(encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
+
+    def read_agent_output_json(self) -> dict[str, Any]:
+        """Read JSON output from agent."""
+        output_path = self.workspace / "agent_output.json"
+        if not output_path.exists():
+            return {}
+        with output_path.open(encoding="utf-8") as f:
+            return json.load(f) or {}
+
+    def read_all_unit_outputs(self) -> list[dict[str, Any]]:
+        """Read all per-unit output files from outputs/ directory.
+
+        Returns:
+            List of output dictionaries, one per unit
+        """
+        outputs_dir = self.workspace / "outputs"
+        if not outputs_dir.exists():
+            return []
+        results = []
+        for output_file in outputs_dir.glob("*.yaml"):
+            with output_file.open(encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+                if data:
+                    results.append(data)
+        return results
+
+    def clear_unit_io(self) -> None:
+        """Clear inputs/ and outputs/ directories for next iteration."""
+        for subdir in ["inputs", "outputs"]:
+            dir_path = self.workspace / subdir
+            if dir_path.exists():
+                for f in dir_path.glob("*.yaml"):
+                    f.unlink()
 
     def add_history(self, action: str, details: dict[str, Any] | None = None) -> None:
         """Add an entry to the history log.
@@ -542,11 +757,13 @@ class DesignState:
             action: Action name
             details: Optional details dict
         """
-        self.history.append({
-            "timestamp": datetime.now().isoformat(),
-            "action": action,
-            "details": details or {},
-        })
+        self.history.append(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "action": action,
+                "details": details or {},
+            }
+        )
 
     def _to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for YAML serialization."""
@@ -556,9 +773,7 @@ class DesignState:
         # Convert explored paths
         paths_dict: dict[str, dict[str, Any]] = {}
         for unit_id, paths in self.explored_paths.items():
-            paths_dict[unit_id] = {
-                path_id: path.to_dict() for path_id, path in paths.items()
-            }
+            paths_dict[unit_id] = {path_id: path.to_dict() for path_id, path in paths.items()}
 
         # Convert comments
         comments_list = [c.to_dict() for c in self.comments]
@@ -569,6 +784,9 @@ class DesignState:
         # Convert test plans
         test_plans_dict = {cap_id: tp.to_dict() for cap_id, tp in self.test_plans.items()}
 
+        # Convert branches
+        branches_dict = {branch_id: branch.to_dict() for branch_id, branch in self.branches.items()}
+
         return {
             "ticket_id": self.ticket_id,
             "title": self.title,
@@ -578,8 +796,9 @@ class DesignState:
             "updated_at": self.updated_at,
             "phase": self.phase,
             "current_layer": self.current_layer,
+            "review_target_layer": self.review_target_layer,
             "iteration": self.iteration,
-            "layers": self.layers,
+            "branches": branches_dict,
             "units": units_dict,
             "explored_paths": paths_dict,
             "test_plans": test_plans_dict,
@@ -614,8 +833,7 @@ class DesignState:
         explored_paths: dict[str, dict[str, ExploredPath]] = {}
         for unit_id, paths in data.get("explored_paths", {}).items():
             explored_paths[unit_id] = {
-                path_id: ExploredPath.from_dict(path_data)
-                for path_id, path_data in paths.items()
+                path_id: ExploredPath.from_dict(path_data) for path_id, path_data in paths.items()
             }
 
         # Parse comments
@@ -629,6 +847,15 @@ class DesignState:
         for cap_id, tp_data in data.get("test_plans", {}).items():
             test_plans[cap_id] = TestPlan.from_dict(tp_data)
 
+        # Parse branches
+        branches: dict[str, Branch] = {}
+        # New format: deserialize branches
+        for branch_id, branch_data in data["branches"].items():
+            branches[branch_id] = Branch.from_dict(branch_data)
+
+        if "main" not in branches:
+            branches["main"] = Branch(branch_id="main", layers={0: ["root"]})
+
         return cls(
             workspace=workspace,
             ticket_id=data["ticket_id"],
@@ -639,8 +866,9 @@ class DesignState:
             updated_at=data.get("updated_at", datetime.now().isoformat()),
             phase=data.get("phase", "init"),
             current_layer=data.get("current_layer", 0),
+            review_target_layer=data.get("review_target_layer"),
             iteration=data.get("iteration", 1),
-            layers=data.get("layers", {0: ["root"]}),
+            branches=branches,
             units=units,
             explored_paths=explored_paths,
             test_plans=test_plans,

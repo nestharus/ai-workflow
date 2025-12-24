@@ -42,6 +42,10 @@ A mapper is a pure transformation:
 4. **Type-safe**: Full typing with covariance where appropriate
 5. **Clear naming**: `map_<from>_to_<to>` or `map_<what>`
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## CREATE Example
 
 ```python

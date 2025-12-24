@@ -38,6 +38,13 @@ A validator does NOT return anything:
 3. **Clear errors**: ValidationError explains WHY it failed
 4. **No mutation**: Don't modify input data
 5. **Composable**: Can chain multiple validators
+6. **Condition focus**: Keep the validation condition clear and visible
+
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
+Keep the validation condition clear and visible. Delegate complex logic to helper functions.
 
 ## CREATE Example
 

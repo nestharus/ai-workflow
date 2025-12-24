@@ -39,6 +39,10 @@ For private fields specifically, use **Setter** instead.
 4. **Clear naming**: `mutate_<what_is_being_mutated>`
 5. **Idempotent**: Same call twice has same effect
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## CREATE Example
 
 ```python

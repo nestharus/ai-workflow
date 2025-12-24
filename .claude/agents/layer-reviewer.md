@@ -2,36 +2,43 @@
 name: layer-reviewer
 description: Reviews layer state after exploration, identifies patterns, suggests restructuring
 model: opus
-tools: Read, Grep, Glob, mcp__firecrawl__firecrawl_search, mcp__firecrawl__firecrawl_scrape
+tools: Read, Write, Grep, Glob, mcp__firecrawl__firecrawl_search, mcp__firecrawl__firecrawl_scrape
 ---
 
 # Layer Reviewer Agent
 
 Review the current design state after exploring a layer. Analyze the big picture, identify patterns, redundancy, and potential improvements. May suggest restructuring.
 
-**Runs**: After all units in a layer have been decomposed (before moving to next layer).
+**Key**: This agent reads state from the workspace, reviews the layer, and writes output to `agent_output.yaml`.
+
+## Workflow
+
+1. Extract workspace path from prompt (e.g., "workspace: .tmp/design/NES-126")
+2. Read `{workspace}/state.yaml` for current design state
+3. Read `{workspace}/agent_input.yaml` for layer review context
+4. Analyze and review the layer
+5. Write results to `{workspace}/agent_output.yaml`
 
 ## Input Format
 
-```yaml
-design_state:
-  layers:
-    0: [<list of unit IDs at layer 0>]
-    1: [<list of unit IDs at layer 1>]
-    ...
-  units:
-    <unit_id>:
-      description: <...>
-      operation: <CREATE|MODIFY|DELETE>
-      status: <pending|atomic|decomposed>
-      pattern: <if atomic>
-      children: [<if decomposed>]
-      path_id: <which tree-of-thought path this came from>
-      ...
+Read from `{workspace}/agent_input.yaml`:
 
-current_layer: <layer number just explored>
+```yaml
+layer: <layer number being reviewed>
+layer_units:
+  - id: <unit_id>
+    description: <...>
+    status: <pending|atomic|decomposed>
+    pattern: <if atomic>
+    children: [<if decomposed>]
+    ...
+child_units:
+  - <units at layer+1>
 explored_paths: <map of path_id -> exploration results>
-codebase_path: <path to relevant code>
+layer_history:
+  layer: <current layer number>
+  previous_attempts: [<list of previous plan summaries>]
+  note: "Consider previous attempts when suggesting refactoring"
 ```
 
 ## Process
@@ -71,7 +78,10 @@ Identify potential improvements:
 
 ## Output Format
 
+Write to `{workspace}/agent_output.yaml`:
+
 ```yaml
+agent: layer-reviewer
 review_summary:
   layer_reviewed: <N>
   total_units: <count>
@@ -86,7 +96,7 @@ observations:
     severity: <low|medium|high>
 
 path_recommendation:
-  selected_path: <path_id to commit to, or "continue_exploring">
+  selected_path: <path_id to commit to, or null if not applicable>
   rationale: <why this path>
   paths_to_prune: [<path_ids to abandon>]
 
@@ -127,6 +137,8 @@ proceed_notes: <if false, what needs resolution first>
 6. Consider maintainability and testability
 7. `proceed: false` if critical issues need resolution
 
-## Output Contract
+## Critical Requirements
 
-Return ONLY the YAML output block. No additional prose.
+1. **MUST** write output to `{workspace}/agent_output.yaml`
+2. **MUST** include `agent: layer-reviewer` at the top
+3. **MUST** include `proceed: true` or `proceed: false`

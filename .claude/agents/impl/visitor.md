@@ -37,6 +37,10 @@ A visitor accepts a callback and applies it to each element:
 4. **Clear naming**: `visit_<what_is_being_visited>`
 5. **Typically mutations**: Callbacks often modify state
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## CREATE Example
 
 ```python

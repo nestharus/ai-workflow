@@ -15,10 +15,12 @@ class ActionType(Enum):
     # === LLM Agent Invocations (Create/Update Plan) ===
     CALL_DECOMPOSER = "call_decomposer"
     CALL_LAYER_REVIEWER = "call_layer_reviewer"
+    CALL_TREE_REVIEWER = "call_tree_reviewer"
     CALL_DESIGN_REFACTORER = "call_design_refactorer"
     CALL_COMMENT_APPLIER = "call_comment_applier"
     CALL_DIAGRAM_GENERATOR = "call_diagram_generator"
     CALL_DESIGN_FORMATTER = "call_design_formatter"
+    GENERATE_DOCS = "generate_docs"
 
     # === LLM Agent Invocations (Refactor Plan) ===
     CALL_SKELETON_ANALYZER = "call_skeleton_analyzer"
@@ -28,17 +30,17 @@ class ActionType(Enum):
 
     # === Test Agent Invocations (Test-First Flow) ===
     # Tests have their own building blocks (practices) from .ai/agents/30-test-artifact/
-    CALL_TEST_PLANNER = "call_test_planner"          # Plans tests from capabilities
+    CALL_TEST_PLANNER = "call_test_planner"  # Plans tests from capabilities
     CALL_TEST_IMPLEMENTOR = "call_test_implementor"  # Composes tests from building blocks
     RUN_TESTS = "run_tests"
 
     # === Debug-Replan Invocations ===
     # When tests fail, debug and replan at current layer
     CREATE_DEBUG_WORKTREE = "create_debug_worktree"  # Create isolated debug environment
-    CALL_DEBUG_FIXER = "call_debug_fixer"            # Fix failing tests (may violate blocks)
+    CALL_DEBUG_FIXER = "call_debug_fixer"  # Fix failing tests (may violate blocks)
     CALL_SOLUTION_REFACTORER = "call_solution_refactorer"  # Refactor fix into building blocks
-    REPLAN_LAYER = "replan_layer"                    # Replan current layer after debug
-    REPLAN_PARENT_LAYERS = "replan_parent_layers"    # Bigger refactoring after layer complete
+    REPLAN_LAYER = "replan_layer"  # Replan current layer after debug
+    REPLAN_PARENT_LAYERS = "replan_parent_layers"  # Bigger refactoring after layer complete
 
     # === Code Generation Agent Invocations ===
     CALL_IMPL_AGENT = "call_impl_agent"

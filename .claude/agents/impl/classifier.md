@@ -38,6 +38,13 @@ A classifier is a named boolean expression:
 3. **Pure function**: No side effects
 4. **No exceptions**: Returns False instead of throwing
 5. **Used by routers**: Classifiers drive routing decisions
+6. **Single condition focus**: Keep the classification condition clear and visible
+
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
+Keep the classification condition clear and visible. Delegate complex logic to helper functions.
 
 ## CREATE Example
 

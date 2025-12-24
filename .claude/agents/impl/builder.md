@@ -42,6 +42,10 @@ For building from iterables specifically, use **Collector** instead.
 4. **Clear naming**: `build_<what_is_being_built>`
 5. **Flexible input**: May take variable args or options
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## CREATE Example
 
 ```python

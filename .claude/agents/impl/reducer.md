@@ -35,6 +35,10 @@ def reduce_<what>(
 4. **Handle empty**: Return identity for empty input
 5. **Single pass**: Process items once
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## CREATE Example
 
 ```python

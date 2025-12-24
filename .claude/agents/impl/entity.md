@@ -42,6 +42,10 @@ For data shapes used in transmission, use **Projection** instead.
 4. **Persistence**: Designed for database storage
 5. **Clear naming**: Named after domain concept
 
+## No Control Flow
+
+Entities are data classes with fields only. They have no methods containing logic, so control flow flexibility does not apply. Any logic operating on entities belongs in separate functions (validators, classifiers, projectors, etc.).
+
 ## CREATE Example
 
 ```python

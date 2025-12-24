@@ -52,6 +52,8 @@ class UpdatePlanStateMachine:
             self._handle_apply_comments()
         elif phase == "review":
             self._handle_review()
+        elif phase == "replan":
+            self._handle_replan()
         elif phase == "test_planning":
             self._handle_test_planning()
         elif phase == "generate_docs":
@@ -63,6 +65,13 @@ class UpdatePlanStateMachine:
 
     def process_agent_output(self) -> None:
         """Process agent output."""
+        next_action = self.state.read_next_action()
+        action_type = next_action.get("action", "")
+        if action_type == ActionType.GENERATE_DOCS.value:
+            output = self.state.read_agent_output()
+            self._process_generate_docs_output(output)
+            return
+
         output = self.state.read_agent_output()
         agent = output.get("agent")
 
@@ -79,7 +88,7 @@ class UpdatePlanStateMachine:
 
     def _handle_init(self) -> None:
         """Group comments by layer, start at deepest."""
-        self._group_comments_by_layer()
+        self._refresh_comments_by_layer()
 
         if not self._comments_by_layer:
             # No comments to process
@@ -96,11 +105,10 @@ class UpdatePlanStateMachine:
 
     def _handle_apply_comments(self) -> None:
         """Apply comments at current layer."""
-        if self._comments_by_layer is None:
-            self._group_comments_by_layer()
+        self._refresh_comments_by_layer()
 
         comments_by_layer = self._comments_by_layer
-        assert comments_by_layer is not None  # Set by _group_comments_by_layer
+        assert comments_by_layer is not None  # Set by _refresh_comments_by_layer
 
         layer_comments = comments_by_layer.get(self.state.current_layer, [])
 
@@ -152,6 +160,19 @@ class UpdatePlanStateMachine:
             }
         )
 
+    def _handle_replan(self) -> None:
+        """Handle replanning phase for update-plan (future extensibility)."""
+        self.layer_manager.pop_layer("main", self.state.current_layer + 1)
+        layer_units = self.layer_manager.get_units_at_layer(self.state.current_layer)
+        for unit_id in layer_units:
+            unit = self.state.units.get(unit_id)
+            if unit is not None:
+                unit.status = "pending"
+
+        self.state.phase = "apply_comments"
+        self.state.save()
+        self.next_action()
+
     def _handle_test_planning(self) -> None:
         """Replan tests for affected capabilities.
 
@@ -174,19 +195,23 @@ class UpdatePlanStateMachine:
 
             if is_affected or has_affected_parent:
                 for cap in unit.expected_capabilities:
-                    capabilities.append({
-                        **cap.to_dict(),
-                        "source_unit_id": unit.id,
-                        "capability_role": "expected",
-                        "affected": True,
-                    })
+                    capabilities.append(
+                        {
+                            **cap.to_dict(),
+                            "source_unit_id": unit.id,
+                            "capability_role": "expected",
+                            "affected": True,
+                        }
+                    )
                 for cap in unit.provided_capabilities:
-                    capabilities.append({
-                        **cap.to_dict(),
-                        "source_unit_id": unit.id,
-                        "capability_role": "provided",
-                        "affected": True,
-                    })
+                    capabilities.append(
+                        {
+                            **cap.to_dict(),
+                            "source_unit_id": unit.id,
+                            "capability_role": "provided",
+                            "affected": True,
+                        }
+                    )
 
         if not capabilities:
             # No affected capabilities to replan
@@ -196,28 +221,26 @@ class UpdatePlanStateMachine:
             return
 
         self.state.write_next_action(ActionType.CALL_TEST_PLANNER)
-        self.state.write_agent_input({
-            "capabilities": capabilities,
-            "units": {uid: self._unit_to_dict(uid) for uid in self.state.units},
-            "existing_test_plans": {
-                cap_id: plan.to_dict()
-                for cap_id, plan in self.state.test_plans.items()
-            },
-            "mode": "update",  # Signal this is an update, not fresh planning
-        })
+        self.state.write_agent_input(
+            {
+                "capabilities": capabilities,
+                "units": {uid: self._unit_to_dict(uid) for uid in self.state.units},
+                "existing_test_plans": {
+                    cap_id: plan.to_dict() for cap_id, plan in self.state.test_plans.items()
+                },
+                "mode": "update",  # Signal this is an update, not fresh planning
+            }
+        )
 
     def _handle_generate_docs(self) -> None:
         """Generate documentation files."""
-        self.state.write_next_action(
-            ActionType.CALL_DIAGRAM_GENERATOR,
-        )
+        self.state.write_next_action(ActionType.GENERATE_DOCS)
         self.state.write_agent_input(
             {
                 "units": {uid: self._unit_to_dict(uid) for uid in self.state.units},
-                "layers": self.state.layers,
+                "layers": self.state.branches["main"].layers,
                 "test_plans": {
-                    cap_id: plan.to_dict()
-                    for cap_id, plan in self.state.test_plans.items()
+                    cap_id: plan.to_dict() for cap_id, plan in self.state.test_plans.items()
                 },
             }
         )
@@ -254,6 +277,7 @@ class UpdatePlanStateMachine:
             if unit and "plan" in changes:
                 unit.plan = self._build_plan(changes["plan"])
 
+        self._refresh_comments_by_layer()
         self.state.add_history(
             "apply_comments",
             {
@@ -280,8 +304,7 @@ class UpdatePlanStateMachine:
             return
 
         # Move up one layer (bottom-up)
-        if self._comments_by_layer is None:
-            self._group_comments_by_layer()
+        self._refresh_comments_by_layer()
 
         min_layer = min(self._comments_by_layer.keys()) if self._comments_by_layer else 0
 
@@ -349,10 +372,25 @@ class UpdatePlanStateMachine:
         self.state.save()
         self.next_action()
 
+    def _process_generate_docs_output(self, output: dict[str, Any]) -> None:
+        """Process documentation generation results.
+
+        Args:
+            output: The agent output dictionary
+        """
+        self.state.add_history(
+            "generate_docs",
+            {
+                "files": output.get("files_written", []),
+            },
+        )
+        self.state.phase = "complete"
+        self.state.save()
+        self.next_action()
+
     def _continue_after_refactoring(self) -> None:
         """Continue the workflow after refactoring is complete."""
-        if self._comments_by_layer is None:
-            self._group_comments_by_layer()
+        self._refresh_comments_by_layer()
 
         min_layer = min(self._comments_by_layer.keys()) if self._comments_by_layer else 0
 
@@ -366,8 +404,8 @@ class UpdatePlanStateMachine:
         self.state.save()
         self.next_action()
 
-    def _group_comments_by_layer(self) -> None:
-        """Group pending comments by target layer."""
+    def _refresh_comments_by_layer(self) -> None:
+        """Rebuild pending comments grouped by target layer."""
         self._comments_by_layer = {}
         for comment in self.state.comments:
             if comment.resolution == "pending":

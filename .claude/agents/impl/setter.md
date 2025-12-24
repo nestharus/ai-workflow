@@ -40,6 +40,10 @@ For setting/mutating data in general, use **Mutator** instead.
 4. **Encapsulation**: Part of class/module encapsulation
 5. **Clear naming**: `set_<field_name>`
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## CREATE Example
 
 ```python

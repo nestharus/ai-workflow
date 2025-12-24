@@ -39,6 +39,10 @@ A walker yields individual elements (stream style):
 4. **Clear naming**: `walk_<what_is_being_traversed>`
 5. **No side effects**: Read-only traversal
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## CREATE Example
 
 ```python

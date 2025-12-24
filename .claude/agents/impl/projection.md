@@ -45,6 +45,10 @@ For core domain storage objects, use **Entity** instead.
 4. **Clear naming**: Often suffixed (DTO, Response, Summary, etc.)
 5. **Serialization-friendly**: Easy to convert to JSON/XML
 
+## No Control Flow
+
+Projections are data classes with fields only. They have no methods containing logic, so control flow flexibility does not apply. Logic that creates projections from entities belongs in projector functions.
+
 ## CREATE Example
 
 ```python

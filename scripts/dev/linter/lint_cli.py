@@ -18,13 +18,13 @@ def _get_changed_files(commit: str | None = None) -> list[str]:
             changes (staged + unstaged), or files from last commit if no uncommitted.
 
     Returns:
-        List of file paths relative to repo root.
+        List of file paths relative to repo root, excluding deleted files.
     """
     try:
         if commit:
-            # Get files changed in the specified commit
+            # Get files changed in the specified commit (excluding deletions)
             result = subprocess.run(
-                ["git", "diff", "--name-only", f"{commit}~1..{commit}"],
+                ["git", "diff", "--name-only", "--diff-filter=ACMRTUX", f"{commit}~1..{commit}"],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -33,15 +33,15 @@ def _get_changed_files(commit: str | None = None) -> list[str]:
                 return sorted(set(result.splitlines()))
             return []
 
-        # Get uncommitted changes (staged + unstaged)
+        # Get uncommitted changes (staged + unstaged, excluding deletions)
         staged = subprocess.run(
-            ["git", "diff", "--name-only", "--cached"],
+            ["git", "diff", "--name-only", "--cached", "--diff-filter=ACMRTUX"],
             capture_output=True,
             text=True,
             check=True,
         ).stdout.strip()
         unstaged = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
+            ["git", "diff", "--name-only", "HEAD", "--diff-filter=ACMRTUX"],
             capture_output=True,
             text=True,
             check=True,
@@ -57,9 +57,9 @@ def _get_changed_files(commit: str | None = None) -> list[str]:
         if uncommitted_files:
             return sorted(uncommitted_files)
 
-        # No uncommitted changes - get files from last commit
+        # No uncommitted changes - get files from last commit (excluding deletions)
         last_commit = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD~1..HEAD"],
+            ["git", "diff", "--name-only", "--diff-filter=ACMRTUX", "HEAD~1..HEAD"],
             capture_output=True,
             text=True,
             check=True,

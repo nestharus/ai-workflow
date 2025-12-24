@@ -28,20 +28,36 @@ def orchestrate_<what>(*args, **kwargs) -> R:
 
 An orchestrator is pure integration:
 - Sequential function calls
-- NO conditionals (no if/else)
-- NO loops (no for/while)
-- NO business logic
-- Just wires outputs → inputs between steps
+- Wires outputs → inputs between steps
 - May return final result
+- Primary purpose: visible, clear orchestration (not drowned in noise)
 
 ## Implementation Rules
 
 1. **Sequential only**: Steps run one after another
-2. **No conditionals**: No if/else statements
-3. **No loops**: No for/while statements
-4. **No business logic**: Just call functions and pass data
-5. **Wire states**: Output of step N → input of step N+1
-6. **Clear naming**: `orchestrate_<workflow>`
+2. **No nesting**: No nested loops, no nested if-statements
+3. **No complex expressions**: No concatenated boolean expressions in single statements
+4. **Wire states**: Output of step N → input of step N+1
+5. **Clear naming**: `orchestrate_<workflow>`
+6. **Delegate complexity**: Complex logic belongs in dedicated functions
+
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
+Additionally, orchestrators support guard clauses (if-statements at top only):
+```python
+def orchestrate_process(data: Data) -> Result:
+    if not data.items:
+        return empty_result()
+    if data.skip_processing:
+        return passthrough_result(data)
+
+    # Orchestration continues...
+    validated = validate_items(data.items)
+    processed = process_all(validated)
+    return build_result(processed)
+```
 
 ## CREATE Example
 

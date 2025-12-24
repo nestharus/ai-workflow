@@ -60,6 +60,10 @@ For conditional routing to ONE path, use **Router** instead.
 4. **No filtering**: Not selective like Router
 5. **Clear naming**: `split_<what_is_being_split>`
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## CREATE Example
 
 ```python

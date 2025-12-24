@@ -262,6 +262,7 @@ convention = "google"
 "scripts/mcp/**/*.py" = ["ANN401", "E402", "S108"]  # E402 for late imports after sys.path; S108 for socket paths
 "scripts/servers/mcp/**/*.py" = ["ANN401", "E402", "S108"]  # E402 for late imports after sys.path; S108 for socket paths
 "scripts/tasks/**/*.py" = ["ANN401"]
+"scripts/planner/**/*.py" = ["ANN401"]
 "scripts/dev/ensure_dev_env.py" = ["S108"]  # S108 for /tmp socket directory creation
 
 # Scripts: S103 for world-writable socket permissions (security: host/container user isolation)

@@ -39,6 +39,10 @@ A router routes to one of N functions using labeled conditions:
 4. **Clear naming**: `route_<what_is_being_routed>`
 5. **No business logic**: Just routing, logic lives in handlers
 
+## Flexibility Rules
+
+**Read `.claude/docs/impl-flexibility-rules.md` for universal flexibility rules.**
+
 ## If-Else Style (Classifier Labels)
 
 ```python

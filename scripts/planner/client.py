@@ -19,9 +19,19 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from scripts.planner.create_plan import CreatePlanStateMachine
+    from scripts.planner.update_plan import UpdatePlanStateMachine
 
 
-def init_command(ticket_id: str, workflow: str = "create-plan") -> int:
+def init_command(
+    ticket_id: str,
+    workflow: Literal[
+        "create-plan", "update-plan", "execute-plan", "refactor-plan"
+    ] = "create-plan",
+) -> int:
     """Initialize state for a new ticket.
 
     Creates workspace directory and initial state.yaml.
@@ -62,7 +72,7 @@ def init_command(ticket_id: str, workflow: str = "create-plan") -> int:
         operation="CREATE",
         status="pending",
     )
-    state.layers[0] = ["root"]
+    state.branches["main"].layers[0] = ["root"]
 
     state.add_history("init", {"ticket_id": ticket_id, "workflow": workflow})
     state.save()
@@ -101,7 +111,7 @@ def next_command(workspace: Path) -> int:
     state = DesignState.load(workspace)
 
     if state.workflow == "create-plan":
-        machine = CreatePlanStateMachine(state)
+        machine: CreatePlanStateMachine | UpdatePlanStateMachine = CreatePlanStateMachine(state)
     elif state.workflow == "update-plan":
         machine = UpdatePlanStateMachine(state)
     else:
@@ -134,7 +144,7 @@ def process_command(workspace: Path) -> int:
     state = DesignState.load(workspace)
 
     if state.workflow == "create-plan":
-        machine = CreatePlanStateMachine(state)
+        machine: CreatePlanStateMachine | UpdatePlanStateMachine = CreatePlanStateMachine(state)
     elif state.workflow == "update-plan":
         machine = UpdatePlanStateMachine(state)
     else:
@@ -178,7 +188,11 @@ def status_command(workspace: Path) -> int:
                 "atomic_units": atomic_units,
                 "pending_units": pending_units,
                 "decomposed_units": decomposed_units,
-                "max_layer": max(state.layers.keys()) if state.layers else 0,
+                "max_layer": (
+                    max(state.branches["main"].layers.keys())
+                    if state.branches["main"].layers
+                    else 0
+                ),
             }
         )
     )
