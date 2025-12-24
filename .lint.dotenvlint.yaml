@@ -1,23 +1,17 @@
 # Lint script driver configuration for dotenv-linter
-# Uses glob patterns following coderabbit path_filters format
-
-# Patterns to scan for .env files
-targets:
-  - .env.example
-  - .env.*.example
+# Paths to include for .env file linting (glob patterns)
 
 # Paths to include in scanning (glob patterns)
 included_paths:
-  - "*"
-  - "app/**"
-  - "tests/**"
-  - "scripts/**"
-  - ".ai/**"
-  - ".claude/**"
-  - ".github/**"
-  - "agents/**"
-
-# Exclusion patterns (following coderabbit format with ! prefix)
-exclude_patterns:
-  - "!*.local"  # Exclude all .env.local files
-  - "!*.env.*.local"
+  # Root-level .env files
+  - ".env"
+  - ".env.*"
+  # App directory
+  - "app/.env"
+  - "app/.env.*"
+  # Scripts directory
+  - "scripts/.env"
+  - "scripts/.env.*"
+  # Tests directory
+  - "tests/.env"
+  - "tests/.env.*"

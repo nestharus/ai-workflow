@@ -1,14 +1,7 @@
 # Lint script configuration for actionlint
 # See: https://github.com/rhysd/actionlint/blob/main/docs/config.md
-# Uses glob patterns following coderabbit path_filters format
+# Paths to include for GitHub Actions workflow linting (glob patterns)
 
-# Paths to include for GitHub Actions workflow linting
 included_paths:
-  - ".github/workflows/**"
-
-# Exclusion patterns (following coderabbit format with ! prefix)
-excludes:
-  - "!.tasks/store/**"
-  - "!.tmp/**"
-  - "!.worktrees/**"
-  - "!.git-rewrite/**"
+  - ".github/workflows/*.yml"
+  - ".github/workflows/*.yaml"

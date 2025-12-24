@@ -105,9 +105,12 @@ The following tools require manual installation as they are not Python packages:
 
 | Tool | Purpose | Installation |
 |------|---------|--------------|
-| **actionlint** | GitHub Actions workflow linting | `brew install actionlint` (macOS) or `go install github.com/rhysd/actionlint/cmd/actionlint@latest` |
-| **trivy** | Security vulnerability scanning | `brew install trivy` (macOS/Linux) or download from [GitHub releases](https://github.com/aquasecurity/trivy/releases) |
-| **gitleaks** | Secret detection in code | `brew install gitleaks` (macOS/Linux) or `go install github.com/gitleaks/gitleaks/v8@v8.24.2` |
+| **actionlint** | GitHub Actions workflow linting | `brew install actionlint` (macOS) or `go install
+| github.com/rhysd/actionlint/cmd/actionlint@latest` |
+| **trivy** | Security vulnerability scanning | `brew install trivy` (macOS/Linux) or download from
+| [GitHub releases](https://github.com/aquasecurity/trivy/releases) |
+| **gitleaks** | Secret detection in code | `brew install gitleaks` (macOS/Linux) or `go install
+| github.com/gitleaks/gitleaks/v8@v8.24.2` |
 | **dotenv-linter** | .env file linting | `brew install dotenv-linter` (macOS) or `cargo install dotenv-linter` (Linux) |
 
 If these tools are not installed, `uv run lint` will fail with clear error messages. For detailed

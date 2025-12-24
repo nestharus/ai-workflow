@@ -1,7 +1,7 @@
 ---
 name: fact-surgeon-reviewer
 description: Reviews low-confidence rewrites and approves/rejects/iterates
-model: minimax-m2.1
+model: haiku
 tools: Read, Grep
 ---
 

@@ -1,38 +1,29 @@
 # Lint script configuration for yamllint
-# Uses glob patterns following coderabbit path_filters format
+# Paths to include for YAML linting (glob patterns)
 
-# Paths to include for YAML linting
 included_paths:
-  - "*"
-  - "app/**"
-  - "tests/**"
-  - "scripts/**"
-  - ".ai/**"
-  - ".claude/**"
-  - ".github/**"
-  - "agents/**"
-
-# Exclusion patterns (following coderabbit format with ! prefix)
-excludes:
-  - "!**/__pycache__/**"
-  - "!**/.pyc"
-  - "!.venv/**"
-  - "!.venv*"
-  - "!.mypy_cache/**"
-  - "!.pytest_cache/**"
-  - "!.ruff_cache/**"
-  - "!.sonar/**"
-  - "!.review/**"
-  - "!.tasks/store/**"
-  - "!.tmp/**"
-  - "!.worktrees/**"
-  - "!.git-rewrite/**"
-  - "!.idea/**"
-  - "!.idea*"
-  - "!.git/**"
-  - "!.github/workflows/**"  # Linted by actionlint instead
-  - "!.huggingface/**"
-  - "!.cache/**"
-  - "!.uv-cache/**"
-  - "!node_modules/**"
-  - "!.knowledge/**"
+  # Root-level YAML files
+  - "*.yaml"
+  - "*.yml"
+  # App directory
+  - "app/**/*.yaml"
+  - "app/**/*.yml"
+  # Tests directory
+  - "tests/**/*.yaml"
+  - "tests/**/*.yml"
+  # Scripts directory
+  - "scripts/**/*.yaml"
+  - "scripts/**/*.yml"
+  # Claude/AI config directories
+  - ".claude/**/*.yaml"
+  - ".claude/**/*.yml"
+  - ".ai/**/*.yaml"
+  - ".ai/**/*.yml"
+  # Docs directory (excluding plans and references)
+  - "docs/**/*.yaml"
+  - "docs/**/*.yml"
+  - "!docs/plans/**"
+  - "!docs/references/**"
+  # GitHub workflows
+  - ".github/workflows/**/*.yaml"
+  - ".github/workflows/**/*.yml"

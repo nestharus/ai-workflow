@@ -32,10 +32,13 @@ class ScriptsLinter(BaseLinter):
             LinterResult indicating success/failure.
         """
         # If files are specified, only run if pyproject.toml is in the list
-        if files is not None:
-            if "pyproject.toml" not in files and "scripts/pyproject.toml" not in files:
-                print("pyproject.toml not in changed files, skipping scripts linter.")
-                return LinterResult(success=True)
+        if (
+            files is not None
+            and "pyproject.toml" not in files
+            and "scripts/pyproject.toml" not in files
+        ):
+            print("pyproject.toml not in changed files, skipping scripts linter.")
+            return LinterResult(success=True)
 
         # Load configuration
         config = load_yaml_config(LINT_SCRIPTS_CONFIG)

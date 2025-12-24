@@ -35,24 +35,21 @@ class HadolintLinter(BaseLinter):
         hadolint_exe = get_executable("hadolint", HADOLINT_CLI_REQUIRED)
         config = load_yaml_config(LINT_HADOLINT_CONFIG)
         included_paths = config.get("included_paths", [])
-        excludes = config.get("excludes", [])
-        glob_patterns = included_paths + excludes
 
         if files is not None:
-            # Filter to only Dockerfile files that match glob patterns
+            # Filter to only Dockerfile files that match include patterns
             dockerfiles = [
                 Path(f)
                 for f in files
-                if Path(f).name == "Dockerfile"
-                and is_path_included(f, glob_patterns)
+                if Path(f).name == "Dockerfile" and is_path_included(f, included_paths)
             ]
         else:
-            # Find all Dockerfiles and filter by glob patterns
+            # Find all Dockerfiles and filter by include patterns
             dockerfiles = [
                 path
                 for path in REPO_ROOT.rglob("Dockerfile")
                 if path.is_file()
-                and is_path_included(str(path.relative_to(REPO_ROOT)), glob_patterns)
+                and is_path_included(str(path.relative_to(REPO_ROOT)), included_paths)
             ]
 
         if not dockerfiles:

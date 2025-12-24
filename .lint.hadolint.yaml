@@ -1,24 +1,12 @@
 # Lint script configuration for hadolint
-# Uses glob patterns following coderabbit path_filters format
+# Paths to include for Dockerfile scanning (glob patterns)
 
-# Paths to include for Dockerfile scanning
 included_paths:
-  - "*"
-  - "app/**"
-  - "tests/**"
-  - "scripts/**"
-  - ".ai/**"
-  - ".claude/**"
-  - ".github/**"
-  - "agents/**"
-  - "!app/infrastructure/surrealdb/**"
-  - "!tests/**"
-  - "!scripts/tests/**"
-  - "!.tasks/store/**"
-  - "!.tmp/**"
-  - "!.worktrees/**"
-  - "!.git-rewrite/**"
-  - "!.venv/**"
-  - "!docs/plans/**"
-  - "!docs/references/**"
-  - "!to_adapt/**"
+  # Root-level Dockerfile
+  - "Dockerfile"
+  # Scripts directory
+  - "scripts/**/Dockerfile"
+  # App directory
+  - "app/**/Dockerfile"
+  # Tests directory
+  - "tests/**/Dockerfile"

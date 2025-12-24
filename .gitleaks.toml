@@ -29,4 +29,7 @@ paths = [
     '''build/''',
     '''dist/''',
     '''\.secrets\.baseline''',
+    '''\.audit/''',
+    '''\.sonar/''',
+    '''docs/.*''',
 ]

@@ -7,7 +7,7 @@ from scripts.dev.linter.base import (
     BaseLinter,
     LinterResult,
     get_executable,
-    is_path_excluded,
+    is_path_included,
     load_yaml_config,
     run_checked,
 )
@@ -33,27 +33,27 @@ class DotenvlintLinter(BaseLinter):
         """
         dotenv_linter_exe = get_executable("dotenv-linter", DOTENV_LINTER_CLI_REQUIRED)
         config = load_yaml_config(LINT_DOTENVLINT_CONFIG)
-        exclude_dirs = {REPO_ROOT / d for d in config.get("exclude_dirs", [])}
+        included_paths = config.get("included_paths", [])
 
         if files:
-            # Filter to only .env files
-            env_files = [f for f in files if Path(f).name.startswith(".env")]
+            # Filter to only .env files that match include patterns
+            env_files = [
+                f
+                for f in files
+                if Path(f).name.startswith(".env") and is_path_included(f, included_paths)
+            ]
             if not env_files:
                 print("No .env files to check with dotenv-linter")
                 return LinterResult(success=True)
             targets = env_files
         else:
-            # Find all .env files based on configured targets
-            targets_config = config.get("targets", [".env", ".env.*"])
-            exclude_patterns = config.get("exclude_patterns", [])
+            # Find all .env files that match included_paths patterns
             env_files = []
-            for pattern in targets_config:
-                for path in REPO_ROOT.glob(pattern):
-                    if path.is_file() and not is_path_excluded(path, exclude_dirs):
-                        # Check exclude patterns
-                        excluded = any(path.match(ep) for ep in exclude_patterns)
-                        if not excluded:
-                            env_files.append(str(path))
+            for path in REPO_ROOT.rglob(".env*"):
+                if path.is_file():
+                    rel_path = str(path.relative_to(REPO_ROOT))
+                    if is_path_included(rel_path, included_paths):
+                        env_files.append(str(path))
             targets = env_files
 
         if not targets:

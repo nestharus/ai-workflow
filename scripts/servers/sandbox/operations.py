@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -207,11 +209,7 @@ def sync_sandbox_branch(sandbox_path: Path, branch: str) -> tuple[bool, str]:
 
     # Check if there's an active rebase in progress before aborting
     # This prevents aborting rebases that are waiting for conflict resolution
-    rebase_check = _run_git(
-        ["git", "rev-parse", "--verify", "--quiet", ".git/rebase-merge/HEAD"],
-        cwd=sandbox_path,
-    )
-    if rebase_check is not None and rebase_check.returncode == 0:
+    if is_rebase_in_progress(sandbox_path):
         return False, "Cannot sync: rebase in progress (operation may be resolving conflicts)"
 
     # Abort any in-progress rebase (only if none is active)
@@ -305,15 +303,39 @@ def get_conflicts(sandbox_path: Path) -> list[str]:
     return conflicts
 
 
-def rebase_in_sandbox(sandbox_path: Path, branch: str, target: str) -> RebaseResult:
+def is_rebase_in_progress(sandbox_path: Path) -> bool:
+    """Check if a git rebase is currently in progress.
+
+    Args:
+        sandbox_path: Path to the sandbox directory.
+
+    Returns:
+        True if a rebase is in progress, False otherwise.
+    """
+    git_dir = sandbox_path / ".git"
+    return (git_dir / "rebase-merge").is_dir() or (git_dir / "rebase-apply").is_dir()
+
+
+def rebase_in_sandbox(
+    sandbox_path: Path,
+    branch: str,
+    target: str,
+    poll_interval: float = 5.0,
+    max_wait: float = 3600.0,
+    progress_callback: Callable[[str], None] | None = None,
+) -> RebaseResult:
     """Perform a rebase operation in the sandbox.
 
-    Rebases the specified branch onto the target branch.
+    Rebases the specified branch onto the target branch. If conflicts occur,
+    polls until the rebase is manually resolved before returning.
 
     Args:
         sandbox_path: Path to the sandbox directory.
         branch: Branch to rebase.
         target: Target branch to rebase onto.
+        poll_interval: Seconds between polling when waiting for conflict resolution.
+        max_wait: Maximum seconds to wait for conflict resolution.
+        progress_callback: Optional callable to send progress updates.
 
     Returns:
         RebaseResult with operation outcome.
@@ -322,6 +344,15 @@ def rebase_in_sandbox(sandbox_path: Path, branch: str, target: str) -> RebaseRes
     success, err = sync_sandbox_branch(sandbox_path, branch)
     if not success:
         return RebaseResult(success=False, has_conflicts=False, conflicts=[], error=err)
+
+    # Check if there's already a rebase in progress
+    if is_rebase_in_progress(sandbox_path):
+        return RebaseResult(
+            success=False,
+            has_conflicts=False,
+            conflicts=[],
+            error="Cannot start rebase: another rebase is already in progress",
+        )
 
     # Fetch target branch
     result = _run_git(["git", "fetch", "origin", target], cwd=sandbox_path)
@@ -348,12 +379,73 @@ def rebase_in_sandbox(sandbox_path: Path, branch: str, target: str) -> RebaseRes
         # Check if it's a conflict
         conflicts = get_conflicts(sandbox_path)
         if conflicts:
+            logger.info(
+                "Rebase stopped due to conflicts, waiting for manual resolution: %s",
+                conflicts,
+            )
+            if progress_callback:
+                progress_callback(
+                    f"Conflicts detected, waiting for resolution: {', '.join(conflicts)}"
+                )
+
+            # Wait for the rebase to be resolved
+            start_time = time.time()
+            wait_count = 0
+            logger.info("Entering polling loop...")
+            while time.time() - start_time < max_wait:
+                time.sleep(poll_interval)
+                wait_count += 1
+
+                # Check if rebase is still in progress
+                in_progress = is_rebase_in_progress(sandbox_path)
+                logger.info("Poll #%d: rebase in progress = %s", wait_count, in_progress)
+
+                if not in_progress:
+                    logger.info("Rebase no longer in progress, checking final state")
+
+                    # Check if we're at the expected target (rebase completed successfully)
+                    result = _run_git(
+                        ["git", "merge-base", "--is-ancestor", f"origin/{target}", "HEAD"],
+                        cwd=sandbox_path,
+                    )
+                    if result and result.returncode == 0:
+                        logger.info("Rebase completed successfully")
+                        if progress_callback:
+                            progress_callback("Rebase completed successfully")
+                        return RebaseResult(
+                            success=True, has_conflicts=False, conflicts=[], error=""
+                        )
+                    else:
+                        # Rebase was aborted or otherwise ended without completing
+                        logger.info("Rebase was aborted (target is not ancestor of HEAD)")
+                        if progress_callback:
+                            progress_callback("Rebase was aborted")
+                        return RebaseResult(
+                            success=False,
+                            has_conflicts=False,
+                            conflicts=[],
+                            error="Rebase was aborted",
+                        )
+
+                else:
+                    if progress_callback and wait_count % 3 == 0:  # Log every 15 seconds
+                        elapsed = time.time() - start_time
+                        progress_callback(
+                            f"Still waiting for rebase to complete... ({elapsed:.0f}s elapsed)"
+                        )
+
+                logger.debug("Still waiting for rebase to complete...")
+
+            logger.warning("Timeout waiting for rebase to complete after %f seconds", max_wait)
+            if progress_callback:
+                progress_callback(f"Timeout waiting for rebase after {max_wait} seconds")
             return RebaseResult(
                 success=False,
                 has_conflicts=True,
                 conflicts=conflicts,
-                error="rebase stopped due to conflicts",
+                error=f"Timeout waiting for conflict resolution after {max_wait} seconds",
             )
+
         return RebaseResult(
             success=False,
             has_conflicts=False,

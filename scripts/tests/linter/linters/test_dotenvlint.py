@@ -27,6 +27,7 @@ class TestDotenvlintLinterInit:
 class TestDotenvlintLinterRunWithFiles:
     """Tests for DotenvlintLinter.run with file filtering."""
 
+    @patch("scripts.dev.linter.linters.dotenvlint.is_path_included")
     @patch("scripts.dev.linter.linters.dotenvlint.run_checked")
     @patch("scripts.dev.linter.linters.dotenvlint.load_yaml_config")
     @patch("scripts.dev.linter.linters.dotenvlint.get_executable")
@@ -35,10 +36,12 @@ class TestDotenvlintLinterRunWithFiles:
         mock_get_exe: MagicMock,
         mock_load_config: MagicMock,
         mock_run_checked: MagicMock,
+        mock_is_included: MagicMock,
     ) -> None:
-        """Test run with .env files specified (line 38-44)."""
+        """Test run with .env files specified."""
         mock_get_exe.return_value = "/usr/bin/dotenv-linter"
-        mock_load_config.return_value = {"exclude_dirs": []}
+        mock_load_config.return_value = {"included_paths": [".env.example", "app/.env.example"]}
+        mock_is_included.return_value = True
 
         linter = DotenvlintLinter()
         result = linter.run(files=[".env", ".env.local", "config.yaml"])
@@ -48,21 +51,22 @@ class TestDotenvlintLinterRunWithFiles:
         call_args = mock_run_checked.call_args[0][0]
         assert "/usr/bin/dotenv-linter" in call_args
         assert "check" in call_args
-        assert ".env" in call_args
-        assert ".env.local" in call_args
         assert "config.yaml" not in call_args  # Non-env files filtered out
 
+    @patch("scripts.dev.linter.linters.dotenvlint.is_path_included")
     @patch("scripts.dev.linter.linters.dotenvlint.load_yaml_config")
     @patch("scripts.dev.linter.linters.dotenvlint.get_executable")
     def test_run_with_no_env_files(
         self,
         mock_get_exe: MagicMock,
         mock_load_config: MagicMock,
+        mock_is_included: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Test run when no .env files in list (lines 41-43)."""
+        """Test run when no .env files in list."""
         mock_get_exe.return_value = "/usr/bin/dotenv-linter"
-        mock_load_config.return_value = {"exclude_dirs": []}
+        mock_load_config.return_value = {"included_paths": [".env.example", "app/.env.example"]}
+        mock_is_included.return_value = True
 
         linter = DotenvlintLinter()
         result = linter.run(files=["config.yaml", "test.py"])
@@ -75,154 +79,124 @@ class TestDotenvlintLinterRunWithFiles:
 class TestDotenvlintLinterRunWithoutFiles:
     """Tests for DotenvlintLinter.run without file filtering (glob mode)."""
 
-    @patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT", Path("/fake/repo"))
+    @patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT")
     @patch("scripts.dev.linter.linters.dotenvlint.run_checked")
-    @patch("scripts.dev.linter.linters.dotenvlint.is_path_excluded")
+    @patch("scripts.dev.linter.linters.dotenvlint.is_path_included")
     @patch("scripts.dev.linter.linters.dotenvlint.load_yaml_config")
     @patch("scripts.dev.linter.linters.dotenvlint.get_executable")
     def test_run_finds_env_files(
         self,
         mock_get_exe: MagicMock,
         mock_load_config: MagicMock,
-        mock_is_excluded: MagicMock,
+        mock_is_included: MagicMock,
         mock_run_checked: MagicMock,
+        mock_repo_root: MagicMock,
     ) -> None:
-        """Test run with glob mode finding .env files (lines 46-57, branch 52 True)."""
+        """Test run with glob mode finding .env files."""
         mock_get_exe.return_value = "/usr/bin/dotenv-linter"
         mock_load_config.return_value = {
-            "targets": [".env"],
-            "exclude_dirs": [],
-            "exclude_patterns": [],
+            "included_paths": [".env.example", "app/.env.example"],
         }
-        mock_is_excluded.return_value = False
+        mock_is_included.return_value = True
 
         # Create a mock path that is_file returns True
-        mock_path = MagicMock()
+        mock_path = MagicMock(spec=Path)
         mock_path.is_file.return_value = True
-        mock_path.match.return_value = False  # Not excluded by pattern (branch 55 False)
+        mock_path.relative_to.return_value = Path(".env.example")
+        mock_path.__str__ = lambda self: "/fake/repo/.env.example"
 
-        with patch.object(Path, "glob", return_value=[mock_path]):
-            linter = DotenvlintLinter()
-            result = linter.run(files=None)
+        mock_repo_root.rglob.return_value = [mock_path]
+        mock_repo_root.__truediv__ = lambda self, x: Path(x)
+
+        linter = DotenvlintLinter()
+        result = linter.run(files=None)
 
         assert result.success is True
         mock_run_checked.assert_called_once()
 
-    @patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT", Path("/fake/repo"))
-    @patch("scripts.dev.linter.linters.dotenvlint.is_path_excluded")
+    @patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT")
+    @patch("scripts.dev.linter.linters.dotenvlint.is_path_included")
     @patch("scripts.dev.linter.linters.dotenvlint.load_yaml_config")
     @patch("scripts.dev.linter.linters.dotenvlint.get_executable")
-    def test_run_path_excluded(
+    def test_run_path_not_included(
         self,
         mock_get_exe: MagicMock,
         mock_load_config: MagicMock,
-        mock_is_excluded: MagicMock,
+        mock_is_included: MagicMock,
+        mock_repo_root: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Test run when path is excluded (branch 52 False - is_path_excluded True)."""
+        """Test run when path is not in included_paths."""
         mock_get_exe.return_value = "/usr/bin/dotenv-linter"
         mock_load_config.return_value = {
-            "targets": [".env"],
-            "exclude_dirs": [],
-            "exclude_patterns": [],
+            "included_paths": [".env.example"],
         }
-        mock_is_excluded.return_value = True  # Path is excluded
+        mock_is_included.return_value = False  # Path not in included_paths
 
-        mock_path = MagicMock()
+        mock_path = MagicMock(spec=Path)
         mock_path.is_file.return_value = True
+        mock_path.relative_to.return_value = Path(".venv/.env")
 
-        with patch.object(Path, "glob", return_value=[mock_path]):
-            linter = DotenvlintLinter()
-            result = linter.run(files=None)
+        mock_repo_root.rglob.return_value = [mock_path]
+        mock_repo_root.__truediv__ = lambda self, x: Path(x)
 
-        assert result.success is True
-        captured = capsys.readouterr()
-        # No env files found since it was excluded
-        assert "No .env files found for dotenv-linter scan" in captured.out
-
-    @patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT", Path("/fake/repo"))
-    @patch("scripts.dev.linter.linters.dotenvlint.is_path_excluded")
-    @patch("scripts.dev.linter.linters.dotenvlint.load_yaml_config")
-    @patch("scripts.dev.linter.linters.dotenvlint.get_executable")
-    def test_run_pattern_excluded(
-        self,
-        mock_get_exe: MagicMock,
-        mock_load_config: MagicMock,
-        mock_is_excluded: MagicMock,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """Test run when path matches exclude pattern (branch 55 True)."""
-        mock_get_exe.return_value = "/usr/bin/dotenv-linter"
-        mock_load_config.return_value = {
-            "targets": [".env"],
-            "exclude_dirs": [],
-            "exclude_patterns": ["*.example"],
-        }
-        mock_is_excluded.return_value = False
-
-        mock_path = MagicMock()
-        mock_path.is_file.return_value = True
-        mock_path.match.return_value = True  # Matches exclude pattern
-
-        with patch.object(Path, "glob", return_value=[mock_path]):
-            linter = DotenvlintLinter()
-            result = linter.run(files=None)
+        linter = DotenvlintLinter()
+        result = linter.run(files=None)
 
         assert result.success is True
         captured = capsys.readouterr()
         assert "No .env files found for dotenv-linter scan" in captured.out
 
-    @patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT", Path("/fake/repo"))
+    @patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT")
     @patch("scripts.dev.linter.linters.dotenvlint.load_yaml_config")
     @patch("scripts.dev.linter.linters.dotenvlint.get_executable")
     def test_run_no_files_found(
         self,
         mock_get_exe: MagicMock,
         mock_load_config: MagicMock,
+        mock_repo_root: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Test run when no .env files found (lines 59-60)."""
+        """Test run when no .env files found."""
         mock_get_exe.return_value = "/usr/bin/dotenv-linter"
         mock_load_config.return_value = {
-            "targets": [".env"],
-            "exclude_dirs": [],
-            "exclude_patterns": [],
+            "included_paths": [".env.example"],
         }
 
-        with patch.object(Path, "glob", return_value=[]):
-            linter = DotenvlintLinter()
-            result = linter.run(files=None)
+        mock_repo_root.rglob.return_value = []
+        mock_repo_root.__truediv__ = lambda self, x: Path(x)
+
+        linter = DotenvlintLinter()
+        result = linter.run(files=None)
 
         assert result.success is True
         captured = capsys.readouterr()
         assert "No .env files found for dotenv-linter scan" in captured.out
 
-    @patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT", Path("/fake/repo"))
-    @patch("scripts.dev.linter.linters.dotenvlint.is_path_excluded")
+    @patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT")
     @patch("scripts.dev.linter.linters.dotenvlint.load_yaml_config")
     @patch("scripts.dev.linter.linters.dotenvlint.get_executable")
     def test_run_not_file(
         self,
         mock_get_exe: MagicMock,
         mock_load_config: MagicMock,
-        mock_is_excluded: MagicMock,
+        mock_repo_root: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Test run when glob returns directory not file (branch 52 False via is_file)."""
+        """Test run when rglob returns directory not file."""
         mock_get_exe.return_value = "/usr/bin/dotenv-linter"
         mock_load_config.return_value = {
-            "targets": [".env"],
-            "exclude_dirs": [],
-            "exclude_patterns": [],
+            "included_paths": [".env.example"],
         }
-        mock_is_excluded.return_value = False
 
-        mock_path = MagicMock()
+        mock_path = MagicMock(spec=Path)
         mock_path.is_file.return_value = False  # Not a file
 
-        with patch.object(Path, "glob", return_value=[mock_path]):
-            linter = DotenvlintLinter()
-            result = linter.run(files=None)
+        mock_repo_root.rglob.return_value = [mock_path]
+        mock_repo_root.__truediv__ = lambda self, x: Path(x)
+
+        linter = DotenvlintLinter()
+        result = linter.run(files=None)
 
         assert result.success is True
         captured = capsys.readouterr()

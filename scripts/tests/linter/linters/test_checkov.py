@@ -55,11 +55,13 @@ class TestCheckovLinterRun:
             assert "--framework" in call_args
             assert "openapi" in call_args
 
-    def test_ignores_files_parameter(self, tmp_path: Path) -> None:
-        """Test run ignores files parameter (line 29 comment)."""
+    def test_skips_when_no_openapi_in_files(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Test run skips when no openapi.json in files list."""
         linter = CheckovLinter()
 
-        assert linter.supports_file_filtering is False
+        assert linter.supports_file_filtering is True
 
         # Create the schema file
         schema_file = tmp_path / "openapi.json"
@@ -74,11 +76,13 @@ class TestCheckovLinterRun:
             ),
             patch("scripts.dev.linter.linters.checkov.run_checked") as mock_run,
         ):
-            # Files parameter should be ignored
+            # Files without openapi.json should cause linter to skip
             result = linter.run(files=["some_file.py"])
 
             assert result.success is True
-            mock_run.assert_called_once()
+            mock_run.assert_not_called()  # Should skip, not run checkov
+            captured = capsys.readouterr()
+            assert "skipping checkov linter" in captured.out
 
     def test_uses_config_file(self, tmp_path: Path) -> None:
         """Test run uses checkov config file (line 47)."""

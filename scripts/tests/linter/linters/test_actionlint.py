@@ -16,7 +16,7 @@ class TestActionlintLinterRun:
     def test_returns_success_when_no_workflow_files_in_file_filter(
         self, capsys: pytest.CaptureFixture[str], tmp_path: Path
     ) -> None:
-        """Test run returns success when filtered files have no workflow files (lines 48-50)."""
+        """Test run returns success when filtered files have no workflow files."""
         linter = ActionlintLinter()
 
         with (
@@ -27,7 +27,10 @@ class TestActionlintLinterRun:
             ),
             patch(
                 "scripts.dev.linter.linters.actionlint.load_yaml_config",
-                return_value={"ignore": [], "exclude_dirs": []},
+                return_value={
+                    "ignore": [],
+                    "included_paths": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
+                },
             ),
             patch("scripts.dev.linter.linters.actionlint.REPO_ROOT", tmp_path),
         ):
@@ -43,7 +46,7 @@ class TestActionlintLinterRun:
     def test_returns_success_when_workflows_dir_not_exists(
         self, capsys: pytest.CaptureFixture[str], tmp_path: Path
     ) -> None:
-        """Test run returns success when no .github/workflows dir (lines 53-55)."""
+        """Test run returns success when no .github/workflows dir."""
         linter = ActionlintLinter()
 
         with (
@@ -53,7 +56,10 @@ class TestActionlintLinterRun:
             ),
             patch(
                 "scripts.dev.linter.linters.actionlint.load_yaml_config",
-                return_value={"ignore": [], "exclude_dirs": []},
+                return_value={
+                    "ignore": [],
+                    "included_paths": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
+                },
             ),
             patch("scripts.dev.linter.linters.actionlint.REPO_ROOT", tmp_path),
         ):
@@ -68,7 +74,7 @@ class TestActionlintLinterRun:
     def test_returns_success_when_no_workflow_files_found(
         self, capsys: pytest.CaptureFixture[str], tmp_path: Path
     ) -> None:
-        """Test run returns success when workflows dir exists but is empty (lines 67-69)."""
+        """Test run returns success when workflows dir exists but is empty."""
         linter = ActionlintLinter()
 
         with (
@@ -78,7 +84,10 @@ class TestActionlintLinterRun:
             ),
             patch(
                 "scripts.dev.linter.linters.actionlint.load_yaml_config",
-                return_value={"ignore": [], "exclude_dirs": []},
+                return_value={
+                    "ignore": [],
+                    "included_paths": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
+                },
             ),
             patch("scripts.dev.linter.linters.actionlint.REPO_ROOT", tmp_path),
         ):
@@ -92,7 +101,7 @@ class TestActionlintLinterRun:
             assert "No workflow files found" in captured.out
 
     def test_runs_actionlint_with_ignore_patterns(self, tmp_path: Path) -> None:
-        """Test run passes ignore patterns to actionlint (lines 72-74)."""
+        """Test run passes ignore patterns to actionlint."""
         linter = ActionlintLinter()
 
         with (
@@ -102,10 +111,17 @@ class TestActionlintLinterRun:
             ),
             patch(
                 "scripts.dev.linter.linters.actionlint.load_yaml_config",
-                return_value={"ignore": ["SC2086", "SC2034"], "exclude_dirs": []},
+                return_value={
+                    "ignore": ["SC2086", "SC2034"],
+                    "included_paths": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
+                },
             ),
             patch("scripts.dev.linter.linters.actionlint.REPO_ROOT", tmp_path),
             patch("scripts.dev.linter.linters.actionlint.run_checked") as mock_run,
+            patch(
+                "scripts.dev.linter.linters.actionlint.is_path_included",
+                return_value=True,
+            ),
         ):
             # Create workflow file
             workflows_dir = tmp_path / ".github" / "workflows"
@@ -121,8 +137,8 @@ class TestActionlintLinterRun:
             assert "SC2086" in call_args
             assert "SC2034" in call_args
 
-    def test_filters_excluded_dirs_in_file_mode(self, tmp_path: Path) -> None:
-        """Test run excludes files in excluded directories (line 46)."""
+    def test_filters_by_included_paths_in_file_mode(self, tmp_path: Path) -> None:
+        """Test run filters files by included_paths patterns."""
         linter = ActionlintLinter()
 
         with (
@@ -132,28 +148,31 @@ class TestActionlintLinterRun:
             ),
             patch(
                 "scripts.dev.linter.linters.actionlint.load_yaml_config",
-                return_value={"ignore": [], "exclude_dirs": ["excluded"]},
+                return_value={
+                    "ignore": [],
+                    "included_paths": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
+                },
             ),
             patch("scripts.dev.linter.linters.actionlint.REPO_ROOT", tmp_path),
             patch("scripts.dev.linter.linters.actionlint.run_checked") as mock_run,
+            patch(
+                "scripts.dev.linter.linters.actionlint.is_path_included",
+                return_value=True,
+            ),
         ):
-            # Create workflow file and excluded workflow
+            # Create workflow file
             workflows_dir = tmp_path / ".github" / "workflows"
             workflows_dir.mkdir(parents=True)
             (workflows_dir / "ci.yml").touch()
 
-            # Create file in excluded dir (simulating the exclude check)
-            excluded_dir = tmp_path / "excluded"
-            excluded_dir.mkdir()
-
-            # Pass a regular workflow file
+            # Pass a workflow file that matches included_paths
             result = linter.run(files=[".github/workflows/ci.yml"])
 
             assert result.success is True
             mock_run.assert_called_once()
 
     def test_scans_yaml_and_yml_files(self, tmp_path: Path) -> None:
-        """Test run scans both .yml and .yaml files (lines 59-66)."""
+        """Test run scans both .yml and .yaml files."""
         linter = ActionlintLinter()
 
         with (
@@ -163,10 +182,17 @@ class TestActionlintLinterRun:
             ),
             patch(
                 "scripts.dev.linter.linters.actionlint.load_yaml_config",
-                return_value={"ignore": [], "exclude_dirs": []},
+                return_value={
+                    "ignore": [],
+                    "included_paths": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
+                },
             ),
             patch("scripts.dev.linter.linters.actionlint.REPO_ROOT", tmp_path),
             patch("scripts.dev.linter.linters.actionlint.run_checked") as mock_run,
+            patch(
+                "scripts.dev.linter.linters.actionlint.is_path_included",
+                return_value=True,
+            ),
         ):
             # Create workflow files with both extensions
             workflows_dir = tmp_path / ".github" / "workflows"
@@ -183,7 +209,7 @@ class TestActionlintLinterRun:
             assert any("deploy.yaml" in str(arg) for arg in call_args)
 
     def test_runs_with_file_filter_for_workflows(self, tmp_path: Path) -> None:
-        """Test run works with file filter for workflow files (lines 39-51)."""
+        """Test run works with file filter for workflow files."""
         linter = ActionlintLinter()
 
         with (
@@ -193,10 +219,17 @@ class TestActionlintLinterRun:
             ),
             patch(
                 "scripts.dev.linter.linters.actionlint.load_yaml_config",
-                return_value={"ignore": [], "exclude_dirs": []},
+                return_value={
+                    "ignore": [],
+                    "included_paths": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
+                },
             ),
             patch("scripts.dev.linter.linters.actionlint.REPO_ROOT", tmp_path),
             patch("scripts.dev.linter.linters.actionlint.run_checked") as mock_run,
+            patch(
+                "scripts.dev.linter.linters.actionlint.is_path_included",
+                return_value=True,
+            ),
         ):
             # Create workflow file
             workflows_dir = tmp_path / ".github" / "workflows"

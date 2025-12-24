@@ -121,32 +121,42 @@ def match_glob_pattern(path: str, pattern: str) -> bool:
     if pattern.startswith("!"):
         return not match_glob_pattern(path, pattern[1:])
 
-    # Handle recursive glob
-    if pattern.startswith("**"):
-        # ** at the start matches everything
-        rest = pattern[2:]
-        if rest.startswith("/"):
-            rest = rest[1:]
-        if not rest:
-            return True
-        # Check if path contains the rest of the pattern anywhere
-        parts = rest.split("/")
-        path_parts = path.split("/")
-        # Match remaining parts anywhere in the path
-        idx = 0
-        for part in parts:
-            found = False
-            for i in range(idx, len(path_parts)):
-                if fnmatch.fnmatch(path_parts[i], part):
-                    idx = i + 1
-                    found = True
-                    break
-            if not found:
-                return False
-        return True
+    path_parts = path.split("/")
+    pattern_parts = pattern.split("/")
 
-    # Use fnmatch for regular patterns
-    return fnmatch.fnmatch(path, pattern)
+    i = 0  # Index in path_parts
+    j = 0  # Index in pattern_parts
+
+    while j < len(pattern_parts):
+        pattern_part = pattern_parts[j]
+
+        if pattern_part == "**":
+            # ** matches zero or more directories
+            j += 1
+            if j >= len(pattern_parts):
+                # ** at end matches rest of path
+                return True
+            # Try to match remaining pattern at current or subsequent positions
+            next_pattern = pattern_parts[j]
+            while i < len(path_parts):
+                if fnmatch.fnmatch(path_parts[i], next_pattern) and match_glob_pattern(
+                    "/".join(path_parts[i:]), "/".join(pattern_parts[j:])
+                ):
+                    return True
+                i += 1
+            return False
+
+        if i >= len(path_parts):
+            return False
+
+        if not fnmatch.fnmatch(path_parts[i], pattern_part):
+            return False
+
+        i += 1
+        j += 1
+
+    # All pattern parts consumed - path matches if we also consumed all parts
+    return i == len(path_parts)
 
 
 def filter_paths_by_glob(
@@ -195,33 +205,17 @@ def is_path_included(path: str, glob_patterns: list[str]) -> bool:
     Returns:
         True if the path is included by the patterns.
     """
-    has_inclusion = False
     excluded = False
+    included = False
 
     for pattern in glob_patterns:
         if pattern.startswith("!"):
             if match_glob_pattern(path, pattern[1:]):
                 excluded = True
         else:
-            has_inclusion = True
             if match_glob_pattern(path, pattern):
-                # Path matches an inclusion, check if it's excluded by subsequent patterns
-                pass
+                included = True
 
-    if not has_inclusion:
-        # No inclusion patterns means all paths are included by default
-        # But if there's an exclusion pattern that matches, it's excluded
-        for pattern in glob_patterns:
-            if pattern.startswith("!") and match_glob_pattern(path, pattern[1:]):
-                return False
-        return True
-
-    # Check if path matches any inclusion and no exclusion
-    if excluded:
-        return False
-
-    for pattern in glob_patterns:
-        if not pattern.startswith("!") and match_glob_pattern(path, pattern):
-            return True
-
-    return False
+    # Path is included only if it matches at least one inclusion pattern
+    # and is not excluded by any exclusion pattern
+    return included and not excluded

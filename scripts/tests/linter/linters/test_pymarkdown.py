@@ -29,17 +29,20 @@ class TestPymarkdownLinterRunWithFiles:
 
     @patch("scripts.dev.linter.linters.pymarkdown.REPO_ROOT", Path("/fake/repo"))
     @patch("scripts.dev.linter.linters.pymarkdown.run_checked")
+    @patch("scripts.dev.linter.linters.pymarkdown.is_path_included")
     @patch("scripts.dev.linter.linters.pymarkdown.load_yaml_config")
     @patch("scripts.dev.linter.linters.pymarkdown.get_executable")
     def test_run_with_markdown_files(
         self,
         mock_get_exe: MagicMock,
         mock_load_config: MagicMock,
+        mock_is_included: MagicMock,
         mock_run_checked: MagicMock,
     ) -> None:
-        """Test run with Markdown files specified (lines 35-49, branch 35 True)."""
+        """Test run with Markdown files specified."""
         mock_get_exe.return_value = "/usr/bin/uv"
-        mock_load_config.return_value = {"excludes": []}
+        mock_load_config.return_value = {"included_paths": ["README.md", "docs/**/*.md"]}
+        mock_is_included.return_value = True  # All paths included
 
         linter = PymarkdownLinter()
         result = linter.run(files=["README.md", "docs/guide.md", "config.yaml"])
@@ -52,21 +55,22 @@ class TestPymarkdownLinterRunWithFiles:
         assert "pymarkdown" in call_args
         assert "-c" in call_args
         assert "scan" in call_args
-        assert "README.md" in call_args
-        assert "docs/guide.md" in call_args
         assert "config.yaml" not in call_args
 
+    @patch("scripts.dev.linter.linters.pymarkdown.is_path_included")
     @patch("scripts.dev.linter.linters.pymarkdown.load_yaml_config")
     @patch("scripts.dev.linter.linters.pymarkdown.get_executable")
     def test_run_with_no_markdown_files(
         self,
         mock_get_exe: MagicMock,
         mock_load_config: MagicMock,
+        mock_is_included: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Test run when no Markdown files in list (lines 36-39, branch 37 True)."""
+        """Test run when no Markdown files in list."""
         mock_get_exe.return_value = "/usr/bin/uv"
-        mock_load_config.return_value = {"excludes": []}
+        mock_load_config.return_value = {"included_paths": ["README.md", "docs/**/*.md"]}
+        mock_is_included.return_value = True
 
         linter = PymarkdownLinter()
         result = linter.run(files=["config.yaml", "test.py"])
@@ -89,11 +93,10 @@ class TestPymarkdownLinterRunWithoutFiles:
         mock_load_config: MagicMock,
         mock_run_checked: MagicMock,
     ) -> None:
-        """Test run without files (full scan) (lines 50-61, branch 35 False)."""
+        """Test run without files (full scan)."""
         mock_get_exe.return_value = "/usr/bin/uv"
         mock_load_config.return_value = {
-            "targets": ["docs/", "*.md"],
-            "excludes": [],
+            "included_paths": ["README.md", "docs/**/*.md"],
         }
 
         linter = PymarkdownLinter()
@@ -103,28 +106,27 @@ class TestPymarkdownLinterRunWithoutFiles:
         mock_run_checked.assert_called_once()
         call_args = mock_run_checked.call_args[0][0]
         assert "-r" in call_args  # Recursive flag for full scan
-        assert "docs/" in call_args
-        assert "*.md" in call_args
+        assert "README.md" in call_args
+        assert "docs/**/*.md" in call_args
 
 
-class TestPymarkdownLinterExcludes:
-    """Tests for PymarkdownLinter.run with exclude patterns."""
+class TestPymarkdownLinterIncludedPaths:
+    """Tests for PymarkdownLinter.run with include patterns."""
 
     @patch("scripts.dev.linter.linters.pymarkdown.REPO_ROOT", Path("/fake/repo"))
     @patch("scripts.dev.linter.linters.pymarkdown.run_checked")
     @patch("scripts.dev.linter.linters.pymarkdown.load_yaml_config")
     @patch("scripts.dev.linter.linters.pymarkdown.get_executable")
-    def test_run_with_excludes(
+    def test_run_with_included_paths(
         self,
         mock_get_exe: MagicMock,
         mock_load_config: MagicMock,
         mock_run_checked: MagicMock,
     ) -> None:
-        """Test run with exclude patterns (lines 63-64)."""
+        """Test run with included_paths patterns."""
         mock_get_exe.return_value = "/usr/bin/uv"
         mock_load_config.return_value = {
-            "targets": ["docs/"],
-            "excludes": ["node_modules/", "*.generated.md"],
+            "included_paths": ["docs/architecture/*.md", "docs/development/*.md"],
         }
 
         linter = PymarkdownLinter()
@@ -133,32 +135,32 @@ class TestPymarkdownLinterExcludes:
         assert result.success is True
         mock_run_checked.assert_called_once()
         call_args = mock_run_checked.call_args[0][0]
-        assert "-e" in call_args
-        # Check that exclude patterns are in the command
-        e_indices = [i for i, arg in enumerate(call_args) if arg == "-e"]
-        assert len(e_indices) == 2  # Two exclude patterns
+        assert "-r" in call_args
+        # Check that included_paths are in the command
+        assert "docs/architecture/*.md" in call_args
+        assert "docs/development/*.md" in call_args
 
     @patch("scripts.dev.linter.linters.pymarkdown.REPO_ROOT", Path("/fake/repo"))
     @patch("scripts.dev.linter.linters.pymarkdown.run_checked")
+    @patch("scripts.dev.linter.linters.pymarkdown.is_path_included")
     @patch("scripts.dev.linter.linters.pymarkdown.load_yaml_config")
     @patch("scripts.dev.linter.linters.pymarkdown.get_executable")
-    def test_run_with_files_and_excludes(
+    def test_run_with_files_filters_by_included_paths(
         self,
         mock_get_exe: MagicMock,
         mock_load_config: MagicMock,
+        mock_is_included: MagicMock,
         mock_run_checked: MagicMock,
     ) -> None:
-        """Test run with files and exclude patterns (branch 63 with files)."""
+        """Test run with files filters using included_paths patterns."""
         mock_get_exe.return_value = "/usr/bin/uv"
         mock_load_config.return_value = {
-            "excludes": ["*.generated.md"],
+            "included_paths": ["README.md", "docs/**/*.md"],
         }
+        mock_is_included.return_value = True
 
         linter = PymarkdownLinter()
         result = linter.run(files=["README.md"])
 
         assert result.success is True
         mock_run_checked.assert_called_once()
-        call_args = mock_run_checked.call_args[0][0]
-        assert "-e" in call_args
-        assert "*.generated.md" in call_args

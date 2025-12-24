@@ -1,49 +1,15 @@
 # Lint script configuration for pymarkdown
-# Uses glob patterns following coderabbit path_filters format
+# Paths to include for markdown linting (glob patterns)
 
-# Paths to include for markdown linting
 included_paths:
+  # Root-level markdown files
   - "README.md"
   - "AGENTS.md"
-  - "docs/**"
+  # Docs directory (excluding plans and references)
+  - "docs/architecture/**/*.md"
+  - "docs/development/**/*.md"
+  - "docs/processes/**/*.md"
+  - "docs/testing/**/*.md"
+  - "docs/usage/**/*.md"
+  # README files in subdirectories
   - "scripts/knowledge/README.md"
-
-# Exclusion patterns (following coderabbit format with ! prefix)
-excludes:
-  - "!**/__pycache__/**"
-  - "!**/.pyc"
-  - "!.venv/**"
-  - "!.venv*"
-  - "!build/**"
-  - "!dist/**"
-  - "!.mypy_cache/**"
-  - "!.pytest_cache/**"
-  - "!.ruff_cache/**"
-  - "!.sonar/**"
-  - "!.review/**"
-  - "!.tasks/store/**"
-  - "!.tmp/**"
-  - "!.worktrees/**"
-  - "!.git-rewrite/**"
-  - "!openapi/**"
-  - "!.idea/**"
-  - "!.idea*"
-  - "!to_adapt/**"
-  - "!htmlcov/**"
-  - "!.coverage*"
-  - "!coverage.xml"
-  - "!junit.xml"
-  - "!uv.lock"
-  - "!LICENSE"
-  - "!.git/**"
-  - "!.github/**"
-  - "!.code/**"
-  - "!out/**"
-  - "!.uv-cache/**"
-  - "!.cache/**"
-  - "!.knowledge/knowledge.duckdb"
-  - "!.knowledge/**/*.csv"
-  - "!.knowledge/originals/**"
-  - "!.serena/**"
-  - "!docs/plans/**"
-  - "!docs/references/**"

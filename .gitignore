@@ -1,18 +1,14 @@
-# Python
+# Python artifacts
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.uv-cache/
-.pyright/
 
 # Virtual environments
 .venv*/
-venv/
-env/
+venv*/
+env*/
 ENV/
-env.bak/
-venv.bak/
 
 # Build / distribution
 build/
@@ -23,24 +19,28 @@ pip-wheel-metadata/
 # IDEs
 .idea*/
 .vscode/
-*.sublime-project
-*.sublime-workspace
+*.sublime-*
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Coverage / testing
-.coverage*
-coverage.xml
-htmlcov/
+# Cache directories
+.uv-cache/
+.pyright/
 .cache/
-nosetests.xml
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 
-# Output / generated
+# Coverage / testing
+.coverage*
+coverage.xml
+htmlcov/
+nosetests.xml
+junit.xml
+
+# Generated / output
 openapi/
 .sonar/
 .review/
@@ -49,6 +49,7 @@ openapi/
 .git-rewrite/
 .audit/
 out/
+**/surgeon_logs/
 
 # Local config / secrets
 .env
@@ -56,13 +57,12 @@ out/
 .env.*.local
 .claude/settings.local.json
 
-# Knowledge base data (track structure, ignore data files)
+# Knowledge base data (track structure, not data)
 .knowledge/knowledge.duckdb
 .knowledge/*.duckdb.wal
 .knowledge/**/*.csv
 .knowledge/originals/*.yml
 .knowledge/originals/*.yaml
-**/surgeon_logs/
 
 # Misc
 *.log

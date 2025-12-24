@@ -1,71 +1,23 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.py[cod]
-*.so
-.Python
-*.sqlite3
+# Ignore everything by default
+*
 
-# Build / distribution
-build/
-dist/
-*.egg-info/
-pip-wheel-metadata/
+# Include application code
+!app/
+!app/**
 
-# Virtual environments
-.venv*/
-venv*/
-env/
-ENV/
+# Include production scripts only
+!scripts/__init__.py
+!scripts/app/
+!scripts/app/**
 
-# Git / version control
-.git
-.gitignore
-.git-rewrite/
-
-# IDEs
-.idea/
-.vscode/
-
-# Cache directories
-.uv-cache/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# CI / tooling
-.github/
-.pre-commit-config.yaml
-.to_adapt/
-
-# Output / generated
-.review/
-.tmp/
-.worktrees/
-out/
-openapi/
-
-# Coverage / testing
-.coverage*
-coverage.xml
-htmlcov/
-junit.xml
-
-# Documentation (keep README.md and app/resources/*.md)
-docs/
-tests/
-*.md
+# Include dependency files
+!pyproject.toml
+!uv.lock
 !README.md
-!app/resources/**/*.md
+!LICENSE
 
-# Local scripts (not needed in production)
-scripts/coderabbit_review.py
-scripts/latest_review.py
-scripts/setup.py
-scripts/sonar_scan.sh
-scripts/knowledge/
-
-# Misc
-*.log
-*~
+# Exclude Python bytecode everywhere
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.py[cod]

@@ -1,7 +1,7 @@
 ---
 name: audit-commit-analyzer
 description: Analyzes commit diffs to produce structured change summaries
-model: minimax-m2.1
+model: haiku
 tools: Read, Write, Grep
 ---
 

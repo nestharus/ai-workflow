@@ -1,7 +1,7 @@
 ---
 name: audit-ticket-fetcher
 description: Fetches done tickets from Linear and extracts implementation plans
-model: minimax-m2.1
+model: haiku
 tools: Bash, Read, Write, Grep, Glob
 ---
 

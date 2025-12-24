@@ -32,13 +32,11 @@ class PymarkdownLinter(BaseLinter):
         uv_exe = get_executable("uv", UV_CLI_REQUIRED)
         config = load_yaml_config(LINT_PYMARKDOWN_CONFIG)
         included_paths = config.get("included_paths", [])
-        excludes = config.get("excludes", [])
-        glob_patterns = included_paths + excludes
 
         if files is not None:
             md_files = [f for f in files if f.endswith(".md")]
-            # Filter by glob patterns
-            md_files = [f for f in md_files if is_path_included(f, glob_patterns)]
+            # Filter by include patterns
+            md_files = [f for f in md_files if is_path_included(f, included_paths)]
             if not md_files:
                 print("No Markdown files to check with pymarkdown")
                 return LinterResult(success=True)
@@ -64,9 +62,6 @@ class PymarkdownLinter(BaseLinter):
                 "-r",
                 *targets,
             ]
-
-        for pattern in excludes:
-            pymarkdown_cmd.extend(["-e", pattern])
 
         run_checked(pymarkdown_cmd)
         return LinterResult(success=True)

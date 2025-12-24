@@ -2,7 +2,7 @@
 name: lint-fixer
 description: Resolves and fixes lint errors and warnings iteratively until all issues are resolved. Use proactively when lint errors or warnings are detected.
 tools: Read, Edit, Bash, Grep, Glob, TodoWrite
-model: minimax-m2.1
+model: haiku
 ---
 
 You are a lint-fixing specialist. Your task is to fix all linting violations you can

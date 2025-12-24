@@ -47,10 +47,7 @@ class TrivyLinter(BaseLinter):
         # If files are specified, only run if uv.lock or any Dockerfile is in the list
         if files is not None:
             has_uv_lock = any(f.endswith("uv.lock") for f in files)
-            has_dockerfile = any(
-                f.endswith("Dockerfile") or "Dockerfile" in f
-                for f in files
-            )
+            has_dockerfile = any(f.endswith("Dockerfile") or "Dockerfile" in f for f in files)
             if not (has_uv_lock or has_dockerfile):
                 print("No uv.lock or Dockerfile in changed files, skipping trivy linter.")
                 return LinterResult(success=True)

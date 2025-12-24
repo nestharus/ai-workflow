@@ -1,7 +1,7 @@
 ---
 name: fact-surgeon-organizer
 description: Groups overlapping spans and related facts into minimal rewrite operations for the Surgeon pipeline
-model: minimax-m2.1
+model: haiku
 tools: Read, Grep
 ---
 

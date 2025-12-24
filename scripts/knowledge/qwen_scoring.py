@@ -123,9 +123,7 @@ def load_reranker_model(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
-        model_name, trust_remote_code=True
-    )
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name,
         trust_remote_code=True,

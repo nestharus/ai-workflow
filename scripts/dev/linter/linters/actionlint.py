@@ -1,7 +1,5 @@
 """Actionlint GitHub Actions workflow linter."""
 
-from pathlib import Path
-
 from scripts.dev.linter.base import (
     REPO_ROOT,
     BaseLinter,
@@ -35,18 +33,16 @@ class ActionlintLinter(BaseLinter):
         config = load_yaml_config(LINT_ACTIONLINT_CONFIG)
         ignore_patterns: list[str] = config.get("ignore", [])
         included_paths = config.get("included_paths", [])
-        excludes = config.get("excludes", [])
-        glob_patterns = included_paths + excludes
 
         workflows_dir = REPO_ROOT / ".github" / "workflows"
 
         if files is not None:
-            # Filter to only workflow YAML files that match glob patterns
+            # Filter to only workflow YAML files that match include patterns
             workflow_files = [
                 f
                 for f in files
                 if (f.endswith(".yml") or f.endswith(".yaml"))
-                and is_path_included(f, glob_patterns)
+                and is_path_included(f, included_paths)
             ]
             if not workflow_files:
                 print("No GitHub Actions workflow files to check with actionlint")
@@ -56,23 +52,23 @@ class ActionlintLinter(BaseLinter):
             if not workflows_dir.exists():
                 print("No .github/workflows/ directory found for actionlint scan")
                 return LinterResult(success=True)
-            # Enumerate workflow files, respecting glob patterns
+            # Enumerate workflow files, respecting include patterns
             workflow_files = [
-                path
+                str(path)
                 for path in workflows_dir.rglob("*.yml")
                 if path.is_file()
-                and is_path_included(str(path.relative_to(REPO_ROOT)), glob_patterns)
+                and is_path_included(str(path.relative_to(REPO_ROOT)), included_paths)
             ]
             workflow_files.extend(
-                path
+                str(path)
                 for path in workflows_dir.rglob("*.yaml")
                 if path.is_file()
-                and is_path_included(str(path.relative_to(REPO_ROOT)), glob_patterns)
+                and is_path_included(str(path.relative_to(REPO_ROOT)), included_paths)
             )
             if not workflow_files:
                 print("No workflow files found for actionlint scan")
                 return LinterResult(success=True)
-            targets = [str(path) for path in workflow_files]
+            targets = workflow_files
 
         cmd = [actionlint_exe]
         for pattern in ignore_patterns:

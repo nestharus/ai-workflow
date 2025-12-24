@@ -21,7 +21,7 @@ class TestTrivyLinterInit:
     def test_supports_file_filtering(self) -> None:
         """Test supports_file_filtering attribute."""
         linter = TrivyLinter()
-        assert linter.supports_file_filtering is False
+        assert linter.supports_file_filtering is True
 
 
 class TestTrivyLinterRunScanConfiguration:

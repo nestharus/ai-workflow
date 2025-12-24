@@ -1,7 +1,7 @@
 ---
 name: fact-surgeon-rewriter
 description: Applies planned rewrites to remove target facts while preserving anchors
-model: minimax-m2.1
+model: haiku
 tools: Read, Grep
 ---
 

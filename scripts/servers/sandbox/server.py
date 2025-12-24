@@ -14,6 +14,7 @@ import os
 import signal
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -93,12 +94,15 @@ class SandboxServer:
     _shutdown_event: asyncio.Event | None = None
     _shutdown_requested: bool = False  # Track early shutdown requests before event loop
     _server: asyncio.Server | None = None
+    _git_executor: ThreadPoolExecutor | None = None  # Single-threaded executor for git operations
 
     async def start(self) -> None:
         """Start the server."""
         # Initialize asyncio primitives in async context
         self.operation_queue = asyncio.Queue()
         self._shutdown_event = asyncio.Event()
+        # Create a single-threaded executor for git operations to prevent concurrency
+        self._git_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="git-op")
 
         # Check if shutdown was requested before the event loop started
         if self._shutdown_requested:
@@ -145,6 +149,10 @@ class SandboxServer:
 
             with contextlib.suppress(asyncio.CancelledError):
                 await processor_task
+
+            # Shutdown the git executor
+            if self._git_executor is not None:
+                self._git_executor.shutdown(wait=True)
 
             # Remove socket file
             with contextlib.suppress(FileNotFoundError):
@@ -483,9 +491,10 @@ class SandboxServer:
                         queued_op.request_id,
                         queued_op.request.branch,
                     )
-                    loop = asyncio.get_running_loop()
-                    response = await loop.run_in_executor(
-                        None,  # Use default executor
+                    # Use single-threaded executor to prevent concurrent git operations
+                    assert self._git_executor is not None
+                    response = await asyncio.get_running_loop().run_in_executor(
+                        self._git_executor,
                         self._execute_operation,
                         queued_op.request,
                     )
@@ -590,11 +599,16 @@ class SandboxServer:
                 message="Sandbox not initialized",
             ).to_json()
 
+        # Create a progress callback that logs messages
+        def progress_callback(message: str) -> None:
+            logger.info("Operation %s progress: %s", request.request_id, message)
+
         if isinstance(request, RebaseRequest):
             rebase_result = rebase_in_sandbox(
                 self.sandbox_path,
                 request.branch,
                 request.target,
+                progress_callback=progress_callback,
             )
             return self._format_rebase_result(request.request_id, rebase_result, request.branch)
         elif isinstance(request, MergeRequest):

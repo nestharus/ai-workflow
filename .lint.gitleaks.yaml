@@ -1,5 +1,5 @@
 # Lint configuration for gitleaks file filtering
-# Uses glob patterns following coderabbit path_filters format
+# Paths to include in scanning (glob patterns)
 
 # File extensions to exclude (binary/non-text files)
 excluded_extensions:
@@ -32,14 +32,27 @@ excluded_names:
   - uv.lock
   - .secrets.baseline
 
-# Paths to include in scanning (glob patterns, following coderabbit format)
-# Patterns without ! are inclusions, patterns with ! are exclusions
+# Paths to include in scanning (glob patterns)
 included_paths:
+  # Root-level files
   - "*"
+  # App directory
   - "app/**"
+  # Tests directory
   - "tests/**"
+  # Scripts directory
   - "scripts/**"
-  - ".ai/**"
+  # Config directories
   - ".claude/**"
+  - ".ai/**"
   - ".github/**"
-  - "agents/**"
+  # Docs directory (excluding plans and references)
+  - "docs/**"
+  - "!docs/plans/**"
+  - "!docs/references/**"
+  # Exclude surgeon logs anywhere
+  - "!**/surgeon_logs/**"
+  # Exclude audit directory (contains test data with fake secrets)
+  - "!.audit/**"
+  # Exclude sonar cache directory
+  - "!.sonar/**"
