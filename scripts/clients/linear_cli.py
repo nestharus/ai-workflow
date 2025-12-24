@@ -184,6 +184,62 @@ def create_comment(issue_id: str, body: str) -> None:
     print(json.dumps({"ok": True, "data": comment}, indent=2))
 
 
+def get_comment(issue_id: str, title: str) -> None:
+    """Get a comment by title and print result as JSON."""
+    client = LinearClient()
+    comment = client.get_comment_by_title(issue_id=issue_id, title=title)
+    if comment:
+        print(json.dumps({"ok": True, "data": comment}, indent=2))
+    else:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "NOT_FOUND",
+                        "message": f"No comment with title '{title}' found",
+                    },
+                }
+            )
+        )
+        sys.exit(1)
+
+
+def upsert_comment(
+    issue_id: str, title: str, body: str | None = None, body_file: str | None = None
+) -> None:
+    """Create or update a comment by title and print result as JSON.
+
+    Args:
+        issue_id: The issue identifier (e.g., NES-24)
+        title: The comment title to match/create
+        body: Comment body text (mutually exclusive with body_file)
+        body_file: Path to file containing comment body (mutually exclusive with body)
+    """
+    # Read body from file if provided
+    if body_file:
+        with open(body_file, encoding="utf-8") as f:
+            body = f.read()
+
+    if not body:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "INVALID_INPUT",
+                        "message": "Either --body or --body-file must be provided",
+                    },
+                }
+            )
+        )
+        sys.exit(2)
+
+    client = LinearClient()
+    comment = client.upsert_comment(issue_id=issue_id, title=title, body=body)
+    print(json.dumps({"ok": True, "data": comment}, indent=2))
+
+
 def main() -> None:
     """Parse arguments and dispatch to appropriate command."""
     parser = JsonArgumentParser(
@@ -247,6 +303,22 @@ def main() -> None:
     create_comment_parser.add_argument("issue_id", help="Issue ID (e.g., NES-24)")
     create_comment_parser.add_argument("--body", required=True, help="Comment body")
 
+    # get-comment command
+    get_comment_parser = subparsers.add_parser("get-comment", help="Get a comment by title")
+    get_comment_parser.add_argument("issue_id", help="Issue ID (e.g., NES-24)")
+    get_comment_parser.add_argument("--title", required=True, help="Comment title to search for")
+
+    # upsert-comment command
+    upsert_comment_parser = subparsers.add_parser(
+        "upsert-comment", help="Create or update a comment by title"
+    )
+    upsert_comment_parser.add_argument("issue_id", help="Issue ID (e.g., NES-24)")
+    upsert_comment_parser.add_argument(
+        "--title", required=True, help="Comment title to match/create"
+    )
+    upsert_comment_parser.add_argument("--body", help="Comment body")
+    upsert_comment_parser.add_argument("--body-file", help="Path to file containing comment body")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -258,7 +330,7 @@ def main() -> None:
                         "code": "INVALID_INPUT",
                         "message": "A command is required. Available commands: get-issue, "
                         "list-projects, list-teams, list-comments, create-issue, "
-                        "update-issue, create-comment",
+                        "update-issue, create-comment, get-comment, upsert-comment",
                     },
                 }
             )
@@ -293,6 +365,15 @@ def main() -> None:
             )
         elif args.command == "create-comment":
             create_comment(issue_id=args.issue_id, body=args.body)
+        elif args.command == "get-comment":
+            get_comment(issue_id=args.issue_id, title=args.title)
+        elif args.command == "upsert-comment":
+            upsert_comment(
+                issue_id=args.issue_id,
+                title=args.title,
+                body=args.body,
+                body_file=args.body_file,
+            )
     except LinearClientError as e:
         print(json.dumps({"ok": False, "error": {"code": e.code, "message": e.message}}))
         sys.exit(1)

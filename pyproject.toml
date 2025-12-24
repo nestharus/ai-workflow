@@ -44,6 +44,7 @@ test = [
 # Linters, formatters, type checkers, and pre-commit hooks
 dev = [
     { include-group = "test" },
+    "pyyaml>=6.0.3,<6.1.0",
     "mypy>=1.18.2,<1.19.0",
     "ruff>=0.14.10,<0.15",
     "checkov>=3.2.495,<3.3",
@@ -59,7 +60,6 @@ dev = [
 knowledge = [
     { include-group = "test" },
     "duckdb>=1.4.3,<1.5.0",
-    "pyyaml>=6.0.3,<6.1.0",
     "spacy>=3.8.11,<3.9.0",
     "transformers>=4.57.3,<4.58.0",
     "accelerate>=1.12.0,<1.13.0",
@@ -84,6 +84,9 @@ lint = "scripts.dev.linter.lint_cli:main"
 # GitHub PR operations
 "pr" = "scripts.pr.client:main"
 "pr.sandbox" = "scripts.servers.sandbox.server:main"
+# Planning and code generation state machines
+"planner" = "scripts.planner.client:main"
+"codegen" = "scripts.codegen.client:main"
 # Review scripts
 "review.coderabbit" = "scripts.dev.review.coderabbit_review:main"
 "review.sonar" = "scripts.dev.review.sonar_review:main"

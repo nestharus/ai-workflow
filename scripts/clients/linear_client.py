@@ -12,7 +12,7 @@ import re
 import threading
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, cast
 
 LINEAR_API_URL = "https://api.linear.app/graphql"
 
@@ -1144,6 +1144,132 @@ mutation($issueId: String!, $stateId: String!) {
         if not issue_update.get("success"):
             raise LinearClientError("API_ERROR", f"Failed to update state for issue: {issue_uuid}")
         return {"stateName": issue_update.get("issue", {}).get("state", {}).get("name")}
+
+    def update_comment(self, comment_id: str, body: str) -> dict[str, Any]:
+        """Update an existing comment on a Linear issue.
+
+        Args:
+            comment_id: Comment UUID to update.
+            body: The new comment body in Markdown format.
+
+        Returns:
+            Dictionary containing the updated comment data:
+            - id: Comment UUID
+            - body: Comment body text
+            - updatedAt: ISO timestamp when comment was updated
+
+        Raises:
+            LinearClientError: If the comment is not found or API call fails.
+        """
+        mutation = """
+mutation CommentUpdate($id: String!, $input: CommentUpdateInput!) {
+  commentUpdate(id: $id, input: $input) {
+    success
+    comment {
+      id
+      body
+      updatedAt
+    }
+  }
+}
+"""
+        variables = {"id": comment_id, "input": {"body": body}}
+        result = self._run_graphql(mutation, variables)
+
+        comment_update = result.get("data", {}).get("commentUpdate", {})
+        if not (isinstance(comment_update, dict) and comment_update.get("success")):
+            raise LinearClientError(
+                "API_ERROR",
+                f"Failed to update comment: {comment_id}",
+            )
+
+        comment = comment_update.get("comment", {})
+        return {
+            "id": comment.get("id"),
+            "body": comment.get("body"),
+            "updatedAt": comment.get("updatedAt"),
+        }
+
+    def get_comment_by_title(self, issue_id: str, title: str) -> dict[str, Any] | None:
+        """Find a comment by its title (first line or # header).
+
+        Searches through all comments on an issue and returns the first one
+        whose body starts with the given title (with or without # prefix).
+
+        Args:
+            issue_id: Issue identifier (e.g., "NES-123") or UUID.
+            title: The title to search for (e.g., "Architecture Design").
+
+        Returns:
+            Comment dictionary if found, None otherwise. Contains:
+            - id: Comment UUID
+            - body: Comment body text
+            - createdAt: ISO timestamp
+            - updatedAt: ISO timestamp
+
+        Raises:
+            LinearClientError: If the issue is not found or API call fails.
+        """
+        comments_result = self.list_comments(issue_id)
+        comments = comments_result.get("comments", [])
+
+        # Normalize title for matching
+        title_normalized = title.strip().lstrip("#").strip()
+
+        for comment in comments:
+            body = comment.get("body", "")
+            if not body:
+                continue
+
+            # Get first line and normalize
+            first_line = body.split("\n")[0].strip().lstrip("#").strip()
+
+            if first_line == title_normalized:
+                return cast("dict[str, Any]", comment)
+
+        return None
+
+    def upsert_comment(self, issue_id: str, title: str, body: str) -> dict[str, Any]:
+        r"""Create or update a comment by title.
+
+        If a comment with the given title exists, updates it. Otherwise creates
+        a new comment. The title should be the first line of the body.
+
+        Args:
+            issue_id: Issue identifier (e.g., "NES-123") or UUID.
+            title: The title for the comment (will be matched against first line).
+            body: The full comment body in Markdown format. Should start with
+                the title (e.g., "# Architecture Design\n\n...").
+
+        Returns:
+            Dictionary containing the comment data:
+            - id: Comment UUID
+            - body: Comment body text
+            - createdAt: ISO timestamp (for new comments)
+            - updatedAt: ISO timestamp (for updated comments)
+            - created: Boolean indicating if comment was newly created
+
+        Raises:
+            LinearClientError: If the issue is not found or API call fails.
+        """
+        existing = self.get_comment_by_title(issue_id, title)
+
+        if existing:
+            updated = self.update_comment(existing["id"], body)
+            return {
+                "id": updated["id"],
+                "body": updated["body"],
+                "updatedAt": updated["updatedAt"],
+                "created": False,
+            }
+        else:
+            created = self.create_comment(issue_id, body)
+            return {
+                "id": created["id"],
+                "body": created["body"],
+                "createdAt": created["createdAt"],
+                "created": True,
+            }
 
     def list_unresolved_comments(self, issue_id: str) -> dict[str, Any]:
         """List unresolved comments for a Linear issue with pagination.

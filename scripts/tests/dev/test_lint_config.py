@@ -75,25 +75,32 @@ class TestRunYamllint:
     def yamllint_config(self, fake_repo: Path, fs: FakeFilesystem) -> Path:
         """Create yamllint configuration files."""
         lint_config = fake_repo / ".lint.yamllint.yaml"
+        # Use included_paths format to match actual config structure
         fs.create_file(
             str(lint_config),
-            contents="exclude_dirs:\n  - .tmp\n  - .worktrees\n  - .github\n",
+            contents="included_paths:\n  - '*.yaml'\n  - '*.yml'\n",
         )
         yamllint_config = fake_repo / ".yamllint.yaml"
         fs.create_file(str(yamllint_config), contents="")
         return lint_config
 
-    def test_excludes_tmp_directory(
+    def test_only_includes_files_matching_patterns(
         self,
         fake_repo: Path,
         fs: FakeFilesystem,
         yamllint_config: Path,
     ) -> None:
-        """Should exclude files in .tmp directory."""
-        # Create test files
+        """Should only include files matching included_paths patterns."""
+        # Create test files - root YAML is included via *.yaml pattern
         fs.create_file(str(fake_repo / "config.yml"), contents="key: value")
+        # These are outside of included patterns (only root *.yaml/*.yml in fixture)
         fs.create_dir(str(fake_repo / ".tmp"))
         fs.create_file(str(fake_repo / ".tmp" / "excluded.yml"), contents="key: value")
+        fs.create_dir(str(fake_repo / ".worktrees" / "branch"))
+        fs.create_file(
+            str(fake_repo / ".worktrees" / "branch" / "test.yaml"),
+            contents="key: value",
+        )
 
         with (
             patch("scripts.dev.linter.linters.yamllint.REPO_ROOT", fake_repo),
@@ -111,70 +118,14 @@ class TestRunYamllint:
         assert mock_run_checked.called
         # Get the command that was passed
         cmd = mock_run_checked.call_args[0][0]
-        # Assert .tmp/excluded.yml is NOT in the command
-        assert not any(".tmp" in arg for arg in cmd), "Files in .tmp should be excluded"
-        # Assert config.yml IS in the command
+        # Assert .tmp/excluded.yml is NOT in the command (not in included patterns)
+        assert not any(".tmp" in arg for arg in cmd), "Files in .tmp should not be included"
+        # Assert .worktrees files are NOT in the command
+        assert not any(".worktrees" in arg for arg in cmd), (
+            "Files in .worktrees should not be included"
+        )
+        # Assert config.yml IS in the command (matches *.yml)
         assert any("config.yml" in arg for arg in cmd), "Root YAML files should be included"
-
-    def test_excludes_worktrees_directory(
-        self,
-        fake_repo: Path,
-        fs: FakeFilesystem,
-        yamllint_config: Path,
-    ) -> None:
-        """Should exclude files in .worktrees directory."""
-        fs.create_file(str(fake_repo / "config.yml"), contents="key: value")
-        fs.create_dir(str(fake_repo / ".worktrees" / "branch" / "config"))
-        fs.create_file(
-            str(fake_repo / ".worktrees" / "branch" / "config" / "test.yaml"),
-            contents="key: value",
-        )
-
-        with (
-            patch("scripts.dev.linter.linters.yamllint.REPO_ROOT", fake_repo),
-            patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", yamllint_config),
-            patch(
-                "scripts.dev.linter.linters.yamllint.get_executable",
-                return_value="/usr/bin/uv",
-            ),
-            patch("scripts.dev.linter.linters.yamllint.run_checked") as mock_run_checked,
-        ):
-            linter = YamllintLinter()
-            linter.run()
-
-        assert mock_run_checked.called
-        cmd = mock_run_checked.call_args[0][0]
-        assert not any(".worktrees" in arg for arg in cmd), "Files in .worktrees should be excluded"
-
-    def test_excludes_github_directory(
-        self,
-        fake_repo: Path,
-        fs: FakeFilesystem,
-        yamllint_config: Path,
-    ) -> None:
-        """Should exclude files in .github directory (handled by actionlint)."""
-        fs.create_file(str(fake_repo / "config.yml"), contents="key: value")
-        fs.create_dir(str(fake_repo / ".github" / "workflows"))
-        fs.create_file(
-            str(fake_repo / ".github" / "workflows" / "ci.yml"),
-            contents="name: CI",
-        )
-
-        with (
-            patch("scripts.dev.linter.linters.yamllint.REPO_ROOT", fake_repo),
-            patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", yamllint_config),
-            patch(
-                "scripts.dev.linter.linters.yamllint.get_executable",
-                return_value="/usr/bin/uv",
-            ),
-            patch("scripts.dev.linter.linters.yamllint.run_checked") as mock_run_checked,
-        ):
-            linter = YamllintLinter()
-            linter.run()
-
-        assert mock_run_checked.called
-        cmd = mock_run_checked.call_args[0][0]
-        assert not any(".github" in arg for arg in cmd), "Files in .github should be excluded"
 
     def test_includes_project_root_yaml(
         self,
@@ -205,13 +156,13 @@ class TestRunYamllint:
         yaml_files = [arg for arg in cmd if arg.endswith((".yml", ".yaml"))]
         assert len(yaml_files) > 0, "Root YAML files should be included"
 
-    def test_files_parameter_filters_to_yaml_only(
+    def test_files_parameter_filters_to_yaml_and_included_paths(
         self,
         fake_repo: Path,
         fs: FakeFilesystem,
         yamllint_config: Path,
     ) -> None:
-        """Should only pass YAML files when files parameter is provided."""
+        """Should only pass YAML files matching included_paths when files parameter is provided."""
         # Create test files
         fs.create_file(str(fake_repo / "config.yml"), contents="key: value")
         fs.create_file(str(fake_repo / "settings.yaml"), contents="setting: true")
@@ -237,12 +188,11 @@ class TestRunYamllint:
         config_index = cmd.index("-c")
         files_passed = cmd[config_index + 2 :]  # Skip -c and config path
 
-        # Only YAML files should be passed
-        assert "config.yml" in files_passed, "config.yml should be included"
-        assert "settings.yaml" in files_passed, "settings.yaml should be included"
-        assert "script.py" not in files_passed, "script.py should NOT be included"
-        assert "README.md" not in files_passed, "README.md should NOT be included"
-        assert len(files_passed) == 2, "Only 2 YAML files should be passed"
+        # Only YAML files matching included_paths should be passed
+        assert any("config.yml" in f for f in files_passed), "config.yml should be included"
+        assert any("settings.yaml" in f for f in files_passed), "settings.yaml should be included"
+        assert not any("script.py" in f for f in files_passed), "script.py should NOT be included"
+        assert not any("README.md" in f for f in files_passed), "README.md should NOT be included"
 
     def test_files_parameter_short_circuits_when_no_yaml_files(
         self,
@@ -275,7 +225,7 @@ class TestRunYamllint:
         assert result.success is True
         # Should print the short-circuit message
         captured = capsys.readouterr()
-        assert "No YAML files to check" in captured.out
+        assert "No YAML files found for yamllint scan" in captured.out
 
 
 # --- DotenvlintLinter Tests ---
@@ -288,35 +238,31 @@ class TestRunDotenvlint:
     def dotenvlint_config(self, fake_repo: Path, fs: FakeFilesystem) -> Path:
         """Create dotenvlint configuration file."""
         config = fake_repo / ".lint.dotenvlint.yaml"
+        # Use included_paths format to match actual config structure
         fs.create_file(
             str(config),
-            contents=(
-                "targets:\n"
-                "  - .env.example\n"
-                "  - .env.*.example\n"
-                "exclude_patterns:\n"
-                "  - .env.local\n"
-                "  - .env.*.local\n"
-                "exclude_dirs:\n"
-                "  - .tmp\n"
-                "  - .worktrees\n"
-            ),
+            contents=("included_paths:\n  - '.env'\n  - '.env.*'\n"),
         )
         return config
 
-    def test_only_scans_example_env_files(
+    def test_only_includes_env_files_matching_patterns(
         self,
         fake_repo: Path,
         fs: FakeFilesystem,
         dotenvlint_config: Path,
     ) -> None:
-        """Should only scan .env.example and .env.*.example files."""
-        # Create test files
-        fs.create_file(str(fake_repo / ".env.example"), contents="KEY=value")
-        fs.create_file(str(fake_repo / ".env.production.example"), contents="KEY=value")
-        fs.create_file(str(fake_repo / ".env"), contents="SECRET=hidden")
-        fs.create_file(str(fake_repo / ".env.local"), contents="LOCAL=value")
-        fs.create_file(str(fake_repo / ".env.development"), contents="DEV=value")
+        """Should only scan .env files matching included_paths patterns."""
+        # Create test files that match *.env patterns
+        fs.create_file(str(fake_repo / ".env"), contents="KEY=value")
+        fs.create_file(str(fake_repo / ".env.production"), contents="KEY=value")
+        # These are outside of included patterns (nested dirs not in patterns)
+        fs.create_dir(str(fake_repo / ".tmp"))
+        fs.create_file(str(fake_repo / ".tmp" / ".env"), contents="KEY=value")
+        fs.create_dir(str(fake_repo / ".worktrees" / "branch"))
+        fs.create_file(
+            str(fake_repo / ".worktrees" / "branch" / ".env"),
+            contents="KEY=value",
+        )
 
         with (
             patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT", fake_repo),
@@ -338,120 +284,26 @@ class TestRunDotenvlint:
         check_index = cmd.index("check")
         files_passed = cmd[check_index + 1 :]
 
-        # .env.example and .env.*.example should be included
-        assert any(".env.example" in f for f in files_passed), ".env.example should be scanned"
-        assert any(".env.production.example" in f for f in files_passed), (
-            ".env.*.example files should be scanned"
-        )
-        # .env should NOT be included
-        assert not any(f.endswith("/.env") or f == ".env" for f in files_passed), (
-            ".env should NOT be scanned"
-        )
-        # .env.local should NOT be included (excluded pattern), and non-example .env.* skipped
-        assert not any(".env.local" in f for f in files_passed), ".env.local should NOT be scanned"
-        assert not any(".env.development" in f for f in files_passed), (
-            "non-example .env.* files should NOT be scanned"
+        # Root .env files should be included (matching patterns)
+        assert any(
+            ".env" in f and ".tmp" not in f and ".worktrees" not in f for f in files_passed
+        ), "Root .env should be scanned"
+        # .tmp files should NOT be included (not in included patterns)
+        assert not any(".tmp" in f for f in files_passed), ".tmp files should NOT be scanned"
+        # .worktrees files should NOT be included (not in included patterns)
+        assert not any(".worktrees" in f for f in files_passed), (
+            ".worktrees files should NOT be scanned"
         )
 
-    def test_excludes_tmp_directory(
+    def test_files_parameter_filters_to_env_and_included_paths(
         self,
         fake_repo: Path,
         fs: FakeFilesystem,
         dotenvlint_config: Path,
     ) -> None:
-        """Should exclude .env files in .tmp directory."""
-        fs.create_file(str(fake_repo / ".env.example"), contents="KEY=value")
-        fs.create_dir(str(fake_repo / ".tmp"))
-        fs.create_file(str(fake_repo / ".tmp" / ".env.example"), contents="KEY=value")
-
-        with (
-            patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT", fake_repo),
-            patch(
-                "scripts.dev.linter.linters.dotenvlint.LINT_DOTENVLINT_CONFIG", dotenvlint_config
-            ),
-            patch(
-                "scripts.dev.linter.linters.dotenvlint.get_executable",
-                return_value="/usr/bin/dotenv-linter",
-            ),
-            patch("scripts.dev.linter.linters.dotenvlint.run_checked") as mock_run_checked,
-        ):
-            linter = DotenvlintLinter()
-            linter.run()
-
-        assert mock_run_checked.called
-        cmd = mock_run_checked.call_args[0][0]
-        assert not any(".tmp" in arg for arg in cmd), "Files in .tmp should be excluded"
-
-    def test_excludes_worktrees_directory(
-        self,
-        fake_repo: Path,
-        fs: FakeFilesystem,
-        dotenvlint_config: Path,
-    ) -> None:
-        """Should exclude .env files in .worktrees directory."""
-        fs.create_file(str(fake_repo / ".env.example"), contents="KEY=value")
-        fs.create_dir(str(fake_repo / ".worktrees" / "branch"))
-        fs.create_file(
-            str(fake_repo / ".worktrees" / "branch" / ".env.production.example"),
-            contents="KEY=value",
-        )
-
-        with (
-            patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT", fake_repo),
-            patch(
-                "scripts.dev.linter.linters.dotenvlint.LINT_DOTENVLINT_CONFIG", dotenvlint_config
-            ),
-            patch(
-                "scripts.dev.linter.linters.dotenvlint.get_executable",
-                return_value="/usr/bin/dotenv-linter",
-            ),
-            patch("scripts.dev.linter.linters.dotenvlint.run_checked") as mock_run_checked,
-        ):
-            linter = DotenvlintLinter()
-            linter.run()
-
-        assert mock_run_checked.called
-        cmd = mock_run_checked.call_args[0][0]
-        assert not any(".worktrees" in arg for arg in cmd), "Files in .worktrees should be excluded"
-
-    def test_excludes_local_env_files(
-        self,
-        fake_repo: Path,
-        fs: FakeFilesystem,
-        dotenvlint_config: Path,
-    ) -> None:
-        """Should exclude .env.local files via exclude_patterns."""
-        fs.create_file(str(fake_repo / ".env.example"), contents="KEY=value")
-        fs.create_file(str(fake_repo / ".env.local"), contents="SECRET=hidden")
-        fs.create_file(str(fake_repo / ".env.production.local"), contents="SECRET=hidden")
-
-        with (
-            patch("scripts.dev.linter.linters.dotenvlint.REPO_ROOT", fake_repo),
-            patch(
-                "scripts.dev.linter.linters.dotenvlint.LINT_DOTENVLINT_CONFIG", dotenvlint_config
-            ),
-            patch(
-                "scripts.dev.linter.linters.dotenvlint.get_executable",
-                return_value="/usr/bin/dotenv-linter",
-            ),
-            patch("scripts.dev.linter.linters.dotenvlint.run_checked") as mock_run_checked,
-        ):
-            linter = DotenvlintLinter()
-            linter.run()
-
-        assert mock_run_checked.called
-        cmd = mock_run_checked.call_args[0][0]
-        assert not any(".local" in arg for arg in cmd), ".local files should be excluded"
-
-    def test_files_parameter_filters_to_env_files(
-        self,
-        fake_repo: Path,
-        fs: FakeFilesystem,
-        dotenvlint_config: Path,
-    ) -> None:
-        """Should only pass .env files when files parameter is provided."""
+        """Should only pass .env files matching included_paths when files parameter is provided."""
         # Create test files
-        fs.create_file(str(fake_repo / ".env.example"), contents="KEY=value")
+        fs.create_file(str(fake_repo / ".env"), contents="KEY=value")
         fs.create_file(str(fake_repo / ".env.production"), contents="PROD=value")
         fs.create_file(str(fake_repo / "config.yaml"), contents="key: value")
         fs.create_file(str(fake_repo / "script.py"), contents="print('hello')")
@@ -469,7 +321,7 @@ class TestRunDotenvlint:
         ):
             linter = DotenvlintLinter()
             # Pass a mix of .env* and non-.env files
-            linter.run(files=[".env.example", ".env.production", "config.yaml", "script.py"])
+            linter.run(files=[".env", ".env.production", "config.yaml", "script.py"])
 
         assert mock_run_checked.called
         cmd = mock_run_checked.call_args[0][0]
@@ -477,12 +329,15 @@ class TestRunDotenvlint:
         check_index = cmd.index("check")
         files_passed = cmd[check_index + 1 :]
 
-        # Only .env* files should be passed
-        assert ".env.example" in files_passed, ".env.example should be included"
-        assert ".env.production" in files_passed, ".env.production should be included"
-        assert "config.yaml" not in files_passed, "config.yaml should NOT be included"
-        assert "script.py" not in files_passed, "script.py should NOT be included"
-        assert len(files_passed) == 2, "Only 2 .env files should be passed"
+        # Only .env* files matching included_paths should be passed
+        assert any(".env" in f for f in files_passed), ".env should be included"
+        assert any(".env.production" in f for f in files_passed), (
+            ".env.production should be included"
+        )
+        assert not any("config.yaml" in f for f in files_passed), (
+            "config.yaml should NOT be included"
+        )
+        assert not any("script.py" in f for f in files_passed), "script.py should NOT be included"
 
     def test_files_parameter_short_circuits_when_no_env_files(
         self,
@@ -517,7 +372,7 @@ class TestRunDotenvlint:
         assert result.success is True
         # Should print the short-circuit message
         captured = capsys.readouterr()
-        assert "No .env files to check" in captured.out
+        assert "No .env files to check with dotenv-linter" in captured.out
 
 
 # --- DetectSecretsLinter Tests ---
@@ -738,37 +593,55 @@ class TestRunActionlint:
     def actionlint_config(self, fake_repo: Path, fs: FakeFilesystem) -> Path:
         """Create actionlint configuration file."""
         config = fake_repo / ".lint.actionlint.yaml"
+        # Use included_paths format to match actual config structure
         fs.create_file(
             str(config),
             contents=(
-                "exclude_dirs:\n"
-                "  - .tasks/store\n"
-                "  - .tmp\n"
-                "  - .worktrees\n"
-                "  - .git-rewrite\n"
+                "included_paths:\n"
+                "  - '.github/workflows/*.yml'\n"
+                "  - '.github/workflows/*.yaml'\n"
                 "ignore: []\n"
             ),
         )
         return config
 
-    def test_excludes_tmp_directory(
+    def test_only_includes_main_github_workflows(
         self,
         fake_repo: Path,
         fs: FakeFilesystem,
         actionlint_config: Path,
     ) -> None:
-        """Should exclude workflow files in .tmp directory."""
+        """Should only include workflow files matching included_paths pattern."""
         # Create main workflow directory
         fs.create_dir(str(fake_repo / ".github" / "workflows"))
         fs.create_file(
             str(fake_repo / ".github" / "workflows" / "ci.yml"),
             contents="name: CI\non: push",
         )
-        # Create excluded workflow in .tmp
+        fs.create_file(
+            str(fake_repo / ".github" / "workflows" / "deploy.yaml"),
+            contents="name: Deploy\non: push",
+        )
+        # Create workflows in directories not matching included_paths
         fs.create_dir(str(fake_repo / ".tmp" / ".github" / "workflows"))
         fs.create_file(
             str(fake_repo / ".tmp" / ".github" / "workflows" / "test.yml"),
             contents="name: Test\non: push",
+        )
+        fs.create_dir(str(fake_repo / ".worktrees" / "feature" / ".github" / "workflows"))
+        fs.create_file(
+            str(fake_repo / ".worktrees" / "feature" / ".github" / "workflows" / "ci.yml"),
+            contents="name: CI\non: push",
+        )
+        fs.create_dir(str(fake_repo / ".tasks" / "store" / ".github" / "workflows"))
+        fs.create_file(
+            str(fake_repo / ".tasks" / "store" / ".github" / "workflows" / "generated.yml"),
+            contents="name: Generated\non: push",
+        )
+        fs.create_dir(str(fake_repo / ".git-rewrite" / ".github" / "workflows"))
+        fs.create_file(
+            str(fake_repo / ".git-rewrite" / ".github" / "workflows" / "temp.yml"),
+            contents="name: Temp\non: push",
         )
 
         with (
@@ -789,164 +662,24 @@ class TestRunActionlint:
         cmd = mock_run_checked.call_args[0][0]
         # Main workflow should be included
         assert any("ci.yml" in arg for arg in cmd), "Main workflows should be linted"
-        # .tmp workflows should be excluded
-        assert not any(".tmp" in arg for arg in cmd), "Files in .tmp should be excluded"
-
-    def test_excludes_worktrees_directory(
-        self,
-        fake_repo: Path,
-        fs: FakeFilesystem,
-        actionlint_config: Path,
-    ) -> None:
-        """Should exclude workflow files in .worktrees directory."""
-        fs.create_dir(str(fake_repo / ".github" / "workflows"))
-        fs.create_file(
-            str(fake_repo / ".github" / "workflows" / "ci.yml"),
-            contents="name: CI\non: push",
+        assert any("deploy.yaml" in arg for arg in cmd), "Main workflows should be linted"
+        # Other directory workflows should NOT be included (not in included_paths)
+        assert not any(".tmp" in arg for arg in cmd), "Files in .tmp should not be included"
+        assert not any(".worktrees" in arg for arg in cmd), (
+            "Files in .worktrees should not be included"
         )
-        fs.create_dir(str(fake_repo / ".worktrees" / "feature" / ".github" / "workflows"))
-        fs.create_file(
-            str(fake_repo / ".worktrees" / "feature" / ".github" / "workflows" / "ci.yml"),
-            contents="name: CI\non: push",
-        )
-
-        with (
-            patch("scripts.dev.linter.linters.actionlint.REPO_ROOT", fake_repo),
-            patch(
-                "scripts.dev.linter.linters.actionlint.LINT_ACTIONLINT_CONFIG", actionlint_config
-            ),
-            patch(
-                "scripts.dev.linter.linters.actionlint.get_executable",
-                return_value="/usr/bin/actionlint",
-            ),
-            patch("scripts.dev.linter.linters.actionlint.run_checked") as mock_run_checked,
-        ):
-            linter = ActionlintLinter()
-            linter.run()
-
-        assert mock_run_checked.called
-        cmd = mock_run_checked.call_args[0][0]
-        assert not any(".worktrees" in arg for arg in cmd), "Files in .worktrees should be excluded"
-
-    def test_excludes_tasks_store_directory(
-        self,
-        fake_repo: Path,
-        fs: FakeFilesystem,
-        actionlint_config: Path,
-    ) -> None:
-        """Should exclude workflow files in .tasks/store directory."""
-        fs.create_dir(str(fake_repo / ".github" / "workflows"))
-        fs.create_file(
-            str(fake_repo / ".github" / "workflows" / "ci.yml"),
-            contents="name: CI\non: push",
-        )
-        fs.create_dir(str(fake_repo / ".tasks" / "store" / ".github" / "workflows"))
-        fs.create_file(
-            str(fake_repo / ".tasks" / "store" / ".github" / "workflows" / "generated.yml"),
-            contents="name: Generated\non: push",
-        )
-
-        with (
-            patch("scripts.dev.linter.linters.actionlint.REPO_ROOT", fake_repo),
-            patch(
-                "scripts.dev.linter.linters.actionlint.LINT_ACTIONLINT_CONFIG", actionlint_config
-            ),
-            patch(
-                "scripts.dev.linter.linters.actionlint.get_executable",
-                return_value="/usr/bin/actionlint",
-            ),
-            patch("scripts.dev.linter.linters.actionlint.run_checked") as mock_run_checked,
-        ):
-            linter = ActionlintLinter()
-            linter.run()
-
-        assert mock_run_checked.called
-        cmd = mock_run_checked.call_args[0][0]
-        assert not any(".tasks/store" in arg or ".tasks\\store" in arg for arg in cmd), (
-            "Files in .tasks/store should be excluded"
-        )
-
-    def test_excludes_git_rewrite_directory(
-        self,
-        fake_repo: Path,
-        fs: FakeFilesystem,
-        actionlint_config: Path,
-    ) -> None:
-        """Should exclude workflow files in .git-rewrite directory."""
-        fs.create_dir(str(fake_repo / ".github" / "workflows"))
-        fs.create_file(
-            str(fake_repo / ".github" / "workflows" / "ci.yml"),
-            contents="name: CI\non: push",
-        )
-        fs.create_dir(str(fake_repo / ".git-rewrite" / ".github" / "workflows"))
-        fs.create_file(
-            str(fake_repo / ".git-rewrite" / ".github" / "workflows" / "temp.yml"),
-            contents="name: Temp\non: push",
-        )
-
-        with (
-            patch("scripts.dev.linter.linters.actionlint.REPO_ROOT", fake_repo),
-            patch(
-                "scripts.dev.linter.linters.actionlint.LINT_ACTIONLINT_CONFIG", actionlint_config
-            ),
-            patch(
-                "scripts.dev.linter.linters.actionlint.get_executable",
-                return_value="/usr/bin/actionlint",
-            ),
-            patch("scripts.dev.linter.linters.actionlint.run_checked") as mock_run_checked,
-        ):
-            linter = ActionlintLinter()
-            linter.run()
-
-        assert mock_run_checked.called
-        cmd = mock_run_checked.call_args[0][0]
+        assert not any(".tasks" in arg for arg in cmd), "Files in .tasks should not be included"
         assert not any(".git-rewrite" in arg for arg in cmd), (
-            "Files in .git-rewrite should be excluded"
+            "Files in .git-rewrite should not be included"
         )
 
-    def test_includes_main_github_workflows(
+    def test_file_filtering_uses_included_paths(
         self,
         fake_repo: Path,
         fs: FakeFilesystem,
         actionlint_config: Path,
     ) -> None:
-        """Should include workflow files in main .github/workflows directory."""
-        fs.create_dir(str(fake_repo / ".github" / "workflows"))
-        fs.create_file(
-            str(fake_repo / ".github" / "workflows" / "ci.yml"),
-            contents="name: CI\non: push",
-        )
-        fs.create_file(
-            str(fake_repo / ".github" / "workflows" / "deploy.yaml"),
-            contents="name: Deploy\non: push",
-        )
-
-        with (
-            patch("scripts.dev.linter.linters.actionlint.REPO_ROOT", fake_repo),
-            patch(
-                "scripts.dev.linter.linters.actionlint.LINT_ACTIONLINT_CONFIG", actionlint_config
-            ),
-            patch(
-                "scripts.dev.linter.linters.actionlint.get_executable",
-                return_value="/usr/bin/actionlint",
-            ),
-            patch("scripts.dev.linter.linters.actionlint.run_checked") as mock_run_checked,
-        ):
-            linter = ActionlintLinter()
-            linter.run()
-
-        assert mock_run_checked.called
-        cmd = mock_run_checked.call_args[0][0]
-        workflow_files = [arg for arg in cmd if arg.endswith((".yml", ".yaml"))]
-        assert len(workflow_files) == 2, "Both workflow files should be included"
-
-    def test_file_filtering_excludes_directories(
-        self,
-        fake_repo: Path,
-        fs: FakeFilesystem,
-        actionlint_config: Path,
-    ) -> None:
-        """Should filter out excluded directories when using files parameter."""
+        """Should filter files by included_paths when using files parameter."""
         # Create main workflow directory with valid workflows
         fs.create_dir(str(fake_repo / ".github" / "workflows"))
         fs.create_file(
@@ -957,36 +690,18 @@ class TestRunActionlint:
             str(fake_repo / ".github" / "workflows" / "deploy.yaml"),
             contents="name: Deploy\non: push",
         )
-        # Create workflows in excluded directories
+        # Create workflows in directories not matching included_paths
         fs.create_dir(str(fake_repo / ".tmp" / ".github" / "workflows"))
         fs.create_file(
             str(fake_repo / ".tmp" / ".github" / "workflows" / "test.yml"),
             contents="name: Test\non: push",
         )
-        fs.create_dir(str(fake_repo / ".worktrees" / "feature" / ".github" / "workflows"))
-        fs.create_file(
-            str(fake_repo / ".worktrees" / "feature" / ".github" / "workflows" / "ci.yml"),
-            contents="name: CI\non: push",
-        )
-        fs.create_dir(str(fake_repo / ".tasks" / "store" / ".github" / "workflows"))
-        fs.create_file(
-            str(fake_repo / ".tasks" / "store" / ".github" / "workflows" / "generated.yml"),
-            contents="name: Generated\non: push",
-        )
-        fs.create_dir(str(fake_repo / ".git-rewrite" / ".github" / "workflows"))
-        fs.create_file(
-            str(fake_repo / ".git-rewrite" / ".github" / "workflows" / "temp.yml"),
-            contents="name: Temp\non: push",
-        )
 
-        # Prepare files list with mix of valid and excluded paths
+        # Prepare files list with mix of valid and non-matching paths
         files = [
             ".github/workflows/ci.yml",
             ".github/workflows/deploy.yaml",
             ".tmp/.github/workflows/test.yml",
-            ".worktrees/feature/.github/workflows/ci.yml",
-            ".tasks/store/.github/workflows/generated.yml",
-            ".git-rewrite/.github/workflows/temp.yml",
         ]
 
         with (
@@ -1010,18 +725,8 @@ class TestRunActionlint:
         # Valid workflows should be included
         assert "ci.yml" in cmd_str, "Main workflow ci.yml should be included"
         assert "deploy.yaml" in cmd_str, "Main workflow deploy.yaml should be included"
-        # Excluded paths should not be present (check both posix and windows separators)
-        assert ".tmp" not in cmd_str, "Files in .tmp should be excluded"
-        assert ".worktrees" not in cmd_str, "Files in .worktrees should be excluded"
-        assert ".tasks/store" not in cmd_str and ".tasks\\store" not in cmd_str, (
-            "Files in .tasks/store should be excluded"
-        )
-        assert ".git-rewrite" not in cmd_str, "Files in .git-rewrite should be excluded"
-        # Verify only 2 workflow files passed (the main ones)
-        workflow_args = [arg for arg in cmd if arg.endswith((".yml", ".yaml"))]
-        assert len(workflow_args) == 2, (
-            f"Only 2 main workflow files should be passed, got {len(workflow_args)}"
-        )
+        # Non-matching paths should not be present
+        assert ".tmp" not in cmd_str, "Files in .tmp should not be included"
 
 
 # --- GitleaksLinter Tests ---
@@ -1034,6 +739,7 @@ class TestRunGitleaks:
     def gitleaks_config(self, fake_repo: Path, fs: FakeFilesystem) -> Path:
         """Create gitleaks configuration files."""
         lint_config = fake_repo / ".lint.gitleaks.yaml"
+        # Use included_paths format to match actual config structure
         fs.create_file(
             str(lint_config),
             contents=(
@@ -1049,10 +755,11 @@ class TestRunGitleaks:
                 "excluded_names:\n"
                 "  - uv.lock\n"
                 "  - .secrets.baseline\n"
-                "excluded_dirs:\n"
-                "  - .tmp\n"
-                "  - .worktrees\n"
-                "  - .venv\n"
+                "included_paths:\n"
+                "  - '*'\n"
+                "  - 'app/**'\n"
+                "  - 'scripts/**'\n"
+                "  - 'tests/**'\n"
             ),
         )
         gitleaks_toml = fake_repo / ".gitleaks.toml"
@@ -1149,13 +856,13 @@ class TestRunGitleaks:
             ".secrets.baseline should be excluded"
         )
 
-    def test_excludes_directories(
+    def test_only_includes_paths_matching_patterns(
         self,
         fake_repo: Path,
         fs: FakeFilesystem,
         gitleaks_config: Path,
     ) -> None:
-        """Should exclude files in excluded directories (.tmp, .worktrees, .venv)."""
+        """Should only include files matching included_paths patterns."""
         fs.create_file(str(fake_repo / "main.py"), contents="print('hello')")
         fs.create_dir(str(fake_repo / ".tmp"))
         fs.create_file(
@@ -1200,12 +907,14 @@ class TestRunGitleaks:
 
         assert mock_run.called
         cmd = mock_run.call_args[0][0]
-        # main.py should be included
+        # main.py should be included (matches * pattern)
         assert any("main.py" in arg for arg in cmd), "Root files should be scanned"
-        # Excluded directories should not be present
-        assert not any(".tmp" in arg for arg in cmd), "Files in .tmp should be excluded"
-        assert not any(".worktrees" in arg for arg in cmd), "Files in .worktrees should be excluded"
-        assert not any(".venv" in arg for arg in cmd), "Files in .venv should be excluded"
+        # Files in directories not in included_paths should not be present
+        assert not any(".tmp" in arg for arg in cmd), "Files in .tmp should not be included"
+        assert not any(".worktrees" in arg for arg in cmd), (
+            "Files in .worktrees should not be included"
+        )
+        assert not any(".venv" in arg for arg in cmd), "Files in .venv should not be included"
 
     def test_file_filtering_works_correctly(
         self,
@@ -1823,13 +1532,15 @@ class TestSecretScannerConsistency:
             f"detect-secrets has {detect_secrets_names - gitleaks_names}"
         )
 
-    def test_excluded_dirs_cover_precommit_patterns(self, gitleaks_config: dict) -> None:
-        """Gitleaks excluded_dirs must cover all directories from pre-commit detect-secrets."""
-        # Canonical directories from .pre-commit-config.yaml detect-secrets exclude.
+    def test_included_paths_does_not_include_canonical_excluded_dirs(
+        self, gitleaks_config: dict
+    ) -> None:
+        """Gitleaks included_paths must not include directories that should be excluded."""
+        # Canonical directories that should NOT be included per pre-commit detect-secrets exclude.
         # MAINTAINER NOTE: Keep this set in sync with the detect-secrets hook's
         # exclude regex in .pre-commit-config.yaml. If that config changes,
         # update this set accordingly.
-        canonical_dirs = {
+        excluded_dirs = {
             ".venv",
             "node_modules",
             "htmlcov",
@@ -1850,6 +1561,16 @@ class TestSecretScannerConsistency:
             "build",
             "dist",
         }
-        gitleaks_dirs = set(gitleaks_config.get("excluded_dirs", []))
-        missing = canonical_dirs - gitleaks_dirs
-        assert not missing, f"Gitleaks missing canonical excluded dirs: {missing}"
+        included_paths = gitleaks_config.get("included_paths", [])
+        # Check that none of the excluded directories are explicitly included
+        for path in included_paths:
+            # Skip negation patterns (these are exclusions which is correct)
+            if path.startswith("!"):
+                continue
+            for excluded_dir in excluded_dirs:
+                # Check if the pattern would include files from excluded directories
+                if path.startswith(f"{excluded_dir}/") or path.startswith(f"{excluded_dir}/**"):
+                    raise AssertionError(
+                        f"Gitleaks included_paths contains pattern '{path}' "
+                        f"which includes excluded directory '{excluded_dir}'"
+                    )

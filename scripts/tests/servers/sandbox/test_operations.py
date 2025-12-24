@@ -1087,6 +1087,108 @@ class TestIsSandboxClean:
 
             assert result is False
 
+    def test_returns_false_when_origin_sha_unchanged(self, tmp_path: Path) -> None:
+        """Return False when origin SHA hasn't changed (rebase was aborted)."""
+        from scripts.servers.sandbox.operations import is_sandbox_clean
+
+        with (
+            patch("scripts.servers.sandbox.operations.is_rebase_in_progress", return_value=False),
+            patch("scripts.servers.sandbox.operations.has_uncommitted_changes", return_value=False),
+            patch("scripts.servers.sandbox.operations.has_unpushed_commits", return_value=False),
+            patch(
+                "scripts.servers.sandbox.operations.get_origin_sha",
+                return_value="abc123",  # Same as expected
+            ),
+        ):
+            result = is_sandbox_clean(tmp_path, "feature-branch", expected_origin_sha="abc123")
+
+            assert result is False
+
+    def test_returns_true_when_origin_sha_changed(self, tmp_path: Path) -> None:
+        """Return True when origin SHA has changed (branch was pushed)."""
+        from scripts.servers.sandbox.operations import is_sandbox_clean
+
+        with (
+            patch("scripts.servers.sandbox.operations.is_rebase_in_progress", return_value=False),
+            patch("scripts.servers.sandbox.operations.has_uncommitted_changes", return_value=False),
+            patch("scripts.servers.sandbox.operations.has_unpushed_commits", return_value=False),
+            patch(
+                "scripts.servers.sandbox.operations.get_origin_sha",
+                return_value="def456",  # Different from expected
+            ),
+        ):
+            result = is_sandbox_clean(tmp_path, "feature-branch", expected_origin_sha="abc123")
+
+            assert result is True
+
+    def test_returns_true_when_no_expected_sha_provided(self, tmp_path: Path) -> None:
+        """Return True when no expected SHA is provided (backwards compatible)."""
+        from scripts.servers.sandbox.operations import is_sandbox_clean
+
+        with (
+            patch("scripts.servers.sandbox.operations.is_rebase_in_progress", return_value=False),
+            patch("scripts.servers.sandbox.operations.has_uncommitted_changes", return_value=False),
+            patch("scripts.servers.sandbox.operations.has_unpushed_commits", return_value=False),
+        ):
+            # No expected_origin_sha provided - should not check origin SHA
+            result = is_sandbox_clean(tmp_path, "feature-branch")
+
+            assert result is True
+
+
+class TestGetOriginSha:
+    """Tests for get_origin_sha function."""
+
+    def test_returns_sha_on_success(self, tmp_path: Path) -> None:
+        """Return SHA when git rev-parse succeeds."""
+        from scripts.servers.sandbox.operations import get_origin_sha
+
+        test_sha = "abc123def456"  # pragma: allowlist secret
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
+            mock_run.return_value = make_completed_process(stdout=f"{test_sha}\n")
+
+            result = get_origin_sha(tmp_path, "feature-branch")
+
+            assert result == test_sha
+            mock_run.assert_called_once_with(
+                ["git", "rev-parse", "origin/feature-branch"],
+                cwd=tmp_path,
+            )
+
+    def test_returns_none_when_git_not_available(self, tmp_path: Path) -> None:
+        """Return None when git is not available."""
+        from scripts.servers.sandbox.operations import get_origin_sha
+
+        with patch("scripts.servers.sandbox.operations._run_git", return_value=None):
+            result = get_origin_sha(tmp_path, "feature-branch")
+
+            assert result is None
+
+    def test_returns_none_when_git_fails(self, tmp_path: Path) -> None:
+        """Return None when git rev-parse fails."""
+        from scripts.servers.sandbox.operations import get_origin_sha
+
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
+            mock_run.return_value = make_completed_process(
+                returncode=1,
+                stderr="fatal: ambiguous argument",
+            )
+
+            result = get_origin_sha(tmp_path, "feature-branch")
+
+            assert result is None
+
+    def test_returns_none_when_stdout_empty(self, tmp_path: Path) -> None:
+        """Return None when git rev-parse returns empty stdout."""
+        from scripts.servers.sandbox.operations import get_origin_sha
+
+        with patch("scripts.servers.sandbox.operations._run_git") as mock_run:
+            mock_run.return_value = make_completed_process(stdout="")
+
+            result = get_origin_sha(tmp_path, "feature-branch")
+
+            assert result is None
+
 
 class TestMergeInSandbox:
     """Tests for merge_in_sandbox function."""

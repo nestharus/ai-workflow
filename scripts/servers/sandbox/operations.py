@@ -355,17 +355,45 @@ def has_unpushed_commits(sandbox_path: Path, branch: str) -> bool:
         return True
 
 
-def is_sandbox_clean(sandbox_path: Path, branch: str) -> bool:
+def get_origin_sha(sandbox_path: Path, branch: str) -> str | None:
+    """Get the SHA of origin/{branch}.
+
+    Args:
+        sandbox_path: Path to the sandbox directory.
+        branch: Branch name.
+
+    Returns:
+        The SHA of origin/{branch}, or None if it cannot be determined.
+    """
+    result = _run_git(
+        ["git", "rev-parse", f"origin/{branch}"],
+        cwd=sandbox_path,
+    )
+    if result is None or result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def is_sandbox_clean(
+    sandbox_path: Path,
+    branch: str,
+    expected_origin_sha: str | None = None,
+) -> bool:
     """Check if the sandbox is in a clean state ready for the next operation.
 
     The sandbox is considered clean when:
     - No rebase is in progress
     - No uncommitted changes exist
     - No unpushed commits exist
+    - If expected_origin_sha is provided, origin/{branch} must be at a DIFFERENT SHA
+      (indicating the branch was pushed after conflict resolution)
 
     Args:
         sandbox_path: Path to the sandbox directory.
         branch: Branch name to check for unpushed commits.
+        expected_origin_sha: If provided, the SHA that origin/{branch} was at when
+            the conflict occurred. The sandbox is only clean if origin/{branch}
+            has moved to a different SHA (indicating a successful push).
 
     Returns:
         True if sandbox is clean, False otherwise.
@@ -374,7 +402,23 @@ def is_sandbox_clean(sandbox_path: Path, branch: str) -> bool:
         return False
     if has_uncommitted_changes(sandbox_path):
         return False
-    return not has_unpushed_commits(sandbox_path, branch)
+    if has_unpushed_commits(sandbox_path, branch):
+        return False
+
+    # If we have an expected origin SHA, verify that origin/{branch} has been updated
+    # This prevents treating an aborted rebase as "clean"
+    if expected_origin_sha is not None:
+        current_origin_sha = get_origin_sha(sandbox_path, branch)
+        if current_origin_sha == expected_origin_sha:
+            # origin/{branch} hasn't changed - rebase was aborted, not pushed
+            logger.debug(
+                "Sandbox not clean: origin/%s unchanged (still at %s)",
+                branch,
+                expected_origin_sha[:8] if expected_origin_sha else "unknown",
+            )
+            return False
+
+    return True
 
 
 def rebase_in_sandbox(

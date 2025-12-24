@@ -1,31 +1,40 @@
 ---
-description: Create an implementation plan from a Linear ticket (or create ticket from prompt)
-argument-hint: [ticket-id or description of work]
-allowed-tools: Bash, Read, Write, Glob, Grep, Task
+description: Create implementation design using neuro-symbolic decomposition with layer review
+argument-hint: "<ticket-id> or <description of work>"
+allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Task
 ---
 
-# Create Implementation Plan
+# Create Implementation Design
 
-If `$ARGUMENTS` matches ticket ID format (`XXX-NNN` where XXX is letters, NNN is numbers), fetch it. Otherwise, create a new ticket.
+Decompose requirements into a layered design with building block primitives and expected capabilities.
 
-Plans are stored in the Linear ticket description below a `---` separator.
+**Capabilities**: Each unit expresses expected capabilities from children (contracts). Each capability gets one test during execution.
+
+**Arguments**: Either a ticket ID or a description to create a new ticket.
+
+Examples:
+```bash
+/create-plan NES-123                           # Fetch existing ticket
+/create-plan "Add user authentication flow"   # Create new ticket
+```
 
 ## Step 1: Determine Ticket
 
-**If ticket ID provided:**
 ```bash
-uv run linear get-issue <TICKET_ID>
+# Check if argument matches ticket ID format (XXX-NNN)
+if [[ "$ARGUMENTS" =~ ^[A-Z]+-[0-9]+$ ]]; then
+    # Fetch existing ticket
+    ticket_id="$ARGUMENTS"
+    uv run linear get-issue $ticket_id
+else
+    # Create new ticket from description
+    uv run linear list-projects  # Show available projects
+    uv run linear create-issue --team Neshq --title "<TITLE>" --description "$ARGUMENTS" --project "<PROJECT>"
+    # Capture ticket_id from response
+fi
 ```
-Extract `title` and `url` from the JSON response.
 
-**If description provided:**
-```bash
-uv run linear list-projects
-uv run linear create-issue --team Neshq --title "<TITLE>" --description "$ARGUMENTS" --project "<PROJECT>"
-```
-Capture the created ticket ID from the response.
-
-**Project selection:**
+**Project selection**:
 - "AI Workflow Application Phase N" - app development work
 - "Task System" - task/agent system work (default if unclear)
 - "Test Framework" - testing infrastructure
@@ -33,73 +42,154 @@ Capture the created ticket ID from the response.
 - "GitHub CI" - CI/CD work
 - "Knowledge System" - knowledge/fact extraction work
 
-## Step 2: Extract Description
+Extract `title`, `description`, and `url` from the ticket.
+
+## Step 2: Initialize State Machine
+
 ```bash
-mkdir -p .tmp
-uv run linear get-issue-description <TICKET_ID> > .tmp/<TICKET_ID>.md
-```
-Do NOT read the temp file. The planner agent will read and update it.
-
-## Step 3: Run Planner Agent
-
-```text
-Task(subagent_type="planner", prompt="file:.tmp/<TICKET_ID>.md
-
-## Create Plan
-
-Ticket ID: <TICKET_ID>
-Title: <TITLE>
-
-Create a new implementation plan for this ticket. The file contains the ticket description.
-Add the plan after a `---` separator.")
+uv run planner init $ticket_id --workflow create-plan
 ```
 
-The planner agent will: read the temp file, analyze requirements, explore codebase for context, research unfamiliar patterns, generate plan, and write the plan back to the temp file (description + separator + plan).
+Returns JSON: `{ "ok": true, "workspace": ".tmp/design/$ticket_id", "ticket_id": "...", "title": "..." }`
 
-Wait for the planner agent to complete.
+## Step 3: Execute State Machine Loop
 
-**Validate structure after completion:**
-1. Find first `---` separator line in temp file
-2. Verify line immediately after `---` (skipping blank lines) is `# Implementation Plan`
-3. Verify `## Plans` appears after `# Implementation Plan`
-4. Verify `### Plan 1:` appears after `## Plans`
-5. Verify plans numbered sequentially (1, 2, 3, ...) with no gaps or letters
-
-If validation fails, rerun planner with specific feedback explaining which structural requirement was not met.
-
-## Step 4: Update Linear Ticket
 ```bash
-uv run linear update-issue <TICKET_ID> --description-file .tmp/<TICKET_ID>.md
-```
-Do NOT read the temp file. Pass it directly using `--description-file`.
+while true; do
+    action=$(uv run planner next .tmp/design/$ticket_id)
+    action_type=$(echo "$action" | jq -r '.action')
 
-## Step 5: Cleanup
+    case "$action_type" in
+        "complete") break ;;
+        "error") echo "Error: $(echo "$action" | jq -r '.message')"; exit 1 ;;
+
+        "call_decomposer")
+            Task(subagent_type="decomposer", prompt="workspace: .tmp/design/$ticket_id")
+            ;;
+
+        "call_layer_reviewer")
+            Task(subagent_type="layer-reviewer", prompt="workspace: .tmp/design/$ticket_id")
+            ;;
+
+        "call_design_refactorer")
+            Task(subagent_type="design-refactorer", prompt="workspace: .tmp/design/$ticket_id")
+            ;;
+
+        "generate_docs")
+            Task(subagent_type="diagram-generator", prompt="workspace: .tmp/design/$ticket_id")
+            Task(subagent_type="design-formatter", prompt="workspace: .tmp/design/$ticket_id")
+            ;;
+
+        "post_to_linear")
+            uv run linear upsert-comment $ticket_id --title "Architecture Design" --body-file .tmp/design/$ticket_id/architecture.md
+            uv run linear upsert-comment $ticket_id --title "Implementation Design" --body-file .tmp/design/$ticket_id/implementation.md
+            ;;
+    esac
+
+    uv run planner process .tmp/design/$ticket_id
+done
+```
+
+## Step 4: Output
+
 ```bash
-rm .tmp/<TICKET_ID>.md
+uv run planner status .tmp/design/$ticket_id
 ```
 
-## Step 6: Output
-```text
+Print:
+```
 ================================================================================
-PLAN CREATION COMPLETE - REVIEW REQUESTED
+DESIGN CREATION COMPLETE - REVIEW REQUESTED
+================================================================================
+Ticket: $ticket_id - <TITLE>
+Linear: <LINEAR_TICKET_URL>
+
+Decomposition Summary:
+  Layers: <N>
+  Total units: <count>
+  Atomic units: <count>
+
+Capabilities:
+  Expected: <count> (contracts from parent units)
+  Provided: <count> (fulfilled by child units)
+  Types: output, behavior, integration, data, guarantee
+
+Plan Types:
+  CREATE: <count> (new code)
+  PATCH: <count> (same pattern, modify existing)
+  REGENERATE: <count> (pattern change, rewrite)
+  DELETE: <count> (remove code)
+
+Pattern Distribution:
+  Stream (Walker, Visitor, Filter, Collector, Splitter, Zip): <count>
+  Data Access (Extractor, Mutator, Getter, Setter): <count>
+  Data Model (Entity, Projection): <count>
+  Construction (Builder, Mapper, Reducer): <count>
+  Control Flow (Guard, Router, Classifier, Orchestrator): <count>
+  Validation (Validator): <count>
+
+================================================================================
+LINEAR COMMENTS CREATED
 ================================================================================
 
-Ticket: <TICKET_ID> - <TITLE>
-Run `uv run linear get-issue <TICKET_ID>` to fetch plan.
+The following comments were posted to the Linear ticket. Each serves a specific
+purpose for different audiences:
 
-Review the implementation plan in the ticket description:
-1. Verify the plan adequately addresses all requirements
-2. Check that success criteria are measurable and complete
+1. "Architecture Design"
+   - PURPOSE: Human-readable overview with Mermaid diagrams
+   - AUDIENCE: Humans reviewing the high-level structure
+   - CONTAINS: Component diagrams, layer breakdown, pattern locations
+   - REVIEW FOR: Logical organization, missing components, unclear boundaries
+   - FETCH: uv run linear get-comment $ticket_id --title "Architecture Design"
 
-YOU ARE REVIEWING THE IMPLEMENTATION PLAN FOR HOW TO CHANGE THE CODE,
-NOT THAT THE CODE FOLLOWS THE PLAN
+2. "Implementation Design"
+   - PURPOSE: Machine-readable unit tree with detailed plans
+   - AUDIENCE: AI agents executing the design, technical reviewers
+   - CONTAINS: Full unit hierarchy, pattern assignments, patch/regenerate plans
+   - REVIEW FOR: Correct pattern selection, complete coverage, valid plans
+   - FETCH: uv run linear get-comment $ticket_id --title "Implementation Design"
+
+================================================================================
+REVIEW INSTRUCTIONS
+================================================================================
+
+Fetch and review both comments:
+  uv run linear get-comment $ticket_id --title "Architecture Design"
+  uv run linear get-comment $ticket_id --title "Implementation Design"
+
+VERIFY:
+1. Every requirement from the ticket is covered by a unit
+2. Pattern assignments match operation semantics:
+   - Walker/Visitor for iteration
+   - Extractor/Mutator for data access
+   - Builder/Mapper for construction
+   - Guard/Router for control flow
+   - Validator for validation
+3. Plan types are appropriate:
+   - PATCH: Same pattern, small changes
+   - REGENERATE: Pattern changes fundamentally
+   - CREATE: New code from scratch
+4. Layer structure makes sense (atomics at bottom, compositions above)
+5. Capabilities form valid contracts:
+   - Each expected capability has a provider_unit_id
+   - Provided capabilities match what children actually do
+   - No dangling capabilities (expected but not provided)
+   - Capability types match operation semantics
+
+YOU ARE REVIEWING THE DESIGN FOR HOW TO BUILD THE CODE.
+NOT reviewing actual code - that comes after /execute-plan.
+
+Next: /execute-plan $ticket_id
+State: .tmp/design/$ticket_id/
 ================================================================================
 ```
 
-## Error Handling
+## Notes
 
-- If ticket fetch fails, report error and stop
-- If ticket creation fails, report error and stop
-- If planner agent fails, report error output and stop
-- If Linear ticket update fails, report error and stop
-- Always clean up temp file, even on errors
+- State machine handles all decomposition logic internally
+- Orchestrator only passes workspace path to agents
+- Agents read from `agent_input.yaml`, write to `agent_output.yaml`
+- State persisted in `state.yaml` for resumability
+- **Capabilities**: Contracts between units; one test per capability
+- For updating existing designs, use `/update-plan`
+- For refactoring existing code structure, use `/create-refactor-plan`

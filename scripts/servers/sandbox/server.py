@@ -23,6 +23,7 @@ from scripts.servers.sandbox.operations import (
     MergeResult,
     RebaseResult,
     ensure_sandbox_exists,
+    get_origin_sha,
     is_sandbox_clean,
     merge_in_sandbox,
     push_from_sandbox,
@@ -105,6 +106,7 @@ class SandboxServer:
     _git_executor: ThreadPoolExecutor | None = None  # Single-threaded executor for git operations
     # Track conflict state for polling
     _conflict_branch: str | None = None  # Branch being worked on during conflict resolution
+    _conflict_origin_sha: str | None = None  # SHA of origin/{branch} when conflict occurred
 
     async def start(self) -> None:
         """Start the server."""
@@ -459,16 +461,27 @@ class SandboxServer:
                 for key in completed[:entries_to_remove]:
                     del self.operation_history[key]
 
-    async def _wait_for_sandbox_clean(self, branch: str) -> None:
+    async def _wait_for_sandbox_clean(
+        self,
+        branch: str,
+        expected_origin_sha: str | None = None,
+    ) -> None:
         """Poll until the sandbox is clean (no rebase, uncommitted changes, or unpushed commits).
 
         Args:
             branch: Branch name to check for unpushed commits.
+            expected_origin_sha: If provided, the SHA that origin/{branch} was at when
+                the conflict occurred. The sandbox is only clean if origin/{branch}
+                has moved to a different SHA (indicating a successful push).
         """
         if not self.sandbox_path:
             return
-        while not is_sandbox_clean(self.sandbox_path, branch):
-            logger.debug("Waiting for sandbox to become clean (branch=%s)", branch)
+        while not is_sandbox_clean(self.sandbox_path, branch, expected_origin_sha):
+            logger.debug(
+                "Waiting for sandbox to become clean (branch=%s, expected_sha=%s)",
+                branch,
+                expected_origin_sha[:8] if expected_origin_sha else "none",
+            )
             await asyncio.sleep(SANDBOX_POLL_INTERVAL)
         logger.info("Sandbox is clean, ready for next operation")
 
@@ -479,8 +492,12 @@ class SandboxServer:
             try:
                 # If there's a pending conflict, poll until sandbox is clean
                 if self._conflict_branch:
-                    await self._wait_for_sandbox_clean(self._conflict_branch)
+                    await self._wait_for_sandbox_clean(
+                        self._conflict_branch,
+                        self._conflict_origin_sha,
+                    )
                     self._conflict_branch = None
+                    self._conflict_origin_sha = None
 
                 # Get next operation
                 queued_op = await self.operation_queue.get()
@@ -573,14 +590,23 @@ class SandboxServer:
                                     status.result = {"conflicts": parsed.get("files", [])}
                                     # Track branch for polling - queue will block until clean
                                     self._conflict_branch = queued_op.request.branch
+                                    # Capture origin SHA to detect if branch was pushed vs aborted
+                                    if self.sandbox_path:
+                                        self._conflict_origin_sha = get_origin_sha(
+                                            self.sandbox_path,
+                                            queued_op.request.branch,
+                                        )
                                     logger.info(
                                         (
                                             "Operation has conflicts, will poll for clean state: "
-                                            "request_id=%s, branch=%s, files=%s"
+                                            "request_id=%s, branch=%s, files=%s, origin_sha=%s"
                                         ),
                                         queued_op.request_id,
                                         queued_op.request.branch,
                                         parsed.get("files", []),
+                                        self._conflict_origin_sha[:8]
+                                        if self._conflict_origin_sha
+                                        else "unknown",
                                     )
                                 else:
                                     status.status = "failed"

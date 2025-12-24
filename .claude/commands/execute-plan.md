@@ -1,147 +1,285 @@
 ---
-description: Execute an implementation plan in a git worktree
-argument-hint: "`ticket-id`"
-allowed-tools: Bash, Read, Write, Glob, Grep, Task
+description: Execute implementation design with test-first parallel layer-by-layer code generation
+argument-hint: "<ticket-id>"
+allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Task
 ---
 
 # Execute Implementation Plan
 
-Execute the plan for ticket `$ARGUMENTS` in a dedicated git worktree.
+Execute the design for ticket `$ARGUMENTS` using test-first, parallel layer-by-layer code generation.
 
-**Worktree isolation**: Work is done in an isolated git worktree (`.worktrees/<branch>`) to keep the main working directory clean. Sub-agents (implementor, lint-fixer) operate on files in the worktree path, NOT the main repo. The worktree branch PRs back to the base branch.
+**Prerequisites**: Run `/create-plan $ARGUMENTS` first.
 
-## Step 1: Setup Worktree
+**Test-First Flow**: Tests are generated BEFORE code. Each capability gets one test. Tests should fail initially, then pass after code generation.
 
-```bash
-uv run pr setup-worktree $ARGUMENTS
-```
-
-Returns JSON: `{ "worktree_path", "branch_name", "base_branch", "branch_created": true }`
-
-**Important**: This command ALWAYS creates a new branch. It never checks out existing branches.
-If branch name exists, it appends a counter (`-2`, `-3`, etc.).
+## Step 1: Initialize
 
 ```bash
-git rev-parse --show-toplevel
+uv run codegen init .tmp/design/$ARGUMENTS
 ```
 
-Store `repo_root` and compute absolute `worktree_path` = `{{repo_root}}/{{worktree_path from JSON}}`.
+Returns JSON: `{ "ok": true, "workspace": "...", "ticket_id": "...", "total_units": N }`
 
-## Step 2: Split Plans
+## Step 2: Execute State Machine Loop
 
 ```bash
-uv run linear split-plans <TICKET_ID> --output-dir .tmp/plans/<TICKET_ID>
+while true; do
+    action=$(uv run codegen next .tmp/design/$ARGUMENTS)
+    action_type=$(echo "$action" | jq -r '.action')
+
+    case "$action_type" in
+        "complete") break ;;
+        "error") echo "Error: $(echo "$action" | jq -r '.message')"; exit 1 ;;
+
+        "setup_worktree")
+            ticket_id=$(echo "$action" | jq -r '.ticket_id')
+            uv run pr setup-worktree "$ticket_id" > .tmp/design/$ARGUMENTS/agent_output.yaml
+            ;;
+
+        "call_test_implementor")
+            # Compose tests from test plans (plans created in /create-plan):
+            # Uses 14 building block agents in .claude/agents/test-impl/
+            Task(subagent_type="test-implementor", prompt="workspace: .tmp/design/$ARGUMENTS")
+            ;;
+
+        "run_tests")
+            # Run tests - verify fail (before impl) or pass (after impl)
+            worktree=$(echo "$action" | jq -r '.worktree_path')
+            layer=$(echo "$action" | jq -r '.layer // "all"')
+            cd "$worktree" && uv run pytest --tb=short > .tmp/design/$ARGUMENTS/test_output.txt 2>&1 || true
+            ;;
+
+        "call_impl_agent")
+            # Execute units at current layer (grouped by file for parallelism)
+            Task(subagent_type="impl-executor", prompt="workspace: .tmp/design/$ARGUMENTS")
+            ;;
+
+        # === Debug Loop (when layer tests fail) ===
+        "create_debug_worktree")
+            # Create isolated worktree for debugging
+            worktree=$(echo "$action" | jq -r '.worktree_path')
+            layer=$(echo "$action" | jq -r '.layer')
+            uv run pr create-debug-worktree "$worktree" "$layer" > .tmp/design/$ARGUMENTS/agent_output.yaml
+            ;;
+
+        "call_debug_fixer")
+            # Fix failing tests (may make ad-hoc fixes that violate building blocks)
+            # Captures what was changed so we can refactor the solution
+            Task(subagent_type="debug-fixer", prompt="workspace: .tmp/design/$ARGUMENTS")
+            ;;
+
+        "call_solution_refactorer")
+            # Refactor debug fix into building block patterns
+            # Takes ad-hoc fix and restructures to follow patterns
+            Task(subagent_type="solution-refactorer", prompt="workspace: .tmp/design/$ARGUMENTS")
+            ;;
+
+        "replan_layer")
+            # Replan affected capabilities at current layer
+            # Updates test plans after debug fix is refactored
+            Task(subagent_type="test-planner", prompt="workspace: .tmp/design/$ARGUMENTS mode=replan")
+            ;;
+
+        "replan_parent_layers")
+            # Bigger refactoring after layer complete
+            # Updates parent layers if debug fixes had cascading effects
+            Task(subagent_type="parent-replanner", prompt="workspace: .tmp/design/$ARGUMENTS")
+            ;;
+        # === End Debug Loop ===
+
+        "call_lint_fixer")
+            worktree=$(echo "$action" | jq -r '.worktree_path')
+            Task(subagent_type="lint-fixer", prompt="--worktree $worktree --changed-only")
+            ;;
+
+        "commit_and_push")
+            worktree=$(echo "$action" | jq -r '.worktree_path')
+            message=$(echo "$action" | jq -r '.message')
+            uv run pr commit-push --worktree "$worktree" --set-upstream --message "$message"
+            ;;
+
+        "create_pr")
+            worktree=$(echo "$action" | jq -r '.worktree_path')
+            # Create PR, capture URL
+            cd "$worktree" && gh pr create --base main --title "$ARGUMENTS: <TITLE>" --body "..."
+            ;;
+    esac
+
+    uv run codegen process .tmp/design/$ARGUMENTS
+done
 ```
 
-Creates: `.tmp/plans/<TICKET_ID>/plan1.md`, `plan2.md`, etc.
-
-If fails (no `---` separator or no plans found), suggest `/create-plan` first.
-
-## Step 3: Execute Plans
-
-For each plan file in sequence:
-
-```text
-Task(subagent_type="implementor", prompt="plan_file: {{plan_file_path}}
-worktree: {{worktree_path}}")
-```
-
-Handle implementor output:
-- `SUCCESS` - Proceed to next plan
-- `TESTS: [...]` - Run test-fixer agent, then retry implementor
-- `FAIL: ...` - Analyze failure, may need human intervention
-
-## Step 4: Lint
-
-```text
-Task(subagent_type="lint-fixer", prompt="--worktree {{worktree_path}} --changed-only")
-```
-
-Only lints modified files (faster for new implementations).
-
-## Step 5: Cleanup
+## Step 3: Output
 
 ```bash
-rm -rf .tmp/plans/<TICKET_ID>
+uv run codegen status .tmp/design/$ARGUMENTS
 ```
 
-## Step 6: Commit and Push
-
+Get commit references:
 ```bash
-uv run pr commit-push --worktree {{worktree_path}} --set-upstream --message "<TICKET_ID>: <TITLE>
-
-Implements the plan from Linear ticket <TICKET_ID>.
-
-Changes:
-- <Summary of Plan 1>
-- <Summary of Plan 2>"
-```
-
-This runs: `git add -A`, creates commit, pushes with `-u origin HEAD` (required for new branches).
-
-## Step 7: Create PR
-
-Run from worktree to ensure correct branch detection:
-
-```bash
-cd {{worktree_path}} && gh pr create --base <BASE_BRANCH> --title "<TICKET_ID>: <TITLE>" --body "$(cat <<'EOF'
-## Summary
-Implements [<TICKET_ID>](<LINEAR_TICKET_URL>)
-
-<PLAN_OVERVIEW>
-
-## Changes
-* <Summary of changes from each plan>
-
-## Test Plan
-* [ ] All tests pass
-* [ ] Implementation reviewed against plan
-* [ ] Success criteria met
-
-Linear: <LINEAR_TICKET_URL>
-EOF
-)"
-```
-
-**Note**: PR auto-links to Linear when ticket ID casing matches exactly.
-
-## Step 8: Output Summary
-
-```bash
-cd {{worktree_path}}
+cd <worktree_path>
 git rev-parse HEAD                    # current_branch_commit
-git rev-parse origin/<BASE_BRANCH>    # pr_target_branch_commit
+git rev-parse origin/main             # pr_target_branch_commit
 ```
 
 Print:
 ```
 ================================================================================
-IMPLEMENTATION COMPLETE
+IMPLEMENTATION COMPLETE - CODE REVIEW REQUESTED
 ================================================================================
-Ticket: <TICKET_ID> - <TITLE>
+Ticket: $ARGUMENTS - <TITLE>
+Linear: <LINEAR_TICKET_URL>
 PR: <PR_URL>
-Worktree: {{worktree_path}}
+Worktree: <worktree_path>
 
 References:
-  current_branch_commit: <SHA>     # HEAD of PR branch
-  pr_target_branch_commit: <SHA>   # merge base for diffs
+  current_branch_commit: <SHA>
+  pr_target_branch_commit: <SHA>
 
-Commands:
-  uv run linear get-issue <TICKET_ID>                           # View plan
-  cd {{worktree_path}} && git diff <target>..<current>          # All PR changes
+Execution Summary:
+  Layers executed: <N>
+  Total units: <count>
+  Successful: <count>
+  Failed: <count>
+
+Test-First Summary:
+  Capabilities: <count>
+  Test plans: <count>
+  Tests generated: <count>
+  Tests passing: <count>/<count>
+
+Plan Distribution:
+  CREATE: <count> (new code written)
+  PATCH: <count> (existing code modified)
+  REGENERATE: <count> (code rewritten)
+  DELETE: <count> (code removed)
+
+Layer Breakdown:
+  Layer N: <count> atomics (impl-extractor: X, impl-validator: Y, ...)
+  Layer N-1: <count> compositions
+  ...
+  Layer 0: 1 root
+
+================================================================================
+LINEAR COMMENTS REFERENCE
+================================================================================
+
+The implementation was generated from these Linear comments:
+
+1. "Architecture Design"
+   - PURPOSE: Human-readable overview with Mermaid diagrams
+   - USE FOR: Understanding high-level structure of changes
+   - FETCH: uv run linear get-comment $ARGUMENTS --title "Architecture Design"
+
+2. "Implementation Design"
+   - PURPOSE: Machine-readable unit tree with detailed plans
+   - USE FOR: Verifying code matches each unit's plan
+   - FETCH: uv run linear get-comment $ARGUMENTS --title "Implementation Design"
+   - CONTAINS:
+     * Unit hierarchy (root → components → atomics)
+     * Pattern assignments (Walker, Extractor, Mapper, etc.)
+     * Plan details (target file, changes, specifications)
+
+================================================================================
+CODE REVIEW INSTRUCTIONS
+================================================================================
+
+View the PR diff:
+  cd <worktree_path> && git diff origin/main...HEAD
+
+Fetch the design that was implemented:
+  uv run linear get-comment $ARGUMENTS --title "Implementation Design"
+
+VERIFY EACH UNIT:
+1. Locate the unit in "Implementation Design"
+2. Find the corresponding code change in the PR
+3. Verify:
+   - Pattern is correctly applied (Walker yields, Filter predicates, etc.)
+   - Plan changes were implemented (for PATCH)
+   - Specification was followed (for CREATE/REGENERATE)
+   - Code was removed cleanly (for DELETE)
+
+PATTERN SEMANTICS TO CHECK:
+  Walker     - yields elements, doesn't collect
+  Visitor    - accepts callback, applies to each
+  Filter     - returns predicate result, streams
+  Collector  - accumulates into collection
+  Extractor  - gets single value from source
+  Mutator    - sets single value on target
+  Builder    - constructs from parts
+  Mapper     - transforms format
+  Guard      - early return on condition
+  Router     - dispatches based on input
+  Validator  - returns validation result
+
+COMPOSITION CHECK:
+  - Parent units correctly wire up children
+  - Imports/exports match between units
+  - No orphaned code from refactoring
+
+CAPABILITY VERIFICATION:
+  - Each capability has exactly one test
+  - Tests verify the expected behavior (not implementation details)
+  - Component tests are mapped to use-cases
+  - All tests pass after code generation
+
+TEST-FIRST CHECK:
+  - Tests were generated BEFORE implementation code
+  - Tests composed from 14 building blocks by test-implementor
+  - Building blocks used correctly:
+    * suite-contract determined correct test file + suite type
+    * shell-builder has correct decorators (@pytest.mark.asyncio for async)
+    * data-builder follows PAT-E (inline/module/conftest adjacency)
+    * aaa-body-builder uses whitespace separation (NO AAA comments - PAT-B1)
+    * scope-builder used for multi-step use-case tests
+    * stream-probe-builder + loop-builder for traversal tests
+  - No production code added without corresponding test
+  - One test per capability (component tests mapped by use-cases)
+
+YOU ARE REVIEWING CODE IMPLEMENTATION AGAINST THE DESIGN.
+Compare: "Implementation Design" (what should exist) ↔ PR diff (what was built)
+Verify: All capabilities have passing tests
+
+Cleanup after merge: git worktree remove <worktree_path>
 ================================================================================
 ```
 
-## Error Handling
-
-- Ticket fetch fails: report error, stop
-- Plan split fails (no separator/plans): suggest `/create-plan`
-- Worktree creation fails (branch exists): offer to reuse or cleanup
-- Agent fails: save progress, report what completed vs failed
-- PR fails: keep branch pushed, report error
-- Always cleanup `.tmp/plans/<TICKET_ID>` on completion or error
-
 ## Notes
 
-- Multiple `/execute-plan` commands can run in parallel for different tickets
-- Clean up worktrees after PR merge: `git worktree remove {{worktree_path}}`
+- **Test-First**: Tests generated before code; tests should fail, then pass
+- **Decomposer/Composer Pattern**:
+  - `test-planner` (decomposer) - Breaks capabilities into building block specifications
+  - `test-implementor` (composer) - Invokes building block agents and assembles outputs
+- **14 Test Building Blocks** (in `.claude/agents/test-impl/`):
+
+  | # | Agent | Purpose |
+  |---|-------|---------|
+  | 0 | `suite-contract` | Test placement + suite requirements |
+  | 1 | `shell-builder` | Function signature + decorators |
+  | 2 | `infra-fixture-builder` | Infrastructure fixtures (client, async_client) |
+  | 3 | `override-builder` | Dependency overrides (test doubles) |
+  | 4 | `data-builder` | PAT-E compliant data constants |
+  | 5 | `visible-builder` | Object factories with explicit values |
+  | 6 | `aaa-body-builder` | Implicit AAA body (whitespace-separated, NO comments) |
+  | 7 | `driver-builder` | Test stimulus (HTTP/call) |
+  | 8 | `assertion-builder` | check.*/assert statements |
+  | 9 | `scope-builder` | Workflow scopes for use-case tests |
+  | 10 | `stream-probe-builder` | Typed traversal generators |
+  | 11 | `loop-builder` | Approved constraint loops |
+  | 12 | `parametrize-builder` | @pytest.mark.parametrize decorators |
+  | 13 | `wrapper-builder` | Resource lifetime wrappers |
+
+- **Building Block Selection by Test Type**:
+  - Standard: 0→1→4→7→8→6
+  - Use-case (multi-step): 0→1→4→(9→7→8)+→6
+  - Traversal: 0→1→4→7→10→11→8→6
+  - Parametrized: 0→12→1→4→7→8→6
+- **PAT Rules Enforced**:
+  - PAT-B1: No AAA comments (whitespace separation only)
+  - PAT-B7: No assertions before Act (except use-case multi-step)
+  - PAT-E1: Data adjacent (inline, module, or folder conftest)
+- Layers execute bottom-up (deepest atomics first)
+- Same-file units run sequentially (avoid conflicts)
+- Different-file units run in parallel (throughput)
+- State machine handles all scheduling logic
+- One test per capability (component tests mapped by use-cases)
