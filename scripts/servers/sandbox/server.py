@@ -23,6 +23,7 @@ from scripts.servers.sandbox.operations import (
     MergeResult,
     RebaseResult,
     ensure_sandbox_exists,
+    is_sandbox_clean,
     merge_in_sandbox,
     push_from_sandbox,
     rebase_in_sandbox,
@@ -75,9 +76,16 @@ class OperationStatus:
     status: str  # "pending", "in_progress", "completed", "conflict", "failed", "cancelled"
     result: dict[str, object] | None = None
     error: str | None = None
+    # Store operation details for resuming after conflict resolution
+    branch: str | None = None
+    target: str | None = None
 
 
 MAX_HISTORY_SIZE = 1000
+
+
+# Interval between polls when waiting for sandbox to become clean
+SANDBOX_POLL_INTERVAL = 1.0  # seconds
 
 
 @dataclass
@@ -95,6 +103,8 @@ class SandboxServer:
     _shutdown_requested: bool = False  # Track early shutdown requests before event loop
     _server: asyncio.Server | None = None
     _git_executor: ThreadPoolExecutor | None = None  # Single-threaded executor for git operations
+    # Track conflict state for polling
+    _conflict_branch: str | None = None  # Branch being worked on during conflict resolution
 
     async def start(self) -> None:
         """Start the server."""
@@ -363,10 +373,12 @@ class SandboxServer:
             # Create response queue for this operation
             response_queue: asyncio.Queue[str] = asyncio.Queue()
 
-            # Add to history as pending
+            # Add to history as pending, storing branch/target for resume support
             self.operation_history[request.request_id] = OperationStatus(
                 request_id=request.request_id,
                 status="pending",
+                branch=request.branch,
+                target=request.target,
             )
 
         # Queue the operation
@@ -447,11 +459,29 @@ class SandboxServer:
                 for key in completed[:entries_to_remove]:
                     del self.operation_history[key]
 
+    async def _wait_for_sandbox_clean(self, branch: str) -> None:
+        """Poll until the sandbox is clean (no rebase, uncommitted changes, or unpushed commits).
+
+        Args:
+            branch: Branch name to check for unpushed commits.
+        """
+        if not self.sandbox_path:
+            return
+        while not is_sandbox_clean(self.sandbox_path, branch):
+            logger.debug("Waiting for sandbox to become clean (branch=%s)", branch)
+            await asyncio.sleep(SANDBOX_POLL_INTERVAL)
+        logger.info("Sandbox is clean, ready for next operation")
+
     async def _process_queue(self) -> None:
         """Process operations from the queue sequentially."""
         assert self.operation_queue is not None
         while True:
             try:
+                # If there's a pending conflict, poll until sandbox is clean
+                if self._conflict_branch:
+                    await self._wait_for_sandbox_clean(self._conflict_branch)
+                    self._conflict_branch = None
+
                 # Get next operation
                 queued_op = await self.operation_queue.get()
 
@@ -541,9 +571,11 @@ class SandboxServer:
                                 elif parsed_status == "conflict":
                                     status.status = "conflict"
                                     status.result = {"conflicts": parsed.get("files", [])}
+                                    # Track branch for polling - queue will block until clean
+                                    self._conflict_branch = queued_op.request.branch
                                     logger.info(
                                         (
-                                            "Operation has conflicts: "
+                                            "Operation has conflicts, will poll for clean state: "
                                             "request_id=%s, branch=%s, files=%s"
                                         ),
                                         queued_op.request_id,

@@ -592,6 +592,8 @@ class TestProcessQueuePrunesOnCancel:
         server = SandboxServer(repo_path=Path("/tmp"))
         server.operation_queue = asyncio.Queue()
         server._shutdown_event = asyncio.Event()
+        server._conflict_resolved_event = asyncio.Event()
+        server._conflict_resolved_event.set()  # Not blocked
 
         # Fill history to trigger pruning
         for i in range(MAX_HISTORY_SIZE + 100):
@@ -1009,6 +1011,7 @@ class TestQueueIsolationWithConflicts:
     @pytest.mark.asyncio
     async def test_operations_processed_sequentially(self) -> None:
         """Verify operations are processed sequentially, not concurrently."""
+        from concurrent.futures import ThreadPoolExecutor
         from unittest.mock import patch
 
         from scripts.servers.sandbox.server import QueuedOperation
@@ -1016,9 +1019,12 @@ class TestQueueIsolationWithConflicts:
         server = SandboxServer(repo_path=Path("/tmp"))
         server.operation_queue = asyncio.Queue()
         server._shutdown_event = asyncio.Event()
+        server._conflict_resolved_event = asyncio.Event()
+        server._conflict_resolved_event.set()  # Not blocked
+        server._git_executor = ThreadPoolExecutor(max_workers=1)
         server.sandbox_path = Path("/tmp/sandbox")
 
-        execution_order = []
+        execution_order: list[str] = []
 
         def mock_execute_op(request):
             execution_order.append(request.request_id)
@@ -1067,6 +1073,7 @@ class TestQueueIsolationWithConflicts:
     @pytest.mark.asyncio
     async def test_queue_maintains_order(self) -> None:
         """Verify the queue maintains FIFO order."""
+        from concurrent.futures import ThreadPoolExecutor
         from unittest.mock import patch
 
         from scripts.servers.sandbox.server import QueuedOperation
@@ -1074,9 +1081,12 @@ class TestQueueIsolationWithConflicts:
         server = SandboxServer(repo_path=Path("/tmp"))
         server.operation_queue = asyncio.Queue()
         server._shutdown_event = asyncio.Event()
+        server._conflict_resolved_event = asyncio.Event()
+        server._conflict_resolved_event.set()  # Not blocked
+        server._git_executor = ThreadPoolExecutor(max_workers=1)
         server.sandbox_path = Path("/tmp/sandbox")
 
-        execution_order = []
+        execution_order: list[str] = []
 
         def mock_execute_op(request):
             execution_order.append(request.request_id)

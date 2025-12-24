@@ -9,131 +9,106 @@ allowed-tools: Task, Read, Glob, Bash
 
 Rebase PR: $ARGUMENTS
 
-## Arguments
-
-* If `$ARGUMENTS` is empty: Use current branch (must be on PR branch)
-* If `$ARGUMENTS` is a PR ID (e.g., `17` or `#17`): Get branch from GitHub PR
-* If `$ARGUMENTS` is a ticket ID (e.g., `NES-87`): Look up branch from Linear
-* If `$ARGUMENTS` is a branch name: Use branch directly
-
-## Prerequisites
-
-The sandbox server starts automatically via `uv run dev.ensure-env` (triggered by
-SessionStart hook). If not running, start manually:
-
-```bash
-docker compose -p ai-workflow-devtools -f docker-compose.dev.yml up -d
-```
-
-## Workflow
-
-### 1. Get PR Information
+## 1. Get PR Information
 
 ```bash
 uv run pr get-pr $ARGUMENTS
 ```
 
-This returns JSON with:
+Returns `branch_name`, `base_branch`, `working_directory`, `pr_number`, etc.
 
-* `branch_name`: Git branch name
-* `worktree_path`: Path to the worktree (or `null` if on branch)
-* `working_directory`: Where to run commands
-* `is_worktree`: Boolean
-* `pr_number`: PR number
-* `pr_url`: PR URL
-* `base_branch`: Target branch the PR will merge into
+## 2. Initialize Conflict Cache
 
-### 2. Execute Sandbox Rebase
+```bash
+rm -rf .git/sandbox/.tmp/conflict-answers
+mkdir -p .git/sandbox/.tmp/conflict-answers
+```
 
-Run the sandbox-rebase command:
+## 3. Execute Sandbox Rebase
 
 ```bash
 uv run pr sandbox-rebase --branch {{branch_name}} --target {{base_branch}} -v
 ```
 
-This command:
+Exit codes: `0` = success, `2` = conflicts, `1` = error
 
-* Connects to the sandbox server via Unix domain socket
-* Fetches the latest branches in the sandbox
-* Performs the rebase operation in the isolated `.git/sandbox/` checkout
-* Pushes the rebased branch with `--force-with-lease`
+## 4. Resolve Conflicts (if exit code 2)
 
-**Exit codes:**
+### 4a. Commit-Level Analysis
 
-* `0`: Success, rebase completed and pushed
-* `2`: Conflicts detected - proceed to step 3
-* `1`: Error - check logs and abort
-
-### 3. Resolve Conflicts (if needed)
-
-When conflicts occur (exit code 2), the CLI outputs the list of conflicted files.
-Use the conflict-resolver agent for each conflicted file:
+First, analyze the current commit:
 
 ```python
-Task(subagent_type="conflict-resolver", model="opus", prompt=<JSON>)
+Task(subagent_type="commit-conflict-resolver", model="opus", prompt=<JSON>)
 ```
-
-Where JSON contains:
 
 ```json
 {
-  "file_path": "<relative path to conflicted file>",
   "sandbox_path": ".git/sandbox",
   "source_path": "{{working_directory}}",
-  "base_commit": "<merge-base SHA>",
   "target_branch": "origin/{{base_branch}}",
-  "target_commits": ["<sha1>", "<sha2>", ...],
-  "source_commit": "<squashed commit SHA>"
+  "branch_name": "{{branch_name}}",
+  "pr_number": "{{pr_number}}"
 }
 ```
 
-To obtain the required SHA values, run git commands via docker exec (the sandbox runs inside a container):
+**Handle commit-conflict-resolver output:**
 
-```bash
-# Get merge-base SHA (base_commit)
-docker exec ai-workflow-sandbox-server-dev bash -c 'cd /repo/.git/sandbox && git merge-base HEAD origin/{{base_branch}}'
+| Output | Action |
+|--------|--------|
+| `SKIP_COMMIT` | Agent ran `rebase --skip`, loop back to check for more conflicts |
+| `REBUILD_BRANCH` | Agent rebuilt via cherry-pick, skip to push |
+| `PROCEED` | Continue to file-level resolution (4b) |
 
-# Get current HEAD SHA (source_commit)
-docker exec ai-workflow-sandbox-server-dev bash -c 'cd /repo/.git/sandbox && git rev-parse HEAD'
+### 4b. File-Level Resolution
 
-# Get target commits since merge-base (for conflict-resolver)
-docker exec ai-workflow-sandbox-server-dev bash -c 'cd /repo/.git/sandbox && git rev-list $(git merge-base HEAD origin/{{base_branch}})..origin/{{base_branch}}'
+For each conflicted file from PROCEED output:
+
+```python
+Task(subagent_type="file-conflict-resolver", model="opus", prompt=<JSON>)
 ```
 
-**Note**: The agent uses `.git/sandbox` for conflict editing and `source_path`
-for researching clean code context.
-
-After all files are resolved, continue the rebase via docker exec:
-
-```bash
-docker exec ai-workflow-sandbox-server-dev bash -c 'cd /repo/.git/sandbox && git add -A && GIT_EDITOR=true git rebase --continue'
+```json
+{
+  "file_path": "<conflicted file>",
+  "sandbox_path": ".git/sandbox",
+  "source_path": "{{working_directory}}",
+  "base_commit": "<git -C .git/sandbox merge-base REBASE_HEAD origin/{{base_branch}}>",
+  "target_branch": "origin/{{base_branch}}",
+  "target_commits": ["<sha1>", ...],
+  "source_commit": "<git -C .git/sandbox rev-parse REBASE_HEAD>",
+  "branch_name": "{{branch_name}}",
+  "pr_number": "{{pr_number}}"
+}
 ```
 
-**Note**: `GIT_EDITOR=true` prevents the "Terminal is dumb, but EDITOR unset" error.
+**Handle file-conflict-resolver output:**
 
-If more conflicts appear, repeat step 3.
+| Output | Action |
+|--------|--------|
+| `RESOLVED` | Continue to next file |
+| `FAIL` | Abort rebase, report failure |
 
-### 4. Push After Manual Conflict Resolution
+### 4c. Continue Rebase
 
-After resolving all conflicts manually, push from the sandbox via docker exec:
+After all files resolved:
 
 ```bash
-docker exec ai-workflow-sandbox-server-dev bash -c 'cd /repo/.git/sandbox && git push --force-with-lease origin {{branch_name}}'
+git -C .git/sandbox add -A && GIT_EDITOR=true git -C .git/sandbox rebase --continue
 ```
 
-## Architecture
+If more conflicts appear, loop back to 4a.
 
-The rebase operation runs entirely in the `.git/sandbox/` checkout, managed by
-the sandbox server. This isolates git operations from your main checkout and
-worktrees.
+## 5. Push
 
-For detailed architecture information, see `docs/development/sandbox-architecture.md`.
+```bash
+git -C .git/sandbox push origin {{branch_name}} --force-with-lease
+```
 
-## Important Rules
+## 6. Abort (on failure)
 
-* The sandbox server must be running before executing rebase
-* Always use `--force-with-lease` (handled automatically by the server)
-* The conflict-resolver agent analyzes BOTH sides' intent and stitches changes
-  together
-* Never just pick one side of a conflict - always analyze and merge properly
-* The source_path remains clean for code research during conflict resolution
+```bash
+git -C .git/sandbox rebase --abort
+```
+
+The server automatically unblocks the queue when the sandbox is clean.

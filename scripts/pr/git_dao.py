@@ -737,3 +737,37 @@ def reset_hard_to_remote(worktree: Path, branch_name: str) -> tuple[bool, str]:
     if result.returncode != 0:
         return False, f"reset failed: {result.stderr}"
     return True, ""
+
+
+def check_refs_match(branch_name: str) -> tuple[bool, str, str]:
+    """Check if local and remote refs match for a branch.
+
+    Fetches from origin first, then compares local and remote SHAs.
+
+    Args:
+        branch_name: Branch name to check.
+
+    Returns:
+        Tuple of (refs_match, local_sha, remote_sha).
+        If fetch or rev-parse fails, returns (False, "", error_message).
+    """
+    # Fetch to get latest remote refs
+    result = _run_git(["git", "fetch", "origin", branch_name])
+    if result is None:
+        return False, "", "git not available"
+    if result.returncode != 0:
+        return False, "", f"fetch failed: {result.stderr}"
+
+    # Get local SHA
+    result = _run_git(["git", "rev-parse", branch_name])
+    if result is None or result.returncode != 0:
+        return False, "", f"could not resolve local ref: {branch_name}"
+    local_sha = result.stdout.strip()
+
+    # Get remote SHA
+    result = _run_git(["git", "rev-parse", f"origin/{branch_name}"])
+    if result is None or result.returncode != 0:
+        return False, "", f"could not resolve remote ref: origin/{branch_name}"
+    remote_sha = result.stdout.strip()
+
+    return local_sha == remote_sha, local_sha, remote_sha

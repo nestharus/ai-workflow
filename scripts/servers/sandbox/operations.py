@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -316,25 +315,84 @@ def is_rebase_in_progress(sandbox_path: Path) -> bool:
     return (git_dir / "rebase-merge").is_dir() or (git_dir / "rebase-apply").is_dir()
 
 
+def has_uncommitted_changes(sandbox_path: Path) -> bool:
+    """Check if there are uncommitted changes in the sandbox.
+
+    Args:
+        sandbox_path: Path to the sandbox directory.
+
+    Returns:
+        True if there are uncommitted changes, False otherwise.
+    """
+    result = _run_git(["git", "status", "--porcelain"], cwd=sandbox_path)
+    if result is None or result.returncode != 0:
+        # If we can't check, assume there are changes (safer)
+        return True
+    return bool(result.stdout.strip())
+
+
+def has_unpushed_commits(sandbox_path: Path, branch: str) -> bool:
+    """Check if there are commits that haven't been pushed to origin.
+
+    Args:
+        sandbox_path: Path to the sandbox directory.
+        branch: Branch name to check.
+
+    Returns:
+        True if there are unpushed commits, False otherwise.
+    """
+    result = _run_git(
+        ["git", "rev-list", f"origin/{branch}..HEAD", "--count"],
+        cwd=sandbox_path,
+    )
+    if result is None or result.returncode != 0:
+        # If we can't check, assume there are unpushed commits (safer)
+        return True
+    try:
+        count = int(result.stdout.strip())
+        return count > 0
+    except ValueError:
+        return True
+
+
+def is_sandbox_clean(sandbox_path: Path, branch: str) -> bool:
+    """Check if the sandbox is in a clean state ready for the next operation.
+
+    The sandbox is considered clean when:
+    - No rebase is in progress
+    - No uncommitted changes exist
+    - No unpushed commits exist
+
+    Args:
+        sandbox_path: Path to the sandbox directory.
+        branch: Branch name to check for unpushed commits.
+
+    Returns:
+        True if sandbox is clean, False otherwise.
+    """
+    if is_rebase_in_progress(sandbox_path):
+        return False
+    if has_uncommitted_changes(sandbox_path):
+        return False
+    return not has_unpushed_commits(sandbox_path, branch)
+
+
 def rebase_in_sandbox(
     sandbox_path: Path,
     branch: str,
     target: str,
-    poll_interval: float = 5.0,
-    max_wait: float = 3600.0,
     progress_callback: Callable[[str], None] | None = None,
 ) -> RebaseResult:
     """Perform a rebase operation in the sandbox.
 
     Rebases the specified branch onto the target branch. If conflicts occur,
-    polls until the rebase is manually resolved before returning.
+    returns immediately with the conflict list. The caller is responsible for
+    handling conflict resolution and calling check_rebase_status() afterward.
 
     Args:
         sandbox_path: Path to the sandbox directory.
         branch: Branch to rebase.
         target: Target branch to rebase onto.
-        poll_interval: Seconds between polling when waiting for conflict resolution.
-        max_wait: Maximum seconds to wait for conflict resolution.
         progress_callback: Optional callable to send progress updates.
 
     Returns:
@@ -380,70 +438,19 @@ def rebase_in_sandbox(
         conflicts = get_conflicts(sandbox_path)
         if conflicts:
             logger.info(
-                "Rebase stopped due to conflicts, waiting for manual resolution: %s",
+                "Rebase stopped due to conflicts: %s",
                 conflicts,
             )
             if progress_callback:
-                progress_callback(
-                    f"Conflicts detected, waiting for resolution: {', '.join(conflicts)}"
-                )
+                progress_callback(f"Conflicts detected: {', '.join(conflicts)}")
 
-            # Wait for the rebase to be resolved
-            start_time = time.time()
-            wait_count = 0
-            logger.info("Entering polling loop...")
-            while time.time() - start_time < max_wait:
-                time.sleep(poll_interval)
-                wait_count += 1
-
-                # Check if rebase is still in progress
-                in_progress = is_rebase_in_progress(sandbox_path)
-                logger.info("Poll #%d: rebase in progress = %s", wait_count, in_progress)
-
-                if not in_progress:
-                    logger.info("Rebase no longer in progress, checking final state")
-
-                    # Check if we're at the expected target (rebase completed successfully)
-                    result = _run_git(
-                        ["git", "merge-base", "--is-ancestor", f"origin/{target}", "HEAD"],
-                        cwd=sandbox_path,
-                    )
-                    if result and result.returncode == 0:
-                        logger.info("Rebase completed successfully")
-                        if progress_callback:
-                            progress_callback("Rebase completed successfully")
-                        return RebaseResult(
-                            success=True, has_conflicts=False, conflicts=[], error=""
-                        )
-                    else:
-                        # Rebase was aborted or otherwise ended without completing
-                        logger.info("Rebase was aborted (target is not ancestor of HEAD)")
-                        if progress_callback:
-                            progress_callback("Rebase was aborted")
-                        return RebaseResult(
-                            success=False,
-                            has_conflicts=False,
-                            conflicts=[],
-                            error="Rebase was aborted",
-                        )
-
-                else:
-                    if progress_callback and wait_count % 3 == 0:  # Log every 15 seconds
-                        elapsed = time.time() - start_time
-                        progress_callback(
-                            f"Still waiting for rebase to complete... ({elapsed:.0f}s elapsed)"
-                        )
-
-                logger.debug("Still waiting for rebase to complete...")
-
-            logger.warning("Timeout waiting for rebase to complete after %f seconds", max_wait)
-            if progress_callback:
-                progress_callback(f"Timeout waiting for rebase after {max_wait} seconds")
+            # Return immediately with conflict info - no polling loop
+            # The agent will resolve conflicts and call check_rebase_status()
             return RebaseResult(
                 success=False,
                 has_conflicts=True,
                 conflicts=conflicts,
-                error=f"Timeout waiting for conflict resolution after {max_wait} seconds",
+                error="Rebase stopped due to conflicts",
             )
 
         return RebaseResult(

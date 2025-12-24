@@ -12,87 +12,59 @@ Parse arguments: first token is ticket ID, rest is the update prompt (optional).
 
 ## Workflow
 
-### Step 1: Fetch Existing Plan to Temp File
-
-1. Create .tmp directory if it doesn't exist
-2. Fetch the ticket description to a markdown file:
+### Step 1: Fetch Existing Plan
 
 ```bash
 mkdir -p .tmp
 uv run linear get-issue-description <TICKET_ID> > .tmp/<TICKET_ID>.md
-```
-
-3. Verify the file was created and is not empty:
-
-```bash
 test -s .tmp/<TICKET_ID>.md && echo "exists"
 ```
 
-If the file is empty or doesn't exist, the ticket has no description - suggest running `/create-plan` first.
+If empty, suggest running `/create-plan` first.
 
-**IMPORTANT**: Do NOT read the temp file contents directly. The planner agent will handle
-reading and updating the file. This step only extracts the ticket description for the planner
-agent to process.
+**IMPORTANT**: Do NOT read the temp file directly. The planner agent handles reading and updating it.
 
 ### Step 2: Determine Update Source
 
-If an update prompt was provided in $ARGUMENTS (after the ticket ID), use that as the
-review feedback.
-
-Otherwise, fetch unresolved comments from the ticket:
+If update prompt provided in $ARGUMENTS, use that. Otherwise fetch comments:
 
 ```bash
 uv run pr list-unresolved-comments <TICKET_ID>
 ```
 
-Parse the comments output to extract individual comment bodies.
+Parse the output to extract individual comment bodies.
 
-### Step 3: Run Planner Agent for Each Comment
+### Step 3: Run Planner Agent
 
-For each comment (from prompt or fetched), invoke the planner agent separately:
+For each comment, invoke planner separately:
 
 ```text
 Task(subagent_type="planner", prompt="file:.tmp/<TICKET_ID>.md
 
 ## Update Request
-<SINGLE_COMMENT_CONTENT>")
+<COMMENT_CONTENT>")
 ```
 
-Wait for each planner agent invocation to complete before proceeding to the next comment.
-The planner agent will read from and update the temp file directly.
+**Wait for each invocation to complete** before proceeding to the next. The planner reads from and updates the temp file directly.
 
-**Collect the summary** returned by each planner invocation. These summaries will be used
-in Step 5 for the update comment.
+**Collect summaries** from each invocation for the update comment in Step 5.
 
-**Validate the plan structure** after each planner invocation:
+**Validate plan structure** after each invocation:
+1. First `---` separator, then `# Implementation Plan` (first header after `---`)
+2. `## Plans` appears before any `### Plan N:`
+3. Plans numbered sequentially (1, 2, 3...) - no gaps, no letter suffixes (e.g., "Plan 2a" invalid)
 
-1. Find the first `---` separator line in the temp file
-2. Verify the line immediately after `---` (skipping blank lines) is `# Implementation Plan`
-3. Verify `## Plans` appears after `# Implementation Plan`
-4. Verify `### Plan 1:` appears after `## Plans`
-5. Verify plans are numbered sequentially (1, 2, 3, ...) with no gaps or letters (no "Plan 2a")
-
-If any validation fails, rerun the planner with feedback explaining which structural
-requirement was not met. The plan must follow this exact order after the `---` separator:
-- `# Implementation Plan` (must be first header after `---`)
-- `## Plans` (must appear before any `### Plan N:` headers)
-- `### Plan 1:` (at minimum, Plan 1 must exist)
-- Plans must be numbered sequentially: `### Plan 1:`, `### Plan 2:`, `### Plan 3:`, etc.
-- No letter suffixes allowed (e.g., "Plan 2a" is invalid - renumber to "Plan 3")
+If validation fails, rerun planner with feedback explaining which requirement was not met.
 
 ### Step 4: Update Linear Ticket
-
-After all planner invocations complete, update the ticket description directly from the temp file:
 
 ```bash
 uv run linear update-issue <TICKET_ID> --description-file .tmp/<TICKET_ID>.md
 ```
 
-**IMPORTANT**: Do NOT read the temp file. Pass it directly to `update-issue` using `--description-file`.
+**IMPORTANT**: Do NOT read the temp file. Pass it directly using `--description-file`.
 
 ### Step 5: Add Update Comment
-
-Add a comment on the ticket summarizing the changes using the Linear CLI:
 
 ```bash
 uv run linear create-comment <TICKET_ID> --body "## Plan Updated
@@ -100,34 +72,24 @@ uv run linear create-comment <TICKET_ID> --body "## Plan Updated
 Changes incorporated:
 <SUMMARY_OF_ALL_UPDATES>
 
-The implementation plan in the ticket description has been updated."
+The implementation plan has been updated."
 ```
 
 ### Step 6: Cleanup and Confirm
-
-1. Delete the temp file
 
 ```bash
 rm .tmp/<TICKET_ID>.md
 ```
 
-2. Print confirmation message:
-
-```text
+Print confirmation:
+```
 ================================================================================
-PLAN UPDATE COMPLETE - REVIEW REQUESTED
+PLAN UPDATE COMPLETE - Ticket: <TICKET_ID>
 ================================================================================
-
-Ticket: <TICKET_ID> - <TITLE>
 Run `uv run linear get-issue <TICKET_ID>` to fetch plan.
 
-Please review the plan on the ticket:
-1. Review the implementation plan in the ticket description
-2. Verify the plan adequately addresses all requirements
-3. Check that success criteria are measurable and complete
-
-YOU ARE REVIEWING THE IMPLEMENTATION PLAN FOR HOW TO CHANGE THE CODE,
-NOT THAT THE CODE FOLLOWS THE PLAN
+Review the implementation plan in the ticket description.
+YOU ARE REVIEWING THE PLAN FOR HOW TO CHANGE THE CODE, NOT THAT CODE FOLLOWS THE PLAN.
 
 Changes incorporated:
 <SUMMARY_OF_ALL_UPDATES>
@@ -136,8 +98,7 @@ Changes incorporated:
 
 ## Error Handling
 
-* If ticket fetch fails, report the error and stop
-* If existing plan not found in ticket description (empty file), suggest running /create-plan first
-* If planner agent fails, report the error output and stop
-* If Linear ticket update fails, report the error and stop
-* Always clean up the temp file, even on errors
+- If ticket fetch fails or plan not found (empty file), suggest `/create-plan`
+- If planner agent fails, report the error and stop
+- If Linear ticket update fails, report the error and stop
+- Always clean up temp file, even on errors

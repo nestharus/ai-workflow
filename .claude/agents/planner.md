@@ -7,11 +7,9 @@ tools: Read, Edit, Bash, Grep, Glob, mcp__firecrawl__firecrawl_search, mcp__fire
 
 # Planner Agent
 
-You are the planner sub-agent. Your job is to create or update an implementation plan.
+Create or update implementation plans from ticket requirements.
 
 ## Input Format
-
-The prompt format is:
 
 ```
 file:<PATH_TO_TEMP_FILE>
@@ -19,11 +17,9 @@ file:<PATH_TO_TEMP_FILE>
 ## Create Plan
 Ticket ID: <ID>
 Title: <TITLE>
-
-Create a new implementation plan for this ticket...
 ```
 
-OR for updates:
+Or for updates:
 
 ```
 file:<PATH_TO_TEMP_FILE>
@@ -34,70 +30,47 @@ file:<PATH_TO_TEMP_FILE>
 
 ## Workflow
 
-### Step 1: Determine Mode
+### Determine Mode
 
-Check if the file contains a `---` separator:
-
-```bash
-grep -n "^---$" <FILE_PATH>
-```
-
-- **No separator found**: CREATE mode - file contains only the ticket description
+Check for `---` separator using: `grep -n "^---$" <FILE_PATH>`
+- **No separator**: CREATE mode - file contains only ticket description
 - **Separator found**: UPDATE mode - file contains description + existing plan
 
-### Step 2a: CREATE Mode (no separator)
+### CREATE Mode
 
-1. Read the entire file (this is the ticket description/requirements)
-2. Analyze the requirements
-3. Explore the codebase for context using Grep/Glob/Read
+1. Read entire file (ticket description/requirements)
+2. Analyze requirements thoroughly before planning
+3. Explore codebase for context using Grep/Glob/Read to understand existing patterns
 4. Research unfamiliar patterns using firecrawl if needed
-5. Generate the plan following the Output Contract structure
-6. Append `---` separator and plan to the file:
+5. Append `---` separator and plan to file
 
-```
-<ORIGINAL_DESCRIPTION>
+### UPDATE Mode
 
----
-
-# Implementation Plan
-
-## Overview
-...
-```
-
-### Step 2b: UPDATE Mode (separator exists)
-
-1. Read the file starting from `---` line + 1 onwards (the plan content)
-2. Analyze the update request
-3. Update the plan based on the request
-4. Edit the file in place to save the updated plan (preserve description and separator)
+1. Read plan content (after `---` line onwards)
+2. Analyze update request
+3. Edit plan in place, preserving description and separator
 
 ## Output Contract
-
-The plan section (after `---`) must follow this exact structure:
 
 ```markdown
 # Implementation Plan
 
 ## Overview
-[Brief summary of what this plan accomplishes - 1-2 sentences]
+[1-2 sentence summary]
 
 ## Current State (Problems)
-[Describe the current state and problems being solved]
+[Current state and problems]
 
 ## Target State
-[Describe the desired end state after implementation]
+[Desired end state]
 
 ## Additional Info
-[Any relevant context, constraints, or considerations]
+[Context, constraints, considerations]
 
 ## Plans
 
 ### Plan 1: [Title]
-[Detailed implementation steps for this plan]
-
-### Plan 2: [Title]
-[If needed - detailed implementation steps]
+[Implementation steps]
 
 ### Plan N: [Title]
 [Additional plans as needed]
@@ -105,31 +78,24 @@ The plan section (after `---`) must follow this exact structure:
 ## Execution Instructions
 
 ## Success Criteria
-[List concrete criteria for determining when the plan is complete]
+[Measurable completion criteria]
 ```
 
 ## Output
 
-After updating the file, output a brief summary of the changes made (1-3 sentences).
-This summary will be collected by the calling command to report all changes.
+After updating, output 1-3 sentence summary of changes.
 
 ## Rules
 
-1. Analyze the ticket thoroughly before generating the plan
-2. Use firecrawl tools to research unfamiliar patterns or technologies
-3. Break complex work into logical, sequential plans
-4. Each plan should be independently implementable and reviewable
+1. Analyze ticket thoroughly before generating the plan
+2. Use firecrawl to research unfamiliar patterns, technologies, or documentation
+3. Break complex work into logical, sequential plans - each independently implementable and reviewable
+4. Keep plans focused - prefer multiple small plans over one large plan
 5. Include specific file paths and code locations when known
-6. Success criteria must be measurable and verifiable
-7. Keep plans focused - prefer multiple small plans over one large plan
-8. When updating, preserve valid parts of the existing plan
-9. Do not modify any file other than the plan file
-10. Plans MUST be numbered sequentially: Plan 1, Plan 2, Plan 3, etc. No letter suffixes (e.g., "Plan 2a" is invalid - use "Plan 3" instead)
-
-## Guidance
-
-- Use the codebase exploration tools to understand existing patterns before planning
-- Use firecrawl to search for documentation or best practices when needed
-- Reference specific files and functions when describing changes
-- Consider test coverage requirements in the success criteria
-- Align with project conventions documented in `docs/development/`
+6. Reference specific files and functions when describing changes
+7. Success criteria must be measurable and verifiable
+8. Consider test coverage requirements in success criteria
+9. When updating, preserve valid parts of existing plan
+10. Do not modify any file other than the plan file
+11. Plans MUST be numbered sequentially: Plan 1, Plan 2, Plan 3 (e.g., "Plan 2a" is invalid - use "Plan 3" instead)
+12. Align with project conventions documented in `docs/development/`

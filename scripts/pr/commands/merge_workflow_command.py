@@ -36,17 +36,33 @@ def merge_workflow_command(
     """
     errors: list[str] = []
 
-    # Step 1: Merge the PR
-    print(f"Step 1: Merging PR #{pr_number}...")
+    # Step 1: Verify refs match before merge
+    print(f"Step 1: Verifying local and remote refs match for {branch_name}...")
+    refs_match, local_sha, remote_sha = git_dao.check_refs_match(branch_name)
+    if not refs_match:
+        if local_sha and remote_sha:
+            print(
+                f"ERROR: Refs mismatch - local={local_sha[:8]} remote={remote_sha[:8]}",
+                file=sys.stderr,
+            )
+            print("Push or pull to sync before merging.", file=sys.stderr)
+        else:
+            # Error case - remote_sha contains error message
+            print(f"ERROR: {remote_sha}", file=sys.stderr)
+        return 1
+    print(f"Refs match: {local_sha[:8]}")
+
+    # Step 2: Merge the PR
+    print(f"Step 2: Merging PR #{pr_number}...")
     success = github_dao.merge_pr(pr_number, squash=True, auto=False)
     if not success:
         print("Error merging PR", file=sys.stderr)
         return 1
     print(f"PR #{pr_number} merged successfully")
 
-    # Step 2: Remove worktree (only if working in a worktree)
+    # Step 3: Remove worktree (only if working in a worktree)
     if is_worktree:
-        print(f"Step 2: Removing worktree {working_dir}...")
+        print(f"Step 3: Removing worktree {working_dir}...")
         if working_dir.is_dir():
             success, err = git_dao.remove_worktree(working_dir)
             if not success:
@@ -57,8 +73,8 @@ def merge_workflow_command(
         else:
             print(f"Worktree not found at {working_dir}, skipping removal")
 
-        # Step 3: Delete local branch (only if working in a worktree)
-        print(f"Step 3: Deleting local branch {branch_name}...")
+        # Step 4: Delete local branch (only if working in a worktree)
+        print(f"Step 4: Deleting local branch {branch_name}...")
         success, err = git_dao.delete_branch(branch_name)
         if not success:
             errors.append(f"Failed to delete branch: {err}")
@@ -66,20 +82,20 @@ def merge_workflow_command(
         else:
             print("Local branch deleted successfully")
     else:
-        print("Step 2: Skipping worktree removal (working on current branch)")
-        print("Step 3: Skipping branch deletion (working on current branch)")
+        print("Step 3: Skipping worktree removal (working on current branch)")
+        print("Step 4: Skipping branch deletion (working on current branch)")
 
-    # Step 4: Fetch and prune remote tracking branches
-    print("Step 4: Fetching and pruning remote branches...")
+    # Step 5: Fetch and prune remote tracking branches
+    print("Step 5: Fetching and pruning remote branches...")
     git_dao.fetch_all_prune()
     print("Remote branches updated")
 
-    # Step 5: Check for remaining open PRs and conditionally mark done
+    # Step 6: Check for remaining open PRs and conditionally mark done
     # Skip if no ticket_id provided
     if not ticket_id:
-        print("Step 5: Skipping ticket operations (no ticket ID provided)")
+        print("Step 6: Skipping ticket operations (no ticket ID provided)")
     else:
-        print(f"Step 5: Checking for remaining open PRs for {ticket_id}...")
+        print(f"Step 6: Checking for remaining open PRs for {ticket_id}...")
         remaining_prs: list[dict[str, Any]] = []
         try:
             remaining_prs = _get_open_prs_for_ticket(ticket_id, exclude_pr=pr_number)

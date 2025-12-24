@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 
+from scripts.pr import git_dao
 from scripts.servers.sandbox.client import (
     DEFAULT_SOCKET_PATH,
     SandboxClientError,
@@ -33,6 +34,23 @@ def sandbox_merge_command(
         - 2 when conflicts are detected
         - 1 on errors
     """
+    # Verify refs match before merge
+    if verbose:
+        print(f"Verifying local and remote refs match for {branch}...")
+    refs_match, local_sha, remote_sha = git_dao.check_refs_match(branch)
+    if not refs_match:
+        if local_sha and remote_sha:
+            print(
+                f"ERROR: Refs mismatch - local={local_sha[:8]} remote={remote_sha[:8]}",
+                file=sys.stderr,
+            )
+            print("Push or pull to sync before merging.", file=sys.stderr)
+        else:
+            print(f"ERROR: {remote_sha}", file=sys.stderr)
+        return 1
+    if verbose:
+        print(f"Refs match: {local_sha[:8]}")
+
     if socket_path is None:
         socket_path = DEFAULT_SOCKET_PATH
 

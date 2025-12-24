@@ -3,217 +3,99 @@
 > **Metadata:** Description: Run lint-fixer sub-agent until all lint errors are
 > fixed. Allowed tools: Task, Bash, Read, Grep, Glob, TodoWrite
 
-Fix all lint errors AND warnings in the project by repeatedly running the lint-fixer sub-agent.
+Fix all lint errors AND warnings by repeatedly running the lint-fixer sub-agent.
 
 ## Arguments
 
-This command accepts the following optional arguments via `$ARGUMENTS`:
-
-* `--changed-only`: Only lint files that have been changed (uncommitted or last commit).
-  When this flag is present, the lint-fixer sub-agent will only check changed files,
-  and verification commands will also be scoped to changed files.
+* `--changed-only`: Only lint changed files (uncommitted first, then last commit if none)
+* `--commit <sha>`: Only lint files from specific commit
+* `--files <file1> <file2> ...`: Only lint specific files
 
 ## Workflow
 
-### Step 0: Parse Arguments
-
-Check if `--changed-only` was provided in `$ARGUMENTS`:
-
-* If `--changed-only` is present, set `CHANGED_ONLY_MODE=true`
-* Otherwise, set `CHANGED_ONLY_MODE=false`
-
-When in changed-only mode, detect the changed files once at the start for use in Step 3:
-
-```bash
-# Get uncommitted changes (staged + unstaged), deduplicated
-UNCOMMITTED=$( (git diff --name-only HEAD 2>/dev/null; git diff --name-only --cached 2>/dev/null) | sort -u)
-
-# If no uncommitted changes, get files from last commit
-if [ -z "$UNCOMMITTED" ]; then
-    CHANGED_FILES=$(git diff --name-only HEAD~1..HEAD 2>/dev/null)
-else
-    CHANGED_FILES=$UNCOMMITTED
-fi
-```
-
 ### Step 1: Run Lint-Fixer Sub-Agent
 
-Invoke the lint-fixer sub-agent with the appropriate arguments:
-
-**Standard mode** (no `--changed-only`):
-
-```bash
-Task(subagent_type="lint-fixer", prompt="")
+```python
+Task(subagent_type="lint-fixer", prompt="$ARGUMENTS")
 ```
 
-**Changed-only mode** (with `--changed-only`):
-
-```bash
-Task(subagent_type="lint-fixer", prompt="--changed-only")
-```
+Pass `--changed-only` or `--commit <sha>` through `$ARGUMENTS` if provided.
 
 ### Step 2: Evaluate Results
 
-After the lint-fixer returns, check its summary:
+After lint-fixer returns, check its summary:
 
-* If the lint-fixer reports **success** (no lint errors remain), you are done
-* If the lint-fixer reports **remaining fixable errors or warnings** (ruff, mypy, yamllint, etc.), go to Step 3
-* If the lint-fixer reports **errors or warnings are unfixable** (with reasons), go to Step 4 (Investigation)
-* If the lint-fixer asks you to fix specific errors or warnings manually, fix them and return to Step 1
-* If **no meaningful progress** after 2-3 iterations (same errors or warnings recurring), go to Step 4 (Investigation)
+* **Success** (no errors remain): Done
+* **Remaining fixable errors**: Return to Step 1
+* **Manual fix requested**: Fix and return to Step 1
+* **No progress after 2-3 iterations**: Go to Step 3 (Investigation)
+* **Unfixable errors reported**: Go to Step 3 (Investigation)
 
-### Step 3: Verify Progress
-
-If you are unsure whether the lint-fixer was successful:
-
-**Standard mode** (no `--changed-only`):
-
-1. Run to check current lint status:
-   * `uv run lint scripts` - Validates pyproject.toml script entry point naming conventions
-   * `uv run lint ruff` - Auto-formats code and fixes linting issues
-   * `uv run lint mypy` - Type checking
-   * `uv run lint hadolint` - Dockerfile linting
-   * `uv run lint pymarkdown` - Markdown validation
-   * `uv run lint yamllint` - YAML validation
-   * `uv run lint actionlint` - GitHub Actions workflow linting
-   * `uv run lint dotenvlint` - .env file validation
-   * `uv run lint checkov` - OpenAPI schema security scans
-   * `uv run lint detect-secrets` - Secret detection in code
-   * `uv run lint gitleaks` - Git leak detection
-   * `uv run lint trivy` - Security vulnerability scanning
-2. Review the output for errors and warnings
-3. If errors or warnings exist, return to Step 1
-4. If no errors and no warnings remain, you are done
-
-**Changed-only mode** (with `--changed-only`):
-
-1. Run all linters with `--files` flag using the `$CHANGED_FILES` from Step 0:
-   * `uv run lint scripts --files $CHANGED_FILES`
-   * `uv run lint ruff --files $CHANGED_FILES`
-   * `uv run lint mypy --files $CHANGED_FILES`
-   * `uv run lint hadolint --files $CHANGED_FILES`
-   * `uv run lint pymarkdown --files $CHANGED_FILES`
-   * `uv run lint yamllint --files $CHANGED_FILES`
-   * `uv run lint actionlint --files $CHANGED_FILES`
-   * `uv run lint dotenvlint --files $CHANGED_FILES`
-   * `uv run lint checkov --files $CHANGED_FILES`
-   * `uv run lint detect-secrets --files $CHANGED_FILES`
-   * `uv run lint gitleaks --files $CHANGED_FILES`
-   * `uv run lint trivy --files $CHANGED_FILES`
-   * Note: All linters now support `--files` and will internally skip themselves if
-     none of the files they check are in the changed files list
-2. Review the output for errors and warnings
-3. If errors or warnings exist, return to Step 1
-4. If no errors and no warnings remain, you are done
-
-### Step 4: Investigate Conflicting Linter Settings
-
-When the lint-fixer reports **errors or warnings are unfixable** OR you observe **no meaningful progress**
-after multiple iterations, delegate investigation to a sub-agent.
+### Step 3: Investigate Conflicting Linter Settings
 
 **Triggers for investigation:**
-* The lint-fixer explicitly reports it cannot fix certain errors or warnings (review its stated reasons)
-* Error counts are bouncing up and down without net reduction
-* The same errors or warnings keep reappearing after being fixed
+* Lint-fixer explicitly reports errors as unfixable (with reasons)
+* Error counts bouncing up and down without net reduction
+* Same errors keep reappearing after being fixed
 
-#### Spawn Investigation Sub-Agent
+When triggered, spawn an investigation sub-agent (the sub-agent investigates, NOT you):
 
-Use the Task tool with `subagent_type="general-purpose"` to investigate and fix linter conflicts:
-
-```bash
+```python
 Task(
   subagent_type="general-purpose",
   prompt="""
-Investigate and resolve conflicting linter settings that are causing unfixable lint errors or warnings.
+Investigate and resolve conflicting linter settings causing unfixable errors.
 
 ## Context from lint-fixer
-<paste the lint-fixer's "Remaining Issues" section with its explanations here>
+<paste lint-fixer's "Remaining Issues" section here>
 
 ## Your Task
-1. Read the linter configuration files:
-   * `.yamllint.yaml` - YAML linting rules
-   * `pyproject.toml` - Ruff, mypy, and other Python tool settings
-   * `.pymarkdown.json` - Markdown linting rules
-   * `.hadolint.yaml` - Dockerfile linting rules
-
-2. Analyze for conflicts such as:
-   * Line length differences between linters
-   * Indentation rule conflicts
-   * Quote style conflicts
-   * Block scalar vs quoted string preferences
-
-3. Use Firecrawl to research solutions:
-   * Search for documentation on resolving the specific conflict
-   * Look for best practices for multi-linter Python projects
-
-4. Apply fixes:
-   * Modify linter configuration to resolve conflicts
-   * Ensure settings are aligned across all linters
-   * Document any changes with comments in config files
+1. Read config files: .yamllint.yaml, pyproject.toml, .pymarkdown.json, .hadolint.yaml
+2. Analyze for conflicts: line length, indentation, quote styles, block scalar preferences
+3. Apply fixes to linter configs, document changes with comments
 
 ## Report Back
-Provide a summary of:
-* What conflicts you found
-* What configuration changes you made
-* Whether the conflicts are now resolved
-* Any remaining issues that could not be resolved (and why)
+What conflicts found, what changes made, whether resolved, any remaining issues.
 """
 )
 ```
 
-**Important**: Include the lint-fixer's error explanations in the prompt so the sub-agent
-knows exactly what to investigate.
+**Important**: Include lint-fixer's error explanations so sub-agent knows what to investigate.
 
-#### After Sub-Agent Returns
+After sub-agent returns:
+* If conflicts resolved: Return to Step 1
+* If unresolvable: Go to Step 4
 
-Review the sub-agent's report:
-* If conflicts were resolved, return to Step 1 to run lint-fixer again
-* If issues remain unresolvable, go to Step 5
+### Step 4: Report Unresolvable Issues
 
-### Step 5: Report Unresolvable Issues
+Document what was investigated, the specific conflict, why it cannot be resolved, then stop.
 
-If after investigation you determine the issue cannot be resolved:
+## Lint Commands
 
-1. Document what you investigated
-2. Explain the specific conflict
-3. Report why it cannot be resolved
-4. Stop - do not continue running lint-fixer
+```bash
+uv run lint [--changed-only]           # All linters
+uv run lint ">=mypy" [--changed-only]  # From mypy onwards (use quotes!)
+uv run lint ruff [--changed-only]      # Single linter
+```
+
+## Suppression Policy
+
+The lint-fixer sub-agent AND any manual fixes must **NEVER** add `# noqa`, `# type: ignore`, or similar without explicit justification.
+
+1. **Per-file ignores preferred**: Check `pyproject.toml` `[tool.ruff.lint.per-file-ignores]` first
+2. **Inline suppressions require justification**: Only for genuine edge cases with explanatory comment
+3. **Fix code, don't suppress**: Refactor to comply, not add suppressions
+4. **Report, don't suppress**: If unfixable without suppression, report it - let caller decide
+
+Reference: `docs/development/linting-strategy.yml` for approved ignores.
 
 ## Important Notes
 
-* **Track progress** - use TodoWrite to track remaining error counts per iteration
-* **Pass context to sub-agents** - include lint-fixer's error explanations when spawning investigation
-* **Don't be persistent when stuck** - delegate investigation rather than re-running lint-fixer
-* **Sub-agents can fix configs** - the investigation sub-agent has permission to modify linter settings
-
-## CRITICAL: No Random Suppressions
-
-The lint-fixer sub-agent and any manual fixes must **NEVER** add `# noqa`, `# type: ignore`,
-or similar suppression comments to silence warnings unless explicitly justified.
-
-### Policy
-
-1. **Per-file ignores are preferred** - The project uses `pyproject.toml` `[tool.ruff.lint.per-file-ignores]`
-   for systematic patterns (tests, scripts, etc.). Check if the file already has the rule ignored.
-
-2. **Inline suppressions require justification** - Only add inline noqa for:
-   * Production S608 with validated paths (must have explanatory comment)
-   * Root-level scripts needing S603 for subprocess
-   * Genuine edge cases with no applicable per-file ignore
-
-3. **Fix code, don't suppress** - The proper fix is to refactor code to comply with rules,
-   not to add suppressions.
-
-4. **Report, don't suppress** - If the lint-fixer cannot fix an error without adding a
-   suppression, it should report it as unfixable. You can then decide whether to:
-   * Add a per-file ignore to `pyproject.toml` (for systematic patterns)
-   * Add an inline suppression with justification (for genuine edge cases)
-   * Escalate for human review
-
-### Reference
-
-See `docs/development/linting-strategy.yml` for the full linting strategy and approved ignores.
+* **Track progress**: Use TodoWrite to track remaining error counts per iteration
+* **Pass context**: Include lint-fixer's error explanations when spawning investigation sub-agent
+* **Don't persist when stuck**: Delegate investigation rather than re-running lint-fixer repeatedly
+* **Investigation sub-agent can fix configs**: The sub-agent has permission to modify linter settings to resolve conflicts
 
 ## Success Criteria
 
-The project is fully linted when lint-fixer sub-agent produces no errors and no warnings.
+Lint-fixer sub-agent produces no errors and no warnings.

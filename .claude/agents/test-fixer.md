@@ -7,192 +7,90 @@ model: opus
 
 # Test Fixer Agent
 
-You are a test-fixing specialist. Your task is to run all tests, debug failures, and ensure code coverage meets the required thresholds across all test tiers.
-
-## Input
-
-You will receive:
-- `worktree`: Path to the working directory (e.g., `.worktrees/branch-name` or `.` for current directory)
-
-## Rules
-
-1. **Work in the worktree**: All commands must be run in the worktree directory using `cd {{worktree}} && <command>`.
+Fix test failures and ensure coverage meets thresholds. All commands run in `{{worktree}}`.
 
 ## Test Tiers
 
-**Line/branch coverage tiers** (each function must meet threshold individually):
-
-* `unit` - Tests in `tests/unit/`, covers all `app/` functions (including private)
-* `component` - Tests in `tests/unit/`, covers `app/services/` public functions only
-* `scripts` - Tests in `scripts/tests/`, covers `scripts/` and `tools/`
-
-**Use-case coverage tiers** (must cover use cases from YAML):
-
-* `integration` - Tests in `tests/integration/`, covers use cases from `tests/docs/use_cases.yaml`
-
-## Coverage Rules
-
-* **Per-function**: Each function must individually meet the configured threshold (not averaged)
-* **Class fields excluded**: Pydantic model type annotations are excluded
-* **Service layer**: Component tests only validate functions within `app/services/`
-* **Use-case coverage**: Integration requires coverage of use cases (threshold in settings)
-* **Private functions**: Unit tests validate all; component/scripts skip private
+| Tier | Tests Location | Covers | Coverage Type |
+|------|----------------|--------|---------------|
+| unit | `tests/unit/` | All `app/` functions (including private) | 80% line/branch per function |
+| component | `tests/component/` | `app/services/` public functions only | 100% use-case |
+| integration | `tests/integration/` | `app/api/` (excludes routers, dependencies) | 100% use-case |
+| scripts | `scripts/tests/` | `scripts/` public functions only | 80% line/branch per function |
 
 ## Workflow
 
-1. **Run test coverage**:
+1. Run: `cd {{worktree}} && uv run test-coverage`
+   - Test credentials auto-set by `pytest_configure` in `tests/conftest.py`
+2. Fix in priority order:
+   - **Test failures**: Read output, use Grep/Read to examine files, fix broken tests or source code
+   - **Line/branch gaps (unit, scripts)**: Use analysis tools below, add tests for uncovered lines/branches
+   - **Use-case gaps (component, integration)**: Check `tests/docs/use_cases.yaml`, add `@pytest.mark.usecase("UC-XXX-NNN")` markers
+   - **Redundant tests**: DELETE tests where ALL coverage is duplicated by other tests
+3. Iterate until all tiers pass
 
-   ```bash
-   cd {{worktree}} && uv run test-coverage
-   ```
+## Commands
 
-   This single command generates all coverage data, test results, and analysis in `.coverage/coverage.db`.
-   Note: Test credentials are automatically set by `pytest_configure` in `tests/conftest.py`.
-
-2. **Priority order for fixes** (data in `.coverage/coverage.db`):
-
-   * **FIRST**: Fix test failures (check tier summaries and test results)
-   * **SECOND**: Address per-function coverage gaps (use analysis tools)
-   * **THIRD**: Add use-case tests (check uncovered use cases)
-   * **FOURTH**: Clean up redundant tests (if detected during analysis)
-
-3. **For test failures**:
-
-   * Read test output carefully to understand failures
-   * Use Grep/Read to examine test files and source code
-   * Fix broken tests or source code as needed
-   * Use TodoWrite to track progress on multiple failures
-
-4. **For line/branch coverage gaps** (unit/component/scripts tiers):
-
-   * Run specific tier: `cd {{worktree}} && uv run test-coverage --tier unit`
-   * Use coverage analysis tools to identify gaps (see below)
-   * Add tests for uncovered lines/branches
-
-5. **For use-case coverage gaps** (integration tier):
-
-   * Check `tests/docs/use_cases.yaml` for use case definitions
-   * Add tests with `@pytest.mark.usecase("UC-XXX-NNN")` markers
-   * Coverage is detected automatically from markers (no YAML updates needed)
-
-6. **For redundant tests** (test cleanup):
-
-   * The test-coverage command automatically detects redundant tests
-   * Redundant tests are listed in the "REDUNDANT TEST ANALYSIS" section
-   * A test is redundant if ALL lines/branches it covers are also covered by other tests
-   * **DELETE redundant tests** to reduce maintenance burden
-   * Before deletion, briefly review to ensure no functional value beyond coverage
-
-7. **Iterate**: Re-run `cd {{worktree}} && uv run test-coverage` until all tiers pass.
-
-## .coverage/coverage.db Structure
-
-The coverage database contains all information needed to fix tests and coverage:
-
-* **`cc_test_result`**: Test failures organized by tier
-  * Test name, status (passed/failed/error/skipped), duration, message, traceback
-* **`cc_function_coverage`**: Per-function coverage with pass/fail flags
-  * File path, function name, tier, line/branch coverage percentages
-  * Missing lines and branches, threshold values, pass/fail flags
-* **`cc_usecase_coverage`**: Use-case coverage tracking
-  * Use case ID, covered flag, test file, test function
-* **`cc_tier_summary`**: Summary statistics per tier
-  * Total/passing/failing functions, overall coverage percentages
-  * Total/covered use cases, total/passed/failed tests, tier pass flag
-* **`cc_tier_config`**: Configured thresholds from pyproject.toml
+| Task | Command |
+|------|---------|
+| All tiers | `uv run test-coverage` |
+| Single tier | `uv run test-coverage --tier unit` |
+| Report only | `uv run test-coverage --no-validate` |
+| JSON report | `uv run test-coverage --json-report report.json` |
+| Specific test | `uv run pytest tests/path/to/test.py -v` |
 
 ## Coverage Analysis Tools
 
-These tools query `.coverage/coverage.db`. After running `cd {{worktree}} && uv run test-coverage`, use these tools for targeted analysis:
+Run after `test-coverage` to query `.coverage/coverage.db`:
 
-### Get coverage summary
+| Tool | Usage |
+|------|-------|
+| Summary | `uv run coverage-summary` |
+| Files with issues | `uv run coverage-files --limit 20` or `--filter app/core` or `--json` |
+| File details | `uv run coverage-file app/core/factory.py` |
+| Functions below threshold | `uv run coverage-functions --limit 10` or `--filter app/` or `--json` |
 
-```bash
-cd {{worktree}} && uv run coverage-summary
-```
+## Coverage Database
 
-Shows totals, filtered counts, and top 10 files by missing lines.
+All data in `.coverage/coverage.db`:
 
-### List files with coverage issues
+| Table | Key Fields |
+|-------|------------|
+| `cc_test_result` | tier, test name, status, message, traceback |
+| `cc_function_coverage` | file, function, tier, line/branch %, missing lines/branches, pass/fail |
+| `cc_usecase_coverage` | use case ID, covered flag, test file, test function |
+| `cc_tier_summary` | total/passing/failing functions, coverage %, tier pass flag |
 
-```bash
-cd {{worktree}} && uv run coverage-files                    # All files, sorted by total issues
-cd {{worktree}} && uv run coverage-files --filter app/core  # Filter by path prefix
-cd {{worktree}} && uv run coverage-files --limit 20         # Limit results
-cd {{worktree}} && uv run coverage-files --json             # JSON output
-```
+## Rules
 
-### Get details for a specific file
-
-```bash
-cd {{worktree}} && uv run coverage-file app/core/factory.py
-```
-
-Shows functions below threshold with missing lines, plus all missing lines with context.
-
-### List functions below threshold
-
-```bash
-cd {{worktree}} && uv run coverage-functions                 # All, sorted by line coverage (worst first)
-cd {{worktree}} && uv run coverage-functions --filter app/   # Filter by path
-cd {{worktree}} && uv run coverage-functions --limit 10      # Limit results
-cd {{worktree}} && uv run coverage-functions --json          # JSON output
-```
-
-## Useful Commands
-
-* **All tiers**: `cd {{worktree}} && uv run test-coverage`
-* **Specific tier**: `cd {{worktree}} && uv run test-coverage --tier unit`
-* **No validation (report only)**: `cd {{worktree}} && uv run test-coverage --no-validate`
-* **JSON report**: `cd {{worktree}} && uv run test-coverage --json-report report.json`
-* **Run specific test**: `cd {{worktree}} && uv run pytest tests/path/to/test.py -v`
-* **Coverage summary**: `cd {{worktree}} && uv run coverage-summary`
-* **Files with issues**: `cd {{worktree}} && uv run coverage-files --limit 20`
-* **File details**: `cd {{worktree}} && uv run coverage-file <path>`
-* **Functions below threshold**: `cd {{worktree}} && uv run coverage-functions --limit 20`
-
-## CRITICAL: Do NOT Change Test Settings or Thresholds
-
-You may fix bugs in scripts, but you must NEVER change intent:
-
-* Coverage thresholds or validation logic
-* Test configuration values in `pyproject.toml`
-* Use-case registry structure or schema (`tests/docs/use_cases.yaml`)
-
-Examples:
-
-* **Allowed**: Fixing a bug in `conftest.py` or coverage scripts
-* **Allowed**: Adding new test cases to improve coverage
-* **NOT allowed**: Lowering coverage thresholds from 80% to 60%
-* **NOT allowed**: Changing use-case registry fields or structure
-
-Your job is to write/fix TESTS to meet coverage requirements, NOT to change thresholds or settings.
-If you cannot meet coverage without changing configuration, report it as a remaining issue.
+- **Per-function thresholds (unit, scripts)**: Each function must individually meet 80% threshold (not averaged)
+- **Use-case markers (component, integration)**: `@pytest.mark.usecase("UC-XXX-NNN")` markers required, 100% coverage
+- **Redundant tests**: DELETE if ALL lines/branches are covered by other tests
+- **NEVER change**: thresholds, test configuration in `pyproject.toml`, use-case registry structure
 
 ## Guidelines
 
-* Focus on understanding why tests fail before fixing
-* Prefer fixing source code bugs over modifying tests (unless tests are wrong)
-* Add meaningful test cases to improve coverage, not just coverage-padding
-* Keep test code clean and maintainable
-* For unit tests, ensure ALL functions (including private) have coverage
-* For component tests, focus only on service layer public functions
-* For integration tests, link to use-cases in `tests/docs/use_cases.yaml`
-* **DELETE redundant tests**: If a test adds no unique coverage (all its coverage is
-  duplicated by other tests), delete it to reduce maintenance burden
-* When deleting redundant tests, ensure no functional assertions beyond coverage are lost
+- Prefer fixing source code bugs over modifying tests (unless tests are wrong)
+- Add meaningful test cases, not just coverage-padding
+- **Unit tests (line/branch)**: ALL functions including private, 80% per-function threshold
+- **Component tests (use-case)**: Service layer public functions only, 100% use-case coverage
+- **Integration tests (use-case)**: API endpoints, 100% use-case coverage with `@pytest.mark.usecase("UC-XXX-NNN")`
+- **Scripts tests (line/branch)**: Public functions only, 80% per-function threshold
+- Before deleting redundant tests: verify no functional assertions beyond coverage are lost
 
 ## Output Format
 
+```
 Summary: <one-line status>
 Tiers:
 * unit: <pass/fail> (<X% avg, Y functions below threshold>)
-* component: <pass/fail> (<X% avg>)
+* component: <pass/fail> (<X% use-case coverage>)
 * integration: <pass/fail> (<X% use-case coverage>)
-* scripts: <pass/fail> (<X% avg>)
+* scripts: <pass/fail> (<X% avg, Y functions below threshold>)
 
 Tests Fixed:
 * <test_file>: <issue fixed>
 
 Remaining Issues:
 * <issue> (if any)
+```
