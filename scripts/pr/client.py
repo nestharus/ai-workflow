@@ -22,6 +22,7 @@ Usage:
     uv run pr is-valid-branch-name --ticket <id> --branch <name>
     uv run pr extract-ticket-id [<branch-name>]
     uv run pr list-unresolved-comments <ticket-id>
+    uv run pr parse-coderabbit --review-file <path> --output-dir <path>
     uv run pr promote-worktree [<identifier>]
     uv run pr cleanup-sandbox [<identifier>]
     uv run pr rebase-start [<identifier>]
@@ -385,6 +386,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Linear ticket ID (e.g., NES-123)",
     )
 
+    # parse-coderabbit command
+    parse_coderabbit_parser = subparsers.add_parser(
+        "parse-coderabbit",
+        help="Parse a CodeRabbit review file into task JSON files",
+    )
+    parse_coderabbit_parser.add_argument(
+        "--review-file",
+        type=Path,
+        required=True,
+        help="Path to the CodeRabbit review file",
+    )
+    parse_coderabbit_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Directory to write task JSON files to",
+    )
+
     # promote-worktree command
     promote_parser = subparsers.add_parser(
         "promote-worktree",
@@ -561,6 +580,8 @@ def main(argv: list[str] | None = None) -> int:
         return commands.extract_ticket_id_command(args.branch_name)
     if args.command == "list-unresolved-comments":
         return commands.list_unresolved_comments_command(args.ticket_id)
+    if args.command == "parse-coderabbit":
+        return commands.parse_coderabbit_command(args.review_file, args.output_dir)
     if args.command == "promote-worktree":
         return commands.promote_worktree_command(args.identifier)
     if args.command == "cleanup-sandbox":

@@ -22,6 +22,7 @@ from scripts.pr.commands.list_unresolved_comments_command import (
 from scripts.pr.commands.merge_pr_command import merge_pr_command
 from scripts.pr.commands.merge_workflow_command import merge_workflow_command
 from scripts.pr.commands.open_pr_command import open_pr_command
+from scripts.pr.commands.parse_coderabbit_command import parse_coderabbit_command
 from scripts.pr.commands.post_deferred_replies_command import post_deferred_replies_command
 from scripts.pr.commands.post_reply_command import post_reply_command
 from scripts.pr.commands.promote_worktree_command import promote_worktree_command
@@ -52,6 +53,7 @@ __all__ = [
     "merge_pr_command",
     "merge_workflow_command",
     "open_pr_command",
+    "parse_coderabbit_command",
     "post_deferred_replies_command",
     "post_reply_command",
     "promote_worktree_command",

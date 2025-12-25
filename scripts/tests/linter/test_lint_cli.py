@@ -113,7 +113,7 @@ class TestGetChangedFiles:
 
             assert result == ["commit_file.py", "other.py"]
             mock_run.assert_called_once_with(
-                ["git", "diff", "--name-only", "abc123~1..abc123"],
+                ["git", "diff", "--name-only", "--diff-filter=ACMRTUX", "abc123~1..abc123"],
                 capture_output=True,
                 text=True,
                 check=True,

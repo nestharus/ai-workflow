@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Run Minimax with all permissions skipped
+minimax --dangerously-skip-permissions "$@"

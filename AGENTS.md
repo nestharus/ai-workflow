@@ -37,18 +37,19 @@ Test coverage is enforced separately for each test tier using `uv run test-cover
 
 | Tier | Test Path | Coverage Type | Target |
 |------|-----------|---------------|--------|
-| **unit** | `tests/unit/` | 80% line/branch per function | All `app/` functions |
-| **component** | `tests/unit/` | 80% line/branch per function | `app/services/` only |
-| **integration** | `tests/integration/` | 100% use-case | Use cases from YAML |
-| **scripts** | `scripts/tests/` | 80% line/branch per function | `scripts/`, `tools/` |
+| **unit** | `tests/unit/` | 80% line / 70% branch | All `app/` functions |
+| **component** | `tests/component/` | 100% use-case | `app/services/` only |
+| **integration** | `tests/integration/` | 100% use-case | `app/api/` endpoints |
+| **scripts** | `scripts/tests/` | 80% line / 70% branch | `scripts/` only |
 
 ### Coverage Rules
 
-* **Per-function**: Each function must individually meet the 80% threshold (not averaged)
+* **Per-function thresholds**: Line 80%, branch 70% per function (unit/scripts tiers)
+* **Overall thresholds**: Line 80%, branch 70% overall (unit/scripts tiers)
 * **Class fields excluded**: Pydantic model type annotations are excluded from coverage
 * **Service layer**: Component tests only validate functions within `app/services/`
-* **Use-case coverage**: Integration requires 100% coverage of use cases
-* **Private functions**: Unit tests validate all functions; component/scripts skip private
+* **Use-case coverage**: Component/integration require 100% use-case coverage
+* **Private functions**: Unit tests validate all functions; component/integration/scripts skip private
 
 ### Validation Commands
 
@@ -60,7 +61,7 @@ uv run test-coverage
 uv run test-coverage --tier unit
 uv run test-coverage --tier integration
 
-# Custom thresholds
+# Custom thresholds (override defaults)
 uv run test-coverage --min-line 90 --min-branch 85
 
 # Report only (no validation)
@@ -76,61 +77,6 @@ which contains per-function coverage statistics, use-case coverage, test results
 detailed missing line/branch information. Analysis tools (`coverage-summary`,
 `coverage-files`, `coverage-file`, `coverage-functions`) read from this database.
 
-## Linting
-
-Use the `lint-fixer` sub-agent to fix lint errors.
-
-**For workflows and commands** (update-pr, execute-plan, etc.), use changed-only mode:
-
-```python
-Task(subagent_type="lint-fixer", prompt="--changed-only")
-```
-
-**For full project linting**, use the `/lint-fix` slash command (does NOT use changed-only mode).
-
-For docstring linter errors, see `docs/development/python/python.docstrings-guide.yml`.
-
-## Code Review
-
-Automated code reviews are performed using CodeRabbit and SonarQube.
-
-### CodeRabbit
-
-Automated CodeRabbit review wrapper (adds `--prompt-only` automatically). Agents must not
-run this command; a human must run it, and the agent will fetch the latest artifact
-afterward.
-
-* **Human-run command**: `uv run review.coderabbit -- [--base <branch> | --type <mode> |
-  --base-commit <sha>] [extra coderabbit args]` (defaults to `--base main` when no target
-  flag is provided)
-* **Selection rule**: Choose exactly one of `--base`, `--type`, or `--base-commit`;
-  do not combine
-* **Purpose**: Provides AI-driven feedback on work-in-progress code before it is committed
-* **Agent retrieval**: After the human run, the agent will fetch the newest artifact via
-  `uv run review.latest --type coderabbit` (prints the newest
-  `.review/*.review.coderabbit` path)
-* **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
-  invoked via `uv run`
-
-### SonarQube
-
-Runs SonarQube analysis using a Docker-based wrapper with caching enabled. Agents must
-not run this command; a human must run it, and the agent will fetch the latest artifact
-afterward.
-
-* **Usage**: `./scripts/sonar_scan.sh [OPTIONS]`
-* **Options**:
-  * `-t, --token`: Authentication token (overrides `SONAR_TOKEN` env var)
-  * `-u, --url`: SonarQube server URL (default: `http://localhost:9000`)
-  * `--`: Arguments after this flag are passed directly to `sonar-scanner-cli`
-* **Environment Variables**: `SONAR_TOKEN`, `SONAR_HOST_URL`
-* **Human-run wrapper**: `uv run review.sonar -- [sonar_scan args]`
-* **Agent retrieval**: After the human run, the agent will fetch the newest artifact via
-  `uv run review.latest --type sonar` (prints the newest `.review/*.review.sonar` path)
-* **Log output**: Wrapper writes to `.review/<timestamp>.review.sonar` and echoes the path
-* **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
-  invoked via `uv run`
-
 ## Generating OpenAPI Schema
 
 Generates the OpenAPI 3.1 schema JSON file from the FastAPI application code.
@@ -142,19 +88,7 @@ Generates the OpenAPI 3.1 schema JSON file from the FastAPI application code.
 * **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
   invoked via `uv run`
 
-## Sub-agents
-
-This project has two distinct agent systems with strict call-boundary rules.
-
-### Call-Boundary Invariant
-
-**IMPORTANT**: The `.tasks` orchestration system (including `apply_plan` and all
-scripts under `scripts/tasks/workflows/`) must ONLY dispatch to agents defined in
-`.tasks/agents/`. These workflows must NOT invoke `.claude/agents/` agents directly.
-This separation ensures that orchestration agents have consistent behavior and can
-be tested independently.
-
-### Claude Code Sub-agents (Manual Use Only)
+## Claude Code Sub-agents (Manual Use Only)
 
 These agents are defined in `.claude/agents/` and can be invoked manually via the
 Task tool during interactive Claude Code sessions. They are NOT called
@@ -163,55 +97,7 @@ programmatically from `.tasks` orchestration workflows.
 **Important**: Most sub-agents contain their own instructions. Pass an empty
 string (`""`) for the prompt parameter unless otherwise specified below.
 
-#### lint-fixer
-
-Resolves and fixes lint errors iteratively until all issues pass.
-
-* **Invocation**: `Task(subagent_type="lint-fixer", prompt="<args>")`
-* **Arguments**:
-  * `--worktree <path>`: Run linting from a specific git worktree directory
-  * `--changed-only`: Only lint files that have been changed (uncommitted or last commit)
-* **Use cases**:
-  * Workflow use (recommended): `Task(subagent_type="lint-fixer", prompt="--changed-only")`
-  * With worktree: `Task(subagent_type="lint-fixer", prompt="--worktree .worktrees/NES-123-add-feature --changed-only")`
-  * Full lint (via `/lint-fix` command only): `Task(subagent_type="lint-fixer", prompt="")`
-
-#### test-fixer
-
-Runs all tests, debugs failures, and ensures coverage requirements are met.
-
-* **Invocation**: `Task(subagent_type="test-fixer", prompt="")`
-* **Prompt**: `""` (empty string required)
-* **Use case**: Manual invocation when you need to debug test failures interactively
-* **Note**: This agent is for direct manual use only; `.tasks` workflows use the
-  separate `test-debugger` agent in `.tasks/agents/` for programmatic test debugging
-
-#### knowledge-analyzer
-
-Analyzes YAML documentation items with chunking and multi-dimensional classification.
-
-* **Invocation**: `Task(subagent_type="knowledge-analyzer", prompt="")`
-* **Prompt**: `""` (empty string required)
-* **Use case**: Manual invocation for documentation analysis tasks
-
-### Tasks Orchestration Agents
-
-These agents are defined in `.tasks/agents/` and are called programmatically by
-the `.tasks` orchestration system. They follow a different frontmatter format and
-are managed separately from Claude Code sub-agents.
-
-Key orchestration agents include:
-
-* `implementor` - Implements tasks from plan files
-* `test-debugger` - Debugs failing tests reported by implementor
-* `task-patcher` - Updates task files when source plan changes
-* `implementation-analyzer` - Analyzes implementation failures
-
-See `.tasks/agents/` for the full list. These agents are invoked via
-`_run_tasks_agent()` in the orchestration code and should not be called directly
-via the Task tool.
-
-### Creating New Sub-agents
+## Creating New Sub-agents
 
 Claude Code sub-agents are Markdown files with YAML frontmatter in `.claude/agents/`:
 
@@ -297,6 +183,36 @@ If implementation cannot be completed, you MUST report:
 * What is needed to complete it
 
 Do NOT silently skip requirements or create stubs without explicit acknowledgment.
+
+## No Backwards Compatibility
+
+**CRITICAL**: This project has a strict NO BACKWARDS COMPATIBILITY policy. Always prioritize
+optimal implementations over legacy support.
+
+### Forbidden Patterns
+
+Do NOT use any of these backwards-compatibility patterns:
+
+* **Backwards-compatibility shims**: Adapter layers, deprecated aliases, or compatibility wrappers
+* **Deprecated aliases**: `old_name = new_name  # For backwards compatibility`
+* **Version checks**: `if version < 2: use_old_method() else: use_new_method()`
+* **Dual support**: Accepting both old and new formats/arguments
+* **Compatibility layers**: Adapter classes or wrapper functions for old interfaces
+* **Re-exports**: Keeping old import paths working via re-exports
+* **Unused parameters**: `def func(new_param, old_param=None):  # old_param ignored`
+* **Legacy pattern support**: Maintaining old code that depends on deprecated patterns
+
+### When Updating Code
+
+1. **Find all usages**: Use grep/search to find every reference to the code being changed
+2. **Update all usages**: Modify every call site to use the new pattern
+3. **Delete old code**: Remove the old implementation entirely—do not keep it alongside new code
+4. **Run tests**: Ensure all tests pass with the new implementation
+5. **No fallbacks**: Do not add fallback logic "just in case"
+
+Always choose the best solution for current requirements, not the one that preserves old patterns.
+This policy ensures the codebase stays clean, maintainable, and free of technical debt
+from accumulated compatibility layers.
 
 ## External Resources
 

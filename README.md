@@ -118,6 +118,57 @@ documentation on each linter, see the files in `docs/usage/` and `docs/developme
 
 Any errors will fail the lint job locally and in CI.
 
+## Code Review
+
+Automated code reviews are performed using CodeRabbit and SonarQube.
+
+### CodeRabbit
+
+Automated CodeRabbit review wrapper (adds `--prompt-only` automatically). Agents must not
+run this command; a human must run it, and the agent will fetch the latest artifact
+afterward.
+
+* **Human-run command**: `uv run review.coderabbit -- [--base <branch> | --type <mode> |
+  --base-commit <sha>] [extra coderabbit args]` (defaults to `--base main` when no target
+  flag is provided)
+* **Selection rule**: Choose exactly one of `--base`, `--type`, or `--base-commit`;
+  do not combine
+* **Purpose**: Provides AI-driven feedback on work-in-progress code before it is committed
+* **Agent retrieval**: After the human run, the agent will fetch the newest artifact via
+  `uv run review.latest --type coderabbit` (prints the newest
+  `.review/*.review.coderabbit` path)
+* **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
+  invoked via `uv run`
+
+#### Quick Commands
+
+```bash
+# Review uncommitted changes (staged + unstaged)
+uv run review.coderabbit -- --type uncommitted
+
+# Review against main branch
+uv run review.coderabbit -- --base main
+```
+
+### SonarQube
+
+Runs SonarQube analysis using a Docker-based wrapper with caching enabled. Agents must
+not run this command; a human must run it, and the agent will fetch the latest artifact
+afterward.
+
+* **Usage**: `./scripts/sonar_scan.sh [OPTIONS]`
+* **Options**:
+  * `-t, --token`: Authentication token (overrides `SONAR_TOKEN` env var)
+  * `-u, --url`: SonarQube server URL (default: `http://localhost:9000`)
+  * `--`: Arguments after this flag are passed directly to `sonar-scanner-cli`
+* **Environment Variables**: `SONAR_TOKEN`, `SONAR_HOST_URL`
+* **Human-run wrapper**: `uv run review.sonar -- [sonar_scan args]`
+* **Agent retrieval**: After the human run, the agent will fetch the newest artifact via
+  `uv run review.latest --type sonar` (prints the newest `.review/*.review.sonar` path)
+* **Log output**: Wrapper writes to `.review/<timestamp>.review.sonar` and echoes the path
+* **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
+  invoked via `uv run`
+
 ## Environment Variables
 
 Configuration is managed via `app/core/settings.py`. See that file for complete validation rules.
