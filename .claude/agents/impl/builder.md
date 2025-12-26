@@ -24,6 +24,11 @@ def build_<what>(*parts, **options) -> T:
     """
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A builder constructs data from parts:
@@ -186,12 +191,3 @@ def build_sql_query(
 | Multiple parts → result | Single input → output |
 | Construction | Transformation |
 | `build_config(a, b, c)` | `map_to_json(obj)` |
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

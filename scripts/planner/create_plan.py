@@ -7,10 +7,12 @@ Communication happens through files in the workspace directory.
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 from scripts.planner.actions import ActionType
 from scripts.planner.layer_manager import LayerManager
+from scripts.planner.state import DomainHypothesis, PatternHypothesis, UnitRelation
 
 if TYPE_CHECKING:
     from scripts.planner.state import Branch, Capability, DesignState, Unit, UnitPlan
@@ -59,8 +61,6 @@ class CreatePlanStateMachine:
             self._handle_decomposition()
         elif phase == "review":
             self._handle_review()
-        elif phase == "tree_review" or phase == "tree_decision":
-            pass
         elif phase == "replan":
             self._handle_replan()
         elif phase == "refactoring":
@@ -69,6 +69,8 @@ class CreatePlanStateMachine:
             self._handle_test_planning()
         elif phase == "generate_docs":
             self._handle_generate_docs()
+        elif phase == "post_to_linear":
+            self._handle_post_to_linear()
         elif phase == "complete":
             self._handle_complete()
         else:
@@ -89,9 +91,6 @@ class CreatePlanStateMachine:
         elif action_type == "call_layer_reviewer":
             output = self.state.read_agent_output()
             self._process_layer_reviewer_output(output)
-        elif action_type == "call_tree_reviewer":
-            output = self.state.read_agent_output_json()
-            self._process_tree_reviewer_output(output)
         elif action_type == "call_design_refactorer":
             output = self.state.read_agent_output()
             self._process_refactorer_output(output)
@@ -101,6 +100,8 @@ class CreatePlanStateMachine:
         elif action_type == ActionType.GENERATE_DOCS.value:
             output = self.state.read_agent_output()
             self._process_generate_docs_output(output)
+        elif action_type == ActionType.POST_TO_LINEAR.value:
+            self._process_post_to_linear()
         else:
             self._handle_error(f"Unknown action type for processing: {action_type}")
 
@@ -173,7 +174,6 @@ class CreatePlanStateMachine:
 
     def _handle_review(self) -> None:
         """Request layer review."""
-        self.state.branch_reports.clear()
         active_branches = [
             branch_id
             for branch_id, branch in self.state.branches.items()
@@ -228,56 +228,28 @@ class CreatePlanStateMachine:
         self.state.save()
 
     def _review_all_branches(self) -> None:
-        """Request layer review for all active branches."""
-        self.state.branch_reports.clear()
-        target_layer = (
-            self.state.review_target_layer
-            if self.state.review_target_layer is not None
-            else self.state.current_layer
-        )
+        """Request layer review for all active branches.
+
+        Note: Branch-level tree review (comparing entire branch hierarchies via
+        tree-reviewer agent) has been permanently disabled in favor of per-unit
+        multi-path decomposition. The per-unit approach stores alternative
+        decomposition paths in `explored_paths` and lets the layer reviewer
+        select between them via `selected_path` output, providing more granular
+        control than full branch comparison. See tree-reviewer.md for details.
+        """
         active_branches = [
             branch_id
             for branch_id, branch in self.state.branches.items()
             if branch.status in ("exploring", "selected")
         ]
-
-        for branch_id in active_branches:
-            layer_units = self.layer_manager.get_branch_units_at_layer(
-                branch_id,
-                target_layer,
-            )
-            child_units = self.layer_manager.get_branch_units_at_layer(
-                branch_id,
-                target_layer + 1,
-            )
-            branch = self.state.branches.get(branch_id)
-            layer_history = []
-            if branch is not None:
-                layer_history = branch.history.get(target_layer, [])[-3:]
-
-            self.state.write_agent_input(
-                {
-                    "branch_id": branch_id,
-                    "layer": target_layer,
-                    "layer_units": [self._unit_to_dict(uid) for uid in layer_units],
-                    "child_units": [self._unit_to_dict(uid) for uid in child_units],
-                    "explored_paths": self._explored_paths_to_dict(),
-                    "layer_history": {
-                        "layer": target_layer,
-                        "previous_attempts": layer_history,
-                        "note": "Consider previous attempts when suggesting refactoring",
-                    },
-                },
-                unit_id=f"review_{branch_id}",
-            )
-
-        self.state.write_next_action(
-            ActionType.CALL_LAYER_REVIEWER,
-            layer=target_layer,
-            target_branches=active_branches,
+        # Select highest-confidence branch for single-branch review.
+        # Multi-path exploration happens at the unit level via explored_paths.
+        best_branch = max(
+            active_branches,
+            key=lambda bid: self.state.branches[bid].confidence,
         )
-        self.state.phase = "tree_review"
-        self.state.save()
+        self._review_single_branch(best_branch)
+        return
 
     def _handle_refactoring(self) -> None:
         """Request design refactoring.
@@ -389,13 +361,31 @@ class CreatePlanStateMachine:
         self.state.write_next_action(ActionType.GENERATE_DOCS)
         self.state.write_agent_input(
             {
+                "ticket": {
+                    "id": self.state.ticket_id,
+                    "title": self.state.title,
+                    "url": self.state.url,
+                    "workflow": self.state.workflow,
+                },
                 "units": {uid: self._unit_to_dict(uid) for uid in self.state.units},
                 "layers": self.state.branches["main"].layers,
                 "test_plans": {
                     cap_id: plan.to_dict() for cap_id, plan in self.state.test_plans.items()
                 },
+                "relations": [relation.to_dict() for relation in self.state.relations],
             }
         )
+
+    def _handle_post_to_linear(self) -> None:
+        """Signal to post docs to Linear."""
+        self.state.write_next_action(ActionType.POST_TO_LINEAR)
+
+    def _process_post_to_linear(self) -> None:
+        """Process post to Linear completion."""
+        self.state.add_history("post_to_linear", {"posted": True})
+        self.state.phase = "complete"
+        self.state.save()
+        self.next_action()
 
     def _handle_complete(self) -> None:
         """Signal completion."""
@@ -471,21 +461,21 @@ class CreatePlanStateMachine:
                         confidence=path_data.get("confidence", 0.5),
                         rationale=path_data.get("rationale", ""),
                         status="selected" if is_selected else "exploring",
+                        sub_unit_specs=path_data.get("sub_units", []),
                         sub_units=[su["id"] for su in path_data.get("sub_units", [])],
                     )
 
-                    # Only add units from the selected path
-                    if is_selected:
-                        for child_data in path_data.get("sub_units", []):
-                            child_id = child_data["id"]
-                            child_unit = self._create_unit(child_data, parent=unit_id)
-                            child_unit.path_id = path_id
-                            child_unit.confidence = path_data.get("confidence")
-                            self.state.units[child_id] = child_unit
-                            unit.children.append(child_id)
-                        self.layer_manager.add_units_to_layer(
-                            [su["id"] for su in path_data.get("sub_units", [])]
-                        )
+                new_unit_ids = self.state.commit_to_path(
+                    unit_id,
+                    best_path["path_id"],
+                    self.layer_manager,
+                )
+                self.layer_manager.add_units_to_layer(new_unit_ids)
+                selected_path_data = best_path
+                if "relations" in selected_path_data:
+                    for rel_data in selected_path_data.get("relations", []):
+                        if isinstance(rel_data, dict):
+                            self.state.relations.append(UnitRelation.from_dict(rel_data))
             elif result.get("children"):
                 # Single decomposition path
                 unit.status = "decomposed"
@@ -495,6 +485,24 @@ class CreatePlanStateMachine:
                     self.state.units[child_id] = self._create_unit(child_data, parent=unit_id)
                     unit.children.append(child_id)
                 self.layer_manager.add_units_to_layer([c["id"] for c in children])
+                if "relations" in result:
+                    for rel_data in result.get("relations", []):
+                        if isinstance(rel_data, dict):
+                            self.state.relations.append(UnitRelation.from_dict(rel_data))
+
+            if "domain_hypotheses" in result:
+                unit.domain_hypotheses = [
+                    DomainHypothesis.from_dict(d)
+                    for d in result.get("domain_hypotheses", [])
+                    if isinstance(d, dict)
+                ]
+
+            if "pattern_hypotheses" in result:
+                unit.pattern_hypotheses = [
+                    PatternHypothesis.from_dict(p)
+                    for p in result.get("pattern_hypotheses", [])
+                    if isinstance(p, dict)
+                ]
 
             summary = summarize_plan(result)
             branch.history.setdefault(self.state.current_layer, []).append(summary)
@@ -513,33 +521,32 @@ class CreatePlanStateMachine:
         Args:
             output: The agent output dictionary
         """
-        if self.state.phase == "tree_review":
-            branch_id = None
-            metadata = output.get("metadata")
-            if isinstance(metadata, dict):
-                branch_id = metadata.get("branch_id")
-            if not branch_id:
-                branch_id = output.get("branch_id")
-            if not branch_id:
-                self._handle_error("Layer reviewer output missing branch_id")
-                return
-
-            report = dict(output)
-            if "selected_path" in output:
-                report["selected_path"] = output.get("selected_path")
-            self.state.branch_reports[branch_id] = report
-            active_branches = [
-                branch_id
-                for branch_id, branch in self.state.branches.items()
-                if branch.status in ("exploring", "selected")
-            ]
-            if len(self.state.branch_reports) == len(active_branches):
-                self._invoke_tree_reviewer()
-            return
-
         # Handle path selection if tree-of-thought
-        if output.get("selected_path"):
-            self._commit_to_path(output["selected_path"])
+        selected_path = output.get("selected_path")
+        if selected_path:
+            try:
+                unit_id: str | None = None
+                path_id: str | None = None
+                if isinstance(selected_path, dict):
+                    unit_id = selected_path.get("unit_id")
+                    path_id = selected_path.get("path_id")
+                elif isinstance(selected_path, str):
+                    for uid, paths in self.state.explored_paths.items():
+                        if selected_path in paths:
+                            unit_id = uid
+                            path_id = selected_path
+                            break
+                if unit_id is None or path_id is None:
+                    raise ValueError(f"Selected path missing unit_id or path_id: {selected_path}")
+                new_unit_ids = self.state.commit_to_path(unit_id, path_id, self.layer_manager)
+                self.layer_manager.add_units_to_layer(new_unit_ids)
+            except (ValueError, KeyError) as e:
+                logging.warning(
+                    "Failed to process selected_path %r: %s. Skipping path commit.",
+                    selected_path,
+                    e,
+                )
+                # Continue without committing - planner proceeds gracefully
 
         # Handle refactoring actions
         actions = output.get("refactoring_actions", [])
@@ -574,135 +581,6 @@ class CreatePlanStateMachine:
             else:
                 self.state.phase = "decomposition"
 
-        self.state.save()
-        self.next_action()
-
-    def _invoke_tree_reviewer(self) -> None:
-        """Invoke tree reviewer with collected branch reports."""
-        target_layer = (
-            self.state.review_target_layer
-            if self.state.review_target_layer is not None
-            else self.state.current_layer
-        )
-        branch_reports: dict[str, dict[str, Any]] = {}
-        for branch_id, report in self.state.branch_reports.items():
-            branch_report = {
-                "review_summary": report.get("review_summary", {}),
-                "observations": report.get("observations", []),
-                "refactoring_actions": report.get("refactoring_actions", []),
-                "proceed": report.get("proceed", True),
-                "proceed_notes": report.get("proceed_notes", ""),
-            }
-            selected_path = report.get("selected_path")
-            if selected_path:
-                branch_report["selected_path"] = selected_path
-            branch_reports[branch_id] = branch_report
-
-        input_data = {
-            "layer": target_layer,
-            "branch_reports": branch_reports,
-        }
-        self.state.write_agent_input_json(input_data)
-        self.state.write_next_action(ActionType.CALL_TREE_REVIEWER, layer=target_layer)
-        self.state.phase = "tree_decision"
-        self.state.review_target_layer = None
-        self.state.save()
-
-    def _process_tree_reviewer_output(self, output: dict[str, Any]) -> None:
-        """Process tree reviewer decisions."""
-        decisions = output.get("decisions", output)
-        if not isinstance(decisions, dict):
-            self._handle_error("Invalid tree reviewer output")
-            return
-        self._execute_tree_decisions(decisions)
-
-    def _execute_tree_decisions(self, decisions: dict[str, str]) -> None:
-        """Execute tree reviewer decisions across branches."""
-        pruned_branches: list[str] = []
-        replanning_branches: list[str] = []
-        continuing_branches: list[str] = []
-
-        for branch_id, decision in decisions.items():
-            branch = self.state.branches.get(branch_id)
-            if branch is None:
-                continue
-            if decision == "prune":
-                branch.status = "pruned"
-                pruned_branches.append(branch_id)
-            elif decision == "replan":
-                branch.status = "replanning"
-                replanning_branches.append(branch_id)
-                # Pop the child layer to trigger replan
-                self.layer_manager.pop_layer(branch_id, self.state.current_layer)
-                self.state.add_history(
-                    "pop_layer",
-                    {"branch_id": branch_id, "layer": self.state.current_layer},
-                )
-            elif decision == "continue":
-                continuing_branches.append(branch_id)
-            else:
-                self._handle_error(f"Unknown tree reviewer decision: {decision}")
-                return
-
-        if continuing_branches:
-            select_only = len(continuing_branches) == 1
-            for branch_id in continuing_branches:
-                branch = self.state.branches.get(branch_id)
-                if branch is None:
-                    continue
-                branch.status = "selected" if select_only else "exploring"
-
-        for branch_id in continuing_branches:
-            selected_path = self.state.branch_reports.get(branch_id, {}).get("selected_path")
-            if selected_path:
-                self._commit_to_path(selected_path)
-
-        remaining_unit_ids: set[str] = set()
-        for _branch_id, branch in self.state.branches.items():
-            if branch.status == "pruned":
-                continue
-            for layer_units in branch.layers.values():
-                remaining_unit_ids.update(layer_units)
-
-        for branch_id in pruned_branches:
-            branch = self.state.branches.get(branch_id)
-            if branch is None:
-                continue
-            for layer_units in branch.layers.values():
-                for unit_id in layer_units:
-                    if unit_id in remaining_unit_ids:
-                        continue
-                    unit = self.state.units.get(unit_id)
-                    if unit and unit.parent and unit.parent in self.state.units:
-                        parent = self.state.units[unit.parent]
-                        if unit_id in parent.children:
-                            parent.children.remove(unit_id)
-                    self.state.units.pop(unit_id, None)
-            branch.layers.clear()
-
-        if replanning_branches:
-            # _handle_replan will adjust current_layer back to the parent layer.
-            self.state.phase = "replan"
-        else:
-            remaining_branches = [
-                branch_id
-                for branch_id, branch in self.state.branches.items()
-                if branch.status in ("exploring", "selected")
-            ]
-            if len(remaining_branches) == 1:
-                self._merge_branch_to_main(remaining_branches[0])
-
-            next_layer = self._find_next_layer(self.state.current_layer)
-            if next_layer is not None:
-                self.state.current_layer = next_layer
-                self.state.phase = "decomposition"
-            else:
-                if self._all_leaves_atomic():
-                    self.state.phase = "test_planning"
-                else:
-                    self.state.phase = "decomposition"
-
-        self.state.branch_reports.clear()
         self.state.save()
         self.next_action()
 
@@ -812,6 +690,7 @@ class CreatePlanStateMachine:
 
         test_plans = output.get("test_plans", [])
         for plan_data in test_plans:
+            # TestPlan.from_dict() handles extracting suite fields from nested suite dict
             plan = TestPlan.from_dict(plan_data)
             self.state.test_plans[plan.capability_id] = plan
 
@@ -829,16 +708,33 @@ class CreatePlanStateMachine:
         """Process documentation generation results.
 
         Args:
-            output: The agent output dictionary
+            output: The agent output dictionary from design-formatter
         """
-        # Diagram generator has written the docs, move to complete
+        # Validate that output is from design-formatter (not diagram-generator)
+        agent = output.get("agent")
+        if agent != "design-formatter":
+            self._handle_error(
+                f"Expected design-formatter output, got: {agent}. "
+                "Ensure diagram-generator runs before design-formatter."
+            )
+            return
+
+        # Validate required files were written
+        files_written = output.get("files_written", [])
+        required_files = ["architecture.md", "implementation.md"]
+        missing = [f for f in required_files if f not in files_written]
+        if missing:
+            self._handle_error(f"design-formatter did not write required files: {missing}")
+            return
+
         self.state.add_history(
             "generate_docs",
             {
-                "files": output.get("files_written", []),
+                "agent": agent,
+                "files": files_written,
             },
         )
-        self.state.phase = "complete"
+        self.state.phase = "post_to_linear"
         self.state.save()
         self.next_action()
 
@@ -1018,66 +914,3 @@ class CreatePlanStateMachine:
             expected_capabilities=self._capabilities_from_data(data.get("expected_capabilities")),
             provided_capabilities=self._capabilities_from_data(data.get("provided_capabilities")),
         )
-
-    def _commit_to_path(self, path_selection: str | dict[str, Any]) -> None:
-        """Commit to a selected exploration path.
-
-        Marks the selected path as 'selected' and prunes alternatives.
-
-        Args:
-            path_selection: The path selection (path_id or {unit_id, path_id})
-        """
-        unit_id: str | None = None
-        path_id: str | None = None
-        if isinstance(path_selection, dict):
-            unit_id = path_selection.get("unit_id")
-            path_id = path_selection.get("path_id")
-        elif isinstance(path_selection, str):
-            path_id = path_selection
-
-        if not path_id:
-            return
-
-        if unit_id is None:
-            candidate_units = [
-                uid for uid, paths in self.state.explored_paths.items() if path_id in paths
-            ]
-            if len(candidate_units) == 1:
-                unit_id = candidate_units[0]
-            else:
-                exploring_candidates = [
-                    uid
-                    for uid in candidate_units
-                    if self.state.explored_paths[uid][path_id].status == "exploring"
-                ]
-                if len(exploring_candidates) == 1:
-                    unit_id = exploring_candidates[0]
-                else:
-                    return
-
-        paths = self.state.explored_paths.get(unit_id)
-        if not paths:
-            return
-
-        for pid, path in paths.items():
-            if pid == path_id:
-                path.status = "selected"
-                continue
-            if path.status == "exploring":
-                path.status = "pruned"
-                for sub_unit_id in path.sub_units:
-                    unit = self.state.units.get(sub_unit_id)
-                    if not unit:
-                        continue
-                    if unit.parent and unit.parent in self.state.units:
-                        parent = self.state.units[unit.parent]
-                        if sub_unit_id in parent.children:
-                            parent.children.remove(sub_unit_id)
-                    for branch_id in self.state.branches:
-                        self.layer_manager.remove_unit_from_layer(
-                            sub_unit_id,
-                            branch_id=branch_id,
-                        )
-                    del self.state.units[sub_unit_id]
-
-        self.state.add_history("commit_path", {"unit_id": unit_id, "path_id": path_id})

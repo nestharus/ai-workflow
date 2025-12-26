@@ -69,8 +69,10 @@ while true; do
             ;;
 
         "generate_docs")
+            # Run diagram-generator first to produce diagrams.yaml
             Task(subagent_type="diagram-generator", prompt="workspace: .tmp/design/$ticket_id")
-            Task(subagent_type="design-formatter", prompt="workspace: .tmp/design/$ticket_id")
+            # Then run refactor-design-formatter to read diagrams.yaml and produce final docs
+            Task(subagent_type="refactor-design-formatter", prompt="workspace: .tmp/design/$ticket_id")
             ;;
 
         "post_to_linear")

@@ -27,6 +27,11 @@ def reduce_<what>(
     """
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Implementation Rules
 
 1. **Associative operation**: (a op b) op c = a op (b op c)
@@ -69,13 +74,4 @@ def reduce_errors_by_category(
     for error in errors:
         result.setdefault(error.category, []).append(error)
     return result
-```
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
 ```

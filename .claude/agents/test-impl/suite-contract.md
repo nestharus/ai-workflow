@@ -40,8 +40,8 @@ Based on `pyproject.toml` configuration, the project has the following test suit
   - Assertions (check coverage per function)
 
 ### 2. Component Tests
-- **Location**: `tests/unit/` (service-focused tests)
-- **Coverage Type**: Use-case coverage
+- **Location**: `tests/component/` (service-focused tests)
+- **Coverage Type**: Use-case coverage (100% threshold)
 - **Target**: Only `app/services/**/*.py` (excluding `__init__.py`)
 - **Threshold**: 100.0% use-case coverage
 - **Private functions**: Skipped (only public API)
@@ -129,7 +129,7 @@ elif test_type == "integration":
     test_path = "tests/integration/"
 elif test_type == "component" or source_path.startswith("app/services/"):
     suite_type = "component"
-    test_path = "tests/unit/"
+    test_path = "tests/component/"
 else:
     suite_type = "unit"
     test_path = "tests/unit/"
@@ -286,7 +286,7 @@ elif suite_type == "script":
 **Output**:
 ```python
 {
-    "test_file_path": "tests/unit/test_task_service.py",
+    "test_file_path": "tests/component/test_task_service.py",
     "suite_type": "component",
     "coverage_type": "usecase",
     "required_building_blocks": [

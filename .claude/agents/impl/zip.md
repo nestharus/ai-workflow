@@ -25,6 +25,11 @@ def zip_<what>(
     """
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A zip combines streams by alignment (index/time):
@@ -182,12 +187,3 @@ def zip_with_index(iterable: Iterable[T]) -> Iterator[tuple[int, T]]:
 | Combines streams | Fans out stream |
 | `zip(a, b)` → combined | `split(x, 2)` → a, b |
 | Merger | Broadcaster |
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

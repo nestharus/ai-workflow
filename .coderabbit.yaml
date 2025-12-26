@@ -23,7 +23,7 @@ reviews:
     - ".github/**"
     - ".huggingface/**"
     - ".opencode/**"
-    - ".tasks/**"
+    - ".tasks/agents/**"
     - "agents/**"
     - "app/**"
     - "docs/**"

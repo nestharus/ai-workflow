@@ -22,6 +22,11 @@ def set_<field>(obj: T, value: V) -> None:
     obj._field = value
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A setter is a **reserved** pattern specifically for private fields:
@@ -121,11 +126,3 @@ def set_name(self, value: str) -> None:  # self._name = value
 def set_id(self, value: int) -> None:  # self._id = value
 ```
 
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

@@ -23,6 +23,11 @@ def validate_<what>(data: T) -> None:
     """
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A validator does NOT return anything:
@@ -109,12 +114,3 @@ def validate_config(config: dict[str, Any], schema: dict) -> None:
 | Throws on failure | Returns bool |
 | No return value | Returns True/False |
 | `validate_email(e)` raises | `is_valid_email(e)` → bool |
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

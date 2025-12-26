@@ -24,6 +24,11 @@ def get_<field>(obj: T) -> V:
     return obj._field
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A getter is a **reserved** pattern specifically for private fields:
@@ -121,13 +126,4 @@ def extract_user_id(token: str) -> int:  # Decodes token
 # These are GETTERS:
 def get_name(self) -> str:  # Returns self._name
 def get_id(self) -> int:  # Returns self._id
-```
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
 ```

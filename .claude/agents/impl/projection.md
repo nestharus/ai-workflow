@@ -27,6 +27,11 @@ class <ProjectionName>:
     field2: Type2
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A projection is a derived/packaged view of entities:
@@ -196,12 +201,3 @@ class WebhookPayload:
 | Data class (the shape) | Function (extracts fields) |
 | `UserSummary` class | `project_user_summary(user)` |
 | Noun (what) | Verb (how) |
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<class names exported>]
-error: <error message if failure>
-```

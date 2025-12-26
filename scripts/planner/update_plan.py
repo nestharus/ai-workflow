@@ -58,6 +58,8 @@ class UpdatePlanStateMachine:
             self._handle_test_planning()
         elif phase == "generate_docs":
             self._handle_generate_docs()
+        elif phase == "post_to_linear":
+            self._handle_post_to_linear()
         elif phase == "complete":
             self._handle_complete()
         else:
@@ -70,6 +72,9 @@ class UpdatePlanStateMachine:
         if action_type == ActionType.GENERATE_DOCS.value:
             output = self.state.read_agent_output()
             self._process_generate_docs_output(output)
+            return
+        if action_type == ActionType.POST_TO_LINEAR.value:
+            self._process_post_to_linear()
             return
 
         output = self.state.read_agent_output()
@@ -145,6 +150,10 @@ class UpdatePlanStateMachine:
         # Same as create_plan review but scoped to this layer
         layer_units = self.layer_manager.get_units_at_layer(self.state.current_layer)
         child_units = self.layer_manager.get_units_at_layer(self.state.current_layer + 1)
+        main_branch = self.state.branches.get("main")
+        layer_history: list[Any] = []
+        if main_branch is not None:
+            layer_history = main_branch.history.get(self.state.current_layer, [])[-3:]
 
         self.state.write_next_action(
             ActionType.CALL_LAYER_REVIEWER,
@@ -156,6 +165,12 @@ class UpdatePlanStateMachine:
                 "layer": self.state.current_layer,
                 "layer_units": [self._unit_to_dict(uid) for uid in layer_units],
                 "child_units": [self._unit_to_dict(uid) for uid in child_units],
+                "explored_paths": self._explored_paths_to_dict(),
+                "layer_history": {
+                    "layer": self.state.current_layer,
+                    "previous_attempts": layer_history,
+                    "note": "Consider previous attempts when suggesting refactoring",
+                },
                 "changes_applied": True,  # Flag that we just applied changes
             }
         )
@@ -215,6 +230,8 @@ class UpdatePlanStateMachine:
 
         if not capabilities:
             # No affected capabilities to replan
+            self.state.latest_test_replanning_count = 0
+            self.state.latest_replanned_tests = []
             self.state.phase = "generate_docs"
             self.state.save()
             self.next_action()
@@ -234,16 +251,37 @@ class UpdatePlanStateMachine:
 
     def _handle_generate_docs(self) -> None:
         """Generate documentation files."""
+        agent_input = {
+            "ticket": {
+                "id": self.state.ticket_id,
+                "title": self.state.title,
+                "url": self.state.url,
+                "workflow": self.state.workflow,
+            },
+            "units": {uid: self._unit_to_dict(uid) for uid in self.state.units},
+            "layers": self.state.branches["main"].layers,
+            "test_plans": {
+                cap_id: plan.to_dict() for cap_id, plan in self.state.test_plans.items()
+            },
+            "relations": [relation.to_dict() for relation in self.state.relations],
+        }
+
+        if self.state.workflow == "update-plan":
+            agent_input["update_summary"] = self._compute_update_summary()
+
         self.state.write_next_action(ActionType.GENERATE_DOCS)
-        self.state.write_agent_input(
-            {
-                "units": {uid: self._unit_to_dict(uid) for uid in self.state.units},
-                "layers": self.state.branches["main"].layers,
-                "test_plans": {
-                    cap_id: plan.to_dict() for cap_id, plan in self.state.test_plans.items()
-                },
-            }
-        )
+        self.state.write_agent_input(agent_input)
+
+    def _handle_post_to_linear(self) -> None:
+        """Signal to post docs to Linear."""
+        self.state.write_next_action(ActionType.POST_TO_LINEAR)
+
+    def _process_post_to_linear(self) -> None:
+        """Process post to Linear completion."""
+        self.state.add_history("post_to_linear", {"posted": True})
+        self.state.phase = "complete"
+        self.state.save()
+        self.next_action()
 
     def _handle_complete(self) -> None:
         """Signal completion."""
@@ -357,15 +395,27 @@ class UpdatePlanStateMachine:
         from scripts.planner.state import TestPlan
 
         test_plans = output.get("test_plans", [])
+        replanned_tests: list[dict[str, Any]] = []
         for plan_data in test_plans:
+            # TestPlan.from_dict() handles extracting suite fields from nested suite dict
             plan = TestPlan.from_dict(plan_data)
             # Update or add test plan
             self.state.test_plans[plan.capability_id] = plan
+            replanned_tests.append(
+                {
+                    "id": plan.id,
+                    "capability_id": plan.capability_id,
+                    "type": plan.type,
+                    "use_case": plan.use_case,
+                }
+            )
 
         self.state.add_history(
             "test_replanning",
             {"test_plans_updated": len(test_plans)},
         )
+        self.state.latest_test_replanning_count = len(test_plans)
+        self.state.latest_replanned_tests = replanned_tests
 
         # Move to generate docs
         self.state.phase = "generate_docs"
@@ -376,15 +426,33 @@ class UpdatePlanStateMachine:
         """Process documentation generation results.
 
         Args:
-            output: The agent output dictionary
+            output: The agent output dictionary from design-formatter
         """
+        # Validate that output is from design-formatter (not diagram-generator)
+        agent = output.get("agent")
+        if agent != "design-formatter":
+            self._handle_error(
+                f"Expected design-formatter output, got: {agent}. "
+                "Ensure diagram-generator runs before design-formatter."
+            )
+            return
+
+        # Validate required files were written
+        files_written = output.get("files_written", [])
+        required_files = ["architecture.md", "implementation.md"]
+        missing = [f for f in required_files if f not in files_written]
+        if missing:
+            self._handle_error(f"design-formatter did not write required files: {missing}")
+            return
+
         self.state.add_history(
             "generate_docs",
             {
-                "files": output.get("files_written", []),
+                "agent": agent,
+                "files": files_written,
             },
         )
-        self.state.phase = "complete"
+        self.state.phase = "post_to_linear"
         self.state.save()
         self.next_action()
 
@@ -467,6 +535,17 @@ class UpdatePlanStateMachine:
 
         return result
 
+    def _explored_paths_to_dict(self) -> dict[str, Any]:
+        """Convert explored paths to a serializable dictionary.
+
+        Returns:
+            Dictionary of explored paths with path data
+        """
+        result: dict[str, Any] = {}
+        for unit_id, paths in self.state.explored_paths.items():
+            result[unit_id] = {path_id: path.to_dict() for path_id, path in paths.items()}
+        return result
+
     def _build_plan(self, data: dict[str, Any]) -> UnitPlan:
         """Build a UnitPlan from dictionary data.
 
@@ -479,3 +558,38 @@ class UpdatePlanStateMachine:
         from scripts.planner.state import UnitPlan
 
         return UnitPlan.from_dict(data)
+
+    def _compute_update_summary(self) -> dict[str, Any]:
+        """Compute update summary statistics.
+
+        Returns:
+            Dictionary with update summary data
+        """
+        comments_total = len(self.state.comments)
+        comments_applied = sum(1 for c in self.state.comments if c.resolution == "applied")
+        comments_pending = sum(1 for c in self.state.comments if c.resolution == "pending")
+
+        affected_unit_ids = set()
+        affected_layers = set()
+        for comment in self.state.comments:
+            if comment.resolution == "applied":
+                affected_unit_ids.add(comment.target_unit_id)
+                affected_layers.add(comment.target_layer)
+
+        # latest_test_replanning_count is always populated upstream:
+        # - Set to 0 in _handle_test_planning when no capabilities affected
+        # - Set to len(test_plans) in _process_test_planner_output after replanning
+        latest_count = self.state.latest_test_replanning_count
+        replanned_tests = self.state.latest_replanned_tests
+
+        return {
+            "update_source": self.state.update_source or "unknown",
+            "prompt_text": self.state.update_prompt_text or "",
+            "comments_total": comments_total,
+            "comments_applied": comments_applied,
+            "comments_pending": comments_pending,
+            "layers_touched": sorted(affected_layers),
+            "units_touched": sorted(affected_unit_ids),
+            "test_plans_updated": latest_count,
+            "replanned_tests": replanned_tests,
+        }

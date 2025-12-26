@@ -21,6 +21,11 @@ def mutate_<what>(target: T, value: V) -> None:
     """
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A mutator sets ONE specific piece of data:
@@ -140,11 +145,3 @@ def mutate_list_item(items: list, index: int, value: Any) -> None:
 | Direct mutation | Callback-based |
 | `mutate_field(obj, v)` | `visit_items(list, fn)` |
 
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

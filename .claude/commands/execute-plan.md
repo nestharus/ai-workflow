@@ -43,10 +43,61 @@ while true; do
             ;;
 
         "run_tests")
-            # Run tests - verify fail (before impl) or pass (after impl)
+            # Run tests and capture results in structured format
             worktree=$(echo "$action" | jq -r '.worktree_path')
             layer=$(echo "$action" | jq -r '.layer // "all"')
-            cd "$worktree" && uv run pytest --tb=short > .tmp/design/$ARGUMENTS/test_output.txt 2>&1 || true
+            expected_fail=$(echo "$action" | jq -r '.expected_to_fail // false')
+
+            # Run pytest with JUnit XML output for structured result parsing
+            # This avoids fragile grep/sed pipelines that can break with pytest format changes
+            workspace="$(cd ".tmp/design/$ARGUMENTS" && pwd)"
+            agent_output="${workspace}/agent_output.yaml"
+            test_output="${workspace}/test_output.txt"
+            junit_xml="${workspace}/junit_report.xml"
+            if (cd "$worktree" && uv run pytest --tb=short --junitxml="$junit_xml" > "$test_output" 2>&1); then
+                test_passed=true
+            else
+                test_passed=false
+            fi
+
+            # Write structured agent_output.yaml
+            if [ "$layer" = "all" ]; then
+                # General test run (test_verify_fail or test_verify_pass)
+                cat > "$agent_output" <<EOF
+action: test_results
+passed: $test_passed
+expected_to_fail: $expected_fail
+raw_output_path: $test_output
+junit_xml_path: $junit_xml
+test_results: {}
+EOF
+            else
+                # Layer-specific test run
+                # Parse failing tests from JUnit XML using the existing junit_parser module
+                # This is more robust than grep/sed on pytest text output
+                failing_tests="[]"
+                if [ "$test_passed" = "false" ] && [ -f "$junit_xml" ]; then
+                    # Use Python with junit_parser to extract failed test names as JSON array
+                    failing_tests=$(uv run python -c "
+import json
+from pathlib import Path
+from scripts.dev.test_runner.junit_parser import parse_junit_xml
+results, _ = parse_junit_xml(Path('$junit_xml'))
+failed = [r.test_name for r in results if r.status in ('failed', 'error')]
+print(json.dumps(failed))
+" 2>/dev/null || echo "[]")
+                fi
+
+                cat > "$agent_output" <<EOF
+action: layer_test_results
+layer: $layer
+passed: $test_passed
+expected_to_fail: $expected_fail
+failing_tests: $failing_tests
+raw_output_path: $test_output
+junit_xml_path: $junit_xml
+EOF
+            fi
             ;;
 
         "call_impl_agent")

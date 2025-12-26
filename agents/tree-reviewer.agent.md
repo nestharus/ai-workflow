@@ -1,9 +1,14 @@
 ---
 name: Tree Reviewer
-description: Compares multiple branch reports from layer reviews and decides which branches to continue, prune, or replan
+description: UNUSED - Branch-level tree review disabled
 model: Claude Opus 4
 tools: ['*']
 ---
+
+> **STATUS: UNUSED**  
+> This agent is not currently invoked by any workflow. Branch-level tree review
+> has been disabled in favor of per-unit multi-path decomposition. This file is
+> retained for reference only.
 
 # Tree Reviewer Agent
 

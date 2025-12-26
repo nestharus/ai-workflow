@@ -8,7 +8,7 @@ coverage metrics for each testing level.
 | Tier | Test Path | Coverage Type | Target | Speed |
 |------|-----------|---------------|--------|-------|
 | **Unit** | `tests/unit/` | Line/branch per function | All `app/` functions | Fast |
-| **Component** | `tests/unit/` | Line/branch per function | `app/services/` only | Fast |
+| **Component** | `tests/component/` | Use-case | `app/services/` only | Fast |
 | **Integration** | `tests/integration/` | Use-case | Use cases from YAML | Fast |
 | **Scripts** | `scripts/tests/` | Line/branch per function | `scripts/` | Fast |
 
@@ -30,11 +30,12 @@ meaning each function must individually meet the configured threshold.
 
 ## Component Tests
 
-* **Location**: `tests/unit/` (service-focused tests)
-* **Coverage**: Line and branch coverage per function (threshold configured in settings)
+* **Location**: `tests/component/` (service-focused tests)
+* **Coverage**: Use-case coverage (100% threshold from `pyproject.toml`)
 * **Target**: Only functions within `app/services/` (service layer)
 * **Scope**: Tests service layer public API; private functions are skipped
 * **Command**: `uv run test-coverage --tier component`
+* **Required marker**: `@pytest.mark.usecase("UC-XXX-NNN")`
 
 Component tests target the service layer, treating it as the public API of the application. Private
 functions within services are implementation details and are excluded from coverage validation.

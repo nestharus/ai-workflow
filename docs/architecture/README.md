@@ -94,3 +94,16 @@ processing.
 * Understanding the complete event lifecycle
 * Debugging event routing or processing issues
 * Designing new event-driven workflows
+
+### Algorithm Documentation Pipeline
+
+**File:** `algorithm-documentation-pipeline.yml`
+
+Documents how planner state and agent_input.yaml flow into design-formatter outputs, including
+Algorithm Overview, Algorithm Drilldown, diagrams.yaml integration, and validation scenarios.
+
+**Apply when:**
+
+* Auditing planner-to-design-formatter data flow
+* Reviewing Algorithm Overview or Algorithm Drilldown generation rules
+* Validating algorithm documentation output expectations

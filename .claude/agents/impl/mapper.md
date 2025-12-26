@@ -26,6 +26,11 @@ def map_<what>(input_data: T) -> R:
     """
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A mapper is a pure transformation:
@@ -102,11 +107,3 @@ def map_commit_to_summary(commit: GitCommit) -> CommitSummary:
 | Full transformation | Field selection |
 | `map_user_to_dto(user)` | `project_user_name(user)` |
 
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

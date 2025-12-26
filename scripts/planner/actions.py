@@ -15,7 +15,6 @@ class ActionType(Enum):
     # === LLM Agent Invocations (Create/Update Plan) ===
     CALL_DECOMPOSER = "call_decomposer"
     CALL_LAYER_REVIEWER = "call_layer_reviewer"
-    CALL_TREE_REVIEWER = "call_tree_reviewer"
     CALL_DESIGN_REFACTORER = "call_design_refactorer"
     CALL_COMMENT_APPLIER = "call_comment_applier"
     CALL_DIAGRAM_GENERATOR = "call_diagram_generator"

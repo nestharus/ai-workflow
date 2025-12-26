@@ -24,7 +24,9 @@ def split_<what>(
     """
 ```
 
-Or returning multiple iterators:
+### Alternative Signature - Returning Multiple Iterators
+
+As an alternative to the consumer-based pattern above, a splitter can return multiple independent iterators:
 
 ```python
 def split_<what>(
@@ -41,6 +43,10 @@ def split_<what>(
         Tuple of N independent iterators
     """
 ```
+
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
 
 ## Key Insight
 
@@ -167,12 +173,3 @@ def split_commits(
 | All items to all paths | Some items yielded |
 | Multiplies outputs | Reduces outputs |
 | `split(stream, 3)` → 3 streams | `filter(stream, pred)` → fewer items |
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

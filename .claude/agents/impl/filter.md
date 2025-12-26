@@ -27,6 +27,11 @@ def filter_<what>(iterable: Iterable[T], predicate: Callable[[T], bool]) -> Iter
             yield item
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A filter is part of stream processing:
@@ -141,12 +146,3 @@ pipeline = filter_non_empty(
 | Stream operation | Pure function |
 | `filter_*(iter, pred)` → Iterator | `is_*(data)` → bool |
 | Used in pipelines | Used in conditions |
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

@@ -23,6 +23,11 @@ def route_<what>(input: T) -> R:
     """
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A router routes to one of N functions using labeled conditions:
@@ -139,11 +144,3 @@ def route_http_method(method: str, request: Request) -> Response:
 | If-else or switch | No conditionals |
 | `route_command()` | `orchestrate_flow()` |
 
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

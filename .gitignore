@@ -69,3 +69,6 @@ out/
 *.duckdb
 *.duckdb.wal
 to_adapt/
+
+# Task plans (working documents)
+.tasks/plans/

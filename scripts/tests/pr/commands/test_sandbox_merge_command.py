@@ -15,7 +15,7 @@ from scripts.servers.sandbox.protocol import (
 class TestSandboxMergeCommand:
     """Tests for sandbox_merge_command function."""
 
-    def test_uses_default_socket_path(self) -> None:
+    def test_uses_default_socket_path(self, mock_sandbox_git_dao_refs_match) -> None:
         """Should use DEFAULT_SOCKET_PATH when socket_path is None."""
         mock_response = SuccessResponse(request_id="test-123", result={"message": "ok"})
 
@@ -29,7 +29,7 @@ class TestSandboxMergeCommand:
 
         assert call_kwargs["socket_path"] == DEFAULT_SOCKET_PATH
 
-    def test_returns_zero_on_success(self, capsys) -> None:
+    def test_returns_zero_on_success(self, capsys, mock_sandbox_git_dao_refs_match) -> None:
         """Should return 0 for SuccessResponse."""
         mock_response = SuccessResponse(request_id="test-123", result={"message": "Merged"})
 
@@ -41,7 +41,7 @@ class TestSandboxMergeCommand:
         captured = capsys.readouterr()
         assert "SUCCESS" in captured.out
 
-    def test_returns_two_on_conflict(self, capsys) -> None:
+    def test_returns_two_on_conflict(self, capsys, mock_sandbox_git_dao_refs_match) -> None:
         """Should return 2 for ConflictResponse."""
         mock_response = ConflictResponse(request_id="test-123", files=["file1.py", "file2.py"])
 
@@ -54,7 +54,7 @@ class TestSandboxMergeCommand:
         assert "CONFLICT" in captured.out
         assert "file1.py" in captured.out
 
-    def test_returns_one_on_error_response(self, capsys) -> None:
+    def test_returns_one_on_error_response(self, capsys, mock_sandbox_git_dao_refs_match) -> None:
         """Should return 1 for ErrorResponse."""
         mock_response = ErrorResponse(request_id="test-123", message="Something went wrong")
 
@@ -66,7 +66,7 @@ class TestSandboxMergeCommand:
         captured = capsys.readouterr()
         assert "ERROR" in captured.out
 
-    def test_returns_one_on_client_error(self, capsys) -> None:
+    def test_returns_one_on_client_error(self, capsys, mock_sandbox_git_dao_refs_match) -> None:
         """Should return 1 on SandboxClientError."""
         from scripts.servers.sandbox.client import SandboxClientError
 
@@ -78,7 +78,7 @@ class TestSandboxMergeCommand:
         captured = capsys.readouterr()
         assert "Error: Connection refused" in captured.err
 
-    def test_passes_correct_parameters(self) -> None:
+    def test_passes_correct_parameters(self, mock_sandbox_git_dao_refs_match) -> None:
         """Should pass branch, target, socket_path, wait, and verbose correctly."""
         mock_response = SuccessResponse(request_id="test-123", result={})
 
@@ -99,7 +99,7 @@ class TestSandboxMergeCommand:
             verbose=True,
         )
 
-    def test_prints_formatted_response(self, capsys) -> None:
+    def test_prints_formatted_response(self, capsys, mock_sandbox_git_dao_refs_match) -> None:
         """Should print formatted response."""
         mock_response = SuccessResponse(request_id="test-123", result={"message": "Merge complete"})
 

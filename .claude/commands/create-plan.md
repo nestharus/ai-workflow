@@ -54,6 +54,13 @@ Returns JSON: `{ "ok": true, "workspace": ".tmp/design/$ticket_id", "ticket_id":
 
 ## Step 3: Execute State Machine Loop
 
+**Tree-of-Thought**: The system supports multi-path decomposition at the **unit level**:
+- Decomposer can return multiple `paths` for a single unit
+- Layer reviewer can select between paths via `selected_path` output
+- State machine handles path switching via `commit_to_path()`
+
+Branch-level tree review (comparing entire branch hierarchies) is disabled.
+
 ```bash
 while true; do
     action=$(uv run planner next .tmp/design/$ticket_id)
@@ -83,8 +90,14 @@ while true; do
             Task(subagent_type="design-refactorer", prompt="workspace: .tmp/design/$ticket_id")
             ;;
 
+        "call_test_planner")
+            Task(subagent_type="test-planner", prompt="workspace: .tmp/design/$ticket_id")
+            ;;
+
         "generate_docs")
+            # Run diagram-generator first to produce diagrams.yaml
             Task(subagent_type="diagram-generator", prompt="workspace: .tmp/design/$ticket_id")
+            # Then run design-formatter to read diagrams.yaml and produce final docs
             Task(subagent_type="design-formatter", prompt="workspace: .tmp/design/$ticket_id")
             ;;
 

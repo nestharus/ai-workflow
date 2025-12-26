@@ -1,7 +1,7 @@
 """Planning state machine CLI.
 
 Usage:
-    uv run planner init <ticket-id> [--workflow <create-plan|update-plan>]
+    uv run planner init <ticket-id> [--workflow <create-plan|update-plan|refactor-plan|analyze>]
     uv run planner next <workspace>
     uv run planner process <workspace>
     uv run planner status <workspace>
@@ -18,19 +18,61 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from scripts.planner.analyze import AnalyzeStateMachine
     from scripts.planner.create_plan import CreatePlanStateMachine
+    from scripts.planner.refactor_plan import RefactorPlanStateMachine
+    from scripts.planner.state import DesignState
     from scripts.planner.update_plan import UpdatePlanStateMachine
+
+    StateMachineType = (
+        CreatePlanStateMachine
+        | UpdatePlanStateMachine
+        | AnalyzeStateMachine
+        | RefactorPlanStateMachine
+    )
+
+
+def _get_state_machine(state: DesignState) -> StateMachineType:
+    """Map workflow string to the corresponding StateMachine instance.
+
+    Args:
+        state: The DesignState containing the workflow type.
+
+    Returns:
+        An instantiated state machine for the given workflow.
+
+    Raises:
+        ValueError: If the workflow type is unknown.
+    """
+    from scripts.planner.analyze import AnalyzeStateMachine
+    from scripts.planner.create_plan import CreatePlanStateMachine
+    from scripts.planner.refactor_plan import RefactorPlanStateMachine
+    from scripts.planner.update_plan import UpdatePlanStateMachine
+
+    workflow_to_machine: dict[str, type[StateMachineType]] = {
+        "create-plan": CreatePlanStateMachine,
+        "update-plan": UpdatePlanStateMachine,
+        "analyze": AnalyzeStateMachine,
+        "refactor-plan": RefactorPlanStateMachine,
+    }
+
+    machine_class = workflow_to_machine.get(state.workflow)
+    if machine_class is None:
+        raise ValueError(f"Unknown workflow: {state.workflow}")
+
+    return machine_class(state)
 
 
 def init_command(
     ticket_id: str,
-    workflow: Literal[
-        "create-plan", "update-plan", "execute-plan", "refactor-plan"
-    ] = "create-plan",
+    workflow: Literal["create-plan", "update-plan", "refactor-plan", "analyze"] = "create-plan",
+    paths: list[str] | None = None,
+    update_prompt: str | None = None,
 ) -> int:
     """Initialize state for a new ticket.
 
@@ -40,12 +82,23 @@ def init_command(
     Args:
         ticket_id: Linear ticket ID (e.g., NES-123)
         workflow: Workflow type (create-plan or update-plan)
+        paths: Paths to analyze (for refactor-plan/analyze workflow)
+        update_prompt: Update prompt text (for update-plan workflow)
 
     Returns:
         0 on success, 1 on failure
     """
     from scripts.clients.linear_client import LinearClient
     from scripts.planner.state import DesignState, Unit
+
+    normalized_paths: list[str] = []
+    if isinstance(paths, str):
+        normalized_paths = shlex.split(paths)
+    elif paths:
+        if len(paths) == 1 and isinstance(paths[0], str) and " " in paths[0]:
+            normalized_paths = shlex.split(paths[0])
+        else:
+            normalized_paths = list(paths)
 
     # Create workspace
     workspace = Path(f".tmp/design/{ticket_id}")
@@ -63,7 +116,14 @@ def init_command(
         url=issue.get("url", ""),
         workflow=workflow,
         phase="init",
+        paths=normalized_paths,
     )
+    if workflow == "update-plan":
+        if update_prompt:
+            state.update_source = "inline_prompt"
+            state.update_prompt_text = update_prompt
+        else:
+            state.update_source = "pr_comments"
 
     # Create root unit
     state.units["root"] = Unit(
@@ -104,18 +164,14 @@ def next_command(workspace: Path) -> int:
     Returns:
         0 on success, 1 on failure
     """
-    from scripts.planner.create_plan import CreatePlanStateMachine
     from scripts.planner.state import DesignState
-    from scripts.planner.update_plan import UpdatePlanStateMachine
 
     state = DesignState.load(workspace)
 
-    if state.workflow == "create-plan":
-        machine: CreatePlanStateMachine | UpdatePlanStateMachine = CreatePlanStateMachine(state)
-    elif state.workflow == "update-plan":
-        machine = UpdatePlanStateMachine(state)
-    else:
-        print(json.dumps({"ok": False, "error": f"Unknown workflow: {state.workflow}"}))
+    try:
+        machine = _get_state_machine(state)
+    except ValueError as e:
+        print(json.dumps({"ok": False, "error": str(e)}))
         return 1
 
     machine.next_action()
@@ -137,18 +193,14 @@ def process_command(workspace: Path) -> int:
     Returns:
         0 on success, 1 on failure
     """
-    from scripts.planner.create_plan import CreatePlanStateMachine
     from scripts.planner.state import DesignState
-    from scripts.planner.update_plan import UpdatePlanStateMachine
 
     state = DesignState.load(workspace)
 
-    if state.workflow == "create-plan":
-        machine: CreatePlanStateMachine | UpdatePlanStateMachine = CreatePlanStateMachine(state)
-    elif state.workflow == "update-plan":
-        machine = UpdatePlanStateMachine(state)
-    else:
-        print(json.dumps({"ok": False, "error": f"Unknown workflow: {state.workflow}"}))
+    try:
+        machine = _get_state_machine(state)
+    except ValueError as e:
+        print(json.dumps({"ok": False, "error": str(e)}))
         return 1
 
     machine.process_agent_output()
@@ -219,8 +271,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     init_parser.add_argument(
         "--workflow",
         default="create-plan",
-        choices=["create-plan", "update-plan"],
+        choices=["create-plan", "update-plan", "refactor-plan", "analyze"],
         help="Workflow type",
+    )
+    init_parser.add_argument(
+        "--paths",
+        nargs="+",
+        help="Paths to analyze (for refactor-plan/analyze workflow)",
+    )
+    init_parser.add_argument(
+        "--update-prompt",
+        help="Update prompt text (for update-plan workflow)",
     )
 
     # next command
@@ -264,7 +325,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     if args.command == "init":
-        return init_command(args.ticket_id, args.workflow)
+        return init_command(
+            args.ticket_id,
+            args.workflow,
+            args.paths,
+            args.update_prompt,
+        )
     if args.command == "next":
         return next_command(args.workspace)
     if args.command == "process":

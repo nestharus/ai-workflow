@@ -24,6 +24,11 @@ def orchestrate_<what>(*args, **kwargs) -> R:
     """
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 An orchestrator is pure integration:
@@ -162,12 +167,3 @@ def orchestrate_rebase(
 | No branching | If-else chains |
 | All steps run | One branch runs |
 | `orchestrate_flow()` | `route_command()` |
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

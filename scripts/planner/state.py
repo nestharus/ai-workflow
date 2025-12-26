@@ -14,7 +14,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 import yaml
 
@@ -22,6 +22,32 @@ if TYPE_CHECKING:
     from typing import Any
 
     from scripts.planner.actions import ActionType
+
+
+class LayerManagerProtocol(Protocol):
+    """Protocol defining the layer manager interface used by DesignState.
+
+    This protocol declares the methods required for layer management during
+    path commits and rollbacks. The actual implementation is in LayerManager.
+    """
+
+    def remove_unit_from_layer(self, unit_id: str, branch_id: str = "main") -> None:
+        """Remove a unit from its layer.
+
+        Args:
+            unit_id: The unit ID to remove
+            branch_id: Branch identifier
+        """
+        ...
+
+    def add_units_to_layer(self, unit_ids: list[str], branch_id: str = "main") -> None:
+        """Add units to their appropriate layers based on depth.
+
+        Args:
+            unit_ids: List of unit IDs to add
+            branch_id: Branch identifier
+        """
+        ...
 
 
 @dataclass
@@ -70,6 +96,117 @@ class Capability:
 
 
 @dataclass
+class DomainHypothesis:
+    """A candidate domain for a unit's problem space."""
+
+    domain: str
+    subdomains: list[str] = field(default_factory=list)
+    confidence: float = 0.5
+    rationale: str = ""
+
+    def __post_init__(self) -> None:
+        """Validate confidence is between 0.0 and 1.0 and coerce to float."""
+        if not isinstance(self.confidence, (int, float)) or not (0.0 <= self.confidence <= 1.0):
+            raise ValueError(
+                f"DomainHypothesis confidence must be a float between 0.0 and 1.0, "
+                f"got {self.confidence!r}"
+            )
+        # Coerce to float for type consistency
+        self.confidence = float(self.confidence)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for YAML serialization."""
+        result: dict[str, Any] = {
+            "domain": self.domain,
+            "confidence": self.confidence,
+            "rationale": self.rationale,
+        }
+        if self.subdomains:
+            result["subdomains"] = self.subdomains
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DomainHypothesis:
+        """Create from dictionary loaded from YAML."""
+        return cls(
+            domain=data["domain"],
+            subdomains=data.get("subdomains", []),
+            confidence=data.get("confidence", 0.5),
+            rationale=data.get("rationale", ""),
+        )
+
+
+@dataclass
+class PatternHypothesis:
+    """A candidate pattern for a unit."""
+
+    pattern: str
+    category: str
+    confidence: float = 0.5
+    rationale: str = ""
+
+    def __post_init__(self) -> None:
+        """Validate confidence is between 0.0 and 1.0 and coerce to float."""
+        if not isinstance(self.confidence, (int, float)) or not (0.0 <= self.confidence <= 1.0):
+            raise ValueError(
+                f"PatternHypothesis confidence must be a float between 0.0 and 1.0, "
+                f"got {self.confidence!r}"
+            )
+        # Coerce to float for type consistency
+        self.confidence = float(self.confidence)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for YAML serialization."""
+        return {
+            "pattern": self.pattern,
+            "category": self.category,
+            "confidence": self.confidence,
+            "rationale": self.rationale,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PatternHypothesis:
+        """Create from dictionary loaded from YAML."""
+        return cls(
+            pattern=data["pattern"],
+            category=data["category"],
+            confidence=data.get("confidence", 0.5),
+            rationale=data.get("rationale", ""),
+        )
+
+
+@dataclass
+class UnitRelation:
+    """A relation between two units (not parent-child)."""
+
+    from_unit: str
+    to_unit: str
+    type: Literal["sequencing", "dataflow", "gating", "routing", "state_transition"]
+    label: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for YAML serialization."""
+        result: dict[str, Any] = {
+            "from": self.from_unit,
+            "to": self.to_unit,
+            "type": self.type,
+        }
+        if self.label:
+            result["label"] = self.label
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> UnitRelation:
+        """Create from dictionary loaded from YAML."""
+        return cls(
+            from_unit=data["from"],
+            to_unit=data["to"],
+            type=data["type"],
+            label=data.get("label", ""),
+        )
+
+
+@dataclass
 class BuildingBlockSpec:
     """Specification for a test building block.
 
@@ -109,9 +246,12 @@ class TestPlan:
     capability_id: str
     use_case: str
     type: Literal["unit", "component", "integration", "script"]
+    source_path: str | None = None
+    use_case_id: str | None = None
     # Suite information from suite-contract
     suite_file: str | None = None
     suite_type: Literal["unit", "component", "integration", "script"] | None = None
+    coverage_type: Literal["line_branch", "usecase"] | None = None
     # Building blocks to invoke (in order)
     building_blocks: list[BuildingBlockSpec] = field(default_factory=list)
     # Test function metadata
@@ -131,10 +271,16 @@ class TestPlan:
             "type": self.type,
             "status": self.status,
         }
+        if self.source_path:
+            result["source_path"] = self.source_path
+        if self.use_case_id:
+            result["use_case_id"] = self.use_case_id
         if self.suite_file:
             result["suite_file"] = self.suite_file
         if self.suite_type:
             result["suite_type"] = self.suite_type
+        if self.coverage_type:
+            result["coverage_type"] = self.coverage_type
         if self.building_blocks:
             result["building_blocks"] = [bb.to_dict() for bb in self.building_blocks]
         if self.test_name:
@@ -153,13 +299,28 @@ class TestPlan:
         building_blocks = [
             BuildingBlockSpec.from_dict(bb) for bb in data.get("building_blocks", [])
         ]
+        plan_id = data["id"]
+        suite_data = data.get("suite")
+        suite_file = data.get("suite_file")
+        suite_type = data.get("suite_type")
+        coverage_type = data.get("coverage_type")
+        if isinstance(suite_data, dict):
+            if not suite_file and isinstance(suite_data.get("file"), str):
+                suite_file = suite_data["file"]
+            if not suite_type and isinstance(suite_data.get("type"), str):
+                suite_type = suite_data["type"]
+            if not coverage_type and isinstance(suite_data.get("coverage_type"), str):
+                coverage_type = suite_data["coverage_type"]
         return cls(
-            id=data["id"],
+            id=plan_id,
             capability_id=data["capability_id"],
             use_case=data["use_case"],
             type=data["type"],
-            suite_file=data.get("suite_file"),
-            suite_type=data.get("suite_type"),
+            source_path=data.get("source_path"),
+            use_case_id=data.get("use_case_id"),
+            suite_file=suite_file,
+            suite_type=suite_type,
+            coverage_type=coverage_type,
             building_blocks=building_blocks,
             test_name=data.get("test_name"),
             is_async=data.get("is_async", False),
@@ -239,6 +400,11 @@ class Unit:
     expected_capabilities: list[Capability] = field(default_factory=list)
     # Capabilities this unit PROVIDES to its parent
     provided_capabilities: list[Capability] = field(default_factory=list)
+    domain_hypotheses: list[DomainHypothesis] = field(default_factory=list)
+    pattern_hypotheses: list[PatternHypothesis] = field(default_factory=list)
+    patterns_used: list[dict[str, Any]] = field(default_factory=list)
+    # Source of discovery (for analyze workflow)
+    discovered_from: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for YAML serialization."""
@@ -266,6 +432,14 @@ class Unit:
             result["expected_capabilities"] = [c.to_dict() for c in self.expected_capabilities]
         if self.provided_capabilities:
             result["provided_capabilities"] = [c.to_dict() for c in self.provided_capabilities]
+        if self.domain_hypotheses:
+            result["domain_hypotheses"] = [d.to_dict() for d in self.domain_hypotheses]
+        if self.pattern_hypotheses:
+            result["pattern_hypotheses"] = [p.to_dict() for p in self.pattern_hypotheses]
+        if self.patterns_used:
+            result["patterns_used"] = self.patterns_used
+        if self.discovered_from:
+            result["discovered_from"] = self.discovered_from
         return result
 
     @classmethod
@@ -277,6 +451,8 @@ class Unit:
 
         expected_caps = [Capability.from_dict(c) for c in data.get("expected_capabilities", [])]
         provided_caps = [Capability.from_dict(c) for c in data.get("provided_capabilities", [])]
+        domain_hyps = [DomainHypothesis.from_dict(d) for d in data.get("domain_hypotheses", [])]
+        pattern_hyps = [PatternHypothesis.from_dict(p) for p in data.get("pattern_hypotheses", [])]
 
         return cls(
             id=data["id"],
@@ -292,6 +468,10 @@ class Unit:
             confidence=data.get("confidence"),
             expected_capabilities=expected_caps,
             provided_capabilities=provided_caps,
+            domain_hypotheses=domain_hyps,
+            pattern_hypotheses=pattern_hyps,
+            patterns_used=data.get("patterns_used", []),
+            discovered_from=data.get("discovered_from"),
         )
 
 
@@ -302,6 +482,7 @@ class ExploredPath:
     confidence: float
     rationale: str
     status: Literal["exploring", "selected", "pruned"]
+    sub_unit_specs: list[dict[str, Any]] = field(default_factory=list)
     sub_units: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -310,17 +491,30 @@ class ExploredPath:
             "confidence": self.confidence,
             "rationale": self.rationale,
             "status": self.status,
+            "sub_unit_specs": self.sub_unit_specs,
             "sub_units": self.sub_units,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExploredPath:
         """Create from dictionary loaded from YAML."""
+        sub_unit_specs = data.get("sub_unit_specs", [])
+        if not isinstance(sub_unit_specs, list):
+            sub_unit_specs = []
+        if sub_unit_specs:
+            sub_units = [
+                spec.get("id")
+                for spec in sub_unit_specs
+                if isinstance(spec, dict) and isinstance(spec.get("id"), str)
+            ]
+        else:
+            sub_units = data.get("sub_units", [])
         return cls(
             confidence=data["confidence"],
             rationale=data["rationale"],
             status=data["status"],
-            sub_units=data.get("sub_units", []),
+            sub_unit_specs=sub_unit_specs,
+            sub_units=sub_units if isinstance(sub_units, list) else [],
         )
 
 
@@ -566,7 +760,9 @@ class DesignState:
     ticket_id: str
     title: str
     url: str = ""
-    workflow: Literal["create-plan", "update-plan", "execute-plan", "refactor-plan"] = "create-plan"
+    workflow: Literal["create-plan", "update-plan", "execute-plan", "refactor-plan", "analyze"] = (
+        "create-plan"
+    )
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -582,9 +778,9 @@ class DesignState:
     )
     units: dict[str, Unit] = field(default_factory=dict)
 
-    # Tree-of-Thought
+    # Tree-of-Thought (per-unit multi-path decomposition)
     explored_paths: dict[str, dict[str, ExploredPath]] = field(default_factory=dict)
-    branch_reports: dict[str, dict[str, Any]] = field(default_factory=dict)
+    relations: list[UnitRelation] = field(default_factory=list)
 
     # Capabilities and Tests
     # Test plans mapped by capability_id
@@ -606,6 +802,24 @@ class DesignState:
 
     # History
     history: list[dict[str, Any]] = field(default_factory=list)
+
+    # Refactor-plan specific data
+    paths: list[str] = field(default_factory=list)
+    entry_points: list[str] = field(default_factory=list)
+    dependency_graph: dict[str, Any] = field(default_factory=dict)
+    circular_dependencies: list[dict[str, Any]] = field(default_factory=list)
+    integration_points: list[dict[str, Any]] = field(default_factory=list)
+    external_consumers: list[dict[str, Any]] = field(default_factory=list)
+    refactoring_risks: list[dict[str, Any]] = field(default_factory=list)
+    refactoring_operations: list[dict[str, Any]] = field(default_factory=list)
+    migration_plan: dict[str, Any] = field(default_factory=dict)
+    pattern_migrations: list[dict[str, Any]] = field(default_factory=list)
+    breaking_changes_summary: dict[str, Any] = field(default_factory=dict)
+    risk_assessment: dict[str, Any] = field(default_factory=dict)
+    update_source: Literal["inline_prompt", "pr_comments"] | None = None
+    update_prompt_text: str | None = None
+    latest_test_replanning_count: int = 0
+    latest_replanned_tests: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def load(cls, workspace: Path) -> DesignState:
@@ -787,7 +1001,7 @@ class DesignState:
         # Convert branches
         branches_dict = {branch_id: branch.to_dict() for branch_id, branch in self.branches.items()}
 
-        return {
+        result = {
             "ticket_id": self.ticket_id,
             "title": self.title,
             "url": self.url,
@@ -801,6 +1015,7 @@ class DesignState:
             "branches": branches_dict,
             "units": units_dict,
             "explored_paths": paths_dict,
+            "relations": [relation.to_dict() for relation in self.relations],
             "test_plans": test_plans_dict,
             "comments": comments_list,
             "worktree_path": self.worktree_path,
@@ -811,7 +1026,28 @@ class DesignState:
             "failures": failures_list,
             "pr_url": self.pr_url,
             "history": self.history,
+            "paths": self.paths,
+            "entry_points": self.entry_points,
+            "dependency_graph": self.dependency_graph,
+            "circular_dependencies": self.circular_dependencies,
+            "integration_points": self.integration_points,
+            "external_consumers": self.external_consumers,
+            "refactoring_risks": self.refactoring_risks,
+            "refactoring_operations": self.refactoring_operations,
+            "migration_plan": self.migration_plan,
+            "pattern_migrations": self.pattern_migrations,
+            "breaking_changes_summary": self.breaking_changes_summary,
+            "risk_assessment": self.risk_assessment,
         }
+        if self.update_source:
+            result["update_source"] = self.update_source
+        if self.update_prompt_text:
+            result["update_prompt_text"] = self.update_prompt_text
+        if self.latest_test_replanning_count:
+            result["latest_test_replanning_count"] = self.latest_test_replanning_count
+        if self.latest_replanned_tests:
+            result["latest_replanned_tests"] = self.latest_replanned_tests
+        return result
 
     @classmethod
     def _from_dict(cls, workspace: Path, data: dict[str, Any]) -> DesignState:
@@ -835,6 +1071,8 @@ class DesignState:
             explored_paths[unit_id] = {
                 path_id: ExploredPath.from_dict(path_data) for path_id, path_data in paths.items()
             }
+
+        relations = [UnitRelation.from_dict(r) for r in data.get("relations", [])]
 
         # Parse comments
         comments = [ReviewComment.from_dict(c) for c in data.get("comments", [])]
@@ -871,6 +1109,7 @@ class DesignState:
             branches=branches,
             units=units,
             explored_paths=explored_paths,
+            relations=relations,
             test_plans=test_plans,
             comments=comments,
             worktree_path=data.get("worktree_path"),
@@ -881,4 +1120,333 @@ class DesignState:
             failures=failures,
             pr_url=data.get("pr_url"),
             history=data.get("history", []),
+            paths=data.get("paths", []),
+            entry_points=data.get("entry_points", []),
+            dependency_graph=data.get("dependency_graph", {}),
+            circular_dependencies=data.get("circular_dependencies", []),
+            integration_points=data.get("integration_points", []),
+            external_consumers=data.get("external_consumers", []),
+            refactoring_risks=data.get("refactoring_risks", []),
+            refactoring_operations=data.get("refactoring_operations", []),
+            migration_plan=data.get("migration_plan", {}),
+            pattern_migrations=data.get("pattern_migrations", []),
+            breaking_changes_summary=data.get("breaking_changes_summary", {}),
+            risk_assessment=data.get("risk_assessment", {}),
+            update_source=data.get("update_source"),
+            update_prompt_text=data.get("update_prompt_text"),
+            latest_test_replanning_count=data.get("latest_test_replanning_count", 0),
+            latest_replanned_tests=data.get("latest_replanned_tests", []),
+        )
+
+    def _prune_old_path(
+        self,
+        old_path: ExploredPath,
+        descendant_ids: set[str],
+        parent_children_to_remove: dict[str, list[str]],
+        layer_manager: LayerManagerProtocol | None,
+    ) -> None:
+        """Apply pruning mutations to the old path and its descendants.
+
+        This performs the following mutations:
+        - Marks old_path status as "pruned"
+        - Detaches children from their parent units
+        - Removes units from layer_manager (if provided)
+        - Deletes units from self.units
+
+        Args:
+            old_path: The previously selected path to prune
+            descendant_ids: Set of unit IDs to remove (descendants of old_path)
+            parent_children_to_remove: Mapping of parent_id to list of child IDs to detach
+            layer_manager: Optional layer manager for layer removal
+        """
+        old_path.status = "pruned"
+
+        # Remove from parent.children
+        for parent_id, children_to_remove in parent_children_to_remove.items():
+            parent = self.units[parent_id]
+            for child_id in children_to_remove:
+                parent.children.remove(child_id)
+
+        # Remove from layer manager
+        if layer_manager is not None:
+            for sub_unit_id in descendant_ids:
+                for branch_id in self.branches:
+                    layer_manager.remove_unit_from_layer(
+                        sub_unit_id,
+                        branch_id=branch_id,
+                    )
+
+        # Remove from units dict
+        for sub_unit_id in descendant_ids:
+            self.units.pop(sub_unit_id, None)
+
+    def _rollback_path_pruning(
+        self,
+        old_path: ExploredPath,
+        descendant_ids: set[str],
+        parent_children_to_remove: dict[str, list[str]],
+        removed_units: dict[str, Unit],
+        layer_manager: LayerManagerProtocol | None,
+    ) -> None:
+        """Rollback pruning mutations to restore the old path state.
+
+        This restores state after a failed pruning operation:
+        - Restores old_path status to "selected"
+        - Re-attaches children to their parent units
+        - Re-inserts removed units into self.units
+        - Re-registers units with layer_manager (if provided)
+
+        Args:
+            old_path: The path whose status should be restored
+            descendant_ids: Set of unit IDs that were being removed
+            parent_children_to_remove: Mapping of parent_id to list of child IDs to restore
+            removed_units: Units that were removed and need to be restored
+            layer_manager: Optional layer manager for re-registration
+        """
+        # Rollback: restore old_path status
+        old_path.status = "selected"
+
+        # Rollback: re-attach children to parents
+        for parent_id, children_to_remove in parent_children_to_remove.items():
+            if parent_id in self.units:
+                parent = self.units[parent_id]
+                for child_id in children_to_remove:
+                    if child_id not in parent.children:
+                        parent.children.append(child_id)
+
+        # Rollback: restore removed units
+        for uid, unit in removed_units.items():
+            if uid not in self.units:
+                self.units[uid] = unit
+
+        # Rollback: re-register units in layer_manager
+        # Note: layer_manager may be None in tests, check before calling
+        if layer_manager is not None:
+            for sub_unit_id in descendant_ids:
+                for branch_id in self.branches:
+                    layer_manager.add_units_to_layer(
+                        [sub_unit_id],
+                        branch_id=branch_id,
+                    )
+
+    def _materialize_path_units(
+        self,
+        new_path: ExploredPath,
+        parent_unit_id: str,
+        path_id: str,
+    ) -> tuple[dict[str, Unit], list[str], list[str]]:
+        """Validate specs and prepare units for materialization.
+
+        This method validates all specs in new_path.sub_unit_specs and prepares
+        units without mutating state. May raise ValueError/TypeError/KeyError
+        if any spec fails validation.
+
+        Args:
+            new_path: The path containing sub_unit_specs to materialize
+            parent_unit_id: ID of the parent unit for new units
+            path_id: Path ID to assign to new/updated units
+
+        Returns:
+            A tuple of:
+            - units_to_create: Mapping of unit_id to Unit for new units
+            - existing_units_to_update: List of existing unit IDs to update path_id
+            - new_unit_ids: Ordered list of new unit IDs (for parent.children)
+        """
+        units_to_create: dict[str, Unit] = {}
+        existing_units_to_update: list[str] = []
+        new_unit_ids: list[str] = []
+
+        for spec in new_path.sub_unit_specs:
+            if not isinstance(spec, dict):
+                continue
+            new_sub_unit_id: str | None = spec.get("id")
+            if not isinstance(new_sub_unit_id, str):
+                continue
+            if new_sub_unit_id in self.units:
+                # Existing unit: mark for path_id update
+                existing_units_to_update.append(new_sub_unit_id)
+                continue
+            # Create unit (may raise ValueError/TypeError/KeyError)
+            unit = self._create_unit_from_spec(
+                spec,
+                parent_id=parent_unit_id,
+                path_id=path_id,
+                confidence=new_path.confidence,
+            )
+            units_to_create[new_sub_unit_id] = unit
+            new_unit_ids.append(new_sub_unit_id)
+
+        return units_to_create, existing_units_to_update, new_unit_ids
+
+    def commit_to_path(
+        self, unit_id: str, path_id: str, layer_manager: LayerManagerProtocol | None
+    ) -> list[str]:
+        """Commit to a selected exploration path and materialize its units."""
+        if unit_id not in self.units:
+            raise ValueError(f"Unit {unit_id} not found")
+        paths = self.explored_paths.get(unit_id)
+        if not paths:
+            raise ValueError(f"No explored paths found for unit {unit_id}")
+        new_path = paths.get(path_id)
+        if new_path is None:
+            raise ValueError(f"Path {path_id} not found for unit {unit_id}")
+        if new_path.status == "pruned":
+            raise ValueError(f"Path {path_id} has already been pruned")
+        if new_path.status == "selected":
+            # Path is already selected; return empty list to indicate no new units
+            return []
+
+        selected_path_id: str | None = None
+        for candidate_id, path in paths.items():
+            if path.status == "selected":
+                selected_path_id = candidate_id
+                break
+
+        if selected_path_id and selected_path_id != path_id:
+            old_path = paths[selected_path_id]
+
+            # Phase 1: Compute all affected state before mutating
+            descendant_ids: set[str] = set()
+            to_visit = list(old_path.sub_units)
+            while to_visit:
+                sub_unit_id = to_visit.pop()
+                if sub_unit_id in descendant_ids:
+                    continue
+                descendant_ids.add(sub_unit_id)
+                unit = self.units.get(sub_unit_id)
+                if unit:
+                    to_visit.extend(unit.children)
+
+            # Capture state for rollback: parent -> list of children to remove
+            parent_children_to_remove: dict[str, list[str]] = {}
+            for sub_unit_id in descendant_ids:
+                unit = self.units.get(sub_unit_id)
+                if not unit:
+                    continue
+                if unit.parent and unit.parent in self.units:
+                    parent = self.units[unit.parent]
+                    if sub_unit_id in parent.children:
+                        if unit.parent not in parent_children_to_remove:
+                            parent_children_to_remove[unit.parent] = []
+                        parent_children_to_remove[unit.parent].append(sub_unit_id)
+
+            # Capture units that will be removed for rollback
+            removed_units: dict[str, Unit] = {
+                uid: self.units[uid] for uid in descendant_ids if uid in self.units
+            }
+
+            # Phase 2: Apply mutations with rollback on failure
+            try:
+                self._prune_old_path(
+                    old_path, descendant_ids, parent_children_to_remove, layer_manager
+                )
+            except Exception:
+                self._rollback_path_pruning(
+                    old_path,
+                    descendant_ids,
+                    parent_children_to_remove,
+                    removed_units,
+                    layer_manager,
+                )
+                raise
+
+        # Phase 1: Validate all specs and prepare units without mutating state
+        units_to_create, existing_units_to_update, new_unit_ids = self._materialize_path_units(
+            new_path, unit_id, path_id
+        )
+
+        # Phase 2: All validations passed, commit changes atomically
+        # Update path statuses
+        new_path.status = "selected"
+        for candidate_id, path in paths.items():
+            if candidate_id != path_id:
+                path.status = "pruned"
+
+        # Update path_id for existing units
+        for existing_unit_id in existing_units_to_update:
+            self.units[existing_unit_id].path_id = path_id
+
+        # Add new units to self.units
+        for new_sub_unit_id, unit in units_to_create.items():
+            self.units[new_sub_unit_id] = unit
+
+        # Append new children to parent in one step
+        parent_unit: Unit | None = self.units.get(unit_id)
+        if parent_unit is not None:
+            for new_sub_unit_id in new_unit_ids:
+                if new_sub_unit_id not in parent_unit.children:
+                    parent_unit.children.append(new_sub_unit_id)
+
+        self.add_history("commit_path", {"unit_id": unit_id, "path_id": path_id})
+        return new_unit_ids
+
+    @staticmethod
+    def _create_unit_from_spec(
+        spec: dict[str, Any],
+        parent_id: str,
+        path_id: str,
+        confidence: float | None,
+    ) -> Unit:
+        """Create a Unit from a raw decomposer specification."""
+        # Validate required fields
+        spec_id = spec.get("id")
+        if not isinstance(spec_id, str):
+            spec_preview = str(spec)[:200]
+            raise TypeError(
+                f"Missing or invalid 'id' in spec (expected string, got "
+                f"{type(spec_id).__name__}): {spec_preview}"
+            )
+        description = spec.get("description")
+        if not isinstance(description, str):
+            spec_preview = str(spec)[:200]
+            raise TypeError(
+                f"Missing or invalid 'description' in spec for id={spec_id!r} "
+                f"(expected string, got {type(description).__name__}): {spec_preview}"
+            )
+
+        # Validate operation field
+        allowed_operations = ("CREATE", "MODIFY", "DELETE")
+        operation = spec.get("operation", "CREATE")
+        if operation not in allowed_operations:
+            raise ValueError(
+                f"Invalid 'operation' in spec for id={spec_id!r}: "
+                f"got {operation!r}, expected one of {allowed_operations}"
+            )
+
+        expected_caps = [
+            Capability.from_dict(item)
+            for item in spec.get("expected_capabilities", [])
+            if isinstance(item, dict)
+        ]
+        provided_caps = [
+            Capability.from_dict(item)
+            for item in spec.get("provided_capabilities", [])
+            if isinstance(item, dict)
+        ]
+        domain_hyps = [
+            DomainHypothesis.from_dict(item)
+            for item in spec.get("domain_hypotheses", [])
+            if isinstance(item, dict)
+        ]
+        pattern_hyps = [
+            PatternHypothesis.from_dict(item)
+            for item in spec.get("pattern_hypotheses", [])
+            if isinstance(item, dict)
+        ]
+        return Unit(
+            id=spec_id,
+            description=description,
+            operation=operation,
+            status="pending",
+            pattern=spec.get("pattern"),
+            pattern_category=spec.get("pattern_category"),
+            children=[],
+            parent=parent_id,
+            plan=None,
+            path_id=path_id,
+            confidence=confidence,
+            expected_capabilities=expected_caps,
+            provided_capabilities=provided_caps,
+            domain_hypotheses=domain_hyps,
+            pattern_hypotheses=pattern_hyps,
         )

@@ -23,6 +23,11 @@ def is_<condition>(data: T) -> bool:
     """
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A classifier is a named boolean expression:
@@ -152,11 +157,3 @@ def route_branch_action(branch: str) -> Action:
         return handle_default(branch)
 ```
 
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

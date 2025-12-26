@@ -36,6 +36,11 @@ def guarded_<operation>(input: T) -> R:
     return process(input)
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Implementation Rules
 
 1. **Early exit**: Guards at top of function
@@ -100,13 +105,4 @@ def process_commit(repo: Repository, commit_sha: str) -> CommitInfo:
         message=commit.message,
         author=commit.author,
     )
-```
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
 ```

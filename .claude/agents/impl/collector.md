@@ -23,6 +23,11 @@ def collect_<what>(iterable: Iterable[T]) -> Collection[T]:
     """
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A collector is a **builder specialized for iterables**:
@@ -201,12 +206,3 @@ first_error = collect_first(
 | From iterable | From parts/components |
 | `collect_*(iterable)` | `build_*(a, b, c)` |
 | Specialized for streams | General construction |
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

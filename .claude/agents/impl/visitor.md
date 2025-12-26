@@ -21,6 +21,11 @@ def visit_<what>(source: S, fn: Callable[[T], None]) -> None:
     """
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A visitor accepts a callback and applies it to each element:
@@ -162,12 +167,3 @@ def collect_errors(log_path: Path) -> list[str]:
 | Visitor controls iteration | Caller controls iteration |
 | `visit_*(src, fn)` | `for x in walk_*(src)` |
 | Typically for mutations | Typically read-only |
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

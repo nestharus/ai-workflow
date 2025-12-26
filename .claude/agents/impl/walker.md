@@ -23,6 +23,11 @@ def walk_<what>(source: S) -> Iterator[T]:
     """
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 A walker yields individual elements (stream style):
@@ -147,12 +152,3 @@ def walk_tree_nodes(root: TreeNode) -> Iterator[TreeNode]:
 | Caller controls iteration | Visitor controls iteration |
 | Read-only | Typically for mutations |
 | `for x in walk_*(src)` | `visit_*(src, fn)` |
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

@@ -1,0 +1,37 @@
+# Review Task: Verify Feedback Integration
+
+Review whether the **requirements document** correctly incorporates all **feedback**.
+
+## Input Files
+- **Requirements document**: The output document being reviewed
+- **Feedback document**: The feedback that should be integrated
+
+## Review Process
+
+1. **Extract every feedback item** from the feedback document
+2. **For each feedback item**, verify it is correctly expressed in the requirements document
+3. **Check cross-application**: Each feedback item may apply to MULTIPLE sections of the requirements document—verify ALL applicable sections reflect the feedback
+4. **Do not trust scope hints**: Feedback may suggest specific sections, but you must independently identify ALL sections where it could apply
+5. **Check coherence**: Verify feedback was integrated INTO existing artifacts, not added alongside them
+
+## Key Principles
+
+### Complete Application
+Feedback is only correctly applied when it is reflected in **every** section where it is relevant—not just where explicitly mentioned.
+
+### Coherent Integration
+Feedback must MODIFY existing artifacts—not create parallel systems. Watch for:
+- Old and new versions of the same concept coexisting
+- Legacy patterns remaining alongside updated patterns
+- Feedback "tacked on" as additions rather than integrated as modifications
+- Duplicate or contradictory definitions
+
+If feedback implies changing an existing system, the original must be transformed—not preserved with a new alternative added.
+
+## Output
+
+Report any feedback that is:
+- Missing entirely
+- Applied incompletely (present in some sections but not all applicable sections)
+- Applied incorrectly
+- Added as parallel content instead of integrated into existing artifacts

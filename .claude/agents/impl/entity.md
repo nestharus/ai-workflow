@@ -24,6 +24,11 @@ class <EntityName>:
     field2: Type2
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 An entity is a domain object with just fields:
@@ -159,12 +164,3 @@ class Configuration:
 | Full domain model | Derived view/subset |
 | Has identity (ID) | May not have ID |
 | `User` in database | `UserSummary` in API |
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<class names exported>]
-error: <error message if failure>
-```

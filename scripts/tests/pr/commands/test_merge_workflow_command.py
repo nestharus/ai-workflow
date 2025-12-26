@@ -10,17 +10,61 @@ import pytest
 from scripts.pr.commands.merge_workflow_command import merge_workflow_command
 
 
-class TestMergeWorkflowCommandBasic:
-    """Basic tests for merge_workflow_command."""
+class TestMergeWorkflowCommandRefsMismatch:
+    """Tests for ref mismatch handling in merge_workflow_command."""
 
-    def test_success_returns_zero(self, tmp_path: Path) -> None:
-        """Test successful workflow returns 0."""
+    def test_returns_one_when_refs_mismatch(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Test that ref mismatch causes early return with exit code 1."""
         working_dir = tmp_path / "worktree"
         working_dir.mkdir()
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
             patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
+        ):
+            mock_git.check_refs_match.return_value = (False, "abc1234", "def5678")
+
+            result = merge_workflow_command("NES-123", 42, working_dir, "feature-branch", "main")
+
+        captured = capsys.readouterr()
+        assert "ERROR: Refs mismatch - local=abc1234 remote=def5678" in captured.err
+        assert "Push or pull to sync before merging." in captured.err
+        mock_gh.merge_pr.assert_not_called()
+        assert result == 1
+
+    def test_returns_one_when_refs_check_fails(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Test that ref check error causes early return with exit code 1."""
+        working_dir = tmp_path / "worktree"
+        working_dir.mkdir()
+
+        with (
+            patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
+            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
+        ):
+            mock_git.check_refs_match.return_value = (False, None, "Branch not found")
+
+            result = merge_workflow_command("NES-123", 42, working_dir, "feature-branch", "main")
+
+        captured = capsys.readouterr()
+        assert "ERROR: Branch not found" in captured.err
+        mock_gh.merge_pr.assert_not_called()
+        assert result == 1
+
+
+class TestMergeWorkflowCommandBasic:
+    """Basic tests for merge_workflow_command."""
+
+    def test_success_returns_zero(self, tmp_path: Path, mock_git_dao_refs_match: MagicMock) -> None:
+        """Test successful workflow returns 0."""
+        working_dir = tmp_path / "worktree"
+        working_dir.mkdir()
+
+        with (
+            patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -29,8 +73,8 @@ class TestMergeWorkflowCommandBasic:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
             mock_prs.return_value = []
             mock_client = MagicMock()
             mock_client_fn.return_value = mock_client
@@ -44,7 +88,7 @@ class TestMergeWorkflowCommandBasic:
         assert result == 0
 
     def test_merge_failure_returns_one(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test that merge failure returns 1."""
         working_dir = tmp_path / "worktree"
@@ -63,14 +107,15 @@ class TestMergeWorkflowCommandBasic:
 class TestMergeWorkflowCommandWorktree:
     """Tests for worktree handling in merge_workflow_command."""
 
-    def test_removes_worktree_when_is_worktree_true(self, tmp_path: Path) -> None:
+    def test_removes_worktree_when_is_worktree_true(
+        self, tmp_path: Path, mock_git_dao_refs_match: MagicMock
+    ) -> None:
         """Test that worktree is removed when is_worktree=True."""
         working_dir = tmp_path / "worktree"
         working_dir.mkdir()
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -79,8 +124,8 @@ class TestMergeWorkflowCommandWorktree:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
             mock_prs.return_value = []
             mock_client = MagicMock()
             mock_client_fn.return_value = mock_client
@@ -91,10 +136,10 @@ class TestMergeWorkflowCommandWorktree:
                 "NES-123", 42, working_dir, "feature-branch", "main", is_worktree=True
             )
 
-        mock_git.remove_worktree.assert_called_once_with(working_dir)
+        mock_git_dao_refs_match.remove_worktree.assert_called_once_with(working_dir)
 
     def test_skips_worktree_removal_when_is_worktree_false(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test that worktree removal is skipped when is_worktree=False."""
         working_dir = tmp_path / "repo"
@@ -102,7 +147,6 @@ class TestMergeWorkflowCommandWorktree:
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -121,14 +165,14 @@ class TestMergeWorkflowCommandWorktree:
                 "NES-123", 42, working_dir, "feature-branch", "main", is_worktree=False
             )
 
-        mock_git.remove_worktree.assert_not_called()
-        mock_git.delete_branch.assert_not_called()
+        mock_git_dao_refs_match.remove_worktree.assert_not_called()
+        mock_git_dao_refs_match.delete_branch.assert_not_called()
         captured = capsys.readouterr()
         assert "Skipping worktree removal" in captured.out
         assert "Skipping branch deletion" in captured.out
 
     def test_handles_worktree_removal_failure(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test that worktree removal failure is reported but doesn't stop workflow."""
         working_dir = tmp_path / "worktree"
@@ -136,7 +180,6 @@ class TestMergeWorkflowCommandWorktree:
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -145,8 +188,8 @@ class TestMergeWorkflowCommandWorktree:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (False, "Worktree locked")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (False, "Worktree locked")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
             mock_prs.return_value = []
             mock_client = MagicMock()
             mock_client_fn.return_value = mock_client
@@ -162,14 +205,13 @@ class TestMergeWorkflowCommandWorktree:
         assert result == 0  # Still succeeds
 
     def test_handles_missing_worktree_directory(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test handling when worktree directory doesn't exist."""
         working_dir = tmp_path / "nonexistent"  # Doesn't exist
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -178,7 +220,7 @@ class TestMergeWorkflowCommandWorktree:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
             mock_prs.return_value = []
             mock_client = MagicMock()
             mock_client_fn.return_value = mock_client
@@ -191,21 +233,22 @@ class TestMergeWorkflowCommandWorktree:
 
         captured = capsys.readouterr()
         assert "Worktree not found" in captured.out
-        mock_git.remove_worktree.assert_not_called()
+        mock_git_dao_refs_match.remove_worktree.assert_not_called()
         assert result == 0
 
 
 class TestMergeWorkflowCommandBranchDeletion:
     """Tests for branch deletion in merge_workflow_command."""
 
-    def test_deletes_branch_when_is_worktree_true(self, tmp_path: Path) -> None:
+    def test_deletes_branch_when_is_worktree_true(
+        self, tmp_path: Path, mock_git_dao_refs_match: MagicMock
+    ) -> None:
         """Test that branch is deleted when is_worktree=True."""
         working_dir = tmp_path / "worktree"
         working_dir.mkdir()
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -214,8 +257,8 @@ class TestMergeWorkflowCommandBranchDeletion:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
             mock_prs.return_value = []
             mock_client = MagicMock()
             mock_client_fn.return_value = mock_client
@@ -226,10 +269,10 @@ class TestMergeWorkflowCommandBranchDeletion:
                 "NES-123", 42, working_dir, "my-feature", "main", is_worktree=True
             )
 
-        mock_git.delete_branch.assert_called_once_with("my-feature")
+        mock_git_dao_refs_match.delete_branch.assert_called_once_with("my-feature")
 
     def test_handles_branch_deletion_failure(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test that branch deletion failure is reported but doesn't stop workflow."""
         working_dir = tmp_path / "worktree"
@@ -237,7 +280,6 @@ class TestMergeWorkflowCommandBranchDeletion:
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -246,8 +288,8 @@ class TestMergeWorkflowCommandBranchDeletion:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (False, "Branch not found")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (False, "Branch not found")
             mock_prs.return_value = []
             mock_client = MagicMock()
             mock_client_fn.return_value = mock_client
@@ -266,14 +308,15 @@ class TestMergeWorkflowCommandBranchDeletion:
 class TestMergeWorkflowCommandFetchPrune:
     """Tests for fetch and prune in merge_workflow_command."""
 
-    def test_fetches_and_prunes_remote_branches(self, tmp_path: Path) -> None:
+    def test_fetches_and_prunes_remote_branches(
+        self, tmp_path: Path, mock_git_dao_refs_match: MagicMock
+    ) -> None:
         """Test that remote branches are fetched and pruned."""
         working_dir = tmp_path / "worktree"
         working_dir.mkdir()
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -282,8 +325,8 @@ class TestMergeWorkflowCommandFetchPrune:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
             mock_prs.return_value = []
             mock_client = MagicMock()
             mock_client_fn.return_value = mock_client
@@ -294,14 +337,14 @@ class TestMergeWorkflowCommandFetchPrune:
                 "NES-123", 42, working_dir, "feature-branch", "main", is_worktree=True
             )
 
-        mock_git.fetch_all_prune.assert_called_once()
+        mock_git_dao_refs_match.fetch_all_prune.assert_called_once()
 
 
 class TestMergeWorkflowCommandTicketState:
     """Tests for ticket state updates in merge_workflow_command."""
 
     def test_skips_ticket_operations_when_no_ticket_id(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test that ticket operations are skipped when ticket_id is None."""
         working_dir = tmp_path / "worktree"
@@ -309,15 +352,14 @@ class TestMergeWorkflowCommandTicketState:
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
             patch("scripts.pr.commands.merge_workflow_command._get_default_client"),
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
 
             result = merge_workflow_command(
                 None, 42, working_dir, "feature-branch", "main", is_worktree=True
@@ -329,7 +371,7 @@ class TestMergeWorkflowCommandTicketState:
         assert result == 0
 
     def test_marks_ticket_done_when_no_remaining_prs(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test that ticket is marked Done when no remaining open PRs."""
         working_dir = tmp_path / "worktree"
@@ -337,7 +379,6 @@ class TestMergeWorkflowCommandTicketState:
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -346,8 +387,8 @@ class TestMergeWorkflowCommandTicketState:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
             mock_prs.return_value = []  # No remaining PRs
             mock_client = MagicMock()
             mock_client_fn.return_value = mock_client
@@ -364,7 +405,7 @@ class TestMergeWorkflowCommandTicketState:
         assert result == 0
 
     def test_skips_mark_done_when_remaining_prs(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test that ticket is not marked Done when there are remaining open PRs."""
         working_dir = tmp_path / "worktree"
@@ -372,7 +413,6 @@ class TestMergeWorkflowCommandTicketState:
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -381,8 +421,8 @@ class TestMergeWorkflowCommandTicketState:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
             mock_prs.return_value = [
                 {"number": 43, "url": "https://github.com/owner/repo/pull/43"},
             ]
@@ -400,7 +440,7 @@ class TestMergeWorkflowCommandTicketState:
         assert result == 0
 
     def test_handles_linear_client_error_in_pr_check(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test that LinearClientError in PR check is reported but doesn't stop workflow."""
         from scripts.clients.linear_client import LinearClientError
@@ -410,14 +450,13 @@ class TestMergeWorkflowCommandTicketState:
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
             mock_prs.side_effect = LinearClientError("API_ERROR", "Connection failed")
 
             result = merge_workflow_command(
@@ -429,7 +468,7 @@ class TestMergeWorkflowCommandTicketState:
         assert result == 0
 
     def test_handles_missing_team_id(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test handling when team_id is not available."""
         working_dir = tmp_path / "worktree"
@@ -437,7 +476,6 @@ class TestMergeWorkflowCommandTicketState:
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -446,8 +484,8 @@ class TestMergeWorkflowCommandTicketState:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
             mock_prs.return_value = []
             mock_client = MagicMock()
             mock_client_fn.return_value = mock_client
@@ -462,7 +500,7 @@ class TestMergeWorkflowCommandTicketState:
         assert result == 0
 
     def test_handles_missing_issue_uuid(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test handling when issue UUID is not available."""
         working_dir = tmp_path / "worktree"
@@ -470,7 +508,6 @@ class TestMergeWorkflowCommandTicketState:
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -479,8 +516,8 @@ class TestMergeWorkflowCommandTicketState:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
             mock_prs.return_value = []
             mock_client = MagicMock()
             mock_client_fn.return_value = mock_client
@@ -496,7 +533,7 @@ class TestMergeWorkflowCommandTicketState:
         assert result == 0
 
     def test_handles_linear_client_error_in_set_state(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test that LinearClientError when setting state is reported."""
         from scripts.clients.linear_client import LinearClientError
@@ -506,7 +543,6 @@ class TestMergeWorkflowCommandTicketState:
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -515,8 +551,8 @@ class TestMergeWorkflowCommandTicketState:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
             mock_prs.return_value = []
             mock_client = MagicMock()
             mock_client_fn.return_value = mock_client
@@ -537,14 +573,15 @@ class TestMergeWorkflowCommandTicketState:
 class TestMergeWorkflowCommandSummary:
     """Tests for summary output in merge_workflow_command."""
 
-    def test_prints_summary(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_prints_summary(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
+    ) -> None:
         """Test that summary is printed at the end."""
         working_dir = tmp_path / "worktree"
         working_dir.mkdir()
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -553,8 +590,8 @@ class TestMergeWorkflowCommandSummary:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
             mock_prs.return_value = []
             mock_client = MagicMock()
             mock_client_fn.return_value = mock_client
@@ -573,7 +610,7 @@ class TestMergeWorkflowCommandSummary:
         assert "Target: develop" in captured.out
 
     def test_prints_warnings_in_summary(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test that warnings are printed in summary."""
         working_dir = tmp_path / "worktree"
@@ -581,7 +618,6 @@ class TestMergeWorkflowCommandSummary:
 
         with (
             patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
             patch(
                 "scripts.pr.commands.merge_workflow_command._get_open_prs_for_ticket"
             ) as mock_prs,
@@ -590,8 +626,8 @@ class TestMergeWorkflowCommandSummary:
             ) as mock_client_fn,
         ):
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (False, "Error 1")
-            mock_git.delete_branch.return_value = (False, "Error 2")
+            mock_git_dao_refs_match.remove_worktree.return_value = (False, "Error 1")
+            mock_git_dao_refs_match.delete_branch.return_value = (False, "Error 2")
             mock_prs.return_value = []
             mock_client = MagicMock()
             mock_client_fn.return_value = mock_client
@@ -606,19 +642,16 @@ class TestMergeWorkflowCommandSummary:
         assert "Failed to delete branch" in captured.out
 
     def test_summary_shows_na_for_no_ticket(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mock_git_dao_refs_match: MagicMock
     ) -> None:
         """Test that summary shows N/A when no ticket ID."""
         working_dir = tmp_path / "worktree"
         working_dir.mkdir()
 
-        with (
-            patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh,
-            patch("scripts.pr.commands.merge_workflow_command.git_dao") as mock_git,
-        ):
+        with patch("scripts.pr.commands.merge_workflow_command.github_dao") as mock_gh:
             mock_gh.merge_pr.return_value = True
-            mock_git.remove_worktree.return_value = (True, "")
-            mock_git.delete_branch.return_value = (True, "")
+            mock_git_dao_refs_match.remove_worktree.return_value = (True, "")
+            mock_git_dao_refs_match.delete_branch.return_value = (True, "")
 
             merge_workflow_command(None, 42, working_dir, "feature", "main", is_worktree=True)
 

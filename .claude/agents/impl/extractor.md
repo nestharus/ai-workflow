@@ -26,6 +26,11 @@ def extract_<what>(source: S) -> T:
     """
 ```
 
+## Executor Contract
+
+**See `.claude/docs/impl-executor-contract.md` for invocation parameters, execution process, and output format.**
+
+
 ## Key Insight
 
 An extractor gets ONE specific thing from any source:
@@ -177,12 +182,3 @@ def extract_file_extension(path: Path) -> str:
 | From any source | From iterable/stream |
 | Direct extraction | Aggregates stream |
 | `extract_imports(code)` | `collect_into_list(walker)` |
-
-## Output Contract
-
-```yaml
-status: <success|failure>
-file_path: <path to created/modified file>
-exports: [<function names exported>]
-error: <error message if failure>
-```

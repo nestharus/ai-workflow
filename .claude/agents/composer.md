@@ -9,7 +9,41 @@ tools: Read, Write, Edit, Grep, Glob
 
 Compose child implementations into a parent unit during the bottom-up phase.
 
+## Invocation Parameters
+
+These are the call arguments passed when the agent is started.
+
+When invoked by impl-executor, you receive:
+```yaml
+workspace: <path>        # Design workspace
+unit_id: <id>           # Parent unit identifier
+worktree_path: <path>   # Git worktree for changes
+```
+
+## Execution Process
+
+1. Read `{workspace}/agent_input.yaml`:
+   - `units[unit_id]` is the parent unit to compose
+   - `units[unit_id].children` lists child unit IDs
+   - For each child, read its implementation from worktree
+
+2. Compose children into parent structure in worktree
+
+3. Return composition result
+
+## Output Contract
+
+Return YAML to stdout:
+```yaml
+composed: true
+file_path: <path where composed code was written>
+exports: <public interface of composed unit>
+error: <error message if failure>
+```
+
 ## Input Format
+
+This describes the data structure payload read during invocation.
 
 ```yaml
 parent:
@@ -98,15 +132,6 @@ def orchestrate():
 @child2_middleware
 def core_operation():
     return child3()
-```
-
-## Output Contract
-
-Return ONLY:
-```yaml
-composed: true
-file_path: <path where composed code was written>
-exports: <public interface of the composed unit>
 ```
 
 ## Rules

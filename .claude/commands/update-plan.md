@@ -30,7 +30,12 @@ update_prompt=$(echo "$ARGUMENTS" | cut -d' ' -f2-)
 ## Step 2: Initialize
 
 ```bash
-uv run planner init $ticket_id --workflow update-plan
+# If update_prompt is provided
+if [ -n "$update_prompt" ]; then
+    uv run planner init $ticket_id --workflow update-plan --update-prompt "$update_prompt"
+else
+    uv run planner init $ticket_id --workflow update-plan
+fi
 ```
 
 If `update_prompt` is empty, fetch PR comments:
@@ -67,8 +72,14 @@ while true; do
             Task(subagent_type="design-refactorer", prompt="workspace: .tmp/design/$ticket_id")
             ;;
 
+        "call_test_planner")
+            Task(subagent_type="test-planner", prompt="workspace: .tmp/design/$ticket_id")
+            ;;
+
         "generate_docs")
+            # Run diagram-generator first to produce diagrams.yaml
             Task(subagent_type="diagram-generator", prompt="workspace: .tmp/design/$ticket_id")
+            # Then run design-formatter to read diagrams.yaml and produce final docs
             Task(subagent_type="design-formatter", prompt="workspace: .tmp/design/$ticket_id")
             ;;
 
@@ -97,18 +108,14 @@ Ticket: $ticket_id - <TITLE>
 Linear: <LINEAR_TICKET_URL>
 
 Update Source:
-  <INLINE_PROMPT or "PR comments (N unresolved)">
+  [Inline prompt: "$update_prompt" | PR comments (N total, M applied, P pending)]
 
 Changes Applied:
   Units modified: <count>
-  Units added: <count>
-  Units removed: <count>
-  Pattern changes: <count>
-
-Layers Affected:
-  Layer 3: <count> changes
-  Layer 2: <count> changes
-  Layer 1: <count> changes
+  Layers affected: <comma-separated layer numbers>
+  Tests replanned: <count>
+    - Use-case coverage (component/integration): <count>
+    - Line/branch coverage (unit/scripts): <count>
 
 ================================================================================
 LINEAR COMMENTS UPDATED
