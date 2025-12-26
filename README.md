@@ -262,6 +262,7 @@ Available via `uv run <script>`:
 | `lint` | Run comprehensive linting (Ruff, mypy, Checkov, pymarkdown) |
 | `app.start` | Start development server with health checks |
 | `gen_openapi` | Generate OpenAPI schema JSON to `openapi/openapi.json` |
+| `zip-changes` | Create zip of changed files (no args = uncommitted, or pass SHA) |
 | `coderabbit-review` | Run CodeRabbit AI code review (human-initiated) |
 | `sonar-review` | Run SonarQube analysis (human-initiated) |
 | `latest-review` | Fetch latest review artifact path |

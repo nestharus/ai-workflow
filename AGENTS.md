@@ -88,6 +88,32 @@ Generates the OpenAPI 3.1 schema JSON file from the FastAPI application code.
 * **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
   invoked via `uv run`
 
+## Adding Dependencies
+
+When adding a new dependency to `pyproject.toml`, always use uv to get the latest version:
+
+```bash
+# Main project dependencies ([project] dependencies)
+uv add <package-name>
+
+# Test group (pytest, test utilities)
+uv add --group test <package-name>
+
+# Dev group (linters, formatters, type checkers)
+uv add --group dev <package-name>
+
+# Knowledge group (ML/NLP dependencies for scripts/knowledge/)
+uv add --group knowledge <package-name>
+```
+
+**Rules**:
+
+* **Always use latest versions**: Do not guess or use outdated version numbers
+* **Use uv add**: This automatically resolves and adds the latest compatible version
+* **Choose the correct group**: Match the dependency to its purpose (test, dev, knowledge, or main)
+* **Verify after adding**: Run `uv sync` to ensure the dependency resolves correctly
+* **Check compatibility**: Ensure the new dependency doesn't conflict with existing ones
+
 ## Claude Code Sub-agents (Manual Use Only)
 
 These agents are defined in `.claude/agents/` and can be invoked manually via the

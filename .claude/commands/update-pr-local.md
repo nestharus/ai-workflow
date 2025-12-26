@@ -83,17 +83,9 @@ Handler returns `action: implement` with changes made. Collect summaries from ea
 git status --porcelain
 ```
 
-If empty (no changes), skip steps 6-7 and go directly to step 8.
+If empty (no changes), skip step 6.
 
-### 6. Run Test Debugger
-
-**Skip if no code changes (step 5 empty).**
-
-```python
-Task(subagent_type="test-debugger", prompt="worktree: {{working_dir}}")
-```
-
-### 7. Run Lint Fixer
+### 6. Run Lint Fixer
 
 **Skip if no code changes (step 5 empty).**
 
@@ -103,7 +95,7 @@ Task(subagent_type="lint-fixer", prompt="--changed-only")
 
 Only lints modified files (faster, appropriate for local updates).
 
-### 8. Cleanup
+### 7. Cleanup
 
 Delete the tmp folder:
 
@@ -111,7 +103,7 @@ Delete the tmp folder:
 rm -rf {{tmp_folder}}
 ```
 
-### 9. Output Summary
+### 8. Output Summary
 
 ```bash
 git diff --stat
@@ -180,5 +172,4 @@ useful for agent processing). Documentation retained for reference.
 
 - No AI co-authors (see AGENTS.md)
 - Never defer - implement or challenge
-- **DO NOT RUN LINTING DIRECTLY. USE THE SUB-AGENT.**
-- Use sub-agents for test-debugger and lint-fixer
+- Use sub-agent for lint-fixer
