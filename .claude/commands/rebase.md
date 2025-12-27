@@ -123,7 +123,18 @@ Only lints modified files (faster, appropriate for rebased branches).
 git -C .git/sandbox push origin {{branch_name}} --force-with-lease
 ```
 
-## 8. Abort (on failure)
+## 8. Sync Worktree to Origin
+
+**Skip if `worktree_path` is null (no worktree exists).**
+
+After push, sync the worktree to match origin:
+
+```bash
+git -C {{worktree_path}} fetch origin {{branch_name}}
+git -C {{worktree_path}} reset --hard origin/{{branch_name}}
+```
+
+## 9. Abort (on failure)
 
 ```bash
 git -C .git/sandbox rebase --abort
