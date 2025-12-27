@@ -99,13 +99,31 @@ git -C .git/sandbox add -A && GIT_EDITOR=true git -C .git/sandbox rebase --conti
 
 If more conflicts appear, loop back to 4a.
 
-## 5. Push
+## 5. Run Test Debugger (if conflicts)
+
+**Skip if no conflicts (step 3 exit code 0).**
+
+```python
+Task(subagent_type="test-debugger", prompt="worktree: .git/sandbox")
+```
+
+## 6. Run Lint Fixer (if conflicts)
+
+**Skip if no conflicts (step 3 exit code 0).**
+
+```python
+Task(subagent_type="lint-fixer", prompt="--worktree .git/sandbox --changed-only")
+```
+
+Only lints modified files (faster, appropriate for rebased branches).
+
+## 7. Push
 
 ```bash
 git -C .git/sandbox push origin {{branch_name}} --force-with-lease
 ```
 
-## 6. Abort (on failure)
+## 8. Abort (on failure)
 
 ```bash
 git -C .git/sandbox rebase --abort
