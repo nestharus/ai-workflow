@@ -15,6 +15,7 @@ domain:
   - linting
   - mypy
   - ruff
+  - ast-grep
 
 sections:
   - id: mypy-strategy
@@ -138,8 +139,98 @@ sections:
           - ANN401: Allow Any type annotations
           - E402: Allow late imports (scripts/tests only, after sys.path manipulation)
 
-  - id: enforcement
+  - id: astgrep-strategy
     index: 3
+    title: ast-grep Structural Linting Strategy
+    category: standard
+    summary: How ast-grep is configured for structural code analysis.
+    items:
+      - id: astgrep-overview
+        title: Overview
+        text: |
+          ast-grep provides AST-based structural code analysis complementing Ruff's
+          text-based linting. It detects patterns that require understanding code
+          structure, such as try/except blocks, function call patterns, and code
+          smells that span multiple lines.
+
+      - id: astgrep-when-to-use
+        title: When to Use ast-grep vs Ruff
+        text: |
+          Use ast-grep for patterns that require structural analysis:
+        use_astgrep:
+          - Multi-line patterns (e.g., try/except blocks with specific structure)
+          - Patterns requiring AST context (e.g., bare except clauses)
+          - Custom project-specific patterns not covered by Ruff
+          - Patterns with automatic fix suggestions
+        use_ruff:
+          - Standard Python style violations
+          - Import ordering and formatting
+          - Single-line patterns
+          - Well-established community rules (PEP8, etc.)
+
+      - id: astgrep-configuration
+        title: Configuration
+        text: |
+          ast-grep is configured via two files in the repository root.
+        config_files:
+          - file: sgconfig.yml
+            purpose: Main ast-grep configuration pointing to rule directories
+            content: |
+              ruleDirs:
+                - ast-grep-rules
+          - file: .lint.astgrep.yaml
+            purpose: Linter integration configuration (exclude dirs, etc.)
+            mirrors: .lint.yamllint.yaml, .lint.gitleaks.yaml patterns
+
+      - id: astgrep-rules
+        title: Rule Structure
+        text: |
+          Rules are organized under `ast-grep-rules/` by language subdirectory.
+        structure:
+          - path: ast-grep-rules/python/
+            description: Python-specific structural rules
+        current_rules:
+          - id: no-bare-except
+            severity: error
+            description: Catches bare except clauses that swallow all exceptions
+            has_fix: true
+          - id: no-print-statements
+            severity: warning
+            description: Flags print() in production code (ignores scripts/tests)
+            has_fix: false
+          - id: prefer-pathlib-exists
+            severity: hint
+            description: Suggests pathlib over os.path.exists()
+            has_fix: false
+
+      - id: astgrep-rule-creation
+        title: Rule Creation Guidelines
+        text: |
+          When creating new ast-grep rules, follow these guidelines:
+        guidelines:
+          - Place rules in appropriate language subdirectory (e.g., ast-grep-rules/python/)
+          - Use descriptive rule IDs (e.g., no-bare-except, prefer-pathlib)
+          - Include severity (error, warning, hint)
+          - Write clear message explaining the issue
+          - Add note with recommended fix
+          - Include automatic fix when possible
+          - Use ignores field to exclude directories where rule should not apply
+        rule_template: |
+          id: rule-name
+          language: Python
+          rule:
+            pattern: <pattern-to-match>
+          severity: error|warning|hint
+          message: "Description of the issue"
+          note: "How to fix the issue"
+          fix: |
+            <replacement-pattern>
+          ignores:
+            - "tests/**"
+            - "scripts/**"
+
+  - id: enforcement
+    index: 4
     title: Enforcement
     category: workflow
     summary: How linting rules are enforced.
@@ -153,6 +244,8 @@ sections:
             description: Run only mypy type checking
           - command: uv run lint ruff
             description: Run only ruff linting and formatting
+          - command: uv run lint astgrep
+            description: Run only ast-grep structural analysis
 
       - id: enforcement-ci
         title: CI Enforcement
@@ -183,7 +276,7 @@ sections:
           issues rather than suppressing them.
 
   - id: rationale
-    index: 4
+    index: 5
     title: Design Rationale
     category: explanation
     summary: Why tests are excluded from mypy.
@@ -211,7 +304,7 @@ sections:
           pattern that balances type safety with test maintainability.
 
   - id: external-dependencies
-    index: 5
+    index: 6
     title: External Binary Dependencies
     category: setup
     summary: External tools required by the lint pipeline that are not Python packages.
@@ -244,3 +337,27 @@ sections:
           If gitleaks is not installed, `uv run lint gitleaks` will emit:
           "gitleaks CLI not found. Install with: brew install gitleaks (macOS/Linux)
           or go install github.com/gitleaks/gitleaks/v8@v8.24.2"
+
+      - id: astgrep-installation
+        title: ast-grep Installation
+        text: |
+          ast-grep is a Rust-based CLI tool for structural code search and linting.
+          The ast-grep-cli Python package provides the executable and is included
+          as a dev dependency, installed automatically via uv.
+        installation_methods:
+          - method: UV (automatic, recommended)
+            command: uv sync
+            note: Installed as dev dependency via pyproject.toml
+          - method: pip (manual)
+            command: pip install ast-grep-cli
+            note: Direct installation if not using uv
+        verification:
+          command: ast-grep --version
+          expected_output: Contains version number
+        error_handling: |
+          If ast-grep is not installed, `uv run lint astgrep` will emit:
+          "ast-grep CLI required (install via: pip install ast-grep-cli)"
+        configuration_note: |
+          ast-grep requires sgconfig.yml in the repository root to locate rules.
+          If sgconfig.yml is missing, the linter will fail with:
+          "sgconfig.yml not found - ast-grep requires this configuration file"

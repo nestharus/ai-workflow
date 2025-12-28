@@ -1,6 +1,7 @@
 """Individual linter implementations."""
 
 from scripts.dev.linter.linters.actionlint import ActionlintLinter
+from scripts.dev.linter.linters.astgrep import AstgrepLinter
 from scripts.dev.linter.linters.checkov import CheckovLinter
 from scripts.dev.linter.linters.detect_secrets import DetectSecretsLinter
 from scripts.dev.linter.linters.dotenvlint import DotenvlintLinter
@@ -17,6 +18,7 @@ from scripts.dev.linter.linters.yamllint import YamllintLinter
 LINTERS = [
     ScriptsLinter(),
     RuffLinter(),
+    AstgrepLinter(),
     MypyLinter(),
     HadolintLinter(),
     PymarkdownLinter(),
@@ -40,6 +42,7 @@ __all__ = [
     "LINTER_MAP",
     "LINTER_NAMES",
     "ActionlintLinter",
+    "AstgrepLinter",
     "CheckovLinter",
     "DetectSecretsLinter",
     "DotenvlintLinter",

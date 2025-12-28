@@ -1,5 +1,6 @@
 """Detect-secrets linter for scanning secrets."""
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -12,6 +13,9 @@ from scripts.dev.linter.base import (
     load_yaml_config,
     run_checked,
 )
+
+# Exit code 3 means baseline was updated (line numbers changed, no new secrets)
+EXIT_CODE_BASELINE_UPDATED = 3
 
 UV_CLI_REQUIRED = "uv CLI required to run lint"
 SECRETS_BASELINE = REPO_ROOT / ".secrets.baseline"
@@ -68,7 +72,9 @@ class DetectSecretsLinter(BaseLinter):
                 return LinterResult(success=True)
 
             # Use detect-secrets-hook for file-based scanning
-            run_checked(
+            # Handle exit code 3 (baseline updated) as success - it just means
+            # line numbers changed, not that new secrets were found
+            result = subprocess.run(
                 [
                     uv_exe,
                     "run",
@@ -76,8 +82,17 @@ class DetectSecretsLinter(BaseLinter):
                     "--baseline",
                     str(SECRETS_BASELINE),
                     *scannable_files,
-                ]
+                ],
+                check=False,
             )
+            if result.returncode == EXIT_CODE_BASELINE_UPDATED:
+                print(
+                    "Note: .secrets.baseline was updated (line numbers changed). "
+                    "Please commit the updated baseline.",
+                    file=sys.stderr,
+                )
+            elif result.returncode != 0:
+                return LinterResult(success=False)
         else:
             # Scan all files and compare against baseline
             # Use relative path and cwd to avoid machine-specific paths in baseline

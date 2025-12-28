@@ -1,0 +1,9 @@
+id: no-print-statements
+valid:
+  - logger.info("message")
+  - logging.debug("debug message")
+  - sys.stdout.write("output")
+invalid:
+  - print("hello world")
+  - print(x, y, z)
+  - print()

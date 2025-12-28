@@ -1,0 +1,22 @@
+# ast-grep linter configuration
+# Paths to include for ast-grep scanning (glob patterns)
+
+included_paths:
+  # Root-level Python files
+  - "*.py"
+  - "*.pyi"
+  # app/ directory (direct and nested)
+  - "app/*.py"
+  - "app/*.pyi"
+  - "app/**/*.py"
+  - "app/**/*.pyi"
+  # tests/ directory (direct and nested)
+  - "tests/*.py"
+  - "tests/*.pyi"
+  - "tests/**/*.py"
+  - "tests/**/*.pyi"
+  # scripts/ directory (direct and nested)
+  - "scripts/*.py"
+  - "scripts/*.pyi"
+  - "scripts/**/*.py"
+  - "scripts/**/*.pyi"
