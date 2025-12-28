@@ -1,24 +1,11 @@
 #!/usr/bin/env bash
-# Run Codex CLI - optionally with --yolo flag for bypassing sandboxing
+# Shortcut script for running Codex CLI with --yolo flag
+#
+# This script ALWAYS runs with --yolo to bypass sandboxing.
+# To run codex WITHOUT --yolo, invoke the codex binary directly.
 #
 # Usage:
-#   ./codex [args...]           - Run with sandboxing enabled (safe mode)
-#   ./codex --yolo [args...]    - Explicitly bypass sandboxing (dangerous)
-#   CODEX_YOLO=1 ./codex [args...] - Bypass sandboxing via environment variable
-#
-# WARNING: The --yolo flag bypasses all sandboxing and approval prompts.
-#          Only use this when you fully trust the operations being performed.
+#   ./codex [args...]    - Runs: codex --yolo [args...]
+#   codex [args...]      - Standard codex (use this if you don't want --yolo)
 
-# Check if user explicitly passed --yolo or set CODEX_YOLO environment variable
-if [[ " $* " == *" --yolo "* ]] || [[ "${CODEX_YOLO:-}" == "1" ]]; then
-    if [[ "${CODEX_YOLO:-}" == "1" ]] && [[ " $* " != *" --yolo "* ]]; then
-        echo "WARNING: Running with --yolo flag (CODEX_YOLO=1). Sandboxing bypassed." >&2
-        codex --yolo "$@"
-    else
-        # User explicitly passed --yolo, forward as-is
-        codex "$@"
-    fi
-else
-    # Safe mode: no --yolo flag
-    codex "$@"
-fi
+codex --yolo "$@"
