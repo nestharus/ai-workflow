@@ -58,6 +58,7 @@ Based on which directories have testable changes:
 
 - `app/` changes: `cd {{worktree}} && uv run pytest tests/ -v`
 - `scripts/` changes: `cd {{worktree}} && uv run pytest scripts/tests/ -v`
+  - Note: `scripts/tests/` is organized into `unit/`, `component/`, `integration/` subdirectories
 - Both: Run both commands
 - Specific file: `cd {{worktree}} && uv run pytest {{test_file}} -v`
 

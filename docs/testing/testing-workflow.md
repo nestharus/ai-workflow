@@ -12,6 +12,9 @@ coverage metrics for each testing level.
 | **Integration** | `tests/integration/` | Use-case | Use cases from YAML | Fast |
 | **Scripts** | `scripts/tests/` | Line/branch per function | `scripts/` | Fast |
 
+> **Note**: The `scripts/tests/` directory is organized into `unit/`, `component/`, and
+> `integration/` subdirectories for consistency with the main test structure.
+>
 > **Configuration**: Tier paths, thresholds, and behavior are configured in `pyproject.toml`.
 > See [Tier Configuration](README.md#tier-configuration) for the full configuration reference
 > and [Migrating to the New Tier Format](README.md#migrating-to-the-new-tier-format) for

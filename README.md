@@ -278,7 +278,12 @@ Detailed deployment and configuration information for the MCP bridge is document
 
 ## Keyword Extraction Pipeline Tests
 
-The keyword extraction pipeline has comprehensive test coverage in `scripts/tests/knowledge/`:
+The keyword extraction pipeline has comprehensive test coverage organized in the tiered structure
+under `scripts/tests/`:
+
+* **Unit tests**: `scripts/tests/unit/knowledge/` - Isolated function tests
+* **Component tests**: `scripts/tests/component/knowledge/` - Integration tests for module interactions
+* **Integration tests**: `scripts/tests/integration/knowledge/` - End-to-end pipeline tests
 
 | Test File | Description |
 |-----------|-------------|
@@ -293,19 +298,22 @@ The keyword extraction pipeline has comprehensive test coverage in `scripts/test
 ### Running Tests
 
 ```bash
-# Run all knowledge tests
-uv run pytest scripts/tests/knowledge/
+# Run all knowledge tests (all tiers)
+uv run pytest scripts/tests/unit/knowledge/ scripts/tests/component/knowledge/ scripts/tests/integration/knowledge/
+
+# Run unit tests only
+uv run pytest scripts/tests/unit/knowledge/
 
 # Run specific test file
-uv run pytest scripts/tests/knowledge/test_extraction_pipeline.py
+uv run pytest scripts/tests/unit/knowledge/test_extraction_pipeline.py
 
 # Run golden keyword validation
-uv run pytest scripts/tests/knowledge/test_extraction_pipeline.py::TestPipelineIntegration
+uv run pytest scripts/tests/unit/knowledge/test_extraction_pipeline.py::TestPipelineIntegration
 ```
 
 ### Golden Keywords
 
-The test fixture `scripts/tests/knowledge/fixtures/golden_keywords_test.yml` contains a curated
+The test fixture `scripts/tests/unit/knowledge/fixtures/golden_keywords_test.yml` contains a curated
 set of technical terms that must be extracted. The integration test validates that all golden
 keywords are captured, ensuring the pipeline maintains high recall (zero false negatives).
 

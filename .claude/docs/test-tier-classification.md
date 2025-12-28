@@ -25,6 +25,10 @@ For each capability:
 | `tests/integration` | integration | use-case |
 | `scripts/tests` | scripts | line/branch |
 
+> **Note**: The `scripts/tests` directory is organized into `unit/`, `component/`, and
+> `integration/` subdirectories for consistency with the main test structure. All tests under
+> `scripts/tests/` are part of the single "scripts" tier.
+
 ## Use-Case vs Line/Branch Coverage
 
 **Use-Case Coverage Tiers** (component, integration):

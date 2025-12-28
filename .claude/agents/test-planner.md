@@ -470,6 +470,9 @@ def validate_use_case_id(test_type: str, use_case_id: str | None, has_rationale:
 | `integration` | `tests/integration/` | "Invalid suite_file: integration tests must be in 'tests/integration/', got '{path}'" |
 | `script` | `scripts/tests/` | "Invalid suite_file: script tests must be in 'scripts/tests/', got '{path}'" |
 
+> **Note**: The `scripts/tests/` directory is organized into `unit/`, `component/`, and
+> `integration/` subdirectories for consistency with the main test structure.
+
 **Validation logic:**
 ```python
 def validate_suite_file_prefix(test_type: str, suite_file: str) -> str | None:

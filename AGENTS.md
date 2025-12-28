@@ -42,6 +42,9 @@ Test coverage is enforced separately for each test tier using `uv run test-cover
 | **integration** | `tests/integration/` | 100% use-case | `app/api/` endpoints |
 | **scripts** | `scripts/tests/` | 80% line / 70% branch | `scripts/` only |
 
+> **Note**: The `scripts/tests/` directory is organized into `unit/`, `component/`, and
+> `integration/` subdirectories for consistency with the main test structure.
+
 ### Coverage Rules
 
 * **Per-function thresholds**: Line 80%, branch 70% per function (unit/scripts tiers)
@@ -161,7 +164,8 @@ use **curl + jq** for readability, or **Python stdlib** when external tools are 
   (`uv run python -c "import ssl; print(ssl.OPENSSL_VERSION)"`)
 * **Connectivity check**: Test network access with
   `uv run python -c "import urllib.request; urllib.request.urlopen('https://pypi.org')"`
-* **Alternative tools**: Use `curl https://pypi.org/pypi/<package-name>/json | jq -r '.info.version'` or `wget` if urllib fails
+* **Alternative tools**: Use `curl https://pypi.org/pypi/<package-name>/json | jq -r '.info.version'`
+  or `wget` if urllib fails
 
 **Option 1: curl + jq** (recommended for readability):
 

@@ -1,0 +1,30 @@
+# Test fixture for golden keyword extraction tests.
+# Contains terms that MUST be captured by the extraction pipeline.
+# See GOLDEN_KEYWORDS in conftest.py for the expected set of keywords.
+
+id: golden-keywords-test-doc
+name: Golden Keywords Test Document
+description: |
+  This document tests keyword extraction from the ElasticsearchWrapper class
+  and the ConnectionManager component. It references the file path
+  app/infrastructure/db_connections.py for database connections.
+
+  The connection_pool_size setting controls pooling behavior. Implementation
+  details are in scripts/knowledge/candidate_extraction.py which handles
+  the extraction logic.
+
+components:
+  - id: elasticsearch-wrapper
+    name: ElasticsearchWrapper
+    description: Wraps Elasticsearch client for search operations.
+
+  - id: connection-manager
+    name: ConnectionManager
+    description: Manages database and service connections.
+    config:
+      pool_size_param: connection_pool_size
+      source_file: app/infrastructure/db_connections.py
+
+references:
+  - path: scripts/knowledge/candidate_extraction.py
+    purpose: Candidate keyword extraction implementation

@@ -1,0 +1,1391 @@
+import subprocess
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pytest
+
+from scripts.knowledge.surgeon_orchestrator import (
+    GroupResult,
+    OrganizerOutput,
+    PlannerOutput,
+    ReviewerOutput,
+    RewriteResult,
+    RewriterOutput,
+    SpanInput,
+    SurgeonError,
+    SurgeonResult,
+    ValidationResult,
+    compute_score_drop,
+    invoke_sub_agent,
+    orchestrate_surgeon_pipeline,
+    orchestrate_surgeon_pipeline_mock,
+    organize_spans,
+    plan_rewrites,
+    review_rewrite,
+    rewrite_span,
+    validate_removal_qwen3,
+    validate_removal_with_anchors,
+)
+
+
+class TestInvokeSubAgent:
+    def test_invoke_sub_agent_success(self, tmp_path: Path) -> None:
+        """Should invoke sub-agent and return parsed JSON."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"result": "success", "data": [1, 2, 3]}'
+        mock_result.stderr = ""
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            result = invoke_sub_agent(
+                "fact-surgeon-organizer",
+                {"input": "test"},
+                knowledge_path=tmp_path,
+            )
+
+            assert result["result"] == "success"
+            assert result["data"] == [1, 2, 3]
+            mock_run.assert_called_once()
+
+    def test_invoke_sub_agent_extracts_json_from_text(self, tmp_path: Path) -> None:
+        """Should extract JSON from response with surrounding text."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = 'Here is my response:\n{"groups": []}\nDone!'
+        mock_result.stderr = ""
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = invoke_sub_agent(
+                "fact-surgeon-organizer",
+                {"spans": []},
+                knowledge_path=tmp_path,
+            )
+
+            assert result["groups"] == []
+
+    def test_invoke_sub_agent_timeout_raises_error(self, tmp_path: Path) -> None:
+        """Should raise SurgeonError on timeout."""
+        with (
+            patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 120)),
+            pytest.raises(SurgeonError, match="timed out"),
+        ):
+            invoke_sub_agent(
+                "fact-surgeon-organizer",
+                {"input": "test"},
+                timeout=120,
+                knowledge_path=tmp_path,
+            )
+
+    def test_invoke_sub_agent_not_found_raises_error(self, tmp_path: Path) -> None:
+        """Should raise SurgeonError when Claude CLI not found."""
+        with (
+            patch("subprocess.run", side_effect=FileNotFoundError("claude")),
+            pytest.raises(SurgeonError, match="Claude CLI not found"),
+        ):
+            invoke_sub_agent(
+                "fact-surgeon-organizer",
+                {"input": "test"},
+                knowledge_path=tmp_path,
+            )
+
+    def test_invoke_sub_agent_non_zero_exit_raises_error(self, tmp_path: Path) -> None:
+        """Should raise SurgeonError on non-zero exit code."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        mock_result.stderr = "Error: Agent failed"
+
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(SurgeonError, match="non-zero exit code"),
+        ):
+            invoke_sub_agent(
+                "fact-surgeon-organizer",
+                {"input": "test"},
+                knowledge_path=tmp_path,
+            )
+
+    def test_invoke_sub_agent_empty_output_raises_error(self, tmp_path: Path) -> None:
+        """Should raise SurgeonError on empty output."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(SurgeonError, match="empty output"),
+        ):
+            invoke_sub_agent(
+                "fact-surgeon-organizer",
+                {"input": "test"},
+                knowledge_path=tmp_path,
+            )
+
+    def test_invoke_sub_agent_invalid_json_raises_error(self, tmp_path: Path) -> None:
+        """Should raise SurgeonError on invalid JSON output."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "not valid json"
+        mock_result.stderr = ""
+
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(SurgeonError, match="No JSON found"),
+        ):
+            invoke_sub_agent(
+                "fact-surgeon-organizer",
+                {"input": "test"},
+                knowledge_path=tmp_path,
+            )
+
+    def test_invoke_sub_agent_default_knowledge_path(self) -> None:
+        """Should use default knowledge path when None is provided."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"result": "ok"}'
+        mock_result.stderr = ""
+
+        with patch("subprocess.run", return_value=mock_result):
+            # knowledge_path=None should use REPO_ROOT / ".knowledge"
+            result = invoke_sub_agent(
+                "fact-surgeon-organizer",
+                {"input": "test"},
+                knowledge_path=None,
+            )
+            assert result["result"] == "ok"
+
+    def test_invoke_sub_agent_relative_knowledge_path(self) -> None:
+        """Should convert relative knowledge path to absolute."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"result": "ok"}'
+        mock_result.stderr = ""
+
+        with patch("subprocess.run", return_value=mock_result):
+            # Provide relative path - should be converted to REPO_ROOT / relative_path
+            result = invoke_sub_agent(
+                "fact-surgeon-organizer",
+                {"input": "test"},
+                knowledge_path=Path("my_knowledge"),
+            )
+            assert result["result"] == "ok"
+
+    def test_invoke_sub_agent_subprocess_error_raises(self, tmp_path: Path) -> None:
+        """Should raise SurgeonError on SubprocessError."""
+        with (
+            patch(
+                "subprocess.run",
+                side_effect=subprocess.SubprocessError("Subprocess failed"),
+            ),
+            pytest.raises(SurgeonError, match="Sub-agent invocation failed"),
+        ):
+            invoke_sub_agent(
+                "fact-surgeon-organizer",
+                {"input": "test"},
+                knowledge_path=tmp_path,
+            )
+
+    def test_invoke_sub_agent_malformed_json_raises_error(self, tmp_path: Path) -> None:
+        """Should raise SurgeonError on malformed JSON in output."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        # Has curly braces but invalid JSON content
+        mock_result.stdout = "Here is output: {invalid json here}"
+        mock_result.stderr = ""
+
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(SurgeonError, match="Invalid JSON"),
+        ):
+            invoke_sub_agent(
+                "fact-surgeon-organizer",
+                {"input": "test"},
+                knowledge_path=tmp_path,
+            )
+
+
+class TestValidateRemovalQwen3:
+    def test_score_drop_calculation(self) -> None:
+        """Should compute score drop correctly."""
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
+            mock_embed.return_value = np.array(
+                [
+                    [1.0, 0.0, 0.0],  # fact
+                    [0.9, 0.1, 0.0],  # original (similar to fact)
+                    [0.1, 0.9, 0.0],  # rewritten (dissimilar to fact)
+                ]
+            )
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.compute_cosine_similarity"
+            ) as mock_sim:
+                mock_sim.return_value = np.array(
+                    [
+                        [1.0, 0.9, 0.1],  # fact similarities
+                        [0.9, 1.0, 0.2],  # original similarities
+                        [0.1, 0.2, 1.0],  # rewritten similarities
+                    ]
+                )
+
+                score_drop, passed = validate_removal_qwen3(
+                    "create_app is a function",
+                    "The create_app function initializes the app.",
+                    "The function initializes the app.",
+                    mock_model,
+                    mock_tokenizer,
+                )
+
+                # score_drop = sim(fact, original) - sim(fact, rewritten) = 0.9 - 0.1 = 0.8
+                assert score_drop == pytest.approx(0.8, rel=0.01)
+                assert passed is True  # 0.8 >= 0.2 threshold
+
+    def test_threshold_comparison(self) -> None:
+        """Should correctly compare against threshold."""
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
+            mock_embed.return_value = np.array([[1.0, 0.0], [0.8, 0.2], [0.7, 0.3]])
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.compute_cosine_similarity"
+            ) as mock_sim:
+                # Low score drop (0.1)
+                mock_sim.return_value = np.array(
+                    [[1.0, 0.5, 0.4], [0.5, 1.0, 0.9], [0.4, 0.9, 1.0]]
+                )
+
+                score_drop, passed = validate_removal_qwen3(
+                    "fact",
+                    "original",
+                    "rewritten",
+                    mock_model,
+                    mock_tokenizer,
+                    threshold=0.2,
+                )
+
+                # score_drop = 0.5 - 0.4 = 0.1, below threshold
+                assert score_drop == pytest.approx(0.1, rel=0.01)
+                assert passed is False
+
+
+class TestValidateRemovalWithAnchors:
+    def test_returns_validation_result(self) -> None:
+        """Should return ValidationResult structure."""
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
+            mock_embed.return_value = np.array([[1.0, 0.0, 0.0], [0.9, 0.1, 0.0], [0.8, 0.1, 0.1]])
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.compute_cosine_similarity"
+            ) as mock_sim:
+                mock_sim.return_value = np.array(
+                    [
+                        [1.0, 0.9, 0.5],  # fact similarities
+                        [0.9, 1.0, 0.8],  # original similarities
+                        [0.5, 0.8, 1.0],  # new similarities
+                    ]
+                )
+
+                result = validate_removal_with_anchors(
+                    "create_app is a function",
+                    "The create_app function initializes the app.",
+                    "The function initializes the app.",
+                    mock_model,
+                    mock_tokenizer,
+                )
+
+                assert "score_drop" in result
+                assert "target_passed" in result
+                assert "anchor_similarity" in result
+                assert "anchor_passed" in result
+                assert "over_removal_detected" in result
+                assert "needs_review" in result
+
+    def test_detects_over_removal(self) -> None:
+        """Should detect over-removal when anchor similarity drops."""
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
+            mock_embed.return_value = np.array([[1.0, 0.0, 0.0], [0.9, 0.1, 0.0], [0.2, 0.7, 0.1]])
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.compute_cosine_similarity"
+            ) as mock_sim:
+                # High target removal but low anchor preservation
+                mock_sim.return_value = np.array(
+                    [
+                        [1.0, 0.9, 0.2],  # fact: high drop
+                        [0.9, 1.0, 0.3],  # original -> new: low similarity
+                        [0.2, 0.3, 1.0],  # new
+                    ]
+                )
+
+                result = validate_removal_with_anchors(
+                    "create_app is a function",
+                    "The create_app function initializes the app.",
+                    "Something completely different.",
+                    mock_model,
+                    mock_tokenizer,
+                )
+
+                assert result["target_passed"] is True
+                assert result["anchor_passed"] is False
+                assert result["over_removal_detected"] is True
+                assert result["needs_review"] is True
+
+    def test_anchor_preservation_check(self) -> None:
+        """Should check anchor text preservation."""
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
+            # Mock for main embeddings, then for anchor embeddings
+            mock_embed.side_effect = [
+                np.array([[1.0, 0.0], [0.9, 0.1], [0.7, 0.3]]),  # Main
+                np.array([[0.8, 0.2], [0.7, 0.3]]),  # Anchor + new
+            ]
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.compute_cosine_similarity"
+            ) as mock_sim:
+                # Good target removal, good anchor preservation
+                mock_sim.side_effect = [
+                    np.array([[1.0, 0.9, 0.4], [0.9, 1.0, 0.8], [0.4, 0.8, 1.0]]),  # Main
+                    np.array([[1.0, 0.85], [0.85, 1.0]]),  # Anchor
+                ]
+
+                result = validate_removal_with_anchors(
+                    "target fact",
+                    "original text",
+                    "new text",
+                    mock_model,
+                    mock_tokenizer,
+                    anchor_texts=["anchor fact"],
+                )
+
+                assert result["target_passed"] is True
+                assert result["anchor_passed"] is True
+
+    def test_anchor_text_below_threshold_fails(self) -> None:
+        """Should set anchor_passed=False when anchor text similarity is below threshold."""
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
+            # Main embeddings, then anchor embeddings
+            mock_embed.side_effect = [
+                np.array([[1.0, 0.0], [0.9, 0.1], [0.7, 0.3]]),  # Main
+                np.array([[0.8, 0.2], [0.1, 0.9]]),  # Anchor + new (dissimilar)
+            ]
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.compute_cosine_similarity"
+            ) as mock_sim:
+                # Good target removal, good overall anchor preservation (0.8)
+                # BUT explicit anchor text check fails (0.3 < 0.7 threshold)
+                mock_sim.side_effect = [
+                    np.array([[1.0, 0.9, 0.4], [0.9, 1.0, 0.8], [0.4, 0.8, 1.0]]),  # Main
+                    np.array([[1.0, 0.3], [0.3, 1.0]]),  # Anchor similarity 0.3 < 0.7
+                ]
+
+                result = validate_removal_with_anchors(
+                    "target fact",
+                    "original text",
+                    "new text",
+                    mock_model,
+                    mock_tokenizer,
+                    anchor_texts=["anchor fact"],
+                    anchor_threshold=0.7,
+                )
+
+                # Even though main anchor_similarity was good (0.8),
+                # explicit anchor text check should fail
+                assert result["anchor_passed"] is False
+                assert result["over_removal_detected"] is True
+                assert result["needs_review"] is True
+
+    def test_multiple_anchor_texts_one_fails(self) -> None:
+        """Should fail anchor check if any anchor text is below threshold."""
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
+            # Main embeddings, then anchor embeddings (2 anchors + 1 new)
+            mock_embed.side_effect = [
+                np.array([[1.0, 0.0], [0.9, 0.1], [0.7, 0.3]]),  # Main
+                np.array([[0.8, 0.2], [0.2, 0.8], [0.5, 0.5]]),  # 2 anchors + new
+            ]
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.compute_cosine_similarity"
+            ) as mock_sim:
+                mock_sim.side_effect = [
+                    np.array([[1.0, 0.9, 0.4], [0.9, 1.0, 0.8], [0.4, 0.8, 1.0]]),  # Main
+                    # First anchor has 0.9 similarity (good)
+                    # Second anchor has 0.5 similarity (bad, < 0.7)
+                    np.array(
+                        [
+                            [1.0, 0.4, 0.9],  # anchor1 to anchor2, new
+                            [0.4, 1.0, 0.5],  # anchor2 to anchor1, new (0.5 < 0.7!)
+                            [0.9, 0.5, 1.0],  # new to anchors
+                        ]
+                    ),
+                ]
+
+                result = validate_removal_with_anchors(
+                    "target fact",
+                    "original text",
+                    "new text",
+                    mock_model,
+                    mock_tokenizer,
+                    anchor_texts=["anchor1", "anchor2"],
+                    anchor_threshold=0.7,
+                )
+
+                # Should fail because second anchor has low similarity
+                assert result["anchor_passed"] is False
+                assert result["over_removal_detected"] is True
+
+
+class TestOrchestateSurgeonPipeline:
+    def test_success_flow(self, tmp_path: Path) -> None:
+        """Should complete full pipeline successfully."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text="The create_app function initializes the app.",
+                target_facts=["create_app is a function"],
+                anchor_facts=[],
+            )
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            # Mock responses for each stage
+            mock_invoke.side_effect = [
+                # Organizer
+                {
+                    "groups": [
+                        {
+                            "group_id": "group_1",
+                            "span_ids": ["span_1"],
+                            "anchors_to_keep": [],
+                            "targets_to_remove": ["create_app is a function"],
+                        }
+                    ]
+                },
+                # Planner
+                {"plan": {"strategy": "selective_removal"}},
+                # Rewriter
+                {
+                    "rewrites": [
+                        {
+                            "span_id": "span_1",
+                            "replacement_text": "The function initializes the app.",
+                        }
+                    ],
+                    "self_check": {"target_inferable": False},
+                },
+            ]
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.validate_removal_with_anchors"
+            ) as mock_validate:
+                mock_validate.return_value = ValidationResult(
+                    score_drop=0.5,
+                    target_passed=True,
+                    anchor_similarity=0.9,
+                    anchor_passed=True,
+                    over_removal_detected=False,
+                    needs_review=False,
+                )
+
+                results = orchestrate_surgeon_pipeline(
+                    spans=spans,
+                    target_facts=["create_app is a function"],
+                    anchor_facts=[],
+                    artifact_id="test_artifact",
+                    qwen_model=mock_qwen_model,
+                    qwen_tokenizer=mock_qwen_tokenizer,
+                    knowledge_path=tmp_path,
+                )
+
+        assert len(results) == 1
+        assert results[0]["success"] is True
+        assert results[0]["span_id"] == "span_1"
+
+    def test_needs_review_flow(self, tmp_path: Path) -> None:
+        """Should invoke reviewer when validation fails."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text="The create_app function initializes the app.",
+                target_facts=["create_app is a function"],
+                anchor_facts=[],
+            )
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.side_effect = [
+                # Organizer
+                {
+                    "groups": [
+                        {
+                            "group_id": "group_1",
+                            "span_ids": ["span_1"],
+                            "anchors_to_keep": [],
+                            "targets_to_remove": ["create_app is a function"],
+                        }
+                    ]
+                },
+                # Planner
+                {"plan": {"strategy": "selective_removal"}},
+                # Rewriter
+                {
+                    "rewrites": [
+                        {
+                            "span_id": "span_1",
+                            "replacement_text": "The function initializes the app.",
+                        }
+                    ],
+                    "self_check": {},
+                },
+                # Reviewer (called because needs_review=True)
+                {"decision": "approve", "reason": "Looks good"},
+            ]
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.validate_removal_with_anchors"
+            ) as mock_validate:
+                mock_validate.return_value = ValidationResult(
+                    score_drop=0.1,
+                    target_passed=False,  # Failed target removal
+                    anchor_similarity=0.9,
+                    anchor_passed=True,
+                    over_removal_detected=False,
+                    needs_review=True,
+                )
+
+                results = orchestrate_surgeon_pipeline(
+                    spans=spans,
+                    target_facts=["create_app is a function"],
+                    anchor_facts=[],
+                    artifact_id="test_artifact",
+                    qwen_model=mock_qwen_model,
+                    qwen_tokenizer=mock_qwen_tokenizer,
+                    knowledge_path=tmp_path,
+                )
+
+        assert len(results) == 1
+        assert results[0]["review"] is not None
+        assert results[0]["review"]["decision"] == "approve"
+        assert results[0]["success"] is True
+
+    def test_reject_reverts_original(self, tmp_path: Path) -> None:
+        """Should revert to original span on reviewer reject."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        original_text = "The create_app function initializes the app."
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text=original_text,
+                target_facts=["create_app is a function"],
+                anchor_facts=[],
+            )
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.side_effect = [
+                # Organizer
+                {"groups": [{"group_id": "g1", "span_ids": ["span_1"]}]},
+                # Planner
+                {"plan": {}},
+                # Rewriter
+                {
+                    "rewrites": [{"span_id": "span_1", "replacement_text": "Bad rewrite"}],
+                    "self_check": {},
+                },
+                # Reviewer rejects
+                {"decision": "reject", "reason": "Over-removal"},
+            ]
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.validate_removal_with_anchors"
+            ) as mock_validate:
+                mock_validate.return_value = ValidationResult(
+                    score_drop=0.8,
+                    target_passed=True,
+                    anchor_similarity=0.3,
+                    anchor_passed=False,
+                    over_removal_detected=True,
+                    needs_review=True,
+                )
+
+                results = orchestrate_surgeon_pipeline(
+                    spans=spans,
+                    target_facts=[],
+                    anchor_facts=[],
+                    artifact_id="test",
+                    qwen_model=mock_qwen_model,
+                    qwen_tokenizer=mock_qwen_tokenizer,
+                    knowledge_path=tmp_path,
+                )
+
+        assert results[0]["success"] is False
+        assert results[0]["replacement_text"] == original_text  # Reverted
+
+    def test_fallback_on_sub_agent_failure(self, tmp_path: Path) -> None:
+        """Should retain original spans when sub-agent fails."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        original_text = "The create_app function initializes the app."
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text=original_text,
+                target_facts=[],
+                anchor_facts=[],
+            )
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            # Organizer fails
+            mock_invoke.side_effect = SurgeonError("Organizer failed")
+
+            results = orchestrate_surgeon_pipeline(
+                spans=spans,
+                target_facts=[],
+                anchor_facts=[],
+                artifact_id="test",
+                qwen_model=mock_qwen_model,
+                qwen_tokenizer=mock_qwen_tokenizer,
+                knowledge_path=tmp_path,
+            )
+
+        assert len(results) == 1
+        assert results[0]["success"] is False
+        assert results[0]["replacement_text"] == original_text
+
+    def test_no_groups_returns_unchanged(self, tmp_path: Path) -> None:
+        """Should return unchanged spans when no groups formed."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text="Original text",
+                target_facts=[],
+                anchor_facts=[],
+            )
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.return_value = {"groups": []}
+
+            results = orchestrate_surgeon_pipeline(
+                spans=spans,
+                target_facts=[],
+                anchor_facts=[],
+                artifact_id="test",
+                qwen_model=mock_qwen_model,
+                qwen_tokenizer=mock_qwen_tokenizer,
+                knowledge_path=tmp_path,
+            )
+
+        assert len(results) == 1
+        assert results[0]["success"] is True
+        assert results[0]["replacement_text"] == "Original text"
+
+    def test_default_knowledge_path(self) -> None:
+        """Should use default knowledge path when None is provided."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text="Original text",
+                target_facts=[],
+                anchor_facts=[],
+            )
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.return_value = {"groups": []}
+
+            # knowledge_path=None triggers default path logic
+            results = orchestrate_surgeon_pipeline(
+                spans=spans,
+                target_facts=[],
+                anchor_facts=[],
+                artifact_id="test",
+                qwen_model=mock_qwen_model,
+                qwen_tokenizer=mock_qwen_tokenizer,
+                knowledge_path=None,
+            )
+
+        assert len(results) == 1
+        assert results[0]["success"] is True
+
+    def test_relative_knowledge_path(self) -> None:
+        """Should convert relative knowledge path to absolute."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text="Original text",
+                target_facts=[],
+                anchor_facts=[],
+            )
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.return_value = {"groups": []}
+
+            # Relative path triggers conversion logic
+            results = orchestrate_surgeon_pipeline(
+                spans=spans,
+                target_facts=[],
+                anchor_facts=[],
+                artifact_id="test",
+                qwen_model=mock_qwen_model,
+                qwen_tokenizer=mock_qwen_tokenizer,
+                knowledge_path=Path("my_knowledge"),
+            )
+
+        assert len(results) == 1
+        assert results[0]["success"] is True
+
+    def test_empty_group_spans_skips_group(self, tmp_path: Path) -> None:
+        """Should skip groups with no matching spans."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text="Original text",
+                target_facts=[],
+                anchor_facts=[],
+            )
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.return_value = {
+                "groups": [
+                    {
+                        "group_id": "group_1",
+                        # Reference non-existent span IDs
+                        "span_ids": ["nonexistent_span"],
+                        "anchors_to_keep": [],
+                        "targets_to_remove": [],
+                    }
+                ]
+            }
+
+            results = orchestrate_surgeon_pipeline(
+                spans=spans,
+                target_facts=[],
+                anchor_facts=[],
+                artifact_id="test",
+                qwen_model=mock_qwen_model,
+                qwen_tokenizer=mock_qwen_tokenizer,
+                knowledge_path=tmp_path,
+            )
+
+        # span_1 is not in any valid group, so it should be added as unprocessed
+        assert len(results) == 1
+        assert results[0]["span_id"] == "span_1"
+        assert results[0]["validation"]["reason"] == "not_in_any_group"
+
+    def test_planner_failure_retains_original(self, tmp_path: Path) -> None:
+        """Should retain original spans when Planner fails."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        original_text = "The create_app function initializes the app."
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text=original_text,
+                target_facts=["create_app is a function"],
+                anchor_facts=[],
+            )
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.side_effect = [
+                # Organizer succeeds
+                {
+                    "groups": [
+                        {
+                            "group_id": "group_1",
+                            "span_ids": ["span_1"],
+                            "anchors_to_keep": [],
+                            "targets_to_remove": ["create_app is a function"],
+                        }
+                    ]
+                },
+                # Planner fails
+                SurgeonError("Planner failed"),
+            ]
+
+            results = orchestrate_surgeon_pipeline(
+                spans=spans,
+                target_facts=["create_app is a function"],
+                anchor_facts=[],
+                artifact_id="test_artifact",
+                qwen_model=mock_qwen_model,
+                qwen_tokenizer=mock_qwen_tokenizer,
+                knowledge_path=tmp_path,
+            )
+
+        assert len(results) == 1
+        assert results[0]["success"] is False
+        assert results[0]["replacement_text"] == original_text
+        assert "Planner failed" in results[0]["validation"]["error"]
+
+    def test_rewriter_failure_retains_original(self, tmp_path: Path) -> None:
+        """Should retain original spans when Rewriter fails."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        original_text = "The create_app function initializes the app."
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text=original_text,
+                target_facts=["create_app is a function"],
+                anchor_facts=[],
+            )
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.side_effect = [
+                # Organizer succeeds
+                {
+                    "groups": [
+                        {
+                            "group_id": "group_1",
+                            "span_ids": ["span_1"],
+                            "anchors_to_keep": [],
+                            "targets_to_remove": ["create_app is a function"],
+                        }
+                    ]
+                },
+                # Planner succeeds
+                {"plan": {"strategy": "selective_removal"}},
+                # Rewriter fails
+                SurgeonError("Rewriter failed"),
+            ]
+
+            results = orchestrate_surgeon_pipeline(
+                spans=spans,
+                target_facts=["create_app is a function"],
+                anchor_facts=[],
+                artifact_id="test_artifact",
+                qwen_model=mock_qwen_model,
+                qwen_tokenizer=mock_qwen_tokenizer,
+                knowledge_path=tmp_path,
+            )
+
+        assert len(results) == 1
+        assert results[0]["success"] is False
+        assert results[0]["replacement_text"] == original_text
+        assert "Rewriter failed" in results[0]["validation"]["error"]
+
+    def test_span_not_in_map_skips(self, tmp_path: Path) -> None:
+        """Should skip rewrites for spans not in span_map."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text="Original text",
+                target_facts=["fact1"],
+                anchor_facts=[],
+            )
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.side_effect = [
+                # Organizer
+                {
+                    "groups": [
+                        {
+                            "group_id": "group_1",
+                            "span_ids": ["span_1"],
+                            "anchors_to_keep": [],
+                            "targets_to_remove": ["fact1"],
+                        }
+                    ]
+                },
+                # Planner
+                {"plan": {"strategy": "selective_removal"}},
+                # Rewriter returns rewrite for non-existent span_id
+                {
+                    "rewrites": [
+                        {
+                            "span_id": "nonexistent_span",  # Not in span_map
+                            "replacement_text": "New text",
+                        }
+                    ],
+                    "self_check": {},
+                },
+            ]
+
+            results = orchestrate_surgeon_pipeline(
+                spans=spans,
+                target_facts=["fact1"],
+                anchor_facts=[],
+                artifact_id="test",
+                qwen_model=mock_qwen_model,
+                qwen_tokenizer=mock_qwen_tokenizer,
+                knowledge_path=tmp_path,
+            )
+
+        # span_1 was not processed (rewrite was for nonexistent span)
+        # So it should be added as unprocessed
+        assert len(results) == 1
+        assert results[0]["span_id"] == "span_1"
+        assert results[0]["validation"]["reason"] == "not_in_any_group"
+
+    def test_reviewer_failure_retains_original(self, tmp_path: Path) -> None:
+        """Should retain original span when Reviewer fails."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        original_text = "The create_app function initializes the app."
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text=original_text,
+                target_facts=["create_app is a function"],
+                anchor_facts=[],
+            )
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.side_effect = [
+                # Organizer
+                {
+                    "groups": [
+                        {
+                            "group_id": "group_1",
+                            "span_ids": ["span_1"],
+                            "anchors_to_keep": [],
+                            "targets_to_remove": ["create_app is a function"],
+                        }
+                    ]
+                },
+                # Planner
+                {"plan": {"strategy": "selective_removal"}},
+                # Rewriter
+                {
+                    "rewrites": [
+                        {
+                            "span_id": "span_1",
+                            "replacement_text": "The function initializes the app.",
+                        }
+                    ],
+                    "self_check": {},
+                },
+                # Reviewer fails
+                SurgeonError("Reviewer failed"),
+            ]
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.validate_removal_with_anchors"
+            ) as mock_validate:
+                mock_validate.return_value = ValidationResult(
+                    score_drop=0.1,
+                    target_passed=False,  # Needs review
+                    anchor_similarity=0.9,
+                    anchor_passed=True,
+                    over_removal_detected=False,
+                    needs_review=True,
+                )
+
+                results = orchestrate_surgeon_pipeline(
+                    spans=spans,
+                    target_facts=["create_app is a function"],
+                    anchor_facts=[],
+                    artifact_id="test_artifact",
+                    qwen_model=mock_qwen_model,
+                    qwen_tokenizer=mock_qwen_tokenizer,
+                    knowledge_path=tmp_path,
+                )
+
+        assert len(results) == 1
+        assert results[0]["success"] is False
+        # On reviewer failure, replacement_text is reverted to original
+        assert results[0]["replacement_text"] == original_text
+
+    def test_unprocessed_spans_added(self, tmp_path: Path) -> None:
+        """Should add unprocessed spans as not_in_any_group."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text="Text 1",
+                target_facts=["fact1"],
+                anchor_facts=[],
+            ),
+            SpanInput(
+                span_id="span_2",
+                original_text="Text 2",
+                target_facts=[],
+                anchor_facts=[],
+            ),
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.side_effect = [
+                # Organizer - only includes span_1 in a group
+                {
+                    "groups": [
+                        {
+                            "group_id": "group_1",
+                            "span_ids": ["span_1"],
+                            "anchors_to_keep": [],
+                            "targets_to_remove": ["fact1"],
+                        }
+                    ]
+                },
+                # Planner
+                {"plan": {"strategy": "selective_removal"}},
+                # Rewriter
+                {
+                    "rewrites": [
+                        {
+                            "span_id": "span_1",
+                            "replacement_text": "New text 1",
+                        }
+                    ],
+                    "self_check": {},
+                },
+            ]
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.validate_removal_with_anchors"
+            ) as mock_validate:
+                mock_validate.return_value = ValidationResult(
+                    score_drop=0.5,
+                    target_passed=True,
+                    anchor_similarity=0.9,
+                    anchor_passed=True,
+                    over_removal_detected=False,
+                    needs_review=False,
+                )
+
+                results = orchestrate_surgeon_pipeline(
+                    spans=spans,
+                    target_facts=["fact1"],
+                    anchor_facts=[],
+                    artifact_id="test",
+                    qwen_model=mock_qwen_model,
+                    qwen_tokenizer=mock_qwen_tokenizer,
+                    knowledge_path=tmp_path,
+                )
+
+        assert len(results) == 2
+        # Find results by span_id
+        result_by_id = {r["span_id"]: r for r in results}
+
+        # span_1 was processed
+        assert result_by_id["span_1"]["success"] is True
+        assert result_by_id["span_1"]["replacement_text"] == "New text 1"
+
+        # span_2 was not in any group
+        assert result_by_id["span_2"]["success"] is True
+        assert result_by_id["span_2"]["replacement_text"] == "Text 2"
+        assert result_by_id["span_2"]["validation"]["reason"] == "not_in_any_group"
+
+    def test_iterate_decision_reverts_original(self, tmp_path: Path) -> None:
+        """Should revert to original span on reviewer iterate decision."""
+        mock_qwen_model = MagicMock()
+        mock_qwen_tokenizer = MagicMock()
+
+        original_text = "The create_app function initializes the app."
+        spans = [
+            SpanInput(
+                span_id="span_1",
+                original_text=original_text,
+                target_facts=["create_app is a function"],
+                anchor_facts=[],
+            )
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.side_effect = [
+                # Organizer
+                {"groups": [{"group_id": "g1", "span_ids": ["span_1"]}]},
+                # Planner
+                {"plan": {}},
+                # Rewriter
+                {
+                    "rewrites": [{"span_id": "span_1", "replacement_text": "Bad rewrite"}],
+                    "self_check": {},
+                },
+                # Reviewer returns iterate decision
+                {"decision": "iterate", "reason": "Needs improvement"},
+            ]
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.validate_removal_with_anchors"
+            ) as mock_validate:
+                mock_validate.return_value = ValidationResult(
+                    score_drop=0.8,
+                    target_passed=True,
+                    anchor_similarity=0.3,
+                    anchor_passed=False,
+                    over_removal_detected=True,
+                    needs_review=True,
+                )
+
+                results = orchestrate_surgeon_pipeline(
+                    spans=spans,
+                    target_facts=[],
+                    anchor_facts=[],
+                    artifact_id="test",
+                    qwen_model=mock_qwen_model,
+                    qwen_tokenizer=mock_qwen_tokenizer,
+                    knowledge_path=tmp_path,
+                )
+
+        assert results[0]["success"] is False
+        assert results[0]["replacement_text"] == original_text  # Reverted
+
+
+class TestComputeScoreDrop:
+    def test_returns_score_drop(self) -> None:
+        """Should return score drop value."""
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+
+        with patch("scripts.knowledge.surgeon_orchestrator.embed_keywords") as mock_embed:
+            mock_embed.return_value = np.array([[1.0, 0.0], [0.8, 0.2], [0.2, 0.8]])
+
+            with patch(
+                "scripts.knowledge.surgeon_orchestrator.compute_cosine_similarity"
+            ) as mock_sim:
+                mock_sim.return_value = np.array(
+                    [[1.0, 0.8, 0.2], [0.8, 1.0, 0.4], [0.2, 0.4, 1.0]]
+                )
+
+                result = compute_score_drop(
+                    "fact",
+                    "original",
+                    "rewritten",
+                    mock_model,
+                    mock_tokenizer,
+                )
+
+                # score_drop = 0.8 - 0.2 = 0.6
+                assert result == pytest.approx(0.6, rel=0.01)
+
+
+class TestOrganizeSpans:
+    def test_organize_spans_success(self, tmp_path: Path) -> None:
+        """Should invoke organizer sub-agent and return groups."""
+        spans = [
+            {
+                "span_id": "span_1",
+                "original_text": "Text 1",
+                "target_facts": [],
+                "anchor_facts": [],
+            },
+            {
+                "span_id": "span_2",
+                "original_text": "Text 2",
+                "target_facts": [],
+                "anchor_facts": [],
+            },
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.return_value = {
+                "groups": [
+                    {
+                        "group_id": "group_1",
+                        "span_ids": ["span_1", "span_2"],
+                        "anchors_to_keep": [],
+                        "targets_to_remove": [],
+                    }
+                ]
+            }
+
+            result = organize_spans(spans, knowledge_path=tmp_path)
+
+            assert len(result["groups"]) == 1
+            assert result["groups"][0]["group_id"] == "group_1"
+            mock_invoke.assert_called_once()
+
+    def test_organize_spans_empty_groups(self, tmp_path: Path) -> None:
+        """Should return empty groups when sub-agent returns none."""
+        spans = [{"span_id": "span_1", "original_text": "Text 1"}]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.return_value = {}  # No groups key
+
+            result = organize_spans(spans, knowledge_path=tmp_path)
+
+            assert result["groups"] == []
+
+
+class TestPlanRewrites:
+    def test_plan_rewrites_success(self, tmp_path: Path) -> None:
+        """Should invoke planner sub-agent and return plans."""
+        groups: list[GroupResult] = [
+            {
+                "group_id": "group_1",
+                "span_ids": ["span_1"],
+                "anchors_to_keep": ["anchor"],
+                "targets_to_remove": ["target"],
+            }
+        ]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.return_value = {
+                "plans": [{"group_id": "group_1", "strategy": "selective_removal"}]
+            }
+
+            result = plan_rewrites(groups, knowledge_path=tmp_path)
+
+            assert len(result["plans"]) == 1
+            assert result["plans"][0]["group_id"] == "group_1"
+            mock_invoke.assert_called_once()
+
+    def test_plan_rewrites_empty_plans(self, tmp_path: Path) -> None:
+        """Should return empty plans when sub-agent returns none."""
+        groups: list[GroupResult] = []
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.return_value = {}  # No plans key
+
+            result = plan_rewrites(groups, knowledge_path=tmp_path)
+
+            assert result["plans"] == []
+
+
+class TestRewriteSpan:
+    def test_rewrite_span_success(self, tmp_path: Path) -> None:
+        """Should invoke rewriter sub-agent and return output."""
+        plan = {"strategy": "selective_removal"}
+        span_text = "Original span text with target."
+        anchors = ["anchor fact"]
+        targets = ["target fact"]
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.return_value = {
+                "rewritten_text": "Modified span text.",
+                "self_check": {"target_inferable": False},
+                "confidence": 0.95,
+            }
+
+            result = rewrite_span(plan, span_text, anchors, targets, knowledge_path=tmp_path)
+
+            assert result["rewritten_text"] == "Modified span text."
+            assert result["self_check"]["target_inferable"] is False
+            assert result["confidence"] == 0.95
+            mock_invoke.assert_called_once()
+
+    def test_rewrite_span_default_values(self, tmp_path: Path) -> None:
+        """Should use default values when sub-agent returns partial data."""
+        plan = {"strategy": "full_removal"}
+        span_text = "Original text."
+
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.return_value = {}  # Empty response
+
+            result = rewrite_span(plan, span_text, [], [], knowledge_path=tmp_path)
+
+            # Should fall back to original span_text
+            assert result["rewritten_text"] == span_text
+            assert result["self_check"] == {}
+            assert result["confidence"] == 0.0
+
+
+class TestReviewRewrite:
+    def test_review_rewrite_approve(self, tmp_path: Path) -> None:
+        """Should invoke reviewer sub-agent and return approval."""
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.return_value = {
+                "decision": "approve",
+                "reason": "Rewrite is correct",
+                "suggested_fix": None,
+            }
+
+            result = review_rewrite(
+                original_text="Original text with target.",
+                rewritten_text="Modified text.",
+                removed_facts=["target fact"],
+                score_drop=0.5,
+                knowledge_path=tmp_path,
+            )
+
+            assert result["decision"] == "approve"
+            assert result["reason"] == "Rewrite is correct"
+            assert result["suggested_fix"] is None
+            mock_invoke.assert_called_once()
+
+    def test_review_rewrite_reject(self, tmp_path: Path) -> None:
+        """Should return reject decision with suggested fix."""
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.return_value = {
+                "decision": "reject",
+                "reason": "Over-removal detected",
+                "suggested_fix": "Keep the anchor information",
+            }
+
+            result = review_rewrite(
+                original_text="Original text.",
+                rewritten_text="",  # Empty = over-removal
+                removed_facts=["fact"],
+                score_drop=1.0,
+                knowledge_path=tmp_path,
+            )
+
+            assert result["decision"] == "reject"
+            assert result["suggested_fix"] == "Keep the anchor information"
+
+    def test_review_rewrite_default_values(self, tmp_path: Path) -> None:
+        """Should use default values when sub-agent returns partial data."""
+        with patch("scripts.knowledge.surgeon_orchestrator.invoke_sub_agent") as mock_invoke:
+            mock_invoke.return_value = {}  # Empty response
+
+            result = review_rewrite(
+                original_text="Original text.",
+                rewritten_text="New text.",
+                removed_facts=[],
+                score_drop=0.3,
+                knowledge_path=tmp_path,
+            )
+
+            # Should fall back to default 'reject'
+            assert result["decision"] == "reject"
+            assert result["reason"] == ""
+            assert result["suggested_fix"] is None

@@ -99,7 +99,7 @@ class FileScheduler:
             return 0
         return max(len(units) for units in by_file.values())
 
-    def estimate_parallelism(self, unit_ids: list[str]) -> dict[str, int]:
+    def estimate_parallelism(self, unit_ids: list[str]) -> dict[str, int | float]:
         """Estimate parallelism metrics for scheduling.
 
         Args:

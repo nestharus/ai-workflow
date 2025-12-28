@@ -19,6 +19,13 @@ class GitCommandError(Exception):
     """Raised when a git command fails."""
 
     def __init__(self, cmd: list[str], returncode: int, stderr: str) -> None:
+        """Initialize GitCommandError with command details.
+
+        Args:
+            cmd: Command that failed.
+            returncode: Exit code returned by the command.
+            stderr: Standard error output from the command.
+        """
         self.cmd = cmd
         self.returncode = returncode
         self.stderr = stderr
@@ -116,10 +123,7 @@ def get_commit_files(sha: str) -> list[Path]:
             continue
 
         # For renames (R100, R095, etc.), take the new path (last part)
-        if status.startswith("R"):
-            path_part = parts[-1]
-        else:
-            path_part = parts[1]
+        path_part = parts[-1] if status.startswith("R") else parts[1]
 
         file_path = Path(path_part)
         if file_path.exists() and file_path.is_file():

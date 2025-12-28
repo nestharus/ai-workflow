@@ -916,7 +916,12 @@ YAML → FieldFacts → structural facts → artifact detection → semantic ext
 
 ## Testing
 
-Tests are in `scripts/tests/knowledge/test_fact_store.py`:
+Tests are organized in the tiered structure under `scripts/tests/`:
+
+* **Unit tests**: `scripts/tests/unit/knowledge/` - Isolated function tests
+* **Component tests**: `scripts/tests/component/knowledge/` - Integration tests for module interactions
+
+Key test files include `test_fact_store.py` with these test classes:
 
 * `TestDeterminePrimaryDomain`: Primary domain selection
 * `TestFieldfactToStructuralRecord`: FieldFact conversion

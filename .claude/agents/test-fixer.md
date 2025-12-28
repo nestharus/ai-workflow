@@ -18,6 +18,9 @@ Fix test failures and ensure coverage meets thresholds. All commands run in `{{w
 | integration | `tests/integration/` | `app/api/` (excludes routers, dependencies) | 100% use-case |
 | scripts | `scripts/tests/` | `scripts/` public functions only | 80% line/branch per function |
 
+> **Note**: The `scripts/tests/` directory is organized into `unit/`, `component/`, and
+> `integration/` subdirectories for consistency with the main test structure.
+
 ## Workflow
 
 1. Run: `cd {{worktree}} && uv run test-coverage`

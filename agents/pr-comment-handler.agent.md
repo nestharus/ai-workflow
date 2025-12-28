@@ -147,7 +147,8 @@ Run only the tests relevant to the files you modified (#tool:terminal):
 cd {{worktree}} && uv run pytest tests/unit/path/to/test_file.py -v
 
 # For scripts/ changes - run specific test file
-cd {{worktree}} && uv run pytest scripts/tests/path/to/test_file.py -v
+# Note: scripts/tests/ is organized into unit/, component/, integration/ subdirectories
+cd {{worktree}} && uv run pytest scripts/tests/unit/path/to/test_file.py -v
 ```
 
 Do NOT run the full test suite - only run tests for the specific files you changed.

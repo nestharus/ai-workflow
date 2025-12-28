@@ -45,13 +45,12 @@ def _parse_imports(file_path: Path) -> tuple[Path, set[str]]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imports.add(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                imports.add(node.module)
-                # Also add fully qualified names for specific imports
-                for alias in node.names:
-                    if alias.name != "*":
-                        imports.add(f"{node.module}.{alias.name}")
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.add(node.module)
+            # Also add fully qualified names for specific imports
+            for alias in node.names:
+                if alias.name != "*":
+                    imports.add(f"{node.module}.{alias.name}")
 
     return (file_path, imports)
 
@@ -129,10 +128,7 @@ def _is_test_file(path: Path) -> bool:
         return True
 
     # Check for _test suffix
-    if path.stem.endswith("_test"):
-        return True
-
-    return False
+    return bool(path.stem.endswith("_test"))
 
 
 def _collect_python_files(root: Path) -> list[Path]:

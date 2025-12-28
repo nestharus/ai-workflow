@@ -298,7 +298,7 @@ _PAGE_NUMBER_PATTERN = re.compile(rf"^\s*\d{{1,{PAGE_NUMBER_MAX_DIGITS}}}\s*$")
 # Changing this value affects:
 # - Both functions above (they share this constant for consistency)
 # - TestHasIsolatedPageNumbers and TestRemovePageNumberLines in
-#   scripts/tests/knowledge/test_document_ingestion.py (tests deliberately lock
+#   scripts/tests/unit/knowledge/test_document_ingestion.py (tests deliberately lock
 #   this value to verify expected behavior)
 #
 # If you modify this constant, update the related tests in lockstep.

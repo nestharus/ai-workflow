@@ -35,10 +35,7 @@ def _is_test_file(path: Path) -> bool:
         return True
 
     # Check for _test suffix
-    if path.stem.endswith("_test"):
-        return True
-
-    return False
+    return bool(path.stem.endswith("_test"))
 
 
 def _get_canonical_test_path(impl_path: Path, root: Path) -> Path | None:
@@ -68,13 +65,13 @@ def _get_canonical_test_path(impl_path: Path, root: Path) -> Path | None:
 
     # app/... -> tests/unit/app/.../test_*.py
     if parts[0] == "app":
-        test_parts = ("tests", "unit") + parts[:-1] + (f"test_{parts[-1]}",)
+        test_parts = [*("tests", "unit"), *parts[:-1], f"test_{parts[-1]}"]
         return root / Path(*test_parts)
 
     # scripts/... (but not scripts/tests/...) -> scripts/tests/.../test_*.py
     if parts[0] == "scripts" and (len(parts) < 2 or parts[1] != "tests"):
         # scripts/foo/bar.py -> scripts/tests/foo/test_bar.py
-        test_parts = ("scripts", "tests") + parts[1:-1] + (f"test_{parts[-1]}",)
+        test_parts = [*("scripts", "tests"), *parts[1:-1], f"test_{parts[-1]}"]
         return root / Path(*test_parts)
 
     return None

@@ -72,7 +72,7 @@ Based on `pyproject.toml` configuration, the project has the following test suit
 - **Use-case registry**: `tests/docs/use_cases.yaml`
 
 ### 4. Scripts Tests
-- **Location**: `scripts/tests/`
+- **Location**: `scripts/tests/` (organized into `unit/`, `component/`, `integration/` subdirectories)
 - **Coverage Type**: Line/branch per function
 - **Target**: `scripts/**/*.py` (excluding `__init__.py` and `scripts/tests/**/*.py`)
 - **Thresholds**:

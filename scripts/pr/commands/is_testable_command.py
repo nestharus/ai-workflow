@@ -102,26 +102,29 @@ def _has_testable_constructs(source: str) -> tuple[bool, str]:
         if isinstance(node, ast.If):
             # Check for: if __name__ == "__main__":
             test = node.test
-            if isinstance(test, ast.Compare):
-                if (
-                    isinstance(test.left, ast.Name)
-                    and test.left.id == "__name__"
-                    and len(test.comparators) == 1
-                    and isinstance(test.comparators[0], ast.Constant)
-                    and test.comparators[0].value == "__main__"
-                ):
-                    # Check if there's actual code in the block (not just pass/...)
-                    for stmt in node.body:
-                        if isinstance(stmt, ast.Pass):
-                            continue
-                        # Expr could be docstring or ellipsis - skip those
-                        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
-                            # Skip string constants (docstrings) and ellipsis
-                            if isinstance(stmt.value.value, str | type(...)):
-                                continue
-                        # Any other statement is actual code
-                        has_main_block = True
-                        break
+            if (
+                isinstance(test, ast.Compare)
+                and isinstance(test.left, ast.Name)
+                and test.left.id == "__name__"
+                and len(test.comparators) == 1
+                and isinstance(test.comparators[0], ast.Constant)
+                and test.comparators[0].value == "__main__"
+            ):
+                # Check if there's actual code in the block (not just pass/...)
+                for stmt in node.body:
+                    if isinstance(stmt, ast.Pass):
+                        continue
+                    # Expr could be docstring or ellipsis - skip those
+                    if (
+                        isinstance(stmt, ast.Expr)
+                        and isinstance(stmt.value, ast.Constant)
+                        and isinstance(stmt.value.value, str | type(...))
+                    ):
+                        # Skip string constants (docstrings) and ellipsis
+                        continue
+                    # Any other statement is actual code
+                    has_main_block = True
+                    break
 
     if has_functions:
         return True, "contains function definitions"

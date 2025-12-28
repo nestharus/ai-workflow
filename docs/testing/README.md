@@ -142,6 +142,10 @@ Use these values when migrating built-in tiers:
 | integration | `tests/integration` | `["app/api"]` | `usecase` | `true` |
 | scripts | `scripts/tests` | `["scripts", "tools"]` | `line_branch` | `true` |
 
+> **Note**: The `scripts/tests` directory is internally organized into `unit/`, `component/`, and
+> `integration/` subdirectories for consistency with the main test structure, but all tests under
+> `scripts/tests/` are part of the single "scripts" tier.
+
 ### Example Migration
 
 **Before (legacy format):**

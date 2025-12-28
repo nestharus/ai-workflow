@@ -66,8 +66,9 @@ def get_test_file_path(source_path: str, tier: str) -> str:
         return f"tests/unit/test_{stem}.py"
 
     elif tier == "scripts":
-        # scripts/knowledge/fact_store.py -> scripts/tests/knowledge/test_fact_store.py
-        # scripts/dev/test_runner/coverage.py -> scripts/tests/test_runner/test_coverage.py
+        # scripts/knowledge/fact_store.py -> scripts/tests/unit/knowledge/test_fact_store.py
+        # scripts/dev/test_runner/coverage.py -> scripts/tests/unit/test_runner/test_coverage.py
+        # NOTE: scripts/tests/ is organized into unit/, component/, integration/ subdirectories
         parts = path.parts
         if parts[0] == "scripts":
             # Skip 'scripts' and any 'dev' prefix

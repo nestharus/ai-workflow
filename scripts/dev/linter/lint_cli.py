@@ -4,10 +4,23 @@ import argparse
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 import yaml
 
 from scripts.dev.linter.linters import LINTER_MAP, LINTER_NAMES
+
+
+def _filter_existing_files(files: list[str]) -> list[str]:
+    """Filter out files that don't exist on disk.
+
+    Args:
+        files: List of file paths relative to repo root.
+
+    Returns:
+        List of file paths that actually exist.
+    """
+    return [f for f in files if Path(f).exists()]
 
 
 def _get_changed_files(commit: str | None = None) -> list[str]:
@@ -167,7 +180,7 @@ def main() -> int:
     # Determine files to lint
     files: list[str] | None = None
     if args.changed_only:
-        files = _get_changed_files()
+        files = _filter_existing_files(_get_changed_files())
         if not files:
             print("No changed files to lint.")
             return 0
@@ -175,7 +188,7 @@ def main() -> int:
         for f in files:
             print(f"  {f}")
     elif args.commit:
-        files = _get_changed_files(args.commit)
+        files = _filter_existing_files(_get_changed_files(args.commit))
         if not files:
             print(f"No files changed in commit {args.commit}.")
             return 0
@@ -183,7 +196,10 @@ def main() -> int:
         for f in files:
             print(f"  {f}")
     elif args.files:
-        files = args.files
+        files = _filter_existing_files(args.files)
+        if not files:
+            print("No specified files exist.")
+            return 0
 
     # Determine which linters to run
     if args.linters:
