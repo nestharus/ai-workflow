@@ -53,17 +53,19 @@ dev = [
     "hadolint-coatl>=2.14.0,<2.15.0",
     "types-pyyaml>=6.0.12.20250915,<6.0.13",
     "types-jsonschema>=4.23.0,<4.24.0",
+    "types-regex>=2024.11.6,<2024.12.0",
     "yamllint>=1.37.1,<1.38.0",
     "detect-secrets>=1.5.0,<1.6.0",
+    "tomli-w>=1.2.0,<1.3.0",
 ]
 # Knowledge management system dependencies (scripts/knowledge/)
 knowledge = [
     { include-group = "test" },
     "duckdb>=1.4.3,<1.5.0",
-    "spacy>=3.8.11,<3.9.0",
-    "transformers>=4.57.3,<4.58.0",
-    "accelerate>=1.12.0,<1.13.0",
-    "torch>=2.9.1,<3.0.0",
+    "nltk>=3.9.2,<3.10.0",
+    "pypdf>=6.5.0,<6.6.0",
+    "ijson>=3.4.0.post0,<3.5.0",
+    "regex>=2025.11.3,<2025.12.0",
 ]
 
 [project.scripts]
@@ -72,6 +74,7 @@ knowledge = [
 "app.api.generate" = "scripts.app.gen_openapi:main"
 # Development scripts
 setup = "scripts.dev.setup:main"
+zip-changes = "scripts.dev.zip_changes:main"
 lint = "scripts.dev.linter.lint_cli:main"
 "dev.ensure-env" = "scripts.dev.ensure_dev_env:main"
 "agent.claude" = "scripts.dev.claude_agent_runner:main"
@@ -87,12 +90,14 @@ lint = "scripts.dev.linter.lint_cli:main"
 # Planning and code generation state machines
 "planner" = "scripts.planner.client:main"
 "codegen" = "scripts.codegen.client:main"
+"code-config" = "scripts.everycode.generate_code_config:main"
 # Review scripts
 "review.coderabbit" = "scripts.dev.review.coderabbit_review:main"
 "review.sonar" = "scripts.dev.review.sonar_review:main"
 "review.latest" = "scripts.dev.review.latest_review:main"
 # Test runner scripts
 test-coverage = "scripts.dev.test_runner.test_coverage:main"
+test-files = "scripts.dev.test_runner.test_files:main"
 # Test workflow orchestration
 test-workflow = "scripts.tasks.workflows.test_automation:main"
 # Test analysis scripts (LLM-friendly coverage querying)
@@ -146,6 +151,7 @@ coverage-functions = "scripts.dev.test_analysis.coverage_functions:main"
 "knowledge.query-validations" = "scripts.knowledge.query_validations:main"
 # Artifact-level semantic fact extraction (per docs/plans/fact_redesign.md lines 838-841)
 "knowledge.extract-artifact-facts" = "scripts.knowledge.artifact_fact_extractor:main"
+"knowledge.ingest-document" = "scripts.knowledge.document_ingestion:main"
 
 [tool.uv]
 link-mode = "copy"
