@@ -115,13 +115,13 @@ def load_model(model_name: str) -> tuple[PreTrainedModel, PreTrainedTokenizer]:
         )
 
         logger.info("Loading model: %s", model_name)
-        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)  # type: ignore[no-untyped-call]
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             trust_remote_code=True,
             device_map="auto",
         )
-        model.eval()
+        model.eval()  # type: ignore[no-untyped-call]
         logger.info("Model loaded successfully")
     except Exception as e:
         raise RuntimeError(f"Failed to load model '{model_name}': {e}") from e
@@ -172,7 +172,7 @@ def run_inference(
                 generation_kwargs[key] = value
 
         with torch.no_grad():
-            outputs = model.generate(**inputs, **generation_kwargs)
+            outputs = model.generate(**inputs, **generation_kwargs)  # type: ignore[operator]
 
         # Decode response
         response: str = tokenizer.decode(outputs[0], skip_special_tokens=True)
