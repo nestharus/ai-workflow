@@ -64,4 +64,5 @@ class PymarkdownLinter(BaseLinter):
             ]
 
         run_checked(pymarkdown_cmd)
+        print("Pymarkdown: all checks passed")
         return LinterResult(success=True)

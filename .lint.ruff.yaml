@@ -1,0 +1,9 @@
+# Ruff linter configuration for file filtering
+# These patterns are used to filter files when --files is specified
+# Files must match at least one inclusion pattern to be checked
+
+included_paths:
+  - "app/**/*.py"
+  - "scripts/**/*.py"
+  - "tests/**/*.py"
+  - "tools/**/*.py"

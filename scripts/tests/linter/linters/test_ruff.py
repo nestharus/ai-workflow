@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from scripts.dev.linter.base import LinterResult
 from scripts.dev.linter.linters.ruff import RuffLinter
 
 
@@ -26,15 +27,18 @@ class TestRuffLinterInit:
 class TestRuffLinterRunWithFiles:
     """Tests for RuffLinter.run with file filtering."""
 
+    @patch("scripts.dev.linter.linters.ruff.filter_files_with_config")
     @patch("scripts.dev.linter.linters.ruff.run_checked")
     @patch("scripts.dev.linter.linters.ruff.get_executable")
     def test_run_with_python_files(
         self,
         mock_get_exe: MagicMock,
         mock_run_checked: MagicMock,
+        mock_filter: MagicMock,
     ) -> None:
         """Test run with Python files specified (lines 31-41, branch 32 True)."""
         mock_get_exe.return_value = "/usr/bin/uv"
+        mock_filter.return_value = (["app/main.py", "app/utils.py"], None)
 
         linter = RuffLinter()
         result = linter.run(files=["app/main.py", "config.yaml", "app/utils.py"])
@@ -65,6 +69,79 @@ class TestRuffLinterRunWithFiles:
         assert "No Python files to lint with ruff" in captured.out
 
 
+class TestRuffLinterConfigErrors:
+    """Tests for RuffLinter.run config error handling."""
+
+    @patch("scripts.dev.linter.linters.ruff.run_checked")
+    @patch("scripts.dev.linter.linters.ruff.filter_files_with_config")
+    @patch("scripts.dev.linter.linters.ruff.get_executable")
+    def test_run_config_file_not_found(
+        self,
+        mock_get_exe: MagicMock,
+        mock_filter: MagicMock,
+        mock_run_checked: MagicMock,
+    ) -> None:
+        """Test run when config file is not found."""
+        mock_get_exe.return_value = "/usr/bin/uv"
+        mock_filter.return_value = (
+            [],
+            LinterResult(success=False, message="Config file not found"),
+        )
+
+        linter = RuffLinter()
+        result = linter.run(files=["test.py"])
+
+        assert result.success is False
+        assert result.message == "Config file not found"
+        mock_run_checked.assert_not_called()
+
+    @patch("scripts.dev.linter.linters.ruff.run_checked")
+    @patch("scripts.dev.linter.linters.ruff.filter_files_with_config")
+    @patch("scripts.dev.linter.linters.ruff.get_executable")
+    def test_run_config_parse_error(
+        self,
+        mock_get_exe: MagicMock,
+        mock_filter: MagicMock,
+        mock_run_checked: MagicMock,
+    ) -> None:
+        """Test run when config file has parse errors."""
+        mock_get_exe.return_value = "/usr/bin/uv"
+        mock_filter.return_value = (
+            [],
+            LinterResult(success=False, message="Config load error: YAML parse error"),
+        )
+
+        linter = RuffLinter()
+        result = linter.run(files=["test.py"])
+
+        assert result.success is False
+        assert "Config load error" in (result.message or "")
+        mock_run_checked.assert_not_called()
+
+    @patch("scripts.dev.linter.linters.ruff.run_checked")
+    @patch("scripts.dev.linter.linters.ruff.filter_files_with_config")
+    @patch("scripts.dev.linter.linters.ruff.get_executable")
+    def test_run_included_paths_invalid_type(
+        self,
+        mock_get_exe: MagicMock,
+        mock_filter: MagicMock,
+        mock_run_checked: MagicMock,
+    ) -> None:
+        """Test run when included_paths is not a list."""
+        mock_get_exe.return_value = "/usr/bin/uv"
+        mock_filter.return_value = (
+            [],
+            LinterResult(success=False, message="Invalid included_paths config"),
+        )
+
+        linter = RuffLinter()
+        result = linter.run(files=["test.py"])
+
+        assert result.success is False
+        assert result.message == "Invalid included_paths config"
+        mock_run_checked.assert_not_called()
+
+
 class TestRuffLinterRunWithoutFiles:
     """Tests for RuffLinter.run without file filtering."""
 
@@ -93,15 +170,18 @@ class TestRuffLinterRunWithoutFiles:
 class TestRuffLinterRunCheckedCalls:
     """Tests for RuffLinter.run run_checked call verification."""
 
+    @patch("scripts.dev.linter.linters.ruff.filter_files_with_config")
     @patch("scripts.dev.linter.linters.ruff.run_checked")
     @patch("scripts.dev.linter.linters.ruff.get_executable")
     def test_run_checked_call_order(
         self,
         mock_get_exe: MagicMock,
         mock_run_checked: MagicMock,
+        mock_filter: MagicMock,
     ) -> None:
         """Test that format is called before check (lines 39-40)."""
         mock_get_exe.return_value = "/usr/bin/uv"
+        mock_filter.return_value = (["test.py"], None)
 
         linter = RuffLinter()
         result = linter.run(files=["test.py"])
@@ -119,15 +199,18 @@ class TestRuffLinterRunCheckedCalls:
         assert check_call_idx is not None
         assert format_call_idx < check_call_idx  # format before check
 
+    @patch("scripts.dev.linter.linters.ruff.filter_files_with_config")
     @patch("scripts.dev.linter.linters.ruff.run_checked")
     @patch("scripts.dev.linter.linters.ruff.get_executable")
     def test_run_checked_includes_fix_flag(
         self,
         mock_get_exe: MagicMock,
         mock_run_checked: MagicMock,
+        mock_filter: MagicMock,
     ) -> None:
         """Test that check command includes --fix flag (line 40)."""
         mock_get_exe.return_value = "/usr/bin/uv"
+        mock_filter.return_value = (["test.py"], None)
 
         linter = RuffLinter()
         result = linter.run(files=["test.py"])

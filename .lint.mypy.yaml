@@ -1,0 +1,10 @@
+# Mypy linter configuration for file filtering
+# These patterns are used to filter files when --files is specified
+# Files must match at least one inclusion pattern to be checked
+
+included_paths:
+  - "app/**/*.py"
+  - "scripts/**/*.py"
+  - "tools/**/*.py"
+  # Exclude test files - mypy checking of tests is handled separately
+  - "!scripts/tests/**/*.py"

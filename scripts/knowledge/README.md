@@ -184,7 +184,7 @@ them. Both can be used together as needed.
 **spaCy model not found:**
 
 ```bash
-python -m spacy download en_core_web_trf
+uv run python -m spacy download en_core_web_trf
 ```
 
 **Qwen model loading errors:**

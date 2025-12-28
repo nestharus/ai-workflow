@@ -1,13 +1,16 @@
 """Mypy type checker linter."""
 
 from scripts.dev.linter.base import (
+    REPO_ROOT,
     BaseLinter,
     LinterResult,
+    filter_files_with_config,
     get_executable,
     run_checked,
 )
 
 UV_CLI_REQUIRED = "uv CLI required to run lint"
+LINT_MYPY_CONFIG = REPO_ROOT / ".lint.mypy.yaml"
 
 
 class MypyLinter(BaseLinter):
@@ -32,18 +35,15 @@ class MypyLinter(BaseLinter):
             if not py_files:
                 print("No Python files to check with mypy")
                 return LinterResult(success=True)
-            # Filter out common test directories to avoid unnecessary mypy runs.
-            # This is a performance optimization; mypy applies its full exclude rules
-            # regardless.
-            filtered_files = [
-                f
-                for f in py_files
-                if not (f.startswith("tests/") or f.startswith("scripts/tests/"))
-            ]
-            if not filtered_files:
-                print("All Python files are excluded from mypy checking")
+
+            # Apply included_paths filter from config
+            py_files, error = filter_files_with_config(py_files, LINT_MYPY_CONFIG, "mypy")
+            if error is not None:
+                return error
+            if not py_files:
                 return LinterResult(success=True)
-            run_checked([uv_exe, "run", "mypy", *filtered_files])
+
+            run_checked([uv_exe, "run", "mypy", *py_files])
         else:
             run_checked([uv_exe, "run", "mypy"])
 

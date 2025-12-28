@@ -3,12 +3,17 @@
 Re-exports all command functions for convenient importing.
 """
 
+from scripts.pr.commands.aggregate_tasks_command import aggregate_tasks_command
 from scripts.pr.commands.checkout_worktree_command import checkout_worktree_command
 from scripts.pr.commands.cleanup_sandbox_command import cleanup_sandbox_command
 from scripts.pr.commands.commit_push_command import commit_push_command
 from scripts.pr.commands.deferred_comment_command import deferred_comment_command
 from scripts.pr.commands.extract_ticket_id_command import extract_ticket_id_command
 from scripts.pr.commands.fetch_threads_command import fetch_threads_command
+from scripts.pr.commands.file_hash_command import (
+    file_hash_command,
+    file_hash_compare_command,
+)
 from scripts.pr.commands.get_changed_files_command import get_changed_files_command
 from scripts.pr.commands.get_expected_branch_name_command import (
     get_expected_branch_name_command,
@@ -38,12 +43,15 @@ from scripts.pr.commands.setup_worktree_command import setup_worktree_command
 from scripts.pr.commands.squash_rebase_command import squash_rebase_command
 
 __all__ = [
+    "aggregate_tasks_command",
     "checkout_worktree_command",
     "cleanup_sandbox_command",
     "commit_push_command",
     "deferred_comment_command",
     "extract_ticket_id_command",
     "fetch_threads_command",
+    "file_hash_command",
+    "file_hash_compare_command",
     "get_changed_files_command",
     "get_expected_branch_name_command",
     "get_pr_command",

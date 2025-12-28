@@ -219,3 +219,79 @@ def is_path_included(path: str, glob_patterns: list[str]) -> bool:
     # Path is included only if it matches at least one inclusion pattern
     # and is not excluded by any exclusion pattern
     return included and not excluded
+
+
+def _validate_list_config(
+    config: dict[str, Any], key: str, linter_name: str
+) -> tuple[list[str], LinterResult | None]:
+    """Validate a list config value from the config dict.
+
+    Args:
+        config: The parsed config dictionary.
+        key: The config key to validate (e.g., "included_paths", "excluded_paths").
+        linter_name: Name of the linter (for error messages).
+
+    Returns:
+        A tuple of (value_or_empty_list, error_result). If error_result is not None,
+        the caller should return it immediately. Otherwise, use the returned list.
+    """
+    value = config.get(key, [])
+    if value is not None and not isinstance(value, list):
+        type_name = type(value).__name__
+        print(f"Invalid {key} in {linter_name} config: expected list, got {type_name}")
+        return [], LinterResult(success=False, message=f"Invalid {key} config")
+    return value if value is not None else [], None
+
+
+def filter_files_with_config(
+    py_files: list[str],
+    config_path: Path,
+    linter_name: str,
+) -> tuple[list[str], LinterResult | None]:
+    """Load config and filter Python files by included_paths.
+
+    This is a shared helper for linters that need to filter files based on
+    included_paths from their config YAML. Files must match at least one
+    inclusion pattern to pass the filter.
+
+    Empty-match behavior: When no files match the included_paths patterns,
+    the function prints a diagnostic message and returns ([], None). This is treated
+    as a valid empty result (not a failure), and callers should proceed accordingly
+    rather than treating it as an exception. An empty list with None error_result
+    indicates "no files matched the filter" and the caller may skip linting.
+
+    Args:
+        py_files: List of Python files to filter.
+        config_path: Path to the linter's YAML config file.
+        linter_name: Name of the linter (for error messages).
+
+    Returns:
+        A tuple of (filtered_files, error_result). If error_result is not None,
+        the caller should return it immediately (indicates a real error like
+        missing config or parse failure). If error_result is None, use filtered_files
+        (which may be empty if no files matched the patterns - this is valid).
+    """
+    try:
+        config = load_yaml_config(config_path)
+    except FileNotFoundError:
+        print(f"{linter_name.capitalize()} config file not found: {config_path}")
+        return [], LinterResult(success=False, message="Config file not found")
+    except PermissionError as e:
+        print(f"Permission denied reading {linter_name} config {config_path}: {e}")
+        return [], LinterResult(success=False, message=f"Config permission error: {e}")
+    except yaml.YAMLError as e:
+        print(f"Failed to parse {linter_name} config {config_path}: {e}")
+        return [], LinterResult(success=False, message=f"Config parse error: {e}")
+
+    included_paths, error = _validate_list_config(config, "included_paths", linter_name)
+    if error is not None:
+        return [], error
+
+    if included_paths:
+        filtered = [f for f in py_files if is_path_included(f, included_paths)]
+        if not filtered:
+            print(f"No Python files match {linter_name} included_paths filter")
+            return [], None
+        return filtered, None
+
+    return py_files, None

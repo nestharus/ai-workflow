@@ -10,6 +10,13 @@ Fix all lint errors AND warnings by repeatedly running the lint-fixer sub-agent.
 * `--changed-only`: Only lint changed files (uncommitted first, then last commit if none)
 * `--commit <sha>`: Only lint files from specific commit
 * `--files <file1> <file2> ...`: Only lint specific files
+* `--pr <TICKET>`: Lint files changed in PR for given Linear ticket ID (required, format: `PROJECT-NUMBER`, e.g., `--pr NES-87`)
+
+**These options are mutually exclusive; pass only one.**
+
+**Note:** The `--pr` flag is forwarded to the lint-fixer agent, which handles
+all PR-specific logic (validation, branch/worktree resolution). See
+`.claude/agents/lint-fixer.md` for details.
 
 ## Workflow
 
@@ -19,7 +26,8 @@ Fix all lint errors AND warnings by repeatedly running the lint-fixer sub-agent.
 Task(subagent_type="lint-fixer", prompt="$ARGUMENTS")
 ```
 
-Pass `--changed-only` or `--commit <sha>` through `$ARGUMENTS` if provided.
+Pass one of `--changed-only`, `--commit <sha>`, `--files <file1> <file2> ...`, or
+`--pr <TICKET>` through `$ARGUMENTS` if provided. These options are mutually exclusive.
 
 ### Step 2: Evaluate Results
 
@@ -80,7 +88,8 @@ uv run lint ruff [--changed-only]      # Single linter
 
 ## Suppression Policy
 
-The lint-fixer sub-agent AND any manual fixes must **NEVER** add `# noqa`, `# type: ignore`, or similar without explicit justification.
+The lint-fixer sub-agent AND any manual fixes must **NEVER** add `# noqa`, `# type: ignore`,
+or similar without explicit justification.
 
 1. **Per-file ignores preferred**: Check `pyproject.toml` `[tool.ruff.lint.per-file-ignores]` first
 2. **Inline suppressions require justification**: Only for genuine edge cases with explanatory comment

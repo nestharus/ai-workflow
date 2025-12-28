@@ -1,0 +1,14 @@
+I have a sources. I need to make sure that they are represented synthesis .
+If they are not represented in synthesis then the synthesis must be modified
+to represent them WHILE IMPORTANTLY retaining its current structure.
+You may add new sections or add additional clarity to explain existing
+sections but you may not just add paragraphs of prose.
+
+ SOURCES
+ ===
+.tasks/plans/information extraction/split/03_non-negotiable_invariants/00_overview.md
+.tasks/plans/information extraction/split/03_non-negotiable_invariants/05_5_facts_do_not_own_text.md
+
+ SYNTHESIS
+ ===
+.tasks/plans/information extraction/chatgpt.md
