@@ -361,3 +361,39 @@ sections:
           ast-grep requires sgconfig.yml in the repository root to locate rules.
           If sgconfig.yml is missing, the linter will fail with:
           "sgconfig.yml not found - ast-grep requires this configuration file"
+
+      - id: shellcheck-installation
+        title: Shellcheck Installation
+        text: |
+          Shellcheck is a static analysis tool for shell scripts required via `uv run lint shellcheck`.
+          It provides warnings and suggestions for bash/sh scripts. Like gitleaks, hadolint, and
+          actionlint, shellcheck is an external binary that must be installed separately from
+          Python dependencies.
+        version: "0.10.0"
+        version_note: Minimum recommended version; newer versions are compatible
+        installation_methods:
+          - method: APT (Debian/Ubuntu)
+            command: sudo apt-get update && sudo apt-get install -y shellcheck
+            note: Package version varies by distro release; Ubuntu 22.04+ has 0.8.0+
+          - method: Homebrew (macOS/Linux)
+            command: brew install shellcheck
+            note: Installs latest stable version
+          - method: Binary download
+            url: https://github.com/koalaman/shellcheck/releases
+            note: Download appropriate binary for your OS/arch
+        verification:
+          command: shellcheck --version
+          expected_output: Contains "version:" line with 0.8.0 or higher
+        ci_integration: |
+          For CI pipelines that run `uv run lint`, add shellcheck installation to setup steps:
+
+          GitHub Actions example:
+            - name: Install shellcheck
+              run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+          Note: The project's Dockerfile is production-only and does not require shellcheck.
+          The rebase-check.yml workflow only performs git operations and does not run linting.
+          The sandbox and MCP server Dockerfiles are runtime images and do not run linting.
+        error_handling: |
+          If shellcheck is not installed, `uv run lint shellcheck` will emit:
+          "shellcheck CLI required to run lint"

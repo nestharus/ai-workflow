@@ -11,6 +11,7 @@ from scripts.dev.linter.linters.mypy import MypyLinter
 from scripts.dev.linter.linters.pymarkdown import PymarkdownLinter
 from scripts.dev.linter.linters.ruff import RuffLinter
 from scripts.dev.linter.linters.scripts import ScriptsLinter
+from scripts.dev.linter.linters.shellcheck import ShellcheckLinter
 from scripts.dev.linter.linters.trivy import TrivyLinter
 from scripts.dev.linter.linters.yamllint import YamllintLinter
 
@@ -21,6 +22,7 @@ LINTERS = [
     AstgrepLinter(),
     MypyLinter(),
     HadolintLinter(),
+    ShellcheckLinter(),
     PymarkdownLinter(),
     YamllintLinter(),
     ActionlintLinter(),
@@ -52,6 +54,7 @@ __all__ = [
     "PymarkdownLinter",
     "RuffLinter",
     "ScriptsLinter",
+    "ShellcheckLinter",
     "TrivyLinter",
     "YamllintLinter",
 ]

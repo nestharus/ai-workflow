@@ -1,0 +1,14 @@
+# Lint script configuration for shellcheck
+# Paths to include for shell script linting (glob patterns)
+
+included_paths:
+  # Root-level shell scripts
+  - "*.sh"
+  # Scripts directory
+  - "scripts/**/*.sh"
+  # App directory
+  - "app/**/*.sh"
+  # Tests directory
+  - "tests/**/*.sh"
+  # Bin directory
+  - "bin/**/*.sh"
