@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Shortcut script for running Every Code CLI with --yolo flag
+#
+# This script ALWAYS runs with --yolo to bypass sandboxing.
+# To run coder WITHOUT --yolo, invoke the coder binary directly.
+#
+# Usage:
+#   ./coder [args...]    - Runs: coder --yolo [args...]
+#   coder [args...]      - Standard coder (use this if you don't want --yolo)
+
+coder --yolo "$@"
