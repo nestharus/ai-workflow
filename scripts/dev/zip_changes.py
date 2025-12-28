@@ -11,7 +11,7 @@ Usage:
 import subprocess
 import sys
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -101,9 +101,7 @@ def get_commit_files(sha: str) -> list[Path]:
     Raises:
         GitCommandError: If git diff-tree command fails (e.g., invalid SHA).
     """
-    stdout = run_git_command(
-        ["git", "diff-tree", "--no-commit-id", "--name-status", "-r", sha]
-    )
+    stdout = run_git_command(["git", "diff-tree", "--no-commit-id", "--name-status", "-r", sha])
 
     files: list[Path] = []
     for line in stdout.strip().split("\n"):
@@ -170,7 +168,7 @@ def main() -> int:
         return 1
 
     # Generate output filename with timestamp
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     if sha:
         output_path = Path(f"changes_{sha[:8]}_{timestamp}.zip")
     else:

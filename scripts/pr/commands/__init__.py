@@ -3,11 +3,13 @@
 Re-exports all command functions for convenient importing.
 """
 
+from scripts.pr.commands.affected_tests_command import affected_tests_command
 from scripts.pr.commands.aggregate_tasks_command import aggregate_tasks_command
 from scripts.pr.commands.checkout_worktree_command import checkout_worktree_command
 from scripts.pr.commands.cleanup_sandbox_command import cleanup_sandbox_command
 from scripts.pr.commands.commit_push_command import commit_push_command
 from scripts.pr.commands.deferred_comment_command import deferred_comment_command
+from scripts.pr.commands.extract_review_path_command import extract_review_path_command
 from scripts.pr.commands.extract_ticket_id_command import extract_ticket_id_command
 from scripts.pr.commands.fetch_threads_command import fetch_threads_command
 from scripts.pr.commands.file_hash_command import (
@@ -20,6 +22,7 @@ from scripts.pr.commands.get_expected_branch_name_command import (
 )
 from scripts.pr.commands.get_pr_command import get_pr_command
 from scripts.pr.commands.import_local_tasks_command import import_local_tasks_command
+from scripts.pr.commands.is_testable_command import is_testable_command
 from scripts.pr.commands.is_valid_branch_name_command import is_valid_branch_name_command
 from scripts.pr.commands.list_unresolved_comments_command import (
     list_unresolved_comments_command,
@@ -43,11 +46,13 @@ from scripts.pr.commands.setup_worktree_command import setup_worktree_command
 from scripts.pr.commands.squash_rebase_command import squash_rebase_command
 
 __all__ = [
+    "affected_tests_command",
     "aggregate_tasks_command",
     "checkout_worktree_command",
     "cleanup_sandbox_command",
     "commit_push_command",
     "deferred_comment_command",
+    "extract_review_path_command",
     "extract_ticket_id_command",
     "fetch_threads_command",
     "file_hash_command",
@@ -56,6 +61,7 @@ __all__ = [
     "get_expected_branch_name_command",
     "get_pr_command",
     "import_local_tasks_command",
+    "is_testable_command",
     "is_valid_branch_name_command",
     "list_unresolved_comments_command",
     "merge_pr_command",

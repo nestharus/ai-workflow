@@ -51,7 +51,7 @@ TEST_BUILDING_BLOCKS: dict[str, str] = {
     "data-builder": "data-builder",
     # Block 5: Visible Builder - factories with explicit values
     "visible-builder": "visible-builder",
-    # Block 6: Implicit AAA Body - whitespace-separated structure
+    # Block 6: Implicit AAA Body - composing the sections
     "aaa-body-builder": "aaa-body-builder",
     # Block 7: Driver - test stimulus (HTTP/call)
     "driver-builder": "driver-builder",
@@ -114,28 +114,36 @@ def is_test_building_block(block_name: str) -> bool:
 def get_test_building_block_order() -> list[str]:
     """Get the canonical order of test building blocks.
 
-    Returns building blocks in the order they should typically be invoked:
-    1. Suite contract (determines placement)
-    2. Parametrize (if needed, decorator goes first)
-    3. Shell (function signature)
-    4. Data builders (arrange section)
-    5. Driver (act section)
-    6. Assertions (assert section)
-    7. AAA body (composes the sections)
+    Returns the 14 building blocks in the order they should typically be invoked:
+
+    1. suite-contract: Test placement and suite requirements
+    2. parametrize-builder: @pytest.mark.parametrize decorators
+    3. shell-builder: Function signature and decorators
+    4. infra-fixture-builder: Infrastructure fixtures (repos, databases)
+    5. override-builder: Test doubles via dependency overrides
+    6. data-builder: PAT-E compliant local test data constants
+    7. visible-builder: Factories with explicit values
+    8. wrapper-builder: Resource lifetime (context managers, teardown)
+    9. driver-builder: Test stimulus (HTTP calls, function invocations)
+    10. scope-builder: Workflow scope with multi-step use-case checkpoints
+    11. stream-probe-builder: Typed stream probe traversal generators
+    12. loop-builder: Constraint loop for approved looping over streams
+    13. assertion-builder: check.*/assert statements
+    14. aaa-body-builder: Implicit AAA body composing the sections
     """
     return [
-        "suite-contract",      # 0 - First: determine placement
-        "parametrize-builder", # 12 - If needed, decorator goes before shell
-        "shell-builder",       # 1 - Function signature
-        "infra-fixture-builder", # 2 - Infrastructure fixtures
-        "override-builder",    # 3 - Dependency overrides
-        "data-builder",        # 4 - Test data constants
-        "visible-builder",     # 5 - Object factories
-        "wrapper-builder",     # 13 - Resource wrappers
-        "driver-builder",      # 7 - Test stimulus
-        "scope-builder",       # 9 - Workflow scopes (use-case tests)
-        "stream-probe-builder", # 10 - Traversal generators
-        "loop-builder",        # 11 - Constraint loops
-        "assertion-builder",   # 8 - Assertions
-        "aaa-body-builder",    # 6 - Last: compose the body
+        "suite-contract",
+        "parametrize-builder",
+        "shell-builder",
+        "infra-fixture-builder",
+        "override-builder",
+        "data-builder",
+        "visible-builder",
+        "wrapper-builder",
+        "driver-builder",
+        "scope-builder",
+        "stream-probe-builder",
+        "loop-builder",
+        "assertion-builder",
+        "aaa-body-builder",
     ]

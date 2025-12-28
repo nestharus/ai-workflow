@@ -8,22 +8,29 @@ This module provides data models for the atomic fact extraction system, supporti
 5. Progress tracking (anchoring attempts, clarification questions)
 
 The models follow TypedDict patterns from fact_store.py for consistency with
-existing DuckDB/CSV operations.
+existing DuckDB/CSV operations, except WorkRegion which is a dataclass to
+support the to_span() method.
 
 Architectural References:
-- requirements.md lines 17-100: Non-negotiable invariants
+- requirements.md lines 17-302: Non-negotiable invariants
 - requirements.md lines 365-433: Span handling and work regions
 - requirements.md lines 442-476: Dual representation (canonical + source context)
 - requirements.md lines 507-619: Illegal fabrication types
 
-Non-negotiable Invariants (summary):
+Non-negotiable Invariants (requirements.md lines 17-302):
 1. Byte-exact provenance: All references use character offsets into canonical string
-2. No semantic classification requirement: Links may be untyped
-3. Incomplete structures expected: Surfaced via reconstruction failures
-4. Span lifecycle: ATTEMPTABLE -> PROVEN or FAILED
-5. Facts do not own text: Facts explain text, multiple facts may overlap
-6. Progress test: Anchoring drives improvement, clarification on stall
-7. Anchoring: Uncovered text triggers expanded context extraction
+   (lines 43-54)
+2. No semantic classification requirement: Links may be untyped (lines 55-59)
+3. Incomplete structures expected: Surfaced via reconstruction failures (lines 61-64)
+4. Span lifecycle: ATTEMPTABLE -> PROVEN or FAILED (lines 66-76)
+5. Facts do not own text: Facts explain text, multiple facts may overlap (lines 77-82)
+6. Progress test: Anchoring drives improvement, clarification on stall (lines 84-95)
+7. Anchoring: Uncovered text triggers expanded context extraction (lines 96-129)
+8. Island join failures: Independent proven segments without connectors (lines 130-167)
+9. No illegal fact fabrication: Cannot hallucinate grammatical structure (lines 169-195)
+10. No formal proof languages: Validation via reconstruction, not Lean/Coq (lines 197-210)
+11. Derivability principle: Base facts sufficient to derive all implications (lines 212-254)
+12. Transitive anchors: Facts can have contextual relations (lines 255-299)
 
 Two-Phase Pipeline:
 - Phase 1 (Haiku): Detail extraction - raw observations from text
@@ -54,12 +61,51 @@ Usage:
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
+import logging
 import re
 import unicodedata
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Literal, TypedDict
+from typing import Any, ClassVar, Literal, TypedDict, cast
+
+_logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# CUSTOM EXCEPTIONS
+# =============================================================================
+
+
+class UnknownArtifactTypeError(ValueError):
+    """Raised when an artifact has an unknown or missing artifact_type.
+
+    This exception is raised by artifact_to_csv_row and artifact_to_json when
+    dispatching fails due to an unrecognized or absent artifact_type discriminator.
+
+    Attributes:
+        artifact_type: The unknown artifact_type value (may be None if missing).
+        artifact_summary: A truncated summary of the artifact for debugging.
+    """
+
+    def __init__(
+        self,
+        artifact_type: str | None,
+        artifact_summary: str,
+    ) -> None:
+        """Initialize UnknownArtifactTypeError.
+
+        Args:
+            artifact_type: The unknown artifact_type value (may be None if missing).
+            artifact_summary: A truncated summary of the artifact for debugging.
+        """
+        self.artifact_type = artifact_type
+        self.artifact_summary = artifact_summary
+        super().__init__(f"Unknown or missing artifact_type: {artifact_type!r}")
+
 
 # =============================================================================
 # ENUMS
@@ -177,13 +223,18 @@ class Span(TypedDict):
     updated_at: str
 
 
-class WorkRegion(TypedDict):
+@dataclass
+class WorkRegion(Mapping[str, Any]):
     """An unprocessed region awaiting fact extraction.
 
     Per requirements.md lines 402-433, work regions track extraction progress:
     - Initially, the entire document is one unprocessed work region
     - After extraction, regions are marked processed
     - Validation via reconstruction determines if threshold is met
+
+    Implements collections.abc.Mapping to provide full dict-like access for
+    compatibility with code expecting TypedDict-style access patterns such as
+    dict(region), iteration over keys, and len(region).
 
     Attributes:
         region_id: UUID identifying this work region.
@@ -194,15 +245,34 @@ class WorkRegion(TypedDict):
         created_at: ISO 8601 timestamp when region was created.
 
     Example:
-        {
-            "region_id": "550e8400-e29b-41d4-a716-446655440001",
-            "doc_id": "doc-001",
-            "start_char": 0,
-            "end_char": 5000,
-            "is_processed": False,
-            "created_at": "2025-01-15T10:00:00Z"
-        }
+        >>> region = WorkRegion(
+        ...     region_id="550e8400-e29b-41d4-a716-446655440001",
+        ...     doc_id="doc-001",
+        ...     start_char=0,
+        ...     end_char=5000,
+        ...     is_processed=False,
+        ...     created_at="2025-01-15T10:00:00Z",
+        ... )
+        >>> span = region.to_span(
+        ...     canonical_string="Sample text...",
+        ...     span_id="new-span-id",
+        ...     timestamp="2025-01-15T11:00:00Z",
+        ... )
+        >>> dict(region)  # Convert to dict
+        {'region_id': '...', 'doc_id': '...', ...}
+        >>> list(region.keys())  # Iterate over keys
+        ['region_id', 'doc_id', 'start_char', 'end_char', 'is_processed', 'created_at']
     """
+
+    # Class-level constant for field names (used by Mapping methods)
+    _field_names: ClassVar[tuple[str, ...]] = (
+        "region_id",
+        "doc_id",
+        "start_char",
+        "end_char",
+        "is_processed",
+        "created_at",
+    )
 
     region_id: str
     doc_id: str
@@ -210,6 +280,104 @@ class WorkRegion(TypedDict):
     end_char: int
     is_processed: bool
     created_at: str
+
+    def to_span(
+        self,
+        canonical_string: str,
+        span_id: str,
+        timestamp: str,
+    ) -> Span:
+        """Convert this work region to a span for reconstruction.
+
+        Args:
+            canonical_string: The full canonical UTF-8 string.
+            span_id: UUID for the new span.
+            timestamp: ISO 8601 timestamp for created_at/updated_at.
+
+        Returns:
+            Span with text extracted from canonical string.
+
+        Raises:
+            ValueError: If region offsets are out of bounds.
+        """
+        if (
+            self.start_char < 0
+            or self.end_char > len(canonical_string)
+            or self.start_char >= self.end_char
+        ):
+            msg = (
+                f"Invalid region offsets: start={self.start_char}, end={self.end_char}, "
+                f"len={len(canonical_string)}"
+            )
+            raise ValueError(msg)
+
+        return Span(
+            span_id=span_id,
+            start_char=self.start_char,
+            end_char=self.end_char,
+            state="ATTEMPTABLE",
+            text=canonical_string[self.start_char : self.end_char],
+            doc_id=self.doc_id,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for CSV/JSON serialization compatibility.
+
+        Dynamically builds the dict from _field_names to maintain consistency
+        when fields change.
+
+        Returns:
+            Dictionary representation of the WorkRegion.
+        """
+        return {field: getattr(self, field) for field in self._field_names}
+
+    def __getitem__(self, key: str) -> Any:
+        """Allow dict-like access for backwards compatibility.
+
+        Raises:
+            KeyError: If the key does not exist as an attribute.
+        """
+        if key not in self._field_names:
+            raise KeyError(key)
+        return getattr(self, key)
+
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over field names for Mapping compatibility.
+
+        Returns:
+            Iterator over the field names of this WorkRegion.
+        """
+        return iter(self._field_names)
+
+    def __len__(self) -> int:
+        """Return number of fields for Mapping compatibility.
+
+        Returns:
+            Number of fields in this WorkRegion (always 6).
+        """
+        return len(self._field_names)
+
+
+def _verify_work_region_field_names() -> None:
+    """Verify WorkRegion._field_names matches actual dataclass fields.
+
+    This function is called at module load time to ensure the manually
+    maintained _field_names tuple stays in sync with the dataclass fields.
+    If they drift, an AssertionError is raised immediately.
+    """
+    actual_field_names = tuple(f.name for f in dataclasses.fields(WorkRegion))
+    if WorkRegion._field_names != actual_field_names:
+        msg = (
+            f"WorkRegion._field_names is out of sync with dataclass fields. "
+            f"Expected {actual_field_names!r}, got {WorkRegion._field_names!r}"
+        )
+        raise AssertionError(msg)
+
+
+# Run verification at module load time
+_verify_work_region_field_names()
 
 
 # =============================================================================
@@ -220,6 +388,11 @@ class WorkRegion(TypedDict):
 class ValidationFlags(TypedDict):
     """Validation status flags for fact verification.
 
+    Per requirements.md lines 169-195 and 433-440, two validation layers prevent
+    illegal facts:
+    - SpaCy Grammar Validation catches structural fabrications
+    - Inference Validation Layer catches invalid inferences
+
     Tracks which validation checks a fact has passed:
     - grammar_valid: SpaCy grammar validation passed (structure present in source)
     - inference_valid: Opus inference validation passed (if applicable for ImpliedFact)
@@ -229,6 +402,15 @@ class ValidationFlags(TypedDict):
         grammar_valid: True if SpaCy grammar validation passed.
         inference_valid: True if Opus inference validation passed (always True for BaseFact).
         atomicity_valid: True if fact contains no conjunctions/compound statements.
+
+    Example:
+        >>> flags = ValidationFlags(
+        ...     grammar_valid=True,
+        ...     inference_valid=True,
+        ...     atomicity_valid=True,
+        ... )
+        >>> all(flags.values())
+        True
     """
 
     grammar_valid: bool
@@ -485,6 +667,7 @@ class FabricationAttempt(TypedDict):
     separately in InvalidInferenceAttempt.
 
     Attributes:
+        artifact_type: Discriminator field, always "fabrication_attempt".
         attempt_id: UUID identifying this attempt.
         fabrication_type: One of the 5 grammar fabrication types.
         attempted_fact: The illegal fact that was rejected (BaseFact structure).
@@ -495,6 +678,7 @@ class FabricationAttempt(TypedDict):
 
     Example:
         {
+            "artifact_type": "fabrication_attempt",
             "attempt_id": "550e8400-e29b-41d4-a716-446655440006",
             "fabrication_type": "HIDDEN_COPULA",
             "attempted_fact": {
@@ -513,6 +697,7 @@ class FabricationAttempt(TypedDict):
         }
     """
 
+    artifact_type: Literal["fabrication_attempt"]
     attempt_id: str
     fabrication_type: Literal[
         "HIDDEN_COPULA",
@@ -536,6 +721,7 @@ class InvalidInferenceAttempt(TypedDict):
     that don't validly follow from base facts.
 
     Attributes:
+        artifact_type: Discriminator field, always "invalid_inference_attempt".
         attempt_id: UUID identifying this attempt.
         fabrication_type: One of INVALID_COREFERENCE, UNGROUNDED_IMPLICATION,
             or CONTEXT_BOUNDARY_VIOLATION.
@@ -546,6 +732,7 @@ class InvalidInferenceAttempt(TypedDict):
 
     Example:
         {
+            "artifact_type": "invalid_inference_attempt",
             "attempt_id": "550e8400-e29b-41d4-a716-446655440007",
             "fabrication_type": "INVALID_COREFERENCE",
             "attempted_inference": {...},
@@ -558,6 +745,7 @@ class InvalidInferenceAttempt(TypedDict):
         }
     """
 
+    artifact_type: Literal["invalid_inference_attempt"]
     attempt_id: str
     fabrication_type: Literal[
         "INVALID_COREFERENCE",
@@ -579,6 +767,7 @@ class ReconstructionFailure(TypedDict):
     - Failure means current understanding is insufficient
 
     Attributes:
+        artifact_type: Discriminator field, always "reconstruction_failure".
         failure_id: UUID identifying this failure.
         span_id: ID of the span that failed reconstruction.
         original_text: Verbatim T(S) - the text being reconstructed.
@@ -592,6 +781,7 @@ class ReconstructionFailure(TypedDict):
 
     Example:
         {
+            "artifact_type": "reconstruction_failure",
             "failure_id": "550e8400-e29b-41d4-a716-446655440008",
             "span_id": "550e8400-e29b-41d4-a716-446655440000",
             "original_text": "The device supports Bluetooth and Wi-Fi connectivity.",
@@ -608,6 +798,7 @@ class ReconstructionFailure(TypedDict):
         }
     """
 
+    artifact_type: Literal["reconstruction_failure"]
     failure_id: str
     span_id: str
     original_text: str
@@ -629,10 +820,11 @@ class ClarificationQuestion(TypedDict):
     - Are required outputs, not recovery mechanisms
 
     Attributes:
+        artifact_type: Discriminator field, always "clarification_question".
         question_id: UUID identifying this question.
         doc_id: Document where the unclear region exists.
-        start_char: Inclusive start character offset of unclear region.
-        end_char: Exclusive end character offset of unclear region.
+        region_start: Inclusive start character offset of unclear region.
+        region_end: Exclusive end character offset of unclear region.
         verbatim_text: The text including unanchored portions.
         failure_statement: Why the system cannot understand this region.
         failure_type: "anchoring_failure" or "derivation_impossibility".
@@ -642,10 +834,11 @@ class ClarificationQuestion(TypedDict):
 
     Example:
         {
+            "artifact_type": "clarification_question",
             "question_id": "550e8400-e29b-41d4-a716-446655440009",
             "doc_id": "doc-001",
-            "start_char": 500,
-            "end_char": 550,
+            "region_start": 500,
+            "region_end": 550,
             "verbatim_text": "erupting from the palms of its hands",
             "failure_statement": (
                 "Cannot determine referent for 'its' - "
@@ -658,10 +851,11 @@ class ClarificationQuestion(TypedDict):
         }
     """
 
+    artifact_type: Literal["clarification_question"]
     question_id: str
     doc_id: str
-    start_char: int
-    end_char: int
+    region_start: int
+    region_end: int
     verbatim_text: str
     failure_statement: str
     failure_type: Literal["anchoring_failure", "derivation_impossibility"]
@@ -890,6 +1084,9 @@ def work_region_to_span(
 ) -> Span:
     """Convert a work region to a span for reconstruction.
 
+    This is a convenience wrapper around WorkRegion.to_span() for backwards
+    compatibility. Prefer using region.to_span() directly.
+
     Args:
         region: The work region to convert.
         canonical_string: The full canonical UTF-8 string.
@@ -902,23 +1099,7 @@ def work_region_to_span(
     Raises:
         ValueError: If region offsets are out of bounds.
     """
-    start = region["start_char"]
-    end = region["end_char"]
-
-    if start < 0 or end > len(canonical_string) or start >= end:
-        msg = f"Invalid region offsets: start={start}, end={end}, len={len(canonical_string)}"
-        raise ValueError(msg)
-
-    return Span(
-        span_id=span_id,
-        start_char=start,
-        end_char=end,
-        state="ATTEMPTABLE",
-        text=canonical_string[start:end],
-        doc_id=region["doc_id"],
-        created_at=timestamp,
-        updated_at=timestamp,
-    )
+    return region.to_span(canonical_string, span_id, timestamp)
 
 
 # =============================================================================
@@ -955,6 +1136,7 @@ FACT_CSV_COLUMNS = [
 ]
 
 RECONSTRUCTION_FAILURE_CSV_COLUMNS = [
+    "artifact_type",
     "failure_id",
     "span_id",
     "original_text",
@@ -968,6 +1150,7 @@ RECONSTRUCTION_FAILURE_CSV_COLUMNS = [
 ]
 
 FABRICATION_ATTEMPT_CSV_COLUMNS = [
+    "artifact_type",
     "attempt_id",
     "fabrication_type",
     "attempted_fact_json",  # JSON-encoded BaseFact
@@ -978,10 +1161,11 @@ FABRICATION_ATTEMPT_CSV_COLUMNS = [
 ]
 
 CLARIFICATION_QUESTION_CSV_COLUMNS = [
+    "artifact_type",
     "question_id",
     "doc_id",
-    "start_char",
-    "end_char",
+    "region_start",
+    "region_end",
     "verbatim_text",
     "failure_statement",
     "failure_type",
@@ -1024,6 +1208,7 @@ WORK_REGION_CSV_COLUMNS = [
 ]
 
 INVALID_INFERENCE_ATTEMPT_CSV_COLUMNS = [
+    "artifact_type",
     "attempt_id",
     "fabrication_type",
     "attempted_inference_json",  # JSON-encoded ImpliedFact
@@ -1124,6 +1309,7 @@ def reconstruction_failure_to_csv_row(failure: ReconstructionFailure) -> dict[st
         Dict with string values suitable for CSV writing.
     """
     return {
+        "artifact_type": failure["artifact_type"],
         "failure_id": failure["failure_id"],
         "span_id": failure["span_id"],
         "original_text": failure["original_text"],
@@ -1147,6 +1333,7 @@ def fabrication_attempt_to_csv_row(attempt: FabricationAttempt) -> dict[str, str
         Dict with string values suitable for CSV writing.
     """
     return {
+        "artifact_type": attempt["artifact_type"],
         "attempt_id": attempt["attempt_id"],
         "fabrication_type": attempt["fabrication_type"],
         "attempted_fact_json": _to_json_str(attempt["attempted_fact"]),
@@ -1167,10 +1354,11 @@ def clarification_question_to_csv_row(question: ClarificationQuestion) -> dict[s
         Dict with string values suitable for CSV writing.
     """
     return {
+        "artifact_type": question["artifact_type"],
         "question_id": question["question_id"],
         "doc_id": question["doc_id"],
-        "start_char": str(question["start_char"]),
-        "end_char": str(question["end_char"]),
+        "region_start": str(question["region_start"]),
+        "region_end": str(question["region_end"]),
         "verbatim_text": question["verbatim_text"],
         "failure_statement": question["failure_statement"],
         "failure_type": question["failure_type"],
@@ -1228,18 +1416,18 @@ def work_region_to_csv_row(region: WorkRegion) -> dict[str, str]:
     """Flatten WorkRegion to CSV-compatible dict.
 
     Args:
-        region: WorkRegion TypedDict to flatten.
+        region: WorkRegion dataclass to flatten.
 
     Returns:
         Dict with string values suitable for CSV writing.
     """
     return {
-        "region_id": region["region_id"],
-        "doc_id": region["doc_id"],
-        "start_char": str(region["start_char"]),
-        "end_char": str(region["end_char"]),
-        "is_processed": str(region["is_processed"]).lower(),
-        "created_at": region["created_at"],
+        "region_id": region.region_id,
+        "doc_id": region.doc_id,
+        "start_char": str(region.start_char),
+        "end_char": str(region.end_char),
+        "is_processed": str(region.is_processed).lower(),
+        "created_at": region.created_at,
     }
 
 
@@ -1253,6 +1441,7 @@ def invalid_inference_attempt_to_csv_row(attempt: InvalidInferenceAttempt) -> di
         Dict with string values suitable for CSV writing.
     """
     return {
+        "artifact_type": attempt["artifact_type"],
         "attempt_id": attempt["attempt_id"],
         "fabrication_type": attempt["fabrication_type"],
         "attempted_inference_json": _to_json_str(attempt["attempted_inference"]),
@@ -1403,12 +1592,12 @@ def work_region_to_json(region: WorkRegion) -> dict[str, Any]:
     """Convert WorkRegion to JSON-serializable dict.
 
     Args:
-        region: WorkRegion TypedDict.
+        region: WorkRegion dataclass.
 
     Returns:
         Dict ready for JSON serialization.
     """
-    return dict(region)
+    return region.to_dict()
 
 
 def entity_declaration_to_json(declaration: EntityDeclaration) -> dict[str, Any]:
@@ -1433,6 +1622,145 @@ def attribute_annotation_to_json(annotation: AttributeAnnotation) -> dict[str, A
         Dict ready for JSON serialization with nested data preserved.
     """
     return dict(annotation)
+
+
+# =============================================================================
+# GENERIC ARTIFACT SERIALIZATION
+# =============================================================================
+
+# Type alias for all artifact types.
+#
+# MAINTAINER NOTE: When adding a new artifact TypedDict, you must:
+#   1. Add the new type to the ArtifactType union below
+#   2. Register it in _ARTIFACT_CSV_DISPATCHERS with:
+#      - Key: the exact "artifact_type" discriminator string (e.g., "my_artifact")
+#      - Value: the CSV serializer function (e.g., my_artifact_to_csv_row)
+#   3. Register it in _ARTIFACT_JSON_DISPATCHERS with:
+#      - Key: the same discriminator string
+#      - Value: the JSON serializer function (e.g., my_artifact_to_json)
+#   4. Add unit tests for the new serializers to avoid runtime
+#      ValueError("Unknown or missing artifact_type") errors.
+#
+ArtifactType = (
+    ReconstructionFailure | FabricationAttempt | InvalidInferenceAttempt | ClarificationQuestion
+)
+
+# Dispatch dictionary for CSV row formatters by artifact_type discriminator
+_ARTIFACT_CSV_DISPATCHERS: dict[str, Callable[[Any], dict[str, str]]] = {
+    "reconstruction_failure": reconstruction_failure_to_csv_row,
+    "fabrication_attempt": fabrication_attempt_to_csv_row,
+    "invalid_inference_attempt": invalid_inference_attempt_to_csv_row,
+    "clarification_question": clarification_question_to_csv_row,
+}
+
+_ARTIFACT_JSON_DISPATCHERS: dict[str, Callable[[Any], dict[str, Any]]] = {
+    "reconstruction_failure": reconstruction_failure_to_json,
+    "fabrication_attempt": fabrication_attempt_to_json,
+    "invalid_inference_attempt": invalid_inference_attempt_to_json,
+    "clarification_question": clarification_question_to_json,
+}
+
+
+def _safe_artifact_summary(artifact: Any, max_length: int = 500) -> str:
+    """Create a safe summary of an artifact for logging.
+
+    Attempts to serialize the artifact to JSON for logging, truncating
+    if necessary to avoid excessive log output. Falls back to repr()
+    if JSON serialization fails.
+
+    Args:
+        artifact: The artifact to summarize.
+        max_length: Maximum length of the summary string.
+
+    Returns:
+        A string summary of the artifact suitable for logging.
+    """
+    try:
+        summary = json.dumps(artifact, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        summary = repr(artifact)
+
+    if len(summary) > max_length:
+        return summary[: max_length - 3] + "..."
+    return summary
+
+
+def artifact_to_csv_row(
+    artifact: ArtifactType,
+) -> dict[str, str]:
+    """Flatten any artifact type to CSV-compatible dict.
+
+    Generic artifact serializer that dispatches to the appropriate
+    type-specific serialization function based on the artifact_type
+    discriminator field (tagged union pattern per PEP 589).
+
+    Args:
+        artifact: Any of ReconstructionFailure, FabricationAttempt,
+            InvalidInferenceAttempt, or ClarificationQuestion.
+
+    Returns:
+        Dict with string values suitable for CSV writing.
+
+    Raises:
+        UnknownArtifactTypeError: If artifact_type is missing or unknown.
+
+    Example:
+        >>> failure = ReconstructionFailure(artifact_type="reconstruction_failure", ...)
+        >>> row = artifact_to_csv_row(failure)
+        >>> assert "failure_id" in row
+    """
+    # Cast to Mapping for .get() access on TypedDict union (static type checker compatibility)
+    artifact_mapping = cast("Mapping[str, Any]", artifact)
+    artifact_type = artifact_mapping.get("artifact_type")
+    dispatcher = _ARTIFACT_CSV_DISPATCHERS.get(artifact_type)  # type: ignore[arg-type]
+    if dispatcher is None:
+        artifact_summary = _safe_artifact_summary(artifact)
+        _logger.error(
+            "Unknown or missing artifact_type %r for artifact: %s",
+            artifact_type,
+            artifact_summary,
+        )
+        raise UnknownArtifactTypeError(artifact_type, artifact_summary)
+    return dispatcher(artifact)
+
+
+def artifact_to_json(
+    artifact: ArtifactType,
+) -> dict[str, Any]:
+    """Convert any artifact type to JSON-serializable dict.
+
+    Generic artifact serializer that dispatches to the appropriate
+    type-specific serialization function based on the artifact_type
+    discriminator field (tagged union pattern per PEP 589).
+
+    Args:
+        artifact: Any of ReconstructionFailure, FabricationAttempt,
+            InvalidInferenceAttempt, or ClarificationQuestion.
+
+    Returns:
+        Dict ready for JSON serialization with nested data preserved.
+
+    Raises:
+        UnknownArtifactTypeError: If artifact_type is missing or unknown.
+
+    Example:
+        >>> failure = ReconstructionFailure(artifact_type="reconstruction_failure", ...)
+        >>> data = artifact_to_json(failure)
+        >>> assert "failure_id" in data
+    """
+    # Cast to Mapping for .get() access on TypedDict union (static type checker compatibility)
+    artifact_mapping = cast("Mapping[str, Any]", artifact)
+    artifact_type = artifact_mapping.get("artifact_type")
+    dispatcher = _ARTIFACT_JSON_DISPATCHERS.get(artifact_type)  # type: ignore[arg-type]
+    if dispatcher is None:
+        artifact_summary = _safe_artifact_summary(artifact)
+        _logger.error(
+            "Unknown or missing artifact_type %r for artifact: %s",
+            artifact_type,
+            artifact_summary,
+        )
+        raise UnknownArtifactTypeError(artifact_type, artifact_summary)
+    return dispatcher(artifact)
 
 
 # =============================================================================

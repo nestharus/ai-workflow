@@ -29,6 +29,7 @@ from scripts.knowledge.atomic_fact_models import (
     SPAN_CSV_COLUMNS,
     WORK_REGION_CSV_COLUMNS,
     AnchoringAttempt,
+    ArtifactType,
     AttributeAnnotation,
     BaseFact,
     ClarificationQuestion,
@@ -43,10 +44,13 @@ from scripts.knowledge.atomic_fact_models import (
     SourceContext,
     Span,
     SpanLifecycleState,
+    UnknownArtifactTypeError,
     ValidationFlags,
     WorkRegion,
     anchoring_attempt_to_csv_row,
     anchoring_attempt_to_json,
+    artifact_to_csv_row,
+    artifact_to_json,
     attribute_annotation_to_csv_row,
     attribute_annotation_to_json,
     can_emit_clarification,
@@ -205,6 +209,7 @@ def sample_invalid_inference_attempt(
 ) -> InvalidInferenceAttempt:
     """Sample invalid inference attempt for testing."""
     return InvalidInferenceAttempt(
+        artifact_type="invalid_inference_attempt",
         attempt_id="550e8400-e29b-41d4-a716-446655440007",
         fabrication_type="INVALID_COREFERENCE",
         attempted_inference=sample_implied_fact,
@@ -260,6 +265,50 @@ class TestFabricationType:
         assert FabricationType.INVALID_COREFERENCE.value == "INVALID_COREFERENCE"
         assert FabricationType.UNGROUNDED_IMPLICATION.value == "UNGROUNDED_IMPLICATION"
         assert FabricationType.CONTEXT_BOUNDARY_VIOLATION.value == "CONTEXT_BOUNDARY_VIOLATION"
+
+
+# =============================================================================
+# CUSTOM EXCEPTION TESTS
+# =============================================================================
+
+
+class TestUnknownArtifactTypeError:
+    """Tests for UnknownArtifactTypeError custom exception."""
+
+    def test_inherits_from_value_error(self) -> None:
+        """UnknownArtifactTypeError inherits from ValueError."""
+        assert issubclass(UnknownArtifactTypeError, ValueError)
+
+    def test_exception_with_unknown_type(self) -> None:
+        """Exception captures unknown artifact_type and summary."""
+        error = UnknownArtifactTypeError("unknown_type", '{"field": "value"}')
+        assert error.artifact_type == "unknown_type"
+        assert error.artifact_summary == '{"field": "value"}'
+        assert "unknown_type" in str(error)
+
+    def test_exception_with_none_type(self) -> None:
+        """Exception captures None artifact_type (missing key)."""
+        error = UnknownArtifactTypeError(None, '{"field": "value"}')
+        assert error.artifact_type is None
+        assert "None" in str(error)
+
+    def test_exception_can_be_caught_as_value_error(self) -> None:
+        """UnknownArtifactTypeError can be caught as ValueError."""
+        try:
+            raise UnknownArtifactTypeError("test_type", "summary")
+        except ValueError as e:
+            assert isinstance(e, UnknownArtifactTypeError)
+            assert e.artifact_type == "test_type"
+
+    def test_exception_message_format(self) -> None:
+        """Exception message includes artifact_type in repr format."""
+        error = UnknownArtifactTypeError("bad_type", "artifact_data")
+        assert str(error) == "Unknown or missing artifact_type: 'bad_type'"
+
+    def test_exception_message_with_none(self) -> None:
+        """Exception message formats None correctly."""
+        error = UnknownArtifactTypeError(None, "artifact_data")
+        assert str(error) == "Unknown or missing artifact_type: None"
 
 
 # =============================================================================
@@ -649,6 +698,36 @@ class TestValidateImpliedFactDerivation:
         assert not is_valid
         assert "no derived_from_fact_ids" in error
 
+    def test_empty_inference_justification_fails(
+        self,
+        sample_implied_fact: ImpliedFact,
+        sample_base_fact: BaseFact,
+    ) -> None:
+        """Empty inference_justification fails validation."""
+        implied = {
+            **sample_implied_fact,
+            "derived_from_fact_ids": [sample_base_fact["fact_id"]],
+            "inference_justification": "",
+        }
+        is_valid, error = validate_implied_fact_derivation(implied, [sample_base_fact])  # type: ignore[arg-type]
+        assert not is_valid
+        assert error and "inference_justification" in error
+
+    def test_whitespace_only_inference_justification_fails(
+        self,
+        sample_implied_fact: ImpliedFact,
+        sample_base_fact: BaseFact,
+    ) -> None:
+        """Whitespace-only inference_justification fails validation."""
+        implied = {
+            **sample_implied_fact,
+            "derived_from_fact_ids": [sample_base_fact["fact_id"]],
+            "inference_justification": "   \t\n  ",
+        }
+        is_valid, error = validate_implied_fact_derivation(implied, [sample_base_fact])  # type: ignore[arg-type]
+        assert not is_valid
+        assert error and "inference_justification" in error
+
 
 # =============================================================================
 # LIFECYCLE TRANSITION TESTS
@@ -1015,6 +1094,7 @@ class TestFabricationAttemptToJson:
     ) -> FabricationAttempt:
         """Sample fabrication attempt for testing."""
         return FabricationAttempt(
+            artifact_type="fabrication_attempt",
             attempt_id="550e8400-e29b-41d4-a716-446655440006",
             fabrication_type="HIDDEN_COPULA",
             attempted_fact=sample_base_fact,
@@ -1205,6 +1285,7 @@ class TestReconstructionFailureToCsvRow:
     def sample_reconstruction_failure(self) -> ReconstructionFailure:
         """Sample reconstruction failure for testing."""
         return ReconstructionFailure(
+            artifact_type="reconstruction_failure",
             failure_id="550e8400-e29b-41d4-a716-446655440020",
             span_id="550e8400-e29b-41d4-a716-446655440000",
             original_text="The device supports Bluetooth and Wi-Fi connectivity.",
@@ -1250,10 +1331,11 @@ class TestClarificationQuestionToCsvRow:
     def sample_clarification_question(self) -> ClarificationQuestion:
         """Sample clarification question for testing."""
         return ClarificationQuestion(
+            artifact_type="clarification_question",
             question_id="550e8400-e29b-41d4-a716-446655440021",
             doc_id="doc-001",
-            start_char=500,
-            end_char=550,
+            region_start=500,
+            region_end=550,
             verbatim_text="erupting from the palms of its hands",
             failure_statement="Cannot determine referent for 'its' - no singular entity in context",
             failure_type="anchoring_failure",
@@ -1269,8 +1351,8 @@ class TestClarificationQuestionToCsvRow:
         row = clarification_question_to_csv_row(sample_clarification_question)
         assert row["question_id"] == sample_clarification_question["question_id"]
         assert row["doc_id"] == sample_clarification_question["doc_id"]
-        assert row["start_char"] == str(sample_clarification_question["start_char"])
-        assert row["end_char"] == str(sample_clarification_question["end_char"])
+        assert row["region_start"] == str(sample_clarification_question["region_start"])
+        assert row["region_end"] == str(sample_clarification_question["region_end"])
         assert row["verbatim_text"] == sample_clarification_question["verbatim_text"]
         assert row["failure_statement"] == sample_clarification_question["failure_statement"]
         assert row["failure_type"] == sample_clarification_question["failure_type"]
@@ -1298,6 +1380,7 @@ class TestFabricationAttemptToCsvRow:
     ) -> FabricationAttempt:
         """Sample fabrication attempt for testing."""
         return FabricationAttempt(
+            artifact_type="fabrication_attempt",
             attempt_id="550e8400-e29b-41d4-a716-446655440022",
             fabrication_type="HIDDEN_COPULA",
             attempted_fact=sample_base_fact,
@@ -1347,9 +1430,7 @@ class TestAnchoringAttemptToCsvRow:
             attempted_at="2025-01-15T10:46:00Z",
         )
 
-    def test_flattens_anchoring_attempt(
-        self, sample_anchoring_attempt: AnchoringAttempt
-    ) -> None:
+    def test_flattens_anchoring_attempt(self, sample_anchoring_attempt: AnchoringAttempt) -> None:
         """AnchoringAttempt is flattened with JSON-encoded nested fields."""
         row = anchoring_attempt_to_csv_row(sample_anchoring_attempt)
         assert row["attempt_id"] == sample_anchoring_attempt["attempt_id"]
@@ -1361,9 +1442,7 @@ class TestAnchoringAttemptToCsvRow:
         assert row["context_expansion_end"] == str(
             sample_anchoring_attempt["context_expansion_end"]
         )
-        assert row["uncovered_reduction"] == str(
-            sample_anchoring_attempt["uncovered_reduction"]
-        )
+        assert row["uncovered_reduction"] == str(sample_anchoring_attempt["uncovered_reduction"])
         assert row["succeeded"] == "true"
         assert row["attempted_at"] == sample_anchoring_attempt["attempted_at"]
         # Check JSON-encoded fields are present
@@ -1415,9 +1494,7 @@ class TestProgressTestToCsvRow:
         assert row["initial_uncovered_count"] == str(
             sample_progress_test["initial_uncovered_count"]
         )
-        assert row["final_uncovered_count"] == str(
-            sample_progress_test["final_uncovered_count"]
-        )
+        assert row["final_uncovered_count"] == str(sample_progress_test["final_uncovered_count"])
         assert row["stalled"] == "false"
         assert row["clarification_emitted"] == "false"
         assert row["completed_at"] == sample_progress_test["completed_at"]
@@ -1429,3 +1506,369 @@ class TestProgressTestToCsvRow:
         row = progress_test_to_csv_row(sample_progress_test)
         for col in PROGRESS_TEST_CSV_COLUMNS:
             assert col in row
+
+
+# =============================================================================
+# WORK REGION TO_SPAN METHOD TESTS (Comment 1 - Plan Contract)
+# =============================================================================
+
+
+class TestWorkRegionToSpanMethod:
+    """Tests for WorkRegion.to_span() method (plan-required contract)."""
+
+    def test_to_span_method_exists(self) -> None:
+        """WorkRegion has a to_span method as required by plan."""
+        region = WorkRegion(
+            region_id="test-region",
+            doc_id="doc-001",
+            start_char=0,
+            end_char=50,
+            is_processed=False,
+            created_at="2025-01-15T10:00:00Z",
+        )
+        assert hasattr(region, "to_span")
+        assert callable(region.to_span)
+
+    def test_to_span_returns_span(self, sample_canonical_string: str) -> None:
+        """to_span() method returns a Span with correct values."""
+        region = WorkRegion(
+            region_id="test-region",
+            doc_id="doc-001",
+            start_char=0,
+            end_char=52,
+            is_processed=False,
+            created_at="2025-01-15T10:00:00Z",
+        )
+        span = region.to_span(
+            canonical_string=sample_canonical_string,
+            span_id="new-span-id",
+            timestamp="2025-01-15T11:00:00Z",
+        )
+        assert span["span_id"] == "new-span-id"
+        assert span["doc_id"] == "doc-001"
+        assert span["start_char"] == 0
+        assert span["end_char"] == 52
+        assert span["state"] == "ATTEMPTABLE"
+        assert span["text"] == sample_canonical_string[:52]
+
+    def test_to_span_raises_on_invalid_offsets(self, sample_canonical_string: str) -> None:
+        """to_span() raises ValueError for invalid offsets."""
+        bad_region = WorkRegion(
+            region_id="bad-region",
+            doc_id="doc-001",
+            start_char=0,
+            end_char=1000,  # Beyond canonical string length
+            is_processed=False,
+            created_at="2025-01-15T10:00:00Z",
+        )
+        with pytest.raises(ValueError):
+            bad_region.to_span(sample_canonical_string, "id", "ts")
+
+
+# =============================================================================
+# GENERIC ARTIFACT SERIALIZATION TESTS (Comment 4 - Plan Contract)
+# =============================================================================
+
+
+class TestGenericArtifactSerialization:
+    """Tests for artifact_to_csv_row and artifact_to_json functions."""
+
+    @pytest.fixture
+    def sample_reconstruction_failure(self) -> ReconstructionFailure:
+        """Sample reconstruction failure for testing."""
+        return ReconstructionFailure(
+            artifact_type="reconstruction_failure",
+            failure_id="550e8400-e29b-41d4-a716-446655440020",
+            span_id="550e8400-e29b-41d4-a716-446655440000",
+            original_text="The device supports Bluetooth and Wi-Fi connectivity.",
+            reconstructed_text="The device supports Bluetooth connectivity.",
+            uncovered_phrases=["and Wi-Fi"],
+            uncovered_offsets=[(32, 42)],
+            facts_used=["fact-001"],
+            proof_trace="Applied fact-001. Missing: conjunction.",
+            substitutions_used={},
+            failed_at="2025-01-15T10:45:00Z",
+        )
+
+    @pytest.fixture
+    def sample_clarification(self) -> ClarificationQuestion:
+        """Sample clarification question for testing."""
+        return ClarificationQuestion(
+            artifact_type="clarification_question",
+            question_id="550e8400-e29b-41d4-a716-446655440021",
+            doc_id="doc-001",
+            region_start=500,
+            region_end=550,
+            verbatim_text="erupting from the palms of its hands",
+            failure_statement="Cannot determine referent",
+            failure_type="anchoring_failure",
+            bounded_attempts_count=3,
+            author_response="",
+            emitted_at="2025-01-15T10:50:00Z",
+        )
+
+    def test_artifact_to_csv_row_reconstruction_failure(
+        self, sample_reconstruction_failure: ReconstructionFailure
+    ) -> None:
+        """artifact_to_csv_row correctly dispatches ReconstructionFailure."""
+        row = artifact_to_csv_row(sample_reconstruction_failure)
+        assert "failure_id" in row
+        assert row["failure_id"] == sample_reconstruction_failure["failure_id"]
+
+    def test_artifact_to_csv_row_clarification_question(
+        self, sample_clarification: ClarificationQuestion
+    ) -> None:
+        """artifact_to_csv_row correctly dispatches ClarificationQuestion."""
+        row = artifact_to_csv_row(sample_clarification)
+        assert "question_id" in row
+        assert row["question_id"] == sample_clarification["question_id"]
+
+    def test_artifact_to_json_reconstruction_failure(
+        self, sample_reconstruction_failure: ReconstructionFailure
+    ) -> None:
+        """artifact_to_json correctly dispatches ReconstructionFailure."""
+        data = artifact_to_json(sample_reconstruction_failure)
+        assert "failure_id" in data
+        assert data["failure_id"] == sample_reconstruction_failure["failure_id"]
+
+    def test_artifact_to_json_clarification_question(
+        self, sample_clarification: ClarificationQuestion
+    ) -> None:
+        """artifact_to_json correctly dispatches ClarificationQuestion."""
+        data = artifact_to_json(sample_clarification)
+        assert "question_id" in data
+        assert data["question_id"] == sample_clarification["question_id"]
+
+    def test_artifact_type_alias_includes_all_types(self) -> None:
+        """ArtifactType includes exactly the expected artifact model types."""
+        from typing import get_args
+
+        # ArtifactType must contain exactly these types - no more, no less
+        expected_types = {
+            ReconstructionFailure,
+            FabricationAttempt,
+            InvalidInferenceAttempt,
+            ClarificationQuestion,
+        }
+        actual_types = set(get_args(ArtifactType))
+        assert actual_types == expected_types, (
+            f"ArtifactType mismatch. "
+            f"Missing: {expected_types - actual_types}, "
+            f"Unexpected: {actual_types - expected_types}"
+        )
+
+    def test_artifact_to_csv_row_raises_on_unknown_type(self) -> None:
+        """artifact_to_csv_row raises UnknownArtifactTypeError for unknown artifact_type."""
+        bad_artifact = {"artifact_type": "unknown_type", "some_field": "value"}
+        with pytest.raises(UnknownArtifactTypeError, match=r"artifact_type") as excinfo:
+            artifact_to_csv_row(bad_artifact)  # type: ignore[arg-type]
+        assert excinfo.value.artifact_type == "unknown_type"
+        assert "some_field" in excinfo.value.artifact_summary
+
+    def test_artifact_to_csv_row_raises_on_missing_type(self) -> None:
+        """artifact_to_csv_row raises UnknownArtifactTypeError for missing artifact_type."""
+        bad_artifact = {"some_field": "value"}
+        with pytest.raises(UnknownArtifactTypeError, match=r"artifact_type") as excinfo:
+            artifact_to_csv_row(bad_artifact)  # type: ignore[arg-type]
+        assert excinfo.value.artifact_type is None
+
+    def test_artifact_to_json_raises_on_unknown_type(self) -> None:
+        """artifact_to_json raises UnknownArtifactTypeError for unknown artifact_type."""
+        bad_artifact = {"artifact_type": "unknown_type", "some_field": "value"}
+        with pytest.raises(UnknownArtifactTypeError, match=r"artifact_type") as excinfo:
+            artifact_to_json(bad_artifact)  # type: ignore[arg-type]
+        assert excinfo.value.artifact_type == "unknown_type"
+        assert "some_field" in excinfo.value.artifact_summary
+
+    def test_artifact_to_json_raises_on_missing_type(self) -> None:
+        """artifact_to_json raises UnknownArtifactTypeError for missing artifact_type."""
+        bad_artifact = {"some_field": "value"}
+        with pytest.raises(UnknownArtifactTypeError, match=r"artifact_type") as excinfo:
+            artifact_to_json(bad_artifact)  # type: ignore[arg-type]
+        assert excinfo.value.artifact_type is None
+
+    def test_artifact_to_csv_row_logs_on_unknown_type(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """artifact_to_csv_row logs error with artifact summary before raising."""
+        import logging
+
+        bad_artifact = {"artifact_type": "unknown_type", "some_field": "value"}
+        with caplog.at_level(logging.ERROR), pytest.raises(UnknownArtifactTypeError):
+            artifact_to_csv_row(bad_artifact)  # type: ignore[arg-type]
+        assert "Unknown or missing artifact_type" in caplog.text
+        assert "'unknown_type'" in caplog.text
+        assert "some_field" in caplog.text
+
+    def test_artifact_to_csv_row_logs_on_missing_type(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """artifact_to_csv_row logs error with artifact summary when type is missing."""
+        import logging
+
+        bad_artifact = {"some_field": "value"}
+        with caplog.at_level(logging.ERROR), pytest.raises(UnknownArtifactTypeError):
+            artifact_to_csv_row(bad_artifact)  # type: ignore[arg-type]
+        assert "Unknown or missing artifact_type" in caplog.text
+        assert "None" in caplog.text
+
+    def test_artifact_to_json_logs_on_unknown_type(self, caplog: pytest.LogCaptureFixture) -> None:
+        """artifact_to_json logs error with artifact summary before raising."""
+        import logging
+
+        bad_artifact = {"artifact_type": "unknown_type", "some_field": "value"}
+        with caplog.at_level(logging.ERROR), pytest.raises(UnknownArtifactTypeError):
+            artifact_to_json(bad_artifact)  # type: ignore[arg-type]
+        assert "Unknown or missing artifact_type" in caplog.text
+        assert "'unknown_type'" in caplog.text
+        assert "some_field" in caplog.text
+
+    def test_artifact_to_json_logs_on_missing_type(self, caplog: pytest.LogCaptureFixture) -> None:
+        """artifact_to_json logs error with artifact summary when type is missing."""
+        import logging
+
+        bad_artifact = {"some_field": "value"}
+        with caplog.at_level(logging.ERROR), pytest.raises(UnknownArtifactTypeError):
+            artifact_to_json(bad_artifact)  # type: ignore[arg-type]
+        assert "Unknown or missing artifact_type" in caplog.text
+        assert "None" in caplog.text
+
+    def test_artifact_type_preserved_in_json_output(
+        self, sample_reconstruction_failure: ReconstructionFailure
+    ) -> None:
+        """artifact_type field is preserved in JSON output."""
+        data = artifact_to_json(sample_reconstruction_failure)
+        assert data["artifact_type"] == "reconstruction_failure"
+
+    def test_artifact_type_preserved_in_csv_output(
+        self, sample_clarification: ClarificationQuestion
+    ) -> None:
+        """artifact_type field is preserved in CSV output."""
+        row = artifact_to_csv_row(sample_clarification)
+        assert row["artifact_type"] == "clarification_question"
+
+
+# =============================================================================
+# WORK REGION DATACLASS TESTS (Comment 1 - Plan Contract)
+# =============================================================================
+
+
+class TestWorkRegionDataclass:
+    """Tests for WorkRegion as a dataclass with dict-like access."""
+
+    def test_work_region_is_dataclass(self) -> None:
+        """WorkRegion is a dataclass, not a TypedDict."""
+        from dataclasses import is_dataclass
+
+        assert is_dataclass(WorkRegion)
+
+    def test_work_region_dict_like_access(self, sample_work_region: WorkRegion) -> None:
+        """WorkRegion supports dict-like access for compatibility."""
+        assert sample_work_region["region_id"] == sample_work_region.region_id
+        assert sample_work_region["doc_id"] == sample_work_region.doc_id
+        assert sample_work_region["start_char"] == sample_work_region.start_char
+
+    def test_work_region_to_dict(self, sample_work_region: WorkRegion) -> None:
+        """WorkRegion.to_dict() returns dict representation."""
+        d = sample_work_region.to_dict()
+        assert isinstance(d, dict)
+        assert d["region_id"] == sample_work_region.region_id
+        assert d["doc_id"] == sample_work_region.doc_id
+        assert d["start_char"] == sample_work_region.start_char
+        assert d["end_char"] == sample_work_region.end_char
+        assert d["is_processed"] == sample_work_region.is_processed
+        assert d["created_at"] == sample_work_region.created_at
+
+    def test_work_region_raises_keyerror_for_missing_key(
+        self, sample_work_region: WorkRegion
+    ) -> None:
+        """WorkRegion raises KeyError (not AttributeError) for missing keys."""
+        with pytest.raises(KeyError) as excinfo:
+            _ = sample_work_region["nonexistent_key"]
+        assert excinfo.value.args[0] == "nonexistent_key"
+
+    def test_work_region_is_mapping(self, sample_work_region: WorkRegion) -> None:
+        """WorkRegion implements collections.abc.Mapping."""
+        from collections.abc import Mapping
+
+        assert isinstance(sample_work_region, Mapping)
+
+    def test_work_region_len(self, sample_work_region: WorkRegion) -> None:
+        """WorkRegion returns correct length matching declared fields."""
+        from dataclasses import fields
+
+        assert len(sample_work_region) == len(fields(WorkRegion))
+
+    def test_work_region_iter(self, sample_work_region: WorkRegion) -> None:
+        """WorkRegion iterates over field names."""
+        expected_keys = [
+            "region_id",
+            "doc_id",
+            "start_char",
+            "end_char",
+            "is_processed",
+            "created_at",
+        ]
+        assert list(sample_work_region) == expected_keys
+
+    def test_work_region_keys(self, sample_work_region: WorkRegion) -> None:
+        """WorkRegion.keys() returns field names."""
+        expected_keys = {
+            "region_id",
+            "doc_id",
+            "start_char",
+            "end_char",
+            "is_processed",
+            "created_at",
+        }
+        assert set(sample_work_region.keys()) == expected_keys
+
+    def test_work_region_values(self, sample_work_region: WorkRegion) -> None:
+        """WorkRegion.values() returns field values."""
+        values = list(sample_work_region.values())
+        assert len(values) == 6
+        assert sample_work_region.region_id in values
+        assert sample_work_region.doc_id in values
+        assert sample_work_region.start_char in values
+        assert sample_work_region.end_char in values
+        assert sample_work_region.is_processed in values
+        assert sample_work_region.created_at in values
+
+    def test_work_region_items(self, sample_work_region: WorkRegion) -> None:
+        """WorkRegion.items() returns key-value pairs."""
+        items = dict(sample_work_region.items())
+        assert items["region_id"] == sample_work_region.region_id
+        assert items["doc_id"] == sample_work_region.doc_id
+        assert items["start_char"] == sample_work_region.start_char
+        assert items["end_char"] == sample_work_region.end_char
+        assert items["is_processed"] == sample_work_region.is_processed
+        assert items["created_at"] == sample_work_region.created_at
+
+    def test_work_region_dict_conversion(self, sample_work_region: WorkRegion) -> None:
+        """WorkRegion can be converted to dict via dict()."""
+        d = dict(sample_work_region)
+        assert d == sample_work_region.to_dict()
+
+    def test_work_region_in_operator(self, sample_work_region: WorkRegion) -> None:
+        """WorkRegion supports 'in' operator for key membership."""
+        assert "region_id" in sample_work_region
+        assert "doc_id" in sample_work_region
+        assert "nonexistent_key" not in sample_work_region
+
+    def test_work_region_get(self, sample_work_region: WorkRegion) -> None:
+        """WorkRegion supports get() with default via Mapping."""
+        assert sample_work_region.get("region_id") == sample_work_region.region_id
+        assert sample_work_region.get("nonexistent", "default") == "default"
+        assert sample_work_region.get("nonexistent") is None
+
+    def test_work_region_field_names_matches_dataclass_fields(self) -> None:
+        """WorkRegion._field_names matches actual dataclass fields.
+
+        This test validates that the manual _field_names tuple stays in sync
+        with the dataclass fields. The verification function runs at import
+        time, but this test documents and confirms the invariant.
+        """
+        import dataclasses
+
+        actual_fields = tuple(f.name for f in dataclasses.fields(WorkRegion))
+        assert WorkRegion._field_names == actual_fields

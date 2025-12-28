@@ -1,4 +1,4 @@
-"""GitHub and Linear operations client for PR management and ticket tracking.
+r"""GitHub and Linear operations client for PR management and ticket tracking.
 
 Usage:
     uv run pr fetch-threads --pr <number> --output-dir <path>
@@ -21,8 +21,12 @@ Usage:
     uv run pr get-expected-branch-name <ticket-id>
     uv run pr is-valid-branch-name --ticket <id> --branch <name>
     uv run pr extract-ticket-id [<branch-name>]
+    echo "$stdout" | uv run pr extract-review-path
+    uv run pr is-testable <file-path>
+    uv run pr affected-tests <file-path> [--root <dir>]
     uv run pr list-unresolved-comments <ticket-id>
     uv run pr parse-coderabbit --review-file <path> --output-dir <path>
+    uv run pr aggregate-tasks --input-dir <path> [--files-only]
     uv run pr promote-worktree [<identifier>]
     uv run pr cleanup-sandbox [<identifier>]
     uv run pr rebase-start [<identifier>]
@@ -30,6 +34,8 @@ Usage:
     uv run pr sandbox-rebase --branch <name> --target <name>
     uv run pr sandbox-merge --branch <name> --target <name>
     uv run pr sandbox-status [--request-id <uuid>]
+    echo "file1.py\nfile2.py" | uv run pr file-hash [--root <dir>] > hashes.json
+    uv run pr file-hash-compare before.json after.json
 """
 
 from __future__ import annotations
@@ -376,6 +382,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Branch name to parse. If omitted, uses current branch.",
     )
 
+    # extract-review-path command
+    subparsers.add_parser(
+        "extract-review-path",
+        help="Extract review file path from stdin (pipe CodeRabbit output)",
+    )
+
+    # is-testable command
+    is_testable_parser = subparsers.add_parser(
+        "is-testable",
+        help="Check if a file requires testing",
+    )
+    is_testable_parser.add_argument(
+        "file_path",
+        help="Path to the file to check",
+    )
+
+    # affected-tests command
+    affected_tests_parser = subparsers.add_parser(
+        "affected-tests",
+        help="Find all test files affected by changes to a source file",
+    )
+    affected_tests_parser.add_argument(
+        "file_path",
+        help="Path to the source file",
+    )
+    affected_tests_parser.add_argument(
+        "--root",
+        default=None,
+        help="Repository root directory (default: cwd)",
+    )
+
     # list-unresolved-comments command
     unresolved_comments_parser = subparsers.add_parser(
         "list-unresolved-comments",
@@ -402,6 +439,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         required=True,
         help="Directory to write task JSON files to",
+    )
+
+    # aggregate-tasks command
+    aggregate_tasks_parser = subparsers.add_parser(
+        "aggregate-tasks",
+        help="Aggregate tasks and threads by file",
+    )
+    aggregate_tasks_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        required=True,
+        help=(
+            "Directory containing task JSON files (coderabbit_*.json, thread_*.json, local_*.json)"
+        ),
+    )
+    aggregate_tasks_parser.add_argument(
+        "--files-only",
+        action="store_true",
+        help="Output only file paths (one per line) for piping to file-hash",
     )
 
     # promote-worktree command
@@ -522,6 +578,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Path to sandbox server socket",
     )
 
+    # file-hash command (reads file list from stdin, outputs hashes to stdout)
+    file_hash_parser = subparsers.add_parser(
+        "file-hash",
+        help="Hash files from stdin, output JSON to stdout",
+    )
+    file_hash_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Root directory for resolving relative paths (default: cwd)",
+    )
+
+    # file-hash-compare command
+    file_hash_compare_parser = subparsers.add_parser(
+        "file-hash-compare",
+        help="Compare two hash files (exit 0=identical, 1=different, 2=error)",
+    )
+    file_hash_compare_parser.add_argument(
+        "file1",
+        type=Path,
+        help="First hash JSON file",
+    )
+    file_hash_compare_parser.add_argument(
+        "file2",
+        type=Path,
+        help="Second hash JSON file",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -578,10 +662,18 @@ def main(argv: list[str] | None = None) -> int:
         return commands.is_valid_branch_name_command(args.ticket, args.branch)
     if args.command == "extract-ticket-id":
         return commands.extract_ticket_id_command(args.branch_name)
+    if args.command == "extract-review-path":
+        return commands.extract_review_path_command()
+    if args.command == "is-testable":
+        return commands.is_testable_command(args.file_path)
+    if args.command == "affected-tests":
+        return commands.affected_tests_command(args.file_path, args.root)
     if args.command == "list-unresolved-comments":
         return commands.list_unresolved_comments_command(args.ticket_id)
     if args.command == "parse-coderabbit":
         return commands.parse_coderabbit_command(args.review_file, args.output_dir)
+    if args.command == "aggregate-tasks":
+        return commands.aggregate_tasks_command(args.input_dir, files_only=args.files_only)
     if args.command == "promote-worktree":
         return commands.promote_worktree_command(args.identifier)
     if args.command == "cleanup-sandbox":
@@ -596,6 +688,10 @@ def main(argv: list[str] | None = None) -> int:
         return commands.sandbox_merge_command(args.branch, args.target, args.socket, args.verbose)
     if args.command == "sandbox-status":
         return commands.sandbox_status_command(args.request_id, args.socket)
+    if args.command == "file-hash":
+        return commands.file_hash_command(args.root)
+    if args.command == "file-hash-compare":
+        return commands.file_hash_compare_command(args.file1, args.file2)
 
     return 1
 

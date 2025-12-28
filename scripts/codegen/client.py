@@ -12,10 +12,79 @@ Workspace should contain state.yaml from planner.
 from __future__ import annotations
 
 import argparse
+import functools
 import json
+import logging
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Validation errors: user/input issues that can be fixed by correcting input
+# Includes FileNotFoundError as missing files (e.g., state.yaml) are user-fixable validation issues
+VALIDATION_ERRORS = (ValueError, KeyError, TypeError, FileNotFoundError)
 
 
+def _build_error_response(e: Exception) -> dict[str, Any]:
+    """Build a standardized error response JSON for exception handling.
+
+    Args:
+        e: The exception that was raised
+
+    Returns:
+        Dictionary with error details including type, message, and category
+    """
+    error_type = e.__class__.__name__
+    error_category = "validation" if isinstance(e, VALIDATION_ERRORS) else "system"
+
+    return {
+        "ok": False,
+        "error": str(e),
+        "error_type": error_type,
+        "error_category": error_category,
+    }
+
+
+def handle_command_errors(
+    command_name: str,
+) -> Callable[[Callable[[Path], int]], Callable[[Path], int]]:
+    """Decorator to handle command errors uniformly.
+
+    Catches VALIDATION_ERRORS and logs them with logger.error, catches general
+    Exception and logs with logger.exception. Both cases print JSON error response
+    and return 1.
+
+    Args:
+        command_name: Name of the command for logging purposes
+
+    Returns:
+        Decorator function that wraps command functions
+    """
+
+    def _handle_error(e: Exception, workspace: Path) -> int:
+        """Handle error by logging, printing JSON response, and returning exit code."""
+        if isinstance(e, VALIDATION_ERRORS):
+            logger.error("%s failed for workspace %s: %s", command_name, workspace, e)
+        else:
+            logger.exception("%s failed for workspace %s", command_name, workspace)
+        print(json.dumps(_build_error_response(e)))
+        return 1
+
+    def decorator(func: Callable[[Path], int]) -> Callable[[Path], int]:
+        @functools.wraps(func)
+        def wrapper(workspace: Path) -> int:
+            try:
+                return func(workspace)
+            except Exception as e:
+                return _handle_error(e, workspace)
+
+        return wrapper
+
+    return decorator
+
+
+@handle_command_errors("init_command")
 def init_command(workspace: Path) -> int:
     """Initialize codegen from existing design state.
 
@@ -34,14 +103,19 @@ def init_command(workspace: Path) -> int:
     state.phase = "init"
     state.save()
 
-    print(json.dumps({
-        "ok": True,
-        "workspace": str(workspace),
-        "ticket_id": state.ticket_id,
-    }))
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "workspace": str(workspace),
+                "ticket_id": state.ticket_id,
+            }
+        )
+    )
     return 0
 
 
+@handle_command_errors("next_command")
 def next_command(workspace: Path) -> int:
     """Get next action for orchestrator.
 
@@ -49,7 +123,7 @@ def next_command(workspace: Path) -> int:
         workspace: Path to workspace with state.yaml
 
     Returns:
-        0 on success
+        0 on success, 1 on failure
     """
     from scripts.codegen.execute_plan import ExecutePlanStateMachine
     from scripts.planner.state import DesignState
@@ -59,10 +133,18 @@ def next_command(workspace: Path) -> int:
     machine.next_action()
 
     next_action = state.read_next_action()
-    print(json.dumps({"ok": True, **next_action}))
+    print(
+        json.dumps(
+            {
+                **next_action,
+                "ok": True,
+            }
+        )
+    )
     return 0
 
 
+@handle_command_errors("process_command")
 def process_command(workspace: Path) -> int:
     """Process agent output.
 
@@ -70,7 +152,7 @@ def process_command(workspace: Path) -> int:
         workspace: Path to workspace with state.yaml
 
     Returns:
-        0 on success
+        0 on success, 1 on failure
     """
     from scripts.codegen.execute_plan import ExecutePlanStateMachine
     from scripts.planner.state import DesignState
@@ -80,10 +162,18 @@ def process_command(workspace: Path) -> int:
     machine.process_agent_output()
 
     next_action = state.read_next_action()
-    print(json.dumps({"ok": True, **next_action}))
+    print(
+        json.dumps(
+            {
+                **next_action,
+                "ok": True,
+            }
+        )
+    )
     return 0
 
 
+@handle_command_errors("status_command")
 def status_command(workspace: Path) -> int:
     """Get execution status.
 
@@ -91,7 +181,7 @@ def status_command(workspace: Path) -> int:
         workspace: Path to workspace with state.yaml
 
     Returns:
-        0 on success
+        0 on success, 1 on failure
     """
     from scripts.planner.state import DesignState
 
@@ -99,22 +189,25 @@ def status_command(workspace: Path) -> int:
 
     total_units = len(state.units)
     completed = sum(
-        len(layer.get("units_completed", []))
-        for layer in state.layer_execution.values()
+        len(layer.get("units_completed", [])) for layer in state.layer_execution.values()
     )
     failed = len(state.failures)
 
-    print(json.dumps({
-        "ok": True,
-        "ticket_id": state.ticket_id,
-        "phase": state.phase,
-        "current_layer": state.current_layer,
-        "total_units": total_units,
-        "completed_units": completed,
-        "failed_units": failed,
-        "worktree_path": state.worktree_path,
-        "pr_url": state.pr_url,
-    }))
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "ticket_id": state.ticket_id,
+                "phase": state.phase,
+                "current_layer": state.current_layer,
+                "total_units": total_units,
+                "completed_units": completed,
+                "failed_units": failed,
+                "worktree_path": state.worktree_path,
+                "pr_url": state.pr_url,
+            }
+        )
+    )
     return 0
 
 

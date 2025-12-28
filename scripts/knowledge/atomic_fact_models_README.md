@@ -243,8 +243,8 @@ from scripts.knowledge.atomic_fact_models import ClarificationQuestion
 clarification = ClarificationQuestion(
     question_id="550e8400-e29b-41d4-a716-446655440005",
     doc_id="doc-001",
-    start_char=500,
-    end_char=550,
+    region_start=500,
+    region_end=550,
     verbatim_text="erupting from the palms of its hands",
     failure_statement="Cannot determine referent for 'its' - no singular entity in context",
     failure_type="anchoring_failure",
@@ -256,10 +256,18 @@ clarification = ClarificationQuestion(
 
 ## CSV Schema Documentation
 
+Note: Fields ending in `_json` contain JSON-encoded nested structures.
+
 ### Span CSV Columns
 
 ```
 span_id, start_char, end_char, state, text, doc_id, created_at, updated_at
+```
+
+### Work Region CSV Columns
+
+```
+region_id, doc_id, start_char, end_char, is_processed, created_at
 ```
 
 ### Fact CSV Columns
@@ -270,22 +278,61 @@ source_contexts_json, confidence, extracted_at, validation_flags_json,
 inference_justification, derived_from_fact_ids_json
 ```
 
-Note: Fields ending in `_json` contain JSON-encoded nested structures.
+### Entity Declaration CSV Columns
+
+```
+entity_id, fact_type, entity_name, source_context_json, status
+```
+
+### Attribute Annotation CSV Columns
+
+```
+annotation_id, fact_type, entity_name, attribute, source_context_json
+```
 
 ### Reconstruction Failure CSV Columns
 
 ```
-failure_id, span_id, original_text, reconstructed_text,
+artifact_type, failure_id, span_id, original_text, reconstructed_text,
 uncovered_phrases_json, uncovered_offsets_json, facts_used_json,
 proof_trace, substitutions_used_json, failed_at
+```
+
+### Fabrication Attempt CSV Columns
+
+```
+artifact_type, attempt_id, fabrication_type, attempted_fact_json, source_span_json,
+detection_method, violation_details, detected_at
+```
+
+### Invalid Inference Attempt CSV Columns
+
+```
+artifact_type, attempt_id, fabrication_type, attempted_inference_json, base_facts_used_json,
+inference_error, detected_at
 ```
 
 ### Clarification Question CSV Columns
 
 ```
-question_id, doc_id, start_char, end_char, verbatim_text,
+artifact_type, question_id, doc_id, region_start, region_end, verbatim_text,
 failure_statement, failure_type, bounded_attempts_count,
 author_response, emitted_at
+```
+
+### Anchoring Attempt CSV Columns
+
+```
+attempt_id, span_id, uncovered_phrase, context_expansion_start,
+context_expansion_end, existing_facts_searched_json, new_facts_extracted_json,
+uncovered_reduction, succeeded, attempted_at
+```
+
+### Progress Test CSV Columns
+
+```
+test_id, span_id, initial_uncovered_count, anchoring_attempts_json,
+final_uncovered_count, stalled, clarification_emitted, completed_at
 ```
 
 ## JSON Schema Examples
@@ -322,6 +369,7 @@ author_response, emitted_at
 
 ```json
 {
+  "artifact_type": "reconstruction_failure",
   "failure_id": "550e8400-e29b-41d4-a716-446655440003",
   "span_id": "span-001",
   "original_text": "The device supports Bluetooth and Wi-Fi.",
@@ -332,6 +380,101 @@ author_response, emitted_at
   "proof_trace": "Applied fact-001. Missing: second connectivity type.",
   "substitutions_used": {},
   "failed_at": "2025-01-15T10:45:00Z"
+}
+```
+
+### WorkRegion JSON
+
+```json
+{
+  "region_id": "550e8400-e29b-41d4-a716-446655440001",
+  "doc_id": "doc-001",
+  "start_char": 0,
+  "end_char": 5000,
+  "is_processed": false,
+  "created_at": "2025-01-15T10:00:00Z"
+}
+```
+
+### FabricationAttempt JSON
+
+```json
+{
+  "artifact_type": "fabrication_attempt",
+  "attempt_id": "550e8400-e29b-41d4-a716-446655440004",
+  "fabrication_type": "HIDDEN_COPULA",
+  "attempted_fact": {
+    "fact_id": "...",
+    "fact_type": "BASE_FACT",
+    "canonical_text": "...",
+    "..."
+  },
+  "source_span": {
+    "span_id": "...",
+    "start_char": 0,
+    "end_char": 100,
+    "..."
+  },
+  "detection_method": "spacy_grammar",
+  "violation_details": "Verb 'are' was added to source text.",
+  "detected_at": "2025-01-15T10:40:00Z"
+}
+```
+
+### ClarificationQuestion JSON
+
+```json
+{
+  "artifact_type": "clarification_question",
+  "question_id": "550e8400-e29b-41d4-a716-446655440009",
+  "doc_id": "doc-001",
+  "region_start": 500,
+  "region_end": 550,
+  "verbatim_text": "erupting from the palms of its hands",
+  "failure_statement": "Cannot determine referent for 'its' - no singular entity in context",
+  "failure_type": "anchoring_failure",
+  "bounded_attempts_count": 3,
+  "author_response": "",
+  "emitted_at": "2025-01-15T10:50:00Z"
+}
+```
+
+### AnchoringAttempt JSON
+
+```json
+{
+  "attempt_id": "550e8400-e29b-41d4-a716-446655440010",
+  "span_id": "span-001",
+  "uncovered_phrase": "and Wi-Fi",
+  "context_expansion_start": 80,
+  "context_expansion_end": 280,
+  "existing_facts_searched": ["fact-001"],
+  "new_facts_extracted": ["fact-003"],
+  "uncovered_reduction": 10,
+  "succeeded": true,
+  "attempted_at": "2025-01-15T10:46:00Z"
+}
+```
+
+### ProgressTest JSON
+
+```json
+{
+  "test_id": "550e8400-e29b-41d4-a716-446655440011",
+  "span_id": "span-001",
+  "initial_uncovered_count": 25,
+  "anchoring_attempts": [
+    {
+      "attempt_id": "attempt-001",
+      "span_id": "span-001",
+      "uncovered_phrase": "and Wi-Fi",
+      "..."
+    }
+  ],
+  "final_uncovered_count": 15,
+  "stalled": false,
+  "clarification_emitted": false,
+  "completed_at": "2025-01-15T10:48:00Z"
 }
 ```
 
