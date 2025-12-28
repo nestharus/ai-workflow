@@ -8,6 +8,7 @@ from scripts.dev.linter.linters.actionlint import ActionlintLinter
 from scripts.dev.linter.linters.detect_secrets import DetectSecretsLinter
 from scripts.dev.linter.linters.dotenvlint import DotenvlintLinter
 from scripts.dev.linter.linters.gitleaks import GitleaksLinter
+from scripts.dev.linter.linters.shellcheck import ShellcheckLinter
 from scripts.dev.linter.linters.yamllint import YamllintLinter
 
 if TYPE_CHECKING:
@@ -394,14 +395,17 @@ class TestRunDetectSecrets:
                 "scripts.dev.linter.linters.detect_secrets.get_executable",
                 return_value="/usr/bin/uv",
             ),
-            patch("scripts.dev.linter.linters.detect_secrets.run_checked") as mock_run_checked,
+            patch(
+                "scripts.dev.linter.linters.detect_secrets.subprocess.run"
+            ) as mock_subprocess_run,
         ):
+            mock_subprocess_run.return_value = MagicMock(returncode=0)
             linter = DetectSecretsLinter()
             # Test with file filtering (the path that uses excluded_extensions)
             linter.run(files=["script.py", "script.pyc", "image.png", "data.db"])
 
-        assert mock_run_checked.called
-        cmd = mock_run_checked.call_args[0][0]
+        assert mock_subprocess_run.called
+        cmd = mock_subprocess_run.call_args[0][0]
         # script.py should be included
         assert any("script.py" in arg for arg in cmd), "Python source files should be scanned"
         # Binary files should be excluded
@@ -433,13 +437,16 @@ class TestRunDetectSecrets:
                 "scripts.dev.linter.linters.detect_secrets.get_executable",
                 return_value="/usr/bin/uv",
             ),
-            patch("scripts.dev.linter.linters.detect_secrets.run_checked") as mock_run_checked,
+            patch(
+                "scripts.dev.linter.linters.detect_secrets.subprocess.run"
+            ) as mock_subprocess_run,
         ):
+            mock_subprocess_run.return_value = MagicMock(returncode=0)
             linter = DetectSecretsLinter()
             linter.run(files=["pyproject.toml", "uv.lock", ".secrets.baseline"])
 
-        assert mock_run_checked.called
-        cmd = mock_run_checked.call_args[0][0]
+        assert mock_subprocess_run.called
+        cmd = mock_subprocess_run.call_args[0][0]
         # Extract file arguments (those after --baseline and its value)
         baseline_idx = cmd.index("--baseline")
         file_args = cmd[baseline_idx + 2 :]  # Skip --baseline and its value
@@ -479,13 +486,16 @@ class TestRunDetectSecrets:
                 "scripts.dev.linter.linters.detect_secrets.get_executable",
                 return_value="/usr/bin/uv",
             ),
-            patch("scripts.dev.linter.linters.detect_secrets.run_checked") as mock_run_checked,
+            patch(
+                "scripts.dev.linter.linters.detect_secrets.subprocess.run"
+            ) as mock_subprocess_run,
         ):
+            mock_subprocess_run.return_value = MagicMock(returncode=0)
             linter = DetectSecretsLinter()
             linter.run(files=["pyproject.toml", "config.yaml", "settings.json", "script.sh"])
 
-        assert mock_run_checked.called
-        cmd = mock_run_checked.call_args[0][0]
+        assert mock_subprocess_run.called
+        cmd = mock_subprocess_run.call_args[0][0]
         # All text config files should be included
         assert any("pyproject.toml" in arg for arg in cmd), "TOML files should be scanned"
         assert any("config.yaml" in arg for arg in cmd), "YAML files should be scanned"
@@ -1430,3 +1440,322 @@ class TestRunGitleaks:
         # Should also print to stderr
         captured = capsys.readouterr()
         assert "timed out" in captured.err.lower()
+
+
+# --- ShellcheckLinter Tests ---
+
+
+class TestRunShellcheck:
+    """Tests for ShellcheckLinter configuration patterns."""
+
+    @pytest.fixture
+    def shellcheck_config(self, fake_repo: Path, fs: FakeFilesystem) -> Path:
+        """Create shellcheck configuration file."""
+        config = fake_repo / ".lint.shellcheck.yaml"
+        # Use included_paths format to match actual config structure
+        fs.create_file(
+            str(config),
+            contents=("included_paths:\n  - '*.sh'\n  - 'scripts/**/*.sh'\n  - 'bin/**/*.sh'\n"),
+        )
+        return config
+
+    def test_only_includes_files_matching_patterns(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        shellcheck_config: Path,
+    ) -> None:
+        """Should only include shell scripts matching included_paths patterns."""
+        # Create test files matching patterns
+        fs.create_file(str(fake_repo / "scripts" / "setup.sh"), contents="#!/bin/bash\necho hello")
+        # Create files NOT matching patterns (not in included_paths)
+        fs.create_dir(str(fake_repo / ".tmp"))
+        fs.create_file(
+            str(fake_repo / ".tmp" / "excluded.sh"),
+            contents="#!/bin/bash\necho excluded",
+        )
+        fs.create_dir(str(fake_repo / ".worktrees" / "branch"))
+        fs.create_file(
+            str(fake_repo / ".worktrees" / "branch" / "test.sh"),
+            contents="#!/bin/bash\necho worktree",
+        )
+
+        with (
+            patch("scripts.dev.linter.linters.shellcheck.REPO_ROOT", fake_repo),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.LINT_SHELLCHECK_CONFIG", shellcheck_config
+            ),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.get_executable",
+                return_value="/usr/bin/shellcheck",
+            ),
+            patch("scripts.dev.linter.linters.shellcheck.run_checked") as mock_run_checked,
+        ):
+            linter = ShellcheckLinter()
+            linter.run()
+
+        # Verify run_checked was called
+        assert mock_run_checked.called
+        # Get the command that was passed
+        cmd = mock_run_checked.call_args[0][0]
+        # Assert .tmp/excluded.sh is NOT in the command (not in included patterns)
+        assert not any(".tmp" in arg for arg in cmd), "Files in .tmp should not be included"
+        # Assert .worktrees files are NOT in the command
+        assert not any(".worktrees" in arg for arg in cmd), (
+            "Files in .worktrees should not be included"
+        )
+        # Assert scripts/setup.sh IS in the command (matches scripts/**/*.sh)
+        assert any("setup.sh" in arg for arg in cmd), "Valid shell scripts should be included"
+
+    def test_includes_project_shell_scripts(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        shellcheck_config: Path,
+    ) -> None:
+        """Should include shell scripts matching included_paths patterns."""
+        fs.create_file(str(fake_repo / "scripts" / "setup.sh"), contents="#!/bin/bash\necho setup")
+        fs.create_file(str(fake_repo / "bin" / "run.sh"), contents="#!/bin/bash\necho run")
+        fs.create_file(str(fake_repo / "install.sh"), contents="#!/bin/bash\necho install")
+
+        with (
+            patch("scripts.dev.linter.linters.shellcheck.REPO_ROOT", fake_repo),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.LINT_SHELLCHECK_CONFIG", shellcheck_config
+            ),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.get_executable",
+                return_value="/usr/bin/shellcheck",
+            ),
+            patch("scripts.dev.linter.linters.shellcheck.run_checked") as mock_run_checked,
+        ):
+            linter = ShellcheckLinter()
+            linter.run()
+
+        assert mock_run_checked.called
+        cmd = mock_run_checked.call_args[0][0]
+        # Check that matching shell scripts are included
+        shell_files = [arg for arg in cmd if arg.endswith(".sh")]
+        # install.sh matches *.sh, scripts/setup.sh matches scripts/**/*.sh,
+        # bin/run.sh matches bin/**/*.sh
+        assert len(shell_files) == 3, "All 3 shell scripts should be included"
+
+    def test_files_parameter_filters_to_sh_and_included_paths(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        shellcheck_config: Path,
+    ) -> None:
+        """Should only pass .sh files matching included_paths when files parameter is provided."""
+        # Create test files
+        fs.create_file(str(fake_repo / "setup.sh"), contents="#!/bin/bash\necho setup")
+        fs.create_file(str(fake_repo / "scripts" / "build.sh"), contents="#!/bin/bash\necho build")
+        fs.create_file(str(fake_repo / "script.py"), contents="print('hello')")
+        fs.create_file(str(fake_repo / "README.md"), contents="# Readme")
+
+        with (
+            patch("scripts.dev.linter.linters.shellcheck.REPO_ROOT", fake_repo),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.LINT_SHELLCHECK_CONFIG", shellcheck_config
+            ),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.get_executable",
+                return_value="/usr/bin/shellcheck",
+            ),
+            patch("scripts.dev.linter.linters.shellcheck.run_checked") as mock_run_checked,
+        ):
+            linter = ShellcheckLinter()
+            # Pass a mix of shell and non-shell files
+            linter.run(files=["setup.sh", "scripts/build.sh", "script.py", "README.md"])
+
+        assert mock_run_checked.called
+        cmd = mock_run_checked.call_args[0][0]
+        # Get files passed after the shellcheck executable
+        files_passed = cmd[1:]  # Skip the executable
+
+        # Only shell files matching included_paths should be passed
+        assert any("setup.sh" in f for f in files_passed), "setup.sh should be included"
+        assert any("build.sh" in f for f in files_passed), "scripts/build.sh should be included"
+        assert not any("script.py" in f for f in files_passed), "script.py should NOT be included"
+        assert not any("README.md" in f for f in files_passed), "README.md should NOT be included"
+        assert len(files_passed) == 2, "Only 2 shell scripts should be passed"
+
+    def test_files_parameter_short_circuits_when_no_sh_files(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        shellcheck_config: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Should not call run_checked when no .sh files in the files list."""
+        # Create test files (non-shell files only)
+        fs.create_file(str(fake_repo / "script.py"), contents="print('hello')")
+        fs.create_file(str(fake_repo / "README.md"), contents="# Readme")
+
+        with (
+            patch("scripts.dev.linter.linters.shellcheck.REPO_ROOT", fake_repo),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.LINT_SHELLCHECK_CONFIG", shellcheck_config
+            ),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.get_executable",
+                return_value="/usr/bin/shellcheck",
+            ),
+            patch("scripts.dev.linter.linters.shellcheck.run_checked") as mock_run_checked,
+        ):
+            linter = ShellcheckLinter()
+            # Pass only non-shell files
+            result = linter.run(files=["script.py", "README.md"])
+
+        # run_checked should NOT be called
+        assert not mock_run_checked.called, "run_checked should not be called when no .sh files"
+        # Should return success
+        assert result.success is True
+        # Should print the short-circuit message
+        captured = capsys.readouterr()
+        assert "No shell scripts to check" in captured.out
+
+    def test_missing_shellcheck_binary_returns_failure(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        shellcheck_config: Path,
+    ) -> None:
+        """Should return failure with message when shellcheck binary is not found."""
+        from scripts.dev.linter.linters.shellcheck import SHELLCHECK_CLI_REQUIRED
+
+        fs.create_file(str(fake_repo / "test.sh"), contents="#!/bin/bash\necho hello")
+
+        with (
+            patch("scripts.dev.linter.linters.shellcheck.REPO_ROOT", fake_repo),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.LINT_SHELLCHECK_CONFIG", shellcheck_config
+            ),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.get_executable",
+                side_effect=RuntimeError(SHELLCHECK_CLI_REQUIRED),
+            ),
+        ):
+            linter = ShellcheckLinter()
+            result = linter.run(files=["test.sh"])
+
+        # Linter must return failure (not raise exception) with actionable message
+        assert result.success is False
+        assert "shellcheck CLI required to run lint" in result.message
+
+    def test_files_parameter_filters_by_included_paths(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        shellcheck_config: Path,
+    ) -> None:
+        """Should filter files by included_paths when --files parameter is provided."""
+        # Create files in both included and non-included directories
+        fs.create_dir(str(fake_repo / ".tmp"))
+        fs.create_file(str(fake_repo / ".tmp" / "script.sh"), contents="#!/bin/bash\necho tmp")
+        fs.create_dir(str(fake_repo / "scripts"))
+        fs.create_file(str(fake_repo / "scripts" / "valid.sh"), contents="#!/bin/bash\necho valid")
+
+        with (
+            patch("scripts.dev.linter.linters.shellcheck.REPO_ROOT", fake_repo),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.LINT_SHELLCHECK_CONFIG", shellcheck_config
+            ),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.get_executable",
+                return_value="/usr/bin/shellcheck",
+            ),
+            patch("scripts.dev.linter.linters.shellcheck.run_checked") as mock_run_checked,
+        ):
+            linter = ShellcheckLinter()
+            linter.run(files=[".tmp/script.sh", "scripts/valid.sh"])
+
+        assert mock_run_checked.called
+        cmd = mock_run_checked.call_args[0][0]
+        # Only scripts/valid.sh should be passed (matches scripts/**/*.sh)
+        assert any("valid.sh" in arg for arg in cmd), "scripts/valid.sh should be passed"
+        # .tmp paths should not be included (not in included_paths)
+        assert not any(".tmp" in arg for arg in cmd), ".tmp paths should not be included"
+
+    def test_files_parameter_short_circuits_when_no_matching_paths(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        shellcheck_config: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Should short-circuit when no files match included_paths patterns."""
+        # Create files only in directories not matching included_paths
+        fs.create_dir(str(fake_repo / ".tmp"))
+        fs.create_file(str(fake_repo / ".tmp" / "test.sh"), contents="#!/bin/bash\necho tmp")
+        fs.create_dir(str(fake_repo / ".worktrees" / "branch"))
+        fs.create_file(
+            str(fake_repo / ".worktrees" / "branch" / "check.sh"),
+            contents="#!/bin/bash\necho worktree",
+        )
+
+        with (
+            patch("scripts.dev.linter.linters.shellcheck.REPO_ROOT", fake_repo),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.LINT_SHELLCHECK_CONFIG", shellcheck_config
+            ),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.get_executable",
+                return_value="/usr/bin/shellcheck",
+            ),
+            patch("scripts.dev.linter.linters.shellcheck.run_checked") as mock_run_checked,
+        ):
+            linter = ShellcheckLinter()
+            result = linter.run(files=[".tmp/test.sh", ".worktrees/branch/check.sh"])
+
+        # run_checked should NOT be called when no files match included_paths
+        assert not mock_run_checked.called, (
+            "run_checked should not be called when no files match patterns"
+        )
+
+        # Should print the short-circuit message
+        captured = capsys.readouterr()
+        assert "No shell scripts to check" in captured.out
+
+        # Result should indicate success
+        assert result.success is True
+
+    def test_invalid_lint_config_returns_failure(
+        self,
+        fake_repo: Path,
+        fs: FakeFilesystem,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Should return failure with clear error when .lint.shellcheck.yaml is invalid YAML.
+
+        This ensures that malformed config files don't crash the linter with an unhandled
+        exception but instead return a LinterResult with success=False and clear message.
+        """
+        fs.create_file(str(fake_repo / "test.sh"), contents="#!/bin/bash\necho hello")
+
+        # Create invalid YAML config
+        invalid_config = fake_repo / ".lint.shellcheck.yaml"
+        fs.create_file(str(invalid_config), contents="invalid: yaml: content: [")
+
+        with (
+            patch("scripts.dev.linter.linters.shellcheck.REPO_ROOT", fake_repo),
+            patch("scripts.dev.linter.linters.shellcheck.LINT_SHELLCHECK_CONFIG", invalid_config),
+            patch(
+                "scripts.dev.linter.linters.shellcheck.get_executable",
+                return_value="/usr/bin/shellcheck",
+            ),
+            patch("scripts.dev.linter.linters.shellcheck.run_checked") as mock_run_checked,
+        ):
+            linter = ShellcheckLinter()
+            result = linter.run(files=["test.sh"])
+
+        # run_checked should NOT be called when config is invalid
+        assert not mock_run_checked.called, "run_checked should not be called when config invalid"
+
+        # Linter should return failure with actionable message
+        assert result.success is False
+        assert ".lint.shellcheck.yaml" in result.message
+
+        # Should also print to stderr
+        captured = capsys.readouterr()
+        assert ".lint.shellcheck.yaml" in captured.err
