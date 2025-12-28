@@ -6,7 +6,7 @@ scope: |
   All .env and .env.* files in the repository that are not gitignored.
   Applies to .env.example template files.
 description: |
-  This project uses dotenv-linter v3.3.0 to enforce formatting standards for .env files.
+  This project uses dotenv-linter v4.0.0 to enforce formatting standards for .env files.
   The linter catches common issues that could cause application malfunctions.
 domain:
   - dotenv
@@ -93,7 +93,7 @@ sections:
       - id: install-linux
         text: "Linux: Download from https://github.com/dotenv-linter/dotenv-linter/releases"
       - id: install-version
-        text: "Recommended version: v3.3.0"
+        text: "Recommended version: v4.0.0"
 
   - id: scope-separation
     index: 6

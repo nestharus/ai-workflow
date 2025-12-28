@@ -69,7 +69,7 @@ repos:
         always_run: true
 
   - repo: https://github.com/dotenv-linter/dotenv-linter
-    rev: v3.3.0  # Pinned version - must match documentation and plan references
+    rev: v4.0.0  # Pinned version - must match documentation and plan references
     hooks:
       - id: dotenv-linter
         name: Lint .env files
