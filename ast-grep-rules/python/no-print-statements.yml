@@ -1,0 +1,10 @@
+id: no-print-statements
+language: Python
+rule:
+  pattern: print($$$ARGS)
+severity: warning
+message: "Avoid print() in production code. Use logging instead."
+note: "Replace print() with appropriate logging calls (logger.debug, logger.info, etc.)"
+ignores:
+  - "scripts/**"
+  - "tests/**"

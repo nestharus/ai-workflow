@@ -1,0 +1,20 @@
+id: no-print-statements
+snapshots:
+  print("hello world"):
+    labels:
+      - source: print("hello world")
+        style: primary
+        start: 0
+        end: 20
+  print():
+    labels:
+      - source: print()
+        style: primary
+        start: 0
+        end: 7
+  print(x, y, z):
+    labels:
+      - source: print(x, y, z)
+        style: primary
+        start: 0
+        end: 14

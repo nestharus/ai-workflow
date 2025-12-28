@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 
+from scripts.dev.linter.base import BaseLinter
 from scripts.dev.linter.linters import LINTER_MAP, LINTER_NAMES
 
 
@@ -237,16 +238,27 @@ def main() -> int:
 
     try:
         for linter_name in linters_to_run:
-            print(f"\n{'=' * 60}")
-            print(f"Running: {linter_name}")
-            print("=" * 60)
-
             linter = LINTER_MAP.get(linter_name)
             if linter is None:
                 print(f"Unknown linter: {linter_name}", file=sys.stderr)
                 return 1
 
+            # Run linter tests first (e.g., ast-grep rule tests)
+            test_method = getattr(linter, "test", None)
+            if test_method is not None and type(linter).test is not BaseLinter.test:
+                print(f"\n{'=' * 60}")
+                print(f"Testing: {linter_name}")
+                print("=" * 60)
+
+                test_result = linter.test()
+                if not test_result.success:
+                    return 1
+
             # Run the linter with or without file filtering
+            print(f"\n{'=' * 60}")
+            print(f"Running: {linter_name}")
+            print("=" * 60)
+
             result = linter.run(files) if linter.supports_file_filtering else linter.run()
 
             if not result.success:

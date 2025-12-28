@@ -1,0 +1,22 @@
+id: no-bare-except
+snapshots:
+  ? |
+    try:
+        x = 1
+    except:
+        pass
+  : fixed: |+
+      try:
+        x = 1
+      except Exception:
+        pass
+
+    labels:
+      - source: |-
+          try:
+              x = 1
+          except:
+              pass
+        style: primary
+        start: 0
+        end: 31

@@ -1,0 +1,23 @@
+id: no-bare-except
+valid:
+  - |
+    try:
+        x = 1
+    except Exception:
+        pass
+  - |
+    try:
+        x = 1
+    except ValueError:
+        pass
+  - |
+    try:
+        x = 1
+    except (TypeError, ValueError):
+        pass
+invalid:
+  - |
+    try:
+        x = 1
+    except:
+        pass

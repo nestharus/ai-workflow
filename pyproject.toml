@@ -44,6 +44,7 @@ test = [
 # Linters, formatters, type checkers, and pre-commit hooks
 dev = [
     { include-group = "test" },
+    "ast-grep-cli>=0.31.0,<0.41.0",
     "pyyaml>=6.0.3,<6.1.0",
     "mypy>=1.18.2,<1.19.0",
     "ruff>=0.14.10,<0.15",

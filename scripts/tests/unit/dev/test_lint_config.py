@@ -58,6 +58,10 @@ class TestRunYamllint:
             patch("scripts.dev.linter.linters.yamllint.REPO_ROOT", fake_repo),
             patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", yamllint_config),
             patch(
+                "scripts.dev.linter.linters.yamllint.YAMLLINT_CONFIG",
+                fake_repo / ".yamllint.yaml",
+            ),
+            patch(
                 "scripts.dev.linter.linters.yamllint.get_executable",
                 return_value="/usr/bin/uv",
             ),
@@ -94,6 +98,10 @@ class TestRunYamllint:
             patch("scripts.dev.linter.linters.yamllint.REPO_ROOT", fake_repo),
             patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", yamllint_config),
             patch(
+                "scripts.dev.linter.linters.yamllint.YAMLLINT_CONFIG",
+                fake_repo / ".yamllint.yaml",
+            ),
+            patch(
                 "scripts.dev.linter.linters.yamllint.get_executable",
                 return_value="/usr/bin/uv",
             ),
@@ -124,6 +132,10 @@ class TestRunYamllint:
         with (
             patch("scripts.dev.linter.linters.yamllint.REPO_ROOT", fake_repo),
             patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", yamllint_config),
+            patch(
+                "scripts.dev.linter.linters.yamllint.YAMLLINT_CONFIG",
+                fake_repo / ".yamllint.yaml",
+            ),
             patch(
                 "scripts.dev.linter.linters.yamllint.get_executable",
                 return_value="/usr/bin/uv",
@@ -161,6 +173,10 @@ class TestRunYamllint:
         with (
             patch("scripts.dev.linter.linters.yamllint.REPO_ROOT", fake_repo),
             patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", yamllint_config),
+            patch(
+                "scripts.dev.linter.linters.yamllint.YAMLLINT_CONFIG",
+                fake_repo / ".yamllint.yaml",
+            ),
             patch(
                 "scripts.dev.linter.linters.yamllint.get_executable",
                 return_value="/usr/bin/uv",

@@ -101,6 +101,17 @@ class BaseLinter(ABC):
         """
         pass
 
+    def test(self) -> LinterResult:
+        """Run the linter's test suite (e.g., rule tests).
+
+        This is optional - linters that have self-tests (like ast-grep rule tests)
+        can override this method. By default, returns success with no-op.
+
+        Returns:
+            LinterResult indicating success/failure.
+        """
+        return LinterResult(success=True, message="No tests defined")
+
 
 def match_glob_pattern(path: str, pattern: str) -> bool:
     """Match a path against a glob pattern.

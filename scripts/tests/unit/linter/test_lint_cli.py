@@ -9,7 +9,30 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from scripts.dev.linter.base import LinterResult
+from scripts.dev.linter.base import BaseLinter, LinterResult
+
+
+def create_mock_linter(name: str, supports_file_filtering: bool = False) -> MagicMock:
+    """Create a mock linter with properly configured class for test method detection.
+
+    This creates a proper class that has test = BaseLinter.test, so the test override
+    detection logic (type(linter).test is not BaseLinter.test) works correctly.
+    """
+    # Create a mock run method that accepts any arguments
+    mock_run = MagicMock(return_value=LinterResult(success=True))
+
+    mock_class = type(
+        f"Mock{name}",
+        (BaseLinter, MagicMock),
+        {
+            "test": BaseLinter.test,
+            "name": name,
+            "supports_file_filtering": supports_file_filtering,
+            "run": mock_run,
+        },
+    )
+    mock = mock_class()
+    return mock
 
 
 class TestFilterExistingFiles:
@@ -304,10 +327,7 @@ class TestLintCliMain:
 
     def test_main_runs_all_linters_by_default(self) -> None:
         """Test main runs all linters when none specified (lines 41-44)."""
-        mock_linter = MagicMock()
-        mock_linter.name = "test_linter"
-        mock_linter.supports_file_filtering = False
-        mock_linter.run.return_value = LinterResult(success=True)
+        mock_linter = create_mock_linter("test_linter")
 
         with (
             patch("scripts.dev.linter.lint_cli._parse_args") as mock_args,
@@ -327,15 +347,8 @@ class TestLintCliMain:
 
     def test_main_runs_specified_linters(self) -> None:
         """Test main runs only specified linters (lines 41-42)."""
-        mock_linter1 = MagicMock()
-        mock_linter1.name = "linter1"
-        mock_linter1.supports_file_filtering = False
-        mock_linter1.run.return_value = LinterResult(success=True)
-
-        mock_linter2 = MagicMock()
-        mock_linter2.name = "linter2"
-        mock_linter2.supports_file_filtering = False
-        mock_linter2.run.return_value = LinterResult(success=True)
+        mock_linter1 = create_mock_linter("linter1")
+        mock_linter2 = create_mock_linter("linter2")
 
         with (
             patch("scripts.dev.linter.lint_cli._parse_args") as mock_args,
@@ -361,10 +374,7 @@ class TestLintCliMain:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Test main warns when --files used with non-filtering linters (lines 48-60)."""
-        mock_linter = MagicMock()
-        mock_linter.name = "no_filter"
-        mock_linter.supports_file_filtering = False
-        mock_linter.run.return_value = LinterResult(success=True)
+        mock_linter = create_mock_linter("no_filter")
 
         with (
             patch("scripts.dev.linter.lint_cli._parse_args") as mock_args,
@@ -390,10 +400,7 @@ class TestLintCliMain:
 
     def test_main_runs_linter_with_file_filtering(self) -> None:
         """Test main passes files to linter that supports filtering (line 74)."""
-        mock_linter = MagicMock()
-        mock_linter.name = "with_filter"
-        mock_linter.supports_file_filtering = True
-        mock_linter.run.return_value = LinterResult(success=True)
+        mock_linter = create_mock_linter("with_filter", supports_file_filtering=True)
 
         with (
             patch("scripts.dev.linter.lint_cli._parse_args") as mock_args,
@@ -417,10 +424,8 @@ class TestLintCliMain:
 
     def test_main_returns_one_on_linter_failure(self) -> None:
         """Test main returns 1 when linter fails (lines 76-77)."""
-        mock_linter = MagicMock()
-        mock_linter.name = "failing"
-        mock_linter.supports_file_filtering = False
-        mock_linter.run.return_value = LinterResult(success=False)
+        mock_linter = create_mock_linter("failing")
+        mock_linter.run = MagicMock(return_value=LinterResult(success=False))
 
         with (
             patch("scripts.dev.linter.lint_cli._parse_args") as mock_args,
@@ -458,10 +463,8 @@ class TestLintCliMain:
 
     def test_main_handles_runtime_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test main returns 1 on RuntimeError (lines 79-81)."""
-        mock_linter = MagicMock()
-        mock_linter.name = "error_linter"
-        mock_linter.supports_file_filtering = False
-        mock_linter.run.side_effect = RuntimeError("Linter executable not found")
+        mock_linter = create_mock_linter("error_linter")
+        mock_linter.run = MagicMock(side_effect=RuntimeError("Linter executable not found"))
 
         with (
             patch("scripts.dev.linter.lint_cli._parse_args") as mock_args,
@@ -482,10 +485,8 @@ class TestLintCliMain:
 
     def test_main_handles_called_process_error(self) -> None:
         """Test main returns exit code from CalledProcessError (lines 82-83)."""
-        mock_linter = MagicMock()
-        mock_linter.name = "proc_error"
-        mock_linter.supports_file_filtering = False
-        mock_linter.run.side_effect = subprocess.CalledProcessError(2, "linter cmd")
+        mock_linter = create_mock_linter("proc_error")
+        mock_linter.run = MagicMock(side_effect=subprocess.CalledProcessError(2, "linter cmd"))
 
         with (
             patch("scripts.dev.linter.lint_cli._parse_args") as mock_args,
@@ -504,10 +505,8 @@ class TestLintCliMain:
 
     def test_main_handles_os_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test main returns 1 on OSError (lines 84-86)."""
-        mock_linter = MagicMock()
-        mock_linter.name = "os_error"
-        mock_linter.supports_file_filtering = False
-        mock_linter.run.side_effect = OSError("Permission denied")
+        mock_linter = create_mock_linter("os_error")
+        mock_linter.run = MagicMock(side_effect=OSError("Permission denied"))
 
         with (
             patch("scripts.dev.linter.lint_cli._parse_args") as mock_args,
@@ -528,10 +527,8 @@ class TestLintCliMain:
 
     def test_main_handles_yaml_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test main returns 1 on YAMLError (lines 87-89)."""
-        mock_linter = MagicMock()
-        mock_linter.name = "yaml_error"
-        mock_linter.supports_file_filtering = False
-        mock_linter.run.side_effect = yaml.YAMLError("Invalid YAML")
+        mock_linter = create_mock_linter("yaml_error")
+        mock_linter.run = MagicMock(side_effect=yaml.YAMLError("Invalid YAML"))
 
         with (
             patch("scripts.dev.linter.lint_cli._parse_args") as mock_args,
@@ -597,10 +594,7 @@ class TestLintCliMain:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Test main prints list of changed files."""
-        mock_linter = MagicMock()
-        mock_linter.name = "test_linter"
-        mock_linter.supports_file_filtering = True
-        mock_linter.run.return_value = LinterResult(success=True)
+        mock_linter = create_mock_linter("test_linter", supports_file_filtering=True)
 
         with (
             patch("scripts.dev.linter.lint_cli._parse_args") as mock_args,
@@ -635,10 +629,7 @@ class TestLintCliMain:
 
     def test_main_passes_changed_files_to_linter(self) -> None:
         """Test main passes changed files to linter run method."""
-        mock_linter = MagicMock()
-        mock_linter.name = "test_linter"
-        mock_linter.supports_file_filtering = True
-        mock_linter.run.return_value = LinterResult(success=True)
+        mock_linter = create_mock_linter("test_linter", supports_file_filtering=True)
 
         with (
             patch("scripts.dev.linter.lint_cli._parse_args") as mock_args,
@@ -671,10 +662,7 @@ class TestLintCliMain:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Test main with --commit flag gets files from specific commit."""
-        mock_linter = MagicMock()
-        mock_linter.name = "test_linter"
-        mock_linter.supports_file_filtering = True
-        mock_linter.run.return_value = LinterResult(success=True)
+        mock_linter = create_mock_linter("test_linter", supports_file_filtering=True)
 
         with (
             patch("scripts.dev.linter.lint_cli._parse_args") as mock_args,
@@ -757,22 +745,16 @@ class TestLintCliMain:
 
     def test_main_expands_linter_range_operator(self) -> None:
         """Test main expands linter range operators like >=ruff."""
-        mock_linter1 = MagicMock()
-        mock_linter1.name = "ruff"
-        mock_linter1.supports_file_filtering = False
-        mock_linter1.run.return_value = LinterResult(success=True)
-
-        mock_linter2 = MagicMock()
-        mock_linter2.name = "mypy"
-        mock_linter2.supports_file_filtering = False
-        mock_linter2.run.return_value = LinterResult(success=True)
+        mock_linter1 = create_mock_linter("ruff", supports_file_filtering=False)
+        mock_linter2 = create_mock_linter("mypy", supports_file_filtering=False)
+        mock_scripts_linter = create_mock_linter("scripts", supports_file_filtering=False)
 
         with (
             patch("scripts.dev.linter.lint_cli._parse_args") as mock_args,
             patch("scripts.dev.linter.lint_cli.LINTER_NAMES", ["scripts", "ruff", "mypy"]),
             patch(
                 "scripts.dev.linter.lint_cli.LINTER_MAP",
-                {"scripts": MagicMock(), "ruff": mock_linter1, "mypy": mock_linter2},
+                {"scripts": mock_scripts_linter, "ruff": mock_linter1, "mypy": mock_linter2},
             ),
         ):
             mock_args.return_value = MagicMock(

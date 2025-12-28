@@ -1,0 +1,16 @@
+id: no-bare-except
+language: Python
+rule:
+  pattern: |
+    try:
+      $$$TRY_BODY
+    except:
+      $$$EXCEPT_BODY
+severity: error
+message: "Bare except clause catches all exceptions including KeyboardInterrupt and SystemExit"
+note: "Use 'except Exception:' or catch specific exceptions"
+fix: |
+  try:
+    $$$TRY_BODY
+  except Exception:
+    $$$EXCEPT_BODY

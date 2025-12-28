@@ -1,0 +1,8 @@
+id: prefer-pathlib-exists
+valid:
+  - Path("/some/path").exists()
+  - pathlib.Path(path).exists()
+  - file_path.exists()
+invalid:
+  - os.path.exists("/some/path")
+  - os.path.exists(my_path)

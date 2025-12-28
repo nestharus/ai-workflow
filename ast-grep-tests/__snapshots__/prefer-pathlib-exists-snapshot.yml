@@ -1,0 +1,14 @@
+id: prefer-pathlib-exists
+snapshots:
+  os.path.exists("/some/path"):
+    labels:
+      - source: os.path.exists("/some/path")
+        style: primary
+        start: 0
+        end: 28
+  os.path.exists(my_path):
+    labels:
+      - source: os.path.exists(my_path)
+        style: primary
+        start: 0
+        end: 23
