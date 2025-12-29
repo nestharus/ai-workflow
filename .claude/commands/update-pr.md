@@ -2,408 +2,404 @@
 
 ---
 
-description: Update a PR by handling unresolved review threads
+description: Handle code review comments with optional worktree support
 allowed-tools: Task, Read, Glob, Bash, TodoWrite
 
 ---
 
-> **Note on TodoWrite**: TodoWrite is available to this command and is used
-> internally to track sub-agent task states. It integrates with Task() to
-> persist task status across the workflow. TodoWrite is only required for
-> resumable/persistent multi-step workflows; simple, single-run executions
-> do not need it.
->
-> **When TodoWrite is required:**
-> - Multi-step workflows that spawn sub-agents whose progress must survive
->   retries or context resets
-> - Resumable tasks that may be interrupted and need to continue from last state
-> - Complex orchestration where debugging requires visibility into sub-agent state
->
-> **Benefits:**
-> - Persistent sub-agent state across workflow retries
-> - Easier debugging via visible task progression
-> - Retry safety: failed steps can resume without re-running completed work
->
-> **How to enable in other commands:** Add `TodoWrite` to the `allowed-tools`
-> list in the command's frontmatter.
->
-> **Trade-offs:** Adds minor storage overhead for task state files. Skip for
-> simple, single-pass workflows that complete quickly and don't need resumability.
+Process code review comments: $ARGUMENTS
 
-Handle unresolved PR review threads: $ARGUMENTS
+## Overview
+
+This command processes code review comments, either locally or in a worktree for a PR.
+After processing, it commits changes, runs lint, squashes commits, and pushes.
+
+**Two modes:**
+- **Local mode** (no ticket): Reviews uncommitted code or most recent commit
+- **Worktree mode** (with ticket): Works in a worktree, pulls PR comments first
 
 ## Arguments
 
-- Empty: Use current branch (must be on PR branch)
-- PR ID (`17` or `#17`): Get branch from GitHub PR
-- Ticket ID (`NES-87`): Look up branch from Linear
-- Branch name: Use directly
-- Text after identifier: Treated as local tasks
+- Empty or `--loop`: Local mode - review uncommitted code in current directory
+- Ticket ID (e.g., `NES-123`): Worktree mode - work in worktree, pull PR comments
+- Text after identifier: Treated as local tasks (both modes)
 
 Examples:
-- `/update-pr` - current branch, only PR threads
-- `/update-pr 17` - PR #17, only PR threads
-- `/update-pr NES-123 ## Comment 1: Fix the bug...` - PR threads + local tasks
+- `/update-pr` - local mode, single cycle
+- `/update-pr --loop` - local mode, continuous loop
+- `/update-pr NES-123` - worktree mode for ticket
+- `/update-pr NES-123 ## Comment 1: Fix the bug...` - worktree mode + local tasks
+- `/update-pr --loop ## Comment 1: Add tests...` - local mode + local tasks
 
-## Workflow
+## Mode Selection
 
-### 1. Parse Arguments
+**Do not read file contents** - only track file paths, counts, and brief summaries.
 
-Extract `identifier` (first word) and `local_tasks_text` (remainder).
+**Content Access Policy:**
 
-### 2. Get PR Information
+- **Allowed operations**: stat/lstat for metadata, recording file paths and sizes,
+  computing hashes, using jq to extract JSON keys/paths, using `git diff --stat`
+  or `git ls-files` for filenames
+- **Prohibited operations**: opening and parsing file text, reading full file into
+  memory, running grep/sed/awk to inspect content
 
-```bash
-uv run pr get-pr           # no arguments
-uv run pr get-pr {{identifier}}  # with identifier
-```
+### Argument Parsing
 
-Returns: `branch_name`, `worktree_path`, `working_directory`, `is_worktree`,
-`pr_number`, `pr_url`, `base_branch`
+Parse arguments to identify:
+- `has_loop`: Whether `--loop` flag is present
+- `ticket_id`: A ticket ID like `NES-123` (matches pattern `[A-Z]+-\d+`)
+- `local_tasks_text`: Any text after the identifier/flags (for inline tasks)
 
-### 3. Set Up Variables
+Extract `identifier` (first word) and `local_tasks_text` (remainder after identifier).
+
+**Mode determination:**
+- If `ticket_id` provided: **Worktree Mode**
+- Otherwise: **Local Mode** (with or without `--loop`)
+
+---
+
+## Common Variables
+
+Both modes use these variables:
+
+- `cycle`: Counter starting at 1
+- `max_cycles`: Maximum allowed cycles (default 10)
+- `all_modified_files`: Set of all project files modified across all cycles
+- `cycle_summaries`: List of brief summaries per cycle
+- `loop_start_time`: Timestamp when the loop begins
+- `initial_commit`: SHA of HEAD when loop started (for squashing)
+- `commits_made`: Count of commits made during session
+- `working_dir`: Directory where work happens (repo root or worktree)
+- `tmp_folder`: `{{working_dir}}/.tmp/pr-review`
+- `review_dir`: `{{working_dir}}/.review` (coderabbit output location)
+
+---
+
+## Local Mode
+
+Works in current directory, reviews uncommitted code or most recent commit.
+
+### Setup
 
 ```bash
 git rev-parse --show-toplevel
-uv run pr extract-ticket-id {{branch_name}}
+git branch --show-current
+git rev-parse HEAD
 ```
 
 Set:
-- `ticket_id`, `branch`, `repo_root`
-- `working_dir`: `{{repo_root}}/{{working_directory}}`
-- `tmp_folder`: `{{repo_root}}/.tmp/pr-threads/{{ticket_id or pr_number}}`
+- `repo_root`: Git repository root
+- `working_dir`: Same as repo_root
+- `current_branch`: Current git branch
+- `initial_commit`: Current HEAD SHA (for squashing later)
+- `base_branch`: Same as current_branch
+- `tmp_folder`: `{{working_dir}}/.tmp/pr-review`
+- `review_dir`: `{{working_dir}}/.review`
+- `pr_number`: None (no PR in local mode)
 
-### 4. Import Local Tasks (if local_tasks_text exists)
+Record `loop_start_time`. Initialize: `cycle = 1`, `commits_made = 0`.
 
-**Step 4a:** Write `local_tasks_text` to `{{tmp_folder}}/local_tasks_raw.txt`
+### Import Local Tasks (if local_tasks_text exists)
 
-**Step 4b:** Split into body files using Python:
-
-```python
-import re
-from pathlib import Path
-
-raw_file = Path("{{tmp_folder}}/local_tasks_raw.txt")
-text = raw_file.read_text()
-
-# Split by separator (--- or ## Comment N:)
-# Both split branches consume a leading '\n' while the lookahead (?=## Comment \d+:)
-# prevents consuming the '##' header marker, preserving it for the next segment.
-parts = re.split(r"\n---+\n|(?:\n(?=## Comment \d+:))", text.strip())
-parts = [p.strip() for p in parts if p.strip()]
-
-for i, body in enumerate(parts):
-    Path(f"{{tmp_folder}}/body_{i}.txt").write_text(body)
-raw_file.unlink()
-```
-
-**Step 4c:** Import body files (creates `local_0.json`,
-`local_1.json`, deletes body files):
-
-```bash
-# The body file arguments are generated by the Python loop in step 4b.
-# Example with 3 body files:
-uv run pr import-local-tasks --output-dir {{tmp_folder}} \
-  {{tmp_folder}}/body_0.txt {{tmp_folder}}/body_1.txt {{tmp_folder}}/body_2.txt
-```
-
-### 5. Fetch Unresolved Threads
-
-```bash
-uv run pr fetch-threads --pr {{pr_number}} --output-dir {{tmp_folder}}
-```
-
-This automatically:
-- Fetches unresolved threads with line numbers
-  (file-specific comments)
-- Auto-resolves threads where first author gave thumbs-up
-  reaction
-- Saves as `thread_0.json`, `thread_1.json`, etc.
-
-### 6. Aggregate Tasks by File
-
-```bash
-uv run pr aggregate-tasks --input-dir {{tmp_folder}} > {{tmp_folder}}/tasks_aggregate.json
-```
-
-This writes the aggregate JSON to `{{tmp_folder}}/tasks_aggregate.json`.
-The JSON maps files to their task paths:
-
-```json
-{
-  "files": ["path/to/file1.py", "path/to/file2.py"],
-  "tasks_by_file": {
-    "path/to/file1.py": ["thread_0.json"],
-    "path/to/file2.py": ["thread_1.json"],
-    "__global__": ["local_0.json"]
-  },
-  "task_count": 3
-}
-```
-
-Note: `__global__` contains tasks without a file path
-(e.g., local tasks). These are processed sequentially after
-file-specific tasks complete.
-
-### 7. Process Files in Parallel
-
-**CRITICAL: Files are processed in parallel, but tasks for the
-same file are sequential.**
-
-Read `{{tmp_folder}}/tasks_aggregate.json` to get `tasks_by_file`.
-For each file in `tasks_by_file` (excluding `__global__`), spawn a Task agent:
+Spawn a `local-task-importer` agent:
 
 ```python
-# Launch agents in PARALLEL - one per file (skip __global__)
-# Store task handles to track and collect results
-task_handles = {}  # Maps file_path -> task_handle
-
-for file_path, task_files in tasks_by_file.items():
-    if file_path == "__global__":
-        continue  # Handle separately in step 7b
-    handle = Task(subagent_type="pr-comment-handler", prompt="""
-    Process these tasks for file: {{file_path}}
-
-    Tasks (in order):
-    {% for task_file in task_files %}
-    - {{tmp_folder}}/{{task_file}}
-    {% endfor %}
-
-    worktree: {{working_dir}}
-    branch: {{branch}}
-
-    Process each task sequentially. Return:
-    - file: {{file_path}}
-    - changes_made: list of changes applied
-    - action: "implement" (made code changes or stored challenge/reply) or
-              "resolve" (marked GitHub thread resolved, no code changes)
-    """, run_in_background=True)
-    task_handles[file_path] = handle
+Task(subagent_type="local-task-importer", model="haiku", prompt=f"""
+local_tasks_text: {local_tasks_text}
+tmp_folder: {tmp_folder}
+""")
 ```
 
-Wait for all file agents to complete and collect results:
+Creates `local_0.json`, `local_1.json`, etc. in `{{tmp_folder}}`.
 
-```python
-file_changes = {}
-failed_files = []
+### Loop Iteration
 
-import os
-AGENT_TIMEOUT_SECONDS = int(os.environ.get("PR_AGENT_TIMEOUT", "300"))  # Default: 5-minute timeout for PR comment handler agents
+Repeat until clean or max_cycles reached:
 
-for file_path, handle in task_handles.items():
-    try:
-        # Wait for task completion with timeout (configurable via PR_AGENT_TIMEOUT env var)
-        result = wait_for_task(handle, timeout=AGENT_TIMEOUT_SECONDS)
+#### Step 1: Check Cycle Limit
 
-        if result.status == "success":
-            changes = result.payload.get("changes_made", [])
-            file_changes[file_path] = changes
-        else:
-            # Task completed but returned error status
-            log_warning(f"Agent for {file_path} returned error: {result.error}")
-            failed_files.append(file_path)
-            file_changes[file_path] = []
+If `cycle > max_cycles`:
+- Log warning and exit loop
 
-    except TimeoutError:
-        log_warning(f"Agent for {file_path} timed out after {AGENT_TIMEOUT_SECONDS}s")
-        failed_files.append(file_path)
-        file_changes[file_path] = []
+Record `cycle_start_time`.
 
-    except Exception as e:
-        log_warning(f"Agent for {file_path} failed with exception: {e}")
-        failed_files.append(file_path)
-        file_changes[file_path] = []
+#### Step 2: Determine CodeRabbit Target
 
-# Log summary of any failures
-if failed_files:
-    log_warning(f"Failed to process {len(failed_files)} files: {failed_files}")
-```
+**First cycle:**
 
-This provides:
-- `file_changes`: dict mapping file path to list of changes applied
-- `failed_files`: list of file paths where agent processing failed
-
-### 7b. Process Global Tasks (Sequential)
-
-**Skip if no `__global__` key in `tasks_by_file`.**
-
-Process tasks without file paths sequentially (one at a time):
-
-```python
-global_tasks = tasks_by_file.get("__global__", [])
-failed_global_tasks = []
-
-for task_file in global_tasks:
-    try:
-        handle = Task(subagent_type="pr-comment-handler", prompt="""
-        task_file: {{tmp_folder}}/{{task_file}}
-        worktree: {{working_dir}}
-        branch: {{branch}}
-        """)
-        # Wait for completion before processing next task
-        result = wait_for_task(handle, timeout=AGENT_TIMEOUT_SECONDS)
-
-        if result.status != "success":
-            log_warning(f"Global task {task_file} returned error: {result.error}")
-            failed_global_tasks.append(task_file)
-
-    except TimeoutError:
-        log_warning(f"Global task {task_file} timed out after {AGENT_TIMEOUT_SECONDS}s")
-        failed_global_tasks.append(task_file)
-
-    except Exception as e:
-        log_warning(f"Global task {task_file} failed with exception: {e}")
-        failed_global_tasks.append(task_file)
-
-# Log summary of any failures
-if failed_global_tasks:
-    log_warning(f"Failed to process {len(failed_global_tasks)} global tasks: {failed_global_tasks}")
-```
-
-### 8. Check for Code Changes
-
+Check for uncommitted changes:
 ```bash
 cd {{working_dir}} && git status --porcelain
 ```
 
-If empty (no changes), skip Step 9 (Run Tests on Changed Files), Step 10 (Lint Modified Files), and Step 11 (Commit and Push), and go directly to Step 12 (Post Deferred Replies & Request Review).
+- If uncommitted changes exist: Use `--type uncommitted`
+- If no uncommitted changes: Use `--base-commit HEAD~1` (review most recent commit)
 
-### 9. Run Tests on Changed Files
+**Subsequent cycles (cycle > 1):**
 
-**Skip if no code changes (step 8 empty).**
+Always use `--base-commit HEAD~1` (review the commit we just made).
 
-Filter to Python files only, then spawn test-debugger sub-agents
-in **parallel** - one per file. Each agent runs tests for its
-file and fixes any failures.
+#### Step 3: Run CodeRabbit
+
+Spawn a `coderabbit-poller` agent:
 
 ```python
-# Filter to Python files only - non-Python files don't have tests
+if coderabbit_target == "uncommitted":
+    command = f"uv run review.coderabbit --output-dir {review_dir} -- --type uncommitted"
+else:
+    command = f"uv run review.coderabbit --output-dir {review_dir} -- --base-commit HEAD~1"
+
+Task(subagent_type="coderabbit-poller", model="haiku", prompt=f"""
+command: {command}
+cwd: {working_dir}
+""")
+```
+
+Wait for result. If `NO_CHANGES` or `ERROR`, exit loop.
+Extract `review_file` from `REVIEW_FILE: <path>`.
+
+#### Step 4: Parse and Aggregate
+
+```bash
+cd {{working_dir}}
+uv run pr parse-coderabbit --review-file {{review_file}} --output-dir {{tmp_folder}}
+aggregated_json="{{tmp_folder}}/aggregated.json"
+uv run pr aggregate-tasks --input-dir {{tmp_folder}} > "$aggregated_json"
+```
+
+If no tasks, remove review file and exit loop (clean state).
+
+#### Step 5: Process Files in Parallel
+
+Spawn `pr-comment-handler` agents - one per file in `tasks_by_file`.
+
+For `__global__` tasks (local tasks without file paths), process sequentially.
+
+Wait for all to complete.
+
+#### Step 6: Run Tests on Changed Files
+
+```python
 py_files = [f for f in files if f.endswith(".py")]
-
-# Launch test-debugger agents in PARALLEL - one per modified Python file
-# Store task handles to track and collect results (same pattern as Step 7)
-test_handles = {}  # Maps file_path -> task_handle
-
 for file_path in py_files:
-    changes_made = file_changes.get(file_path, [])  # From step 7 results
-    handle = Task(subagent_type="test-debugger", prompt="""
-    worktree: {{working_dir}}
-    file: {{file_path}}
-
-    Context - Changes applied to this file during PR review:
-    {{changes_made}}
-
-    Run tests for this file and debug/fix any failures. The changes above
-    were applied as part of a PR review - consider whether test
-    expectations need updating or if the implementation is incorrect.
-    """, run_in_background=True)
-    test_handles[file_path] = handle
-
-# Wait for all test-debugger agents to complete and collect results
-# Test results inform whether code is ready for linting (step 10)
-for file_path, handle in test_handles.items():
-    try:
-        result = wait_for_task(handle, timeout=AGENT_TIMEOUT_SECONDS)
-        if result.status != "success":
-            log_warning(f"Test-debugger for {file_path} returned error: {result.error}")
-    except TimeoutError:
-        log_warning(f"Test-debugger for {file_path} timed out after {AGENT_TIMEOUT_SECONDS}s")
-    except Exception as e:
-        log_warning(f"Test-debugger for {file_path} failed with exception: {e}")
+    Task(subagent_type="test-debugger", prompt=f"""
+    file: {file_path}
+    worktree: {working_dir}
+    """)
 ```
 
-**Note**: Only `.py` files have associated tests. Skip
-non-Python files (markdown, shell scripts, etc.).
+#### Step 7: Commit Changes
 
-### 10. Lint Modified Files
+Check for changes to commit:
+```bash
+cd {{working_dir}} && git status --porcelain
+```
 
-**Skip if no code changes (step 8 empty).**
+If changes exist:
+```bash
+cd {{working_dir}} && git add -A && git commit -m "Address review feedback (cycle {{cycle}})"
+```
 
-Spawn lint-fixer sub-agents in **parallel** - one per file
-from the `files` list (step 6):
+Increment `commits_made`.
+
+#### Step 8: Cleanup and Continue
+
+```bash
+rm -rf {{tmp_folder}}
+rm -f {{review_file}}
+```
+
+Add `files` to `all_modified_files`.
+Record cycle summary.
+Increment `cycle`.
+Continue loop.
+
+---
+
+## Worktree Mode
+
+Works in a worktree for a PR, pulls PR comments on first cycle.
+
+### Setup
+
+Get PR info:
+```bash
+uv run pr get-pr {{ticket_id}}
+```
+
+Returns: `branch_name`, `worktree_path`, `working_directory`, `pr_number`, `base_branch`
+
+If `working_directory` is not `.` (needs worktree):
+```bash
+uv run pr setup-worktree {{ticket_id}}
+```
+
+Set:
+- `working_dir`: Resolved worktree path (absolute)
+- `pr_number`: PR number from get-pr
+- `base_branch`: Target branch for PR
+- `current_branch`: Branch name
+- `tmp_folder`: `{{working_dir}}/.tmp/pr-review`
+- `review_dir`: `{{working_dir}}/.review`
+
+Change to working directory and get initial commit:
+```bash
+cd {{working_dir}}
+git rev-parse HEAD
+```
+
+Set `initial_commit`. Record `loop_start_time`. Initialize: `cycle = 1`, `commits_made = 0`.
+
+### Import Local Tasks (if local_tasks_text exists)
+
+Spawn a `local-task-importer` agent (same as Local Mode).
+
+### Loop Iteration
+
+#### Step 1: Check Cycle Limit
+
+Same as local mode.
+
+#### Step 2: Determine Review Source (First Cycle Only)
+
+**First cycle only:**
+
+Fetch PR comments:
+```bash
+uv run pr fetch-threads --pr {{pr_number}} --output-dir {{tmp_folder}}
+```
+
+Check if any thread files were created:
+```bash
+ls {{tmp_folder}}/thread_*.json 2>/dev/null | wc -l
+```
+
+- If threads exist: Skip CodeRabbit, use PR threads as tasks
+- If no threads: Run CodeRabbit with `--base {{base_branch}}`
+
+**Subsequent cycles:**
+
+Always run CodeRabbit with `--base-commit HEAD~1`.
+
+#### Step 3: Run CodeRabbit (if needed)
+
+If not using PR threads:
 
 ```python
-import json
-from pathlib import Path
+if cycle == 1 and no_pr_threads:
+    command = f"uv run review.coderabbit --output-dir {review_dir} -- --base {base_branch}"
+else:
+    command = f"uv run review.coderabbit --output-dir {review_dir} -- --base-commit HEAD~1"
 
-# Load aggregate data from JSON written in step 6
-aggregate_file = Path("{{tmp_folder}}/tasks_aggregate.json")
-aggregate_data = json.loads(aggregate_file.read_text())
-
-# Extract files list from aggregate data
-# Use empty list as default if "files" key is missing
-files = aggregate_data.get("files", [])
-
-# Launch lint-fixer agents in PARALLEL - one per file
-# Store task handles to track and collect results (same pattern as Steps 7 and 9)
-lint_handles = {}  # Maps file_path -> task_handle
-
-for file_path in files:
-    handle = Task(subagent_type="lint-fixer",
-         prompt="--worktree {{working_dir}} --files {{file_path}}",
-         run_in_background=True)
-    lint_handles[file_path] = handle
-
-# Wait for all lint-fixer agents to complete and collect results
-failed_lint_files = []
-
-for file_path, handle in lint_handles.items():
-    try:
-        result = wait_for_task(handle, timeout=AGENT_TIMEOUT_SECONDS)
-        if result.status != "success":
-            log_warning(f"Lint-fixer for {file_path} returned error: {result.error}")
-            failed_lint_files.append(file_path)
-    except TimeoutError:
-        log_warning(f"Lint-fixer for {file_path} timed out after {AGENT_TIMEOUT_SECONDS}s")
-        failed_lint_files.append(file_path)
-    except Exception as e:
-        log_warning(f"Lint-fixer for {file_path} failed with exception: {e}")
-        failed_lint_files.append(file_path)
-
-# Log summary of any failures
-if failed_lint_files:
-    log_warning(f"Failed to lint {len(failed_lint_files)} files: {failed_lint_files}")
+Task(subagent_type="coderabbit-poller", model="haiku", prompt=f"""
+command: {command}
+cwd: {working_dir}
+""")
 ```
 
-**IMPORTANT**: Use `--files` with explicit file path, NOT
-`--changed-only`. The linter will apply its configured
-`included_paths` filters to these files.
-
-> Using `--files` ensures the linter is invoked with explicit file paths so
-> configured filters (like `included_paths`) run consistently on each targeted
-> file. `--changed-only` may skip files that appear unchanged to the change
-> detector or behave differently across environments.
-
-### 11. Commit and Push
-
-**Skip if no code changes (step 8 empty).**
-
+Parse coderabbit output:
 ```bash
-uv run pr commit-push --worktree {{working_dir}} --message "Address PR review feedback"
+cd {{working_dir}}
+uv run pr parse-coderabbit --review-file {{review_file}} --output-dir {{tmp_folder}}
 ```
 
-### 12. Post Deferred Replies & Request Review
+#### Step 4: Aggregate Tasks
 
 ```bash
-# Post deferred replies (skips LOCAL origin tasks automatically)
+aggregated_json="{{tmp_folder}}/aggregated.json"
+uv run pr aggregate-tasks --input-dir {{tmp_folder}} > "$aggregated_json"
+```
+
+If no tasks, exit loop (clean state).
+
+#### Step 5: Process Files in Parallel
+
+Same as local mode - spawn `pr-comment-handler` agents.
+
+Handle `__global__` tasks (local tasks) sequentially after file-specific tasks.
+
+#### Step 6: Run Tests
+
+Same as local mode.
+
+#### Step 7: Commit Changes
+
+Same as local mode:
+```bash
+cd {{working_dir}}
+git add -A
+git commit -m "Address review feedback (cycle {{cycle}})"
+```
+
+#### Step 8: Cleanup and Continue
+
+Same as local mode.
+
+---
+
+## Post-Loop: Finalize
+
+After loop exits (for both modes):
+
+### 1. Final Lint
+
+Run lint on ALL files modified across all cycles:
+
+```python
+for file_path in all_modified_files:
+    Task(subagent_type="lint-fixer", prompt=f'--worktree "{working_dir}" --files "{file_path}"')
+```
+
+### 2. Commit Lint Fixes
+
+```bash
+cd {{working_dir}}
+git status --porcelain
+```
+
+If changes exist:
+```bash
+git add -A
+git commit -m "Lint fixes"
+```
+
+Increment `commits_made`.
+
+### 3. Squash Commits
+
+If `commits_made > 1`:
+
+```bash
+cd {{working_dir}}
+git reset --soft {{initial_commit}}
+git commit -m "Address code review feedback"
+```
+
+**Note**: This squashes all commits made during the session into one.
+
+### 4. Push
+
+```bash
+cd {{working_dir}}
+git push origin {{current_branch}}
+```
+
+For worktree mode, if this is a new branch:
+```bash
+git push -u origin {{current_branch}}
+```
+
+### 5. Post Deferred Replies (Worktree Mode Only)
+
+**Skip if not in worktree mode (no pr_number).**
+
+```bash
 uv run pr post-deferred-replies --pr {{pr_number}} --threads-dir {{tmp_folder}}
-
-# Request review only if code changes were made
-uv run pr request-review --pr {{pr_number}}
 ```
 
-### 13. Collect Local Task Responses
+### 6. Collect Local Task Responses
 
-**This is the canonical collection point for all local task responses.**
-
-Read each `local_*.json` file in `{{tmp_folder}}` and collect
-the `deferred_reply` field from each. The `deferred_reply` is
-populated by pr-comment-handler sub-agents during step 7b
-processing. These responses will be included in the output
-summary (step 15).
-
-**Note:** Step 7b persists global task results (including `deferred_reply`)
-to the same `{{tmp_folder}}` directory, so Step 13 can collect them here.
+If local tasks were processed, collect responses from `local_*.json` files:
 
 ```python
 import json
@@ -421,76 +417,43 @@ for json_file in sorted(tmp_folder.glob("local_*.json")):
         })
 ```
 
-### 14. Cleanup
-
-Delete the tmp folder for the PR comments that was created.
+### 7. Final Cleanup
 
 ```bash
-# Check if tmp folder exists before attempting deletion
-if [ -d "{{tmp_folder}}" ]; then
-    rm -rf "{{tmp_folder}}" || echo "Warning: Failed to delete {{tmp_folder}}"
-else
-    echo "Tmp folder {{tmp_folder}} does not exist, skipping cleanup"
-fi
+rm -rf {{tmp_folder}}
 ```
 
-**Cross-platform note**: On Windows (PowerShell), use:
-
-```powershell
-if (Test-Path "{{tmp_folder}}") {
-    try {
-        Remove-Item -Recurse -Force "{{tmp_folder}}" -ErrorAction Stop
-    } catch {
-        Write-Warning "Failed to delete {{tmp_folder}}: $_"
-    }
-}
-```
-
-### 15. Output Summary
-
-Get commit information:
+### 8. Final Summary
 
 ```bash
 cd {{working_dir}}
-# Current branch commit (HEAD of PR branch)
-git rev-parse HEAD
-# Target branch commit (what PR merges into)
-git rev-parse origin/{{base_branch}}
+git diff --stat {{initial_commit}}..HEAD
 ```
 
-Print to terminal:
-
+Output:
 ```text
 ================================================================================
-PR UPDATE COMPLETE - REVIEW REQUESTED
+REVIEW COMPLETE
 ================================================================================
 
-Ticket: {{ticket_id or "N/A"}}
-{{#if ticket_id}}
-Run `uv run linear get-issue <TICKET_ID>` to fetch plan.
+Mode: {{local_or_worktree}}
+Branch: {{current_branch}}
+{{#if pr_number}}
+PR: #{{pr_number}}
 {{/if}}
-Pull Request: {{pr_url}}
+Cycles: {{cycle}}
+Total elapsed: {{total_elapsed_formatted}}
+Total files modified: {{len(all_modified_files)}}
+Commits squashed: {{commits_made}}
 
-References:
-  working_directory: {{working_dir}}
-  current_branch_commit: <CURRENT_SHA>   # HEAD of PR branch (latest)
-  pr_target_branch_commit: <TARGET_SHA>  # HEAD of target branch
+Cycle summaries:
+{{cycle_summaries}}
 
-Review Process:
-1. Read ticket description for the implementation plan
-2. Read files in working directory for complete implementation understanding
-3. Look at current commit to see the latest changes
-4. Diff branch against pr_target_branch_commit for all changes
+Files modified:
+{{all_modified_files}}
 
-Commands:
-  # Read implementation files
-  cd {{working_dir}}
-
-  # See latest commit details
-  cd {{working_dir}} && git log -1
-
-  # Diff all PR changes against target branch
-  cd {{working_dir}} && git diff <pr_target_branch_commit>...<current_branch_commit>
+Changes:
+{{git_diff_stat}}
 
 {{#if local_task_responses}}
 --------------------------------------------------------------------------------
@@ -510,47 +473,42 @@ LOCAL TASK RESPONSES
 ================================================================================
 ```
 
+---
+
+## File Locations
+
+All files are created relative to `working_dir` to support parallel execution:
+
+| File Type | Location |
+|-----------|----------|
+| CodeRabbit reviews | `{{working_dir}}/.review/` |
+| Task files | `{{working_dir}}/.tmp/pr-review/` |
+| Thread files | `{{working_dir}}/.tmp/pr-review/thread_*.json` |
+| Local task files | `{{working_dir}}/.tmp/pr-review/local_*.json` |
+| Aggregated JSON | `{{working_dir}}/.tmp/pr-review/aggregated.json` |
+
+This allows running reviews in parallel across multiple worktrees + main directory.
+
+---
+
+## Code Review Tools
+
+* **CodeRabbit uncommitted**: `uv run review.coderabbit --output-dir {{review_dir}} -- --type uncommitted`
+* **CodeRabbit vs branch**: `uv run review.coderabbit --output-dir {{review_dir}} -- --base <branch>`
+* **CodeRabbit vs commit**: `uv run review.coderabbit --output-dir {{review_dir}} -- --base-commit <sha>`
+* **PR threads**: `uv run pr fetch-threads --pr <number> --output-dir <dir>`
+* **Timeout guidance**: Allow up to 2 hours for CodeRabbit
+
 ## Rules
 
-- **This command must not read files** - use scripts to get
-  file lists and task paths; sub-agents read task files
+- **This command must not read file contents** - only track paths
+- **Minimize context** - store only paths, counts, and brief summaries
 - No AI co-authors (see AGENTS.md)
-- **Prefer immediate implementation** - sub-agents should implement code
-  changes immediately whenever possible. Permitted actions:
-  - **Immediate implement** (preferred): Make code changes right now
-  - **Challenge with deferred reply** (narrow exception): When requesting
-    external validation or user input, include a `deferred_reply` with:
-    - Reason why implementation cannot proceed immediately
-    - Expected ETA once clarification is received
-  - **Resolve**: Strictly for GitHub threads where discussion concluded
-    with agreement (no code changes needed)
-- Deferred replies for LOCAL tasks are collected in step 13 (Collect Local
-  Task Responses) and included in the output summary
-- Always use lint-fixer sub-agents for linting (never run lint directly)
-- Always use test-debugger sub-agents for testing (never run tests directly)
-- Process pr-comment-handler files in parallel, tasks within a file sequentially
-- Process test-debugger files in parallel (one agent per file)
-- Process lint-fixer files in parallel (one agent per file)
-- Always use `--files` with explicit file path for linting
-- Pass task context (changes made) to test-debugger for debugging
-
-### Action Examples
-
-**Immediate implement** (code changes applied):
-```json
-{"action": "implement", "summary": "Added input validation to parse_args()"}
-```
-
-**Challenge with deferred reply** (needs external input):
-```json
-{
-  "action": "implement",
-  "summary": "Stored deferred reply requesting API key format clarification",
-  "deferred_reply": "The requested change requires knowing the expected API key format. Is it UUID v4 or a custom format? Awaiting clarification before implementing validation. ETA: same day once format confirmed."
-}
-```
-
-**Resolve for GitHub thread** (discussion concluded):
-```json
-{"action": "resolve", "summary": "Reviewer acknowledged current approach is acceptable"}
-```
+- Never defer - implement or challenge
+- Always use sub-agents for: comment handling, testing, linting
+- Process sub-agents in parallel where possible
+- Tests run after each cycle, lint only at end
+- Always squash commits before pushing
+- Always push at the end
+- Post deferred replies only in worktree mode (when pr_number exists)
+- All file paths relative to working_dir for parallel execution support

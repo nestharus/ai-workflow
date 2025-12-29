@@ -14,11 +14,19 @@ Run CodeRabbit review and poll for completion.
 
 - `command`: The full coderabbit command to run (e.g.,
   `uv run review.coderabbit -- --type uncommitted`)
+- `cwd` (optional): Working directory to run the command in. If provided,
+  the command will be prefixed with `cd {{cwd}} &&`. Defaults to current directory.
 
 ## Workflow
 
 1. **Start background task**:
 
+   If `cwd` is provided:
+   ```bash
+   cd {{cwd}} && {{command}}
+   ```
+
+   Otherwise:
    ```bash
    {{command}}
    ```
