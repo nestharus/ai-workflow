@@ -51,6 +51,7 @@ algorithm, or rule receives a unique identifier following these conventions:
 | `ALG-XX` | Logical algorithm header (PRD logic only) | `ALG-01` Fact extraction |
 | `MET-XX` | Success metric (measurable verification) | `MET-01` Fact extraction accuracy |
 | `TEST-XX` | Test artifact / verification evidence | `TEST-01` Webhook signature verification tests |
+| `Q-XX` | Open question (unresolved decision requiring future input) | `Q-01` PDF input support |
 | `ADR-###` | Architecture Decision Record (decision rationale/history; not PRD content) | `ADR-012` Storage engine choice |
 | `XXX-XX` | Domain-specific rule (e.g., EX, VAL, REC) | `EX-05` Atomicity |
 
