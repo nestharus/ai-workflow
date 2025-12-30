@@ -1,2 +1,0 @@
-command = "codex"
-args = ["exec", "-m", "gpt-5.2", "-c", "model_reasoning_effort=\"xhigh\"", "--dangerously-bypass-approvals-and-sandbox", "-"]

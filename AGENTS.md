@@ -1,5 +1,14 @@
 # AI Agent Entry Point
 
+**CRITICAL: This is the only AGENTS.md file. Do not search for others. Follow ALL instructions
+in this file exactly. These are mandatory rules, not suggestions.**
+
+**If you do not know how to accomplish a task, check the "How To" list below for a relevant guide.**
+
+**MANDATORY: The "How To" sections below link to documentation files. When you first need to
+perform a task, read its linked file once. Do not read files for tasks you are not performing.
+Do not re-read on repeat tasks.**
+
 Application Documentation (app/ code) read `docs/architecture/project-overview.md`.
 
 ## Documentation Modules
@@ -31,20 +40,11 @@ use the `uv run python -m` pattern:
 
 ## How To Add Python Dependencies Correctly → [`docs/development/adding-dependencies.md`](docs/development/adding-dependencies.md)
 
-## How To Write Agents Correctly
+## How To Add Models Correctly → [`docs/development/adding-models.md`](docs/development/adding-models.md)
 
-This project uses **Every Code** (`@just-every/code`) for AI agent orchestration.
+## How To Write Agents Correctly → [`docs/development/writing-agents.md`](docs/development/writing-agents.md)
 
-For writing agents, commands, or changing agent-related settings, refer to `.code/README.md`
-for complete documentation on:
-
-* Regenerating `config.toml` from source files
-* Writing agent definitions in `agents.toml`
-* Writing subagent commands with instruction file references
-* Configuring global settings
-* Model selection guide
-
-## How To Run Agents Correctly
+## How To Execute Agents Correctly → [`docs/development/executing-agents.md`](docs/development/executing-agents.md)
 
 ## Plan Execution Guidelines
 

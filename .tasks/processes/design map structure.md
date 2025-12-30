@@ -23,6 +23,8 @@ ADRs live in `.tasks/processes/adr/`.
 PRD IDs (inputs):
 - `GOAL-XX`, `INV-XX`, `SET-XX`, `ART-XX`, `ALG-XX`, `RES-XX`, `Q-XX`, `{DOMAIN}-XX`
 
+Derived requirements introduced/resolved inside a Design Map may use domain-specific prefixes in the `{DOMAIN}-XX` space (e.g., `DM-XX`, `BND-XX`, `ECO-XX`) as long as they are unique and cross-referenced.
+
 Process IDs (links only):
 - `ADR-###` — Architecture Decision Record
 
@@ -53,6 +55,8 @@ Needs: IDs of unresolved inputs required to complete deterministic derivation of
 - Derived requirements resolved inside Design Map, or
 - Open questions / missing intent that must be escalated to PRD.
 
+Cross-references: optional typed relations. Relation labels are extensible; include only those relevant to the node.
+
 ### Component Template
 
 ```markdown
@@ -60,13 +64,13 @@ Needs: IDs of unresolved inputs required to complete deterministic derivation of
 
 Pattern: {pattern-name-or-id}
 Implements: (ALG-__, {DOMAIN}-__, GOAL-__)
-Cross-references: (requires: INV-__; uses: RES-__; satisfies: SET-__; impacts: ART-__; decided-by: ADR-###)
-Needs: ({local-derived-id-__}, Q-__)
+Cross-references (optional): (requires: INV-__; uses: RES-__; satisfies: SET-__; impacts: ART-__; decided-by: ADR-###)
+Needs: ({DOMAIN}-__, Q-__)
 Consumes: (ART-__, IAR-__)
 Produces: (ART-__, IAR-__)
 
 ### Contracts (boundaries)
-- CON-__: for (ART-__/IAR-__) Cross-references: (requires: INV-__; satisfies: SET-__; decided-by: ADR-###)
+- CON-__: for (ART-__/IAR-__) Cross-references (optional): (requires: INV-__; satisfies: SET-__; decided-by: ADR-###)
 ```
 
 ### Contract (Boundary) Template
@@ -80,8 +84,8 @@ For: (ART-__/IAR-__)
 Schema IDs: {schema-ids}
 Message types: {message-types}
 Implements: (ALG-__, {DOMAIN}-__, GOAL-__)
-Cross-references: (requires: INV-__; uses: RES-__; satisfies: SET-__; impacts: ART-__; decided-by: ADR-###)
-Needs: ({local-derived-id-__}, Q-__)
+Cross-references (optional): (requires: INV-__; uses: RES-__; satisfies: SET-__; impacts: ART-__; decided-by: ADR-###)
+Needs: ({DOMAIN}-__, Q-__)
 
 Boundary obligations:
 - OBL-__ — {short obligation description}
@@ -98,11 +102,11 @@ Kind: {queue|topic|table|index|cache|internal-api|filesystem|job|timer}
 Schema IDs: {schema-ids}
 Owned-by: (COM-__)
 Implements: (ALG-__, {DOMAIN}-__, GOAL-__)
-Cross-references: (requires: INV-__; uses: RES-__; satisfies: SET-__; impacts: ART-__; decided-by: ADR-###)
-Needs: ({local-derived-id-__}, Q-__)
+Cross-references (optional): (requires: INV-__; uses: RES-__; satisfies: SET-__; impacts: ART-__; decided-by: ADR-###)
+Needs: ({DOMAIN}-__, Q-__)
 
 ### Contracts (how it is accessed)
-- CON-__: {read|write|publish|subscribe|mutate} Cross-references: (derived-from: IAR-__; requires: INV-__; satisfies: SET-__)
+- CON-__: {read|write|publish|subscribe|mutate} Cross-references (optional): (derived-from: IAR-__; requires: INV-__; satisfies: SET-__)
 
 Boundary obligations:
 - OBL-__ — {short obligation description}

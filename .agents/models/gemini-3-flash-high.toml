@@ -1,2 +1,3 @@
 command = "gemini"
 args = ["--yolo", "--model", "gemini-3-flash-high", "--output-format", "text"]
+prompt_mode = "arg"

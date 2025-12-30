@@ -23,5 +23,5 @@ Superseded-by: ADR-###
 
 ## References
 - PRD: (INV-__, {DOMAIN}-__)
-- Design Map: (COM-__, CON-__, ART-__, IAR-__)
+- Design Map: (COM-__, CON-__, ART-__, IAR-__, OBL-__)
 - Plan: (PHASE-__, TASK-__)
