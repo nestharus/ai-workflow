@@ -50,6 +50,8 @@ algorithm, or rule receives a unique identifier following these conventions:
 | `ART-XX` | External artifact/boundary requirement (external only) | `ART-01` GitHub webhook payload |
 | `ALG-XX` | Logical algorithm header (PRD logic only) | `ALG-01` Fact extraction |
 | `MET-XX` | Success metric (measurable verification) | `MET-01` Fact extraction accuracy |
+| `TEST-XX` | Test artifact / verification evidence | `TEST-01` Webhook signature verification tests |
+| `ADR-###` | Architecture Decision Record (decision rationale/history; not PRD content) | `ADR-012` Storage engine choice |
 | `XXX-XX` | Domain-specific rule (e.g., EX, VAL, REC) | `EX-05` Atomicity |
 
 **SET-XX rules:**
@@ -88,10 +90,14 @@ use typed cross-references instead of restating.
 - `requires:` hard dependency
 - `uses:` resource/tooling dependency
 - `satisfies:` compliance/constraint satisfaction (often a `SET-XX`)
-- `validated-by:` metric or test artifact
+- `validated-by:` metric (`MET-XX`) or test artifact (`TEST-XX`)
 - `derived-from:` decomposition of another ID
 - `impacts:` non-required effect (rare)
-- `decided-by:` ADR link
+- `decided-by:` ADR link (ID only, no prose)
+
+**Decision rationale rule (keep PRD timeless):**
+- If you need “we chose X because…”, write an ADR in `.tasks/processes/adr/` and link from PRD items via `Cross-references: (decided-by: ADR-###)`.
+- Do not put decision history/justifications inside PRD prose.
 
 **Single extension (justified):**
 - `includes:` membership list for `SET-XX` (constraint sets must expose members for machine parsing)

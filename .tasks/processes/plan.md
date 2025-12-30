@@ -1,148 +1,40 @@
-# Plan Structure
+# Execution Plan
 
-## Building Block Architecture
+This document is an execution plan template (work ordering only).
+It uses `PHASE-XX` / `MILE-XX` / `TASK-XX` primitives and references PRD + Design Map IDs.
+It must not contain design-topology definitions (blocks/components/protocols/contracts).
+Decision rationale must not be embedded in the plan; link to ADRs by ID only: `(decided-by: ADR-###)`.
+ADRs live in `.tasks/processes/adr/`.
 
-For complex systems, use hierarchical building blocks instead of flat rule lists.
-Work from **large to small** - identify the biggest units first, then decompose.
+## PHASE-01 — {name}
+Goal: (GOAL-__)
+Scope: (ALG-__, ART-__, SET-__)
+Depends-on: (PHASE-__)
+Decisions: (decided-by: ADR-###)
 
-### Building Block Schema
+### MILE-01 — {deliverable}
+Produces: (ART-__)
+Validated-by: (MET-__)
+Implements: (COM-__, CON-__)
+Decisions: (decided-by: ADR-###)
 
-```markdown
-## Block: {BLOCK-ID}
+#### TASK-01 — {task}
+Implements: (COM-__, ALG-__)
+Satisfies: (INV-__, SET-__)
+Validated-by: (MET-__, TEST-__)
+Depends-on: (TASK-__)
+Decisions: (decided-by: ADR-###)
 
-Parent: {PARENT-BLOCK-ID} | ROOT
-Children: [{CHILD-ID}, ...]
-
-### Purpose
-
-{one sentence describing what this block does}
-
-### Capabilities
-
-| ID | Description |
-|----|-------------|
-| CAP-{BLOCK}-{N} | {what this block can do} |
-
-### Algorithms
-
-| ID | Implements | Description |
-|----|------------|-------------|
-| ALG-{BLOCK}-{N} | CAP-{BLOCK}-{N} | {how the capability is realized} |
-```
-
-### Protocol Schema
-
-Protocols define how blocks communicate.
-
-```markdown
-## Protocol: {PROTOCOL-ID}
-
-Participants: [{BLOCK-A}, {BLOCK-B}]
-Direction: {A → B | A ↔ B}
-
-### Messages
-
-| ID | From | To | Payload |
-|----|------|----|---------|
-| MSG-{PROTOCOL}-{N} | {BLOCK-A} | {BLOCK-B} | {data schema} |
-
-### Sequence
-
-\`\`\`mermaid
-sequenceDiagram
-    participant A as BLOCK-A
-    participant B as BLOCK-B
-    A->>B: MSG-1
-    B-->>A: MSG-2
-\`\`\`
-```
-
-### Contract Schema
-
-Contracts define guarantees between blocks.
-
-```markdown
-## Contract: {CONTRACT-ID}
-
-Between: {BLOCK-A} ↔ {BLOCK-B}
-Via: {PROTOCOL-ID}
-
-### Preconditions
-
-- {what must be true before interaction}
-
-### Postconditions
-
-- {what will be true after interaction}
-
-### Invariants
-
-- {what remains true during interaction}
-
-### Errors
-
-| Condition | Response |
-|-----------|----------|
-| {error condition} | {how to handle} |
-```
-
-### Ticket Schema
-
-Tickets implement building blocks by referencing plan.md sections.
-
-```markdown
-# Ticket {N}: {Title}
-
-## Implements
-
-- Block: [{BLOCK-ID}](#block-block-id)
-- Capabilities: [{CAP-ID}](#cap-id), ...
-- Algorithms: [{ALG-ID}](#alg-id), ...
-
-## Uses
-
-- Protocols: [{PROTOCOL-ID}](#protocol-protocol-id), ...
-- Contracts: [{CONTRACT-ID}](#contract-contract-id), ...
-
-## Dependencies
-
-- Requires: [Ticket {M}](ticket-M-name.md), ...
-
-## Files
+##### Files
 
 | Action | Path |
 |--------|------|
-| create | `path/to/new/file.md` |
-| modify | `path/to/existing.py` |
+| create | `path/to/new_file.ext` |
+| modify | `path/to/existing_file.ext` |
 
-## Acceptance Criteria
+##### Acceptance Criteria
 
-- [ ] Capability CAP-{N} is functional
-- [ ] Tests pass for ALG-{N}
-```
+- [ ] Validation artifacts exist: (TEST-__ / MET-__)
+- [ ] Required PRD/Design IDs are referenced (no restated requirements)
+- [ ] Decision links recorded when applicable: (decided-by: ADR-###)
 
-### Decomposition Hierarchy Example
-
-```mermaid
-graph TD
-	    subgraph ROOT[SYSTEM]
-	        subgraph L1[Level 1: Subsystems]
-	            ORCH[ORCHESTRATION]
-	            WORK[WORKERS]
-	            INFRA[INFRASTRUCTURE]
-	        end
-	        subgraph L2[Level 2: Components]
-	            OUTER[OUTER-LOOP]
-	            INNER[INNER-CYCLE]
-	            FILE[FILE-HANDLER]
-	            CR[CODERABBIT-RUNNER]
-	        end
-	    end
-	    ORCH --> OUTER
-	    ORCH --> INNER
-	    WORK --> FILE
-	    INFRA --> CR
-	    OUTER -->|SPAWN| INNER
-	    INNER -->|SPAWN| FILE
-	    INNER -->|RUN-REVIEW| CR
-```
