@@ -7,9 +7,16 @@ ADRs live in `.tasks/processes/adr/`.
 ## Invariants
 
 * **INV-DM-01 — PRD traceability:** every `COM-XX` / `CON-XX` / `IAR-XX` node MUST cite PRD IDs via `Implements:` or `Cross-references:`.
-* **INV-DM-02 — No restated requirements:** Design Map nodes MUST not introduce new requirements; if a requirement is discovered, add it to the PRD and reference it here.
+* **INV-DM-02 — Derived requirements allowed, PRD escalation only for ambiguity:** Design Map nodes MAY introduce derived requirements discovered during exploration (pattern/boundary/ecosystem constraints). These derived requirements remain in the Design Map unless they cannot be resolved autonomously without an implicit choice. If autonomous derivation fails, the Design Map MUST surface the missing requirement(s) needed to decide (not the decision), and those missing requirements MUST be escalated to the PRD (typically as Q-XX).
 * **INV-DM-03 — Boundary obligations:** every introduced boundary (`CON-XX` and any `IAR-XX` that creates a boundary) MUST list its boundary obligation IDs (`OBL-XX`) (without describing algorithms here).
 * **INV-DM-04 — ADR-only decisions:** decisions appear only as `(decided-by: ADR-###)` with no rationale prose in PRD/Plan/Design Map.
+
+### Derived requirement classification (Design Map behavior)
+
+* **DR-1 (Deterministic derived requirement):** can be derived from PRD + explored facts/pattern constraints with no preference tradeoff → stays in Design Map.
+* **DR-2 (Decision-derivable):** multiple valid options exist, but one option is deterministically implied by existing constraints → record ADR; Design Map links `(decided-by: ADR-###)`; no PRD change.
+* **DR-3 (Ambiguity / missing intent):** cannot be derived without preference/tradeoff → Design Map must surface missing requirement(s); escalate to PRD as `Q-XX` (or equivalent).
+* **Escalation rule:** Only Needs items that are ambiguities requiring user intent are escalated to PRD (as `Q-XX` or equivalent). Deterministic derived requirements MUST remain in Design Map and MUST NOT be rewritten into PRD.
 
 ## Identifier Vocabulary
 
@@ -42,6 +49,10 @@ For deterministic derivation from a Design Map instance:
 
 ## Minimal Node Templates
 
+Needs: IDs of unresolved inputs required to complete deterministic derivation of this node without making an implicit decision. Needs items can be:
+- Derived requirements resolved inside Design Map, or
+- Open questions / missing intent that must be escalated to PRD.
+
 ### Component Template
 
 ```markdown
@@ -50,7 +61,7 @@ For deterministic derivation from a Design Map instance:
 Pattern: {pattern-name-or-id}
 Implements: (ALG-__, {DOMAIN}-__, GOAL-__)
 Cross-references: (requires: INV-__; uses: RES-__; satisfies: SET-__; impacts: ART-__; decided-by: ADR-###)
-Needs: (Q-__)
+Needs: ({local-derived-id-__}, Q-__)
 Consumes: (ART-__, IAR-__)
 Produces: (ART-__, IAR-__)
 
@@ -70,10 +81,10 @@ Schema IDs: {schema-ids}
 Message types: {message-types}
 Implements: (ALG-__, {DOMAIN}-__, GOAL-__)
 Cross-references: (requires: INV-__; uses: RES-__; satisfies: SET-__; impacts: ART-__; decided-by: ADR-###)
-Needs: (Q-__)
+Needs: ({local-derived-id-__}, Q-__)
 
 Boundary obligations:
-- OBL-__ — {label}
+- OBL-__ — {short obligation description}
   Cross-references: (requires: INV-__; satisfies: SET-__)
 ```
 
@@ -88,12 +99,12 @@ Schema IDs: {schema-ids}
 Owned-by: (COM-__)
 Implements: (ALG-__, {DOMAIN}-__, GOAL-__)
 Cross-references: (requires: INV-__; uses: RES-__; satisfies: SET-__; impacts: ART-__; decided-by: ADR-###)
-Needs: (Q-__)
+Needs: ({local-derived-id-__}, Q-__)
 
 ### Contracts (how it is accessed)
 - CON-__: {read|write|publish|subscribe|mutate} Cross-references: (derived-from: IAR-__; requires: INV-__; satisfies: SET-__)
 
 Boundary obligations:
-- OBL-__ — {label}
+- OBL-__ — {short obligation description}
   Cross-references: (requires: INV-__; satisfies: SET-__)
 ```

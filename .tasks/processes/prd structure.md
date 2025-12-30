@@ -55,6 +55,8 @@ algorithm, or rule receives a unique identifier following these conventions:
 | `ADR-###` | Architecture Decision Record (decision rationale/history; not PRD content) | `ADR-012` Storage engine choice |
 | `XXX-XX` | Domain-specific rule (e.g., EX, VAL, REC) | `EX-05` Atomicity |
 
+This prefix table is a starter set; PRD instances may define additional prefixes as needed. Unrecognized prefixes should be treated as domain-specific `XXX-XX` rules as long as IDs are unique and cross-referenced.
+
 **SET-XX rules:**
 - `SET-XX` members are actual system constraints (INV/RULE), not document meta-format requirements.
 - Apply sets by attachment (do not restate set contents): `Cross-references: (satisfies: SET-XX)`.
