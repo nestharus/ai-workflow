@@ -1,0 +1,2 @@
+command = "codex"
+args = ["exec", "-m", "gpt-5.1-codex-mini", "-c", "model_reasoning_effort=\"medium\"", "--dangerously-bypass-approvals-and-sandbox", "-"]

@@ -1,0 +1,25 @@
+# Standalone Ollama service for testing
+# Use docker-compose.dev.yml for integrated dev environment
+#
+# Start: docker-compose up -d --build
+# Test:  curl http://localhost:11434/api/tags
+# Stop:  docker-compose down
+
+services:
+  ollama:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smol-cluster
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_NUM_PARALLEL=10
+      - OLLAMA_MAX_LOADED_MODELS=2
+      - OLLAMA_KEEP_ALIVE=-1
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

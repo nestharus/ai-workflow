@@ -141,22 +141,18 @@ Always use `--base-commit HEAD~1` (review the commit we just made).
 
 #### Step 3: Run CodeRabbit
 
-Spawn a `coderabbit-poller` agent:
+Run CodeRabbit synchronously and extract `review_file` from stdout:
 
-```python
-if coderabbit_target == "uncommitted":
-    command = f"uv run review.coderabbit --output-dir {review_dir} -- --type uncommitted"
-else:
-    command = f"uv run review.coderabbit --output-dir {review_dir} -- --base-commit HEAD~1"
-
-Task(subagent_type="coderabbit-poller", model="haiku", prompt=f"""
-command: {command}
-cwd: {working_dir}
-""")
+```bash
+cd {{working_dir}}
+if [ "{{coderabbit_target}}" = "uncommitted" ]; then
+  uv run review.coderabbit --output-dir {{review_dir}} -- --type uncommitted | uv run pr extract-review-path
+else
+  uv run review.coderabbit --output-dir {{review_dir}} -- --base-commit HEAD~1 | uv run pr extract-review-path
+fi
 ```
 
-Wait for result. If `NO_CHANGES` or `ERROR`, exit loop.
-Extract `review_file` from `REVIEW_FILE: <path>`.
+If no review file or error, exit loop.
 
 #### Step 4: Parse and Aggregate
 
@@ -283,18 +279,15 @@ Always run CodeRabbit with `--base-commit HEAD~1`.
 
 #### Step 3: Run CodeRabbit (if needed)
 
-If not using PR threads:
+If not using PR threads, run CodeRabbit synchronously and extract `review_file` from stdout:
 
-```python
-if cycle == 1 and no_pr_threads:
-    command = f"uv run review.coderabbit --output-dir {review_dir} -- --base {base_branch}"
-else:
-    command = f"uv run review.coderabbit --output-dir {review_dir} -- --base-commit HEAD~1"
-
-Task(subagent_type="coderabbit-poller", model="haiku", prompt=f"""
-command: {command}
-cwd: {working_dir}
-""")
+```bash
+cd {{working_dir}}
+if [ "{{cycle}}" -eq 1 ] && [ "{{no_pr_threads}}" = "true" ]; then
+  uv run review.coderabbit --output-dir {{review_dir}} -- --base {{base_branch}} | uv run pr extract-review-path
+else
+  uv run review.coderabbit --output-dir {{review_dir}} -- --base-commit HEAD~1 | uv run pr extract-review-path
+fi
 ```
 
 Parse coderabbit output:

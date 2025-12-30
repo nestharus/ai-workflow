@@ -1,0 +1,2 @@
+command = "gemini"
+args = ["--yolo", "--model", "gemini-3-pro-high", "--output-format", "text"]

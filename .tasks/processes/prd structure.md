@@ -18,6 +18,8 @@ PRDs must avoid narrative paragraphs. All content should be expressed as:
 - Tables (for structured comparisons)
 - Diagrams (Mermaid flowcharts/component diagrams)
 
+Prose exception (only if present): **Problem Statement** (single paragraph).
+
 **Why:** Prose introduces ambiguity, makes requirements hard to trace, and encourages
 duplication through restating the same concept in different words.
 
@@ -36,16 +38,33 @@ preserve the original location in the source document for traceability purposes.
 
 ### 2. Indexed Identifiers
 
-Every discrete requirement, resource, goal, or rule receives a unique identifier
-following these conventions:
+Every discrete requirement, resource, goal, invariant, constraint set, artifact/boundary,
+algorithm, or rule receives a unique identifier following these conventions:
 
 | Prefix | Meaning | Example |
 |--------|---------|---------|
 | `RES-XX` | Resource (tool, library, external dependency) | `RES-01` Claude Code |
 | `GOAL-XX` | High-level objective | `GOAL-03` Atomic information units |
 | `INV-XX` | Invariant (immutable constraint) | `INV-01` Byte-exact provenance |
+| `SET-XX` | Constraint set (bundle of actual system constraints: INV/RULE) | `SET-01` Auditability set |
+| `ART-XX` | External artifact/boundary requirement (external only) | `ART-01` GitHub webhook payload |
+| `ALG-XX` | Logical algorithm header (PRD logic only) | `ALG-01` Fact extraction |
 | `MET-XX` | Success metric (measurable verification) | `MET-01` Fact extraction accuracy |
 | `XXX-XX` | Domain-specific rule (e.g., EX, VAL, REC) | `EX-05` Atomicity |
+
+**SET-XX rules:**
+- `SET-XX` members are actual system constraints (INV/RULE), not document meta-format requirements.
+- Apply sets by attachment (do not restate set contents): `Cross-references: (satisfies: SET-XX)`.
+
+**SET-XX template:**
+```
+* **SET-01 — {set name}:** bundle of commonly-applied constraints.
+  Cross-references: (includes: INV-05, SEC-02, RET-01)
+```
+
+**ART-XX rules:**
+- PRDs list **external** `ART-XX` only (inputs/outputs/interfaces that are requirements).
+- Internal artifacts/boundaries (queues, tables, internal APIs) belong in the Design Map.
 
 **Why:** Indexed identifiers enable:
 - Cross-referencing without duplication
@@ -56,7 +75,26 @@ following these conventions:
 ### 3. DRY (Don't Repeat Yourself)
 
 Each concept appears exactly once. When a rule depends on or relates to another,
-use cross-references instead of restating:
+use typed cross-references instead of restating.
+
+**Cross-reference format (machine-parseable):**
+- Use a `Cross-references:` field with labeled relations.
+- Grammar: `Cross-references: (requires: INV-01; uses: RES-03; satisfies: SET-02; validated-by: MET-01)`
+- Delimiters:
+  - Relations separated by `; `
+  - IDs separated by `, `
+
+**Initial relation vocabulary (extend only when needed):**
+- `requires:` hard dependency
+- `uses:` resource/tooling dependency
+- `satisfies:` compliance/constraint satisfaction (often a `SET-XX`)
+- `validated-by:` metric or test artifact
+- `derived-from:` decomposition of another ID
+- `impacts:` non-required effect (rare)
+- `decided-by:` ADR link
+
+**Single extension (justified):**
+- `includes:` membership list for `SET-XX` (constraint sets must expose members for machine parsing)
 
 **Bad (duplication):**
 ```
@@ -67,7 +105,9 @@ use cross-references instead of restating:
 **Good (cross-reference):**
 ```
 * **EX-05 — Atomicity:** no compound facts; split conjunctions into separate facts.
-* **VAL-G-01 — Detect grammar fabrication:** (validates EX-05 atomicity constraint)
+  Cross-references: (validated-by: MET-01)
+* **MET-01 — Atomicity conformance:** % of extracted facts that contain exactly one assertion.
+  Cross-references: (derived-from: EX-05)
 ```
 
 ### 4. Precedence Through Invariants
@@ -84,6 +124,10 @@ Place invariants first and explicitly state their precedence:
 
 * **Precedence:** invariants apply globally and override any conflicting requirements.
 * **INV-01 — Byte-exact provenance:** ...
+* **INV-REF-01 — No orphan requirements:** every non-invariant rule MUST be referenced by at least one of:
+  - an `ALG-XX` header, or
+  - an external `ART-XX` requirement, or
+  - a `MET-XX` success metric.
 ```
 
 ### 5. Hierarchical Organization
@@ -112,7 +156,7 @@ Annotate diagram nodes with rule references:
 
 ```mermaid
 flowchart TD
-  A["Input: document<br/>Rules: IN-01, CAN-01"] --> B["Processing<br/>Rules: EX-01, EX-02"]
+  A["Input: document<br/>Cross-references: (requires: IN-01, CAN-01)"] --> B["Processing<br/>Cross-references: (requires: EX-01, EX-02)"]
 ```
 
 ---
@@ -146,9 +190,25 @@ Indexed list of external dependencies (tools, libraries, APIs, models).
 **Guidelines:**
 - One resource per line
 - Include brief description of role/purpose
-- Resources may reference each other (e.g., "used by `RES-04`")
+- Resources may reference each other via `Cross-references: (requires: RES-XX)` when relevant
 
-#### 3. Problem Statement
+#### 3. External Artifacts / Boundaries
+
+Indexed list of external interfaces/deliverables that are requirements.
+
+```
+## External Artifacts / Boundaries
+
+- **ART-01 — {artifact/boundary name}:** exists as an external interface/deliverable.
+  Cross-references: (satisfies: SET-01; validated-by: MET-03; requires: INV-02)
+```
+
+**Guidelines:**
+- One artifact/boundary per line
+- PRDs list external `ART-XX` only
+- Internal artifacts/boundaries belong in the Design Map
+
+#### 4. Problem Statement
 
 Single paragraph (exception to no-prose rule) explaining:
 - What problem exists
@@ -157,7 +217,7 @@ Single paragraph (exception to no-prose rule) explaining:
 
 Keep under 200 words. This is the only prose allowed.
 
-#### 4. Goal List
+#### 5. Goal List
 
 Indexed objectives the system must achieve.
 
@@ -173,7 +233,7 @@ Indexed objectives the system must achieve.
 - Goals are outcome-focused (what), not implementation-focused (how)
 - Goals should be measurable or verifiable
 
-#### 5. Indexed Rule List
+#### 6. Indexed Rule List
 
 The bulk of the PRD. Organized into subsections by category.
 
@@ -183,7 +243,8 @@ The bulk of the PRD. Organized into subsections by category.
 ### Invariants
 
 * **INV-01 — Rule name:** Description.
-* **INV-02 — Rule name:** Description referencing (INV-01, GOAL-02).
+* **INV-02 — Rule name:** Description.
+  Cross-references: (requires: INV-01; derived-from: GOAL-02)
 
 ### Execution rules
 
@@ -192,11 +253,11 @@ The bulk of the PRD. Organized into subsections by category.
 
 **Guidelines:**
 - Each rule has unique prefix+number identifier
-- Include cross-references in parentheses where applicable
+- Include `Cross-references: (...)` with typed relations where applicable
 - Rules should be atomic (one concern per rule)
 - Use consistent verb tense (present/imperative)
 
-#### 6. Component Diagrams
+#### 7. Component Diagrams
 
 Mermaid diagrams showing system architecture.
 
@@ -208,7 +269,7 @@ Mermaid diagrams showing system architecture.
 ```mermaid
 flowchart LR
   subgraph INPUTS["Inputs"]
-    DOC["Documents<br/>Rules: IN-01"]
+    DOC["Documents<br/>Cross-references: (requires: IN-01)"]
   end
   ...
 ```
@@ -220,7 +281,11 @@ flowchart LR
 - Show data flow direction with arrows
 - Include legend if diagram is complex
 
-#### 7. Algorithms as Flowcharts
+In PRDs:
+- Prefer external `ART-XX` boundaries and major components only
+- Put internal artifacts/boundaries in the Design Map
+
+#### 8. Algorithms as Flowcharts
 
 Detailed algorithmic logic as Mermaid flowcharts.
 
@@ -231,7 +296,7 @@ Detailed algorithmic logic as Mermaid flowcharts.
 
 ```mermaid
 flowchart TD
-  %% Rules: EX-01, EX-02
+  %% Cross-references: (requires: EX-01, EX-02)
   A["Start"] --> B{"Condition?"}
   B -->|Yes| C["Action"]
   B -->|No| D["Other action"]
@@ -240,12 +305,12 @@ flowchart TD
 
 **Guidelines:**
 - Name algorithms with `ALG-XX` prefix
-- Reference rules at top of diagram in comment
+- Reference rules at top of diagram as `Cross-references: (...)`
 - Decision nodes use `{}`
 - Action nodes use `[]`
 - Show all branches to completion
 
-#### 8. Success Metrics
+#### 9. Success Metrics
 
 Indexed, measurable criteria that define when goals are achieved. Each metric
 links to specific goals and provides objective verification criteria.
@@ -253,17 +318,18 @@ links to specific goals and provides objective verification criteria.
 ```
 ## Success Metrics
 
-| ID | Metric | Target | Measurement | Goals |
-|----|--------|--------|-------------|-------|
-| `MET-01` | Fact extraction accuracy | >95% | Manual review of 100 samples | GOAL-01, GOAL-03 |
-| `MET-02` | Reconstruction success rate | 100% | Automated byte-comparison | GOAL-02, INV-01 |
-| `MET-03` | Processing throughput | <5min/page | Benchmark on 50-page doc | GOAL-10, PERF-02 |
-| `MET-04` | Deduplication precision | >99% | No false merges in test set | GOAL-04, DED-05 |
+| ID | Metric | Target | Measurement | Cross-references |
+|----|--------|--------|-------------|------------------|
+| `MET-01` | Fact extraction accuracy | >95% | Manual review of 100 samples | (derived-from: GOAL-01, GOAL-03) |
+| `MET-02` | Reconstruction success rate | 100% | Automated byte-comparison | (derived-from: GOAL-02, INV-01) |
+| `MET-03` | Processing throughput | <5min/page | Benchmark on 50-page doc | (derived-from: GOAL-10, PERF-02) |
+| `MET-04` | Deduplication precision | >99% | No false merges in test set | (derived-from: GOAL-04, DED-05) |
 ```
 
 **Guidelines:**
 - Use `MET-XX` prefix for metric identifiers
-- Each metric must link to at least one GOAL or INV
+- Each metric must include at least one typed cross-reference (e.g., `(derived-from: GOAL-XX[, INV-XX])`)
+- Each goal/rule should cite its verification via `Cross-references: (validated-by: MET-XX)`
 - Targets must be specific and testable (not "high accuracy" but ">95%")
 - Measurement column specifies HOW the metric is validated
 - Include both functional metrics (accuracy, coverage) and operational metrics (speed, resource use)
@@ -279,7 +345,7 @@ links to specific goals and provides objective verification criteria.
 
 **Writing Good Metrics:**
 
-1. **Derived from Goals:** Every goal should have at least one metric that validates it
+1. **Derived from Goals:** Every goal should have at least one metric derived from it and cite it via `validated-by`
 2. **Binary Testable:** At any point, you can definitively say pass/fail
 3. **Realistic Targets:** Based on baseline measurements or industry standards
 4. **Measurable Now:** Don't defer measurement to "later" — define the test procedure
@@ -334,8 +400,10 @@ Unresolved decisions that require future input.
 ```
 ## Open Questions
 
-- [ ] **Q-01:** Should we support PDF input directly? (blocked on RES-XX evaluation)
+- [ ] **Q-01:** Should we support PDF input directly?
+  Cross-references: (requires: RES-XX)
 - [x] **Q-02:** Embedding model selection — resolved: RES-10 Qwen-3
+  Cross-references: (uses: RES-10)
 ```
 
 ---
@@ -373,7 +441,7 @@ Define immutable constraints that must never be violated. These are your
 For each category (execution, input, processing, etc.):
 1. Enumerate the rules needed to achieve goals
 2. Ensure each rule is atomic
-3. Cross-reference related rules and invariants
+3. Add typed `Cross-references: (...)` fields
 4. Avoid duplicating concepts already covered
 
 ### Step 6: Add Visual Diagrams
@@ -393,7 +461,7 @@ Scan the document for:
 ### Step 8: Validate Metric Coverage
 
 Verify that:
-- Every GOAL has at least one MET that validates it
+- Every GOAL has at least one `validated-by: MET-XX` reference
 - Every MET has a defined measurement procedure
 - No MET is redundant with another
 
@@ -434,7 +502,7 @@ Use this template for rules:
 
 ```
 * **PREFIX-XX — Short title:** Description in imperative or declarative form.
-  Additional detail if needed. Cross-references: (REF-01, REF-02).
+  Additional detail if needed. Cross-references: (requires: INV-01; derived-from: GOAL-02).
 ```
 
 ### Expanded Sections
@@ -448,9 +516,12 @@ For complex invariants or rules, add an expanded subsection:
 
 #### INV-01: Byte-exact Provenance (expanded)
 
-* **Canonical source text:** ingestion produces canonical UTF-8 string (CAN-01).
-* **Provenance via offsets:** references stored as character offsets (GOAL-06).
-* **Pass condition:** byte-for-byte match required (REC-03).
+* **Canonical source text:** ingestion produces canonical UTF-8 string.
+  Cross-references: (requires: CAN-01)
+* **Provenance via offsets:** references stored as character offsets.
+  Cross-references: (requires: GOAL-06)
+* **Pass condition:** byte-for-byte match required.
+  Cross-references: (requires: REC-03)
 ```
 
 ---
@@ -473,7 +544,7 @@ For complex invariants or rules, add an expanded subsection:
 
 **Problem:** Rule assumes another without citing it.
 
-**Fix:** Add explicit cross-reference: "(requires INV-01)"
+**Fix:** Add explicit cross-reference: `Cross-references: (requires: INV-01)`
 
 ### 4. Vague Rules
 

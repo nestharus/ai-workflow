@@ -1,0 +1,2 @@
+command = "claude-glm"
+args = ["-p", "--dangerously-skip-permissions"]

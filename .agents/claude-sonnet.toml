@@ -1,0 +1,2 @@
+command = "claude"
+args = ["-p", "--model", "sonnet", "--dangerously-skip-permissions"]

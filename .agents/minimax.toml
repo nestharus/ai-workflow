@@ -1,0 +1,2 @@
+command = "claude-minimax"
+args = ["-p", "--dangerously-skip-permissions"]

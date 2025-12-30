@@ -1,0 +1,2 @@
+command = "claude"
+args = ["-p", "--model", "haiku", "--dangerously-skip-permissions"]
