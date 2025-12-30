@@ -6,21 +6,35 @@ ADRs live in `.tasks/processes/adr/`.
 
 ## Invariants
 
-* **INV-DM-01 — PRD traceability:** every `COM-XX` / `CON-XX` / `IAR-XX` / `ALG-COM-…` node MUST cite PRD IDs via `Implements:` or `derived-from:`.
+* **INV-DM-01 — PRD traceability:** every `COM-XX` / `CON-XX` / `IAR-XX` node MUST cite PRD IDs via `Implements:` or `Cross-references:`.
 * **INV-DM-02 — No restated requirements:** Design Map nodes MUST not introduce new requirements; if a requirement is discovered, add it to the PRD and reference it here.
-* **INV-DM-03 — Boundary gap algorithms:** every introduced boundary (`CON-XX` and any `IAR-XX` that creates a boundary) MUST list the gap-filling algorithms it forces.
+* **INV-DM-03 — Boundary obligations:** every introduced boundary (`CON-XX` and any `IAR-XX` that creates a boundary) MUST list its boundary obligations (without describing algorithms here).
 * **INV-DM-04 — ADR-only decisions:** decisions appear only as `(decided-by: ADR-###)` with no rationale prose in PRD/Plan/Design Map.
 
 ## Identifier Vocabulary
 
 PRD IDs (inputs):
-- `GOAL-XX`, `INV-XX`, `SET-XX`, `ART-XX`, `ALG-XX`, `RES-XX`, `{DOMAIN}-XX`
+- `GOAL-XX`, `INV-XX`, `SET-XX`, `ART-XX`, `ALG-XX`, `RES-XX`, `Q-XX`, `{DOMAIN}-XX`
 
 Design Map IDs (this document):
 - `COM-XX` — component
 - `CON-XX` — contract / boundary (component↔component or component↔artifact)
 - `IAR-XX` — internal artifact / boundary (queue, table, topic, cache, internal API, filesystem path)
-- `ALG-COM-…` — component-local algorithm (derived or gap-filling); recommended format: `ALG-COM-<COM-XX>-<NN>`
+
+## Deterministic Derivation (Minimum Required Fields)
+
+For deterministic derivation from a Design Map instance:
+
+- Each `COM-*` must specify:
+  - chosen **pattern** (name/ID) and its required contract types;
+  - its inputs/outputs (typed to `ART-*` or `IAR-*`);
+  - its boundary list (`CON-*`) with obligations.
+- Each `CON-*` must specify:
+  - protocol/data-shape identifiers (schema IDs, message types);
+  - required invariants/constraint sets;
+  - obligations IDs.
+- Each `IAR-*` must specify:
+  - kind + access contracts + schema IDs.
 
 ## Minimal Node Templates
 
@@ -29,7 +43,10 @@ Design Map IDs (this document):
 ```markdown
 ## Component: COM-__
 
+Pattern: {pattern-name-or-id}
 Implements: (ALG-__, RULE-__, GOAL-__)
+Cross-references: (INV-__, SET-__, ART-__, RES-__, {DOMAIN}-__)
+Needs: (REQ-__/Q-__/MISSING-__)
 Consumes: (ART-__, IAR-__)
 Produces: (ART-__, IAR-__)
 Uses: (RES-__)
@@ -38,15 +55,6 @@ Decisions: (decided-by: ADR-###)
 
 ### Contracts (boundaries)
 - CON-__: for (ART-__/IAR-__) (requires: INV-__; satisfies: SET-__; decided-by: ADR-###)
-
-### Derived algorithms (from chopped PRD logic)
-- ALG-COM-__-__: {read/process/write slice} (derived-from: ALG-__; satisfies: SET-__)
-
-### Gap-filling algorithms (exist only because boundary exists)
-- ALG-COM-__-__: retry/backoff (derived-from: CON-__; satisfies: INV-__/SET-__)
-- ALG-COM-__-__: serialization/framing (derived-from: CON-__; satisfies: INV-__/SET-__)
-- ALG-COM-__-__: authn/authz (derived-from: CON-__; satisfies: INV-__/SET-__)
-- ALG-COM-__-__: dedup/idempotency (derived-from: CON-__; satisfies: INV-__/SET-__)
 ```
 
 ### Contract (Boundary) Template
@@ -54,14 +62,19 @@ Decisions: (decided-by: ADR-###)
 ```markdown
 ## Contract: CON-__
 
+Pattern: {pattern-name-or-id}
 Between: (COM-__, COM-__)
 For: (ART-__/IAR-__)
+Schema IDs: {schema-ids}
+Message types: {message-types}
 Implements: (ALG-__, RULE-__, GOAL-__)
+Cross-references: (INV-__, SET-__, ART-__, RES-__, {DOMAIN}-__)
+Needs: (REQ-__/Q-__/MISSING-__)
 Satisfies: (SET-__)
 Decisions: (decided-by: ADR-###)
 
-### Gap-filling algorithms (forced by this boundary)
-- ALG-COM-__-__: {gap algorithm} (derived-from: CON-__; satisfies: INV-__/SET-__)
+Boundary obligations:
+- {obligation} (requires: INV-__; satisfies: SET-__)
 ```
 
 ### Internal Artifact / Boundary Template
@@ -69,16 +82,19 @@ Decisions: (decided-by: ADR-###)
 ```markdown
 ## Internal Artifact / Boundary: IAR-__
 
+Pattern: {pattern-name-or-id}
 Kind: {queue|topic|table|index|cache|internal-api|filesystem|job|timer}
+Schema IDs: {schema-ids}
 Owned-by: (COM-__)
 Implements: (ALG-__, RULE-__, GOAL-__)
+Cross-references: (INV-__, SET-__, ART-__, RES-__, {DOMAIN}-__)
+Needs: (REQ-__/Q-__/MISSING-__)
 Satisfies: (SET-__)
 Decisions: (decided-by: ADR-###)
 
 ### Contracts (how it is accessed)
 - CON-__: {read|write|publish|subscribe|mutate} (derived-from: IAR-__; requires: INV-__; satisfies: SET-__)
 
-### Gap-filling algorithms (forced by this boundary)
-- ALG-COM-__-__: {gap algorithm} (derived-from: CON-__; satisfies: INV-__/SET-__)
+Boundary obligations:
+- {obligation} (requires: INV-__; satisfies: SET-__)
 ```
-

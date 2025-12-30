@@ -1,20 +1,6 @@
 # AI Agent Entry Point
 
-<coding_guidelines>
-
-Welcome to the **Developing With AI 2.0** system—an automated, orchestrator-based AI
-workflow system where agents act as specialized roles within workflows coordinated by
-a central orchestrator service.
-
-## What Is This Project?
-
-This project implements an automated AI workflow system using a 5-role skeleton across
-four domains: Product, UX, UI, and Technical. The system uses a FastAPI orchestrator
-service to route messages to workflows and a separate webhook receiver service to handle
-GitHub integration. The goal is to facilitate high-quality software development through
-structured, automated collaboration.
-
-For detailed information, see `docs/architecture/project-overview.md`.
+Application Documentation (app/ code) read `docs/architecture/project-overview.md`.
 
 ## Documentation Modules
 
@@ -29,251 +15,23 @@ for detailed guidance on specific tasks.
 | **Architecture** | `docs/architecture/` | Folder structure, services, endpoints |
 | **Processes** | `docs/processes/` | Git releases, code reviews, protocols |
 
-## Code Coverage
+## How To Run And Understand Python Tests Correctly → [`docs/testing/python-tests.md`](docs/testing/python-tests.md)
 
-Test coverage is enforced separately for each test tier using `uv run test-coverage`.
+## How To Generate OpenAPI Schema (app/) → [`docs/development/generate-openapi.md`](docs/development/generate-openapi.md)
 
-### Test Tiers
-
-| Tier | Test Path | Coverage Type | Target |
-|------|-----------|---------------|--------|
-| **unit** | `tests/unit/` | 80% line / 70% branch | All `app/` functions |
-| **component** | `tests/component/` | 100% use-case | `app/services/` only |
-| **integration** | `tests/integration/` | 100% use-case | `app/api/` endpoints |
-| **scripts** | `scripts/tests/` | 80% line / 70% branch | `scripts/` only |
-
-> **Note**: The `scripts/tests/` directory is organized into `unit/`, `component/`, and
-> `integration/` subdirectories for consistency with the main test structure.
-
-### Coverage Rules
-
-* **Per-function thresholds**: Line 80%, branch 70% per function (unit/scripts tiers)
-* **Overall thresholds**: Line 80%, branch 70% overall (unit/scripts tiers)
-* **Class fields excluded**: Pydantic model type annotations are excluded from coverage
-* **Service layer**: Component tests only validate functions within `app/services/`
-* **Use-case coverage**: Component/integration require 100% use-case coverage
-* **Private functions**: Unit tests validate all functions; component/integration/scripts skip private
-
-### Validation Commands
-
-```bash
-# Run all test tiers (test credentials auto-configured by pytest)
-uv run test-coverage
-
-# Run specific tier
-uv run test-coverage --tier unit
-uv run test-coverage --tier integration
-
-# Custom thresholds (override defaults)
-uv run test-coverage --min-line 90 --min-branch 85
-
-# Report only (no validation)
-uv run test-coverage --no-validate
-
-# Legacy pytest-cov commands still work
-uv run pytest --cov
-uv run pytest --cov --cov-report=html
-```
-
-**Output**: Test coverage data is written to `.coverage/coverage.db` SQLite database,
-which contains per-function coverage statistics, use-case coverage, test results, and
-detailed missing line/branch information. Analysis tools (`coverage-summary`,
-`coverage-files`, `coverage-file`, `coverage-functions`) read from this database.
-
-## Generating OpenAPI Schema
-
-Generates the OpenAPI 3.1 schema JSON file from the FastAPI application code.
-
-* **Usage**: `uv run app.api.generate`
-* **Output**: Saves to `openapi/openapi.json`
-* **Note**: This script must be run before `lint` or security scans to ensure the schema
-  is up-to-date
-* **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
-  invoked via `uv run`
-
-## Running Python Tools
+## How To Execute Python Tools Correctly
 
 Do not invoke `python` or `python3` directly outside `uv run`. Always run Python
 modules and entry points via `uv run` (e.g., `uv run python -m ...`).
 
-### Correct Usage
-
-```bash
-# Run a module
-uv run python -m scripts.everycode.generate_code_config
-
-# Run with arguments
-uv run python -m scripts.prd.chunker input.md --output-dir ./chunks
-
-# Run entry points defined in pyproject.toml
-uv run code-config
-uv run test-coverage
-```
-
-### Incorrect Usage
-
-```bash
-# WRONG - do not use python directly
-python -m scripts.everycode.generate_code_config
-python3 -m scripts.prd.chunker input.md
-
-# WRONG - do not use virtual environment python
-.venv/bin/python -m scripts.something
-```
-
-### Why uv run?
-
-* **Dependency management**: `uv run` ensures the correct virtual environment and
-  dependencies are available
-* **Consistency**: All developers and CI use the same execution method
-* **Entry points**: Scripts defined in `pyproject.toml` are only accessible via `uv run`
-
-### Writing Documentation
+### How To Write Documentation Correctly
 
 When documenting Python commands in markdown files, toml files, or README files, always
 use the `uv run python -m` pattern:
 
-```markdown
-# In documentation
-Run the chunker:
-\`\`\`bash
-uv run python -m scripts.prd.chunker input.md --output-dir ./chunks
-\`\`\`
-```
+## How To Add Python Dependencies Correctly → [`docs/development/adding-dependencies.md`](docs/development/adding-dependencies.md)
 
-## Adding Dependencies
-
-When adding a new dependency to `pyproject.toml`, follow this workflow:
-
-### Step 1: Fetch Latest Version from PyPI
-
-Fetch the latest version from PyPI using either of the methods below. Both are valid:
-use **curl + jq** for readability, or **Python stdlib** when external tools are unavailable.
-
-**Environment requirements**:
-
-* **Network access**: Requires outbound HTTPS connection to `pypi.org` (may fail behind
-  corporate proxies or firewalls)
-* **TLS/SSL**: Requires a working Python SSL/TLS stack (certificate verification enabled)
-* **API stability**: Relies on the PyPI JSON API (`/pypi/<package>/json` endpoint)
-
-**Troubleshooting**:
-
-* **Proxy issues**: Set `HTTP_PROXY` and `HTTPS_PROXY` environment variables if behind a proxy
-* **TLS errors**: Verify Python's SSL certificates are up-to-date
-  (`uv run python -c "import ssl; print(ssl.OPENSSL_VERSION)"`)
-* **Connectivity check**: Test network access with
-  `uv run python -c "import urllib.request; urllib.request.urlopen('https://pypi.org')"`
-* **Alternative tools**: Use `curl https://pypi.org/pypi/<package-name>/json | jq -r '.info.version'`
-  or `wget` if urllib fails
-
-**Option 1: curl + jq** (recommended for readability):
-
-```bash
-curl -s https://pypi.org/pypi/<package-name>/json | jq -r '.info.version'
-```
-
-**Option 2: Python one-liner** (works without external tools):
-
-```bash
-uv run python -c "import urllib.request, json; print(json.loads(urllib.request.urlopen('https://pypi.org/pypi/<package-name>/json').read())['info']['version'])"
-```
-
-Both options fetch the PyPI JSON API and extract the `info.version` field.
-
-**Note**: If you do not have `jq` installed and prefer not to use the long Python one-liner,
-save this script to a file (e.g., `scripts/get_pypi_version.py`) and run it with
-`uv run python scripts/get_pypi_version.py <package-name>`:
-
-```python
-#!/usr/bin/env python3
-import json
-import sys
-import urllib.request
-
-package = sys.argv[1] if len(sys.argv) > 1 else input("Package name: ")
-url = f"https://pypi.org/pypi/{package}/json"
-data = json.loads(urllib.request.urlopen(url).read())
-print(data["info"]["version"])
-```
-
-**Manual fallback**: If the command fails, verify the package name spelling and try one of:
-
-* Visit `https://pypi.org/project/<package-name>/` directly in a browser
-* Use `pip index versions <package-name>` to list available versions
-* Use `uv pip show <package-name>` if the package is already installed locally
-
-**Verify the version before proceeding**: The extracted version must match the semantic version
-pattern `MAJOR.MINOR.PATCH` (e.g., `2025.11.3`, `1.5.2`). Reject values like `"latest"`, empty
-strings, or malformed versions.
-
-Then continue with Step 2.
-
-### Step 2: Add with Upper Bound
-
-Manually add the dependency to the appropriate section in `pyproject.toml` with version
-constraints matching the project's pattern: `>=MAJOR.MINOR.PATCH,<MAJOR.NEXT_MINOR.0`
-(bound to next minor version).
-
-**Where to add the dependency** (based on the group from the table below):
-
-| Group | pyproject.toml Location |
-|-------|-------------------------|
-| main | `[project]` section under `dependencies = [...]` |
-| test | `[dependency-groups]` section under `test = [...]` |
-| dev | `[dependency-groups]` section under `dev = [...]` |
-| knowledge | `[dependency-groups]` section under `knowledge = [...]` |
-
-Example for a package with version `2025.11.3` added to the knowledge group:
-
-```toml
-# In [dependency-groups] section
-knowledge = [
-    { include-group = "test" },
-    ...existing dependencies...
-    "regex>=2025.11.3,<2025.12.0",  # <-- Add here
-]
-```
-
-Example for a package with version `1.5.2` added to main dependencies:
-
-```toml
-# In [project] section
-dependencies = [
-    ...existing dependencies...
-    "somepackage>=1.5.2,<1.6.0",  # <-- Add here
-]
-```
-
-### Step 3: Sync and Verify
-
-```bash
-uv sync --group <group-name>
-```
-
-For example, to sync the knowledge group: `uv sync --group knowledge`
-
-### Dependency Groups
-
-| Group | Purpose | pyproject.toml Location |
-|-------|---------|------------------------|
-| main | Runtime dependencies | `[project]` section, `dependencies = [...]` |
-| test | pytest, test utilities | `[dependency-groups]` section, `test = [...]` |
-| dev | linters, formatters, type checkers | `[dependency-groups]` section, `dev = [...]` |
-| knowledge | ML/NLP for scripts/knowledge/ | `[dependency-groups]` section, `knowledge = [...]` |
-
-Always use the 3-step workflow above to add dependencies.
-
-**Rules**:
-
-* **Always fetch latest from PyPI**: Use the Python urllib command to get the current version, never guess
-* **Always include upper bound**: Prevent unexpected major version upgrades
-* **Choose the correct group**: Match the dependency to its purpose (see table above), then
-  sync with that group (e.g., `uv sync --group knowledge`)
-* **Always use 3-step workflow**: PyPI fetch → manual pyproject.toml edit → `uv sync --group <group-name>`
-* **Check compatibility**: Ensure the new dependency doesn't conflict with existing ones
-
-## Every Code Agent Orchestration
+## How To Write Agents Correctly
 
 This project uses **Every Code** (`@just-every/code`) for AI agent orchestration.
 
@@ -285,6 +43,8 @@ for complete documentation on:
 * Writing subagent commands with instruction file references
 * Configuring global settings
 * Model selection guide
+
+## How To Run Agents Correctly
 
 ## Plan Execution Guidelines
 
@@ -434,13 +194,6 @@ When creating git commits, agents must NOT add themselves as authors or co-autho
 * **Use configured identity only**: All commits must use only the git username and email
   configured in the repository (from `git config user.name` and `git config user.email`)
 
-The human user is the author of all commits. The agent is a tool assisting the user, not
-a co-author.
-
-**Why this matters**: Each unique author in a GitHub repository costs $30/month for a
-seat. Adding Claude as a co-author would waste money on a seat for an AI that doesn't
-need repository access.
-
 ## Git Branch Naming for Linear Integration
 
 When creating branches for Linear tickets, the ticket ID casing must be preserved exactly:
@@ -448,14 +201,8 @@ When creating branches for Linear tickets, the ticket ID casing must be preserve
 * **Correct**: `NES-47-rest-to-mcp-bridge` (ticket ID `NES-47` keeps uppercase)
 * **Wrong**: `nes-47-rest-to-mcp-bridge` (lowercase breaks automatic linking)
 
-Linear automatically links branches and PRs to tickets when the ticket ID appears in the
-branch name with correct casing. Using lowercase will break this automatic linking and
-require manual attachment.
-
 **Branch format**: `<TICKET-ID>-<description>` where:
 
 * `<TICKET-ID>` preserves exact casing from Linear (e.g., `NES-47`, `PROJ-123`)
 * `<description>` is lowercase with hyphens, derived from ticket title
-* Total length should not exceed 50 characters
-
-</coding_guidelines>
+* Total length must not exceed 50 characters

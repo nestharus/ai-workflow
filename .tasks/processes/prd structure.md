@@ -96,7 +96,9 @@ use typed cross-references instead of restating.
 - `decided-by:` ADR link (ID only, no prose)
 
 **Decision rationale rule (keep PRD timeless):**
-- If you need “we chose X because…”, write an ADR in `.tasks/processes/adr/` and link from PRD items via `Cross-references: (decided-by: ADR-###)`.
+- If something requires a choice, apply decision-gating:
+  - If it is deterministically derivable from existing requirements + explored facts → record as an ADR decision and link from PRD items via `Cross-references: (decided-by: ADR-###)` (ID only).
+  - If it is not derivable → surface the missing requirement(s) needed to derive it (not the choice itself), ideally as an `Open Questions` `Q-XX` item.
 - Do not put decision history/justifications inside PRD prose.
 
 **Single extension (justified):**
