@@ -246,18 +246,6 @@ def sync_sandbox_branch(sandbox_path: Path, branch: str) -> tuple[bool, str]:
             err_msg = result.stderr if result else "git not available"
             return False, f"checkout failed: {err_msg}"
 
-    # Remove .claude directory to prevent sandbox from being detected as a
-    # Claude Code project. This is important because the sandbox is a full
-    # checkout and would otherwise look like a standalone project.
-    claude_dir = sandbox_path / ".claude"
-    if claude_dir.exists():
-        shutil.rmtree(claude_dir, ignore_errors=True)
-
-    # Also remove .tasks directory (orchestration system files)
-    tasks_dir = sandbox_path / ".tasks"
-    if tasks_dir.exists():
-        shutil.rmtree(tasks_dir, ignore_errors=True)
-
     return True, ""
 
 

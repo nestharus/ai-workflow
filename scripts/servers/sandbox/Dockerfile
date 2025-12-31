@@ -69,10 +69,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install runtime dependencies (git and ssh are required for remote operations) and create user
+# Install runtime dependencies (git, ssh, gnupg for signing) and create user
 # hadolint ignore=DL3008
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git ca-certificates openssh-client && \
+    apt-get install -y --no-install-recommends git ca-certificates openssh-client gnupg && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd -g 10000 appuser && \
     useradd -u 10000 -g appuser -s /bin/bash -m appuser && \

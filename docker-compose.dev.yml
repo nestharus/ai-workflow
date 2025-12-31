@@ -72,12 +72,16 @@ services:
       - /tmp/sandbox-sockets:/tmp
       # Mount SSH key for authentication to remote repositories
       - ~/.ssh/github:/ssh-key:ro
+      # Mount GPG directory for commit signing
+      - ~/.gnupg:/root/.gnupg:rw
     environment:
       - SANDBOX_SOCKET_PATH=/tmp/sandbox.sock
       - SANDBOX_REPO_PATH=/repo
       # Use SSH with the mounted key, bypassing config file ownership checks
       - GIT_SSH_COMMAND=ssh -i /ssh-key -o StrictHostKeyChecking=no
         -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes
+      # GPG TTY for signing operations
+      - GPG_TTY=/dev/console
     healthcheck:
       test:
         - CMD
