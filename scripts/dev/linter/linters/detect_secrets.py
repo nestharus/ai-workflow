@@ -140,6 +140,22 @@ class DetectSecretsLinter(BaseLinter):
                 # Return success even if errors were parsed, as this is just a baseline update
                 return LinterResult(success=True, errors=errors)
             elif result.returncode != 0:
+                # If no structured errors were parsed but command failed,
+                # create an error from stderr (e.g., Python compatibility issues)
+                if not errors and result.stderr:
+                    # Extract first meaningful line from traceback or error
+                    stderr_lines = result.stderr.strip().splitlines()
+                    error_msg = stderr_lines[-1] if stderr_lines else "Unknown error"
+                    errors = [
+                        LintError(
+                            file=".secrets.baseline",
+                            line=0,
+                            column=0,
+                            code="detect-secrets-error",
+                            message=f"detect-secrets failed: {error_msg}",
+                            fix_available=False,
+                        )
+                    ]
                 return LinterResult(success=False, errors=errors)
         else:
             # Whole-repo scan: get all git-tracked files and use detect-secrets-hook
@@ -208,6 +224,22 @@ class DetectSecretsLinter(BaseLinter):
                 )
                 return LinterResult(success=True, errors=errors)
             elif result.returncode != 0:
+                # If no structured errors were parsed but command failed,
+                # create an error from stderr (e.g., Python compatibility issues)
+                if not errors and result.stderr:
+                    # Extract first meaningful line from traceback or error
+                    stderr_lines = result.stderr.strip().splitlines()
+                    error_msg = stderr_lines[-1] if stderr_lines else "Unknown error"
+                    errors = [
+                        LintError(
+                            file=".secrets.baseline",
+                            line=0,
+                            column=0,
+                            code="detect-secrets-error",
+                            message=f"detect-secrets failed: {error_msg}",
+                            fix_available=False,
+                        )
+                    ]
                 return LinterResult(success=False, errors=errors)
 
         return LinterResult(success=True)

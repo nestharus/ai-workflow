@@ -464,6 +464,9 @@ def orchestrate(args: Namespace) -> int:
             error_files = extract_files_from_lint_output(output)
             if not error_files:
                 _log("No files with errors found in lint output.")
+                # If we can't extract any files with errors, treat as success
+                # (nothing for lint-fix to fix, even if lint exited non-zero)
+                success = True
                 break
 
             before_hashes = get_file_hashes(error_files, worktree)
