@@ -37,10 +37,10 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import tomllib
 import yaml
 
 
@@ -282,9 +282,7 @@ def route_prompt(
 
     if all_allow_ambiguity:
         # No classification needed - return smallest eligible rule
-        eligible_rules.sort(
-            key=lambda r: r.max_chars if r.max_chars is not None else float("inf")
-        )
+        eligible_rules.sort(key=lambda r: r.max_chars if r.max_chars is not None else float("inf"))
         return eligible_rules[0]
 
     # Need to classify ambiguity
@@ -302,7 +300,5 @@ def route_prompt(
         return eligible_rules[0]
     else:
         # Non-ambiguous - any rule can handle it
-        eligible_rules.sort(
-            key=lambda r: r.max_chars if r.max_chars is not None else float("inf")
-        )
+        eligible_rules.sort(key=lambda r: r.max_chars if r.max_chars is not None else float("inf"))
         return eligible_rules[0]

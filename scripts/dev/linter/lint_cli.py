@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from scripts.dev.linter.base import BaseLinter
+from scripts.dev.linter.base import BaseLinter, LinterResult, execute_phase, schedule_linters
 from scripts.dev.linter.linters import LINTER_MAP, LINTER_NAMES
 
 
@@ -162,12 +162,19 @@ def _parse_args() -> argparse.Namespace:
         metavar="SHA",
         help="Only lint files changed in the specified commit.",
     )
+    parser.add_argument(
+        "--output-format",
+        choices=["text", "yaml"],
+        default="text",
+        help="Output format: text (default) for human-readable, yaml for structured errors.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     """Execute linting steps and return a process exit code."""
     args = _parse_args()
+    yaml_output = args.output_format == "yaml"
 
     # Handle mutual exclusivity for file options
     file_options = [args.changed_only, args.files is not None, args.commit is not None]
@@ -183,23 +190,28 @@ def main() -> int:
     if args.changed_only:
         files = _filter_existing_files(_get_changed_files())
         if not files:
-            print("No changed files to lint.")
+            if not yaml_output:
+                print("No changed files to lint.")
             return 0
-        print(f"Linting {len(files)} changed file(s):")
-        for f in files:
-            print(f"  {f}")
+        if not yaml_output:
+            print(f"Linting {len(files)} changed file(s):")
+            for f in files:
+                print(f"  {f}")
     elif args.commit:
         files = _filter_existing_files(_get_changed_files(args.commit))
         if not files:
-            print(f"No files changed in commit {args.commit}.")
+            if not yaml_output:
+                print(f"No files changed in commit {args.commit}.")
             return 0
-        print(f"Linting {len(files)} file(s) from commit {args.commit}:")
-        for f in files:
-            print(f"  {f}")
+        if not yaml_output:
+            print(f"Linting {len(files)} file(s) from commit {args.commit}:")
+            for f in files:
+                print(f"  {f}")
     elif args.files:
         files = _filter_existing_files(args.files)
         if not files:
-            print("No specified files exist.")
+            if not yaml_output:
+                print("No specified files exist.")
             return 0
 
     # Determine which linters to run
@@ -236,33 +248,81 @@ def main() -> int:
                 file=sys.stderr,
             )
 
-    try:
-        for linter_name in linters_to_run:
-            linter = LINTER_MAP.get(linter_name)
-            if linter is None:
-                print(f"Unknown linter: {linter_name}", file=sys.stderr)
-                return 1
+    # Convert linter names to instances
+    linter_instances = []
+    for linter_name in linters_to_run:
+        linter = LINTER_MAP.get(linter_name)
+        if linter is None:
+            print(f"Unknown linter: {linter_name}", file=sys.stderr)
+            return 1
+        linter_instances.append(linter)
 
-            # Run linter tests first (e.g., ast-grep rule tests)
-            test_method = getattr(linter, "test", None)
-            if test_method is not None and type(linter).test is not BaseLinter.test:
+    # Schedule linters into phases for parallel execution
+    phases = schedule_linters(linter_instances, files)
+
+    if not phases:
+        if not yaml_output:
+            print("No linters to run (all have empty filesets).")
+        return 0
+
+    failed_in_readonly_phase = False
+    all_results: dict[str, LinterResult] = {}
+
+    try:
+        for phase_idx, phase in enumerate(phases):
+            # Determine if this is a mutating phase (single linter, before read-only phase)
+            is_mutating_phase = len(phase) == 1 and phase_idx < len(phases) - 1
+
+            # Run tests for linters in this phase
+            for linter_name in phase:
+                linter = LINTER_MAP[linter_name]
+                test_method = getattr(linter, "test", None)
+                if test_method is not None and type(linter).test is not BaseLinter.test:
+                    if not yaml_output:
+                        print(f"\n{'=' * 60}")
+                        print(f"Testing: {linter_name}")
+                        print("=" * 60)
+
+                    test_result = linter.test()
+                    if not test_result.success:
+                        return 1
+
+            # Execute the phase
+            if not yaml_output:
                 print(f"\n{'=' * 60}")
-                print(f"Testing: {linter_name}")
+                if len(phase) == 1:
+                    print(f"Running: {phase[0]}")
+                else:
+                    print(f"Running {len(phase)} linters in parallel: {', '.join(phase)}")
                 print("=" * 60)
 
-                test_result = linter.test()
-                if not test_result.success:
-                    return 1
+            results = execute_phase(phase, files)
+            all_results.update(results)
 
-            # Run the linter with or without file filtering
-            print(f"\n{'=' * 60}")
-            print(f"Running: {linter_name}")
-            print("=" * 60)
+            # Print errors in text mode
+            if not yaml_output:
+                for result in results.values():
+                    for error in result.errors:
+                        loc = f"{error.file}:{error.line}:{error.column}"
+                        print(f"{loc}: {error.code} {error.message}")
 
-            result = linter.run(files) if linter.supports_file_filtering else linter.run()
+            # Check results and handle failures
+            failed_linters = [name for name, result in results.items() if not result.success]
 
-            if not result.success:
-                return 1
+            if failed_linters:
+                if is_mutating_phase:
+                    # Mutating linter failed - abort immediately
+                    if not yaml_output:
+                        print(
+                            f"\nMutating linter {failed_linters[0]} failed. Aborting.",
+                            file=sys.stderr,
+                        )
+                    break
+                else:
+                    # Read-only linter(s) failed - report but continue
+                    if not yaml_output:
+                        print(f"\nFailed linters: {', '.join(failed_linters)}", file=sys.stderr)
+                    failed_in_readonly_phase = True
 
     except RuntimeError as exc:
         print(exc, file=sys.stderr)
@@ -276,7 +336,61 @@ def main() -> int:
         print(f"YAML configuration error: {exc}", file=sys.stderr)
         return 1
 
-    return 0
+    # Output YAML format if requested
+    if yaml_output:
+        _output_yaml_results(all_results)
+
+    # Check if any linter failed
+    any_failure = any(not r.success for r in all_results.values())
+    return 1 if (failed_in_readonly_phase or any_failure) else 0
+
+
+def _output_yaml_results(results: dict[str, LinterResult]) -> None:
+    """Output linter results in YAML format.
+
+    Args:
+        results: Dictionary mapping linter names to their results.
+    """
+    # Collect all errors from all linters
+    all_errors: list[dict[str, object]] = []
+    for linter_name, result in results.items():
+        for error in result.errors:
+            all_errors.append(
+                {
+                    "linter": linter_name,
+                    "file": error.file,
+                    "line": error.line,
+                    "column": error.column,
+                    "code": error.code,
+                    "message": error.message,
+                    "fix_available": error.fix_available,
+                    "fix_message": error.fix_message,
+                }
+            )
+
+    if not all_errors:
+        print("errors: []")
+        return
+
+    # Output YAML manually for better control over formatting
+    print("errors:")
+    for err in all_errors:
+        print(f"  - linter: {err['linter']}")
+        print(f"    file: {err['file']}")
+        print(f"    line: {err['line']}")
+        print(f"    column: {err['column']}")
+        print(f"    code: {err['code']}")
+        # Handle message with potential special characters
+        msg = str(err["message"])
+        if "\n" in msg or ":" in msg or '"' in msg:
+            print("    message: |")
+            for line in msg.splitlines():
+                print(f"      {line}")
+        else:
+            print(f"    message: {msg}")
+        print(f"    fix_available: {str(err['fix_available']).lower()}")
+        if err["fix_message"]:
+            print(f"    fix_message: {err['fix_message']}")
 
 
 if __name__ == "__main__":

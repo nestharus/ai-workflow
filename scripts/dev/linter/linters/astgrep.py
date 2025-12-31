@@ -1,6 +1,7 @@
 """ast-grep structural code linter for Python."""
 
 import fnmatch
+import json
 import re
 import subprocess
 from functools import lru_cache
@@ -10,6 +11,7 @@ from scripts.dev.linter.base import (
     REPO_ROOT,
     BaseLinter,
     LinterResult,
+    LintError,
     get_executable,
     load_yaml_config,
 )
@@ -208,6 +210,50 @@ def _is_file_included(file_path: str, included_paths: list[str]) -> bool:
     return any(_matches_glob_pattern(file_path, p) for p in included_paths)
 
 
+def _parse_astgrep_json(json_output: str) -> list[LintError]:
+    """Parse ast-grep JSON output into LintError objects.
+
+    Args:
+        json_output: Raw JSON string from ast-grep --json output.
+
+    Returns:
+        List of LintError objects.
+    """
+    if not json_output.strip():
+        return []
+
+    try:
+        matches = json.loads(json_output)
+    except json.JSONDecodeError:
+        return []
+
+    errors = []
+    for match in matches:
+        # ast-grep uses 0-based line/column numbers
+        # Convert to 1-based for consistency with other linters
+        start_pos = match.get("range", {}).get("start", {})
+        line = start_pos.get("line", 0) + 1
+        column = start_pos.get("column", 0) + 1
+
+        # Extract context from the 'lines' field
+        context = match.get("lines", "").strip()
+
+        errors.append(
+            LintError(
+                file=match.get("file", ""),
+                line=line,
+                column=column,
+                code=match.get("ruleId", ""),
+                message=match.get("message", ""),
+                context=context if context else None,
+                fix_available=False,  # ast-grep doesn't report fix availability in JSON
+                fix_message=match.get("note"),  # Use note as additional context
+            )
+        )
+
+    return errors
+
+
 class AstgrepLinter(BaseLinter):
     """Run ast-grep structural code analysis."""
 
@@ -235,7 +281,7 @@ class AstgrepLinter(BaseLinter):
             files: Optional list of files to lint. If None, scans entire repo.
 
         Returns:
-            LinterResult indicating success/failure.
+            LinterResult indicating success/failure with structured errors.
         """
         sg_exe = get_executable("ast-grep", ASTGREP_CLI_REQUIRED)
 
@@ -255,8 +301,8 @@ class AstgrepLinter(BaseLinter):
         else:
             included_paths = []
 
-        # Build command
-        cmd = [sg_exe, "scan"]
+        # Build command with JSON output
+        cmd = [sg_exe, "scan", "--json=compact"]
 
         if files is not None:
             # File-filtered mode: filter files using include patterns
@@ -283,15 +329,22 @@ class AstgrepLinter(BaseLinter):
             capture_output=True,
             text=True,
         )
-        message = None
-        if result.returncode != 0:
-            # ast-grep writes findings to stdout, errors to stderr
-            # Combine both so callers get complete diagnostics
-            outputs = [s for s in (result.stdout, result.stderr) if s]
-            for out in outputs:
-                print(out)
-            message = "\n".join(outputs) if outputs else None
-        return LinterResult(success=result.returncode == 0, message=message)
+
+        # Parse JSON output into structured errors
+        errors = _parse_astgrep_json(result.stdout)
+
+        # Check for stderr errors (e.g., config issues, tool errors)
+        if result.stderr:
+            print(result.stderr)
+            # If we have stderr but no structured errors, return failure with message
+            if not errors and result.returncode != 0:
+                return LinterResult(success=False, message=result.stderr)
+
+        # Return structured result
+        if errors:
+            return LinterResult(success=False, errors=errors)
+
+        return LinterResult(success=True)
 
     def test(self) -> LinterResult:
         """Run ast-grep rule tests to validate custom rules.

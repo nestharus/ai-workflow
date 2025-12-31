@@ -79,6 +79,7 @@ knowledge = [
 setup = "scripts.dev.setup:main"
 zip-changes = "scripts.dev.zip_changes:main"
 lint = "scripts.dev.linter.lint_cli:main"
+"lint-fix" = "scripts.lint_fixer.__main__:main"
 "dev.ensure-env" = "scripts.dev.ensure_dev_env:main"
 "agent.claude" = "scripts.dev.claude_agent_runner:main"
 "agent.huggingface" = "scripts.dev.huggingface_agent_runner:main"

@@ -6,6 +6,7 @@ from scripts.dev.linter.base import (
     REPO_ROOT,
     BaseLinter,
     LinterResult,
+    LintError,
     load_yaml_config,
 )
 
@@ -29,7 +30,7 @@ class ScriptsLinter(BaseLinter):
                    is in the files list.
 
         Returns:
-            LinterResult indicating success/failure.
+            LinterResult with structured errors for naming violations.
         """
         # If files are specified, only run if pyproject.toml is in the list
         if (
@@ -48,39 +49,41 @@ class ScriptsLinter(BaseLinter):
 
         if not prefix_rules:
             print("No prefix_rules defined in .lint.scripts.yaml", file=sys.stderr)
-            return LinterResult(success=False)
+            return LinterResult(success=False, message="No prefix_rules in config")
 
         pyproject_path = REPO_ROOT / "pyproject.toml"
         if not pyproject_path.exists():
             print("pyproject.toml not found", file=sys.stderr)
-            return LinterResult(success=False)
+            return LinterResult(success=False, message="pyproject.toml not found")
 
         # Parse pyproject.toml - use simple parsing for [project.scripts]
         content = pyproject_path.read_text(encoding="utf-8")
-        violations: list[str] = []
+        errors: list[LintError] = []
 
         # Find [project.scripts] section
         in_scripts_section = False
+        line_number = 0
         for line in content.splitlines():
-            line = line.strip()
+            line_number += 1
+            stripped = line.strip()
 
             # Track section transitions
-            if line.startswith("["):
-                in_scripts_section = line == "[project.scripts]"
+            if stripped.startswith("["):
+                in_scripts_section = stripped == "[project.scripts]"
                 continue
 
             if not in_scripts_section:
                 continue
 
             # Skip empty lines and comments
-            if not line or line.startswith("#"):
+            if not stripped or stripped.startswith("#"):
                 continue
 
             # Parse script entry: "name" = "module:func" or name = "module:func"
-            if "=" not in line:
+            if "=" not in stripped:
                 continue
 
-            parts = line.split("=", 1)
+            parts = stripped.split("=", 1)
             if len(parts) != 2:
                 continue
 
@@ -95,17 +98,23 @@ class ScriptsLinter(BaseLinter):
             for module_prefix, required_name_prefix in prefix_rules.items():
                 if module_path.startswith(module_prefix):
                     if not script_name.startswith(required_name_prefix):
-                        violations.append(
-                            f"  '{script_name}' -> {module_path} "
-                            f"(should be prefixed with '{required_name_prefix}')"
+                        errors.append(
+                            LintError(
+                                file=str(pyproject_path),
+                                line=line_number,
+                                column=1,
+                                code="SCRIPT001",
+                                message=f"Script '{script_name}' uses module '{module_path}' "
+                                f"but should be prefixed with '{required_name_prefix}'",
+                                context=line,
+                                fix_available=False,
+                                fix_message=f"Rename script to start with '{required_name_prefix}'",
+                            )
                         )
                     break
 
-        if violations:
-            print("Script naming convention violations:", file=sys.stderr)
-            for v in violations:
-                print(v, file=sys.stderr)
-            return LinterResult(success=False)
+        if errors:
+            return LinterResult(success=False, errors=errors)
 
         print("All script entry points follow naming conventions.")
         return LinterResult(success=True)

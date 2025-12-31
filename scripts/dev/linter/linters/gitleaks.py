@@ -29,6 +29,7 @@ Version compatibility:
 - If upgrading gitleaks, verify exit code behavior has not changed
 """
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -37,6 +38,7 @@ from scripts.dev.linter.base import (
     REPO_ROOT,
     BaseLinter,
     LinterResult,
+    LintError,
     get_executable,
     is_path_included,
     load_yaml_config,
@@ -59,6 +61,45 @@ GITLEAKS_TIMEOUT_SECONDS = 300  # 5 minute timeout to prevent indefinite hangs
 GITLEAKS_TIMEOUT_MSG = f"gitleaks scan timed out after {GITLEAKS_TIMEOUT_SECONDS // 60} minutes"
 LINT_GITLEAKS_CONFIG = REPO_ROOT / ".lint.gitleaks.yaml"
 GITLEAKS_CONFIG = REPO_ROOT / ".gitleaks.toml"
+
+
+def _parse_gitleaks_json(json_output: str) -> list[LintError]:
+    """Parse gitleaks JSON output into LintError objects.
+
+    Args:
+        json_output: Raw JSON string from gitleaks --report-format json.
+
+    Returns:
+        List of LintError objects.
+    """
+    if not json_output.strip():
+        return []
+
+    try:
+        findings = json.loads(json_output)
+    except json.JSONDecodeError:
+        return []
+
+    errors = []
+    for finding in findings:
+        # Build context from the Match field (the line containing the secret)
+        match_text = finding.get("Match", "")
+        context = match_text if match_text else None
+
+        errors.append(
+            LintError(
+                file=finding.get("File", ""),
+                line=finding.get("StartLine", 0),
+                column=finding.get("StartColumn", 0),
+                code=finding.get("RuleID", ""),
+                message=finding.get("Description", "")
+                or f"Secret detected: {finding.get('RuleID', 'unknown')}",
+                context=context,
+                fix_available=False,
+                fix_message=None,
+            )
+        )
+    return errors
 
 
 class GitleaksLinter(BaseLinter):
@@ -96,8 +137,17 @@ class GitleaksLinter(BaseLinter):
             print(GITLEAKS_CONFIG_UNREADABLE, file=sys.stderr)
             return LinterResult(success=False, message=GITLEAKS_CONFIG_UNREADABLE)
 
-        # Build base command with config and verbose output
-        cmd = [gitleaks_bin, "dir", "--config", str(GITLEAKS_CONFIG), "-v"]
+        # Build base command with config and JSON report format to stdout
+        cmd = [
+            gitleaks_bin,
+            "dir",
+            "--config",
+            str(GITLEAKS_CONFIG),
+            "--report-format",
+            "json",
+            "--report-path",
+            "-",
+        ]
 
         if files is not None:
             # Load exclusion config from .lint.gitleaks.yaml (optional, defaults to empty)
@@ -158,15 +208,21 @@ class GitleaksLinter(BaseLinter):
         if result.returncode == 0:
             return LinterResult(success=True)
         elif result.returncode == 1:
-            # Print output for user to see what was found
-            if result.stdout:
-                print(result.stdout)
-            if result.stderr:
-                print(result.stderr, file=sys.stderr)
-            return LinterResult(
-                success=False,
-                message="gitleaks found potential secrets",
-            )
+            # Parse JSON output to get structured errors
+            errors = _parse_gitleaks_json(result.stdout)
+
+            # If parsing failed, fall back to printing raw output
+            if not errors:
+                if result.stdout:
+                    print(result.stdout)
+                if result.stderr:
+                    print(result.stderr, file=sys.stderr)
+                return LinterResult(
+                    success=False,
+                    message="gitleaks found potential secrets (unable to parse JSON output)",
+                )
+
+            return LinterResult(success=False, errors=errors)
         elif result.returncode == 126:
             msg = "gitleaks configuration error: unknown flag"
             print(msg, file=sys.stderr)

@@ -1,12 +1,34 @@
 # Developing With AI 2.0
 
-Run this before you start working
-
-uv run dev.ensure-env >> .claude/dev-env.log 2>&1 || true
-
 **Developing With AI 2.0** is an automated, orchestrator-based AI workflow system in active development. It
 implements a structured collaboration model between AI agents coordinated by a FastAPI orchestrator service,
 with architecture details available in `docs/architecture/`.
+
+## Quick Start
+
+```bash
+# 1. Install uv (if not installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. Clone and setup
+git clone <repo-url> && cd ai-workflow
+cp .env.example .env  # Edit with your API keys
+
+# 3. Install dependencies and hooks
+uv sync && uv run setup
+
+# 4. Start development services
+uv run dev.ensure-env
+
+# 5. Run the server
+uv run app.start
+```
+
+Run this before each working session to ensure services are running:
+
+```bash
+uv run dev.ensure-env >> .claude/dev-env.log 2>&1 || true
+```
 
 ## Architecture
 
@@ -25,10 +47,143 @@ coordinates agent execution, backed by a documentation-first knowledge graph.
 | **Data** | Pydantic v2, Pydantic Settings, orjson |
 | **Infrastructure** | SurrealDB (Knowledge Graph), Elasticsearch (vector search), anyio |
 | **Build** | uv, Hatchling |
+| **AI Backends** | Claude Code, OpenCode, Gemini CLI, Ollama |
+
+## Prerequisites
+
+Before setting up the project, ensure you have these system-level dependencies installed.
+
+### Required System Tools
+
+| Tool | Purpose | Installation |
+|------|---------|--------------|
+| **uv** | Python package manager | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| **Docker** | Container runtime for dev services | [Install Docker](https://docs.docker.com/get-docker/) |
+| **Node.js** | Required for npm-based CLI tools | [Install Node.js](https://nodejs.org/) (v18+) |
+
+### AI CLI Tools
+
+These CLI tools are required to run AI agents in the project:
+
+| Tool | Purpose | Installation |
+|------|---------|--------------|
+| **claude** | Claude Code CLI (Anthropic) | `npm install -g @anthropic-ai/claude-code` |
+| **opencode** | OpenCode CLI (OpenAI) | `npm install -g opencode` |
+| **gemini** | Gemini CLI (Google) | `npm install -g @anthropic-ai/gemini-cli` or via Google's CLI |
+| **coderabbit** | AI code review | `npm install -g coderabbit` then `coderabbit login` |
+
+### Code Quality Tools (External CLI)
+
+| Tool | Purpose | Installation |
+|------|---------|--------------|
+| **actionlint** | GitHub Actions linting | `brew install actionlint` or
+   |                 |                       | `go install github.com/rhysd/actionlint/cmd/actionlint@latest` |
+| **trivy** | Security vulnerability scanning | `brew install trivy` or
+   |                 |                       | [releases](https://github.com/aquasecurity/trivy/releases) |
+| **gitleaks** | Secret detection | `brew install gitleaks` or
+   |                 |                       | `go install github.com/gitleaks/gitleaks/v8@v8.24.2` |
+| **dotenv-linter** | .env file linting | `brew install dotenv-linter` or `cargo install dotenv-linter` |
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+The `.env.example` file contains all required environment variables with comments explaining where to
+obtain API keys. Key categories:
+
+| Category | Variables | Purpose |
+|----------|-----------|---------|
+| **AI Providers** | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
+   |                 | `Z_AI_API_KEY`, `MINIMAX_API_KEY` | AI model backends |
+| **Integrations** | `LINEAR_API_KEY`, `GITHUB_MCP_PAT`, `FIRECRAWL_API_KEY` | External service integrations |
+| **Code Review** | `SONAR_HOST_URL`, `SONAR_TOKEN` | SonarQube analysis |
+| **Runtime** | `UV_MANAGED_PYTHON`, `OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS` | Tool configuration |
+
+Load environment variables:
+
+```bash
+# Using dotenv
+source .env
+
+# Or export in your shell config (~/.bashrc or ~/.zshrc)
+set -a && source .env && set +a
+```
+
+## Home Directory Configuration
+
+Several tools require configuration in your home directory.
+
+### GLM via Z.AI (~/.bashrc)
+
+Add to your `~/.bashrc` or `~/.zshrc`:
+
+```bash
+# GLM alias pointing to Claude Code with Z.AI config
+alias glm='claude --config ~/.claude-glm'
+
+# Z.AI environment (if not already exported)
+export Z_AI_API_KEY="<your-z-ai-key>"
+export Z_AI_BASE_URL="https://api.z.ai/v1"
+```
+
+Then create `~/.claude-glm/config.json`:
+
+```json
+{
+  "apiKey": "${Z_AI_API_KEY}",
+  "baseUrl": "${Z_AI_BASE_URL}",
+  "model": "glm-4.7"
+}
+```
+
+### Minimax via Claude Code
+
+Create `~/.claude-minimax/config.json`:
+
+```json
+{
+  "apiKey": "${MINIMAX_API_KEY}",
+  "baseUrl": "https://api.minimax.chat/v1",
+  "model": "abab6.5s-chat"
+}
+```
+
+Then add alias to `~/.bashrc`:
+
+```bash
+alias claude-minimax='claude --config ~/.claude-minimax'
+```
+
+### Gemini CLI (~/.gemini/settings.json)
+
+Configure Gemini CLI with your API key:
+
+```json
+{
+  "apiKey": "${GEMINI_API_KEY}",
+  "defaultModel": "gemini-3-flash-high"
+}
+```
+
+### SSH Key for Git Operations (~/.ssh/github)
+
+The sandbox server requires an SSH key for git operations:
+
+```bash
+# Generate if not exists
+ssh-keygen -t ed25519 -f ~/.ssh/github -N ""
+
+# Add to GitHub at https://github.com/settings/keys
+cat ~/.ssh/github.pub
+```
 
 ## Project Setup
 
-1. Install dependencies:
+1. Install Python dependencies:
 
    ```bash
    uv sync
@@ -40,7 +195,71 @@ coordinates agent execution, backed by a documentation-first knowledge graph.
    uv run setup
    ```
 
+3. Start development services (MCP Bridge, Sandbox Server, Ollama):
+
+   ```bash
+   uv run dev.ensure-env
+   ```
+
+   This starts Docker containers for:
+   * **MCP Bridge** (`ai-workflow-mcp-bridge-dev`) - REST-to-MCP bridge on Unix socket
+   * **Sandbox Server** (`ai-workflow-sandbox-server-dev`) - Git operations sandbox
+   * **Ollama** (`ai-workflow-ollama-dev`) - Local Ministral 3B model on port 11434
+
+4. Verify services are running:
+
+   ```bash
+   docker ps | grep ai-workflow
+   ```
+
 See `.pre-commit-config.yaml` for code quality standards.
+
+## AI Models Configuration
+
+The project uses multiple AI backends configured in `.agents/models/`. Each model is a TOML file specifying
+how to invoke the AI backend.
+
+### Available Model Providers
+
+| Provider | Models | Environment Variable | Get API Key |
+|----------|--------|---------------------|-------------|
+| **Anthropic** | claude-haiku, claude-sonnet, claude-opus | `ANTHROPIC_API_KEY` |
+   |               |                                         | [console.anthropic.com](https://console.anthropic.com/) |
+| **OpenAI** | gpt-5.2-*, gpt-5.1-* | `OPENAI_API_KEY` |
+   |             |                     | [platform.openai.com](https://platform.openai.com/api-keys) |
+| **Google** | gemini-3-flash-*, gemini-3-pro-* | `GEMINI_API_KEY` |
+   |            |                                       | [aistudio.google.com](https://aistudio.google.com/apikey) |
+| **Z.AI** | glm (GLM-4.7) | `Z_AI_API_KEY` | [z.ai](https://z.ai/) |
+| **Minimax** | minimax | `MINIMAX_API_KEY` | [minimax.chat](https://www.minimax.chat/) |
+| **Ollama** | ministral-3b, smollm2-* | None (local) | Bundled via Docker |
+
+### Model Context Limits
+
+| Model | Context (tokens) | Recommended max_chars |
+|-------|------------------|----------------------|
+| SmolLM2-135M | 2,048 | 4,000 |
+| SmolLM2-360M | 2,048 | 6,000 |
+| Ministral-3B | 4,096 | 8,000 |
+| GLM-4.7 | 32,768-128,768 | (no limit - fallback) |
+| Claude Sonnet | 200,000 | 600,000 |
+| GPT-5.x | 272,000 | 800,000 |
+| Gemini 3 | 1,000,000+ | 1,500,000+ |
+
+### Running Agents
+
+```bash
+# Run an agent with default routing
+uv run agent.claude "Your prompt here"
+
+# Run with a specific model
+uv run agent.claude --model claude-sonnet "Your prompt here"
+
+# Run via OpenCode
+uv run agent.opencode --model gpt-5.2-high "Your prompt here"
+```
+
+See `docs/development/adding-models.md` for adding new models and `docs/development/writing-agents.md` for
+creating agents.
 
 ## Development
 
@@ -99,24 +318,8 @@ uv run lint
 This runs Python-based linters (ruff, mypy, checkov, pymarkdown, detect-secrets, yamllint) plus additional
 CLI-based security and configuration linters (actionlint, trivy, gitleaks, dotenv-linter).
 
-#### External CLI Dependencies
-
-The following tools require manual installation as they are not Python packages:
-
-| Tool | Purpose | Installation |
-|------|---------|--------------|
-| **actionlint** | GitHub Actions workflow linting | `brew install actionlint` (macOS) or `go install
-| github.com/rhysd/actionlint/cmd/actionlint@latest` |
-| **trivy** | Security vulnerability scanning | `brew install trivy` (macOS/Linux) or download from
-| [GitHub releases](https://github.com/aquasecurity/trivy/releases) |
-| **gitleaks** | Secret detection in code | `brew install gitleaks` (macOS/Linux) or `go install
-| github.com/gitleaks/gitleaks/v8@v8.24.2` |
-| **dotenv-linter** | .env file linting | `brew install dotenv-linter` (macOS) or `cargo install dotenv-linter` (Linux) |
-
-If these tools are not installed, `uv run lint` will fail with clear error messages. For detailed
-documentation on each linter, see the files in `docs/usage/` and `docs/development/project/`.
-
-Any errors will fail the lint job locally and in CI.
+See [Code Quality Tools (External CLI)](#code-quality-tools-external-cli) in Prerequisites for installation.
+If these tools are not installed, `uv run lint` will fail with clear error messages.
 
 ## Code Review
 
@@ -169,9 +372,10 @@ afterward.
 * **Timeout guidance**: Allow up to 2 hours for this command; do not stop it early when
   invoked via `uv run`
 
-## Environment Variables
+## Application Environment Variables
 
-Configuration is managed via `app/core/settings.py`. See that file for complete validation rules.
+These variables configure the FastAPI application. For AI API keys, see [Environment Variables](#environment-variables)
+above. Configuration is managed via `app/core/settings.py`.
 
 ### Application Settings
 

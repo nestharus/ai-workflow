@@ -1,5 +1,7 @@
 """Shellcheck linter for shell scripts."""
 
+import json
+import subprocess
 import sys
 
 import yaml
@@ -8,14 +10,49 @@ from scripts.dev.linter.base import (
     REPO_ROOT,
     BaseLinter,
     LinterResult,
+    LintError,
     get_executable,
     is_path_included,
     load_yaml_config,
-    run_checked,
 )
 
 SHELLCHECK_CLI_REQUIRED = "shellcheck CLI required to run lint"
 LINT_SHELLCHECK_CONFIG = REPO_ROOT / ".lint.shellcheck.yaml"
+
+
+def _parse_shellcheck_json(json_output: str) -> list[LintError]:
+    """Parse shellcheck JSON output into LintError objects.
+
+    Args:
+        json_output: Raw JSON string from shellcheck --format=json.
+
+    Returns:
+        List of LintError objects.
+    """
+    if not json_output.strip():
+        return []
+
+    try:
+        errors_data = json.loads(json_output)
+    except json.JSONDecodeError:
+        return []
+
+    errors = []
+    for item in errors_data:
+        fix_info = item.get("fix")
+        errors.append(
+            LintError(
+                file=item.get("file", ""),
+                line=item.get("line", 0),
+                column=item.get("column", 0),
+                code=f"SC{item.get('code', 0)}",
+                message=item.get("message", ""),
+                context=None,  # shellcheck JSON doesn't include context
+                fix_available=fix_info is not None,
+                fix_message=None,  # shellcheck doesn't provide fix messages
+            )
+        )
+    return errors
 
 
 class ShellcheckLinter(BaseLinter):
@@ -31,7 +68,7 @@ class ShellcheckLinter(BaseLinter):
             files: Optional list of files to check. If None, checks all .sh files.
 
         Returns:
-            LinterResult indicating success/failure.
+            LinterResult indicating success/failure with structured errors.
         """
         # Handle missing binary gracefully
         try:
@@ -77,6 +114,17 @@ class ShellcheckLinter(BaseLinter):
             print("No shell scripts to check with shellcheck")
             return LinterResult(success=True)
 
-        run_checked([shellcheck_exe, *shell_files])
+        # Run shellcheck with JSON output format
+        result = subprocess.run(
+            [shellcheck_exe, "--format=json", *shell_files],
+            capture_output=True,
+            text=True,
+        )
+
+        # Parse errors from JSON output
+        errors = _parse_shellcheck_json(result.stdout)
+
+        if errors:
+            return LinterResult(success=False, errors=errors)
 
         return LinterResult(success=True)

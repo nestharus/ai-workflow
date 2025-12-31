@@ -1,6 +1,7 @@
 """Trivy security scanner for filesystem and Docker images."""
 
 import contextlib
+import json
 import subprocess
 import tempfile
 from pathlib import Path
@@ -10,6 +11,7 @@ from scripts.dev.linter.base import (
     REPO_ROOT,
     BaseLinter,
     LinterResult,
+    LintError,
     get_executable,
     load_yaml_config,
 )
@@ -17,6 +19,62 @@ from scripts.dev.linter.base import (
 TRIVY_CLI_REQUIRED = "trivy CLI required to run lint"
 DOCKER_CLI_REQUIRED = "docker CLI required for trivy image scanning"
 LINT_TRIVY_CONFIG = REPO_ROOT / ".lint.trivy.yaml"
+
+
+def _parse_trivy_json(json_output: str, target_file: str) -> list[LintError]:
+    """Parse trivy JSON output into LintError objects.
+
+    Args:
+        json_output: Raw JSON string from trivy --format json.
+        target_file: The file being scanned (e.g., "uv.lock" or image ID).
+
+    Returns:
+        List of LintError objects.
+    """
+    if not json_output.strip():
+        return []
+
+    try:
+        data = json.loads(json_output)
+    except json.JSONDecodeError:
+        return []
+
+    errors = []
+    results = data.get("Results", [])
+
+    for result in results:
+        target = result.get("Target", target_file)
+        vulnerabilities = result.get("Vulnerabilities", [])
+
+        for vuln in vulnerabilities:
+            # Extract vulnerability details
+            vuln_id = vuln.get("VulnerabilityID", "")
+            pkg_name = vuln.get("PkgName", "")
+            installed_version = vuln.get("InstalledVersion", "")
+            fixed_version = vuln.get("FixedVersion", "")
+            severity = vuln.get("Severity", "UNKNOWN")
+            title = vuln.get("Title", "")
+
+            # Build a descriptive message
+            message = f"{pkg_name} {installed_version}: {title}"
+            if fixed_version:
+                message += f" (fix: {fixed_version})"
+
+            # Create LintError
+            errors.append(
+                LintError(
+                    file=target,
+                    line=0,  # Trivy doesn't provide line numbers
+                    column=0,  # Trivy doesn't provide column numbers
+                    code=vuln_id,
+                    message=message,
+                    context=f"Severity: {severity}",
+                    fix_available=bool(fixed_version),
+                    fix_message=f"Update {pkg_name} to {fixed_version}" if fixed_version else None,
+                )
+            )
+
+    return errors
 
 
 class TrivyLinter(BaseLinter):
@@ -83,7 +141,7 @@ class TrivyLinter(BaseLinter):
             config: Configuration dictionary from .lint.trivy.yaml.
 
         Returns:
-            LinterResult indicating success/failure.
+            LinterResult indicating success/failure with structured errors.
         """
         fs_target = config.get("fs_target", "uv.lock")
         lockfile_path = REPO_ROOT / fs_target
@@ -97,12 +155,21 @@ class TrivyLinter(BaseLinter):
                 print(f"Error: {fs_target} not found")
                 return LinterResult(success=False)
 
-        # Run trivy fs scan from REPO_ROOT
-        result = subprocess.call(
-            [trivy_exe, "fs", "--config", ".trivy.yaml", str(fs_target)],
+        # Run trivy fs scan with JSON output from REPO_ROOT
+        result = subprocess.run(
+            [trivy_exe, "fs", "--format", "json", "--config", ".trivy.yaml", str(fs_target)],
             cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
         )
-        return LinterResult(success=result == 0)
+
+        # Parse errors from JSON output
+        errors = _parse_trivy_json(result.stdout, fs_target)
+
+        if errors:
+            return LinterResult(success=False, errors=errors)
+
+        return LinterResult(success=result.returncode == 0)
 
     def _run_trivy_image(self, trivy_exe: str, config: dict[str, Any]) -> LinterResult:
         """Run Trivy image scan on temporary Docker image.
@@ -116,7 +183,7 @@ class TrivyLinter(BaseLinter):
             config: Configuration dictionary from .lint.trivy.yaml.
 
         Returns:
-            LinterResult indicating success/failure.
+            LinterResult indicating success/failure with structured errors.
         """
         skip_if_no_dockerfile = config.get("skip_image_if_no_dockerfile", True)
 
@@ -159,13 +226,22 @@ class TrivyLinter(BaseLinter):
                 print("Error: Failed to get image ID from build")
                 return LinterResult(success=False)
 
-            # Run trivy image scan
+            # Run trivy image scan with JSON output
             print(f"Scanning image: {image_id[:12]}...")
-            scan_result = subprocess.call(
-                [trivy_exe, "image", "--config", ".trivy.yaml", image_id],
+            scan_result = subprocess.run(
+                [trivy_exe, "image", "--format", "json", "--config", ".trivy.yaml", image_id],
                 cwd=str(REPO_ROOT),
+                capture_output=True,
+                text=True,
             )
-            return LinterResult(success=scan_result == 0)
+
+            # Parse errors from JSON output
+            errors = _parse_trivy_json(scan_result.stdout, f"image:{image_id[:12]}")
+
+            if errors:
+                return LinterResult(success=False, errors=errors)
+
+            return LinterResult(success=scan_result.returncode == 0)
         finally:
             # If image_id is not set (read failed), try to read it again for cleanup.
             # We read into a local and reassign to avoid issues with contextlib.suppress

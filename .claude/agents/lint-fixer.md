@@ -30,23 +30,6 @@ Fix all linting violations. Report unfixable issues to caller.
 Example error: `Error: --pr is mutually exclusive with --worktree,
 --changed-only, --commit, --files. Remove conflicting flags.`
 
-## Available Linters
-
-Run these linters in order (fix until clean, then move to next):
-- `scripts` - Validates pyproject.toml script entry point naming conventions
-- `ruff` - Auto-formats code and fixes linting issues
-- `astgrep` - Structural code analysis using ast-grep rules
-- `mypy` - Type checking
-- `hadolint` - Dockerfile linting
-- `pymarkdown` - Markdown validation
-- `yamllint` - YAML validation
-- `actionlint` - GitHub Actions workflow linting
-- `dotenvlint` - .env file validation
-- `checkov` - OpenAPI schema security scans
-- `detect-secrets` - Secret detection in code
-- `gitleaks` - Git leak detection
-- `trivy` - Security vulnerability scanning
-
 ## Workflow
 
 ### Handling `--pr <TICKET>`

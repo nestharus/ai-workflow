@@ -102,7 +102,7 @@ line-length = 100
         mock_repo_root: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Test run detects naming violations (lines 85-92)."""
+        """Test run detects naming violations and returns structured errors."""
         mock_load_config.return_value = {"prefix_rules": {"scripts.dev.": "dev-"}}
 
         pyproject_content = """
@@ -118,10 +118,16 @@ bad-name = "scripts.dev.lint:main"
         result = linter.run()
 
         assert result.success is False
-        captured = capsys.readouterr()
-        assert "Script naming convention violations" in captured.err
-        assert "bad-name" in captured.err
-        assert "should be prefixed with 'dev-'" in captured.err
+        assert len(result.errors) == 1
+
+        error = result.errors[0]
+        assert error.code == "SCRIPT001"
+        assert "bad-name" in error.message
+        assert "should be prefixed with 'dev-'" in error.message
+        assert error.line == 3  # Line 3 in the content
+        assert error.column == 1
+        assert error.fix_available is False
+        assert "dev-" in error.fix_message
 
     @patch("scripts.dev.linter.linters.scripts.REPO_ROOT")
     @patch("scripts.dev.linter.linters.scripts.load_yaml_config")
