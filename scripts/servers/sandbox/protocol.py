@@ -240,11 +240,51 @@ class ErrorResponse:
         )
 
 
+@dataclass
+class DiffMismatchResponse:
+    """Response indicating rebase changed the PR diff unexpectedly."""
+
+    request_id: str
+    files: list[str]
+    added_lines: int
+    removed_lines: int
+    status: str = field(default="diff_mismatch", init=False)
+
+    def to_json(self) -> str:
+        """Serialize to JSON string."""
+        return json.dumps(asdict(self))
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DiffMismatchResponse:
+        """Create from dictionary."""
+        request_id = data.get("request_id")
+        if request_id is None:
+            raise ValueError("Missing 'request_id' in diff_mismatch response")
+        files = data.get("files")
+        if files is None:
+            files = []
+        elif not isinstance(files, list):
+            raise ValueError("Invalid 'files' in diff_mismatch response: expected list")
+        return cls(
+            request_id=request_id,
+            files=files,
+            added_lines=data.get("added_lines", 0),
+            removed_lines=data.get("removed_lines", 0),
+        )
+
+
 # Type alias for all request types
 Request = RebaseRequest | MergeRequest | StatusRequest | CancelRequest
 
 # Type alias for all response types
-Response = SuccessResponse | ConflictResponse | QueuedResponse | ProgressResponse | ErrorResponse
+Response = (
+    SuccessResponse
+    | ConflictResponse
+    | QueuedResponse
+    | ProgressResponse
+    | ErrorResponse
+    | DiffMismatchResponse
+)
 
 
 def parse_request(data: str) -> Request:
@@ -317,5 +357,7 @@ def parse_response(data: str) -> Response:
         return ProgressResponse.from_dict(obj)
     elif status == "error":
         return ErrorResponse.from_dict(obj)
+    elif status == "diff_mismatch":
+        return DiffMismatchResponse.from_dict(obj)
     else:
         raise ValueError(f"Unknown status: {status}")

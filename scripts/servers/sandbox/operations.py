@@ -52,8 +52,21 @@ class OperationResult:
     error: str
 
 
-# Type aliases for semantic clarity - callers can use distinct names
-RebaseResult = OperationResult
+@dataclass
+class RebaseResult:
+    """Result of a rebase operation with state for diff verification."""
+
+    success: bool
+    has_conflicts: bool
+    conflicts: list[str]
+    error: str
+    old_base: str | None = None
+    original_tree: str | None = None
+    target: str | None = None
+    rebased_tree: str | None = None
+
+
+# Type alias for merge results - uses base OperationResult
 MergeResult = OperationResult
 
 
@@ -428,7 +441,7 @@ def rebase_in_sandbox(
         progress_callback: Optional callable to send progress updates.
 
     Returns:
-        RebaseResult with operation outcome.
+        RebaseResult with operation outcome including pre/post rebase state.
     """
     # Sync the branch first
     success, err = sync_sandbox_branch(sandbox_path, branch)
@@ -454,6 +467,11 @@ def rebase_in_sandbox(
             conflicts=[],
             error=f"fetch target failed: {err_msg}",
         )
+
+    # Capture pre-rebase state for diff verification
+    old_base = get_merge_base(sandbox_path, "HEAD", f"origin/{target}")
+    original_tree = get_tree_sha(sandbox_path, "HEAD")
+    target_sha = get_origin_sha(sandbox_path, target)
 
     # Perform rebase
     result = _run_git(["git", "rebase", f"origin/{target}"], cwd=sandbox_path)
@@ -483,6 +501,9 @@ def rebase_in_sandbox(
                 has_conflicts=True,
                 conflicts=conflicts,
                 error="Rebase stopped due to conflicts",
+                old_base=old_base,
+                original_tree=original_tree,
+                target=target_sha,
             )
 
         return RebaseResult(
@@ -492,7 +513,19 @@ def rebase_in_sandbox(
             error=f"rebase failed: {result.stderr}",
         )
 
-    return RebaseResult(success=True, has_conflicts=False, conflicts=[], error="")
+    # Capture post-rebase state
+    rebased_tree = get_tree_sha(sandbox_path, "HEAD")
+
+    return RebaseResult(
+        success=True,
+        has_conflicts=False,
+        conflicts=[],
+        error="",
+        old_base=old_base,
+        original_tree=original_tree,
+        target=target_sha,
+        rebased_tree=rebased_tree,
+    )
 
 
 def merge_in_sandbox(sandbox_path: Path, branch: str, target: str) -> MergeResult:
@@ -575,3 +608,202 @@ def push_from_sandbox(sandbox_path: Path, branch: str, force: bool = False) -> t
     if result.returncode != 0:
         return False, f"push failed: {result.stderr}"
     return True, ""
+
+
+def get_merge_base(sandbox_path: Path, ref1: str, ref2: str) -> str | None:
+    """Get the merge base (common ancestor) between two refs.
+
+    Args:
+        sandbox_path: Path to the sandbox directory.
+        ref1: First reference (branch, commit, etc).
+        ref2: Second reference (branch, commit, etc).
+
+    Returns:
+        The merge base commit SHA, or None if not found.
+    """
+    result = _run_git(["git", "merge-base", ref1, ref2], cwd=sandbox_path)
+    if result is None or result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def get_tree_sha(sandbox_path: Path, ref: str) -> str | None:
+    """Get the tree SHA for a reference.
+
+    Args:
+        sandbox_path: Path to the sandbox directory.
+        ref: Reference (branch, commit, etc).
+
+    Returns:
+        The tree SHA, or None if not found.
+    """
+    result = _run_git(["git", "rev-parse", f"{ref}^{{tree}}"], cwd=sandbox_path)
+    if result is None or result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def get_head_sha(sandbox_path: Path) -> str | None:
+    """Get the current HEAD commit SHA.
+
+    Args:
+        sandbox_path: Path to the sandbox directory.
+
+    Returns:
+        The HEAD commit SHA, or None if not found.
+    """
+    result = _run_git(["git", "rev-parse", "HEAD"], cwd=sandbox_path)
+    if result is None or result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def get_diff_content(sandbox_path: Path, from_ref: str, to_ref: str) -> str | None:
+    """Get the diff content between two refs.
+
+    Args:
+        sandbox_path: Path to the sandbox directory.
+        from_ref: Starting reference.
+        to_ref: Ending reference.
+
+    Returns:
+        The diff content as a string, or None on error.
+    """
+    result = _run_git(["git", "diff", from_ref, to_ref], cwd=sandbox_path)
+    if result is None or result.returncode != 0:
+        return None
+    return result.stdout
+
+
+@dataclass
+class DiffMismatchResult:
+    """Result of diff verification showing what changed unexpectedly."""
+
+    has_mismatch: bool
+    files: list[str]
+    added_lines: int
+    removed_lines: int
+    error: str
+
+
+def verify_rebase_integrity(
+    sandbox_path: Path,
+    old_base: str,
+    original_tree: str,
+    target: str,
+    rebased_tree: str,
+) -> DiffMismatchResult:
+    """Verify that the rebase preserved the PR's changes.
+
+    Compares the diff before rebase (old_base..original_tree) with the diff
+    after rebase (target..rebased_tree). If the diffs differ, returns the
+    list of files that changed unexpectedly.
+
+    Args:
+        sandbox_path: Path to the sandbox directory.
+        old_base: The merge base before rebase (common ancestor of branch and target).
+        original_tree: The tree SHA of the branch before rebase.
+        target: The target branch commit (what we rebased onto).
+        rebased_tree: The tree SHA after rebase.
+
+    Returns:
+        DiffMismatchResult with mismatch details.
+    """
+    # Get diff before rebase: what the PR changed relative to old base
+    before_diff = get_diff_content(sandbox_path, old_base, original_tree)
+    if before_diff is None:
+        return DiffMismatchResult(
+            has_mismatch=False,
+            files=[],
+            added_lines=0,
+            removed_lines=0,
+            error="Failed to get before-rebase diff",
+        )
+
+    # Get diff after rebase: what the PR changes relative to new target
+    after_diff = get_diff_content(sandbox_path, target, rebased_tree)
+    if after_diff is None:
+        return DiffMismatchResult(
+            has_mismatch=False,
+            files=[],
+            added_lines=0,
+            removed_lines=0,
+            error="Failed to get after-rebase diff",
+        )
+
+    # Compare the diffs
+    if before_diff == after_diff:
+        return DiffMismatchResult(
+            has_mismatch=False,
+            files=[],
+            added_lines=0,
+            removed_lines=0,
+            error="",
+        )
+
+    # Diffs don't match - find what changed
+    # Get numstat for both to compare line counts
+    before_numstat = _run_git(
+        ["git", "diff", "--numstat", old_base, original_tree],
+        cwd=sandbox_path,
+    )
+    after_numstat = _run_git(
+        ["git", "diff", "--numstat", target, rebased_tree],
+        cwd=sandbox_path,
+    )
+
+    if before_numstat is None or after_numstat is None:
+        return DiffMismatchResult(
+            has_mismatch=True,
+            files=[],
+            added_lines=0,
+            removed_lines=0,
+            error="Failed to get numstat for diff comparison",
+        )
+
+    # Parse numstat to get per-file line counts
+    before_files: dict[str, tuple[int, int]] = {}
+    for line in before_numstat.stdout.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            try:
+                added = int(parts[0]) if parts[0] != "-" else 0
+                removed = int(parts[1]) if parts[1] != "-" else 0
+                filename = parts[2]
+                before_files[filename] = (added, removed)
+            except ValueError:
+                continue
+
+    after_files: dict[str, tuple[int, int]] = {}
+    for line in after_numstat.stdout.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            try:
+                added = int(parts[0]) if parts[0] != "-" else 0
+                removed = int(parts[1]) if parts[1] != "-" else 0
+                filename = parts[2]
+                after_files[filename] = (added, removed)
+            except ValueError:
+                continue
+
+    # Find files that differ
+    mismatched_files: list[str] = []
+    total_added_diff = 0
+    total_removed_diff = 0
+
+    all_files = set(before_files.keys()) | set(after_files.keys())
+    for filename in all_files:
+        before_counts = before_files.get(filename, (0, 0))
+        after_counts = after_files.get(filename, (0, 0))
+        if before_counts != after_counts:
+            mismatched_files.append(filename)
+            total_added_diff += after_counts[0] - before_counts[0]
+            total_removed_diff += after_counts[1] - before_counts[1]
+
+    return DiffMismatchResult(
+        has_mismatch=len(mismatched_files) > 0,
+        files=sorted(mismatched_files),
+        added_lines=total_added_diff,
+        removed_lines=total_removed_diff,
+        error="",
+    )

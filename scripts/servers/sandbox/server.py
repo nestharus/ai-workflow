@@ -17,6 +17,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 from scripts.servers.sandbox.constants import DEFAULT_SOCKET_PATH
 from scripts.servers.sandbox.operations import (
@@ -28,10 +29,12 @@ from scripts.servers.sandbox.operations import (
     merge_in_sandbox,
     push_from_sandbox,
     rebase_in_sandbox,
+    verify_rebase_integrity,
 )
 from scripts.servers.sandbox.protocol import (
     CancelRequest,
     ConflictResponse,
+    DiffMismatchResponse,
     ErrorResponse,
     MergeRequest,
     ProgressResponse,
@@ -705,6 +708,45 @@ class SandboxServer:
                     request_id=request_id,
                     message="Operation was cancelled",
                 ).to_json()
+
+            # Verify diff integrity before pushing
+            if self.sandbox_path and all(
+                [
+                    result.old_base,
+                    result.original_tree,
+                    result.target,
+                    result.rebased_tree,
+                ]
+            ):
+                mismatch = verify_rebase_integrity(
+                    self.sandbox_path,
+                    cast("str", result.old_base),
+                    cast("str", result.original_tree),
+                    cast("str", result.target),
+                    cast("str", result.rebased_tree),
+                )
+                if mismatch.has_mismatch:
+                    logger.error(
+                        "Rebase diff mismatch: request_id=%s, branch=%s, files=%s, "
+                        "added=%d, removed=%d",
+                        request_id,
+                        branch,
+                        mismatch.files,
+                        mismatch.added_lines,
+                        mismatch.removed_lines,
+                    )
+                    return DiffMismatchResponse(
+                        request_id=request_id,
+                        files=mismatch.files,
+                        added_lines=mismatch.added_lines,
+                        removed_lines=mismatch.removed_lines,
+                    ).to_json()
+                if mismatch.error:
+                    logger.warning(
+                        "Diff verification warning: request_id=%s, error=%s",
+                        request_id,
+                        mismatch.error,
+                    )
 
             # Push the result using the branch from the request
             # (not _get_current_branch which could fail in detached HEAD state)

@@ -14,6 +14,7 @@ import time
 from scripts.servers.sandbox.constants import DEFAULT_SOCKET_PATH
 from scripts.servers.sandbox.protocol import (
     ConflictResponse,
+    DiffMismatchResponse,
     ErrorResponse,
     MergeRequest,
     ProgressResponse,
@@ -173,7 +174,10 @@ def send_rebase(
             raise SandboxClientError(f"Invalid response from server: {e}") from e
 
         # If not waiting or got a final response, return immediately
-        if not wait or isinstance(response, (SuccessResponse, ConflictResponse, ErrorResponse)):
+        if not wait or isinstance(
+            response,
+            (SuccessResponse, ConflictResponse, ErrorResponse, DiffMismatchResponse),
+        ):
             return response
 
         # If queued or in progress, wait for completion
@@ -229,7 +233,10 @@ def send_merge(
             raise SandboxClientError(f"Invalid response from server: {e}") from e
 
         # If not waiting or got a final response, return immediately
-        if not wait or isinstance(response, (SuccessResponse, ConflictResponse, ErrorResponse)):
+        if not wait or isinstance(
+            response,
+            (SuccessResponse, ConflictResponse, ErrorResponse, DiffMismatchResponse),
+        ):
             return response
 
         # If queued or in progress, wait for completion
@@ -339,7 +346,10 @@ def _wait_for_completion(
         try:
             response = get_status(request_id, socket_path)
 
-            if isinstance(response, (SuccessResponse, ConflictResponse, ErrorResponse)):
+            if isinstance(
+                response,
+                (SuccessResponse, ConflictResponse, ErrorResponse, DiffMismatchResponse),
+            ):
                 return response
             elif isinstance(response, ProgressResponse) and verbose:
                 print(f"In progress: {response.message}")
@@ -375,6 +385,13 @@ def format_response(response: Response) -> str:
     elif isinstance(response, ConflictResponse):
         files = ", ".join(map(str, response.files))
         return f"CONFLICT: {files}"
+    elif isinstance(response, DiffMismatchResponse):
+        files = ", ".join(map(str, response.files))
+        return (
+            f"DIFF_MISMATCH: Rebase changed the PR diff unexpectedly. "
+            f"Files: {files}, Added: {response.added_lines:+d}, "
+            f"Removed: {response.removed_lines:+d}"
+        )
     elif isinstance(response, QueuedResponse):
         return f"QUEUED: position {response.position}"
     elif isinstance(response, ProgressResponse):
@@ -475,6 +492,8 @@ def main() -> int:
                 return 0
             elif isinstance(response, ConflictResponse):
                 return 2
+            elif isinstance(response, DiffMismatchResponse):
+                return 3
             return 1
 
         elif args.command == "merge":
@@ -490,6 +509,8 @@ def main() -> int:
                 return 0
             elif isinstance(response, ConflictResponse):
                 return 2
+            elif isinstance(response, DiffMismatchResponse):
+                return 3
             return 1
 
         elif args.command == "status":
