@@ -93,15 +93,14 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # Ollama SmolLM2 Service
-  # Runs SmolLM2 models (135M, 360M) for cheap polling and complexity classification.
+  # Ollama Ministral Service
+  # Runs Ministral 3B for router ambiguity classification.
   # Local development only - exposes Ollama API on localhost:11434.
   #
   # Models pre-loaded in image:
-  #   - smollm2:135m - Ultra-fast polling checks
-  #   - smollm2:360m - Complexity classification
+  #   - ministral-3:3b-instruct-2512-fp16 - Router classification
   #
-  # API: curl http://localhost:11434/api/generate -d '{"model":"smollm2:135m","prompt":"...","stream":false}'
+  # API: curl http://localhost:11434/api/generate -d '{"model":"ministral-3:3b-instruct-2512-fp16","prompt":"...","stream":false}'
   ollama-smol:
     build:
       context: ./docker/ollama
@@ -110,16 +109,16 @@ services:
     ports:
       - "11434:11434"
     environment:
-      - OLLAMA_NUM_PARALLEL=10
-      - OLLAMA_MAX_LOADED_MODELS=2
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_KEEP_ALIVE=-1
     deploy:
       resources:
         limits:
           cpus: '4'
-          memory: 4G
+          memory: 12G
         reservations:
-          memory: 1G
+          memory: 10G
     volumes:
       - ollama_storage:/root/.ollama
     healthcheck:

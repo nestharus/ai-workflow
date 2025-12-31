@@ -31,12 +31,8 @@ def main() -> int:
     )
     parser.add_argument("agent", nargs="?", help="Agent name (without .md extension)")
     parser.add_argument("prompt", nargs="?", help="Prompt to send")
-    parser.add_argument(
-        "--model", "-m", help="Execute model directly instead of agent"
-    )
-    parser.add_argument(
-        "--file", "-f", type=Path, help="Read prompt from file instead of argument"
-    )
+    parser.add_argument("--model", "-m", help="Execute model directly instead of agent")
+    parser.add_argument("--file", "-f", type=Path, help="Read prompt from file instead of argument")
     parser.add_argument(
         "--project",
         "-p",
@@ -49,11 +45,7 @@ def main() -> int:
 
     # When using --model, the prompt is the first positional (captured as agent)
     # When using agent mode, both agent and prompt are positional
-    if args.model:
-        # In model mode: first positional is the prompt
-        prompt_arg = args.agent
-    else:
-        prompt_arg = args.prompt
+    prompt_arg = args.agent if args.model else args.prompt
 
     # Get prompt from argument, file, or stdin
     if args.file:
@@ -101,21 +93,31 @@ def main() -> int:
     agents = load_agents(project_root / ".agents/agents")
 
     agent = agents.get(args.agent)
-    router = agents.get("router")
 
     if not agent:
         print(f"Error: Agent not found: {args.agent}", file=sys.stderr)
         return 1
 
-    if not router:
-        print("Error: Router agent not found (.agents/agents/router.md)", file=sys.stderr)
-        return 1
+    # Router agent called directly - skip routing, use size-based selection only
+    if args.agent == "router":
+        from scripts.agents.router import select_rule
 
-    # Route to find best model
-    rule = route_prompt(agent, router, models, prompt)
-    if not rule:
-        print("Error: No routing rule matched the prompt", file=sys.stderr)
-        return 1
+        rule = select_rule(agent.routing, len(prompt))
+        if not rule:
+            print("Error: No routing rule matched the prompt", file=sys.stderr)
+            return 1
+    else:
+        router = agents.get("router")
+
+        if not router:
+            print("Error: Router agent not found (.agents/agents/router.md)", file=sys.stderr)
+            return 1
+
+        # Route to find best model
+        rule = route_prompt(agent, router, models, prompt)
+        if not rule:
+            print("Error: No routing rule matched the prompt", file=sys.stderr)
+            return 1
 
     model = models.get(rule.model)
     if not model:

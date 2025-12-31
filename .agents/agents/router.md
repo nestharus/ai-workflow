@@ -1,10 +1,8 @@
 ---
 description: Classifies prompts as ambiguous or not ambiguous
 routing:
-  - max_chars: 4000
-    model: smollm2-135
-  - max_chars: 6000
-    model: smollm2-360
+  - max_chars: 2500
+    model: ministral-3b
   - model: opencode-glm
 ---
 
