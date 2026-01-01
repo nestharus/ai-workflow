@@ -48,7 +48,7 @@ algorithm, or rule receives a unique identifier following these conventions:
 | `INV-XX` | Invariant (immutable constraint) | `INV-01` Byte-exact provenance |
 | `SET-XX` | Constraint set (bundle of actual system constraints: INV/RULE) | `SET-01` Auditability set |
 | `ART-XX` | External artifact/boundary requirement (external only) | `ART-01` GitHub webhook payload |
-| `ALG-XX` | Logical algorithm header (PRD logic only) | `ALG-01` Fact extraction |
+| `ALG-XX` | Algorithm (documented in Components; not embedded in PRDs) | `ALG-01` Fact extraction |
 | `MET-XX` | Success metric (measurable verification) | `MET-01` Fact extraction accuracy |
 | `TEST-XX` | Test artifact / verification evidence | `TEST-01` Webhook signature verification tests |
 | `Q-XX` | Open question (unresolved decision requiring future input) | `Q-01` PDF input support |
@@ -136,7 +136,7 @@ Place invariants first and explicitly state their precedence:
 * **Precedence:** invariants apply globally and override any conflicting requirements.
 * **INV-01 — Byte-exact provenance:** ...
 * **INV-REF-01 — No orphan requirements:** every non-invariant rule MUST be referenced by at least one of:
-  - an `ALG-XX` header, or
+  - an `ALG-XX` algorithm (in component packages), or
   - an external `ART-XX` requirement, or
   - a `MET-XX` success metric.
 ```
@@ -161,7 +161,7 @@ Group related rules into logical categories. Standard categories include:
 
 Use Mermaid diagrams for:
 - **Component diagrams:** System architecture showing major components and data flow
-- **Algorithm flowcharts:** Step-by-step decision logic with rule annotations
+- **Algorithm flowcharts (components):** Step-by-step decision logic with rule annotations
 
 Annotate diagram nodes with rule references:
 
@@ -296,30 +296,20 @@ In PRDs:
 - Prefer external `ART-XX` boundaries and major components only
 - Put internal artifacts/boundaries in the Design Map
 
-#### 8. Algorithms as Flowcharts
+#### 8. Components (Algorithms)
 
-Detailed algorithmic logic as Mermaid flowcharts.
+Algorithms do not live in PRDs. They live in component packages under a sibling `components/` folder. Component package structure is defined in `.tasks/processes/components/architecture.md`.
 
 ```
-## Algorithms as Mermaid flowcharts
+## Components (algorithms)
 
-### ALG-01: Algorithm name
-
-```mermaid
-flowchart TD
-  %% Cross-references: (requires: EX-01, EX-02)
-  A["Start"] --> B{"Condition?"}
-  B -->|Yes| C["Action"]
-  B -->|No| D["Other action"]
-```
+- `components/architecture.md` — root component package (start here; contains all `ALG-XX` initially)
 ```
 
 **Guidelines:**
-- Name algorithms with `ALG-XX` prefix
-- Reference rules at top of diagram as `Cross-references: (...)`
-- Decision nodes use `{}`
-- Action nodes use `[]`
-- Show all branches to completion
+- Treat each component as a package of `ALG-XX` algorithms plus its exposed surfaces.
+- Start with a single root component (`components/architecture.md`) that contains all algorithms; split into additional component packages only when the decomposition is clear.
+- Component surfaces MUST be documented as input/output invariants per `.tasks/processes/design map structure.md`.
 
 #### 9. Success Metrics
 
@@ -457,7 +447,7 @@ For each category (execution, input, processing, etc.):
 
 ### Step 6: Add Visual Diagrams
 
-Create component diagrams and algorithm flowcharts that:
+Create component diagrams (in PRDs) and algorithm flowcharts (in component packages) that:
 - Summarize the system visually
 - Annotate with rule references
 - Clarify complex interactions
