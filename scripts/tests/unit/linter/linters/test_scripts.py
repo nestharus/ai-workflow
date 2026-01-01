@@ -7,7 +7,7 @@ from scripts.dev.linter.linters.scripts import ScriptsLinter
 
 
 class TestScriptsLinterConfigLoading:
-    @patch("scripts.dev.linter.linters.scripts.load_yaml_config")
+    @patch.object(ScriptsLinter, "load_config")
     def test_run_config_not_dict(
         self,
         mock_load_config: MagicMock,
@@ -23,7 +23,7 @@ class TestScriptsLinterConfigLoading:
         captured = capsys.readouterr()
         assert "No prefix_rules defined" in captured.err
 
-    @patch("scripts.dev.linter.linters.scripts.load_yaml_config")
+    @patch.object(ScriptsLinter, "load_config")
     def test_run_empty_prefix_rules(
         self,
         mock_load_config: MagicMock,
@@ -42,7 +42,7 @@ class TestScriptsLinterConfigLoading:
 
 class TestScriptsLinterPyprojectMissing:
     @patch("scripts.dev.linter.linters.scripts.REPO_ROOT", Path("/fake/repo"))
-    @patch("scripts.dev.linter.linters.scripts.load_yaml_config")
+    @patch.object(ScriptsLinter, "load_config")
     def test_run_pyproject_not_found(
         self,
         mock_load_config: MagicMock,
@@ -61,7 +61,7 @@ class TestScriptsLinterPyprojectMissing:
 
 class TestScriptsLinterParsing:
     @patch("scripts.dev.linter.linters.scripts.REPO_ROOT")
-    @patch("scripts.dev.linter.linters.scripts.load_yaml_config")
+    @patch.object(ScriptsLinter, "load_config")
     def test_run_parses_project_scripts_section(
         self,
         mock_load_config: MagicMock,
@@ -95,7 +95,7 @@ line-length = 100
         assert "All script entry points follow naming conventions" in captured.out
 
     @patch("scripts.dev.linter.linters.scripts.REPO_ROOT")
-    @patch("scripts.dev.linter.linters.scripts.load_yaml_config")
+    @patch.object(ScriptsLinter, "load_config")
     def test_run_detects_violation(
         self,
         mock_load_config: MagicMock,
@@ -130,7 +130,7 @@ bad-name = "scripts.dev.lint:main"
         assert "dev-" in error.fix_message
 
     @patch("scripts.dev.linter.linters.scripts.REPO_ROOT")
-    @patch("scripts.dev.linter.linters.scripts.load_yaml_config")
+    @patch.object(ScriptsLinter, "load_config")
     def test_run_skips_empty_lines_and_comments(
         self,
         mock_load_config: MagicMock,
@@ -157,7 +157,7 @@ dev-lint = "scripts.dev.lint:main"
         assert result.success is True
 
     @patch("scripts.dev.linter.linters.scripts.REPO_ROOT")
-    @patch("scripts.dev.linter.linters.scripts.load_yaml_config")
+    @patch.object(ScriptsLinter, "load_config")
     def test_run_skips_lines_without_equals(
         self,
         mock_load_config: MagicMock,
@@ -183,7 +183,7 @@ dev-lint = "scripts.dev.lint:main"
         assert result.success is True
 
     @patch("scripts.dev.linter.linters.scripts.REPO_ROOT")
-    @patch("scripts.dev.linter.linters.scripts.load_yaml_config")
+    @patch.object(ScriptsLinter, "load_config")
     def test_run_handles_quoted_script_names(
         self,
         mock_load_config: MagicMock,
@@ -209,7 +209,7 @@ dev-lint = "scripts.dev.lint:main"
         assert result.success is True
 
     @patch("scripts.dev.linter.linters.scripts.REPO_ROOT")
-    @patch("scripts.dev.linter.linters.scripts.load_yaml_config")
+    @patch.object(ScriptsLinter, "load_config")
     def test_run_extracts_module_path_before_colon(
         self,
         mock_load_config: MagicMock,
@@ -234,7 +234,7 @@ dev-lint = "scripts.dev.lint:main"
         assert result.success is True
 
     @patch("scripts.dev.linter.linters.scripts.REPO_ROOT")
-    @patch("scripts.dev.linter.linters.scripts.load_yaml_config")
+    @patch.object(ScriptsLinter, "load_config")
     def test_run_stops_at_next_section(
         self,
         mock_load_config: MagicMock,
@@ -262,7 +262,7 @@ bad-name = "scripts.dev.shouldnt:check"
         assert result.success is True  # Should not see violation in [tool.ruff]
 
     @patch("scripts.dev.linter.linters.scripts.REPO_ROOT")
-    @patch("scripts.dev.linter.linters.scripts.load_yaml_config")
+    @patch.object(ScriptsLinter, "load_config")
     def test_run_continues_after_non_scripts_section(
         self,
         mock_load_config: MagicMock,
@@ -292,7 +292,7 @@ dev-lint = "scripts.dev.lint:main"
 
 class TestScriptsLinterFilesIgnored:
     @patch("scripts.dev.linter.linters.scripts.REPO_ROOT")
-    @patch("scripts.dev.linter.linters.scripts.load_yaml_config")
+    @patch.object(ScriptsLinter, "load_config")
     def test_run_ignores_files_parameter(
         self,
         mock_load_config: MagicMock,

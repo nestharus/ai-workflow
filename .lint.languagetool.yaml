@@ -1,0 +1,109 @@
+# Lint script configuration for languagetool
+# Targets and excludes for grammar/spelling checking
+
+# Language for checking (en-US matches .coderabbit.yaml line 3)
+language: en-US
+
+# Server configuration (one of the following must be enabled):
+#
+# Option 1: Local server (requires Java 17+, default)
+# Set use_public_api: false (or omit) and do not set remote_server
+# This runs LanguageTool locally - no external network calls.
+#
+# Option 2: Remote server (self-hosted)
+# Set remote_server to your LanguageTool server URL:
+# remote_server: https://your-languagetool-server.example.com
+#
+# Option 3: Public API (explicit opt-in required)
+# WARNING: Sends Markdown content to public LanguageTool API
+# Set use_public_api: true only if you accept external data transmission.
+# This also makes lint runs dependent on internet availability.
+use_public_api: false
+
+# Optional: remote server URL for self-hosted LanguageTool
+# remote_server: null
+
+# LanguageTool configuration options
+config:
+  cacheSize: 1000
+  pipelineCaching: true
+
+# Include paths with glob patterns
+# Supports *, ** wildcards and ! prefix for exclusions
+# Patterns are processed in order: inclusions first, then exclusions
+include_paths:
+  - README.md
+  - AGENTS.md
+  - docs/**/*.md
+  - scripts/knowledge/README.md
+  - "!.claude/**"
+  - "!.tmp/**"
+  - "!.worktrees/**"
+  - "!.git-rewrite/**"
+  - "!.tasks/store/**"
+  - "!to_adapt/**"
+  - "!docs/plans/**"
+  - "!docs/references/**"
+
+# Rule categories to disable (reduce noise for technical docs)
+disabled_categories:
+  - TYPOGRAPHY  # Smart quotes, etc.
+  - CASING      # Reduces noise for code references
+
+# Specific rules to disable
+disabled_rules:
+  - UPPERCASE_SENTENCE_START  # Common in code/config examples
+
+# Project dictionary for technical terms (spelling rule remains enabled)
+# Words listed here will not be flagged as misspellings
+# Keep entries lowercase - comparison is case-insensitive
+dictionary:
+  - pymarkdown
+  - yamllint
+  - gitleaks
+  - trivy
+  - pyproject
+  - toml
+  - pytest
+  - ruff
+  - mypy
+  - coderabbit
+  - linter
+  - linters
+  - codebase
+  - repo
+  - CLI
+  - API
+  - APIs
+  - uv
+  - frontend
+  - backend
+  - async
+  - config
+  - configs
+  - env
+  - pre-commit
+  - yaml
+  - json
+  - markdown
+  - duckdb
+  - surrealdb
+  - sqlite
+  # Dependencies from pyproject.toml
+  - fastapi
+  - uvicorn
+  - pydantic
+  - elasticsearch
+  - orjson
+  - anyio
+  - httpx
+  - spacy
+  - transformers
+  - accelerate
+  - torch
+  - pytorch
+  - checkov
+  - hadolint
+  - jsonschema
+  - pytz
+  - pyfakefs

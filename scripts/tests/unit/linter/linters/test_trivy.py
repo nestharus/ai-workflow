@@ -7,7 +7,7 @@ from scripts.dev.linter.linters.trivy import TrivyLinter
 
 
 class TestTrivyLinterRunScanConfiguration:
-    @patch("scripts.dev.linter.linters.trivy.load_yaml_config")
+    @patch.object(TrivyLinter, "load_config")
     @patch("scripts.dev.linter.linters.trivy.get_executable")
     def test_run_fs_scan_disabled(
         self,
@@ -29,7 +29,7 @@ class TestTrivyLinterRunScanConfiguration:
         captured = capsys.readouterr()
         assert "Filesystem scan disabled via enable_fs_scan: false" in captured.out
 
-    @patch("scripts.dev.linter.linters.trivy.load_yaml_config")
+    @patch.object(TrivyLinter, "load_config")
     @patch("scripts.dev.linter.linters.trivy.get_executable")
     def test_run_image_scan_disabled(
         self,
@@ -53,15 +53,15 @@ class TestTrivyLinterRunScanConfiguration:
 
 
 class TestTrivyLinterRunFsScan:
-    @patch("scripts.dev.linter.linters.trivy.subprocess.call")
+    @patch("scripts.dev.linter.linters.trivy.subprocess.run")
     @patch("scripts.dev.linter.linters.trivy.REPO_ROOT", Path("/fake/repo"))
-    @patch("scripts.dev.linter.linters.trivy.load_yaml_config")
+    @patch.object(TrivyLinter, "load_config")
     @patch("scripts.dev.linter.linters.trivy.get_executable")
     def test_run_fs_scan_success(
         self,
         mock_get_exe: MagicMock,
         mock_load_config: MagicMock,
-        mock_subprocess_call: MagicMock,
+        mock_subprocess_run: MagicMock,
     ) -> None:
         """Test filesystem scan success (lines 54-57, branch 56 False)."""
         mock_get_exe.return_value = "/usr/bin/trivy"
@@ -70,7 +70,11 @@ class TestTrivyLinterRunFsScan:
             "enable_image_scan": False,
             "fs_target": "uv.lock",
         }
-        mock_subprocess_call.return_value = 0
+        # Mock subprocess.run to return success
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "{}"
+        mock_subprocess_run.return_value = mock_result
 
         with patch.object(Path, "exists", return_value=True):
             linter = TrivyLinter()
@@ -78,15 +82,15 @@ class TestTrivyLinterRunFsScan:
 
         assert result.success is True
 
-    @patch("scripts.dev.linter.linters.trivy.subprocess.call")
+    @patch("scripts.dev.linter.linters.trivy.subprocess.run")
     @patch("scripts.dev.linter.linters.trivy.REPO_ROOT", Path("/fake/repo"))
-    @patch("scripts.dev.linter.linters.trivy.load_yaml_config")
+    @patch.object(TrivyLinter, "load_config")
     @patch("scripts.dev.linter.linters.trivy.get_executable")
     def test_run_fs_scan_failure(
         self,
         mock_get_exe: MagicMock,
         mock_load_config: MagicMock,
-        mock_subprocess_call: MagicMock,
+        mock_subprocess_run: MagicMock,
     ) -> None:
         """Test filesystem scan failure returns early (lines 55-57, branch 56 True)."""
         mock_get_exe.return_value = "/usr/bin/trivy"
@@ -95,7 +99,11 @@ class TestTrivyLinterRunFsScan:
             "enable_image_scan": True,
             "fs_target": "uv.lock",
         }
-        mock_subprocess_call.return_value = 1  # Failure
+        # Mock subprocess.run to return failure
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = "{}"
+        mock_subprocess_run.return_value = mock_result
 
         with patch.object(Path, "exists", return_value=True):
             linter = TrivyLinter()
@@ -103,7 +111,7 @@ class TestTrivyLinterRunFsScan:
 
         assert result.success is False
         # Image scan should not run due to short-circuit
-        assert mock_subprocess_call.call_count == 1
+        assert mock_subprocess_run.call_count == 1
 
 
 class TestTrivyLinterRunTrivyImageMethod:

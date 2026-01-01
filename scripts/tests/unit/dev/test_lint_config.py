@@ -25,8 +25,12 @@ def fake_repo(fs: FakeFilesystem) -> Path:
 
 class TestRunYamllint:
     @pytest.fixture
-    def yamllint_config(self, fake_repo: Path, fs: FakeFilesystem) -> Path:
-        """Create yamllint configuration files."""
+    def yamllint_config(self, fake_repo: Path, fs: FakeFilesystem) -> tuple[Path, Path]:
+        """Create yamllint configuration files.
+
+        Returns:
+            Tuple of (lint_config_path, yamllint_config_path).
+        """
         lint_config = fake_repo / ".lint.yamllint.yaml"
         # Use included_paths format to match actual config structure
         fs.create_file(
@@ -35,15 +39,16 @@ class TestRunYamllint:
         )
         yamllint_config = fake_repo / ".yamllint.yaml"
         fs.create_file(str(yamllint_config), contents="")
-        return lint_config
+        return lint_config, yamllint_config
 
     def test_only_includes_files_matching_patterns(
         self,
         fake_repo: Path,
         fs: FakeFilesystem,
-        yamllint_config: Path,
+        yamllint_config: tuple[Path, Path],
     ) -> None:
         """Should only include files matching included_paths patterns."""
+        lint_config, yamllint_cfg = yamllint_config
         # Create test files - root YAML is included via *.yaml pattern
         fs.create_file(str(fake_repo / "config.yml"), contents="key: value")
         # These are outside of included patterns (only root *.yaml/*.yml in fixture)
@@ -57,7 +62,8 @@ class TestRunYamllint:
 
         with (
             patch("scripts.dev.linter.linters.yamllint.REPO_ROOT", fake_repo),
-            patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", yamllint_config),
+            patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", lint_config),
+            patch("scripts.dev.linter.linters.yamllint.YAMLLINT_CONFIG", yamllint_cfg),
             patch(
                 "scripts.dev.linter.linters.yamllint.YAMLLINT_CONFIG",
                 fake_repo / ".yamllint.yaml",
@@ -88,16 +94,18 @@ class TestRunYamllint:
         self,
         fake_repo: Path,
         fs: FakeFilesystem,
-        yamllint_config: Path,
+        yamllint_config: tuple[Path, Path],
     ) -> None:
         """Should include YAML files in project root."""
+        lint_config, yamllint_cfg = yamllint_config
         # .yamllint.yaml is already created by the fixture
         fs.create_file(str(fake_repo / "config.yml"), contents="key: value")
         fs.create_file(str(fake_repo / "settings.yaml"), contents="setting: true")
 
         with (
             patch("scripts.dev.linter.linters.yamllint.REPO_ROOT", fake_repo),
-            patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", yamllint_config),
+            patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", lint_config),
+            patch("scripts.dev.linter.linters.yamllint.YAMLLINT_CONFIG", yamllint_cfg),
             patch(
                 "scripts.dev.linter.linters.yamllint.YAMLLINT_CONFIG",
                 fake_repo / ".yamllint.yaml",
@@ -121,9 +129,10 @@ class TestRunYamllint:
         self,
         fake_repo: Path,
         fs: FakeFilesystem,
-        yamllint_config: Path,
+        yamllint_config: tuple[Path, Path],
     ) -> None:
         """Should only pass YAML files matching included_paths when files parameter is provided."""
+        lint_config, yamllint_cfg = yamllint_config
         # Create test files
         fs.create_file(str(fake_repo / "config.yml"), contents="key: value")
         fs.create_file(str(fake_repo / "settings.yaml"), contents="setting: true")
@@ -132,7 +141,8 @@ class TestRunYamllint:
 
         with (
             patch("scripts.dev.linter.linters.yamllint.REPO_ROOT", fake_repo),
-            patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", yamllint_config),
+            patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", lint_config),
+            patch("scripts.dev.linter.linters.yamllint.YAMLLINT_CONFIG", yamllint_cfg),
             patch(
                 "scripts.dev.linter.linters.yamllint.YAMLLINT_CONFIG",
                 fake_repo / ".yamllint.yaml",
@@ -163,17 +173,19 @@ class TestRunYamllint:
         self,
         fake_repo: Path,
         fs: FakeFilesystem,
-        yamllint_config: Path,
+        yamllint_config: tuple[Path, Path],
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Should not call run_checked when no YAML files in the files list."""
+        lint_config, yamllint_cfg = yamllint_config
         # Create test files (non-YAML files only)
         fs.create_file(str(fake_repo / "script.py"), contents="print('hello')")
         fs.create_file(str(fake_repo / "README.md"), contents="# Readme")
 
         with (
             patch("scripts.dev.linter.linters.yamllint.REPO_ROOT", fake_repo),
-            patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", yamllint_config),
+            patch("scripts.dev.linter.linters.yamllint.LINT_YAMLLINT_CONFIG", lint_config),
+            patch("scripts.dev.linter.linters.yamllint.YAMLLINT_CONFIG", yamllint_cfg),
             patch(
                 "scripts.dev.linter.linters.yamllint.YAMLLINT_CONFIG",
                 fake_repo / ".yamllint.yaml",
