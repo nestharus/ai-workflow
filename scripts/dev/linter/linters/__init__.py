@@ -7,6 +7,7 @@ from scripts.dev.linter.linters.detect_secrets import DetectSecretsLinter
 from scripts.dev.linter.linters.dotenvlint import DotenvlintLinter
 from scripts.dev.linter.linters.gitleaks import GitleaksLinter
 from scripts.dev.linter.linters.hadolint import HadolintLinter
+from scripts.dev.linter.linters.languagetool import LanguageToolLinter
 from scripts.dev.linter.linters.mypy import MypyLinter
 from scripts.dev.linter.linters.pymarkdown import PymarkdownLinter
 from scripts.dev.linter.linters.ruff import RuffLinter
@@ -24,6 +25,7 @@ LINTERS = [
     HadolintLinter(),
     ShellcheckLinter(),
     PymarkdownLinter(),
+    LanguageToolLinter(),
     YamllintLinter(),
     ActionlintLinter(),
     DotenvlintLinter(),
@@ -50,6 +52,7 @@ __all__ = [
     "DotenvlintLinter",
     "GitleaksLinter",
     "HadolintLinter",
+    "LanguageToolLinter",
     "MypyLinter",
     "PymarkdownLinter",
     "RuffLinter",

@@ -246,6 +246,8 @@ sections:
             description: Run only ruff linting and formatting
           - command: uv run lint astgrep
             description: Run only ast-grep structural analysis
+          - command: uv run lint languagetool
+            description: Run only LanguageTool grammar/spelling checks on Markdown files
 
       - id: enforcement-ci
         title: CI Enforcement
@@ -397,3 +399,100 @@ sections:
         error_handling: |
           If shellcheck is not installed, `uv run lint shellcheck` will emit:
           "shellcheck CLI required to run lint"
+
+  - id: languagetool-linter
+    index: 7
+    title: LanguageTool Grammar and Spelling Checker
+    category: infrastructure
+    summary: Grammar and spelling linter for Markdown documentation files.
+    items:
+      - id: languagetool-purpose
+        title: Purpose
+        text: |
+          LanguageTool checks Markdown files for grammar errors and spelling mistakes.
+          It complements pymarkdown, which checks Markdown syntax and formatting.
+          Together they ensure documentation is both well-formatted AND well-written.
+        relationship:
+          - tool: pymarkdown
+            focus: Markdown structure, formatting, and syntax rules
+          - tool: languagetool
+            focus: Natural language grammar, spelling, and style
+
+      - id: languagetool-what-it-checks
+        title: What It Checks
+        checks:
+          - Grammar errors (subject-verb agreement, tense consistency, etc.)
+          - Spelling mistakes (typos like "teh", "recieve")
+          - Style issues (passive voice, wordiness, etc.)
+          - Punctuation errors (comma usage, apostrophes)
+        note: |
+          Technical terms are not flagged as spelling errors when added to the
+          project dictionary in .lint.languagetool.yaml.
+
+      - id: languagetool-configuration
+        title: Configuration
+        config_file: .lint.languagetool.yaml
+        options:
+          - option: language
+            description: Language for checking (e.g., "en-US")
+            default: "en-US"
+          - option: use_public_api
+            description: |
+              Use public LanguageTool API (no Java required). This is an explicit
+              opt-in because it sends Markdown content to an external service and
+              makes lint runs dependent on internet availability.
+            default: false
+          - option: remote_server
+            description: |
+              URL of a self-hosted LanguageTool server. Takes priority over local
+              server if configured.
+            example: "https://your-languagetool-server.example.com"
+          - option: include_paths
+            description: |
+              Glob patterns for files to check. Supports * and ** wildcards.
+              Use ! prefix for exclusion patterns (e.g., "!.tmp/**").
+            example: ["README.md", "docs/**/*.md", "!.tmp/**", "!.worktrees/**"]
+          - option: disabled_categories
+            description: Rule categories to disable (e.g., TYPOGRAPHY, CASING)
+          - option: disabled_rules
+            description: Specific rule IDs to disable (e.g., UPPERCASE_SENTENCE_START)
+          - option: dictionary
+            description: |
+              Project-specific terms that should not be flagged as misspellings.
+              Entries are case-insensitive (e.g., "pymarkdown" matches "Pymarkdown").
+
+      - id: languagetool-usage
+        title: Usage
+        commands:
+          - command: uv run lint languagetool
+            description: Run only LanguageTool grammar/spelling checks
+          - command: uv run lint
+            description: Run full lint suite (includes LanguageTool)
+        output_format: |
+          file.md:42:
+            Rule: MORFOLOGIK_RULE_EN_US (TYPOS)
+            Message: Possible spelling mistake found.
+            Context: ...example of a mispelled word...
+            Matched: 'mispelled'
+            Suggestions: misspelled, misspells
+
+      - id: languagetool-api-modes
+        title: API Modes
+        text: |
+          LanguageTool can run in three modes, controlled by configuration.
+          By default, local server mode is used to avoid sending content externally.
+        modes:
+          - mode: Local Server (default)
+            setting: "use_public_api: false (or omit)"
+            requirements: Java 17+
+            note: Runs LanguageTool server locally - no external network calls
+          - mode: Custom Remote Server
+            setting: "remote_server: https://your-server.example.com"
+            requirements: Self-hosted LanguageTool server
+            note: For enterprise/private deployments
+          - mode: Public API (explicit opt-in)
+            setting: "use_public_api: true"
+            requirements: Internet connection only
+            note: |
+              No Java required, but sends Markdown content to external service.
+              Makes lint runs dependent on internet availability.
