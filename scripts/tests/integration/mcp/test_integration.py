@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import tempfile
 import textwrap
@@ -20,8 +21,9 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 
-import httpx
 import pytest
+
+from scripts.servers.mcp.client import MCPSocketClient
 
 # ============================================================================
 # Echo MCP Server Script
@@ -229,18 +231,64 @@ mcpServers:
     return config
 
 
-@pytest.fixture(scope="module")
-def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[tuple[str, str]]:
-    """Start the MCP bridge Docker container and return socket path and dummy base URL.
+def _check_socket_health(socket_path: str, timeout: float = 5.0) -> tuple[bool, str | None]:
+    """Check if the MCP bridge is healthy using native socket.
+
+    Args:
+        socket_path: Path to the Unix socket.
+        timeout: Socket timeout in seconds.
 
     Returns:
-        Tuple of (socket_path, base_url) where base_url is always "http://localhost"
+        Tuple of (healthy, error_classification).
+    """
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect(socket_path)
+            sock.sendall(b'{"method":"health","id":"hc"}\n')
+
+            # Read in a loop until we see a newline (complete JSONL frame)
+            buffer = b""
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                buffer += chunk
+                if b"\n" in buffer:
+                    break
+
+            # Only parse the first complete line
+            line = buffer.split(b"\n")[0]
+            data = json.loads(line.decode("utf-8"))
+            result = data.get("result", {})
+            if data.get("status") == "success" and result.get("status") == "ok":
+                return True, None
+            return False, f"[HEALTH STATUS] status={result.get('status', 'unknown')}"
+
+    except TimeoutError:
+        return False, "[SOCKET TIMEOUT] Connection timed out"
+    except ConnectionRefusedError:
+        return False, "[CONNECTION REFUSED] Socket not accepting connections"
+    except FileNotFoundError:
+        return False, "[SOCKET NOT FOUND] Socket file does not exist"
+    except OSError as e:
+        return False, f"[OS ERROR] errno={e.errno}, {str(e)[:200]}"
+    except json.JSONDecodeError as e:
+        return False, f"[JSON ERROR] {str(e)[:200]}"
+
+
+@pytest.fixture(scope="module")
+def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[str]:
+    """Start the MCP bridge Docker container and return the socket path.
+
+    Returns:
+        Socket path for communicating with the MCP bridge.
 
     Failure Diagnostics:
         This fixture distinguishes between three failure conditions:
         (a) Docker image build failure - skip with build error details
         (b) Container process crash/healthcheck failure - skip with container logs
-        (c) Host-side Unix-socket/HTTPX connectivity issues - skip with transport error
+        (c) Host-side Unix socket connectivity issues - skip with transport error
     """
     # Create temp directory for socket with world-writable permissions
     # Required because container runs as appuser (UID 10000) which needs write access
@@ -248,7 +296,6 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
     os.chmod(socket_dir, 0o1777)  # Sticky bit + world-writable for container user
     socket_path = os.path.join(socket_dir, "mcp-bridge.sock")
     container_name = f"mcp-bridge-test-{os.getpid()}"
-    base_url = "http://localhost"
 
     # Create temp config file
     with tempfile.NamedTemporaryFile(
@@ -265,6 +312,8 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
     config_path.chmod(0o644)
 
     # Get the scripts root (where servers/mcp Dockerfile is)
+    # File path: scripts/tests/integration/mcp/test_integration.py
+    # Navigate: mcp -> integration -> tests -> scripts
     scripts_root = Path(__file__).parent.parent.parent.parent
     dockerfile_context = scripts_root / "servers" / "mcp"
 
@@ -362,37 +411,11 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
                     f"[CONTAINER CRASH] Container exited unexpectedly. Logs: {logs_truncated}"
                 )
 
-            # Check socket file exists (condition c)
+            # Check socket file exists and is healthy using native socket (condition c)
             if Path(socket_path).exists():
-                try:
-                    # Use httpx with Unix socket transport
-                    transport = httpx.HTTPTransport(uds=socket_path)
-                    with httpx.Client(transport=transport, timeout=5.0) as client:
-                        response = client.get(f"{base_url}/health")
-                        if response.status_code == 200:
-                            data = response.json()
-                            if data.get("status") == "ok":
-                                healthy = True
-                                break
-                        else:
-                            last_error_classification = (
-                                f"[NON-200 STATUS] HTTP {response.status_code}"
-                            )
-                except httpx.TimeoutException as e:
-                    last_error_classification = (
-                        f"[HTTPX TIMEOUT] {type(e).__name__}: {str(e)[:200]}"
-                    )
-                except httpx.TransportError as e:
-                    last_error_classification = (
-                        f"[TRANSPORT ERROR] {type(e).__name__}: {str(e)[:200]}"
-                    )
-                except httpx.RequestError as e:
-                    last_error_classification = (
-                        f"[REQUEST ERROR] {type(e).__name__}: {str(e)[:200]}"
-                    )
-                except OSError as e:
-                    # Permission or socket errors
-                    last_error_classification = f"[OS ERROR] errno={e.errno}, {str(e)[:200]}"
+                healthy, last_error_classification = _check_socket_health(socket_path)
+                if healthy:
+                    break
             else:
                 last_error_classification = "[SOCKET NOT FOUND] Socket file does not exist yet"
 
@@ -418,7 +441,7 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
                 f"Last error: {last_error_classification}. Container logs: {logs_truncated}"
             )
 
-        yield socket_path, base_url
+        yield socket_path
 
     finally:
         # Cleanup: stop and remove container
@@ -434,12 +457,16 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
 
 
 @pytest.fixture
-def http_client(mcp_bridge_container: tuple[str, str]) -> Iterator[httpx.Client]:
-    """Create an HTTP client for the MCP bridge using Unix socket."""
-    socket_path, base_url = mcp_bridge_container
-    transport = httpx.HTTPTransport(uds=socket_path)
-    with httpx.Client(transport=transport, base_url=base_url, timeout=30.0) as client:
-        yield client
+def mcp_client(mcp_bridge_container: str) -> MCPSocketClient:
+    """Create an MCPSocketClient for the MCP bridge.
+
+    Args:
+        mcp_bridge_container: Socket path from the container fixture.
+
+    Returns:
+        MCPSocketClient instance configured to use the test container socket.
+    """
+    return MCPSocketClient(socket_path=mcp_bridge_container)
 
 
 # ============================================================================
@@ -450,16 +477,13 @@ def http_client(mcp_bridge_container: tuple[str, str]) -> Iterator[httpx.Client]
 class TestMCPBridgeIntegration:
     """Integration tests for the MCP Bridge.
 
-    These tests verify the full request flow from HTTP client through
+    These tests verify the full request flow from the socket client through
     the bridge to the MCP server and back using Unix socket transport.
     """
 
-    def test_list_servers(self, http_client: httpx.Client) -> None:
-        """Test GET /mcp/servers returns the configured echo server."""
-        response = http_client.get("/mcp/servers")
-
-        assert response.status_code == 200
-        data = response.json()
+    def test_list_servers(self, mcp_client: MCPSocketClient) -> None:
+        """Test list_servers returns the configured echo server."""
+        data = mcp_client.list_servers()
 
         # Verify response structure
         assert "servers" in data
@@ -475,12 +499,9 @@ class TestMCPBridgeIntegration:
         assert echo_server["transport"] == "stdio"
         assert echo_server["healthy"] is True
 
-    def test_list_tools(self, http_client: httpx.Client) -> None:
-        """Test GET /mcp/{server}/tools returns the echo_tool."""
-        response = http_client.get("/mcp/echo/tools")
-
-        assert response.status_code == 200
-        data = response.json()
+    def test_list_tools(self, mcp_client: MCPSocketClient) -> None:
+        """Test list_server_tools returns the echo_tool."""
+        data = mcp_client.list_server_tools("echo")
 
         # Verify response structure
         assert "tools" in data
@@ -491,12 +512,9 @@ class TestMCPBridgeIntegration:
         tool_names = [t["name"] for t in tools]
         assert "echo_tool" in tool_names, f"Expected 'echo_tool', got: {tool_names}"
 
-    def test_get_tool(self, http_client: httpx.Client) -> None:
-        """Test GET /mcp/{server}/tools/{tool} returns tool details."""
-        response = http_client.get("/mcp/echo/tools/echo_tool")
-
-        assert response.status_code == 200
-        data = response.json()
+    def test_get_tool(self, mcp_client: MCPSocketClient) -> None:
+        """Test get_server_tool returns tool details."""
+        data = mcp_client.get_server_tool("echo", "echo_tool")
 
         # Verify tool structure
         assert data["name"] == "echo_tool"
@@ -514,8 +532,8 @@ class TestMCPBridgeIntegration:
         # Verify message is required
         assert "message" in schema.get("required", [])
 
-    def test_call_tool(self, http_client: httpx.Client) -> None:
-        """Test POST /mcp/{server}/call executes the tool and returns echo."""
+    def test_call_tool(self, mcp_client: MCPSocketClient) -> None:
+        """Test call_server_tool executes the tool and returns echo."""
         # Prepare test arguments with field and list values
         test_args = {
             "message": "Hello, MCP!",
@@ -523,20 +541,11 @@ class TestMCPBridgeIntegration:
             "tags": ["test", "integration", "qa"],
         }
 
-        response = http_client.post(
-            "/mcp/echo/call",
-            json={
-                "tool": "echo_tool",
-                "arguments": test_args,
-            },
+        result = mcp_client.call_server_tool(
+            server="echo",
+            name="echo_tool",
+            arguments=test_args,
         )
-
-        assert response.status_code == 200
-        data = response.json()
-
-        # Verify result envelope
-        assert "result" in data
-        result = data["result"]
 
         # Verify content structure (MCP tools/call response format)
         assert "content" in result
@@ -560,12 +569,7 @@ class TestMCPBridgeIntegration:
         assert echoed_args["count"] == test_args["count"]
         assert echoed_args["tags"] == test_args["tags"]
 
-    def test_health_check(self, http_client: httpx.Client) -> None:
-        """Test GET /health returns ok status."""
-        response = http_client.get("/health")
-
-        assert response.status_code == 200
-        data = response.json()
-
-        assert data["status"] == "ok"
-        assert data["provider"] == "running"
+    def test_health_check(self, mcp_client: MCPSocketClient) -> None:
+        """Test health_check returns True when healthy."""
+        is_healthy = mcp_client.health_check()
+        assert is_healthy is True

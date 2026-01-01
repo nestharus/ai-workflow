@@ -89,7 +89,7 @@ COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 RUN mkdir -p /app/scripts/servers/sandbox
 
 # Copy application code to module path
-COPY --chown=appuser:appuser __init__.py constants.py operations.py protocol.py client.py server.py /app/scripts/servers/sandbox/
+COPY --chown=appuser:appuser __init__.py constants.py operations.py protocol.py client.py server.py healthcheck.py /app/scripts/servers/sandbox/
 
 # Create __init__.py files for parent packages
 RUN touch /app/scripts/__init__.py /app/scripts/servers/__init__.py
@@ -115,11 +115,10 @@ ENV SANDBOX_SOCKET_PATH=/tmp/sandbox.sock
 # Repository path (must be mounted)
 ENV SANDBOX_REPO_PATH=/repo
 
-# Healthcheck: verify socket exists AND server responds to status requests
-# Using Python to send a status request over the Unix socket proves the server
-# is actually running and responsive, not just that a stale socket file exists
+# Add healthcheck using external script for maintainability
+# Sends JSONL status request via Unix socket and checks response status
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import socket,json,os; s=socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect(os.environ['SANDBOX_SOCKET_PATH']); s.sendall(b'{\"command\":\"status\"}\\n'); r=s.recv(4096); s.close(); d=json.loads(r); exit(0 if d.get('status')=='success' else 1)" || exit 1
+    CMD ["python", "/app/scripts/servers/sandbox/healthcheck.py"]
 
 # Start the sandbox server as a module
 CMD ["python", "-m", "scripts.servers.sandbox.server"]

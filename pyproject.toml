@@ -294,7 +294,9 @@ python_functions = ["test_*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
-    "usecase: links test to a specific use-case ID from the registry (tests/docs/use_cases.yaml)"
+    "usecase: links test to a specific use-case ID from the registry (tests/docs/use_cases.yaml)",
+    "cold_start_gate: Mandatory cold-start performance gate (requires CI_COLD_START_GATE=true)",
+    "slow: Marks tests as slow (deselect with '-m \"not slow\"')",
 ]
 
 [tool.coverage.run]

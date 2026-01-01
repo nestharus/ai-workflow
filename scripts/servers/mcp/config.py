@@ -17,7 +17,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-import yaml
+# Defer yaml import to reduce cold-start time (~200ms savings)
+# Only import when actually parsing YAML files
 
 
 class TransportType(str, Enum):
@@ -283,6 +284,9 @@ def _load_yaml_or_json(path: Path) -> dict[str, Any]:
     Raises:
         ConfigError: If file cannot be parsed.
     """
+    # Defer yaml import to reduce cold-start time when config is empty/not used
+    import yaml
+
     suffix = path.suffix.lower()
 
     try:

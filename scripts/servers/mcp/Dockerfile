@@ -1,6 +1,6 @@
 # MCP Bridge Dockerfile
 #
-# REST-to-MCP bridge server that exposes MCP tools via Unix socket.
+# Socket-based MCP bridge server that exposes MCP tools via Unix socket.
 # Image name: ai-workflow/mcp-bridge:dev (or use docker-compose)
 #
 # SOCKET PATH SEMANTICS:
@@ -17,7 +17,7 @@
 #   - For production, implement proper authentication
 #
 # Build:
-#   docker build -t ai-workflow/mcp-bridge:dev -f scripts/mcp/Dockerfile scripts/mcp/
+#   docker build -t ai-workflow/mcp-bridge:dev -f scripts/servers/mcp/Dockerfile scripts/servers/mcp/
 #
 # Run (Unix socket - recommended for Docker):
 #   mkdir -p /tmp/mcp-sockets
@@ -28,9 +28,6 @@
 # NOTE: When using host bind mounts (as above), the host directory must be
 # writable by UID 10000 (appuser). Named volumes (used by docker-compose) do
 # not require this step as Docker manages permissions automatically.
-#
-# Run (HTTP mode - for host-based uvicorn without Docker):
-#   uvicorn app.main:app --host 127.0.0.1 --port 8080
 #
 # Or use docker-compose (recommended):
 #   docker-compose up mcp-bridge
@@ -65,9 +62,21 @@ COPY pyproject.toml uv.lock ./
 # --no-dev excludes development dependencies
 RUN uv sync --frozen --no-cache --no-dev
 
-# Copy application code (new structure)
-COPY app ./app
-COPY client ./client
+# Copy application code maintaining import structure
+# The server uses absolute imports like scripts.servers.mcp.config
+# so we recreate the package structure under /app
+COPY server ./scripts/servers/mcp/server
+COPY server_impl.py ./scripts/servers/mcp/server_impl.py
+COPY protocol.py ./scripts/servers/mcp/protocol.py
+COPY config.py ./scripts/servers/mcp/config.py
+COPY manager.py ./scripts/servers/mcp/manager.py
+COPY sse_client.py ./scripts/servers/mcp/sse_client.py
+COPY __init__.py ./scripts/servers/mcp/__init__.py
+COPY healthcheck.py ./scripts/servers/mcp/healthcheck.py
+# Create parent package __init__.py files
+RUN mkdir -p scripts/servers && \
+    touch scripts/__init__.py && \
+    touch scripts/servers/__init__.py
 
 # Phase 2: Runtime
 # This is using the same image as the builder
@@ -79,10 +88,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install runtime dependencies (curl for healthcheck; unpinned for timely security fixes) and create user
+# Install runtime dependencies (unpinned for timely security fixes) and create user
 # hadolint ignore=DL3008
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates && \
+    apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd -g 10000 appuser && \
     useradd -u 10000 -g appuser -s /bin/bash -m appuser && \
@@ -95,9 +104,8 @@ COPY --from=uv /uvx /usr/local/bin/uvx
 # Copy virtual environment from builder
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 
-# Copy application code
-COPY --from=builder --chown=appuser:appuser /app/app /app/app
-COPY --from=builder --chown=appuser:appuser /app/client /app/client
+# Copy application code with package structure
+COPY --from=builder --chown=appuser:appuser /app/scripts /app/scripts
 
 # Set path to use virtual environment
 ENV PATH="/app/.venv/bin:$PATH"
@@ -112,11 +120,10 @@ USER appuser
 # Socket path for Unix domain socket communication
 ENV MCP_BRIDGE_SOCKET=/tmp/mcp-bridge.sock
 
-# Add healthcheck using Unix socket
+# Add healthcheck using external script for maintainability
+# Sends JSONL health request via Unix socket and checks response status
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f --unix-socket ${MCP_BRIDGE_SOCKET} http://localhost/health || exit 1
+    CMD ["python", "/app/scripts/servers/mcp/healthcheck.py"]
 
-# Start the application using Unix socket
-# Shell form required for MCP_BRIDGE_SOCKET variable expansion (acceptable for local dev image)
-# hadolint ignore=DL3025
-CMD uvicorn app.main:app --uds ${MCP_BRIDGE_SOCKET}
+# Start the socket server using exec form for proper signal handling
+CMD ["python", "-m", "scripts.servers.mcp.server"]

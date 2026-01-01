@@ -81,10 +81,13 @@ class TestRunYamllint:
         assert mock_run_checked.called
         # Get the command that was passed
         cmd = mock_run_checked.call_args[0][0]
-        # Assert .tmp/excluded.yml is NOT in the command (not in included patterns)
-        assert not any(".tmp" in arg for arg in cmd), "Files in .tmp should not be included"
-        # Assert .worktrees files are NOT in the command
-        assert not any(".worktrees" in arg for arg in cmd), (
+        # Extract only the file arguments (after -c and its value)
+        config_index = cmd.index("-c")
+        file_args = cmd[config_index + 2 :]  # Skip -c and the config path
+        # Assert .tmp/excluded.yml is NOT in the file arguments
+        assert not any(".tmp" in arg for arg in file_args), "Files in .tmp should not be included"
+        # Assert .worktrees files are NOT in the file arguments
+        assert not any(".worktrees" in arg for arg in file_args), (
             "Files in .worktrees should not be included"
         )
         # Assert config.yml IS in the command (matches *.yml)

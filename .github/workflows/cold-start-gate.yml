@@ -1,0 +1,55 @@
+name: Cold-Start Performance Gate
+
+"on":
+  pull_request:
+    paths:
+      - 'scripts/servers/mcp/**'
+      - 'scripts/tests/component/mcp/test_cold_start_gate.py'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/servers/mcp/**'
+      - 'scripts/tests/component/mcp/test_cold_start_gate.py'
+
+# Cancel in-progress runs for same PR
+concurrency:
+  group: cold-start-gate-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cold-start-gate:
+    name: Cold-Start Gate (<500ms)
+    runs-on: ubuntu-latest
+
+    # Use a specific runner or container for reproducibility
+    # container:
+    #   image: python:3.14-slim  # Controlled Python version
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          allow-prereleases: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run Cold-Start Gate
+        env:
+          CI_COLD_START_GATE: 'true'
+        run: |
+          uv run pytest scripts/tests/component/mcp/test_cold_start_gate.py -v --tb=short
+
+      - name: Run Full Benchmark (on failure)
+        if: failure()
+        run: |
+          echo "=== Detailed Cold-Start Benchmark ==="
+          uv run python scripts/servers/mcp/benchmark_bridge_transport.py --cold-start --cold-start-iterations 10

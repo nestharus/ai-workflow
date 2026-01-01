@@ -1,52 +1,49 @@
 #!/usr/bin/env python3
-"""MCP Agent Client - HTTP-based bridge client for managing long-running background jobs.
+"""MCP Agent Client - Socket-based bridge client for managing long-running background jobs.
 
-This client acts as a CLI and programmatic interface to the REST-to-MCP bridge,
+This client acts as a CLI and programmatic interface to the MCP bridge,
 which manages background job processes. It normalizes provider-native job payloads
 from tools like `execute_command`, `get_job_status`, `get_job_output`, `list_jobs`,
 and `kill_job` into a stable JSON schema for consistent downstream consumption.
 
 Architecture Note (Layering):
     This client implements the **normalization layer** for background-job tool results.
-    The MCP bridge (scripts/mcp/) is transport-only and returns provider-native payloads.
-    This client normalizes those payloads to provide consistent response shapes:
+    The MCP bridge (scripts/servers/mcp/) is transport-only and returns provider-native
+    payloads. This client normalizes those payloads to provide consistent response shapes:
 
     - Ensures `job_id` exists (falls back to provider's `id` field)
     - Ensures `status` and `exit_code` are present for completed jobs
     - Ensures `stdout` and `stderr` default to empty strings
     - Enforces client-side timeouts with proper cleanup
 
-    HTTP-only consumers of the bridge should expect provider-native payloads and
-    implement their own normalization if needed.
-
 The module is designed to work across platforms by relying on the MCP bridge for
 process management, avoiding platform-specific process APIs.
+
+Transport:
+    This client uses native Unix sockets with JSONL (newline-delimited JSON) protocol
+    for communication with the MCP bridge. This provides <500ms cold start time
+    compared to ~2-3 seconds for the previous FastAPI/HTTP approach.
 
 Configuration:
     The bridge endpoint is configured with the following precedence:
     1. --socket-path CLI flag (highest priority)
     2. MCP_BRIDGE_SOCKET environment variable
-    3. --server-url CLI flag
-    4. MCP_BRIDGE_URL environment variable
-    5. Default: http://localhost:8080 (lowest priority)
-
-    When a socket path is configured (via flag or env), all URL settings are ignored.
+    3. Default: /tmp/mcp-bridge.sock (lowest priority)
 
     To start the bridge server:
-        uv run agent.mcp bridge start
+        python scripts/servers/mcp/server_impl.py
 
-    To start with Unix socket:
+    Or via environment:
         export MCP_BRIDGE_SOCKET=/tmp/mcp-sockets/mcp-bridge.sock
-        uv run agent.mcp bridge start --socket $MCP_BRIDGE_SOCKET
+        python scripts/servers/mcp/server_impl.py
 
 Usage:
-    # Using environment variables (existing behavior):
+    # Using environment variables:
     export MCP_BRIDGE_SOCKET=/tmp/mcp-sockets/mcp-bridge.sock
     uv run agent.mcp list
 
-    # Using explicit CLI flags (new):
+    # Using explicit CLI flags:
     uv run agent.mcp --socket-path /tmp/mcp-sockets/mcp-bridge.sock list
-    uv run agent.mcp --server-url http://localhost:8080 start --command "..."
 
     # Start a job and return immediately with job_id
     uv run agent.mcp start --command "uv run agent.tasks --agent planner --prompt '...'"
@@ -87,13 +84,14 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import sys
 import time
 from typing import Any
 
-from scripts.servers.mcp.client.http_client import HttpMCPClient, MCPClientError
+from scripts.servers.mcp.client.http_client import MCPClientError, MCPSocketClient
 
-# Default server name for HTTP transport (configurable via MCP_SERVER env var)
+# Default server name (configurable via MCP_SERVER env var)
 _MCP_SERVER = os.environ.get("MCP_SERVER", "background-job")
 
 
@@ -113,7 +111,7 @@ def _format_bridge_error(e: MCPClientError) -> str:
     Note on timeout semantics: The status="timeout" (exit code 124) is ONLY
     returned when cmd_wait() explicitly detects that the client-side max_seconds
     deadline has been exceeded and calls kill_job. Transport-level or bridge-level
-    timeouts (e.g., HTTP request timeouts during get_job_status/get_job_output)
+    timeouts (e.g., socket timeouts during get_job_status/get_job_output)
     result in status="failed" (exit code 1) because the underlying job may still
     be running. This helper only formats error messages; it does NOT influence
     status selection.
@@ -121,7 +119,7 @@ def _format_bridge_error(e: MCPClientError) -> str:
     The original MCPClientError error message is always preserved in the output.
 
     Note: Currently all code paths return the original error_msg unchanged.
-    This is intentional - HttpMCPClient already provides well-formatted error
+    This is intentional - MCPSocketClient already provides well-formatted error
     messages. The structure is kept for future extensibility if custom
     formatting is needed for specific error patterns.
 
@@ -133,72 +131,62 @@ def _format_bridge_error(e: MCPClientError) -> str:
     """
     error_msg = str(e)
 
-    # Connection failures: already have actionable guidance from HttpMCPClient
+    # Connection failures: already have actionable guidance from MCPSocketClient
     # Pattern: "Cannot connect to mcp-bridge at ..."
     if "Cannot connect to mcp-bridge" in error_msg:
-        # Preserve as-is - HttpMCPClient already includes setup instructions
+        # Preserve as-is - MCPSocketClient already includes setup instructions
         return error_msg
 
-    # Timeout errors: already formatted by HttpMCPClient
+    # Timeout errors: already formatted by MCPSocketClient
     # Pattern: "Request timed out after {timeout}s" or similar
     if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
         return error_msg
 
-    # HTTP 4xx/5xx errors: HttpMCPClient formats as "[ERROR_TYPE] message"
-    # or "HTTP request failed: ..." - preserve the structured format
-    if error_msg.startswith("[") or "HTTP request failed" in error_msg:
+    # Protocol errors: MCPSocketClient formats as "[ERROR_TYPE] message"
+    if re.match(r"^\[[\w]+\]", error_msg):
         return error_msg
 
-    # For any other errors, return as-is (already formatted by HttpMCPClient)
+    # For any other errors, return as-is (already formatted by MCPSocketClient)
     return error_msg
 
 
 def get_mcp_client(
-    base_url: str | None = None,
     socket_path: str | None = None,
-) -> HttpMCPClient:
-    """Get HTTP MCP client for bridge communication.
+) -> MCPSocketClient:
+    """Get MCP socket client for bridge communication.
 
-    This function delegates to HttpMCPClient, which implements the transport
-    mode resolution logic. The arguments are passed directly to the
-    HttpMCPClient constructor.
+    This function delegates to MCPSocketClient, which implements native Unix
+    socket communication with the MCP bridge using JSONL protocol.
 
     Args:
-        base_url: Bridge server URL (from --server-url CLI flag).
-        socket_path: Unix socket path (from --socket-path CLI flag).
+        socket_path: Optional Unix socket path (from --socket-path CLI flag).
+            If None, uses MCP_BRIDGE_SOCKET env var or default.
 
     Returns:
-        Configured HttpMCPClient instance.
+        MCPSocketClient instance configured per precedence rules.
 
     Precedence (highest to lowest):
         1. socket_path argument (--socket-path CLI flag)
         2. MCP_BRIDGE_SOCKET environment variable
-        3. base_url argument (--server-url CLI flag)
-        4. MCP_BRIDGE_URL environment variable
-        5. Default: http://localhost:8080
-
-    When socket_path is set (via arg or env), URL settings are ignored.
-    CLI flags override their corresponding environment variables.
+        3. Default: /tmp/mcp-bridge.sock
 
     See Also:
-        scripts.servers.mcp.client.http_client.HttpMCPClient: The definitive
-        source for transport mode precedence rules and connection behavior.
+        scripts.servers.mcp.client.http_client.MCPSocketClient: The definitive
+        source for socket path precedence rules and connection behavior.
     """
-    # Delegates to HttpMCPClient which owns the precedence logic.
-    # See: scripts.servers.mcp.client.http_client.HttpMCPClient
-    return HttpMCPClient(base_url=base_url, socket_path=socket_path)
+    return MCPSocketClient(socket_path=socket_path)
 
 
 def call_mcp_tool(
-    client: HttpMCPClient,
+    client: MCPSocketClient,
     name: str,
     arguments: dict[str, Any],
     timeout: float = 30.0,
 ) -> dict[str, Any]:
-    """Call an MCP tool using the HTTP client.
+    """Call an MCP tool using the socket client.
 
     Args:
-        client: HTTP MCP client instance.
+        client: MCP socket client instance.
         name: Tool name.
         arguments: Tool arguments.
         timeout: Request timeout in seconds.
@@ -214,11 +202,11 @@ def call_mcp_tool(
     )
 
 
-def cmd_start(client: HttpMCPClient, command: str) -> dict[str, Any]:
+def cmd_start(client: MCPSocketClient, command: str) -> dict[str, Any]:
     """Start a job and return immediately.
 
     Args:
-        client: HTTP MCP client instance.
+        client: MCP socket client instance.
         command: Shell command to execute.
 
     Returns:
@@ -242,7 +230,7 @@ def cmd_start(client: HttpMCPClient, command: str) -> dict[str, Any]:
 
 
 def cmd_wait(
-    client: HttpMCPClient,
+    client: MCPSocketClient,
     command: str | None,
     job_id: str | None,
     max_seconds: int,
@@ -251,7 +239,7 @@ def cmd_wait(
     """Start a job (or attach to existing) and wait for completion.
 
     Args:
-        client: HTTP MCP client instance.
+        client: MCP socket client instance.
         command: Shell command to execute (if starting new job).
         job_id: Existing job ID to wait on.
         max_seconds: Maximum time to wait.
@@ -381,11 +369,11 @@ def cmd_wait(
         return {"status": "failed", "job_id": job_id, "error": _format_bridge_error(e)}
 
 
-def cmd_list(client: HttpMCPClient) -> dict[str, Any]:
+def cmd_list(client: MCPSocketClient) -> dict[str, Any]:
     """List all jobs.
 
     Args:
-        client: HTTP MCP client instance.
+        client: MCP socket client instance.
 
     Returns:
         Result dict with status and jobs list.
@@ -402,11 +390,11 @@ def cmd_list(client: HttpMCPClient) -> dict[str, Any]:
         return {"status": "failed", "error": _format_bridge_error(e)}
 
 
-def cmd_cancel(client: HttpMCPClient, job_id: str) -> dict[str, Any]:
+def cmd_cancel(client: MCPSocketClient, job_id: str) -> dict[str, Any]:
     """Cancel a running job.
 
     Args:
-        client: HTTP MCP client instance.
+        client: MCP socket client instance.
         job_id: ID of job to cancel.
 
     Returns:
@@ -463,15 +451,8 @@ def main() -> int:
 
     # Top-level arguments for bridge configuration (apply to all subcommands)
     parser.add_argument(
-        "--server-url",
-        help="MCP bridge server URL (overrides MCP_BRIDGE_URL env var)",
-    )
-    parser.add_argument(
         "--socket-path",
-        help=(
-            "Unix socket path for MCP bridge "
-            "(overrides MCP_BRIDGE_SOCKET env var, takes precedence over --server-url)"
-        ),
+        help="Unix socket path for MCP bridge (overrides MCP_BRIDGE_SOCKET env var)",
     )
 
     subparsers = parser.add_subparsers(dest="mode", required=True, help="Operation mode")
@@ -512,7 +493,6 @@ def main() -> int:
 
     try:
         client = get_mcp_client(
-            base_url=args.server_url,
             socket_path=args.socket_path,
         )
 

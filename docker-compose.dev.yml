@@ -39,11 +39,12 @@ services:
       - MCP_BRIDGE_SOCKET=/tmp/mcp-bridge.sock
       # Default MCP server - mcp-background-job provides time/scheduling tools
       - MCP_COMMAND=uvx mcp-background-job
+    # Healthcheck uses shared script from scripts/servers/mcp/healthcheck.py
     healthcheck:
-      test: ["CMD", "curl", "-f", "--unix-socket", "/tmp/mcp-bridge.sock", "http://localhost/health"]
+      test: ["CMD", "python", "/app/scripts/servers/mcp/healthcheck.py"]
       interval: 30s
-      timeout: 3s
-      start_period: 5s
+      timeout: 5s
+      start_period: 10s
       retries: 3
     restart: unless-stopped
 
@@ -82,15 +83,9 @@ services:
         -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes
       # GPG TTY for signing operations
       - GPG_TTY=/dev/console
+    # Healthcheck uses shared script from scripts/servers/sandbox/healthcheck.py
     healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - import socket,json; s=socket.socket(socket.AF_UNIX); s.settimeout(3);
-          s.connect('/tmp/sandbox.sock'); s.sendall(b'{"command":"status"}\n');
-          r=s.recv(4096); s.close(); d=json.loads(r); exit(0 if d.get('status')=='success'
-          else 1)
+      test: ["CMD", "python", "/app/scripts/servers/sandbox/healthcheck.py"]
       interval: 30s
       timeout: 5s
       start_period: 10s

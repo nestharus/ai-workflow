@@ -423,8 +423,6 @@ Add utility functions.
             patch("sys.argv", ["clipboard_to_plan"]),
         ):
             # We need to patch Path(__file__) to return our test path
-            _original_path = Path
-
             class MockPath(type(Path())):
                 pass
 

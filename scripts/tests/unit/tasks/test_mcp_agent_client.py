@@ -15,7 +15,10 @@ from scripts.dev.mcp_agent_client import (
     get_mcp_client,
     main,
 )
-from scripts.servers.mcp.client.http_client import HttpMCPClient, MCPClientError
+from scripts.servers.mcp.client.http_client import MCPClientError, MCPSocketClient
+
+# HttpMCPClient is an alias for MCPSocketClient (backward compatibility)
+HttpMCPClient = MCPSocketClient
 
 
 class FakeHttpMCPClient:
@@ -63,14 +66,82 @@ def mock_time_sleep(mocker: Any) -> Any:
 
 
 class TestGetMCPClient:
-    def test_accepts_base_url_parameter(self, monkeypatch: Any) -> None:
-        """Test that get_mcp_client accepts base_url parameter."""
-        # Ensure bridge env vars don't override the explicit base_url in this test.
-        monkeypatch.delenv("MCP_BRIDGE_SOCKET", raising=False)
-        monkeypatch.delenv("MCP_BRIDGE_URL", raising=False)
-        client = get_mcp_client(base_url="http://custom:9000")
+    """Tests for get_mcp_client function."""
+
+    def test_returns_http_client(self) -> None:
+        """Test that get_mcp_client returns an HttpMCPClient."""
+        client = get_mcp_client()
         assert isinstance(client, HttpMCPClient)
-        assert client.base_url == "http://custom:9000"
+
+    def test_accepts_socket_path_parameter(self) -> None:
+        """Test that get_mcp_client accepts socket_path parameter."""
+        client = get_mcp_client(socket_path="/tmp/custom.sock")
+        assert isinstance(client, MCPSocketClient)
+        assert client.socket_path == "/tmp/custom.sock"
+
+    def test_none_parameters_use_defaults(self) -> None:
+        """Test that None parameters fall back to env vars or defaults."""
+        client = get_mcp_client(socket_path=None)
+        assert isinstance(client, MCPSocketClient)
+
+    def test_invalid_socket_path_integer_raises_error(self) -> None:
+        """Test that passing an integer socket_path raises MCPClientError."""
+        with pytest.raises(MCPClientError, match="socket_path must be a string"):
+            get_mcp_client(socket_path=123)  # type: ignore[arg-type]
+
+    def test_invalid_socket_path_object_raises_error(self) -> None:
+        """Test that passing an object socket_path raises MCPClientError."""
+        with pytest.raises(MCPClientError, match="socket_path must be a string"):
+            get_mcp_client(socket_path=object())  # type: ignore[arg-type]
+
+
+class TestCmdStart:
+    """Tests for cmd_start function."""
+
+    def test_start_returns_job_id(self) -> None:
+        """Test that start mode returns job_id immediately."""
+        fake_client = FakeHttpMCPClient(tool_responses=[{"job_id": "abc-123"}])
+        result = cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+        assert result["status"] == "started"
+        assert result["job_id"] == "abc-123"
+
+    def test_start_normalizes_id_to_job_id(self) -> None:
+        """Test that 'id' field is normalized to 'job_id'."""
+        fake_client = FakeHttpMCPClient(tool_responses=[{"id": "provider-id-123"}])
+        result = cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+        assert result["status"] == "started"
+        assert result["job_id"] == "provider-id-123"
+
+    def test_start_extracts_from_structured_content(self) -> None:
+        """Test that job_id is extracted from structuredContent wrapper."""
+        fake_client = FakeHttpMCPClient(
+            tool_responses=[{"structuredContent": {"job_id": "wrapped-123"}}]
+        )
+        result = cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+        assert result["status"] == "started"
+        assert result["job_id"] == "wrapped-123"
+
+    def test_start_handles_error(self) -> None:
+        """Test that start mode handles errors gracefully."""
+        fake_client = FakeHttpMCPClient(raise_on_call=MCPClientError("Connection failed"))
+        result = cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "Connection failed" in result["error"]
+
+    def test_start_handles_no_job_id(self) -> None:
+        """Test that start mode fails gracefully when no job_id returned."""
+        fake_client = FakeHttpMCPClient(tool_responses=[{}])
+        result = cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "No job_id" in result["error"]
+
+    def test_start_handles_invalid_structured_content(self) -> None:
+        """Test that start mode handles non-dict structuredContent."""
+        # When structuredContent is present but not a dict, it should fail
+        fake_client = FakeHttpMCPClient(tool_responses=[{"structuredContent": "not a dict"}])
+        result = cmd_start(fake_client, "echo hello")  # type: ignore[arg-type]
+        assert result["status"] == "failed"
+        assert "Invalid response format" in result["error"]
 
 
 class TestCmdWait:
@@ -318,20 +389,7 @@ class TestCmdWait:
 
 
 class TestCLIArguments:
-    def test_server_url_flag_passed_to_get_mcp_client(self, mocker: Any) -> None:
-        """Test that --server-url flag is passed to get_mcp_client."""
-        mock_get_client = mocker.patch(
-            "scripts.dev.mcp_agent_client.get_mcp_client",
-            return_value=FakeHttpMCPClient(tool_responses=[{"jobs": []}]),
-        )
-        mocker.patch("sys.argv", ["mcp_agent_client", "--server-url", "http://custom:9000", "list"])
-
-        main()
-
-        mock_get_client.assert_called_once_with(
-            base_url="http://custom:9000",
-            socket_path=None,
-        )
+    """Tests for CLI argument parsing."""
 
     def test_socket_path_flag_passed_to_get_mcp_client(self, mocker: Any) -> None:
         """Test that --socket-path flag is passed to get_mcp_client."""
@@ -344,32 +402,6 @@ class TestCLIArguments:
         main()
 
         mock_get_client.assert_called_once_with(
-            base_url=None,
-            socket_path="/tmp/custom.sock",
-        )
-
-    def test_both_flags_passed_to_get_mcp_client(self, mocker: Any) -> None:
-        """Test that both --server-url and --socket-path flags are passed."""
-        mock_get_client = mocker.patch(
-            "scripts.dev.mcp_agent_client.get_mcp_client",
-            return_value=FakeHttpMCPClient(tool_responses=[{"jobs": []}]),
-        )
-        mocker.patch(
-            "sys.argv",
-            [
-                "mcp_agent_client",
-                "--server-url",
-                "http://custom:9000",
-                "--socket-path",
-                "/tmp/custom.sock",
-                "list",
-            ],
-        )
-
-        main()
-
-        mock_get_client.assert_called_once_with(
-            base_url="http://custom:9000",
             socket_path="/tmp/custom.sock",
         )
 
@@ -384,7 +416,6 @@ class TestCLIArguments:
         main()
 
         mock_get_client.assert_called_once_with(
-            base_url=None,
             socket_path=None,
         )
 
@@ -398,8 +429,8 @@ class TestCLIArguments:
             "sys.argv",
             [
                 "mcp_agent_client",
-                "--server-url",
-                "http://custom:9000",
+                "--socket-path",
+                "/tmp/custom.sock",
                 "start",
                 "--command",
                 "echo hello",
@@ -409,8 +440,7 @@ class TestCLIArguments:
         main()
 
         mock_get_client.assert_called_once_with(
-            base_url="http://custom:9000",
-            socket_path=None,
+            socket_path="/tmp/custom.sock",
         )
 
     def test_flags_work_with_wait_mode(self, mocker: Any) -> None:
@@ -439,7 +469,6 @@ class TestCLIArguments:
         main()
 
         mock_get_client.assert_called_once_with(
-            base_url=None,
             socket_path="/tmp/test.sock",
         )
 
@@ -453,8 +482,8 @@ class TestCLIArguments:
             "sys.argv",
             [
                 "mcp_agent_client",
-                "--server-url",
-                "http://localhost:9999",
+                "--socket-path",
+                "/tmp/test.sock",
                 "cancel",
                 "--job-id",
                 "cancel-me",
@@ -464,8 +493,7 @@ class TestCLIArguments:
         main()
 
         mock_get_client.assert_called_once_with(
-            base_url="http://localhost:9999",
-            socket_path=None,
+            socket_path="/tmp/test.sock",
         )
 
 

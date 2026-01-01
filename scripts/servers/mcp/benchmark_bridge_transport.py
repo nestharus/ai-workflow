@@ -1,53 +1,44 @@
 #!/usr/bin/env python3
-r"""Benchmark script for MCP Bridge transport modes.
+r"""Benchmark script for MCP Bridge native socket transport.
 
-This script measures the latency and throughput of the MCP bridge using both
-Unix socket and HTTP transport modes. It helps validate performance claims
+This script measures the latency, throughput, and cold start time of the MCP
+bridge using native Unix socket transport. It helps validate performance claims
 and provides a repeatable way to measure improvements.
 
 Usage:
     # Benchmark Unix socket mode (default, requires running mcp-bridge):
-    python scripts/mcp/benchmark_bridge_transport.py
-
-    # Benchmark HTTP mode:
-    python scripts/mcp/benchmark_bridge_transport.py --mode http --url http://localhost:8080
-
-    # Compare both modes side-by-side:
-    python scripts/mcp/benchmark_bridge_transport.py --compare
+    python scripts/servers/mcp/benchmark_bridge_transport.py
 
     # Custom number of iterations:
-    python scripts/mcp/benchmark_bridge_transport.py --iterations 200
+    python scripts/servers/mcp/benchmark_bridge_transport.py --iterations 200
 
-    # Compare with performance thresholds (exits non-zero if thresholds not met):
-    python scripts/mcp/benchmark_bridge_transport.py --compare \\
-        --min-latency-improvement 20 \\
-        --min-throughput-improvement 15
+    # Measure cold start time (server startup latency):
+    python scripts/servers/mcp/benchmark_bridge_transport.py --cold-start
+
+    # Cold start with custom iterations and threshold:
+    python scripts/servers/mcp/benchmark_bridge_transport.py --cold-start \\
+        --cold-start-iterations 20 \\
+        --cold-start-threshold 100
 
 Requirements:
-    - MCP bridge must be running via the dev-tools stack. Preferred method:
-      uv run dev.ensure-env
-      Or start manually:
-      docker compose -p ai-workflow-devtools -f docker-compose.dev.yml up -d mcp-bridge
-    - For socket mode: MCP_BRIDGE_SOCKET must be set or socket must exist
-    - For HTTP mode: Bridge must be accessible at the specified URL
+    - For latency/throughput benchmark: MCP bridge must be running
+    - For cold start benchmark: No running server required (spawns its own)
+    - MCP_BRIDGE_SOCKET environment variable or socket path must be configured
 
 Output:
     - Latency statistics (min, median, p90, p99, max) in milliseconds
     - Throughput (requests/second)
-    - Optional side-by-side comparison of transport modes
+    - Cold start timing (when using --cold-start)
     - Exit code 1 if thresholds are specified and not met
 
-Threshold Checking:
-    When using --compare with --min-latency-improvement and/or --min-throughput-improvement,
-    the script will compute the percentage improvement of Unix socket over HTTP and exit
-    with code 1 if the measured improvement is below the specified threshold.
+Cold Start Benchmark:
+    The --cold-start flag measures server startup time:
+    - Spawns a fresh server process for each iteration
+    - Measures time from process spawn until first successful health response
+    - Reports timing statistics (min, median, p90, p99, max)
+    - Validates against --cold-start-threshold (default: 500ms)
 
-    This is useful for validating performance targets:
-    - Target latency improvement: ~30-50% (use --min-latency-improvement 30)
-    - Target throughput improvement: varies by workload
-
-    Note: This script is diagnostic and NOT enforced in CI. Use it to manually validate
-    performance claims after changes. Actual results vary by workload and system config.
+    Target cold start time: <500ms (compared to ~2-3s for FastAPI/uvicorn)
 
 See Also:
     - docs/architecture/mcp-bridge-architecture.yml (performance expectations)
@@ -60,18 +51,21 @@ import argparse
 import contextlib
 import os
 import statistics
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-# Add the scripts/mcp directory to path for imports
+# Add the scripts/servers/mcp directory to path for imports
 MCP_BRIDGE_PATH = Path(__file__).parent
 if str(MCP_BRIDGE_PATH) not in sys.path:
     sys.path.insert(0, str(MCP_BRIDGE_PATH))
 
-from client.http_client import HttpMCPClient, MCPClientError  # type: ignore[import-not-found]
+from client.http_client import MCPClientError, MCPSocketClient  # type: ignore[import-not-found]
+
+from scripts.tests.conftest import wait_for_server_ready
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -141,8 +135,175 @@ class BenchmarkResult:
         return (self.successful / self.iterations) * 100.0
 
 
+@dataclass
+class ColdStartResult:
+    """Results from cold start benchmark."""
+
+    iterations: int
+    successful: int
+    timings_ms: list[float]
+
+    @property
+    def min_ms(self) -> float:
+        """Minimum cold start time in milliseconds."""
+        return min(self.timings_ms) if self.timings_ms else 0.0
+
+    @property
+    def max_ms(self) -> float:
+        """Maximum cold start time in milliseconds."""
+        return max(self.timings_ms) if self.timings_ms else 0.0
+
+    @property
+    def median_ms(self) -> float:
+        """Median cold start time in milliseconds."""
+        return statistics.median(self.timings_ms) if self.timings_ms else 0.0
+
+    @property
+    def p90_ms(self) -> float:
+        """90th percentile cold start time in milliseconds."""
+        if len(self.timings_ms) < 10:
+            return self.max_ms
+        return statistics.quantiles(self.timings_ms, n=10)[8]
+
+    @property
+    def p99_ms(self) -> float:
+        """99th percentile cold start time in milliseconds."""
+        if len(self.timings_ms) < 100:
+            return self.max_ms
+        return statistics.quantiles(self.timings_ms, n=100)[98]
+
+
+def benchmark_cold_start(
+    server_script: str,
+    socket_path: str,
+    iterations: int = 10,
+    timeout: float = 10.0,
+) -> ColdStartResult:
+    """Measure cold start time for the socket server.
+
+    Cold start is defined as: time from process spawn until the server
+    responds to a health request over the Unix socket.
+
+    Args:
+        server_script: Path to server script (e.g., "scripts/servers/mcp/server_impl.py")
+        socket_path: Unix socket path the server will bind to
+        iterations: Number of cold start measurements to take
+        timeout: Maximum time to wait for server readiness (seconds)
+
+    Returns:
+        ColdStartResult with timing statistics
+    """
+    timings: list[float] = []
+
+    for i in range(iterations):
+        # Clean up any existing socket
+        if Path(socket_path).exists():
+            with contextlib.suppress(OSError):
+                os.unlink(socket_path)
+
+        start = time.perf_counter()
+
+        # Spawn server process
+        # Include PYTHONPATH so server_impl.py can import from scripts.*
+        repo_root = str(Path(__file__).resolve().parents[3])
+        existing_pythonpath = os.environ.get("PYTHONPATH", "")
+        pythonpath = f"{repo_root}:{existing_pythonpath}" if existing_pythonpath else repo_root
+        proc = subprocess.Popen(
+            [sys.executable, server_script],
+            env={
+                **os.environ,
+                "MCP_BRIDGE_SOCKET": socket_path,
+                "PYTHONPATH": pythonpath,
+                # Skip MCP provider init for cold-start measurement (pure server startup)
+                "MCP_CONFIG_PATH": "/dev/null",
+            },
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+
+        try:
+            # Poll until socket is ready and responds to health check
+            ready = wait_for_server_ready(socket_path, timeout)
+            end = time.perf_counter()
+
+            if ready:
+                timings.append((end - start) * 1000)  # Convert to ms
+                print(f"  Iteration {i + 1}/{iterations}: {timings[-1]:.1f}ms")
+            else:
+                # Capture stderr for diagnostic purposes
+                stderr_output = ""
+                if proc.stderr is not None:
+                    stderr_bytes = proc.stderr.read()
+                    if stderr_bytes:
+                        stderr_output = stderr_bytes.decode("utf-8", errors="replace")
+                        # Truncate to reasonable length for display
+                        if len(stderr_output) > 500:
+                            stderr_output = stderr_output[:500] + "..."
+                failure_msg = (
+                    f"  Iteration {i + 1}/{iterations}: "
+                    f"Server did not become ready within {timeout}s"
+                )
+                if stderr_output:
+                    failure_msg += f"\n    stderr: {stderr_output}"
+                print(failure_msg)
+
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+            # Clean up socket
+            if Path(socket_path).exists():
+                with contextlib.suppress(OSError):
+                    os.unlink(socket_path)
+
+    return ColdStartResult(
+        iterations=iterations,
+        successful=len(timings),
+        timings_ms=timings,
+    )
+
+
+def print_cold_start_result(result: ColdStartResult, threshold_ms: float) -> bool:
+    """Print cold start benchmark results.
+
+    Args:
+        result: ColdStartResult from benchmark.
+        threshold_ms: Threshold in milliseconds to compare against.
+
+    Returns:
+        True if median is below threshold, False otherwise.
+    """
+    print(f"\n{'=' * 60}")
+    print("Cold Start Benchmark Results")
+    print(f"{'=' * 60}")
+    print(f"  Iterations:     {result.iterations}")
+    print(f"  Successful:     {result.successful}")
+    print()
+    print("  Timing (ms):")
+    print(f"    Min:          {result.min_ms:.1f}")
+    print(f"    Median:       {result.median_ms:.1f}")
+    print(f"    P90:          {result.p90_ms:.1f}")
+    print(f"    P99:          {result.p99_ms:.1f}")
+    print(f"    Max:          {result.max_ms:.1f}")
+    print()
+    print(f"  Target:         <{threshold_ms:.0f}ms")
+
+    passed = result.median_ms < threshold_ms
+    if passed:
+        print(f"  Result:         PASS (median {result.median_ms:.1f}ms < {threshold_ms:.0f}ms)")
+    else:
+        print(f"  Result:         FAIL (median {result.median_ms:.1f}ms >= {threshold_ms:.0f}ms)")
+    print(f"{'=' * 60}")
+
+    return passed
+
+
 def run_benchmark(
-    client: HttpMCPClient,
+    client: MCPSocketClient,
     iterations: int,
     mode: str,
     warmup: int = 5,
@@ -150,9 +311,9 @@ def run_benchmark(
     """Run benchmark against the MCP bridge.
 
     Args:
-        client: HttpMCPClient instance configured for the transport mode.
+        client: MCPSocketClient instance.
         iterations: Number of requests to make.
-        mode: Transport mode name for display ("socket" or "http").
+        mode: Transport mode name for display.
         warmup: Number of warmup requests before measuring.
 
     Returns:
@@ -223,102 +384,17 @@ def print_result(result: BenchmarkResult) -> None:
     print(f"  Total Time:     {result.total_time_s:.2f}s")
 
 
-def print_comparison(socket_result: BenchmarkResult, http_result: BenchmarkResult) -> None:
-    """Print side-by-side comparison of two benchmark results."""
-    print(f"\n{'=' * 70}")
-    print("TRANSPORT COMPARISON: Unix Socket vs HTTP")
-    print(f"{'=' * 70}")
-    print(f"{'Metric':<20} {'Socket':>15} {'HTTP':>15} {'Improvement':>15}")
-    print(f"{'-' * 70}")
-
-    # Calculate improvements (positive = socket is better)
-    def improvement(socket_val: float, http_val: float) -> str:
-        if http_val <= 0:
-            return "N/A"
-        pct = ((http_val - socket_val) / http_val) * 100
-        if pct > 0:
-            return f"+{pct:.1f}% faster"
-        elif pct < 0:
-            return f"{-pct:.1f}% slower"
-        else:
-            return "same"
-
-    print(
-        f"{'Min Latency (ms)':<20} "
-        f"{socket_result.min_ms:>15.2f} "
-        f"{http_result.min_ms:>15.2f} "
-        f"{improvement(socket_result.min_ms, http_result.min_ms):>15}"
-    )
-    print(
-        f"{'Median Latency (ms)':<20} "
-        f"{socket_result.median_ms:>15.2f} "
-        f"{http_result.median_ms:>15.2f} "
-        f"{improvement(socket_result.median_ms, http_result.median_ms):>15}"
-    )
-    print(
-        f"{'P90 Latency (ms)':<20} "
-        f"{socket_result.p90_ms:>15.2f} "
-        f"{http_result.p90_ms:>15.2f} "
-        f"{improvement(socket_result.p90_ms, http_result.p90_ms):>15}"
-    )
-    print(
-        f"{'P99 Latency (ms)':<20} "
-        f"{socket_result.p99_ms:>15.2f} "
-        f"{http_result.p99_ms:>15.2f} "
-        f"{improvement(socket_result.p99_ms, http_result.p99_ms):>15}"
-    )
-    print(
-        f"{'Max Latency (ms)':<20} "
-        f"{socket_result.max_ms:>15.2f} "
-        f"{http_result.max_ms:>15.2f} "
-        f"{improvement(socket_result.max_ms, http_result.max_ms):>15}"
-    )
-    print(f"{'-' * 70}")
-
-    # Throughput comparison (higher is better, so invert the comparison)
-    throughput_imp = ""
-    if http_result.throughput_rps > 0:
-        pct = (
-            (socket_result.throughput_rps - http_result.throughput_rps) / http_result.throughput_rps
-        ) * 100
-        if pct > 0:
-            throughput_imp = f"+{pct:.1f}% faster"
-        elif pct < 0:
-            throughput_imp = f"{-pct:.1f}% slower"
-        else:
-            throughput_imp = "same"
-
-    print(
-        f"{'Throughput (req/s)':<20} "
-        f"{socket_result.throughput_rps:>15.1f} "
-        f"{http_result.throughput_rps:>15.1f} "
-        f"{throughput_imp:>15}"
-    )
-    print(f"{'=' * 70}")
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Benchmark MCP Bridge transport modes",
+        description="Benchmark MCP Bridge native socket transport",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["socket", "http"],
-        default="socket",
-        help="Transport mode to benchmark (default: socket)",
     )
     parser.add_argument(
         "--socket",
         default=os.environ.get("MCP_BRIDGE_SOCKET", "/tmp/mcp-bridge.sock"),
         help="Unix socket path (default: $MCP_BRIDGE_SOCKET or /tmp/mcp-bridge.sock)",
-    )
-    parser.add_argument(
-        "--url",
-        default=os.environ.get("MCP_BRIDGE_URL", "http://localhost:8080"),
-        help="HTTP URL for bridge (default: $MCP_BRIDGE_URL or http://localhost:8080)",
     )
     parser.add_argument(
         "--iterations",
@@ -334,25 +410,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Number of warmup requests (default: 5)",
     )
     parser.add_argument(
-        "--compare",
+        "--cold-start",
         action="store_true",
-        help="Compare both socket and HTTP modes side-by-side",
+        help="Measure cold start time (server startup latency)",
     )
     parser.add_argument(
-        "--min-latency-improvement",
-        type=float,
-        default=None,
-        metavar="PCT",
-        help="Minimum required latency improvement (percentage) for socket vs HTTP. "
-        "Only applies with --compare. Exit non-zero if improvement is below threshold.",
+        "--cold-start-iterations",
+        type=int,
+        default=10,
+        help="Number of cold start measurements (default: 10)",
     )
     parser.add_argument(
-        "--min-throughput-improvement",
+        "--cold-start-threshold",
         type=float,
-        default=None,
-        metavar="PCT",
-        help="Minimum required throughput improvement (percentage) for socket vs HTTP. "
-        "Only applies with --compare. Exit non-zero if improvement is below threshold.",
+        default=500.0,
+        metavar="MS",
+        help="Cold start threshold in milliseconds (default: 500ms). "
+        "Exit non-zero if median cold start exceeds threshold.",
+    )
+    parser.add_argument(
+        "--server-script",
+        default=str(MCP_BRIDGE_PATH / "server_impl.py"),
+        help="Path to server script for cold start measurement",
     )
 
     args = parser.parse_args(argv)
@@ -360,96 +439,48 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("MCP Bridge Transport Benchmark")
     print("=" * 60)
 
-    results: list[BenchmarkResult] = []
+    if args.cold_start:
+        # Cold start benchmark
+        print("\nMeasuring cold start time for native socket server...")
+        print(f"  Server script: {args.server_script}")
+        print(f"  Socket path:   {args.socket}")
+        print(f"  Iterations:    {args.cold_start_iterations}")
+        print()
 
-    if args.compare:
-        # Run both modes
-        print("\n[1/2] Benchmarking Unix Socket mode...")
-        try:
-            socket_client = HttpMCPClient(socket_path=args.socket)
-            socket_result = run_benchmark(socket_client, args.iterations, "socket", args.warmup)
-            results.append(socket_result)
-            print_result(socket_result)
-        except MCPClientError as e:
-            print(f"  Socket mode failed: {e}")
-            socket_result = None
+        # Validate server script exists
+        if not Path(args.server_script).exists():
+            print(f"\n[ERROR] Server script not found: {args.server_script}")
+            return 1
 
-        print("\n[2/2] Benchmarking HTTP mode...")
-        try:
-            http_client = HttpMCPClient(base_url=args.url)
-            http_result = run_benchmark(http_client, args.iterations, "http", args.warmup)
-            results.append(http_result)
-            print_result(http_result)
-        except MCPClientError as e:
-            print(f"  HTTP mode failed: {e}")
-            http_result = None
+        cold_start_result = benchmark_cold_start(
+            server_script=args.server_script,
+            socket_path=args.socket,
+            iterations=args.cold_start_iterations,
+            timeout=10.0,
+        )
 
-        # Print comparison if both succeeded
-        if socket_result and http_result:
-            print_comparison(socket_result, http_result)
+        passed = print_cold_start_result(cold_start_result, args.cold_start_threshold)
 
-            # Check thresholds if specified
-            threshold_failures: list[str] = []
+        if cold_start_result.successful == 0:
+            print("\n[ERROR] All cold start iterations failed")
+            return 1
 
-            if args.min_latency_improvement is not None:
-                # Calculate median latency improvement (positive = socket faster)
-                if http_result.median_ms > 0:
-                    latency_improvement = (
-                        (http_result.median_ms - socket_result.median_ms) / http_result.median_ms
-                    ) * 100
-                    if latency_improvement < args.min_latency_improvement:
-                        threshold_failures.append(
-                            f"Latency improvement {latency_improvement:.1f}% "
-                            f"< required {args.min_latency_improvement:.1f}%"
-                        )
-                else:
-                    threshold_failures.append(
-                        "Cannot calculate latency improvement: HTTP median is 0"
-                    )
-
-            if args.min_throughput_improvement is not None:
-                # Calculate throughput improvement (positive = socket faster)
-                if http_result.throughput_rps > 0:
-                    throughput_improvement = (
-                        (socket_result.throughput_rps - http_result.throughput_rps)
-                        / http_result.throughput_rps
-                    ) * 100
-                    if throughput_improvement < args.min_throughput_improvement:
-                        threshold_failures.append(
-                            f"Throughput improvement {throughput_improvement:.1f}% "
-                            f"< required {args.min_throughput_improvement:.1f}%"
-                        )
-                else:
-                    threshold_failures.append(
-                        "Cannot calculate throughput improvement: HTTP throughput is 0"
-                    )
-
-            if threshold_failures:
-                print(f"\n{'=' * 70}")
-                print("THRESHOLD CHECK FAILED")
-                print(f"{'=' * 70}")
-                for failure in threshold_failures:
-                    print(f"  - {failure}")
-                return 1
-
-        else:
-            print("\n[WARNING] Could not compare - one or both modes failed")
+        if not passed:
             return 1
 
     else:
-        # Single mode
-        print(f"\nBenchmarking {args.mode.upper()} mode...")
+        # Latency/throughput benchmark (requires running server)
+        print("\nBenchmarking SOCKET mode...")
+        print(f"  Socket path: {args.socket}")
+        print()
+
         try:
-            if args.mode == "socket":
-                client = HttpMCPClient(socket_path=args.socket)
-            else:
-                client = HttpMCPClient(base_url=args.url)
+            client = MCPSocketClient(socket_path=args.socket)
+            benchmark_result = run_benchmark(client, args.iterations, "socket", args.warmup)
+            print_result(benchmark_result)
 
-            result = run_benchmark(client, args.iterations, args.mode, args.warmup)
-            print_result(result)
-
-            if result.failed > 0:
-                print(f"\n[WARNING] {result.failed} requests failed")
+            if benchmark_result.failed > 0:
+                print(f"\n[WARNING] {benchmark_result.failed} requests failed")
                 return 1
 
         except MCPClientError as e:

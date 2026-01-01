@@ -1,1 +1,0 @@
-"""MCP Bridge API routes."""

@@ -1,50 +1,45 @@
 #!/usr/bin/env python3
-"""HTTP client for MCP bridge server using curl subprocess.
+"""Native socket client for MCP bridge server.
 
-This module provides a lightweight HTTP client that uses curl via subprocess
-to call the mcp-bridge REST API. This avoids adding httpx as a dependency.
+This module provides a lightweight socket-based client that communicates with
+the mcp-bridge via Unix sockets using JSONL (newline-delimited JSON) protocol.
+This replaces the curl-based HTTP client for improved performance and reduced
+external dependencies.
 
 Transport Mode Precedence:
     1. socket_path constructor argument (highest priority)
     2. MCP_BRIDGE_SOCKET environment variable
-    3. base_url constructor argument
+    3. base_url constructor argument (for backward compatibility)
     4. MCP_BRIDGE_URL environment variable
-    5. Default: http://localhost:8080 (lowest priority)
+    5. Default socket: /tmp/mcp-bridge.sock (lowest priority)
 
-When using Unix socket mode (options 1-2), a dummy base URL (http://localhost)
-is used for curl's URL argument since --unix-socket requires a URL but ignores
-the host portion.
+Note: base_url is retained for backward compatibility but ignored when socket
+mode is active (which is the default). The socket-based client uses native
+JSONL protocol instead of HTTP.
 
 The client supports the multi-server usage pattern:
-   - Discover servers with `list_servers()` → returns `{"servers": [...]}`
+   - Discover servers with `list_servers()` -> returns `{"servers": [...]}`
      including per-server `healthy` field
    - Per-server health can be inferred from the `healthy` field in
      `list_servers()` response
-   - Inspect tools via `list_server_tools(server)` → returns `{"tools": [...]}`
-   - Get specific tool info via `get_server_tool(server, tool_name)` → returns
+   - Inspect tools via `list_server_tools(server)` -> returns `{"tools": [...]}`
+   - Get specific tool info via `get_server_tool(server, tool_name)` -> returns
      tool dict
-   - Call tools via `call_server_tool(server, name, arguments, timeout)` →
+   - Call tools via `call_server_tool(server, name, arguments, timeout)` ->
      returns unwrapped result dict
-   - Check overall bridge health with `health_check()` → returns True if healthy
+   - Check overall bridge health with `health_check()` -> returns True if healthy
 
 Usage:
-    # HTTP mode (default, for non-Docker host usage):
+    # Unix socket mode (default, preferred for Docker):
     from scripts.mcp.client.http_client import HttpMCPClient, MCPClientError
-    client = HttpMCPClient()  # Uses MCP_BRIDGE_URL or http://localhost:8080
+    client = HttpMCPClient()  # Uses MCP_BRIDGE_SOCKET or /tmp/mcp-bridge.sock
 
-    # Unix socket mode (preferred for Docker):
-    # When using the dev-tools compose stack, the host-visible socket path is
-    # /tmp/mcp-sockets/mcp-bridge.sock (mapped to /tmp/mcp-bridge.sock inside
-    # the container). Use socket_path or MCP_BRIDGE_SOCKET to specify:
-    #
-    # Host-side (running client on WSL/host against dev-tools bridge):
+    # Explicit socket path:
     client = HttpMCPClient(socket_path="/tmp/mcp-sockets/mcp-bridge.sock")
+
     # Or via environment:
     # export MCP_BRIDGE_SOCKET=/tmp/mcp-sockets/mcp-bridge.sock
     # client = HttpMCPClient()
-    #
-    # Container-side (running client in same container namespace as bridge):
-    # client = HttpMCPClient(socket_path="/tmp/mcp-bridge.sock")
 
     # Check overall bridge health
     if client.health_check():
@@ -63,9 +58,9 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+import socket
+import uuid
 from typing import Any
-from urllib.parse import quote
 
 
 class MCPClientError(Exception):
@@ -74,17 +69,19 @@ class MCPClientError(Exception):
     pass
 
 
-def _validate_and_encode_server(server: str | None, param_name: str = "server") -> str:
-    """Validate and URL-encode a server name for safe use in URL paths.
+def _validate_server(server: str | None, param_name: str = "server") -> str:
+    """Validate a server name for JSONL protocol.
 
-    Strips whitespace, validates non-empty, and URL-encodes for path safety.
+    Strips whitespace and validates non-empty. Unlike HTTP URL paths, JSONL
+    protocol sends server names as JSON string values, so URL-encoding is
+    not needed and would break server lookups.
 
     Args:
-        server: The server name to validate and encode.
+        server: The server name to validate.
         param_name: Parameter name for error messages (default: "server").
 
     Returns:
-        URL-encoded server name safe for use in URL paths.
+        Validated server name (stripped of whitespace).
 
     Raises:
         MCPClientError: If server is not a non-empty string after stripping.
@@ -94,12 +91,33 @@ def _validate_and_encode_server(server: str | None, param_name: str = "server") 
     server = server.strip()
     if not server:
         raise MCPClientError(f"{param_name} parameter must be a non-empty string")
-    # URL-encode to handle special characters (/, #, %, ?, etc.)
-    return quote(server, safe="")
+    return server
 
 
-class HttpMCPClient:
-    """HTTP client for MCP bridge server using curl subprocess."""
+def _validate_tool_name(tool_name: str | None, param_name: str = "tool_name") -> str:
+    """Validate a tool name for JSONL protocol.
+
+    Args:
+        tool_name: The tool name to validate.
+        param_name: Parameter name for error messages.
+
+    Returns:
+        Validated tool name (stripped of whitespace).
+
+    Raises:
+        MCPClientError: If tool_name is not a non-empty string.
+    """
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        raise MCPClientError(f"{param_name} parameter must be a non-empty string")
+    return tool_name.strip()
+
+
+# Default socket path for MCP bridge
+DEFAULT_SOCKET_PATH = "/tmp/mcp-bridge.sock"
+
+
+class MCPSocketClient:
+    """Native socket client for MCP bridge server using Unix sockets and JSONL protocol."""
 
     def __init__(
         self,
@@ -111,155 +129,135 @@ class HttpMCPClient:
         Transport mode is determined by precedence (highest to lowest):
         1. socket_path argument
         2. MCP_BRIDGE_SOCKET env var
-        3. base_url argument
-        4. MCP_BRIDGE_URL env var
-        5. Default http://localhost:8080
+        3. base_url argument (for backward compatibility, ignored in socket mode)
+        4. MCP_BRIDGE_URL env var (for backward compatibility, ignored in socket mode)
+        5. Default socket: /tmp/mcp-bridge.sock
 
-        When socket_path is set (directly or via env), base_url is ignored
-        and a dummy URL (http://localhost) is used for curl compatibility.
+        When socket mode is active (which is the default), base_url is ignored.
 
         Args:
-            base_url: Bridge server URL. Only used if socket_path is not set.
-                      Defaults to MCP_BRIDGE_URL env var or http://localhost:8080.
+            base_url: Bridge server URL. Retained for backward compatibility but
+                      ignored in socket mode. Defaults to MCP_BRIDGE_URL env var
+                      or http://localhost:8080.
             socket_path: Path to Unix socket. Takes precedence over base_url.
-                        Defaults to MCP_BRIDGE_SOCKET env var if set.
+                        Defaults to MCP_BRIDGE_SOCKET env var or /tmp/mcp-bridge.sock.
         """
-        # Precedence: socket_path arg > MCP_BRIDGE_SOCKET env > base_url arg >
-        # MCP_BRIDGE_URL env > default
+        # Precedence: socket_path arg > MCP_BRIDGE_SOCKET env > default socket
         if socket_path is not None and not isinstance(socket_path, str):
             raise MCPClientError("socket_path must be a string path")
 
-        # Resolve socket path first (arg > env)
+        # Resolve socket path (arg > env > default)
         env_socket = os.environ.get("MCP_BRIDGE_SOCKET", "")
         p = (socket_path if socket_path is not None else env_socket).strip()
-        self.socket_path = p or None
+        self.socket_path = p or DEFAULT_SOCKET_PATH
 
-        if self.socket_path:
-            # Unix socket mode - base_url is ignored, use dummy hostname for curl
-            self.base_url = "http://localhost"
-        else:
-            # HTTP mode - validate and resolve base_url
-            if base_url is not None and not isinstance(base_url, str):
-                raise MCPClientError("base_url must be a string URL")
-            if base_url is None:
-                base_url = os.environ.get("MCP_BRIDGE_URL", "http://localhost:8080")
+        # Validate and store base_url for backward compatibility
+        # In socket mode, base_url is stored but not used for actual communication
+        if base_url is not None and not isinstance(base_url, str):
+            raise MCPClientError("base_url must be a string URL")
+
+        if base_url is not None:
             base_url = base_url.strip().rstrip("/")
             if not base_url:
                 raise MCPClientError("Invalid base_url: empty or missing host")
             if base_url.endswith("://"):
                 raise MCPClientError(f"Invalid base_url: scheme without host: {base_url}")
-            self.base_url = base_url
+        else:
+            base_url = os.environ.get("MCP_BRIDGE_URL", "http://localhost:8080")
 
-    def _request_json(
+        self.base_url = base_url
+
+    def _request_jsonl(
         self,
         method: str,
-        url: str,
-        payload: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
         timeout: float = 30.0,
     ) -> dict[str, Any]:
+        """Send a JSONL request over Unix socket and return the response.
+
+        Args:
+            method: The method name (e.g., "list_servers", "call_tool").
+            params: Request parameters (merged with method and id).
+            timeout: Request timeout in seconds.
+
+        Returns:
+            The response dict (result from success envelope, or raises on error).
+
+        Raises:
+            MCPClientError: On connection failure, timeout, or protocol error.
+        """
         try:
             if timeout <= 0:
                 msg = "timeout must be > 0"
                 raise ValueError(msg)
-            max_time_str = str(int(timeout + 1))
         except (TypeError, ValueError, OverflowError) as e:
             raise MCPClientError(f"Invalid timeout: {timeout}") from e
 
-        # Build curl command
-        cmd = [
-            "curl",
-            "-sS",
-            "--fail-with-body",
-            "--max-time",
-            max_time_str,
-        ]
+        # Build request envelope
+        request_id = str(uuid.uuid4())
+        request: dict[str, Any] = {
+            "id": request_id,
+            "method": method,
+        }
+        if params:
+            request.update(params)
 
-        # Add Unix socket option if configured
-        if self.socket_path:
-            cmd.extend(["--unix-socket", self.socket_path])
-
-        payload_json = None
-        if method == "POST":
-            if payload is None:
-                raise MCPClientError("POST request requires payload")
-            try:
-                payload_json = json.dumps(payload)
-            except (TypeError, ValueError) as e:
-                raise MCPClientError(f"Failed to serialize request: {e}") from e
-
-            cmd.extend(
-                [
-                    "-X",
-                    "POST",
-                    url,
-                    "-H",
-                    "Content-Type: application/json",
-                    "--data-binary",
-                    "@-",
-                ]
-            )
-        else:
-            cmd.append(url)
-
+        # Serialize to JSONL (JSON + newline)
         try:
-            result = subprocess.run(
-                cmd,
-                input=payload_json,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=timeout + 5,
-            )
-        except subprocess.TimeoutExpired as e:
-            raise MCPClientError(f"Request timed out after {timeout}s") from e
-        except OSError as e:
-            raise MCPClientError(f"Failed to run curl: {e}") from e
-        except UnicodeError as e:
-            raise MCPClientError(f"Invalid UTF-8 in response: {e}") from e
+            request_json = json.dumps(request)
+        except (TypeError, ValueError) as e:
+            raise MCPClientError(f"Failed to serialize request: {e}") from e
 
-        # Handle curl exit codes
-        if result.returncode == 7:
-            if self.socket_path:
+        request_bytes = (request_json + "\n").encode("utf-8")
+
+        # Connect and communicate
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            sock.settimeout(timeout)
+            try:
+                sock.connect(self.socket_path)
+            except OSError as e:
                 raise MCPClientError(
                     f"Cannot connect to mcp-bridge at {self.socket_path}. "
                     "Socket not available. Ensure mcp-bridge container is running "
                     "and socket is mounted."
-                )
-            else:
-                raise MCPClientError(
-                    f"Cannot connect to mcp-bridge at {self.base_url}. "
-                    "Ensure the MCP bridge is running. For local development, run "
-                    "'uv run dev.ensure-env' (preferred) or "
-                    "'docker compose -p ai-workflow-devtools "
-                    "-f docker-compose.dev.yml up -d mcp-bridge'."
-                )
-        elif result.returncode == 28:
-            raise MCPClientError(f"Request timed out after {timeout}s")
-        elif result.returncode == 22:
-            # HTTP error (from --fail-with-body), try to parse response body for details
-            stdout = result.stdout.strip() if result.stdout else ""
-            if stdout:
-                try:
-                    error_response = json.loads(stdout)
-                    if isinstance(error_response, dict) and "error" in error_response:
-                        error = error_response["error"]
-                        if isinstance(error, dict):
-                            error_type = error.get("type", "UNKNOWN")
-                            message = error.get("message", str(error))
-                            raise MCPClientError(f"[{error_type}] {message}")
-                        raise MCPClientError(f"Server error: {error}")
-                except json.JSONDecodeError:
-                    pass
-            error_msg = result.stderr.strip() if result.stderr else "HTTP error"
-            raise MCPClientError(f"HTTP request failed: {error_msg}")
-        elif result.returncode != 0:
-            error_msg = result.stderr.strip() if result.stderr else f"exit code {result.returncode}"
-            raise MCPClientError(f"curl failed: {error_msg}")
+                ) from e
 
-        # Parse response JSON
-        stdout = result.stdout.strip()
+            # Send request
+            try:
+                sock.sendall(request_bytes)
+            except TimeoutError as e:
+                raise MCPClientError(f"Request timed out after {timeout}s") from e
+            except OSError as e:
+                raise MCPClientError(f"Failed to send request: {e}") from e
+
+            # Read response (JSONL - read until newline)
+            response_buffer = bytearray()
+            try:
+                while True:
+                    chunk = sock.recv(65536)  # 64KB chunks
+                    if not chunk:
+                        break
+                    response_buffer.extend(chunk)
+                    # Check for complete JSONL message (newline terminated)
+                    if b"\n" in response_buffer:
+                        break
+            except TimeoutError as e:
+                raise MCPClientError(f"Request timed out after {timeout}s") from e
+            except OSError as e:
+                raise MCPClientError(f"Failed to read response: {e}") from e
+
+        finally:
+            sock.close()
+
+        # Parse response
+        stdout = response_buffer.decode("utf-8").strip()
         if not stdout:
             raise MCPClientError("Empty response from server")
+
+        # Extract first line (JSONL)
+        if "\n" in stdout:
+            stdout = stdout.split("\n")[0]
 
         try:
             response = json.loads(stdout)
@@ -271,15 +269,25 @@ class HttpMCPClient:
                 f"Invalid response type: expected JSON object, got {type(response).__name__}"
             )
 
-        # Check for error envelope
-        if "error" in response:
-            error = response["error"]
-            if isinstance(error, dict):
-                error_type = error.get("type", "UNKNOWN")
-                message = error.get("message", str(error))
-                raise MCPClientError(f"[{error_type}] {message}")
-            raise MCPClientError(f"Server error: {error}")
+        # Check for error envelope (socket protocol format)
+        # Format: {"id": "...", "status": "error", "error": {"type": "...", "message": "..."}}
+        if response.get("status") == "error":
+            if "error" in response:
+                error = response["error"]
+                if isinstance(error, dict):
+                    error_type = error.get("type", "UNKNOWN")
+                    message = error.get("message", str(error))
+                    raise MCPClientError(f"[{error_type}] {message}")
+                raise MCPClientError(f"Server error: {error}")
+            # status == "error" without error payload - raise generic error
+            raise MCPClientError("Server returned error status without details")
 
+        # Extract result from success envelope
+        # Format: {"id": "...", "status": "success", "result": {...}}
+        if response.get("status") == "success" and "result" in response:
+            return response["result"]  # type: ignore[no-any-return]
+
+        # Fallback: return response as-is (for non-envelope responses like health check)
         return response
 
     def list_servers(self) -> dict[str, Any]:
@@ -292,10 +300,9 @@ class HttpMCPClient:
             Dict with servers list and health status for each server.
 
         Raises:
-            MCPClientError: On connection failure, HTTP error, or timeout
+            MCPClientError: On connection failure, protocol error, or timeout
         """
-        url = f"{self.base_url}/mcp/servers"
-        response = self._request_json("GET", url, payload=None, timeout=5.0)
+        response = self._request_jsonl("list_servers", timeout=5.0)
         return response
 
     def list_server_tools(self, server: str) -> dict[str, Any]:
@@ -312,9 +319,12 @@ class HttpMCPClient:
         Raises:
             MCPClientError: If server is invalid or on connection failure
         """
-        encoded_server = _validate_and_encode_server(server)
-        url = f"{self.base_url}/mcp/{encoded_server}/tools"
-        response = self._request_json("GET", url, payload=None, timeout=10.0)
+        validated_server = _validate_server(server)
+        response = self._request_jsonl(
+            "list_tools",
+            params={"server": validated_server},
+            timeout=10.0,
+        )
         return response
 
     def get_server_tool(self, server: str, tool_name: str) -> dict[str, Any]:
@@ -332,11 +342,13 @@ class HttpMCPClient:
         Raises:
             MCPClientError: If parameters are invalid or on connection failure
         """
-        encoded_server = _validate_and_encode_server(server)
-        if not isinstance(tool_name, str) or not tool_name:
-            raise MCPClientError("tool_name parameter must be a non-empty string")
-        url = f"{self.base_url}/mcp/{encoded_server}/tools/{tool_name}"
-        response = self._request_json("GET", url, payload=None, timeout=10.0)
+        validated_server = _validate_server(server)
+        tool_name = _validate_tool_name(tool_name)
+        response = self._request_jsonl(
+            "get_server_tool",
+            params={"server": validated_server, "tool_name": tool_name},
+            timeout=10.0,
+        )
         return response
 
     def call_server_tool(
@@ -348,10 +360,8 @@ class HttpMCPClient:
     ) -> dict[str, Any]:
         """Call a specific tool on a server.
 
-        The timeout parameter controls both the server-side timeout and curl
-        behavior. Curl's --max-time is set to timeout + 1 second as a buffer,
-        and the subprocess timeout is set to timeout + 5 seconds to allow for
-        process overhead.
+        The timeout parameter controls both the server-side timeout and socket
+        behavior.
 
         Args:
             server: Name of the server.
@@ -365,15 +375,21 @@ class HttpMCPClient:
         Raises:
             MCPClientError: If parameters are invalid or on connection failure
         """
-        encoded_server = _validate_and_encode_server(server)
-        if not isinstance(name, str) or not name:
-            raise MCPClientError("name parameter must be a non-empty string")
-        url = f"{self.base_url}/mcp/{encoded_server}/call"
-        # Use canonical field name 'timeout_seconds' per MCPCallRequest schema
-        payload = {"tool": name, "arguments": arguments, "timeout_seconds": timeout}
+        validated_server = _validate_server(server)
+        name = _validate_tool_name(name, param_name="name")
 
-        response = self._request_json("POST", url, payload, timeout)
+        response = self._request_jsonl(
+            "call_tool",
+            params={
+                "server": validated_server,
+                "tool": name,
+                "arguments": arguments,
+                "timeout_seconds": timeout,
+            },
+            timeout=timeout,
+        )
 
+        # Extract result from response envelope if present
         if "result" in response:
             result_dict = response["result"]
             if not isinstance(result_dict, dict):
@@ -388,46 +404,23 @@ class HttpMCPClient:
         """Check if bridge is healthy.
 
         Returns:
-            True if bridge responds with 200, False otherwise
+            True if bridge responds with status="ok", False otherwise
         """
-        import os as _os
-
-        url = f"{self.base_url}/health"
-
-        cmd = [
-            "curl",
-            "-sS",
-            "-o",
-            _os.devnull,  # Cross-platform null sink
-            "-w",
-            "%{http_code}",
-            "--max-time",
-            "5",
-        ]
-
-        # Add Unix socket option if configured
-        if self.socket_path:
-            cmd.extend(["--unix-socket", self.socket_path])
-
-        cmd.append(url)
-
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        except (subprocess.TimeoutExpired, OSError):
+            response = self._request_jsonl("health", timeout=5.0)
+            # Health response format: {"status": "ok", "provider": "running"}
+            return response.get("status") == "ok"
+        except MCPClientError:
             return False
 
-        if result.returncode != 0:
-            return False
 
-        # Check HTTP status code
-        try:
-            status_code = int(result.stdout.strip())
-        except ValueError:
-            return False
-        else:
-            return status_code == 200
+# Backward compatibility alias - HttpMCPClient now uses socket protocol
+HttpMCPClient = MCPSocketClient
+
+
+__all__ = [
+    "DEFAULT_SOCKET_PATH",
+    "HttpMCPClient",
+    "MCPClientError",
+    "MCPSocketClient",
+]

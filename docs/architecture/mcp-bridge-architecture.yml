@@ -1,6 +1,6 @@
 doc_id: architecture-mcp-bridge
 title: MCP Bridge Architecture
-description: REST-to-MCP bridge server providing HTTP/Unix socket access to MCP STDIO providers.
+description: Native Unix socket server providing socket-to-MCP translation for MCP STDIO providers.
   The bridge is transport-only; tool-specific normalization happens in client layers.
 domain: []
 scope: project
@@ -11,128 +11,162 @@ sections:
     category: standard
     items:
       - id: overview-1
-        text: The MCP bridge is a FastAPI service that translates HTTP requests to MCP JSON-RPC
-          calls over STDIO. It runs in a Docker container alongside persistent MCP provider
-          subprocesses.
+        text: The MCP bridge is a native Unix socket server that translates newline-delimited
+          JSON (JSONL) requests to MCP JSON-RPC calls over STDIO. It runs in a Docker container
+          alongside persistent MCP provider subprocesses. The protocol is transport-only;
+          tool-specific normalization happens in client layers.
       - id: overview-2
-        text: Primary use case is exposing mcp-background-job as an HTTP service so jobs persist
-          independently of WSL shell lifetime and timeouts.
+        text: Primary use case is exposing mcp-background-job as a fast IPC service so jobs persist
+          independently of WSL shell lifetime and timeouts. The native socket implementation
+          achieves <500ms cold start time, suitable for CLI hooks and fast IPC scenarios.
+      - id: overview-3
+        text: "HTTP access is NOT provided by the bridge itself. Any HTTP exposure should be
+          implemented by separate adapters or proxy layers if needed. The bridge's responsibility
+          is transport-only: Unix socket to MCP STDIO translation."
   - id: layering
     index: 2
     title: Architectural Layering
     category: standard
     items:
       - id: layering-1
-        text: "Bridge layer (scripts/mcp/): Transport-only. Translates HTTP to MCP JSON-RPC,
+        text: "Bridge layer (scripts/servers/mcp/): Transport-only. Native Unix socket server
+          using newline-delimited JSON protocol. Translates socket requests to MCP JSON-RPC,
           returns provider-native payloads unchanged (wrapped in result envelope), provides
-          stable error envelopes and HTTP status mapping, enforces timeouts and serialized
-          STDIO access."
+          stable error envelopes, enforces timeouts and serialized STDIO access. No HTTP
+          endpoints - pure socket IPC."
       - id: layering-2
         text: "Client layer (scripts/dev/mcp_agent_client.py): Tool-specific normalization.
           Handles background-job normalization (ensuring job_id, status/exit_code, default
-          stdout/stderr). Provides separation of transport concerns from business logic."
+          stdout/stderr). Provides separation of transport concerns from business logic.
+          Uses the socket client from scripts/servers/mcp/client/."
       - id: layering-3
-        text: "HTTP-only consumers: Should use FastMCP tool names (execute_command, get_job_status,
-          etc.), expect provider-native payloads (e.g., id instead of job_id), and implement
-          their own normalization if needed."
+        text: "HTTP/TCP access (if needed): HTTP access is a client-side concern, not a
+          server-side feature. Any HTTP proxy or adapter should sit outside the bridge
+          container and translate HTTP requests to socket protocol. This keeps the bridge
+          lightweight and fast-starting."
   - id: request-flow
     index: 3
     title: Request Flow
     category: standard
     items:
       - id: request-flow-1
-        text: "WSL/scripts send HTTP POST to bridge. Bridge acquires provider lock, sends
-          JSON-RPC request over STDIO, reads response, releases lock, returns HTTP response
-          with result envelope."
+        text: "Clients connect to Unix socket and send JSONL request (e.g., {\"method\": \"call_tool\",
+          \"server\": \"background-job\", \"tool\": \"execute_command\", \"arguments\": {...},
+          \"id\": \"req-1\"}). Bridge acquires provider lock, sends JSON-RPC request over STDIO,
+          reads response, releases lock, returns JSONL response over socket."
       - id: request-flow-2
-        text: Provider process is persistent, allowing execute then status/output across
-          multiple HTTP calls without subprocess lifecycle issues.
+        text: "Provider process is persistent, allowing execute then status/output across multiple
+          socket requests without subprocess lifecycle issues. Each request-response is a single
+          newline-terminated JSON message."
+      - id: request-flow-3
+        text: "Protocol format - Request: {\"method\": \"...\", \"id\": \"...\", ...params}.
+          Response success: {\"id\": \"...\", \"status\": \"success\", \"result\": {...}}.
+          Response error: {\"id\": \"...\", \"status\": \"error\", \"error\": {\"type\": \"...\",
+          \"message\": \"...\", \"details\": {...}}}."
   - id: error-handling
     index: 4
     title: Error Handling
     category: standard
     items:
       - id: error-handling-1
-        text: "Bridge provides stable error envelope: {error: {type, message, details}}. Error
-          types include BAD_REQUEST, JSONRPC_ERROR, TIMEOUT, PROVIDER_CRASHED, BUSY, INTERNAL."
+        text: "Bridge provides stable error envelope: {\"error\": {\"type\": \"...\", \"message\": \"...\",
+          \"details\": {...}}}. Error types include BAD_REQUEST, NOT_FOUND, JSONRPC_ERROR, TIMEOUT,
+          PROVIDER_CRASHED, BUSY, INTERNAL."
       - id: error-handling-2
-        text: HTTP status mapping is consistent. 400 for bad requests, 502 for JSON-RPC errors,
-          503 for busy/crashed, 504 for timeouts, 500 for internal errors.
+        text: "No HTTP status codes - error type is indicated by the 'type' field in the error
+          envelope. Clients parse error.type to determine error category. The socket client
+          raises MCPClientError with format '[ERROR_TYPE] message' for compatibility."
   - id: files
     index: 5
     title: Key Files
     category: standard
     items:
       - id: files-1
-        text: "scripts/mcp/app/api/routes.py: HTTP endpoints (POST /mcp/{server}/call, GET
-          /mcp/servers, GET /health)."
+        text: "scripts/servers/mcp/server_impl.py: Native Unix socket server implementation.
+          Handles JSONL protocol, request dispatch, and response serialization. Run via
+          'python -m scripts.servers.mcp.server' (uses server/ package entry point)."
       - id: files-2
-        text: "scripts/mcp/app/services/manager.py: MCPStdioManager handles provider lifecycle,
-          STDIO communication, JSON-RPC framing."
+        text: "scripts/servers/mcp/protocol.py: Request/response dataclasses with JSON
+          serialization. Defines ListServersRequest, CallToolRequest, HealthRequest, etc."
       - id: files-3
-        text: "scripts/mcp/client/http_client.py: HttpMCPClient for Python consumers of the
-          bridge."
+        text: "scripts/servers/mcp/manager.py: MCPStdioManager handles provider lifecycle,
+          STDIO communication, JSON-RPC framing."
       - id: files-4
+        text: "scripts/servers/mcp/client/http_client.py: Socket client for Python consumers
+          of the bridge (name preserved for backward compatibility). Communicates via Unix
+          socket, not HTTP."
+      - id: files-5
         text: "scripts/dev/mcp_agent_client.py: Higher-level client with background-job
           normalization and timeout enforcement."
-      - id: files-5
-        text: "scripts/mcp/benchmark_bridge_transport.py: Benchmark script for measuring
-          transport latency and throughput. Supports Unix socket vs HTTP comparison."
+      - id: files-6
+        text: "scripts/servers/mcp/benchmark_bridge_transport.py: Benchmark script for measuring
+          transport latency, throughput, and cold start time. Use --cold-start to measure
+          server startup latency (<500ms target)."
   - id: deployment
     index: 6
     title: Deployment Modes
     category: standard
     items:
       - id: deployment-1
-        text: "Primary local dev path: Unix socket mode via the dev-tools Docker Compose stack.
-          Start with uv run dev.ensure-env (preferred) or docker compose -p ai-workflow-devtools
-          -f docker-compose.dev.yml up -d mcp-bridge. The bridge listens on /tmp/mcp-bridge.sock
-          inside the container (mounted from host /tmp/mcp-sockets via bind mount). This
-          provides ~50% lower latency and ~30-50% less CPU usage compared to HTTP/TCP."
+        text: "Primary deployment: Unix socket mode via Docker Compose dev-tools stack. Start with
+          uv run dev.ensure-env (preferred) or docker compose -p ai-workflow-devtools -f
+          docker-compose.dev.yml up -d mcp-bridge. The bridge listens on /tmp/mcp-bridge.sock
+          inside the container (mounted from host /tmp/mcp-sockets via bind mount)."
       - id: deployment-2
-        text: "Host HTTP mode (non-Docker): For running uvicorn directly on the host
-          without Docker, use --host 127.0.0.1 --port 8080. HttpMCPClient defaults to
-          http://localhost:8080 when MCP_BRIDGE_SOCKET is not set."
-      - id: deployment-3
-        text: "Transport precedence in HttpMCPClient: socket_path argument > MCP_BRIDGE_SOCKET
-          env > base_url argument > MCP_BRIDGE_URL env > default http://localhost:8080."
-      - id: deployment-4
         text: "Socket path semantics: The socket path inside the container is /tmp/mcp-bridge.sock
           (set via MCP_BRIDGE_SOCKET env var). When using docker compose or docker run, mount
           /tmp/mcp-sockets from the host to /tmp in the container to access the socket from
-          the host."
+          the host at /tmp/mcp-sockets/mcp-bridge.sock."
+      - id: deployment-3
+        text: "Transport precedence in socket client: socket_path argument > MCP_BRIDGE_SOCKET
+          env > default socket path. Note: HTTP mode is deprecated. The base_url parameter
+          is only supported for backward compatibility with client code and requires a
+          separate HTTP-to-socket proxy if used."
+      - id: deployment-4
+        text: "HTTP/TCP mode: No longer provided by the bridge server. If HTTP access is needed,
+          implement a separate HTTP-to-socket proxy/adapter outside the bridge container.
+          This is now a client-side concern, not a server-side feature."
       - id: deployment-5
-        text: "HTTP fallback: Host-based HTTP mode remains officially supported for non-Docker
-          development workflows. Both Unix-socket and HTTP modes are validated in automated tests."
+        text: "Cold start: The native socket server targets <500ms cold start time. This enables
+          use in CLI hooks and fast IPC scenarios where FastAPI/uvicorn startup (~2-3s) was
+          prohibitive."
   - id: performance
     index: 7
     title: Performance and Benchmarking
     category: standard
     items:
       - id: performance-1
-        text: "Benchmark script: scripts/mcp/benchmark_bridge_transport.py provides repeatable
-          latency and throughput measurements. Run with --compare to see Unix socket vs HTTP
-          side-by-side. Use this to validate performance claims after changes."
+        text: "Benchmark script: scripts/servers/mcp/benchmark_bridge_transport.py provides repeatable
+          latency and throughput measurements. Use --cold-start to measure server startup latency."
       - id: performance-2
-        text: "Expected improvements (Unix socket vs HTTP/TCP): ~30-50% lower median latency,
-          reduced CPU overhead from avoiding TCP stack processing. Actual results vary by
-          workload and system configuration."
+        text: "Expected performance: <500ms cold start time, low latency socket communication,
+          reduced CPU overhead from avoiding HTTP stack processing."
       - id: performance-3
         text: "To run benchmarks: Ensure mcp-bridge is running via the dev-tools stack (preferred:
           uv run dev.ensure-env, or manually: docker compose -p ai-workflow-devtools -f
-          docker-compose.dev.yml up -d mcp-bridge), then run: python scripts/mcp/benchmark_bridge_transport.py
-          --compare --iterations 100"
+          docker-compose.dev.yml up -d mcp-bridge), then run: python scripts/servers/mcp/benchmark_bridge_transport.py"
       - id: performance-4
         text: "Metrics collected: min/median/mean/p90/p99/max latency in milliseconds,
-          throughput in requests per second, success rate percentage."
-      - id: performance-5
-        text: "Threshold assertions: Use --min-latency-improvement and
-          --min-throughput-improvement flags with --compare to enforce minimum
-          performance improvements. The script exits non-zero if thresholds are
-          not met. Example: --compare --min-latency-improvement 30 requires at
-          least 30% latency reduction for socket vs HTTP."
-      - id: performance-6
-        text: "Diagnostic use: This benchmark script is intended for manual validation
-          of performance claims and is NOT enforced in CI. Developers should run
-          it after making transport-related changes to verify targets are
-          maintained. Results vary by system configuration and workload."
+          throughput in requests per second, success rate percentage, cold start time."
+  - id: health-check
+    index: 8
+    title: Health Check Protocol
+    category: standard
+    items:
+      - id: health-check-1
+        text: "The MCP bridge exposes a health check via the socket protocol using the
+          'health' method. Request format: {\"method\": \"health\", \"id\": \"<request-id>\"}.
+          Response format: {\"id\": \"...\", \"status\": \"success\", \"result\":
+          {\"status\": \"ok|degraded\", \"provider\": \"running|down\"}}."
+      - id: health-check-2
+        text: "Health semantics: status='ok' and provider='running' indicates at least one
+          configured MCP provider returns is_alive()=True. status='degraded' and provider='down'
+          indicates no providers are responding."
+      - id: health-check-3
+        text: "Docker healthcheck uses Python socket snippet to connect to MCP_BRIDGE_SOCKET,
+          send health request, and verify response. Exits 0 only if status='ok', otherwise
+          exits non-zero (including degraded state, connection failures, and timeouts)."
+      - id: health-check-4
+        text: "Failure modes: Socket not available (ENOENT/connection refused), server timeout
+          (no response within 3s), invalid JSON response, missing expected fields, or
+          result.status='degraded' all result in unhealthy status for Docker healthcheck."
