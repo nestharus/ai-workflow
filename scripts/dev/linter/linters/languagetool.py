@@ -56,6 +56,27 @@ class LanguageToolLinter(BaseLinter):
         self._tool: LanguageToolAPI | None = None
         self._config: dict[str, Any] | None = None
 
+    def close(self) -> None:
+        """Close the LanguageTool instance to properly terminate the Java server.
+
+        This must be called before Python exits to avoid errors during garbage
+        collection. The psutil module used by language_tool_python for cleanup
+        may already be partially unloaded during __del__, causing KeyError.
+        """
+        if self._tool is not None:
+            try:
+                # The LanguageTool instance has a close() method to terminate the server
+                close_method = getattr(self._tool, "close", None)
+                if callable(close_method):
+                    close_method()
+            except Exception as e:
+                # Ignore cleanup errors during shutdown, but don't mask them completely
+                # psutil may be partially unloaded, causing benign KeyError exceptions
+                import sys
+
+                print(f"Warning: LanguageTool cleanup failed: {e}", file=sys.stderr)
+            self._tool = None
+
     @property
     def config(self) -> dict[str, Any]:
         """Load config lazily."""
@@ -384,35 +405,40 @@ class LanguageToolLinter(BaseLinter):
         all_errors: list[LintError] = []
         file_errors: list[str] = []  # Per-file I/O or API errors
 
-        for file_path in md_files:
-            try:
-                matches, content = self._check_file(file_path)
-            except RuntimeError as e:
-                # Initialization or critical error (e.g., missing Java, import error)
-                return LinterResult(success=False, message=str(e))
-            except LanguageToolCheckError as e:
-                # API failure or I/O error - log and continue with remaining files
-                file_errors.append(str(e))
-                continue
+        try:
+            for file_path in md_files:
+                try:
+                    matches, content = self._check_file(file_path)
+                except RuntimeError as e:
+                    # Initialization or critical error (e.g., missing Java, import error)
+                    return LinterResult(success=False, message=str(e))
+                except LanguageToolCheckError as e:
+                    # API failure or I/O error - log and continue with remaining files
+                    file_errors.append(str(e))
+                    continue
 
-            for match in matches:
-                all_errors.append(self._match_to_lint_error(match, file_path, content))
+                for match in matches:
+                    all_errors.append(self._match_to_lint_error(match, file_path, content))
 
-        if all_errors or file_errors:
-            issue_count = len(all_errors)
-            error_count = len(file_errors)
+            if all_errors or file_errors:
+                issue_count = len(all_errors)
+                error_count = len(file_errors)
 
-            # Build summary message
-            parts = []
-            if issue_count > 0:
-                parts.append(f"{issue_count} issue(s)")
-            if error_count > 0:
-                parts.append(f"{error_count} file error(s)")
+                # Build summary message
+                parts = []
+                if issue_count > 0:
+                    parts.append(f"{issue_count} issue(s)")
+                if error_count > 0:
+                    parts.append(f"{error_count} file error(s)")
 
-            return LinterResult(
-                success=False,
-                message=f"LanguageTool found {', '.join(parts)}",
-                errors=all_errors,
-            )
+                return LinterResult(
+                    success=False,
+                    message=f"LanguageTool found {', '.join(parts)}",
+                    errors=all_errors,
+                )
 
-        return LinterResult(success=True)
+            return LinterResult(success=True)
+        finally:
+            # Always close the LanguageTool instance to properly terminate the Java server
+            # This prevents errors during Python garbage collection when psutil is unloaded
+            self.close()

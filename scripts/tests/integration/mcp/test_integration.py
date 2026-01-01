@@ -363,7 +363,7 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
                 )
 
             # Check socket file exists (condition c)
-            if os.path.exists(socket_path):
+            if Path(socket_path).exists():
                 try:
                     # Use httpx with Unix socket transport
                     transport = httpx.HTTPTransport(uds=socket_path)
@@ -400,7 +400,7 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
 
         if not healthy:
             # Log informative message about socket status with truncated details
-            socket_exists = os.path.exists(socket_path)
+            socket_exists = Path(socket_path).exists()
             logs_result = subprocess.run(
                 [docker_path, "logs", container_name],
                 capture_output=True,
@@ -427,7 +427,7 @@ def mcp_bridge_container(mcp_config: str, echo_server_script: Path) -> Iterator[
 
         # Unconditionally remove socket directory and warn if cleanup fails
         shutil.rmtree(socket_dir, ignore_errors=True)
-        if os.path.exists(socket_dir):
+        if Path(socket_dir).exists():
             import warnings
 
             warnings.warn(f"Socket directory not cleaned up: {socket_dir}", stacklevel=2)
