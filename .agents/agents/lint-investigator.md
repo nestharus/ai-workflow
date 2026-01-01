@@ -46,14 +46,16 @@ For each investigated error, report:
 **Root Cause:** Brief explanation of why this wasn't fixable
 
 **Analysis:**
-- What was tried
-- What blocked the fix
-- Configuration or code issues found
+
+* What was tried
+* What blocked the fix
+* Configuration or code issues found
 
 **Recommended Solution:**
-- Specific steps to resolve
-- Config changes needed (if any)
-- Whether suppression is appropriate (with justification)
+
+* Specific steps to resolve
+* Config changes needed (if any)
+* Whether suppression is appropriate (with justification)
 ```
 
 ## Investigation Priorities
@@ -65,8 +67,8 @@ For each investigated error, report:
 
 ## Rules
 
-* **DO** read relevant config files to check for conflicts
-* **DO** provide specific file paths and line numbers for config fixes
-* **DO** explain WHY suppression might be appropriate when suggesting it
-* **DO NOT** make changes to files - only report findings
-* **DO NOT** suggest suppressions without strong justification
+- **DO** read relevant config files to check for conflicts
+- **DO** provide specific file paths and line numbers for config fixes
+- **DO** explain WHY suppression might be appropriate when suggesting it
+- **DO NOT** make changes to files - only report findings
+- **DO NOT** suggest suppressions without strong justification

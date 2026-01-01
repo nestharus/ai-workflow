@@ -1,476 +1,426 @@
-# Complexity-Driven Development: Diagram-First, Complexity-Triggered Decomposition for Agentic Software Architecture
+# Refinement-Gated Decomposition: Invariant-Centered Planning Artifacts for Agentic Software Engineering
 
 ## Abstract
 
-Complexity-Driven Development (CDD) is an agentic methodology for producing software architecture where the primary artifact is not source code, but a compact, end-to-end flowchart model that embeds control flow, state, contracts, invariants, and error behavior. The system begins as a single algorithmic flowchart (or a small list of top-level flowcharts), is refined until changes stop producing meaningful gains, and is decomposed only when refinement reliability degrades. Decomposition is performed one layer at a time: an Architect model proposes candidate cuts, an Analyst-Builder selects and applies the best cut while redistributing logic, and a Refiner model stabilizes semantics inside the new components. This cycle repeats when the Refiner begins to collapse under complexity. CDD is positioned as an alternative to spec-first methodologies that can amplify context drift and contract hallucination in autonomous agent workflows.
+This paper presents **Refinement-Gated Decomposition (RGD)**, a planning algorithm for agentic software engineering in which the canonical system representation is an end-to-end algorithm expressed as **hierarchical flowcharts**. RGD delays architectural decomposition until iterative refinement of the algorithm becomes unstable. When instability is observed, the planner performs a single decomposition step, introduces explicit **surfaces** as contracts expressed through **invariant obligations**, redistributes algorithmic responsibility into component packages, and resumes local refinement.
+
+RGD supports two entry points: a **requirements seed** (goals and invariants defined upfront) and an **algorithm seed** (existing code or sketches refined first, with requirements extracted retroactively). Invariants are not fixed inputs but **emerge through refinement**—growing as the algorithm grows, crystallizing when decomposition introduces surfaces, and expanding when tradeoffs require explicit decisions. The **delayed organization principle** ensures that architecture is introduced only when cognitive limits demand it, and then minimally; final organization emerges at the end rather than being committed upfront. This inverts the traditional sequence: algorithms accumulate evidence, and architecture follows.
+
+The method is paired with an identifier-indexed documentation scheme that prioritizes invariants, traceability, and graph construction over schema commitments. A case study of a parallel lint dispatcher illustrates the artifact family produced by RGD, including a requirements document with global invariants, a design map specifying components and boundary obligations, and component-local algorithms for shutdown coordination, deterministic output ordering, and state registry ownership. The paper compares RGD to spec-driven development (SDD) toolchains and to classical methods in software engineering and AI planning.
 
 ---
 
-## 1. Why diagram-first CDD exists
+## 1. Terminology and naming
 
-LLM-based development workflows fail in ways that are predictable and expensive:
+### 1.1 Motivation for a distinct name
 
-* Premature modularization encourages guessed boundaries and invented interfaces.
-* Bottom-up assembly creates locally coherent parts that do not compose cleanly.
-* Error handling is treated as an afterthought, so shutdown, retries, determinism, and recovery become emergent bugs.
-* State ownership becomes implicit and scattered, making the system hard to reason about and hard to refactor safely.
+The phrase “complexity-driven development” has existing usage in software practice to describe approaches that prioritize addressing the most significant complexities early. ([Charlie Alfred's Weblog][1]) This paper adopts different terminology to avoid ambiguity.
 
-CDD addresses this by keeping the system as one coherent algorithmic representation until there is evidence that human or model reasoning is degrading.
+### 1.2 Definition of Refinement-Gated Decomposition
 
-In contrast, Spec-Driven Development (SDD) has recently emerged as a prominent AI-era workflow where specs become the primary artifact and drive generation and maintenance. The definition is still evolving, but tooling and commentary from GitHub, Thoughtworks, and Martin Fowler show SDD is being actively framed as a modern practice for AI-assisted engineering rather than a decades-old, stabilized term. ([GitHub][1])
+**Refinement-Gated Decomposition (RGD)** is defined by three commitments:
 
-Given that SDD is a new label in active flux, this paper keeps the name CDD.
+* **Primary artifact**: the system algorithm is represented as flowcharts that encode control flow, failure paths, and state handling.
+* **Refinement gate**: refinement proceeds until improvement becomes unstable, inconsistent, or regressive at the current scale.
+* **One-step decomposition**: decomposition is applied one layer at a time, producing components and surfaces, followed by renewed refinement at smaller scopes.
 
----
+### 1.3 Definition of Spec-Driven Development in the current tool ecosystem
 
-## 2. The primary artifact is the algorithm, expressed as flowcharts
-
-CDD treats the algorithm as the source of truth, but the algorithm is not “one big file.” It is a compact diagram package:
-
-* A top-level flowchart that captures the end-to-end lifecycle.
-* Embedded error behavior as explicit branches and terminal outcomes.
-* Explicit state holders (named structures that persist across steps).
-* Invariants that override all lower-level decisions.
-* Contracts and data shapes at boundaries once decomposition begins.
-
-This is closely aligned with the motivation behind model-centric development: models can become the main artifact that drives design and implementation, with code as a projection. ([SEI][2])
-
-CDD also benefits from the long-standing value of visual formalisms for complex systems, including hierarchical modeling (statecharts) where hierarchy and decomposition are explicit, rather than implicit in files and call graphs. ([Modern Embedded Software | Quantum Leaps][3])
+This paper uses **Spec-Driven Development (SDD)** to refer to emerging agentic workflows in which structured specifications are elevated to primary artifacts and are used to drive implementation generation and task breakdown. ([GitHub][2])
 
 ---
 
-## 3. Surfaces are introduced deliberately: contracts, invariants, and state ownership
+## 2. Artifact system: identifiers, invariants, and graph construction
 
-CDD uses “surface” to mean any artifact that reduces ambiguity and limits coupling.
+RGD is operationalized through a documentation system designed for machine parsing and graph construction. The system is organized around identifiers that can be referenced across documents without duplication.
 
-Surfaces show up as:
+### 2.1 Requirements documents (PRDs)
 
-* **Invariants**
+A PRD is structured as indexed items with explicit precedence for invariants and explicit cross-references. It is designed to minimize duplication and ambiguity through typed references rather than narrative restatement.
 
-    * Global rules that override requirements and implementation preferences.
-    * Example: “deterministic ordering” or “parallel execution must be conflict-free.”
+Key properties:
 
-* **Contracts**
+* Unique identifiers for goals, invariants, rules, resources, external boundaries, algorithms, metrics, and open questions.
+* Explicit precedence: invariants apply globally and override conflicting lower-level rules.
+* Traceability via typed cross-references, enabling requirement coverage checks and graph derivations.
 
-    * Explicit boundaries between components with obligations.
-    * A contract defines what crosses a boundary and what must be preserved.
+### 2.2 Design maps
 
-* **Internal artifacts**
+A design map defines:
 
-    * Typed, named data shapes exchanged across boundaries.
-    * The point is to make data flow explicit and stable.
+* **Components** (COM-IDs)
+* **Contracts** (CON-IDs), representing surfaces between components or between a component and an artifact
+* **Internal artifacts and boundaries** (IAR-IDs), representing state holders and internal interfaces
+* **Boundary obligations** (OBL-IDs), representing enforceable obligations at surfaces
 
-* **State holders**
+The design map enforces PRD traceability and specifies when derived requirements may remain local versus when ambiguities must be escalated back into the PRD.
 
-    * Named structures with a single owner component.
-    * Their mutation points are restricted and visible.
+A central constraint is that **surfaces are specified as invariants on inputs and outputs**, not as concrete schema definitions.
 
-This is conceptually related to Design by Contract, where obligations and guarantees are made explicit and enforceable. ([Software Engineering Lab][4])
+### 2.3 Component packages
 
-The key CDD twist is sequencing:
+Component packages are the location of algorithms. A component package groups:
 
-* Contracts are not the starting point.
-* Contracts are introduced only when complexity forces decomposition and the algorithm’s “true shape” is already visible.
+* Algorithm flowcharts
+* Surface definitions for that component
+* Optional internal artifacts owned or used by that component
+
+Component documentation is constrained to express boundary behavior through invariants rather than embedded schema definitions.
+
+### 2.4 Architecture decision records
+
+Decisions are recorded in ADRs and referenced by identifier only from PRDs or design maps. Rationale is not embedded in planning artifacts.
 
 ---
 
-## 4. The CDD multi-model loop
+## 3. The RGD planning algorithm
 
-CDD is implemented as a role-separated loop where each role has a narrow responsibility.
+### 3.1 Input and state
 
-### Roles
+RGD operates over a set of algorithm units at each layer. The initial unit may be a single top-level flowchart or a list of top-level flowcharts.
 
-* **Architect (Opus)**
+Each unit is treated as a package containing:
 
-    * Proposes candidate decompositions.
-    * Decomposes only one layer at a time.
-    * May recompose components when earlier cuts were wrong.
+* An algorithm flowchart
+* State holders (if any)
+* Surfaces (if any)
 
-* **Analyst-Builder (ChatGPT)**
+### 3.2 Entry points: requirements seed vs algorithm seed
 
-    * Evaluates Opus candidates.
-    * Selects the best decomposition (or a hybrid).
-    * Applies the cut and redistributes logic across new components.
-    * Fills in missing connective tissue and aligns contracts with the algorithm.
+RGD supports two distinct entry points:
 
-* **Refiner (Gemini)**
+**Requirements seed**: Begin with goals, constraints, and invariants. The algorithm is synthesized to satisfy these requirements. This is appropriate when the problem domain is well-understood and constraints are known upfront.
 
-    * Iteratively refines component-local semantics.
-    * Strengthens invariants, guards, and error behavior.
-    * Continues until refinement becomes unstable or inconsistent, which signals a complexity horizon.
+**Algorithm seed**: Begin with existing code or an algorithm sketch. Extract the algorithm as flowcharts, then refine it. Invariants, goals, and requirements emerge from the refinement process rather than preceding it. This is appropriate for:
 
-### Loop diagram
+* Refactoring legacy code
+* Resolving bugs where the root cause is unclear
+* Extracting implicit design from existing implementations
+* Exploratory development where requirements are underspecified
+
+In the algorithm seed path, invariants are not defined upfront. The algorithm itself serves as the seed. As refinement proceeds and decomposition occurs, invariants crystallize from the patterns observed in the algorithm. Requirements documents are generated retroactively from the evidence accumulated during refinement.
+
+### 3.3 Invariant emergence
+
+Invariants in RGD are not static declarations established at the start. They grow with the system:
+
+* **Initial invariants** may be sparse or absent entirely
+* **Refinement-discovered invariants** emerge as the algorithm is improved and edge cases are addressed
+* **Architecture-driven invariants** arise when decomposition introduces surfaces that require contracts
+* **User-decided invariants** are introduced when tradeoffs become unclear and require explicit decisions
+
+The invariant set expands to improve, refine, and grow the system toward its goals. This contrasts with specification-first approaches where invariants are treated as fixed inputs to the design process.
+
+### 3.4 Phases
+
+#### Phase A: Requirements seeding (optional for algorithm seed path)
+
+* Produce a PRD containing goals, invariants, and indexed rules.
+* Encode precedence constraints as invariants.
+* Define external artifacts and boundaries.
+
+This phase is consistent with identifier-indexed PRDs.
+
+When using the algorithm seed path, Phase A is deferred. The algorithm is refined first (Phases B-C), and requirements are extracted retroactively after sufficient evidence has accumulated through refinement.
+
+#### Phase B: Algorithm synthesis
+
+* Produce an end-to-end flowchart that represents the system algorithm.
+* Encode error behavior and termination conditions as explicit branches.
+
+A representative pre-refinement artifact can be a single compact flowchart describing initialization, scheduling, execution, staleness handling, and termination.
+
+#### Phase C: Refinement saturation
+
+* Refine algorithm logic until the refiner cannot identify additional improvements that reduce defects or increase coherence at the current scale.
+* Refinement targets include guards, invariants, ordering constraints, failure modes, and state transitions.
+
+This phase is an iterative refinement process aligned with test-time refinement concepts in the LLM literature. ([arXiv][3])
+
+#### Phase D: Horizon detection
+
+Decomposition is triggered when refinement becomes unstable. Observable signals include:
+
+* Inconsistent edits across passes
+* Local improvements that increase global complexity
+* Repeated regressions introduced by patches
+* Growth of cross-cutting couplings that are difficult to stabilize
+
+#### Phase E: One-step decomposition
+
+* Generate candidate decompositions of the current unit into components and surfaces.
+* Select a decomposition and materialize it as:
+
+  * A design map with COM, CON, IAR, and OBL identifiers
+  * Component packages with algorithm flowcharts and surface invariants
+
+This corresponds to hierarchical decomposition in planning, with a constrained decomposition step applied iteratively. ([arXiv][4])
+
+#### Phase F: Recursion
+
+* Apply the same refinement and decomposition process to resulting components.
+* Recomposition is permitted when later evidence indicates the previous cut increased coupling or reduced reasoning stability.
+
+### 3.5 The delayed organization principle
+
+A core tenet of RGD is to **delay organization as long as possible**. The algorithm is not organized into components until cognitive limits force decomposition. When decomposition is required, organize **minimally**—just enough to restore comprehensibility and enable continued refinement.
+
+The rationale:
+
+* **Algorithms as evidence**: Refined algorithms provide concrete evidence for architectural decisions. Premature decomposition relies on speculation about the right boundaries. Delayed decomposition allows the architecture to emerge from observed complexity rather than predicted complexity.
+* **Cognitive forcing function**: Decomposition is triggered by the inability to reason coherently at the current scale, not by predetermined architectural blueprints. This ensures that structure is introduced precisely when needed.
+* **Minimal organization**: Each decomposition step introduces only enough structure to restore working conditions. Final organization is completed only at the end, when the full algorithmic picture is known.
+
+This principle inverts the traditional sequence of architecture-then-implementation. In RGD, the algorithm accumulates evidence, and the architecture crystallizes from that evidence.
+
+### 3.6 RGD loop diagram
+
+```mermaid
+flowchart TD
+  subgraph Entry Points
+    R[Requirements seed: goals, invariants] --> B[Top-level algorithm flowchart]
+    A[Algorithm seed: existing code or sketch] --> B
+  end
+  B --> C[Refinement saturation]
+  C --> D{Refinement stable at current scope?}
+  D -->|Yes| E[Local completion at this scope]
+  D -->|No| F[One-step decomposition]
+  F --> G[Design map: components, contracts, obligations]
+  G --> H[Component packages: algorithms, surfaces, state holders]
+  H --> C
+  E --> I{Algorithm seed path?}
+  I -->|Yes| J[Extract PRD from accumulated evidence]
+  I -->|No| K[Done]
+  J --> K
+```
+
+---
+
+## 4. Role separation and multi-model execution
+
+RGD can be implemented as a role-separated agentic system. One effective instantiation assigns distinct responsibilities to distinct models:
+
+* **Architect model**: proposes candidate decompositions and potential recompositions.
+* **Analyst-builder model**: evaluates candidates, selects a cut, and redistributes logic across components.
+* **Refiner model**: performs iterative refinement inside components and reports horizon conditions.
+
+This separation is consistent with multi-agent software frameworks that encode distinct roles and verification stages. ([arXiv][5])
+
+### 4.1 Capability-specialized model assignment
+
+Different models exhibit distinct strengths that can be exploited for specific RGD phases:
+
+* **Algorithm refinement**: Models strong in mathematical reasoning, proofs, and algorithmic analysis (e.g., models optimized for STEM tasks) are effective for iterative refinement of algorithm logic, edge case handling, and invariant formulation.
+* **Architecture pattern generation**: Models with broad pattern recognition and creative synthesis capabilities excel at generating candidate decompositions and crafting hybrid architectural solutions from accumulated algorithmic evidence.
+* **Analysis and synthesis**: Models optimized for detailed analysis, synthesis across sources, and context retention are effective for evaluating candidates, distributing algorithms across architectures, and ensuring consistency.
+
+An effective workflow routes algorithm diagrams through specialized refiners until limits are reached, then hands off to pattern-oriented models for architecture generation, and finally uses analysis-oriented models to evaluate and distribute the result.
+
+### 4.2 Decomposition and refinement sequence
 
 ```mermaid
 sequenceDiagram
-  participant O as Architect (Opus)
-  participant C as Analyst-Builder (ChatGPT)
-  participant G as Refiner (Gemini)
+  participant A as Architect model
+  participant B as Analyst-builder model
+  participant R as Refiner model
 
-  Note over O: Monitor complexity and refiner stability
-  O->>C: Propose candidate one-layer decompositions
-  C->>C: Evaluate candidates, select best cut
-  C->>C: Apply cut, redistribute logic into components
-  C->>G: Hand off component package for refinement
+  A->>B: Propose candidate one-layer decompositions
+  B->>B: Evaluate candidates and select a cut
+  B->>B: Materialize components and surfaces
+  B->>R: Transfer component packages for refinement
 
-  loop Local refinement
-    G->>G: Refine guards, invariants, error paths, ordering
-    G->>G: Normalize contracts and data shapes
+  loop Refinement at current scope
+    R->>R: Refine guards, invariants, error behavior, ordering
   end
 
-  alt Refinement stable
-    G-->>C: CLEAN (no further meaningful improvements found)
-  else Refinement collapses
-    G-->>O: Complexity horizon reached, request next decomposition
+  alt Refinement remains stable
+    R-->>B: CLEAN at this scope
+  else Refinement becomes unstable
+    R-->>A: Horizon reached, request next decomposition
   end
 ```
 
 ---
 
-## 5. Case study: a lint dispatcher as a decomposed, contract-first surface layer
+## 5. Surfaces, contracts, invariants, and state ownership
 
-A concrete example of “surfaces introduced under pressure” is the evolution from a monolithic algorithm flowchart to a decomposed dispatcher architecture.
+### 5.1 Surfaces as invariant obligations
 
-### 5.1 Before refinement: one monolithic flowchart
+RGD treats a surface as an enforceable boundary characterized by invariant obligations. In the design map structure, a contract specifies interaction type, input invariants, output invariants, required constraint identifiers, and boundary obligation identifiers.
 
-The pre-refinement artifact is a single flowchart describing the complete lifecycle, including:
+The contract is expressed in terms of what must be guaranteed, using identifiers that can be traced to PRD invariants. This approach is aligned with contract-based reasoning in software design, while remaining independent of concrete schema declarations. ([Software Engineering ETH Zurich][6])
 
-* Global initialization and state setup
-* A main loop over outstanding errors and investigation futures
-* Concurrency controls (prevent concurrent edits to the same targets)
-* Staleness and external-change handling via fingerprints and hashes
-* Termination conditions that depend on actionable errors and locked resources
-* Explicit modeling of “unlintable” targets and abort conditions
+### 5.2 State holders and ownership rules
 
-This artifact is represented directly as a flowchart.
+State holders are represented as internal artifacts with explicit ownership and invariants. The goal is to confine mutation and make invalidation rules explicit.
 
-The important point is not the domain, but the shape:
+In the lint dispatcher case study, the FileRegistry abstraction is documented as a state holder that owns file state and caches, with explicit ownership rules and mutation boundaries designed to preserve invariants during parallel execution.
 
-* Error behavior is not “off to the side.”
-* State is not implicit.
-* Concurrency and staleness are part of the algorithm, not implementation details.
+### 5.3 Error behavior as algorithm structure
 
-### 5.2 After refinement: decomposition into domains and internals
+In RGD, error behavior is encoded as branches in the algorithm flowcharts and is refined as part of the same process that refines nominal behavior.
 
-Under complexity pressure, the architecture emerges as a set of components with explicit contracts and internal artifacts.
-
-At a high level, the system decomposes into:
-
-* CLI adapter
-* Orchestrator (composition root)
-* File discovery domain
-* Linter configuration domain
-* Scheduling domain
-* Execution domain
-* Output domain
-* Execution internals (shutdown, snapshots, process tree management, ordered output buffering, result collection)
-
-A simplified system map:
-
-```mermaid
-graph TD
-  CLI[COM-01 CLI Adapter] -->|CON-01| ORCH[COM-02 RunLintersOrchestrator]
-  ORCH -->|CON-02| FD[COM-03 FileDiscoveryDomain]
-  ORCH -->|CON-03| LC[COM-04 LinterConfigDomain]
-  ORCH -->|CON-04| SCH[COM-05 SchedulingDomain]
-  ORCH -->|CON-05| EX[COM-06 ExecutionDomain]
-  ORCH -->|CON-06| OUT[COM-07 OutputDomain]
-
-  EX --> SHUT[COM-08 ShutdownCoordinator]
-  ORCH --> SIG[COM-09 SignalHandler]
-  SIG --> SHUT
-  EX --> STREAM[COM-17 ResultStreamHandler]
-  STREAM --> BUF[COM-15 OrderedOutputBuffer]
-  STREAM --> RESC[COM-16 ResultCollector]
-  EX --> SNAP[COM-14 SnapshotManager]
-```
-
-This is not an aesthetic decomposition. It is an explicit surfacing of contracts and ownership boundaries.
-
-### 5.3 Invariants as first-class architecture drivers
-
-The dispatcher requirements define invariants that override everything else, for example:
-
-* Linter instance identity is correctness-critical.
-* Deterministic ordering is mandatory.
-* Drift handling at execution time uses existence checks only.
-* Parallel execution must be conflict-free.
-* There is no legacy compatibility path.
-
-These invariants are not commentary. They constrain scheduling, caching, output ordering, shutdown, and snapshot design.
-
-### 5.4 Contracts and internal artifacts make “surface area” explicit
-
-The design map names contracts (CON-xx) and internal artifacts (IAR-xx), including schemas for run args, runtime facts, file discovery results, scheduling results, execution results, and output meta. This is what “introducing surfaces” looks like in a diagram-first workflow.
-
-### 5.5 State ownership is encoded as dedicated components
-
-A representative example is FileRegistry, which exists to prevent scattered conditionals and unclear ownership of cross-cutting file state. It owns:
-
-* `files[]`
-* a derived `files_set`
-* `fileset_by_linter` cache keyed by linter instance identity
-* explicit mutation timing rules
-
-It also encodes a small, isolated algorithm for existence-only pruning and filtering.
-
-```mermaid
-flowchart TD
-  A([prune_deleted_after_mutation]) --> B[Filter existing files]
-  B --> C[Rebuild files_set]
-  C --> D[Filter cached filesets by existence]
-  D --> E([return])
-```
-
-The effect is architectural: execution can re-check reality without rebuilding the schedule or re-running discovery.
-
-### 5.6 Error behavior is part of the algorithm, not a side channel
-
-The orchestrator flowchart includes explicit error branches and exit semantics:
-
-* invalid inputs and scheduling errors map to exit code 1
-* no files or no applicable linters map to exit code 0
-* SIGINT maps to exit code 130
-* output logic is centralized in OutputDomain
-
-This is encoded in the orchestration algorithm itself.
-
-### 5.7 Isolation of high-risk couplings
-
-ResultStreamHandler isolates a notorious coupling: “as-completed concurrency” plus “shutdown” plus “deterministic output ordering.”
-
-```mermaid
-flowchart TD
-  A([collect_results]) --> B[for future in as_completed]
-  B --> C{shutdown?}
-  C -- Yes --> D[break]
-  C -- No --> E[get result or crashed marker]
-  E --> F[aggregate result]
-  F --> G[format chunk output]
-  G --> H{output exists?}
-  H -- No --> B
-  H -- Yes --> I[buffer by chunk_id]
-
-  I --> J{fail_fast and failure?}
-  J -- Yes --> K[initiate shutdown and ignore late results]
-  J -- No --> B
-
-  D --> L[flush buffered output]
-  L --> M([return aggregated results])
-```
-
-This is a clear example of CDD surfacing:
-
-* The coupling exists in the algorithm.
-* The surface introduced is a named component with a small, auditable local algorithm.
+In the lint dispatcher case study, orchestrator behavior includes explicit exit conditions and error-handling structure as part of the orchestration algorithm.
 
 ---
 
-## 6. How CDD compares to classic methodologies in the AI landscape
+## 6. Case study: parallel lint dispatcher artifacts
 
-### 6.1 Stepwise refinement and top-down design
+This section summarizes a representative RGD artifact set.
 
-CDD’s decomposition lineage is closest to stepwise refinement, where a system is developed through successive refinement and decomposition. ([ACM Digital Library][5])
+### 6.1 Requirements: global invariants
 
-Key differences in an agentic setting:
+The lint dispatcher requirements define global invariants that constrain architecture and implementation, including:
 
-* Stepwise refinement assumes humans maintain global coherence during decomposition.
-* CDD delays decomposition until there is enough algorithmic evidence to cut safely, and it uses model stability as a practical signal for when decomposition is required.
+* identity and keying constraints
+* deterministic ordering constraints
+* drift handling constraints
+* conflict-free parallel execution constraints
+* constraints on compatibility layers
 
-### 6.2 Model-driven development and state-based formalisms
+These invariants are explicitly prioritized as globally overriding constraints.
 
-CDD is aligned with model-driven engineering in the sense that models are primary artifacts that can drive implementation. ([SEI][2])
+### 6.2 Design map: components, contracts, boundary obligations
 
-CDD differs in emphasis:
+The design map introduces a component graph with explicit contracts (CON identifiers) and boundary obligations (OBL identifiers), mapping each element back to requirement identifiers.
 
-* Traditional MDE often begins with an explicit model and transformations.
-* CDD begins with an end-to-end algorithm model and introduces contracts and schemas only when complexity forces stable boundaries.
+### 6.3 Component packages: local algorithms with explicit couplings
 
-Statecharts are relevant precedent for representing complex control and hierarchy compactly. CDD can be viewed as applying a similar “hierarchical diagram as system” idea, but with agentic refinement and decomposition triggers. ([ScienceDirect][6])
+A representative component package isolates a known coupling: concurrent completion of futures, shutdown detection, and deterministic output ordering. The artifact documents this coupling explicitly and localizes it in a component algorithm.
 
-### 6.3 Design by Contract
+### 6.4 Pre-refinement algorithm compactness
 
-CDD’s contracts and invariants are directly compatible with the Design by Contract worldview: specify obligations, benefits, and invariants at boundaries. ([Software Engineering Lab][4])
-
-CDD differs mainly in timing:
-
-* DbC can be applied from the start.
-* CDD introduces boundary contracts when boundaries are justified by complexity.
-
-### 6.4 Spec-Driven Development
-
-SDD is widely discussed as an AI-era practice that puts specs at the center and treats code as downstream. ([GitHub][1])
-
-Where CDD is different:
-
-* SDD elevates specification text as the canonical artifact.
-* CDD elevates the algorithmic diagram as the canonical artifact, and treats error behavior and state as part of that algorithm, not as prose.
-
-Practical tradeoffs:
-
-* SDD strengths:
-
-    * Easier human review early
-    * Better parallelization for teams
-    * Clear compliance story
-
-* SDD weaknesses with agents:
-
-    * Specs can drift from implementation intent
-    * Large specs can exceed what models can reliably keep coherent
-    * Contract text can be misinterpreted unless grounded in executable structure
-
-* CDD strengths:
-
-    * Higher information density per token
-    * Reduced boundary hallucination early
-    * Decomposition is evidence-driven
-
-* CDD weaknesses:
-
-    * Less upfront predictability for teams
-    * Later emergence of ownership boundaries
+The pre-refinement artifact for the dispatcher can be represented as a single flowchart that remains compact while encoding end-to-end behavior.
 
 ---
 
-## 7. Related AI research: pieces exist, but the full CDD loop is a synthesis
+## 7. Comparison to related methodologies
 
-Several research threads cover parts of the CDD loop:
+### 7.1 Relationship to stepwise refinement
 
-* **Iterative refinement**
+Wirth’s stepwise refinement develops programs by successive refinement from specification to implementation. ([ACM Digital Library][7]) RGD aligns with successive refinement but differs in its gating rule: decomposition is triggered by refinement instability rather than by a predetermined refinement schedule.
 
-    * Self-Refine formalizes iterative critique and revision, which mirrors the Refiner role in CDD. ([arXiv][7])
-    * Reflexion adds memory and feedback-driven improvement for agents, including coding tasks. ([arXiv][8])
+### 7.2 Relationship to model-driven architecture and visual formalisms
 
-* **Candidate generation and selection**
+Model-driven architecture places models at the center of software specification. ([OMG][8]) RGD adopts a similar primacy for models, with the additional requirement that the model is algorithmic and contains error behavior and state transitions.
 
-    * Tree of Thoughts frames deliberate search over candidate reasoning branches, similar to generating candidate decompositions and selecting among them. ([arXiv][9])
+Statecharts demonstrate that hierarchical visual models can represent complex systems with well-defined semantics. ([Modern Embedded Software | Quantum Leaps][9]) RGD uses hierarchical flowcharts as the planning substrate and relies on decomposition to manage scale.
 
-* **Role-separated multi-agent software development**
+### 7.3 Relationship to Design by Contract
 
-    * ChatDev and MetaGPT propose role-based multi-agent workflows for software development. ([arXiv][10])
+Design by Contract specifies module obligations through preconditions, postconditions, and invariants. ([Software Engineering ETH Zurich][6]) RGD applies contract concepts at boundaries but constrains representation to invariant obligations linked to requirement identifiers, enabling traceability across planning artifacts.
 
-* **Autonomous software engineering agents**
+### 7.4 Relationship to classical AI planning algorithms
 
-    * SWE-agent and related repair agents highlight the importance of interfaces, tool use, and evaluation loops for software tasks. ([NeurIPS Proceedings][11])
+RGD is structurally related to planning methods that delay commitments until required:
 
-What appears distinctive in CDD as applied here is the combination:
+* Partial-order planning defers ordering constraints until forced by causal requirements. ([Wikipedia][10])
+* Refinement planning formalizes plan synthesis as iterative refinement of partial plans. ([AAAI Online Journal][11])
+* Hierarchical task network planning constructs solutions via iterative decomposition of abstract tasks. ([arXiv][4])
 
-* A diagram-first algorithmic artifact
-* One-layer-at-a-time decomposition
-* Decomposition triggered by refiner instability as a complexity horizon
-* Explicit surfacing of contracts, schemas, and state ownership as the primary decomposition product
+RGD can be interpreted as hierarchical decomposition of algorithm graphs, with a gating criterion based on refiner stability.
 
-The phrase “complexity-driven development” has been used previously in unrelated ways, often as a general management idea rather than an agentic diagram workflow. ([Charlie Alfred's Weblog][12])
+### 7.5 Comparison to Spec-Driven Development toolchains
 
----
+SDD is currently described as an emerging agentic workflow that begins with structured specifications and proceeds through breakdown and implementation generation. ([thoughtworks.com][12])
 
-## 8. Strengths and weaknesses of diagram-first CDD
+A planning-level distinction can be stated in terms of commitment timing:
 
-### Strengths
-
-* **High information density**
-
-    * Flowcharts compress control flow and error handling into a form that fits within bounded context windows better than code.
-
-* **Fewer invented interfaces**
-
-    * Boundaries are created after the algorithm stabilizes, reducing “clean but wrong” interface design.
-
-* **Explicit error behavior**
-
-    * Shutdown, fail-fast, snapshot restore, and determinism are part of the algorithm, which reduces late-stage reliability surprises.
-
-* **Clear ownership of cross-cutting state**
-
-    * Components like FileRegistry make cache invalidation and mutation timing explicit rather than implicit.
-
-* **Incremental decomposition reduces risk**
-
-    * One-layer decomposition limits the blast radius of architectural decisions.
-
-### Weaknesses
-
-* **The complexity horizon is heuristic**
-
-    * “Refiner collapse” is an operational signal, not a formal proof.
-    * Different models or settings may shift the horizon.
-
-* **Late decomposition can be expensive**
-
-    * Waiting too long can require a large redistribution of logic during a single cut.
-
-* **Diagram semantics can be underspecified**
-
-    * If nodes are not typed with preconditions, postconditions, and state effects, ambiguity can move downstream into code generation.
-
-* **Surface explosion risk**
-
-    * Poorly controlled decomposition can create too many contracts and artifacts, increasing overhead and reducing agility.
+* SDD approaches commonly establish decomposition and contracts early in the planning chain, using specification artifacts as the primary driver. ([GitHub][2])
+* RGD establishes an end-to-end algorithm first and applies decomposition after stability degradation is observed at the current scope.
 
 ---
 
-## 9. Practical guardrails for applying CDD
+## 8. Novelty assessment in the AI landscape
 
-To keep CDD from degenerating into endless refinement or uncontrolled decomposition:
+RGD is best characterized as a synthesis of existing concepts with a distinct operational structure:
 
-* Define refinement budgets
+* Iterative refinement resembles self-feedback refinement and reflection-based improvement frameworks. ([arXiv][3])
+* Candidate generation and selection resembles deliberate branching and evaluation frameworks. ([arXiv][13])
+* Role separation resembles multi-agent development frameworks that encode specialized responsibilities. ([arXiv][5])
 
-    * max refinement passes per component
-    * max change size per pass
-    * churn detection (repeated edit reversals)
+The novel elements are:
 
-* Require minimal node semantics for diagrams
+* **Algorithm-first planning substrate**: Hierarchical flowchart artifacts as the primary representation, with architecture derived from algorithmic evidence rather than speculated upfront.
+* **Dual entry points**: Support for both requirements-seed and algorithm-seed workflows, enabling use in greenfield development and legacy refactoring alike.
+* **Emergent invariants**: Invariants grow with the system rather than being fixed inputs; they crystallize from refinement activity and decomposition decisions.
+* **Evidence-based architecture**: Refined algorithms provide concrete evidence for architectural decisions. Decomposition is informed by observed complexity rather than predicted complexity.
+* **Delayed organization principle**: Architecture is deferred until cognitive limits force it, and then applied minimally. Final organization emerges at the end rather than being committed upfront.
+* **Decomposition gated by instability**: Decomposition is triggered by refiner instability, executed as one-step cuts with recursion.
 
-    * inputs and outputs
-    * state read and state write
-    * failure modes and recovery behavior
-    * invariants touched
-
-* Treat state holders as architecture, not implementation
-
-    * name them
-    * define owners
-    * define safe mutation points
-
-* Keep decomposition conservative
-
-    * one layer at a time
-    * minimal contracts
-    * recomposition allowed when a cut was wrong
+No single referenced framework specifies this combination as an explicit planning algorithm for software architecture induction.
 
 ---
 
-## References and example artifacts
+## 9. Strengths, limitations, and applicability
 
-### Public references
+### 9.1 Strengths
 
-* Spec-Driven Development toolkits and commentary (GitHub, Thoughtworks, Martin Fowler). ([GitHub][1])
-* Stepwise refinement (Wirth). ([ACM Digital Library][5])
-* Design by Contract (Meyer). ([Software Engineering Lab][4])
-* Statecharts (Harel). ([ScienceDirect][6])
-* Tree of Thoughts, Self-Refine, Reflexion, ChatDev, MetaGPT, SWE-agent. ([arXiv][9])
+* High information density due to algorithmic flowcharts as primary artifacts.
+* Dual entry points enable both greenfield development and legacy code refactoring.
+* Emergent invariants reduce upfront specification burden and allow requirements to crystallize from evidence.
+* Evidence-based architecture avoids speculative decomposition by grounding decisions in refined algorithmic artifacts.
+* Surfaces defined as invariant obligations, supporting traceability and reducing dependency on schema details.
+* Explicit representation of shutdown behavior, deterministic ordering, and cross-cutting state ownership in component-local algorithms.
+* Delayed organization reduces premature abstraction and keeps the system malleable until complexity demands structure.
 
-### Example artifact set used for the case study
+### 9.2 Limitations
 
-* Lint Dispatcher requirements and invariants.
-* Execution plan.
-* Design map with components, contracts, and internal artifacts.
-* Composition root algorithm (RunLintersOrchestrator).
-* Result streaming and ordered output component algorithm.
-* Architecture overview.
-* Pre-refinement monolithic algorithm flowchart.
-* FileRegistry as an explicit integration state holder.
+* The horizon detection criterion is empirical and depends on the refiner’s capabilities at the current scope.
+* Late decomposition can increase redistribution cost when a component boundary is introduced.
+* Diagram semantics require discipline: nodes and surfaces must reference invariant identifiers with sufficient specificity to prevent ambiguity drift.
+* SDD-aligned artifacts can be operationally advantageous when external governance requires early specification checkpoints. ([thoughtworks.com][12])
 
-[1]: https://github.com/github/spec-kit?utm_source=chatgpt.com "Toolkit to help you get started with Spec-Driven Development"
-[2]: https://www.sei.cmu.edu/library/file_redirect/2015_004_001_435420.pdf/?utm_source=chatgpt.com "Model-Driven Engineering: Automatic Code Generation and ..."
-[3]: https://www.state-machine.com/doc/Harel87.pdf?utm_source=chatgpt.com "Statecharts: A Visual Formalism for Complex Systems"
-[4]: https://se.inf.ethz.ch/~meyer/publications/old/dbc_chapter.pdf?utm_source=chatgpt.com "Design by Contract"
-[5]: https://dl.acm.org/doi/10.1145/362575.362577?utm_source=chatgpt.com "Program development by stepwise refinement"
-[6]: https://www.sciencedirect.com/science/article/pii/0167642387900359?utm_source=chatgpt.com "Statecharts: a visual formalism for complex systems"
-[7]: https://arxiv.org/abs/2303.17651?utm_source=chatgpt.com "Self-Refine: Iterative Refinement with Self-Feedback"
-[8]: https://arxiv.org/abs/2303.11366?utm_source=chatgpt.com "Reflexion: Language Agents with Verbal Reinforcement Learning"
-[9]: https://arxiv.org/abs/2305.10601?utm_source=chatgpt.com "Deliberate Problem Solving with Large Language Models"
-[10]: https://arxiv.org/abs/2307.07924?utm_source=chatgpt.com "ChatDev: Communicative Agents for Software Development"
-[11]: https://proceedings.neurips.cc/paper_files/paper/2024/file/5a7c947568c1b1328ccc5230172e1e7c-Paper-Conference.pdf?utm_source=chatgpt.com "SWE-agent: Agent-Computer Interfaces Enable Automated ..."
-[12]: https://charliealfred.wordpress.com/complexity-driven-1/?utm_source=chatgpt.com "Complexity-Driven #1 | Charlie Alfred's Weblog"
+### 9.3 Applicability conditions
+
+RGD is most appropriate for systems where correctness depends on:
+
+* concurrency semantics
+* shutdown and partial failure behavior
+* deterministic ordering constraints
+* explicit state invalidation and ownership rules
+
+The lint dispatcher case study falls into this class.
+
+RGD is also well-suited for:
+
+* **Legacy code refactoring**: Extract algorithms from existing code, refine them to expose latent bugs and unclear invariants, then restructure.
+* **Bug resolution with unclear root causes**: Extract the relevant algorithm, refine it until the defect becomes visible, then fix and decompose as needed.
+* **Underspecified requirements**: Begin with an algorithm sketch, let invariants emerge through refinement, and extract requirements retroactively.
+
+---
+
+## 10. Conclusion
+
+Refinement-Gated Decomposition defines a planning algorithm and artifact system for agentic software engineering that centers algorithmic flowcharts as the primary representation and defers decomposition until refinement instability is observed. RGD supports dual entry points—requirements seed and algorithm seed—enabling both greenfield development and legacy code refactoring. Invariants emerge through refinement rather than being fixed upfront, and architecture crystallizes from accumulated algorithmic evidence rather than being speculated early.
+
+The delayed organization principle ensures that structure is introduced only when cognitive limits demand it, and then minimally. This inverts the traditional architecture-then-implementation sequence: algorithms accumulate evidence, and architecture follows. The resulting artifacts provide traceability from requirements through contracts and components, while keeping boundary definitions anchored in invariant obligations rather than schema commitments.
+
+The method is compatible with classical ideas in refinement, contract-based design, and hierarchical planning, and it provides a concrete mechanism for managing bounded reasoning limits during agentic construction.
+
+---
+
+## Selected references
+
+* SDD definitions and tool framing: GitHub Spec Kit, Thoughtworks Radar and analysis, Martin Fowler’s exploration of SDD tools. ([GitHub][2])
+* Complexity-driven development as a distinct existing term: examples of complexity-first framing. ([Charlie Alfred's Weblog][1])
+* Stepwise refinement: Wirth (1971). ([ACM Digital Library][7])
+* Statecharts: Harel (1987). ([Modern Embedded Software | Quantum Leaps][9])
+* Design by Contract: Meyer. ([Software Engineering ETH Zurich][6])
+* AI planning: HTN surveys and refinement planning frameworks. ([arXiv][4])
+* LLM planning and refinement: Tree of Thoughts, Self-Refine, Reflexion, MetaGPT. ([arXiv][13])
+* Artifact structure guidelines: PRD structure, design map structure, component package structure, ADR template.
+
+[1]: https://charliealfred.wordpress.com/complexity-driven-2/?utm_source=chatgpt.com "Complexity-Driven #2 | Charlie Alfred's Weblog"
+[2]: https://github.com/github/spec-kit?utm_source=chatgpt.com "Toolkit to help you get started with Spec-Driven Development"
+[3]: https://arxiv.org/abs/2303.17651?utm_source=chatgpt.com "Self-Refine: Iterative Refinement with Self-Feedback"
+[4]: https://arxiv.org/abs/1403.7426?utm_source=chatgpt.com "An Overview of Hierarchical Task Network Planning"
+[5]: https://arxiv.org/abs/2308.00352?utm_source=chatgpt.com "MetaGPT: Meta Programming for A Multi-Agent Collaborative Framework"
+[6]: https://se.inf.ethz.ch/~meyer/publications/old/dbc_chapter.pdf?utm_source=chatgpt.com "Design by Contract"
+[7]: https://dl.acm.org/doi/10.1145/362575.362577?utm_source=chatgpt.com "Program development by stepwise refinement"
+[8]: https://www.omg.org/mda/?utm_source=chatgpt.com "Model Driven Architecture (MDA)"
+[9]: https://www.state-machine.com/doc/Harel87.pdf?utm_source=chatgpt.com "Statecharts: A Visual Formalism for Complex Systems"
+[10]: https://en.wikipedia.org/wiki/Partial-order_planning?utm_source=chatgpt.com "Partial-order planning"
+[11]: https://ojs.aaai.org/aimagazine/index.php/aimagazine/article/download/1295/1196?utm_source=chatgpt.com "Refinement Planning as a Unifying Framework for ..."
+[12]: https://www.thoughtworks.com/en-us/radar/techniques/spec-driven-development?utm_source=chatgpt.com "Spec-driven development | Technology Radar"
+[13]: https://arxiv.org/abs/2305.10601?utm_source=chatgpt.com "Deliberate Problem Solving with Large Language Models"

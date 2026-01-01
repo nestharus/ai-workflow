@@ -90,11 +90,12 @@ Return a JSON result with exactly this structure:
 3. **Analyze Tasks**: Understand each task's requirements from `content`
 4. **Apply Changes**: Make edits to the file content
 5. **Generate Reply**: If PR thread tasks exist, compose response for `deferred_reply`
-6. **Return Result**: Output the JSON result with file path, status, changes_made, and deferred_reply
+6. **Return Result**: Output the JSON result with file path, status, changes_made, deferred_reply
 
 ## Example Workflow
 
 Input context:
+
 ```json
 {
   "file_path": "src/api/handler.py",
@@ -111,6 +112,7 @@ Input context:
 ```
 
 Expected output:
+
 ```json
 {
   "file_path": "src/api/handler.py",

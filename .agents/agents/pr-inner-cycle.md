@@ -100,7 +100,7 @@ Determine whether to use PR threads or spawn CODERABBIT-RUNNER as the review sou
 
 ### Decision Logic
 
-```
+```text
 IF mode == "worktree" AND cycle == 1:
     Run: uv run pr fetch-threads --pr {pr_number} --output-dir {tmp_folder}
 
@@ -133,8 +133,9 @@ Proceed directly to Step 3 (aggregation).
 
 Spawn CODERABBIT-RUNNER agent with the appropriate review arguments and wait synchronously:
 
+Build review_args based on review_source:
+
 ```bash
-# Build review_args based on review_source:
 
 # For coderabbit_base (worktree cycle 1, no threads):
 review_args="--base {base_branch}"
@@ -147,8 +148,11 @@ review_args="--base-commit HEAD~1"
 cd {working_dir} && git status --porcelain
 # If output exists: review_args="--type uncommitted"
 # If no output: review_args="--base-commit HEAD~1"
+```
 
-# Spawn CODERABBIT-RUNNER agent with context:
+Spawn CODERABBIT-RUNNER agent with context:
+
+```json
 {
   "working_dir": "{working_dir}",
   "review_dir": "{review_dir}",
@@ -157,6 +161,7 @@ cd {working_dir} && git status --porcelain
 ```
 
 The CODERABBIT-RUNNER agent executes:
+
 ```bash
 cd {working_dir} && uv run review.coderabbit --output-dir {review_dir} -- {review_args}
 ```
@@ -169,7 +174,8 @@ uv run pr extract-review-path
 
 Store the `review_file` path for later cleanup.
 
-**Error Handling**: If CODERABBIT-RUNNER fails or no review file is produced, set `status = "error"` and proceed to cleanup (Step 7).
+**Error Handling**: If CODERABBIT-RUNNER fails or no review file is produced, set
+`status = "error"` and proceed to cleanup (Step 7).
 
 ---
 
@@ -190,6 +196,7 @@ This creates `coderabbit_*.json` files in `{tmp_folder}`.
 ### Aggregate All Tasks
 
 List all task files in `{tmp_folder}`:
+
 - `thread_*.json` (from PR threads)
 - `local_*.json` (from local tasks text)
 - `coderabbit_*.json` (from CodeRabbit review)
@@ -273,9 +280,9 @@ For each file in `tasks_by_file` (excluding `__global__`):
 }
 ```
 
-3. Spawn FILE-HANDLER agent with the context (all file handlers run in parallel)
+1. Spawn FILE-HANDLER agent with the context (all file handlers run in parallel)
 
-4. Collect results from each handler (including `handler_duration_ms`):
+2. Collect results from each handler (including `handler_duration_ms`):
    - `changes_made`: Whether the file was modified
    - `deferred_reply`: Reply text for PR threads (worktree mode only)
    - `required_files`: Additional files needed (triggers follow-up work)
@@ -288,7 +295,7 @@ Record `parallel_end_time` after all handlers complete.
 If any FILE-HANDLER returns `required_files`:
 
 1. Collect all scope expansion requests
-2. After parallel handlers complete, run follow-up tasks **sequentially**
+2. After parallel handlers complete, run follow-up tasks in sequence
 3. Follow-up handlers receive expanded `allowed_files` including the original file plus required files
 4. No parallel overlap allowed for scope expansion work
 
@@ -349,8 +356,8 @@ For each changed Python file:
 }
 ```
 
-3. Spawn TEST-FIXER agents in parallel
-4. Collect test results
+1. Spawn TEST-FIXER agents in parallel
+2. Collect test results
 
 ### Handle Test Failures
 
@@ -384,6 +391,7 @@ cd {working_dir} && git commit -m "Review cycle {cycle}: applied {tasks_processe
 ```
 
 Capture the commit SHA and set:
+
 - `committed = true`
 - `commit_sha = <captured SHA>`
 
@@ -455,16 +463,19 @@ This removes all `thread_*.json`, `local_*.json`, `coderabbit_*.json`, and `aggr
 ### Allowed Operations
 
 You MAY:
+
 - Use `ls`, `find`, `stat`, `wc` scoped to `{tmp_folder}` and `{review_dir}`
 - Read/parse JSON artifacts in `{tmp_folder}` and `{review_dir}`
 - Use `jq` to extract keys/paths from artifact JSON
 - Run `git status --porcelain`, `git diff --stat`, `git diff --name-only`
 - Run `git ls-files`, `git rev-parse`, `git branch --show-current`
-- Run: `uv run pr fetch-threads`, `uv run review.coderabbit`, `uv run pr parse-coderabbit`, `uv run pr aggregate-tasks`, `uv run pr post-deferred-replies`, `uv run pr extract-review-path`
+- Run: `uv run pr fetch-threads`, `uv run review.coderabbit`, `uv run pr parse-coderabbit`,
+  `uv run pr aggregate-tasks`, `uv run pr post-deferred-replies`, `uv run pr extract-review-path`
 
 ### Prohibited Operations
 
 You MUST NOT:
+
 - Read working tree source code files directly (delegate to FILE-HANDLER)
 - Use `git diff` without `--stat`/`--name-only`
 - Use `git show`, `git blame` (content-bearing)
@@ -478,6 +489,7 @@ You MUST NOT:
 ### Review Acquisition Errors
 
 If CodeRabbit fails or produces no output:
+
 - Set `status = "error"`
 - Set `error = "Review acquisition failed: <details>"`
 - Proceed to cleanup
@@ -485,6 +497,7 @@ If CodeRabbit fails or produces no output:
 ### Task Processing Errors
 
 If a FILE-HANDLER fails:
+
 - Log the error
 - Continue with remaining handlers (don't fail entire cycle)
 - Include error details in the result
@@ -492,6 +505,7 @@ If a FILE-HANDLER fails:
 ### Test Failures
 
 If tests fail after TEST-FIXER attempts:
+
 - Set `tests_passed = false`
 - If critical (blocking), set `status = "error"`
 - Otherwise, proceed with `status = "tasks_handled"`
@@ -499,6 +513,7 @@ If tests fail after TEST-FIXER attempts:
 ### Commit Errors
 
 If `git commit` fails:
+
 - Set `committed = false`
 - Set `error = "Commit failed: <details>"`
 - Proceed to cleanup

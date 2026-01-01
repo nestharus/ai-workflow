@@ -32,6 +32,7 @@ Working directory: /path/to/repo
 ## Output
 
 Only report unfixable items. Include:
+
 - File and line number
 - Error code
 - What you tried
@@ -41,10 +42,10 @@ Do not report what was fixed.
 
 ## Rules
 
-* **NEVER** modify lint rules, exclusions, ignore patterns, or lint script
+- **NEVER** modify lint rules, exclusions, ignore patterns, or lint script
   logic
-* **NEVER** add `# noqa`, `# type: ignore` without explicit justification
-  * this agent must not autonomously add suppressions
+- **NEVER** add `# noqa`, `# type: ignore` without explicit justification
+  - this agent must not autonomously add suppressions
 
 ## Inline Suppression Policy
 
@@ -54,19 +55,19 @@ pattern already has a configured exception.
 
 **Acceptable justification criteria** (suppression may be warranted):
 
-* Documented third-party library or mypy false positive with reference to
+- Documented third-party library or mypy false positive with reference to
   upstream issue or stub limitation
-* Known mypy limitation with a tracking issue (e.g., `# type: ignore[arg-type]
+- Known mypy limitation with a tracking issue (e.g., `# type: ignore[arg-type]
   # mypy#12345`)
-* Generated code or external constraints that cannot be modified
-* Explicit project decision documented in comments or ADRs
+- Generated code or external constraints that cannot be modified
+- Explicit project decision documented in comments or ADRs
 
 **Unacceptable justifications** (suppression NOT allowed):
 
-* Masking a real bug or type error to make CI pass
-* Avoiding a refactor that would properly fix the issue
-* Convenience or time pressure ("fix later")
-* No explanation or generic "doesn't work" comments
+- Masking a real bug or type error to make CI pass
+- Avoiding a refactor that would properly fix the issue
+- Convenience or time pressure ("fix later")
+- No explanation or generic "doesn't work" comments
 
 **Examples:**
 
@@ -97,13 +98,13 @@ inline suppression.
 
 ## Common Fix Patterns
 
-* **E501** (line too long): Wrap line, split string, use parentheses
-* **F401** (unused import): Remove the import
-* **I001** (unsorted imports): Run `ruff check --fix` or manually reorder
-* **TCH003**: Add `TYPE_CHECKING` import guard for type-only imports
-* **arg-type/return-value**: Fix the actual type issue, not suppress it
-* Docstrings: see `docs/development/python/python.docstrings-guide.yml`
-* Markdown: Wrap long lines, align bullet markers
+- **E501** (line too long): Wrap line, split string, use parentheses
+- **F401** (unused import): Remove the import
+- **I001** (unsorted imports): Run `ruff check --fix` or manually reorder
+- **TCH003**: Add `TYPE_CHECKING` import guard for type-only imports
+- **arg-type/return-value**: Fix the actual type issue, not suppress it
+- Docstrings: see `docs/development/python/python.docstrings-guide.yml`
+- Markdown: Wrap long lines, align bullet markers (asterisks)
 
 ## YAML Formatting
 
@@ -122,9 +123,9 @@ code: |
       return bar
 ```
 
-* Trailing whitespace in block scalars: remove the spaces, do NOT convert
+- Trailing whitespace in block scalars: remove the spaces, do NOT convert
   to quoted string
-* Avoid `''` for apostrophes, `\"` or `\n` escapes - use `|` block scalar
+- Avoid `''` for apostrophes, `\"` or `\n` escapes - use `|` block scalar
   instead
-* Single-line values with colons can use quotes: `text: 'Note: this
+- Single-line values with colons can use quotes: `text: 'Note: this
   works'`
