@@ -124,6 +124,7 @@ class MCPStdioManager:
         command: str | None = None,
         startup_timeout: float = 10.0,
         cwd: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
         """Initialize the MCP manager and start the subprocess.
 
@@ -132,6 +133,10 @@ class MCPStdioManager:
                 or 'uvx mcp-background-job'.
             startup_timeout: Seconds to wait for server startup.
             cwd: Working directory for the subprocess. Defaults to current directory.
+            env: Environment variables for the subprocess. If provided, these are
+                merged with os.environ (env values take precedence). This avoids
+                mutating the global os.environ and ensures proper isolation when
+                multiple servers are initialized concurrently.
 
         Raises:
             MCPError: If server fails to start or times out.
@@ -139,6 +144,7 @@ class MCPStdioManager:
         self._command = command or os.environ.get("MCP_COMMAND", self.DEFAULT_COMMAND)
         self._startup_timeout = startup_timeout
         self._cwd = cwd
+        self._env = env
         self._request_id = 0
         self._lock = threading.Lock()
         self._stderr_lock = threading.Lock()
@@ -338,6 +344,14 @@ class MCPStdioManager:
         try:
             # Parse command string into list for subprocess (shlex handles quotes/spaces)
             command_parts = shlex.split(self._command)
+
+            # Build subprocess environment: merge os.environ with custom env
+            # (custom takes precedence). This avoids mutating global os.environ
+            # and ensures isolation between servers
+            subprocess_env: dict[str, str] | None = None
+            if self._env:
+                subprocess_env = {**os.environ, **self._env}
+
             self._proc = subprocess.Popen(
                 command_parts,
                 stdin=subprocess.PIPE,
@@ -345,6 +359,7 @@ class MCPStdioManager:
                 stderr=subprocess.PIPE,
                 bufsize=0,
                 cwd=self._cwd,
+                env=subprocess_env,
             )
         except OSError as e:
             raise MCPError(f"Failed to start MCP server: {e}") from e

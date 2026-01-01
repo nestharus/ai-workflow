@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import os
+import socket
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -9,6 +13,58 @@ import pytest
 
 if TYPE_CHECKING:
     from pyfakefs.fake_filesystem import FakeFilesystem
+
+
+def wait_for_server_ready(
+    socket_path: str,
+    timeout: float,
+    poll_interval: float = 0.005,
+) -> bool:
+    """Wait until Unix socket server accepts connection and responds to health request.
+
+    This is a shared utility for testing socket server cold-start times.
+    It handles various error conditions during server startup.
+
+    Args:
+        socket_path: Path to the Unix domain socket.
+        timeout: Maximum time to wait in seconds.
+        poll_interval: Time between connection attempts in seconds.
+
+    Returns:
+        True if server became ready, False if timeout expired.
+    """
+    deadline = time.monotonic() + timeout
+
+    while time.monotonic() < deadline:
+        if not Path(socket_path).exists():
+            time.sleep(poll_interval)
+            continue
+
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+                sock.settimeout(min(1.0, max(0.0, deadline - time.monotonic())))
+                sock.connect(socket_path)
+                sock.sendall(b'{"method": "health", "id": "ready-check"}\n')
+                response = sock.recv(4096)
+
+                if response:
+                    try:
+                        data = json.loads(response.decode("utf-8"))
+                        # Check for success status in outer envelope
+                        # Response format: {"status": "success", "result": {"status": "ok", ...}}
+                        if data.get("status") == "success":
+                            result = data.get("result") or {}
+                            if result.get("status"):
+                                return True
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        # Response not valid JSON yet, continue polling
+                        pass
+        except (TimeoutError, ConnectionRefusedError, FileNotFoundError, OSError):
+            pass
+
+        time.sleep(poll_interval)
+
+    return False
 
 
 # --- Patch thinc's fix_random_seed to handle seeds >= 2**32 ---

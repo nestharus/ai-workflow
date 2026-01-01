@@ -12,7 +12,7 @@ sections:
     items:
   - id: overview-purpose
     text: The mcp-background-job server is now managed via the MCP bridge service, which exposes the
-      background-job MCP server behind an HTTP/Unix socket interface. The bridge provides transport
+      background-job MCP server behind a Unix socket interface. The bridge provides transport
       persistence that survives Bash tool timeouts, enabling reliable long-running process management.
   - id: overview-use-case
     text: Callers should NOT attempt to start their own mcp-background-job subprocess when using this
@@ -21,10 +21,11 @@ sections:
   - id: overview-architecture
     text: |
       The system uses a layered architecture:
-      - Bridge layer (scripts/mcp/): Transport-only REST-to-MCP translation.
-        Converts HTTP requests to MCP protocol calls.
+      - Bridge layer (scripts/servers/mcp/): Transport-only socket-to-MCP translation.
+        Native Unix socket server using newline-delimited JSON (JSONL) protocol.
+        Converts socket requests to MCP protocol calls. No HTTP endpoints.
       - Client layer (scripts/dev/mcp_agent_client.py): Tool-specific normalization
-        for background-job operations.
+        for background-job operations. Uses socket client for communication.
   - id: prerequisites
     index: 2
     title: Prerequisites
@@ -37,8 +38,8 @@ sections:
     text: uv must be installed for running dev.ensure-env which starts the development environment
       including the MCP bridge container.
   - id: prereq-curl
-    text: curl must be available on the system. The HttpMCPClient uses curl for Unix socket communication
-      with the bridge.
+    text: "curl is no longer required for bridge communication. The client uses native Python
+      sockets. curl may still be useful for manual testing via socat or similar tools."
   - id: configuration
     index: 3
     title: Configuration
@@ -64,14 +65,16 @@ sections:
   - id: config-env-vars
     text: |
       Environment variables for client configuration:
-      - MCP_BRIDGE_SOCKET: Unix socket path (preferred, takes precedence over URL)
-      - MCP_BRIDGE_URL: HTTP URL fallback (default: http://localhost:8080)
+      - MCP_BRIDGE_SOCKET: Unix socket path (primary configuration method)
+      Note: MCP_BRIDGE_URL is deprecated and no longer supported by the bridge server.
+      If HTTP access is needed, implement a separate HTTP-to-socket proxy.
   - id: config-cli-client
     text: |
-      The agent.mcp CLI interacts with the bridge. Default socket location is /tmp/mcp-sockets/mcp-bridge.sock.
-      Supports --socket-path and --server-url CLI flags for explicit configuration.
+      The agent.mcp CLI interacts with the bridge. Default socket location is /tmp/mcp-sockets/mcp-bridge.sock
+      (host-side path; inside the container the socket is at /tmp/mcp-bridge.sock).
+      Supports --socket-path CLI flag for explicit configuration.
       Precedence (highest to lowest): CLI flags > Environment variables > Defaults.
-      Full resolution order: --socket-path, MCP_BRIDGE_SOCKET, --server-url, MCP_BRIDGE_URL, default URL.
+      Full resolution order: --socket-path, MCP_BRIDGE_SOCKET, default socket path.
   - id: available-tools
     index: 4
     title: Available Tools
@@ -99,7 +102,7 @@ sections:
     category: standard
     items:
   - id: validation-intro
-    text: Validation is performed via the bridge health endpoint to confirm the MCP server is accessible
+    text: Validation is performed via the socket health request to confirm the MCP server is accessible
       and operational.
   - id: validation-step-1
     text: |
@@ -113,11 +116,17 @@ sections:
       ```
   - id: validation-step-2
     text: |
-      2. Verify bridge health via /health endpoint:
+      2. Verify bridge health via socket health request:
       ```
-      curl --unix-socket /tmp/mcp-sockets/mcp-bridge.sock http://localhost/health
+      python << 'EOF'
+      import socket, json
+      with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+          s.connect('/tmp/mcp-sockets/mcp-bridge.sock')
+          s.sendall(b'{"method":"health","id":"test"}\n')
+          print(s.recv(4096).decode())
+      EOF
       ```
-      Expected response: {"status": "ok", "provider": "running"}
+      Expected response: {"id": "test", "status": "success", "result": {"status": "ok", "provider": "running"}}
   - id: validation-step-3
     text: |
       3. Test tool call via bridge:
@@ -140,5 +149,7 @@ sections:
     text: 'Error: Permission denied accessing socket. Solution: Ensure /tmp/mcp-sockets directory exists
       and is writable. Container runs as appuser (UID 10000).'
   - id: trouble-http-fallback
-    text: 'For non-Docker workflows, use HTTP mode: Set MCP_BRIDGE_URL=http://localhost:8080 environment
-      variable, or use --server-url http://localhost:8080 CLI flag.'
+    text: "HTTP mode is no longer provided by the bridge server. For non-Docker workflows,
+      run the bridge natively on the host using: python -m scripts.servers.mcp.server
+      with MCP_BRIDGE_SOCKET set to a local socket path. If HTTP access is needed,
+      implement a separate HTTP-to-socket proxy."

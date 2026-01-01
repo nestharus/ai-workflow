@@ -181,3 +181,78 @@ class TestCreateApp:
         assert isinstance(app, FastAPI)
         assert app.title == "test_app"
         assert app.version == "1.0.0"
+
+
+class TestLifespanPartialInitialization:
+    """Tests for lifespan with partial resource initialization."""
+
+    @pytest.mark.asyncio
+    async def test_lifespan_handles_elasticsearch_initialization_failure(
+        self,
+    ) -> None:
+        """Test that lifespan closes SurrealDB when Elasticsearch fails to initialize."""
+        from app.core.factory import _lifespan
+
+        settings = _MockSettings()
+
+        with (
+            patch("app.core.factory.create_surrealdb_pool", new_callable=AsyncMock) as mock_surreal,
+            patch(
+                "app.core.factory.create_elasticsearch_wrapper", new_callable=AsyncMock
+            ) as mock_es,
+            patch("app.core.factory.create_duckdb_client", new_callable=AsyncMock),
+        ):
+            mock_surreal_instance = AsyncMock()
+            mock_surreal.return_value = mock_surreal_instance
+
+            # Make Elasticsearch initialization fail
+            mock_es.side_effect = Exception("Elasticsearch initialization failed")
+
+            lifespan = _lifespan(settings)
+            app = FastAPI()
+
+            with pytest.raises(Exception, match="Elasticsearch initialization failed"):
+                async with lifespan(app):
+                    pass
+
+            # Verify SurrealDB was created
+            mock_surreal.assert_called_once()
+            # Verify SurrealDB was closed during cleanup
+            mock_surreal_instance.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_lifespan_handles_duckdb_initialization_failure(self) -> None:
+        """Test that lifespan closes resources when DuckDB fails to initialize."""
+        from app.core.factory import _lifespan
+
+        settings = _MockSettings()
+
+        with (
+            patch("app.core.factory.create_surrealdb_pool", new_callable=AsyncMock) as mock_surreal,
+            patch(
+                "app.core.factory.create_elasticsearch_wrapper", new_callable=AsyncMock
+            ) as mock_es,
+            patch("app.core.factory.create_duckdb_client", new_callable=AsyncMock) as mock_duckdb,
+        ):
+            mock_surreal_instance = AsyncMock()
+            mock_surreal.return_value = mock_surreal_instance
+
+            mock_es_instance = AsyncMock()
+            mock_es.return_value = mock_es_instance
+
+            # Make DuckDB initialization fail
+            mock_duckdb.side_effect = Exception("DuckDB initialization failed")
+
+            lifespan = _lifespan(settings)
+            app = FastAPI()
+
+            with pytest.raises(Exception, match="DuckDB initialization failed"):
+                async with lifespan(app):
+                    pass
+
+            # Verify SurrealDB and Elasticsearch were created
+            mock_surreal.assert_called_once()
+            mock_es.assert_called_once()
+            # Verify both were closed during cleanup
+            mock_surreal_instance.close.assert_called_once()
+            mock_es_instance.close.assert_called_once()

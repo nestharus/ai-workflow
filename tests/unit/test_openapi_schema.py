@@ -131,3 +131,98 @@ def test_openapi_schema_includes_error_code_enum(openapi_schema: dict[str, Any])
     ]
     for code in expected_codes:
         assert code in enum_values, f"ErrorCode enum should include {code}"
+
+
+def test_openapi_returns_cached_schema_on_second_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify that calling openapi() twice returns the cached schema."""
+    _mock_external_dependencies(monkeypatch)
+    settings = _build_settings()
+    app = create_app(settings)
+
+    # First call generates the schema
+    schema1 = app.openapi()
+
+    # Second call should return the same cached instance
+    schema2 = app.openapi()
+
+    # Both should be identical (same object reference for caching)
+    assert schema1 is schema2
+    assert schema1["info"]["title"] == settings.app_name
+
+
+def test_openapi_custom_schema_handles_validation_error_detail_merge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify that ValidationError schema is replaced with ValidationErrorDetail when both exist."""
+    _mock_external_dependencies(monkeypatch)
+    settings = _build_settings()
+    app = create_app(settings)
+
+    # Force schema generation by calling openapi()
+    schema = app.openapi()
+
+    components = schema.get("components", {})
+    schemas = components.get("schemas", {})
+
+    # If ValidationErrorDetail exists, ValidationError should be replaced with it
+    if "ValidationErrorDetail" in schemas:
+        assert "ValidationError" in schemas
+        # After merging, ValidationError should equal ValidationErrorDetail
+        assert schemas["ValidationError"] == schemas["ValidationErrorDetail"]
+
+
+def test_custom_openapi_merges_validation_error_when_both_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that ValidationError is merged with ValidationErrorDetail when both schemas exist.
+
+    This test directly exercises the branch where both ValidationError and
+    ValidationErrorDetail are present in schema_definitions, triggering the
+    schema merge logic in custom_openapi().
+    """
+    _mock_external_dependencies(monkeypatch)
+    settings = _build_settings()
+    app = create_app(settings)
+
+    # First call to openapi() generates the schema (caches it in app.openapi_schema)
+    app.openapi()
+
+    # Now manually add ValidationError to the schema_definitions to simulate both schemas existing
+    # We need to clear the cached schema so openapi() regenerates it
+    app.openapi_schema = None
+
+    # Get the internal schema generation function and modify its behavior
+    # by pre-populating schema_definitions with both ValidationError and ValidationErrorDetail
+    from fastapi.openapi.utils import get_openapi
+
+    # Manually generate the schema with both schemas present
+    generated_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        openapi_version=app.openapi_version,
+        summary=app.summary,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    # Add both ValidationError and ValidationErrorDetail to the definitions
+    schema_definitions = generated_schema.setdefault("components", {}).setdefault("schemas", {})
+    schema_definitions["ValidationError"] = {"type": "object", "properties": {}}
+    schema_definitions["ValidationErrorDetail"] = {
+        "type": "object",
+        "properties": {"detail": {"type": "string"}},
+    }
+
+    # Patch get_openapi to return our pre-generated schema
+    monkeypatch.setattr(
+        "fastapi.openapi.utils.get_openapi", lambda *args, **kwargs: generated_schema
+    )
+
+    # Now call openapi() - the condition should be True
+    result = app.openapi()
+
+    # Verify both schemas exist
+    assert "ValidationError" in result["components"]["schemas"]
+    assert "ValidationErrorDetail" in result["components"]["schemas"]

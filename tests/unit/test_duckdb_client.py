@@ -285,3 +285,37 @@ class TestDuckDBInitErrors:
 
         with pytest.raises(DuckDBConnectionError, match="Connection failed unexpectedly"):
             await client.init()
+
+
+class TestDuckDBCloseRaceCondition:
+    """Tests for close() race condition handling."""
+
+    @pytest.mark.asyncio
+    async def test_close_handles_connection_becoming_none_during_close(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that close handles the race condition where connection becomes None during close.
+
+        This tests the inner check in _close_sync which handles the case where
+        self._connection becomes None between the outer check in close() and
+        the inner check in _close_sync().
+        """
+        import anyio
+
+        client = DuckDBClient(csv_data_path=tmp_path)
+        await client.init()
+
+        original_run_sync = anyio.to_thread.run_sync
+
+        async def patched_run_sync(fn: object, *args: object, **kwargs: object) -> object:
+            # Simulate race condition: set connection to None before _close_sync executes
+            client._connection = None
+            # Now call the actual _close_sync to verify it handles None gracefully
+            return await original_run_sync(fn, *args, **kwargs)
+
+        monkeypatch.setattr(anyio.to_thread, "run_sync", patched_run_sync)
+
+        # This should not raise even with the race condition
+        await client.close()
+        assert client._connection is None
+        assert client._initialized is False

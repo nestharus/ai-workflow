@@ -14,9 +14,15 @@ from typing import Any
 
 import httpx
 
+from scripts.servers.mcp.manager import MCPError
 
-class MCPSSEError(Exception):
-    """Raised when MCP SSE communication fails."""
+
+class MCPSSEError(MCPError):
+    """Raised when MCP SSE communication fails.
+
+    Inherits from MCPError so callers can catch all MCP-related errors
+    with a single exception type.
+    """
 
     pass
 
