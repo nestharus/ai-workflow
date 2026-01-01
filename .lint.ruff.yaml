@@ -3,6 +3,9 @@
 # Files must match at least one inclusion pattern to be checked
 
 included_paths:
+  # Exclusions (must come first)
+  - "!**/.venv/**"
+  # Inclusions
   - "app/**/*.py"
   - "scripts/**/*.py"
   - "tests/**/*.py"

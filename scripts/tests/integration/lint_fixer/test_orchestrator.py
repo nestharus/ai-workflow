@@ -187,7 +187,7 @@ class TestLintFixCLI:
             return MagicMock(returncode=0, stdout="", stderr="")
 
         with patch("scripts.lint_fixer.orchestrator.subprocess.run", mock_subprocess_run):
-            result = lint_fix_main(["--worktree", str(tmp_path), "--files", "fixable.py"])
+            lint_fix_main(["--worktree", str(tmp_path), "--files", "fixable.py"])
 
         # Agent should have fixed the error
         assert bad_file.read_text() == "x = 1\n"
@@ -239,7 +239,7 @@ class TestLintFixCLI:
             return MagicMock(returncode=0, stdout="", stderr="")
 
         with patch("scripts.lint_fixer.orchestrator.subprocess.run", mock_subprocess_run):
-            result = lint_fix_main(["--worktree", str(tmp_path), "--files", "unfixable.py"])
+            lint_fix_main(["--worktree", str(tmp_path), "--files", "unfixable.py"])
 
         # File should be unchanged
         assert bad_file.read_text() == "# Complex unfixable issue\n"
@@ -330,7 +330,7 @@ class TestLintFixCLI:
             return MagicMock(returncode=0, stdout="", stderr="")
 
         with patch("scripts.lint_fixer.orchestrator.subprocess.run", mock_subprocess_run):
-            result = lint_fix_main(
+            lint_fix_main(
                 [
                     "--worktree",
                     str(tmp_path),
@@ -423,3 +423,294 @@ class TestOrchestratorYamlParsing:
         filtered = filter_lint_output_for_files(yaml_output, ["test.py"])
         assert "fix_message" in filtered
         assert "Remove unused import" in filtered
+
+
+class TestPerLinterScopeTracking:
+    """Tests for per-linter independent scope tracking."""
+
+    def test_multi_linter_independent_scope_with_investigator(self, tmp_path: Path) -> None:
+        """Test that each linter maintains independent scope and investigator integration works.
+
+        Scenario:
+        - 2 files: file1.py, file2.py
+        - 3 linters: ruff, mypy, detect-secrets
+
+        Flow:
+        1. Initial: ruff error on file1, no other errors yet (ruff is mutating, aborts)
+        2. Agent fixes file1 → ruff re-runs on file1 → error remains
+        3. Ruff passes → mypy+detect-secrets run on original scope
+        4. mypy error on file2, detect-secrets passes
+        5. Agent fixes file2 → mypy re-runs on file2 → passes
+        6. file1 stuck for ruff → investigator
+        7. After investigator, file1 re-runs through all linters → all pass
+        8. Final: no errors
+        """
+        file1 = tmp_path / "file1.py"
+        file2 = tmp_path / "file2.py"
+        file1.write_text("# file1 with ruff issue\n")
+        file2.write_text("# file2 with mypy issue\n")
+
+        # Track state across mock calls
+        state = {
+            "lint_calls": 0,
+            "agent_calls": 0,
+            "investigator_calls": 0,
+            "ruff_errors_file1": True,  # file1 has ruff error initially
+            "mypy_errors_file2": True,  # file2 has mypy error
+        }
+
+        def mock_subprocess_run(cmd, **kwargs):
+            """Complex mock simulating multi-linter, multi-file scenario."""
+            cmd_str = " ".join(str(c) for c in cmd)
+
+            if "lint" in cmd:
+                state["lint_calls"] += 1
+
+                # Determine which linters are being run
+                running_ruff = "ruff" in cmd or (
+                    "ruff" not in cmd and "mypy" not in cmd and "detect-secrets" not in cmd
+                )
+                running_mypy = "mypy" in cmd or (
+                    "ruff" not in cmd and "mypy" not in cmd and "detect-secrets" not in cmd
+                )
+
+                # Check which files are being linted
+                linting_file1 = "file1.py" in cmd or "--files" not in cmd
+                linting_file2 = "file2.py" in cmd or "--files" not in cmd
+
+                errors = []
+
+                # Ruff errors on file1
+                if running_ruff and linting_file1 and state["ruff_errors_file1"]:
+                    errors.append(
+                        {
+                            "linter": "ruff",
+                            "file": "file1.py",
+                            "line": 1,
+                            "column": 1,
+                            "code": "E501",
+                            "message": "Line too long",
+                            "fix_available": False,
+                        }
+                    )
+
+                # Mypy errors on file2
+                if running_mypy and linting_file2 and state["mypy_errors_file2"]:
+                    errors.append(
+                        {
+                            "linter": "mypy",
+                            "file": "file2.py",
+                            "line": 1,
+                            "column": 1,
+                            "code": "error",
+                            "message": "Type error",
+                            "fix_available": False,
+                        }
+                    )
+
+                # detect-secrets never has errors in this scenario
+
+                if errors:
+                    yaml_lines = ["errors:"]
+                    for e in errors:
+                        yaml_lines.append(f"  - linter: {e['linter']}")
+                        yaml_lines.append(f"    file: {e['file']}")
+                        yaml_lines.append(f"    line: {e['line']}")
+                        yaml_lines.append(f"    column: {e['column']}")
+                        yaml_lines.append(f"    code: {e['code']}")
+                        yaml_lines.append(f"    message: {e['message']}")
+                        yaml_lines.append(f"    fix_available: {str(e['fix_available']).lower()}")
+                    return MagicMock(
+                        returncode=1,
+                        stdout="\n".join(yaml_lines),
+                        stderr="",
+                    )
+                else:
+                    return MagicMock(returncode=0, stdout="errors: []", stderr="")
+
+            if "lint-fixer" in cmd_str:
+                state["agent_calls"] += 1
+                # Agent can fix mypy error on file2, but not ruff error on file1
+                if state["mypy_errors_file2"]:
+                    file2.write_text("# file2 fixed by agent\n")
+                    state["mypy_errors_file2"] = False
+                return MagicMock(returncode=0, stdout="Agent attempted fixes", stderr="")
+
+            if "lint-investigator" in cmd_str:
+                state["investigator_calls"] += 1
+                # Investigator fixes ruff error on file1
+                file1.write_text("# file1 fixed by investigator\n")
+                state["ruff_errors_file1"] = False
+                return MagicMock(
+                    returncode=0,
+                    stdout="Investigator fixed file1",
+                    stderr="",
+                )
+
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("scripts.lint_fixer.orchestrator.subprocess.run", mock_subprocess_run):
+            lint_fix_main(["--worktree", str(tmp_path), "--files", "file1.py", "file2.py"])
+
+        # Verify the flow completed
+        assert state["agent_calls"] >= 1, "Agent should have been called"
+        assert state["investigator_calls"] >= 1, "Investigator should have been called"
+
+        # Verify files were modified
+        assert "fixed by agent" in file2.read_text(), "file2 should be fixed by agent"
+        assert "fixed by investigator" in file1.read_text(), "file1 should be fixed by investigator"
+
+    def test_per_linter_changed_files_tracking(self, tmp_path: Path) -> None:
+        """Test that changed files are tracked independently per linter.
+
+        Scenario:
+        - 3 files: a.py, b.py, c.py
+        - ruff has errors on a.py, b.py
+        - mypy has errors on b.py, c.py
+        - Agent fixes a.py and c.py (not b.py)
+
+        Expected:
+        - ruff re-runs on a.py only (its changed file)
+        - mypy re-runs on c.py only (its changed file)
+        - b.py remains in error lists for both (stuck)
+        """
+        file_a = tmp_path / "a.py"
+        file_b = tmp_path / "b.py"
+        file_c = tmp_path / "c.py"
+        file_a.write_text("# a\n")
+        file_b.write_text("# b\n")
+        file_c.write_text("# c\n")
+
+        lint_call_files: list[tuple[list[str] | None, list[str] | None]] = []
+        iteration = [0]
+
+        def mock_subprocess_run(cmd, **kwargs):
+            cmd_str = " ".join(str(c) for c in cmd)
+
+            if "lint" in cmd:
+                # Extract files and linters from command
+                files_in_cmd = []
+                linters_in_cmd = []
+                in_files = False
+                for c in cmd:
+                    c_str = str(c)
+                    if c_str == "--files":
+                        in_files = True
+                    elif in_files and not c_str.startswith("-"):
+                        files_in_cmd.append(c_str)
+                    elif c_str in ("ruff", "mypy", "detect-secrets"):
+                        linters_in_cmd.append(c_str)
+
+                lint_call_files.append(
+                    (files_in_cmd if files_in_cmd else None, linters_in_cmd or None)
+                )
+
+                if iteration[0] == 0:
+                    # Initial run: ruff errors on a, b; mypy errors on b, c
+                    return MagicMock(
+                        returncode=1,
+                        stdout="""errors:
+  - linter: ruff
+    file: a.py
+    line: 1
+    column: 1
+    code: E501
+    message: error
+    fix_available: false
+  - linter: ruff
+    file: b.py
+    line: 1
+    column: 1
+    code: E501
+    message: error
+    fix_available: false
+  - linter: mypy
+    file: b.py
+    line: 1
+    column: 1
+    code: error
+    message: error
+    fix_available: false
+  - linter: mypy
+    file: c.py
+    line: 1
+    column: 1
+    code: error
+    message: error
+    fix_available: false
+""",
+                        stderr="",
+                    )
+                elif iteration[0] == 1:
+                    # After first agent run: check what's being re-run
+                    # ruff re-run on a.py - passes
+                    if (
+                        "ruff" in linters_in_cmd
+                        and "a.py" in files_in_cmd
+                        and "b.py" not in files_in_cmd
+                    ):
+                        return MagicMock(returncode=0, stdout="errors: []", stderr="")
+                    # mypy re-run on c.py - passes
+                    if (
+                        "mypy" in linters_in_cmd
+                        and "c.py" in files_in_cmd
+                        and "b.py" not in files_in_cmd
+                    ):
+                        return MagicMock(returncode=0, stdout="errors: []", stderr="")
+                    # Default: still errors on b.py
+                    return MagicMock(
+                        returncode=1,
+                        stdout="""errors:
+  - linter: ruff
+    file: b.py
+    line: 1
+    column: 1
+    code: E501
+    message: error
+    fix_available: false
+""",
+                        stderr="",
+                    )
+                else:
+                    return MagicMock(returncode=0, stdout="errors: []", stderr="")
+
+            if "lint-fixer" in cmd_str:
+                iteration[0] += 1
+                if iteration[0] == 1:
+                    # Agent fixes a.py and c.py, not b.py
+                    file_a.write_text("# a fixed\n")
+                    file_c.write_text("# c fixed\n")
+                return MagicMock(returncode=0, stdout="Fixed", stderr="")
+
+            if "lint-investigator" in cmd_str:
+                return MagicMock(returncode=0, stdout="Investigated", stderr="")
+
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("scripts.lint_fixer.orchestrator.subprocess.run", mock_subprocess_run):
+            lint_fix_main(["--worktree", str(tmp_path), "--files", "a.py", "b.py", "c.py"])
+
+        # Verify that re-runs happened with per-linter file lists
+        # After iteration 1, we should see:
+        # - ruff re-run on [a.py] only (not b.py, since b.py didn't change)
+        # - mypy re-run on [c.py] only (not b.py, since b.py didn't change)
+        ruff_reruns = [
+            (files, linters)
+            for files, linters in lint_call_files
+            if linters and "ruff" in linters and files
+        ]
+        mypy_reruns = [
+            (files, linters)
+            for files, linters in lint_call_files
+            if linters and "mypy" in linters and files
+        ]
+
+        # At least one ruff re-run should be on a.py only
+        assert any("a.py" in files and "b.py" not in files for files, _ in ruff_reruns), (
+            f"ruff should re-run on a.py only, got: {ruff_reruns}"
+        )
+
+        # At least one mypy re-run should be on c.py only
+        assert any("c.py" in files and "b.py" not in files for files, _ in mypy_reruns), (
+            f"mypy should re-run on c.py only, got: {mypy_reruns}"
+        )

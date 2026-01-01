@@ -2,6 +2,8 @@
 # Paths to include for shell script linting (glob patterns)
 
 included_paths:
+  # Exclusions (must come first)
+  - "!**/.venv/**"
   # Root-level shell scripts
   - "*.sh"
   # Scripts directory

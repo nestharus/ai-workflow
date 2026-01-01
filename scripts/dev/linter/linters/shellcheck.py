@@ -3,8 +3,7 @@
 import json
 import subprocess
 import sys
-
-import yaml
+from typing import ClassVar
 
 from scripts.dev.linter.base import (
     REPO_ROOT,
@@ -12,12 +11,9 @@ from scripts.dev.linter.base import (
     LinterResult,
     LintError,
     get_executable,
-    is_path_included,
-    load_yaml_config,
 )
 
 SHELLCHECK_CLI_REQUIRED = "shellcheck CLI required to run lint"
-LINT_SHELLCHECK_CONFIG = REPO_ROOT / ".lint.shellcheck.yaml"
 
 
 def _parse_shellcheck_json(json_output: str) -> list[LintError]:
@@ -58,8 +54,10 @@ def _parse_shellcheck_json(json_output: str) -> list[LintError]:
 class ShellcheckLinter(BaseLinter):
     """Run shellcheck on shell scripts."""
 
-    name = "shellcheck"
-    supports_file_filtering = True
+    name: ClassVar[str] = "shellcheck"
+    config_file: ClassVar[str] = ".lint.shellcheck.yaml"
+    extensions: ClassVar[list[str]] = [".sh"]
+    supports_file_filtering: ClassVar[bool] = True
 
     def run(self, files: list[str] | None = None) -> LinterResult:
         """Run shellcheck on shell scripts.
@@ -77,38 +75,12 @@ class ShellcheckLinter(BaseLinter):
             print(SHELLCHECK_CLI_REQUIRED, file=sys.stderr)
             return LinterResult(success=False, message=SHELLCHECK_CLI_REQUIRED)
 
-        # Load inclusion config
-        config = {}
-        if LINT_SHELLCHECK_CONFIG.exists():
-            try:
-                config = load_yaml_config(LINT_SHELLCHECK_CONFIG)
-            except (OSError, yaml.YAMLError) as e:
-                msg = f"Invalid or unreadable {LINT_SHELLCHECK_CONFIG.name}: {e}"
-                print(msg, file=sys.stderr)
-                return LinterResult(success=False, message=msg)
-
-        if not isinstance(config, dict):
-            config = {}
-        included_paths = config.get("included_paths", [])
-
         if files is not None:
-            # Filter to only .sh files that match include patterns
-            shell_files = [
-                str(REPO_ROOT / f)
-                for f in files
-                if f.endswith(".sh") and (not included_paths or is_path_included(f, included_paths))
-            ]
+            # Filter files using BaseLinter's filter_files
+            shell_files = [str(REPO_ROOT / f) for f in self.filter_files(files)]
         else:
-            # Recursively find all .sh files and filter by include patterns
-            shell_files = [
-                str(path)
-                for path in REPO_ROOT.rglob("*.sh")
-                if path.is_file()
-                and (
-                    not included_paths
-                    or is_path_included(str(path.relative_to(REPO_ROOT)), included_paths)
-                )
-            ]
+            # Discover files using BaseLinter's discover_files
+            shell_files = [str(REPO_ROOT / f) for f in self.discover_files()]
 
         if not shell_files:
             print("No shell scripts to check with shellcheck")

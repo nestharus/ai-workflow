@@ -390,7 +390,13 @@ def _output_yaml_results(results: dict[str, LinterResult]) -> None:
             print(f"    message: {msg}")
         print(f"    fix_available: {str(err['fix_available']).lower()}")
         if err["fix_message"]:
-            print(f"    fix_message: {err['fix_message']}")
+            fix_msg = str(err["fix_message"])
+            if "\n" in fix_msg or ":" in fix_msg or '"' in fix_msg:
+                print("    fix_message: |")
+                for line in fix_msg.splitlines():
+                    print(f"      {line}")
+            else:
+                print(f"    fix_message: {fix_msg}")
 
 
 if __name__ == "__main__":

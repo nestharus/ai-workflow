@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Script to automatically fix common mypy errors."""
 
+import logging
 import re
 import shutil
 import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent
+logger = logging.getLogger(__name__)
 
 
 def get_mypy_errors() -> str:
@@ -102,15 +104,15 @@ def main() -> None:
                 if file_path.exists():
                     files_to_fix.add(file_path)
 
-    print(f"Found {len(files_to_fix)} files with type-arg errors")
+    logger.info(f"Found {len(files_to_fix)} files with type-arg errors")
 
     fixed_count = 0
     for file_path in sorted(files_to_fix):
         if process_file(file_path):
-            print(f"Fixed: {file_path.relative_to(REPO_ROOT)}")
+            logger.info(f"Fixed: {file_path.relative_to(REPO_ROOT)}")
             fixed_count += 1
 
-    print(f"\nFixed {fixed_count} files")
+    logger.info(f"Fixed {fixed_count} files")
 
 
 if __name__ == "__main__":

@@ -2,19 +2,16 @@
 
 import json
 import subprocess
+from typing import ClassVar
 
 from scripts.dev.linter.base import (
-    REPO_ROOT,
     BaseLinter,
     LinterResult,
     LintError,
     get_executable,
-    is_path_included,
-    load_yaml_config,
 )
 
 ACTIONLINT_CLI_REQUIRED = "actionlint CLI required to run lint"
-LINT_ACTIONLINT_CONFIG = REPO_ROOT / ".lint.actionlint.yaml"
 
 
 def _parse_actionlint_json(json_output: str) -> list[LintError]:
@@ -54,8 +51,10 @@ def _parse_actionlint_json(json_output: str) -> list[LintError]:
 class ActionlintLinter(BaseLinter):
     """Run actionlint on GitHub Actions workflow files."""
 
-    name = "actionlint"
-    supports_file_filtering = True
+    name: ClassVar[str] = "actionlint"
+    config_file: ClassVar[str] = ".lint.actionlint.yaml"
+    extensions: ClassVar[list[str]] = [".yml", ".yaml"]
+    supports_file_filtering: ClassVar[bool] = True
 
     def run(self, files: list[str] | None = None) -> LinterResult:
         """Run actionlint on GitHub Actions workflow files.
@@ -67,45 +66,19 @@ class ActionlintLinter(BaseLinter):
             LinterResult indicating success/failure with structured errors.
         """
         actionlint_exe = get_executable("actionlint", ACTIONLINT_CLI_REQUIRED)
-        config = load_yaml_config(LINT_ACTIONLINT_CONFIG)
+        config = self.load_config()
         ignore_patterns: list[str] = config.get("ignore", [])
-        included_paths = config.get("included_paths", [])
-
-        workflows_dir = REPO_ROOT / ".github" / "workflows"
 
         if files is not None:
-            # Filter to only workflow YAML files that match include patterns
-            workflow_files = [
-                f
-                for f in files
-                if (f.endswith(".yml") or f.endswith(".yaml"))
-                and is_path_included(f, included_paths)
-            ]
-            if not workflow_files:
+            targets = self.filter_files(files)
+            if not targets:
                 print("No GitHub Actions workflow files to check with actionlint")
                 return LinterResult(success=True)
-            targets = workflow_files
         else:
-            if not workflows_dir.exists():
-                print("No .github/workflows/ directory found for actionlint scan")
-                return LinterResult(success=True)
-            # Enumerate workflow files, respecting include patterns
-            workflow_files = [
-                str(path)
-                for path in workflows_dir.rglob("*.yml")
-                if path.is_file()
-                and is_path_included(str(path.relative_to(REPO_ROOT)), included_paths)
-            ]
-            workflow_files.extend(
-                str(path)
-                for path in workflows_dir.rglob("*.yaml")
-                if path.is_file()
-                and is_path_included(str(path.relative_to(REPO_ROOT)), included_paths)
-            )
-            if not workflow_files:
+            targets = self.discover_files()
+            if not targets:
                 print("No workflow files found for actionlint scan")
                 return LinterResult(success=True)
-            targets = workflow_files
 
         cmd = [actionlint_exe, "-format", "{{json .}}"]
         for pattern in ignore_patterns:

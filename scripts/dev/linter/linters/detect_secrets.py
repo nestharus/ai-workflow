@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 from scripts.dev.linter.base import (
     REPO_ROOT,
@@ -12,7 +13,6 @@ from scripts.dev.linter.base import (
     LintError,
     get_executable,
     is_path_included,
-    load_yaml_config,
 )
 
 # Exit code 3 means baseline was updated (line numbers changed, no new secrets)
@@ -22,7 +22,6 @@ UV_CLI_REQUIRED = "uv CLI required to run lint"
 SECRETS_BASELINE = REPO_ROOT / ".secrets.baseline"
 # Relative path for detect-secrets to avoid machine-specific absolute paths in baseline
 SECRETS_BASELINE_RELATIVE = ".secrets.baseline"
-LINT_DETECT_SECRETS_CONFIG = REPO_ROOT / ".lint.detect-secrets.yaml"
 
 
 def _parse_detect_secrets_json(json_output: str) -> list[LintError]:
@@ -66,8 +65,35 @@ def _parse_detect_secrets_json(json_output: str) -> list[LintError]:
 class DetectSecretsLinter(BaseLinter):
     """Run detect-secrets to scan for secrets."""
 
-    name = "detect-secrets"
-    supports_file_filtering = True
+    name: ClassVar[str] = "detect-secrets"
+    config_file: ClassVar[str] = ".lint.detect-secrets.yaml"
+    extensions: ClassVar[list[str]] = ["*"]  # All files, with custom filtering for exclusions
+    supports_file_filtering: ClassVar[bool] = True
+
+    def _filter_with_exclusions(self, files: list[str]) -> list[str]:
+        """Filter files using both included_paths and custom exclusions.
+
+        Args:
+            files: List of files to filter.
+
+        Returns:
+            Filtered list of scannable files.
+        """
+        config = self.load_config()
+        excluded_extensions = set(config.get("excluded_extensions", []))
+        excluded_names = set(config.get("excluded_names", []))
+        included_paths = self.get_included_paths()
+
+        return [
+            f
+            for f in files
+            # Check inclusion via glob patterns
+            if (not included_paths or is_path_included(f, included_paths))
+            # Check extension exclusion
+            and not any(f.endswith(ext) for ext in excluded_extensions)
+            # Check name exclusion
+            and Path(f).name not in excluded_names
+        ]
 
     def run(self, files: list[str] | None = None) -> LinterResult:
         """Run detect-secrets to scan for secrets.
@@ -89,22 +115,7 @@ class DetectSecretsLinter(BaseLinter):
         uv_exe = get_executable("uv", UV_CLI_REQUIRED)
 
         if files is not None:
-            # Load config from .lint.detect-secrets.yaml
-            config = load_yaml_config(LINT_DETECT_SECRETS_CONFIG)
-            excluded_extensions = set(config.get("excluded_extensions", []))
-            excluded_names = set(config.get("excluded_names", []))
-            included_paths = config.get("included_paths", [])
-
-            scannable_files = [
-                f
-                for f in files
-                # Check inclusion via glob patterns
-                if (not included_paths or is_path_included(f, included_paths))
-                # Check extension exclusion
-                and not any(f.endswith(ext) for ext in excluded_extensions)
-                # Check name exclusion
-                and Path(f).name not in excluded_names
-            ]
+            scannable_files = self._filter_with_exclusions(files)
 
             if not scannable_files:
                 print("No scannable files for detect-secrets")
@@ -177,21 +188,7 @@ class DetectSecretsLinter(BaseLinter):
                 return LinterResult(success=True)
 
             # Apply config filters to all files
-            config = load_yaml_config(LINT_DETECT_SECRETS_CONFIG)
-            excluded_extensions = set(config.get("excluded_extensions", []))
-            excluded_names = set(config.get("excluded_names", []))
-            included_paths = config.get("included_paths", [])
-
-            scannable_files = [
-                f
-                for f in all_files
-                # Check inclusion via glob patterns
-                if (not included_paths or is_path_included(f, included_paths))
-                # Check extension exclusion
-                and not any(f.endswith(ext) for ext in excluded_extensions)
-                # Check name exclusion
-                and Path(f).name not in excluded_names
-            ]
+            scannable_files = self._filter_with_exclusions(all_files)
 
             if not scannable_files:
                 print("No scannable files for detect-secrets")

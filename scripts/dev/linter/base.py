@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import yaml
 
@@ -136,6 +136,10 @@ class BaseLinter(ABC):
 
     Attributes:
         name: Unique identifier for the linter.
+        config_file: Name of the config file (e.g., ".lint.ruff.yaml"). Set to None if
+            the linter doesn't use a config file.
+        extensions: List of file extensions this linter handles (e.g., [".py"]).
+            Use ["*"] for all files, or a callable for custom matching.
         supports_file_filtering: Whether the linter can filter specific files.
         mutates_files: Whether the linter modifies source files in-place.
             Defaults to False (read-only). Set to True for linters that format,
@@ -143,9 +147,103 @@ class BaseLinter(ABC):
             scheduler to sequence mutating linters before read-only linters.
     """
 
-    name: str
-    supports_file_filtering: bool = True
-    mutates_files: bool = False
+    name: ClassVar[str]
+    config_file: ClassVar[str | None] = None
+    extensions: ClassVar[list[str] | Callable[[str], bool]] = []
+    supports_file_filtering: ClassVar[bool] = True
+    mutates_files: ClassVar[bool] = False
+
+    @property
+    def config_path(self) -> Path | None:
+        """Get the full path to the linter's config file."""
+        if self.config_file is None:
+            return None
+        return REPO_ROOT / self.config_file
+
+    def matches_extension(self, filepath: str) -> bool:
+        """Check if a file matches this linter's extensions.
+
+        Args:
+            filepath: Path to the file.
+
+        Returns:
+            True if the file matches, False otherwise.
+        """
+        extensions = self.__class__.extensions
+        if callable(extensions):
+            return extensions(filepath)
+        if not extensions or extensions == ["*"]:
+            return True
+        return any(filepath.endswith(ext) for ext in extensions)
+
+    def load_config(self) -> dict[str, Any]:
+        """Load the linter's config file.
+
+        Returns:
+            Config dictionary, or empty dict if no config file or error.
+        """
+        if self.config_path is None or not self.config_path.exists():
+            return {}
+        try:
+            return load_yaml_config(self.config_path)
+        except (OSError, yaml.YAMLError):
+            return {}
+
+    def get_included_paths(self) -> list[str]:
+        """Get included_paths from the linter's config.
+
+        Returns:
+            List of glob patterns, or empty list if not configured.
+        """
+        config = self.load_config()
+        paths = config.get("included_paths", [])
+        if isinstance(paths, str):
+            return [paths]
+        if isinstance(paths, list):
+            return [p for p in paths if isinstance(p, str)]
+        return []
+
+    def filter_files(self, files: list[str]) -> list[str]:
+        """Filter files based on extensions and included_paths config.
+
+        Args:
+            files: List of file paths to filter.
+
+        Returns:
+            Filtered list of files that match this linter's criteria.
+        """
+        # First filter by extension
+        matching = [f for f in files if self.matches_extension(f)]
+        if not matching:
+            return []
+
+        # Then filter by included_paths
+        included_paths = self.get_included_paths()
+        if not included_paths:
+            return matching
+
+        return [f for f in matching if is_path_included(f, included_paths)]
+
+    def discover_files(self) -> list[str]:
+        """Discover all files matching this linter's patterns.
+
+        Uses included_paths from config to find files when no explicit
+        file list is provided.
+
+        Returns:
+            List of file paths relative to repo root.
+        """
+        included_paths = self.get_included_paths()
+        if not included_paths:
+            return []
+
+        # Determine extensions for filtering
+        extensions: list[str] | None = None
+        ext_value = self.__class__.extensions
+        if isinstance(ext_value, list) and ext_value and ext_value != ["*"]:
+            extensions = ext_value
+
+        return discover_files(included_paths, extensions=extensions)
 
     @abstractmethod
     def run(self, files: list[str] | None = None) -> LinterResult:
@@ -291,6 +389,64 @@ def is_path_included(path: str, glob_patterns: list[str]) -> bool:
     return included and not excluded
 
 
+def discover_files(
+    included_paths: list[str],
+    extensions: list[str] | None = None,
+    repo_root: Path | None = None,
+) -> list[str]:
+    """Discover files matching included_paths patterns.
+
+    This is the standard utility for all linters to discover files.
+    It respects included_paths patterns and automatically excludes .git directories.
+
+    Args:
+        included_paths: List of glob patterns (e.g., ["app/**/*.py", "scripts/**/*.py"]).
+            Patterns starting with "!" are exclusions.
+        extensions: Optional list of file extensions to filter by (e.g., [".py", ".pyi"]).
+            If None, all files matching patterns are returned.
+        repo_root: Repository root directory. Defaults to REPO_ROOT.
+
+    Returns:
+        List of file paths relative to repo_root that match the patterns.
+    """
+    if repo_root is None:
+        repo_root = REPO_ROOT
+
+    if not included_paths:
+        return []
+
+    # Separate inclusion and exclusion patterns
+    inclusion_patterns = [p for p in included_paths if not p.startswith("!")]
+    exclusion_patterns = [p[1:] for p in included_paths if p.startswith("!")]
+
+    # Extract directory prefixes from patterns to limit glob scope
+    # e.g., "app/**/*.py" -> we glob from "app" directory
+    discovered_files: set[str] = set()
+
+    for pattern in inclusion_patterns:
+        # Use Path.glob to find matching files
+        # Glob from repo root using the pattern directly
+        for path in repo_root.glob(pattern):
+            if not path.is_file():
+                continue
+            rel_path = str(path.relative_to(repo_root))
+            # Normalize path separators
+            rel_path = rel_path.replace("\\", "/")
+            # Filter by extension if specified
+            if extensions and not any(rel_path.endswith(ext) for ext in extensions):
+                continue
+            discovered_files.add(rel_path)
+
+    # Apply exclusion patterns
+    result = []
+    for file_path in sorted(discovered_files):
+        excluded = any(match_glob_pattern(file_path, excl) for excl in exclusion_patterns)
+        if not excluded:
+            result.append(file_path)
+
+    return result
+
+
 def _validate_list_config(
     config: dict[str, Any], key: str, linter_name: str
 ) -> tuple[list[str], LinterResult | None]:
@@ -370,9 +526,8 @@ def filter_files_with_config(
 def calculate_fileset(linter: BaseLinter, files: list[str] | None) -> set[str] | None:
     """Calculate the set of files a linter will process.
 
-    This function extracts and centralizes the file filtering logic from all linters,
-    enabling the parallel scheduler to skip linters with empty filesets and determine
-    file conflicts for optimization.
+    Uses the linter's filter_files() method which respects the linter's
+    config_file and extensions properties.
 
     Examples:
         >>> from scripts.dev.linter.linters.ruff import RuffLinter
@@ -402,349 +557,8 @@ def calculate_fileset(linter: BaseLinter, files: list[str] | None) -> set[str] |
     if files is None:
         return None
 
-    # Dispatch to linter-specific filtering based on linter name
-    dispatch: dict[str, Callable[[list[str]], set[str]]] = {
-        "ruff": _calculate_fileset_ruff,
-        "mypy": _calculate_fileset_mypy,
-        "astgrep": _calculate_fileset_astgrep,
-        "shellcheck": _calculate_fileset_shellcheck,
-        "yamllint": _calculate_fileset_yamllint,
-        "hadolint": _calculate_fileset_hadolint,
-        "pymarkdown": _calculate_fileset_pymarkdown,
-        "actionlint": _calculate_fileset_actionlint,
-        "dotenvlint": _calculate_fileset_dotenvlint,
-        "detect-secrets": _calculate_fileset_detect_secrets,
-        "gitleaks": _calculate_fileset_gitleaks,
-        "scripts": _calculate_fileset_scripts,
-        "trivy": _calculate_fileset_trivy,
-        "checkov": _calculate_fileset_checkov,
-    }
-
-    handler = dispatch.get(linter.name)
-    if handler is not None:
-        return handler(files)
-
-    # Unknown linter - return all files as fallback
-    return set(files)
-
-
-def _calculate_fileset_ruff(files: list[str]) -> set[str]:
-    """Calculate fileset for ruff linter.
-
-    Filters for .py files and applies included_paths from .lint.ruff.yaml config.
-    On config error, returns all .py files so the linter runs and surfaces the error.
-    """
-    py_files = [f for f in files if f.endswith(".py")]
-    if not py_files:
-        return set()
-
-    config_path = REPO_ROOT / ".lint.ruff.yaml"
-    filtered, error = filter_files_with_config(py_files, config_path, "ruff")
-    if error is not None:
-        return set(py_files)
-    return set(filtered)
-
-
-def _calculate_fileset_mypy(files: list[str]) -> set[str]:
-    """Calculate fileset for mypy linter.
-
-    Filters for .py files and applies included_paths from .lint.mypy.yaml config.
-    On config error, returns all .py files so the linter runs and surfaces the error.
-    """
-    py_files = [f for f in files if f.endswith(".py")]
-    if not py_files:
-        return set()
-
-    config_path = REPO_ROOT / ".lint.mypy.yaml"
-    filtered, error = filter_files_with_config(py_files, config_path, "mypy")
-    if error is not None:
-        return set(py_files)
-    return set(filtered)
-
-
-def _calculate_fileset_astgrep(files: list[str]) -> set[str]:
-    """Calculate fileset for astgrep linter.
-
-    Filters for .py/.pyi files and applies included_paths from .lint.astgrep.yaml config.
-    Uses custom glob matching logic.
-    """
-    config_path = REPO_ROOT / ".lint.astgrep.yaml"
-    included_paths: list[str] = []
-
-    if config_path.exists():
-        try:
-            config = load_yaml_config(config_path)
-            raw_paths = config.get("included_paths", [])
-            if isinstance(raw_paths, str):
-                included_paths = [raw_paths]
-            elif isinstance(raw_paths, list):
-                included_paths = [p for p in raw_paths if isinstance(p, str)]
-        except (OSError, yaml.YAMLError):
-            return set()
-
-    result = set()
-    for f in files:
-        if not f.endswith((".py", ".pyi")):
-            continue
-        # Check inclusion patterns
-        if included_paths and not is_path_included(f, included_paths):
-            continue
-        result.add(f)
-    return result
-
-
-def _calculate_fileset_shellcheck(files: list[str]) -> set[str]:
-    """Calculate fileset for shellcheck linter.
-
-    Filters for .sh files and applies included_paths from .lint.shellcheck.yaml config.
-    """
-    config_path = REPO_ROOT / ".lint.shellcheck.yaml"
-    included_paths: list[str] = []
-
-    if config_path.exists():
-        try:
-            config = load_yaml_config(config_path)
-            if isinstance(config, dict):
-                included_paths = config.get("included_paths", [])
-        except (OSError, yaml.YAMLError):
-            return set()
-
-    result = set()
-    for f in files:
-        if not f.endswith(".sh"):
-            continue
-        if included_paths and not is_path_included(f, included_paths):
-            continue
-        result.add(f)
-    return result
-
-
-def _calculate_fileset_yamllint(files: list[str]) -> set[str]:
-    """Calculate fileset for yamllint linter.
-
-    Filters for .yaml/.yml files and applies included_paths from .lint.yamllint.yaml config.
-    On config error, returns all .yaml/.yml files so the linter runs and surfaces the error.
-    """
-    yaml_files = {f for f in files if f.endswith(".yaml") or f.endswith(".yml")}
-    if not yaml_files:
-        return set()
-
-    config_path = REPO_ROOT / ".lint.yamllint.yaml"
-    try:
-        config = load_yaml_config(config_path)
-        included_paths = config.get("included_paths", [])
-    except (OSError, yaml.YAMLError):
-        return yaml_files
-
-    result = set()
-    for f in yaml_files:
-        if not is_path_included(f, included_paths):
-            continue
-        result.add(f)
-    return result
-
-
-def _calculate_fileset_hadolint(files: list[str]) -> set[str]:
-    """Calculate fileset for hadolint linter.
-
-    Filters for Dockerfile files and applies included_paths from .lint.hadolint.yaml config.
-    On config error, returns all Dockerfile files so the linter runs and surfaces the error.
-    """
-    dockerfile_files = {f for f in files if Path(f).name == "Dockerfile"}
-    if not dockerfile_files:
-        return set()
-
-    config_path = REPO_ROOT / ".lint.hadolint.yaml"
-    try:
-        config = load_yaml_config(config_path)
-        included_paths = config.get("included_paths", [])
-    except (OSError, yaml.YAMLError):
-        return dockerfile_files
-
-    result = set()
-    for f in dockerfile_files:
-        if not is_path_included(f, included_paths):
-            continue
-        result.add(f)
-    return result
-
-
-def _calculate_fileset_pymarkdown(files: list[str]) -> set[str]:
-    """Calculate fileset for pymarkdown linter.
-
-    Filters for .md files and applies included_paths from .lint.pymarkdown.yaml config.
-    On config error, returns all .md files so the linter runs and surfaces the error.
-    """
-    md_files = {f for f in files if f.endswith(".md")}
-    if not md_files:
-        return set()
-
-    config_path = REPO_ROOT / ".lint.pymarkdown.yaml"
-    try:
-        config = load_yaml_config(config_path)
-        included_paths = config.get("included_paths", [])
-    except (OSError, yaml.YAMLError):
-        return md_files
-
-    result = set()
-    for f in md_files:
-        if not is_path_included(f, included_paths):
-            continue
-        result.add(f)
-    return result
-
-
-def _calculate_fileset_actionlint(files: list[str]) -> set[str]:
-    """Calculate fileset for actionlint linter.
-
-    Filters for .yml/.yaml files and applies included_paths from .lint.actionlint.yaml config.
-    On config error, returns all .yml/.yaml files so the linter runs and surfaces the error.
-    """
-    yaml_files = {f for f in files if f.endswith(".yml") or f.endswith(".yaml")}
-    if not yaml_files:
-        return set()
-
-    config_path = REPO_ROOT / ".lint.actionlint.yaml"
-    try:
-        config = load_yaml_config(config_path)
-        included_paths = config.get("included_paths", [])
-    except (OSError, yaml.YAMLError):
-        return yaml_files
-
-    result = set()
-    for f in yaml_files:
-        if not is_path_included(f, included_paths):
-            continue
-        result.add(f)
-    return result
-
-
-def _calculate_fileset_dotenvlint(files: list[str]) -> set[str]:
-    """Calculate fileset for dotenvlint linter.
-
-    Filters for .env* files and applies included_paths from .lint.dotenvlint.yaml config.
-    On config error, returns all .env* files so the linter runs and surfaces the error.
-    """
-    env_files = {f for f in files if Path(f).name.startswith(".env")}
-    if not env_files:
-        return set()
-
-    config_path = REPO_ROOT / ".lint.dotenvlint.yaml"
-    try:
-        config = load_yaml_config(config_path)
-        included_paths = config.get("included_paths", [])
-    except (OSError, yaml.YAMLError):
-        return env_files
-
-    result = set()
-    for f in env_files:
-        if not is_path_included(f, included_paths):
-            continue
-        result.add(f)
-    return result
-
-
-def _calculate_fileset_detect_secrets(files: list[str]) -> set[str]:
-    """Calculate fileset for detect-secrets linter.
-
-    Applies included_paths, excluded_extensions, and excluded_names from
-    .lint.detect-secrets.yaml config.
-    On config error, returns all files so the linter runs and surfaces the error.
-    """
-    config_path = REPO_ROOT / ".lint.detect-secrets.yaml"
-    try:
-        config = load_yaml_config(config_path)
-    except (OSError, yaml.YAMLError):
-        return set(files)
-
-    excluded_extensions = set(config.get("excluded_extensions", []))
-    excluded_names = set(config.get("excluded_names", []))
-    included_paths = config.get("included_paths", [])
-
-    result = set()
-    for f in files:
-        # Check inclusion via glob patterns
-        if included_paths and not is_path_included(f, included_paths):
-            continue
-        # Check extension exclusion
-        if any(f.endswith(ext) for ext in excluded_extensions):
-            continue
-        # Check name exclusion
-        if Path(f).name in excluded_names:
-            continue
-        result.add(f)
-    return result
-
-
-def _calculate_fileset_gitleaks(files: list[str]) -> set[str]:
-    """Calculate fileset for gitleaks linter.
-
-    Applies included_paths, excluded_extensions, and excluded_names from
-    .lint.gitleaks.yaml config.
-    On config error, returns all files so the linter runs and surfaces the error.
-    """
-    config_path = REPO_ROOT / ".lint.gitleaks.yaml"
-    config: dict[str, Any] = {}
-
-    if config_path.exists():
-        try:
-            config = load_yaml_config(config_path)
-        except (OSError, yaml.YAMLError):
-            return set(files)
-
-    excluded_extensions = set(config.get("excluded_extensions", []))
-    excluded_names = set(config.get("excluded_names", []))
-    included_paths = config.get("included_paths", [])
-
-    result = set()
-    for f in files:
-        # Check inclusion via glob patterns
-        if included_paths and not is_path_included(f, included_paths):
-            continue
-        # Check extension exclusion
-        if any(f.endswith(ext) for ext in excluded_extensions):
-            continue
-        # Check name exclusion
-        if Path(f).name in excluded_names:
-            continue
-        result.add(f)
-    return result
-
-
-def _calculate_fileset_scripts(files: list[str]) -> set[str]:
-    """Calculate fileset for scripts linter.
-
-    Only includes pyproject.toml if it's in the files list.
-    """
-    result = set()
-    for f in files:
-        if f == "pyproject.toml" or f.endswith("/pyproject.toml"):
-            result.add(f)
-    return result
-
-
-def _calculate_fileset_trivy(files: list[str]) -> set[str]:
-    """Calculate fileset for trivy linter.
-
-    Only includes uv.lock and Dockerfile files if they're in the files list.
-    """
-    result = set()
-    for f in files:
-        if f.endswith("uv.lock") or f.endswith("Dockerfile") or "Dockerfile" in f:
-            result.add(f)
-    return result
-
-
-def _calculate_fileset_checkov(files: list[str]) -> set[str]:
-    """Calculate fileset for checkov linter.
-
-    Only includes files ending with openapi.json if they're in the files list.
-    """
-    result = set()
-    for f in files:
-        if f.endswith("openapi.json"):
-            result.add(f)
-    return result
+    # Use the linter's filter_files method which reads from its config
+    return set(linter.filter_files(files))
 
 
 def schedule_linters(

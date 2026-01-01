@@ -13,12 +13,17 @@ from scripts.dev.linter.base import (
     LinterResult,
     LintError,
     get_executable,
-    load_yaml_config,
 )
 
 TRIVY_CLI_REQUIRED = "trivy CLI required to run lint"
 DOCKER_CLI_REQUIRED = "docker CLI required for trivy image scanning"
-LINT_TRIVY_CONFIG = REPO_ROOT / ".lint.trivy.yaml"
+
+
+def _is_trivy_file(filepath: str) -> bool:
+    """Check if a file is relevant for trivy scanning."""
+    return (
+        filepath.endswith("uv.lock") or filepath.endswith("Dockerfile") or "Dockerfile" in filepath
+    )
 
 
 def _parse_trivy_json(json_output: str, target_file: str) -> list[LintError]:
@@ -81,6 +86,8 @@ class TrivyLinter(BaseLinter):
     """Run Trivy security scans for filesystem and Docker image."""
 
     name = "trivy"
+    config_file = ".lint.trivy.yaml"
+    extensions = _is_trivy_file  # Use callable for custom matching
     supports_file_filtering = True
 
     def run(self, files: list[str] | None = None) -> LinterResult:
@@ -102,16 +109,15 @@ class TrivyLinter(BaseLinter):
         Returns:
             LinterResult indicating success/failure.
         """
-        # If files are specified, only run if uv.lock or any Dockerfile is in the list
+        # If files are specified, only run if matching files exist
         if files is not None:
-            has_uv_lock = any(f.endswith("uv.lock") for f in files)
-            has_dockerfile = any(f.endswith("Dockerfile") or "Dockerfile" in f for f in files)
-            if not (has_uv_lock or has_dockerfile):
+            matching = self.filter_files(files)
+            if not matching:
                 print("No uv.lock or Dockerfile in changed files, skipping trivy linter.")
                 return LinterResult(success=True)
 
         trivy_exe = get_executable("trivy", TRIVY_CLI_REQUIRED)
-        config = load_yaml_config(LINT_TRIVY_CONFIG)
+        config = self.load_config()
 
         # Check which scans are enabled (both default to True for backward compatibility)
         enable_fs_scan = config.get("enable_fs_scan", True)

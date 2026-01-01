@@ -10,13 +10,15 @@ from scripts.dev.linter.base import (
     LinterResult,
     LintError,
     get_executable,
-    is_path_included,
-    load_yaml_config,
 )
 
 HADOLINT_CLI_REQUIRED = "hadolint CLI required to run lint"
 HADOLINT_CONFIG = REPO_ROOT / ".hadolint.yaml"
-LINT_HADOLINT_CONFIG = REPO_ROOT / ".lint.hadolint.yaml"
+
+
+def _is_dockerfile(filepath: str) -> bool:
+    """Check if a file is a Dockerfile."""
+    return Path(filepath).name == "Dockerfile"
 
 
 def _parse_hadolint_json(json_output: str) -> list[LintError]:
@@ -57,6 +59,8 @@ class HadolintLinter(BaseLinter):
     """Run hadolint on Dockerfiles."""
 
     name = "hadolint"
+    config_file = ".lint.hadolint.yaml"
+    extensions = _is_dockerfile  # Use callable for filename-based matching
     supports_file_filtering = True
 
     def run(self, files: list[str] | None = None) -> LinterResult:
@@ -69,24 +73,11 @@ class HadolintLinter(BaseLinter):
             LinterResult indicating success/failure with structured errors.
         """
         hadolint_exe = get_executable("hadolint", HADOLINT_CLI_REQUIRED)
-        config = load_yaml_config(LINT_HADOLINT_CONFIG)
-        included_paths = config.get("included_paths", [])
 
         if files is not None:
-            # Filter to only Dockerfile files that match include patterns
-            dockerfiles = [
-                Path(f)
-                for f in files
-                if Path(f).name == "Dockerfile" and is_path_included(f, included_paths)
-            ]
+            dockerfiles = [Path(f) for f in self.filter_files(files)]
         else:
-            # Find all Dockerfiles and filter by include patterns
-            dockerfiles = [
-                path
-                for path in REPO_ROOT.rglob("Dockerfile")
-                if path.is_file()
-                and is_path_included(str(path.relative_to(REPO_ROOT)), included_paths)
-            ]
+            dockerfiles = [Path(f) for f in self.discover_files()]
 
         if not dockerfiles:
             print("No Dockerfiles found for hadolint scan")

@@ -2,18 +2,16 @@
 
 import json
 import subprocess
+from typing import ClassVar
 
 from scripts.dev.linter.base import (
-    REPO_ROOT,
     BaseLinter,
     LinterResult,
     LintError,
-    filter_files_with_config,
     get_executable,
 )
 
 UV_CLI_REQUIRED = "uv CLI required to run lint"
-LINT_RUFF_CONFIG = REPO_ROOT / ".lint.ruff.yaml"
 
 
 def _parse_ruff_json(json_output: str) -> list[LintError]:
@@ -61,9 +59,11 @@ class RuffLinter(BaseLinter):
     Therefore mutates_files is set to True.
     """
 
-    name = "ruff"
-    supports_file_filtering = True
-    mutates_files = True
+    name: ClassVar[str] = "ruff"
+    config_file: ClassVar[str] = ".lint.ruff.yaml"
+    extensions: ClassVar[list[str]] = [".py"]
+    supports_file_filtering: ClassVar[bool] = True
+    mutates_files: ClassVar[bool] = True
 
     def run(self, files: list[str] | None = None) -> LinterResult:
         """Run ruff format and check.
@@ -76,22 +76,12 @@ class RuffLinter(BaseLinter):
         """
         uv_exe = get_executable("uv", UV_CLI_REQUIRED)
 
-        if files is None:
-            targets = ["."]
-        else:
-            py_files = [f for f in files if f.endswith(".py")]
-            if not py_files:
-                print("No Python files to lint with ruff")
-                return LinterResult(success=True)
+        # Discover files from included_paths config, or filter provided files
+        targets = self.discover_files() if files is None else self.filter_files(files)
 
-            # Apply included_paths filter from config
-            py_files, error = filter_files_with_config(py_files, LINT_RUFF_CONFIG, "ruff")
-            if error is not None:
-                return error
-            if not py_files:
-                return LinterResult(success=True)
-
-            targets = py_files
+        if not targets:
+            print("No Python files to lint with ruff")
+            return LinterResult(success=True)
 
         # Step 1: Run ruff format (modifies files, suppress output)
         subprocess.run(

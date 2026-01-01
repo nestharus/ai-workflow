@@ -33,6 +33,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 from scripts.dev.linter.base import (
     REPO_ROOT,
@@ -41,7 +42,6 @@ from scripts.dev.linter.base import (
     LintError,
     get_executable,
     is_path_included,
-    load_yaml_config,
 )
 
 GITLEAKS_CLI_NOT_FOUND = (
@@ -105,8 +105,39 @@ def _parse_gitleaks_json(json_output: str) -> list[LintError]:
 class GitleaksLinter(BaseLinter):
     """Run gitleaks to scan for secrets."""
 
-    name = "gitleaks"
-    supports_file_filtering = True
+    name: ClassVar[str] = "gitleaks"
+    config_file: ClassVar[str] = ".lint.gitleaks.yaml"
+    extensions: ClassVar[list[str]] = ["*"]  # All files, with custom filtering for exclusions
+    supports_file_filtering: ClassVar[bool] = True
+
+    def _filter_with_exclusions(self, files: list[str]) -> list[str]:
+        """Filter files using both included_paths and custom exclusions.
+
+        Args:
+            files: List of files to filter.
+
+        Returns:
+            Filtered list of scannable files.
+        """
+        config = self.load_config()
+        excluded_extensions = set(config.get("excluded_extensions", []))
+        excluded_names = set(config.get("excluded_names", []))
+        included_paths = self.get_included_paths()
+
+        scannable_files = []
+        for f in files:
+            file_path = Path(f)
+            # Check if file is in an included path (restrictive mode)
+            if included_paths and not is_path_included(f, included_paths):
+                continue
+            # Check extension exclusion
+            if any(f.endswith(ext) for ext in excluded_extensions):
+                continue
+            # Check name exclusion
+            if file_path.name in excluded_names:
+                continue
+            scannable_files.append(f)
+        return scannable_files
 
     def run(self, files: list[str] | None = None) -> LinterResult:
         """Run gitleaks secret scanner.
@@ -150,32 +181,7 @@ class GitleaksLinter(BaseLinter):
         ]
 
         if files is not None:
-            # Load exclusion config from .lint.gitleaks.yaml (optional, defaults to empty)
-            config = {}
-            if LINT_GITLEAKS_CONFIG.exists():
-                try:
-                    config = load_yaml_config(LINT_GITLEAKS_CONFIG)
-                except Exception as e:
-                    msg = f"Invalid or unreadable {LINT_GITLEAKS_CONFIG.name}: {e}"
-                    print(msg, file=sys.stderr)
-                    return LinterResult(success=False, message=msg)
-            excluded_extensions = set(config.get("excluded_extensions", []))
-            excluded_names = set(config.get("excluded_names", []))
-            included_paths = config.get("included_paths", [])
-
-            scannable_files = []
-            for f in files:
-                file_path = Path(f)
-                # Check if file is in an included path (restrictive mode)
-                if included_paths and not is_path_included(f, included_paths):
-                    continue
-                # Check extension exclusion
-                if any(f.endswith(ext) for ext in excluded_extensions):
-                    continue
-                # Check name exclusion
-                if file_path.name in excluded_names:
-                    continue
-                scannable_files.append(f)
+            scannable_files = self._filter_with_exclusions(files)
 
             if not scannable_files:
                 print("No scannable files for gitleaks")

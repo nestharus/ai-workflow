@@ -7,16 +7,20 @@ from scripts.dev.linter.base import (
     BaseLinter,
     LinterResult,
     LintError,
-    load_yaml_config,
 )
 
-LINT_SCRIPTS_CONFIG = REPO_ROOT / ".lint.scripts.yaml"
+
+def _is_pyproject(filepath: str) -> bool:
+    """Check if a file is pyproject.toml."""
+    return filepath == "pyproject.toml" or filepath.endswith("/pyproject.toml")
 
 
 class ScriptsLinter(BaseLinter):
     """Validate pyproject.toml script entry point naming conventions."""
 
     name = "scripts"
+    config_file = ".lint.scripts.yaml"
+    extensions = _is_pyproject
     supports_file_filtering = True
 
     def run(self, files: list[str] | None = None) -> LinterResult:
@@ -33,16 +37,14 @@ class ScriptsLinter(BaseLinter):
             LinterResult with structured errors for naming violations.
         """
         # If files are specified, only run if pyproject.toml is in the list
-        if (
-            files is not None
-            and "pyproject.toml" not in files
-            and "scripts/pyproject.toml" not in files
-        ):
-            print("pyproject.toml not in changed files, skipping scripts linter.")
-            return LinterResult(success=True)
+        if files is not None:
+            matching = self.filter_files(files)
+            if not matching:
+                print("pyproject.toml not in changed files, skipping scripts linter.")
+                return LinterResult(success=True)
 
         # Load configuration
-        config = load_yaml_config(LINT_SCRIPTS_CONFIG)
+        config = self.load_config()
         if not isinstance(config, dict):
             config = {}
         prefix_rules: dict[str, str] = config.get("prefix_rules", {})

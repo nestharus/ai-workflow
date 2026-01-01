@@ -336,6 +336,23 @@ def pull() -> tuple[bool, str]:
     return True, ""
 
 
+def pull_in_worktree(worktree_path: Path) -> tuple[bool, str]:
+    """Pull from remote in a specific worktree.
+
+    Args:
+        worktree_path: Path to the worktree.
+
+    Returns:
+        Tuple of (success, error_message).
+    """
+    result = _run_git(["git", "-C", str(worktree_path), "pull"])
+    if result is None:
+        return False, "git not available"
+    if result.returncode != 0:
+        return False, result.stderr
+    return True, ""
+
+
 def branch_exists_local(branch_name: str) -> bool:
     """Check if a branch exists locally.
 

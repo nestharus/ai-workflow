@@ -2,6 +2,8 @@
 # Paths to include for ast-grep scanning (glob patterns)
 
 included_paths:
+  # Exclusions (must come first)
+  - "!**/.venv/**"
   # Root-level Python files
   - "*.py"
   - "*.pyi"

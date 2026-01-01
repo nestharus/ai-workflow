@@ -17,6 +17,11 @@ OPENAPI_SCHEMA = REPO_ROOT / "openapi" / "openapi.json"
 CHECKOV_CONFIG = REPO_ROOT / ".checkov.yaml"
 
 
+def _is_openapi_json(filepath: str) -> bool:
+    """Check if a file is an openapi.json file."""
+    return filepath.endswith("openapi.json")
+
+
 def _parse_checkov_json(json_output: str) -> list[LintError]:
     """Parse checkov JSON output into LintError objects.
 
@@ -84,6 +89,8 @@ class CheckovLinter(BaseLinter):
     """Run checkov on OpenAPI schema."""
 
     name = "checkov"
+    config_file = None  # No lint config file, uses .checkov.yaml directly
+    extensions = _is_openapi_json  # Use callable for filename-based matching
     supports_file_filtering = True
 
     def run(self, files: list[str] | None = None) -> LinterResult:
@@ -96,10 +103,10 @@ class CheckovLinter(BaseLinter):
         Returns:
             LinterResult indicating success/failure with structured errors.
         """
-        # If files are specified, only run if any openapi.json file is in the list
+        # If files are specified, only run if matching files exist
         if files is not None:
-            has_openapi = any(f.endswith("openapi.json") for f in files)
-            if not has_openapi:
+            matching = self.filter_files(files)
+            if not matching:
                 print("No openapi.json file in changed files, skipping checkov linter.")
                 return LinterResult(success=True)
 

@@ -61,21 +61,21 @@ The routing system works as follows:
 
 1. **Filter by size**: Only rules with `max_chars >= len(prompt)` are eligible
 2. **Check ambiguity**:
-   - If ALL eligible rules allow ambiguity → use smallest `max_chars` rule
-   - If ANY eligible rule has `ambiguity: false` → classify the prompt first
+   * If ALL eligible rules allow ambiguity → use smallest `max_chars` rule
+   * If ANY eligible rule has `ambiguity: false` → classify the prompt first
 3. **Classify if needed**: The router agent determines if prompt is ambiguous
 4. **Route appropriately**:
-   - Ambiguous prompts → rules with `ambiguity: true`
-   - Non-ambiguous prompts → any eligible rule (prefer smallest)
+   * Ambiguous prompts → rules with `ambiguity: true`
+   * Non-ambiguous prompts → any eligible rule (prefer smallest)
 
 ## The Router Agent
 
 There is exactly ONE router agent (`.agents/agents/router.md`). It classifies prompts
 as ambiguous or not. The router agent:
 
-- Only routes on `max_chars` (cannot use `ambiguity` to avoid recursion)
-- Returns `true` (ambiguous) or `false` (not ambiguous)
-- Uses smaller/faster models for small prompts, falls back to larger models
+* Only routes on `max_chars` (cannot use `ambiguity` to avoid recursion)
+* Returns `true` (ambiguous) or `false` (not ambiguous)
+* Uses smaller/faster models for small prompts, falls back to larger models
 
 ```markdown
 ---
@@ -145,17 +145,17 @@ You are an implementor agent. Your job is to...
 ```
 
 In this example:
-- Small prompts (≤3500 chars) use `gpt-5.1-codex-medium` but only if NOT ambiguous
-- Medium prompts (≤7500 chars) use `gpt-5.1-codex-high` but only if NOT ambiguous
-- Larger prompts (≤12500 chars) use `gpt-5.1-codex-xhigh` which handles ambiguity
-- Largest prompts use `claude-opus` as fallback (handles any ambiguity)
+* Small prompts (≤3500 chars) use `gpt-5.1-codex-medium` but only if NOT ambiguous
+* Medium prompts (≤7500 chars) use `gpt-5.1-codex-high` but only if NOT ambiguous
+* Larger prompts (≤12500 chars) use `gpt-5.1-codex-xhigh` which handles ambiguity
+* Largest prompts use `claude-opus` as fallback (handles any ambiguity)
 
 If a 3000 char prompt comes in:
-- Eligible rules: all of them
-- Some rules have `ambiguity: false`
-- Router classifies the prompt
-- If ambiguous → routes to `gpt-5.1-codex-xhigh` (first eligible with ambiguity)
-- If not ambiguous → routes to `gpt-5.1-codex-medium` (smallest eligible)
+* Eligible rules: all of them
+* Some rules have `ambiguity: false`
+* Router classifies the prompt
+* If ambiguous → routes to `gpt-5.1-codex-xhigh` (first eligible with ambiguity)
+* If not ambiguous → routes to `gpt-5.1-codex-medium` (smallest eligible)
 
 ## Model Context Limits Reference
 

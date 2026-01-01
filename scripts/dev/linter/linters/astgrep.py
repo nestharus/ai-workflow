@@ -5,7 +5,7 @@ import json
 import re
 import subprocess
 from functools import lru_cache
-from typing import Any
+from typing import ClassVar
 
 from scripts.dev.linter.base import (
     REPO_ROOT,
@@ -13,11 +13,9 @@ from scripts.dev.linter.base import (
     LinterResult,
     LintError,
     get_executable,
-    load_yaml_config,
 )
 
 ASTGREP_CLI_REQUIRED = "ast-grep CLI required (install via: pip install ast-grep-cli)"
-LINT_ASTGREP_CONFIG = REPO_ROOT / ".lint.astgrep.yaml"
 
 
 @lru_cache(maxsize=128)
@@ -257,8 +255,10 @@ def _parse_astgrep_json(json_output: str) -> list[LintError]:
 class AstgrepLinter(BaseLinter):
     """Run ast-grep structural code analysis."""
 
-    name = "astgrep"
-    supports_file_filtering = True
+    name: ClassVar[str] = "astgrep"
+    config_file: ClassVar[str] = ".lint.astgrep.yaml"
+    extensions: ClassVar[list[str]] = [".py", ".pyi"]
+    supports_file_filtering: ClassVar[bool] = True
 
     def _validate_sgconfig(self) -> LinterResult | None:
         """Check if sgconfig.yml exists.
@@ -288,34 +288,18 @@ class AstgrepLinter(BaseLinter):
         if (error := self._validate_sgconfig()) is not None:
             return error
 
-        # Load optional configuration
-        config: dict[str, Any] = {}
-        if LINT_ASTGREP_CONFIG.exists():
-            config = load_yaml_config(LINT_ASTGREP_CONFIG)
-
-        included_paths = config.get("included_paths", [])
-        if isinstance(included_paths, str):
-            included_paths = [included_paths]
-        elif isinstance(included_paths, list):
-            included_paths = [p for p in included_paths if isinstance(p, str)]
-        else:
-            included_paths = []
-
         # Build command with JSON output
         cmd = [sg_exe, "scan", "--json=compact"]
 
         if files is not None:
-            # File-filtered mode: filter files using include patterns
-            py_files = [
-                f
-                for f in files
-                if f.endswith((".py", ".pyi")) and _is_file_included(f, included_paths)
-            ]
+            # File-filtered mode: use BaseLinter's filter_files
+            py_files = self.filter_files(files)
             if not py_files:
                 return LinterResult(success=True, message="No Python files to scan with ast-grep")
             cmd.extend(py_files)
         else:
-            # Whole-repo mode: use --globs for include patterns
+            # Whole-repo mode: use --globs for include patterns from config
+            included_paths = self.get_included_paths()
             for include_path in included_paths:
                 cmd.extend(["--globs", include_path])
             # Scan from current directory (repo root)

@@ -20,6 +20,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
 
+from scripts.dev.linter.linters import LINTER_NAMES
+
 
 def resolve_pr_context(ticket_id: str) -> tuple[Path, list[str]]:
     """Resolve working directory and files from a PR ticket.
@@ -104,6 +106,7 @@ def run_linters(
     changed_only: bool = False,
     commit: str | None = None,
     output_format: str = "yaml",
+    linters: list[str] | None = None,
 ) -> tuple[bool, str]:
     """Run the lint suite and capture output.
 
@@ -113,11 +116,16 @@ def run_linters(
         changed_only: If True, only lint changed files.
         commit: If provided, only lint files from this commit.
         output_format: Output format - "yaml" for structured, "text" for human-readable.
+        linters: Specific linters to run, or None for all linters.
 
     Returns:
         Tuple of (success, output_text).
     """
     cmd = ["uv", "run", "lint", "--output-format", output_format]
+
+    # Add specific linters if provided (must come before --files)
+    if linters:
+        cmd.extend(linters)
 
     if files:
         cmd.extend(["--files", *files])
@@ -226,6 +234,42 @@ def extract_files_from_lint_output(lint_output: str) -> list[str]:
     return list(files)
 
 
+def extract_errors_by_linter(lint_output: str) -> dict[str, set[str]]:
+    """Extract errors grouped by linter from YAML output.
+
+    Args:
+        lint_output: Lint output in YAML format.
+
+    Returns:
+        Dict mapping linter name to set of files with errors from that linter.
+    """
+    import yaml
+
+    errors_by_linter: dict[str, set[str]] = {}
+
+    yaml_block = _extract_yaml_block(lint_output)
+    if not yaml_block:
+        return errors_by_linter
+
+    try:
+        data = yaml.safe_load(yaml_block)
+        if not isinstance(data, dict) or "errors" not in data:
+            return errors_by_linter
+
+        for error in data.get("errors", []):
+            if isinstance(error, dict):
+                linter = error.get("linter", "unknown")
+                file = error.get("file", "")
+                if file:
+                    if linter not in errors_by_linter:
+                        errors_by_linter[linter] = set()
+                    errors_by_linter[linter].add(file)
+    except yaml.YAMLError:
+        pass
+
+    return errors_by_linter
+
+
 def format_agent_input(lint_output: str, worktree: Path) -> str:
     """Format input for the lint-fixer agent.
 
@@ -329,11 +373,16 @@ def filter_lint_output_for_files(lint_output: str, files: list[str]) -> str:
                                     lines.append(f"      {msg_line}")
                             else:
                                 lines.append(f"    message: {msg}")
-                            lines.append(
-                                f"    fix_available: {str(error.get('fix_available', False)).lower()}"
-                            )
+                            fix_avail = str(error.get("fix_available", False)).lower()
+                            lines.append(f"    fix_available: {fix_avail}")
                             if error.get("fix_message"):
-                                lines.append(f"    fix_message: {error.get('fix_message')}")
+                                fix_msg = str(error.get("fix_message"))
+                                if "\n" in fix_msg or ":" in fix_msg or '"' in fix_msg:
+                                    lines.append("    fix_message: |")
+                                    for fix_line in fix_msg.splitlines():
+                                        lines.append(f"      {fix_line}")
+                                else:
+                                    lines.append(f"    fix_message: {fix_msg}")
                         return "\n".join(lines)
                     return "errors: []"
         except yaml.YAMLError:
@@ -348,6 +397,67 @@ def filter_lint_output_for_files(lint_output: str, files: list[str]) -> str:
                 break
 
     return "\n".join(filtered_lines)
+
+
+def _combine_yaml_outputs(outputs: list[str]) -> str:
+    """Combine multiple YAML lint outputs into one.
+
+    Args:
+        outputs: List of YAML lint outputs from different linters.
+
+    Returns:
+        Combined YAML output with all errors.
+    """
+    import yaml
+
+    all_errors: list[dict[str, object]] = []
+
+    for output in outputs:
+        yaml_block = _extract_yaml_block(output)
+        if not yaml_block:
+            continue
+
+        try:
+            data = yaml.safe_load(yaml_block)
+            if isinstance(data, dict) and "errors" in data:
+                errors = data.get("errors", [])
+                if isinstance(errors, list):
+                    all_errors.extend(errors)
+        except yaml.YAMLError:
+            continue
+
+    if not all_errors:
+        return "errors: []"
+
+    # Output combined YAML
+    lines = ["errors:"]
+    for error in all_errors:
+        if not isinstance(error, dict):
+            continue
+        lines.append(f"  - linter: {error.get('linter', '')}")
+        lines.append(f"    file: {error.get('file', '')}")
+        lines.append(f"    line: {error.get('line', 0)}")
+        lines.append(f"    column: {error.get('column', 0)}")
+        lines.append(f"    code: {error.get('code', '')}")
+        msg = str(error.get("message", ""))
+        if "\n" in msg or ":" in msg:
+            lines.append("    message: |")
+            for msg_line in msg.splitlines():
+                lines.append(f"      {msg_line}")
+        else:
+            lines.append(f"    message: {msg}")
+        fix_avail = str(error.get("fix_available", False)).lower()
+        lines.append(f"    fix_available: {fix_avail}")
+        if error.get("fix_message"):
+            fix_msg = str(error.get("fix_message"))
+            if "\n" in fix_msg or ":" in fix_msg or '"' in fix_msg:
+                lines.append("    fix_message: |")
+                for fix_line in fix_msg.splitlines():
+                    lines.append(f"      {fix_line}")
+            else:
+                lines.append(f"    fix_message: {fix_msg}")
+
+    return "\n".join(lines)
 
 
 def _log(msg: str) -> None:
@@ -394,16 +504,16 @@ def print_report(
     lines.append("=" * 60)
 
     report = "\n".join(lines)
-
-    # Output to stderr for real-time visibility
-    _log(report)
-
-    # Output to stdout for calling agent to capture
     print(report)
 
 
 def orchestrate(args: Namespace) -> int:
     """Main orchestration loop.
+
+    Each linter maintains its own scope that reduces independently as files are fixed.
+    After agent makes changes, each linter re-runs only on files that:
+    1. Had errors from that linter, AND
+    2. Were changed by the agent
 
     Args:
         args: Parsed command-line arguments.
@@ -449,27 +559,81 @@ def orchestrate(args: Namespace) -> int:
         _log("No lint errors found.")
         return 0
 
+    # Track errors per linter: {linter: set of files with errors}
+    errors_by_linter = extract_errors_by_linter(output)
+
+    # Track which linters each file has passed (don't re-run on unchanged files)
+    passed_linters: dict[str, set[str]] = {}  # file -> set of linters that passed
+
     # Fix loop - runs until no progress or all fixed
     iteration = 0
     last_agent_report = ""
-    investigation_futures: list[Future[tuple[bool, str]]] = []
+    investigation_futures: list[tuple[Future[tuple[bool, str]], set[str], dict[str, str]]] = []
     executor = ThreadPoolExecutor(max_workers=1)  # Queue investigations sequentially
 
     try:
-        while not success:
+        while errors_by_linter or investigation_futures:
             iteration += 1
             _log(f"\n=== Iteration {iteration} ===")
 
-            # Get files with errors and their current hashes
-            error_files = extract_files_from_lint_output(output)
-            if not error_files:
-                _log("No files with errors found in lint output.")
-                # If we can't extract any files with errors, treat as success
-                # (nothing for lint-fix to fix, even if lint exited non-zero)
+            # Check for completed investigations and process returned files
+            completed_investigations: list[
+                tuple[Future[tuple[bool, str]], set[str], dict[str, str]]
+            ] = []
+            pending_investigations: list[
+                tuple[Future[tuple[bool, str]], set[str], dict[str, str]]
+            ] = []
+            for inv_tuple in investigation_futures:
+                future, inv_files, inv_hashes = inv_tuple
+                if future.done():
+                    completed_investigations.append(inv_tuple)
+                else:
+                    pending_investigations.append(inv_tuple)
+            investigation_futures = pending_investigations
+
+            for future, inv_files, inv_hashes in completed_investigations:
+                try:
+                    _inv_success, inv_output = future.result(timeout=1)
+                    # Check if investigator changed any files
+                    new_hashes = get_file_hashes(list(inv_files), worktree)
+                    changed_by_inv = {
+                        f for f in inv_files if inv_hashes.get(f) != new_hashes.get(f)
+                    }
+                    if changed_by_inv:
+                        _log(
+                            f"Investigation changed {len(changed_by_inv)} file(s), resuming lint..."
+                        )
+                        # Clear passed linters for changed files (need to re-lint from start)
+                        for f in changed_by_inv:
+                            passed_linters.pop(f, None)
+                        # Run all linters on changed files to discover new errors
+                        inv_lint_success, inv_lint_output = run_linters(
+                            list(changed_by_inv), worktree
+                        )
+                        if not inv_lint_success:
+                            inv_errors = extract_errors_by_linter(inv_lint_output)
+                            for linter, linter_files in inv_errors.items():
+                                if linter not in errors_by_linter:
+                                    errors_by_linter[linter] = set()
+                                errors_by_linter[linter].update(linter_files)
+                except Exception as e:
+                    _log(f"Investigation failed: {e}")
+
+            # Get all files with errors (union across all linters)
+            all_error_files: set[str] = set()
+            for linter_files in errors_by_linter.values():
+                all_error_files.update(linter_files)
+
+            if not all_error_files:
+                if investigation_futures:
+                    _log("Waiting for pending investigations...")
+                    continue
+                _log("No files with errors remaining.")
                 success = True
                 break
 
-            before_hashes = get_file_hashes(error_files, worktree)
+            # Hash files before agent runs
+            before_hashes = get_file_hashes(list(all_error_files), worktree)
 
             # Invoke agent with lint output
             agent_input = format_agent_input(output, worktree)
@@ -479,44 +643,144 @@ def orchestrate(args: Namespace) -> int:
             if not agent_success:
                 _log(f"Agent failed: {agent_output}")
 
-            # Check which files changed
-            after_hashes = get_file_hashes(error_files, worktree)
-            changed_files = [f for f in error_files if before_hashes.get(f) != after_hashes.get(f)]
+            # Detect which files changed
+            after_hashes = get_file_hashes(list(all_error_files), worktree)
+            changed_files = {
+                f for f in all_error_files if before_hashes.get(f) != after_hashes.get(f)
+            }
 
-            # Identify stuck files (errors but no changes)
-            stuck_files = [f for f in error_files if before_hashes.get(f) == after_hashes.get(f)]
-
-            # Dispatch stuck errors to investigator in parallel
+            # Dispatch stuck files (unchanged) to investigator before checking progress
+            stuck_files = all_error_files - changed_files
             if stuck_files:
-                stuck_errors = filter_lint_output_for_files(output, stuck_files)
-                if stuck_errors:
+                stuck_errors = filter_lint_output_for_files(output, list(stuck_files))
+                if stuck_errors and stuck_errors.strip() != "errors: []":
                     _log(f"Dispatching {len(stuck_files)} stuck file(s) to investigator...")
+                    # Store hashes to detect changes when investigation completes
+                    stuck_hashes = get_file_hashes(list(stuck_files), worktree)
                     investigation_input = format_agent_input(stuck_errors, worktree)
                     future = executor.submit(invoke_investigator, investigation_input, worktree)
-                    investigation_futures.append(future)
+                    investigation_futures.append((future, stuck_files, stuck_hashes))
 
             if not changed_files:
+                if investigation_futures:
+                    _log("No files changed. Waiting for investigations...")
+                    continue
                 _log("No files changed. Agent couldn't fix anything. Stopping.")
                 break
 
             _log(f"Files modified: {len(changed_files)}")
 
-            # Re-run linters only on changed files
-            _log("\nRe-running linters on changed files...")
-            success, output = run_linters(
-                changed_files,
-                worktree,
-            )
+            # Clear passed_linters for changed files (changes may introduce new errors)
+            for f in changed_files:
+                passed_linters.pop(f, None)
 
-            if success:
+            # Process each linter independently
+            new_errors_by_linter: dict[str, set[str]] = {}
+            combined_outputs: list[str] = []
+            files_advancing: set[str] = set()  # Files that passed their linter and advance
+
+            for linter, linter_error_files in errors_by_linter.items():
+                # Compute this linter's changed files
+                linter_changed = set(f for f in linter_error_files if f in changed_files)
+                # Unchanged files already went to investigation - don't re-track them
+
+                # Re-run this linter on its changed files
+                if linter_changed:
+                    _log(f"  {linter}: re-running on {len(linter_changed)} changed file(s)")
+                    linter_success, linter_output = run_linters(
+                        list(linter_changed),
+                        worktree,
+                        linters=[linter],
+                    )
+
+                    if linter_success:
+                        # All changed files passed - they advance to remaining linters
+                        _log(f"  {linter}: {len(linter_changed)} file(s) passed!")
+                        files_advancing.update(linter_changed)
+                        # Record that these files passed this linter
+                        for f in linter_changed:
+                            if f not in passed_linters:
+                                passed_linters[f] = set()
+                            passed_linters[f].add(linter)
+                    else:
+                        # Extract remaining errors for this linter
+                        linter_new_errors = extract_errors_by_linter(linter_output)
+                        files_with_errors = linter_new_errors.get(linter, set())
+                        if files_with_errors:
+                            new_errors_by_linter[linter] = files_with_errors
+                            combined_outputs.append(linter_output)
+                        # Files that passed advance, files with errors stay
+                        files_that_passed = linter_changed - files_with_errors
+                        files_advancing.update(files_that_passed)
+                        # Record that passed files passed this linter
+                        for f in files_that_passed:
+                            if f not in passed_linters:
+                                passed_linters[f] = set()
+                            passed_linters[f].add(linter)
+
+            # Files that passed their linter advance to remaining linters
+            # Only run linters that files haven't passed yet
+            if files_advancing:
+                # Group files by linters they need (excluding passed linters)
+                linters_needed: dict[str, set[str]] = {}  # linter -> files that need it
+                for f in files_advancing:
+                    file_passed = passed_linters.get(f, set())
+                    for linter in LINTER_NAMES:
+                        if linter not in file_passed:
+                            if linter not in linters_needed:
+                                linters_needed[linter] = set()
+                            linters_needed[linter].add(f)
+
+                if linters_needed:
+                    _log(
+                        f"Advancing {len(files_advancing)} file(s) to "
+                        f"{len(linters_needed)} linter(s)..."
+                    )
+                    # Run each needed linter on its files
+                    for linter, linter_files in linters_needed.items():
+                        linter_success, linter_output = run_linters(
+                            list(linter_files),
+                            worktree,
+                            linters=[linter],
+                        )
+                        if linter_success:
+                            # Record that these files passed this linter
+                            for f in linter_files:
+                                if f not in passed_linters:
+                                    passed_linters[f] = set()
+                                passed_linters[f].add(linter)
+                        else:
+                            # Extract errors and track them
+                            linter_errors = extract_errors_by_linter(linter_output)
+                            files_with_errors = linter_errors.get(linter, set())
+                            if files_with_errors:
+                                if linter not in new_errors_by_linter:
+                                    new_errors_by_linter[linter] = set()
+                                new_errors_by_linter[linter].update(files_with_errors)
+                                combined_outputs.append(linter_output)
+                            # Files that passed this linter
+                            files_that_passed = linter_files - files_with_errors
+                            for f in files_that_passed:
+                                if f not in passed_linters:
+                                    passed_linters[f] = set()
+                                passed_linters[f].add(linter)
+
+            # Update errors_by_linter for next iteration
+            errors_by_linter = new_errors_by_linter
+
+            # Rebuild combined output for agent
+            output = _combine_yaml_outputs(combined_outputs) if combined_outputs else "errors: []"
+
+            if not errors_by_linter:
                 _log("All lint errors fixed!")
+                success = True
                 break
 
-        # Collect investigation results
+        # Collect remaining investigation results
         investigation_reports: list[str] = []
         if investigation_futures:
-            _log("\nWaiting for investigations to complete...")
-            for future in investigation_futures:
+            _log("\nWaiting for remaining investigations to complete...")
+            for future, _inv_files, _inv_hashes in investigation_futures:
                 try:
                     _inv_success, inv_output = future.result(timeout=300)
                     if inv_output.strip():

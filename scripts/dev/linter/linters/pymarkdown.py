@@ -2,6 +2,7 @@
 
 import re
 import subprocess
+from typing import ClassVar
 
 from scripts.dev.linter.base import (
     REPO_ROOT,
@@ -9,12 +10,9 @@ from scripts.dev.linter.base import (
     LinterResult,
     LintError,
     get_executable,
-    is_path_included,
-    load_yaml_config,
 )
 
 UV_CLI_REQUIRED = "uv CLI required to run lint"
-LINT_PYMARKDOWN_CONFIG = REPO_ROOT / ".lint.pymarkdown.yaml"
 
 
 def _parse_pymarkdown_output(output: str) -> list[LintError]:
@@ -73,8 +71,10 @@ def _parse_pymarkdown_output(output: str) -> list[LintError]:
 class PymarkdownLinter(BaseLinter):
     """Run pymarkdown on Markdown files."""
 
-    name = "pymarkdown"
-    supports_file_filtering = True
+    name: ClassVar[str] = "pymarkdown"
+    config_file: ClassVar[str] = ".lint.pymarkdown.yaml"
+    extensions: ClassVar[list[str]] = [".md"]
+    supports_file_filtering: ClassVar[bool] = True
 
     def run(self, files: list[str] | None = None) -> LinterResult:
         """Run pymarkdown on Markdown files.
@@ -86,17 +86,12 @@ class PymarkdownLinter(BaseLinter):
             LinterResult indicating success/failure with structured errors.
         """
         uv_exe = get_executable("uv", UV_CLI_REQUIRED)
-        config = load_yaml_config(LINT_PYMARKDOWN_CONFIG)
-        included_paths = config.get("included_paths", [])
 
         if files is not None:
-            md_files = [f for f in files if f.endswith(".md")]
-            # Filter by include patterns
-            md_files = [f for f in md_files if is_path_included(f, included_paths)]
+            md_files = self.filter_files(files)
             if not md_files:
                 print("No Markdown files to check with pymarkdown")
                 return LinterResult(success=True)
-            targets = md_files
             pymarkdown_cmd = [
                 uv_exe,
                 "run",
@@ -104,10 +99,11 @@ class PymarkdownLinter(BaseLinter):
                 "-c",
                 str(REPO_ROOT / ".pymarkdown.json"),
                 "scan",
-                *targets,
+                *md_files,
             ]
         else:
-            targets = included_paths
+            # Use included_paths directly for recursive scan
+            included_paths = self.get_included_paths()
             pymarkdown_cmd = [
                 uv_exe,
                 "run",
@@ -116,7 +112,7 @@ class PymarkdownLinter(BaseLinter):
                 str(REPO_ROOT / ".pymarkdown.json"),
                 "scan",
                 "-r",
-                *targets,
+                *included_paths,
             ]
 
         # Run pymarkdown and capture output

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from pathlib import Path
 from typing import Any
 
 from scripts.clients.linear_client import LinearClientError, _get_default_client
@@ -185,11 +186,17 @@ def get_pr_command(identifier: str | None = None) -> int:
                 pr_url = None
                 base_branch = None
 
+        # Check if the worktree already exists on disk
+        worktree_exists = False
+        if worktree_path and working_directory != ".":
+            worktree_exists = git_dao.worktree_exists(Path(worktree_path))
+
         pr_info: dict[str, Any] = {
             "branch_name": branch_name,
             "worktree_path": worktree_path,
             "working_directory": working_directory,
             "is_worktree": is_worktree,
+            "worktree_exists": worktree_exists,
             "pr_number": pr_number,
             "pr_url": pr_url,
             "base_branch": base_branch,

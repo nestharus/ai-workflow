@@ -9,17 +9,19 @@ from pathlib import Path
 from scripts.clients.linear_client import LinearClientError, _get_default_client
 from scripts.pr import git_dao
 
-from .util import _find_available_branch_name
+from .util import _find_available_branch_name, _find_existing_branch_for_ticket
 
 
 def setup_worktree_command(ticket_id: str) -> int:
     """Setup a git worktree for a Linear ticket.
 
-    Gets the branch name from Linear, finds an available branch name (adding
-    a counter if needed), and creates a new worktree with that branch.
+    Gets the branch name from Linear and either:
+    1. Reuses an existing worktree if one exists for this ticket (with pull)
+    2. Creates a new worktree with a new branch
 
-    This command ALWAYS creates a new branch. If the branch name from Linear
-    already exists (locally or on remote), a counter is appended (e.g.,
+    When reusing an existing worktree, the command pulls latest changes.
+    When creating a new worktree, if the branch name from Linear already
+    exists (locally or on remote), a counter is appended (e.g.,
     branch-name-2, branch-name-3).
 
     Args:
@@ -50,8 +52,41 @@ def setup_worktree_command(ticket_id: str) -> int:
             print(f"Error fetching origin: {err}", file=sys.stderr)
             return 1
 
+        # First, check if an existing branch/worktree exists for this ticket
+        existing_branch = _find_existing_branch_for_ticket(base_branch_name)
+        if existing_branch:
+            base_dir = Path(".worktrees").resolve()
+            existing_worktree_path = (base_dir / existing_branch).resolve()
+
+            # Check if the worktree exists on disk
+            if git_dao.worktree_exists(existing_worktree_path):
+                print(
+                    f"Found existing worktree at {existing_worktree_path}, pulling latest...",
+                    file=sys.stderr,
+                )
+
+                # Pull latest changes in the worktree
+                success, err = git_dao.pull_in_worktree(existing_worktree_path)
+                if not success:
+                    print(f"Warning: Could not pull in worktree: {err}", file=sys.stderr)
+                    # Continue anyway, the worktree still exists
+
+                print(
+                    json.dumps(
+                        {
+                            "status": "exists",
+                            "worktree_path": str(existing_worktree_path),
+                            "branch_name": existing_branch,
+                            "base_branch": base_branch,
+                            "pulled": success,
+                        },
+                        indent=2,
+                    )
+                )
+                return 0
+
+        # No existing worktree found, create a new one
         # Find an available branch name (adds counter if needed)
-        # This always creates a new branch, never reuses an existing one
         branch_name = _find_available_branch_name(base_branch_name)
 
         # Worktree base directory
@@ -65,7 +100,7 @@ def setup_worktree_command(ticket_id: str) -> int:
             print("Error: Unsafe branch name resolves outside .worktrees", file=sys.stderr)
             return 1
 
-        # Check if worktree already exists at this path
+        # Check if worktree already exists at this path (edge case)
         if git_dao.worktree_exists(worktree_path):
             print(
                 json.dumps(

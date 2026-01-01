@@ -223,12 +223,18 @@ Get PR info:
 uv run pr get-pr {{ticket_id}}
 ```
 
-Returns: `branch_name`, `worktree_path`, `working_directory`, `pr_number`, `base_branch`
+Returns: `branch_name`, `worktree_path`, `working_directory`, `worktree_exists`, `pr_number`, `base_branch`
 
 If `working_directory` is not `.` (needs worktree):
 ```bash
 uv run pr setup-worktree {{ticket_id}}
 ```
+
+This command will:
+- If a worktree exists for this ticket: reuse it and pull latest changes
+- If no worktree exists: create a new one
+
+Parse the output to get `worktree_path` (may differ from `get-pr` output if newly created).
 
 Set:
 - `working_dir`: Resolved worktree path (absolute)

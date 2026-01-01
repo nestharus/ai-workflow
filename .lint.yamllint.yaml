@@ -2,6 +2,8 @@
 # Paths to include for YAML linting (glob patterns)
 
 included_paths:
+  # Exclusions (must come first)
+  - "!**/.venv/**"
   # Root-level YAML files
   - "*.yaml"
   - "*.yml"
