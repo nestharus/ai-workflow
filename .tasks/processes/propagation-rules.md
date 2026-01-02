@@ -308,6 +308,62 @@ def on_algorithm_update(com_id: str, alg_id: str, new_code: str):
 
 ---
 
+## Operation-Triggered Propagation
+
+When graph operations modify the component structure, propagation must be re-run to
+maintain consistency. This table maps operations to required propagation actions.
+
+| Operation | INV Propagation | OBL Propagation | CAP Analysis |
+|-----------|-----------------|-----------------|--------------|
+| CREATE COM | From parent down to new COM | N/A | Check placement |
+| MODIFY COM | N/A | Owner COM upward | Check delta |
+| REMOVE COM | Re-propagate in affected subtree | Re-propagate affected paths | Redistribute check |
+| SPLIT COM | Propagate to all new child COMs | Re-propagate through new surfaces | Cluster assignment |
+| MERGE COM | Re-propagate through merged SUR | Re-propagate through merged SUR | Deduplicate |
+| CREATE ALG | N/A | N/A | Infer from content |
+| MODIFY ALG | N/A | Owner COM upward | Re-infer from code |
+| REMOVE ALG | N/A | Owner COM upward | Check coverage |
+| MOVE ALG | N/A | Both COMs upward | Transfer with ALG |
+| SPLIT ALG | N/A | Owner COM upward | Redistribute |
+| MERGE ALG | N/A | Owner COM upward | Consolidate |
+
+### Propagation Protocol After Operations
+
+```mermaid
+flowchart TD
+    A([Operation Complete]) --> B{Operation type?}
+
+    B -- CREATE COM --> C[INV propagate from<br/>parent to new COM]
+    B -- REMOVE COM --> D[Re-propagate INV/OBL<br/>in affected subtree]
+    B -- SPLIT COM --> E[INV propagate to<br/>all new child COMs]
+    B -- MERGE COM --> F[Re-propagate through<br/>merged COM surface]
+    B -- Any ALG op --> G[Check ALG-CON alignment<br/>in affected COM]
+
+    C --> H[Validate no leaked OBL]
+    D --> H
+    E --> H
+    F --> H
+    G --> H
+
+    H --> I{OBL leaked to root?}
+    I -- Yes --> J[Flag: Obligation violation]
+    I -- No --> K[Validate CAP distribution]
+
+    J --> K
+
+    K --> L{CAP overlap detected?}
+    L -- Yes --> M[Trigger overlap analysis<br/>—suggest merge/extract]
+    L -- No --> N{CAP divergence?}
+
+    M --> O[Log recommendations]
+
+    N -- Yes --> P[Trigger divergence analysis<br/>—suggest split]
+    N -- No --> Q([Propagation complete])
+
+    P --> O
+    O --> Q
+```
+
 ## Summary
 
 | Concept | Propagation | Direction | Barrier |

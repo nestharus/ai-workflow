@@ -298,6 +298,52 @@ edges:
 
 ---
 
+## Graph Mutation Primitives
+
+The graph supports mutation operations for decomposition and recomposition. These
+primitives are used by the operations defined in
+`.tasks/plans/algorithm decomposition/feedback.md` Part II.
+
+### Node Operations
+
+| Operation | Signature | Description |
+|-----------|-----------|-------------|
+| `add_node` | `(type, id, properties) → Node` | Create a new node in the graph |
+| `remove_node` | `(id) → void` | Delete node (fails if incoming edges exist) |
+| `update_node` | `(id, properties) → Node` | Modify node properties |
+
+### Edge Operations
+
+| Operation | Signature | Description |
+|-----------|-----------|-------------|
+| `add_edge` | `(from, to, type) → Edge` | Create edge between nodes |
+| `remove_edge` | `(from, to, type) → void` | Delete specific edge |
+| `redirect_edge` | `(edge_id, new_target) → void` | Change edge target |
+
+### Compound Operations
+
+These operations combine multiple primitives atomically:
+
+| Operation | Effect | Used By |
+|-----------|--------|---------|
+| `create_component` | Creates COM-XX + SUR-XX + owns_surface edge | CREATE COM |
+| `modify_component` | Updates CAP/ALG/IAR/CON properties and edges | MODIFY COM |
+| `remove_component` | Removes COM-XX + SUR-XX + owned nodes (after redirects) | REMOVE COM |
+| `split_component` | Creates N COMs, redistributes CAP/ALG/IAR, updates edges | SPLIT COM |
+| `merge_components` | Combines nodes into one COM, removes originals | MERGE COM |
+| `create_algorithm` | Creates ALG-XX, links owner COM, infers CAP | CREATE ALG |
+| `modify_algorithm` | Updates ALG guarantees and inferred CAP | MODIFY ALG |
+| `remove_algorithm` | Removes ALG-XX and dependent edges | REMOVE ALG |
+| `move_algorithm` | Transfers ALG-XX between COMs, updates CAP ownership when needed | MOVE ALG |
+| `split_algorithm` | Creates N ALGs, redistributes logic + CAP | SPLIT ALG |
+| `merge_algorithms` | Merges ALGs, unions guarantees + CAP | MERGE ALG |
+
+After any compound operation:
+
+- Re-run invariant/obligation propagation (see `.tasks/processes/propagation-rules.md`).
+- Re-validate `ALG` ↔ `CON` alignment (see “Violation Detection Points”).
+- Re-check capability overlap/divergence as an architecture quality signal.
+
 ## Summary
 
 The graph schema defines:
