@@ -2,9 +2,9 @@
 description: Checkout an existing branch into a git worktree
 name: checkout
 argument-hint: "`ticket-id` or `branch-name`"
-agent: 'agent'
+agent: agent
 tools:
-  - '*'
+  - "*"
 ---
 
 # Checkout Branch into Worktree
