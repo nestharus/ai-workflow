@@ -3,21 +3,44 @@
 Component packages are where **components** live. A component package groups:
 
 - `COM-XX` components (may be purely architectural composition of other `COM-XX`)
+- `SUR-XX` surfaces (1:1 with components; the public boundary)
+- `CON-XX` contracts (on surfaces; bundles of guarantees and demands)
+- `CAP-XX` capabilities (what the component is responsible for; derived from GOAL)
 - `ALG-XX` algorithms (Mermaid flowcharts + cross-references back to PRD IDs)
-- optional state holders (`IAR-XX`) used or owned by the component
-- `CON-XX` surfaces (contracts/boundaries) expressed as input/output invariants (not
-  schemas)
+- `IAR-XX` state holders (internal state owned by the component)
 
 This module defines the standard structure for component packages. It intentionally
 specifies **invariants on inputs/outputs** (what they MUST include / guarantee), not
 concrete schemas, field/key names, data types, or strict data "shapes".
 
+## Structural Model
+
+```
+COM-XX (component)
+├── SUR-XX (surface, 1:1 with COM)
+│   └── CON-XX (contracts on surface)
+│       ├── INV-XX (guarantees)
+│       └── OBL-XX (demands)
+├── CAP-XX (capabilities — what this component does)
+├── ALG-XX (algorithms — how it does it)
+└── IAR-XX (state holders — internal state)
+```
+
+**Key relationships:**
+
+- Each COM has exactly one SUR (its public boundary)
+- SUR is a package of CON contracts
+- CON bundles INV (what it guarantees) and OBL (what it demands)
+- CAP derives from GOAL (GOAL → CAP decomposition)
+- ALGs communicate through surfaces
+- Violations detected when ALG guarantees ≠ CON guarantees
+
 ## Invariants
 
-- **INV-COM-01 — PRD traceability:** every `COM-XX` / `ALG-XX` / `CON-XX` / `IAR-XX`
-  section MUST cite PRD IDs via `Cross-references:` or `Implements:`.
+- **INV-COM-01 — PRD traceability:** every `COM-XX` / `SUR-XX` / `CON-XX` / `CAP-XX` /
+  `ALG-XX` / `IAR-XX` section MUST cite PRD IDs via `Cross-references:` or `Implements:`.
 - **INV-COM-02 — Surfaces are invariant contracts:** surfaces MUST be documented as
-  input/output invariants per `.tasks/processes/design map structure.md`.
+  contract bundles per `.tasks/processes/design map structure.md`.
 - **INV-COM-03 — Start with one component:** begin with a single root component package
   that contains the full component graph and all algorithms; split only when the
   decomposition is clear.
@@ -27,19 +50,22 @@ concrete schemas, field/key names, data types, or strict data "shapes".
 - **INV-COM-05 — Architectural components allowed:** a `COM-XX` may exist only to
   compose other components (no algorithms/state); it still participates in the graph and
   must reference relevant invariants and boundaries.
+- **INV-COM-06 — Capability tracking:** every `COM-XX` MUST declare its capabilities
+  (`CAP-XX`) with traceability to PRD goals (`GOAL-XX`).
 
 ## Root Component Package: `architecture.md`
 
 The root component package is the starting point:
 
 - Contains the initial component graph and **all** `ALG-XX` algorithms
-- Defines the component's surfaces (`CON-XX`) and their input/output invariants
+- Defines each component's surface (`SUR-XX`) and its contracts (`CON-XX`)
+- Declares capabilities (`CAP-XX`) for each component
 - Acts as the index when additional component packages are created
 
 When splitting into multiple components:
 
 - Create new component packages as `com-XX-<kebab-name>.md`
-- Move the relevant `ALG-XX` sections into the new package
+- Move the relevant `ALG-XX`, `CAP-XX`, and `SUR-XX`/`CON-XX` sections into the new package
 - Keep `architecture.md` as the root index + cross-component invariants + system diagram
 
 ## Templates
@@ -55,39 +81,63 @@ Sources: {links to PRD, Design Map, ADRs}
 
 ```mermaid
 flowchart LR
-  %% Components + boundaries; keep state-holder (`IAR-XX`) detail in the Design Map
-  A["COM-__"] -->|CON-__| B["COM-__"]
+  %% Components communicate through surfaces
+  A["COM-__ / SUR-__"] -->|CON-__| B["COM-__ / SUR-__"]
 ```
 
-## Surfaces (CON-XX)
+## Components
+
+### Component: COM-__
+
+Composed-of (optional): (COM-__, COM-__)
+Pattern: {pattern-name-or-id}
+Implements: (GOAL-__)
+Cross-references: (requires: INV-__; satisfies: SET-__; decided-by: ADR-###)
+
+#### Capabilities
+
+- CAP-__: {capability description}
+  Derived-from: (GOAL-__)
+
+#### Surface: SUR-__
+
+Contracts: (CON-__, CON-__)
+
+#### Algorithms
+
+- ALG-__: {algorithm name}
+  Guarantees: (INV-__)
+
+#### State Holders
+
+- IAR-__: {state holder name}
+
+## Contracts (CON-XX)
 
 ### Contract: CON-__
 
-Between: (COM-__, COM-__)
-For: (ART-__/IAR-__)
+Surface: (SUR-__)
 Interaction: {request-response|pub-sub|batch|stream|filesystem|...}
 Cross-references: (requires: INV-__; satisfies: SET-__; decided-by: ADR-###)
 
-Input MUST include (IDs only; no schema fields/types):
+Guarantees (what this contract promises):
 
-- {ID} — {required semantic element / operational metadata / gating invariant}
+- INV-__ — {invariant this contract guarantees}
 
-Output MUST include (IDs only; no schema fields/types):
+Demands (what callers must satisfy):
 
-- {ID} — {required semantic element / operational metadata / gating invariant}
-
-Boundary obligations:
-
-- OBL-__ — {short obligation description}
-  Cross-references: (requires: INV-__; satisfies: SET-__)
+- OBL-__ — {obligation callers must fulfill}
 
 ## Algorithms (ALG-XX)
 
-### ALG-01: {algorithm name}
+### ALG-__: {algorithm name}
+
+Owner: (COM-__)
+Guarantees: (INV-__)
+Cross-references: (requires: RULE-__, INV-__)
 
 ```mermaid
 flowchart TD
-  %% Cross-references: (requires: RULE-01, INV-02)
   A["Start"] --> B{"Decision?"}
   B -->|Yes| C["Action"]
   B -->|No| D["Other action"]
@@ -101,15 +151,40 @@ flowchart TD
 
 Sources: {links}
 
-## Surfaces (CON-XX)
+## Capabilities
+
+- CAP-__: {capability description}
+  Derived-from: (GOAL-__)
+
+## Surface: SUR-__
+
+Contracts: (CON-__, CON-__)
 
 ### Contract: CON-__
-... (same surface sections/invariants as above)
+
+Guarantees:
+- INV-__ — {invariant}
+
+Demands:
+- OBL-__ — {obligation}
 
 ## Algorithms (ALG-XX)
 
 ### ALG-__: {algorithm name}
-... (Mermaid flowchart; cite PRD IDs in Cross-references)
+
+Guarantees: (INV-__)
+
+```mermaid
+flowchart TD
+  ... (Mermaid flowchart; cite PRD IDs in Cross-references)
+```
+
+## State Holders (IAR-XX)
+
+### IAR-__: {state holder name}
+
+Kind: {queue|table|cache|...}
+Invariants: (INV-__)
 ````
 
 ## Reference Example (splitting)

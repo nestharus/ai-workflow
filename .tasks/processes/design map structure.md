@@ -48,7 +48,7 @@ ADRs live in `.tasks/processes/adr/`.
 
 PRD IDs (inputs):
 
-- `GOAL-XX`, `INV-XX`, `SET-XX`, `ART-XX`, `ALG-XX`, `RES-XX`, `Q-XX`, `{DOMAIN}-XX`
+- `GOAL-XX`, `INV-XX`, `SET-XX`, `ART-XX`, `RES-XX`, `Q-XX`, `{DOMAIN}-XX`
 
 Derived requirements introduced/resolved inside a Design Map may use domain-specific
 prefixes in the `{DOMAIN}-XX` space (e.g., `DM-XX`, `BND-XX`, `ECO-XX`) as long as they
@@ -60,30 +60,67 @@ Process IDs (links only):
 
 Design Map IDs (this document):
 
-- `COM-XX` — component
-- `CON-XX` — contract / boundary (component↔component or component↔artifact)
-- `IAR-XX` — internal artifact / state holder / boundary (queue, table, topic, cache,
-  internal API, filesystem path)
-- `OBL-XX` — boundary obligation (referenceable obligation applied at a boundary)
+- `COM-XX` — component (implementation unit)
+- `SUR-XX` — surface (public boundary of a component; 1:1 with COM-XX)
+- `CON-XX` — contract (bundle of INV/OBL on a surface; what the surface guarantees/demands)
+- `CAP-XX` — capability (component responsibility; derived from GOAL-XX)
+- `ALG-XX` — algorithm (implementation logic within a component)
+- `IAR-XX` — internal artifact / state holder (queue, table, topic, cache, internal API,
+  filesystem path)
+- `OBL-XX` — obligation (boundary-specific constraint; localized INV at a contract)
+
+**Structural model:**
+
+```
+COM-XX (component)
+├── SUR-XX (surface, 1:1 with COM)
+│   └── CON-XX (contracts on surface)
+│       ├── INV-XX (guarantees)
+│       └── OBL-XX (demands)
+├── CAP-XX (capabilities — what this component does)
+├── ALG-XX (algorithms — how it does it)
+└── IAR-XX (state holders — internal state)
+```
+
+**Key relationships:**
+
+- Each COM has exactly one SUR (its public boundary)
+- SUR is a package of CON contracts
+- CON bundles INV (what it guarantees) and OBL (what it demands)
+- CAP derives from GOAL (GOAL → CAP decomposition)
+- OBL is a localized INV at a boundary
+- ALGs communicate through surfaces (not directly with other ALGs)
 
 ## Deterministic Derivation (Minimum Required Invariants)
 
 For deterministic derivation from a Design Map instance:
 
-- Each `COM-*` must specify:
+- Each `COM-XX` must specify:
   - chosen **pattern** (name/ID) and its required contract types;
   - optional composition (`Composed-of: (COM-*, ...)`) for purely architectural
     components;
-  - its required inputs/outputs (as `ART-*` and/or `IAR-*` IDs);
-  - its surface list (`CON-*`) (provided and/or consumed).
-- Each `CON-*` must specify:
+  - its capabilities (`CAP-*`) — what this component is responsible for;
+  - its surface (`SUR-XX`) — 1:1 with the component;
+  - its algorithms (`ALG-*`) — implementation logic;
+  - its state holders (`IAR-*`) — internal state.
+- Each `SUR-XX` must specify:
+  - owner component (`COM-XX`);
+  - its contracts (`CON-*`) — what this surface exposes.
+- Each `CON-XX` must specify:
+  - owning surface (`SUR-XX`);
   - interaction type (request/response, pub/sub, batch, stream, filesystem, etc.);
-  - input invariants (what inbound payload + metadata MUST include);
-  - output invariants (what outbound payload + metadata MUST include);
-  - required invariants/constraint sets (by ID references);
-  - boundary obligation IDs (`OBL-*`).
-- Each `IAR-*` must specify:
-  - kind + access contracts (`CON-*`);
+  - guarantees (`INV-*`) — what invariants this contract promises;
+  - demands (`OBL-*`) — what obligations callers must satisfy.
+- Each `CAP-XX` must specify:
+  - owning component (`COM-XX`);
+  - derived from (`GOAL-*`) — which PRD goals this capability fulfills.
+- Each `ALG-XX` must specify:
+  - owning component (`COM-XX`);
+  - guarantees (`INV-*`) — what invariants this algorithm promises;
+  - we detect violations when ALG guarantees ≠ CON guarantees.
+- Each `IAR-XX` must specify:
+  - owning component (`COM-XX`);
+  - kind (queue, table, topic, cache, internal-api, filesystem, job, timer);
   - state invariants (what the artifact MUST represent/include/guarantee).
 
 ## Minimal Node Templates
@@ -104,71 +141,93 @@ those relevant to the node.
 
 Composed-of (optional): (COM-__, COM-__)
 Pattern: {pattern-name-or-id}
-Implements: (ALG-__, {DOMAIN}-__, GOAL-__)
+Implements: (GOAL-__, {DOMAIN}-__)
 Cross-references (optional): (requires: INV-__; uses: RES-__; satisfies: SET-__;
   impacts: ART-__; decided-by: ADR-###)
 Needs: ({DOMAIN}-__, Q-__)
-Consumes: (ART-__, IAR-__)
-Produces: (ART-__, IAR-__)
 
-### Surfaces (contracts)
+### Capabilities
 
-- CON-__: {provides|consumes} for (ART-__/IAR-__) Cross-references (optional):
-  (requires: INV-__; satisfies: SET-__; decided-by: ADR-###)
+- CAP-__: {capability description}
+  Derived-from: (GOAL-__)
+
+### Surface: SUR-__
+
+Contracts: (CON-__, CON-__)
+
+### Algorithms
+
+- ALG-__: {algorithm name}
+  Guarantees: (INV-__)
+
+### State Holders
+
+- IAR-__: {state holder name}
 ```
 
-### Contract (Boundary) Template
+### Surface Template
+
+```markdown
+## Surface: SUR-__
+
+Owner: (COM-__)
+Contracts: (CON-__, CON-__)
+```
+
+### Capability Template
+
+```markdown
+## Capability: CAP-__
+
+Owner: (COM-__)
+Derived-from: (GOAL-__)
+Description: {what this component is responsible for}
+```
+
+### Contract Template
 
 ```markdown
 ## Contract: CON-__
 
+Surface: (SUR-__)
 Pattern: {pattern-name-or-id}
-Between: (COM-__, COM-__)
-For: (ART-__/IAR-__)
 Interaction: {request-response|pub-sub|batch|stream|filesystem|...}
-Implements: (ALG-__, {DOMAIN}-__, GOAL-__)
 Cross-references (optional): (requires: INV-__; uses: RES-__; satisfies: SET-__;
-  impacts: ART-__; decided-by: ADR-###)
+  decided-by: ADR-###)
 Needs: ({DOMAIN}-__, Q-__)
 
-Input MUST include (IDs only; no schema fields/types):
+### Guarantees (what this contract promises)
 
-- {ID} — {required semantic element / operational metadata / gating invariant}
+- INV-__ — {invariant this contract guarantees}
 
-Output MUST include (IDs only; no schema fields/types):
+### Demands (what callers must satisfy)
 
-- {ID} — {required semantic element / operational metadata / gating invariant}
-
-Boundary obligations:
-
-- OBL-__ — {short obligation description}
+- OBL-__ — {obligation callers must fulfill}
   Cross-references: (requires: INV-__; satisfies: SET-__)
 ```
 
-### Internal Artifact / Boundary Template
+**Note:** Contracts are one-sided (owned by a surface). Communication between components
+happens when ALGs in one COM interact through their SUR's CONs with another COM's SUR.
+
+### State Holder Template
 
 ```markdown
-## Internal Artifact / State Holder / Boundary: IAR-__
+## State Holder: IAR-__
 
-Pattern: {pattern-name-or-id}
+Owner: (COM-__)
 Kind: {queue|topic|table|index|cache|internal-api|filesystem|job|timer}
-Owned-by: (COM-__)
-Implements: (ALG-__, {DOMAIN}-__, GOAL-__)
 Cross-references (optional): (requires: INV-__; uses: RES-__; satisfies: SET-__;
-  impacts: ART-__; decided-by: ADR-###)
+  decided-by: ADR-###)
 Needs: ({DOMAIN}-__, Q-__)
 
-State MUST include / guarantee (IDs only; no schema fields/types):
+### State Invariants (what this state holder guarantees)
 
-- {ID} — {required state element / invariants the artifact enforces}
+- INV-__ — {invariant the state holder enforces}
 
-### Contracts (how it is accessed)
+### Access Obligations (what accessors must satisfy)
 
-- CON-__: {read|write|publish|subscribe|mutate} Cross-references (optional):
-  (derived-from: IAR-__; requires: INV-__; satisfies: SET-__)
-
-Boundary obligations:
-
-- OBL-__ — {short obligation description}
-  Cross-references: (requires: INV-__; satisfies: SET-__)
+- OBL-__ — {obligation for accessing this state}
 ```
+
+**Note:** State holders are internal to a component. They are not directly accessible
+from outside; access goes through the component's surface contracts.

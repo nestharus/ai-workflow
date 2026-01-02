@@ -50,15 +50,42 @@ algorithm, or rule receives a unique identifier following these conventions:
 |--------|---------|---------|
 | `RES-XX` | Resource (tool, library, external dependency) | `RES-01` Claude Code |
 | `GOAL-XX` | High-level objective | `GOAL-03` Atomic information units |
-| `INV-XX` | Invariant (immutable constraint) | `INV-01` Byte-exact provenance |
+| `INV-XX` | Invariant (immutable system-wide constraint) | `INV-01` Byte-exact provenance |
 | `SET-XX` | Constraint set (bundle of actual system constraints: INV/RULE) | `SET-01` Auditability set |
 | `ART-XX` | External artifact/boundary requirement (external only) | `ART-01` GitHub webhook payload |
+| `COM-XX` | Component (implementation unit) | `COM-05` SchedulingDomain |
+| `SUR-XX` | Surface (public boundary of a component; 1:1 with COM) | `SUR-05` SchedulingDomain surface |
+| `CON-XX` | Contract (bundle of INV/OBL on a surface) | `CON-03` Phase output contract |
+| `CAP-XX` | Capability (component responsibility; derived from GOAL) | `CAP-03` File discovery |
+| `OBL-XX` | Obligation (boundary-specific constraint; localized INV) | `OBL-02` Valid path required |
 | `ALG-XX` | Algorithm (documented in Components; not embedded in PRDs) | `ALG-01` Fact extraction |
+| `IAR-XX` | Internal artifact / state holder | `IAR-04` FileRegistry |
 | `MET-XX` | Success metric (measurable verification) | `MET-01` Fact extraction accuracy |
 | `TEST-XX` | Test artifact / verification evidence | `TEST-01` Webhook signature verification tests |
 | `Q-XX` | Open question (unresolved decision requiring future input) | `Q-01` PDF input support |
 | `ADR-###` | Architecture Decision Record (decision rationale/history; not PRD content) | `ADR-012` Storage engine choice |
 | `XXX-XX` | Domain-specific rule (e.g., EX, VAL, REC) | `EX-05` Atomicity |
+
+**Core structural relationships (graph-parseable):**
+
+```
+GOAL-XX (PRD)
+    ↓ decomposes into
+CAP-XX (component responsibility)
+
+INV-XX (system-wide)
+    ↓ localizes at boundary to
+OBL-XX (boundary-specific)
+
+COM-XX (component)
+    ├── SUR-XX (surface, 1:1)
+    │   └── CON-XX (contracts on surface)
+    │       ├── INV-XX (guarantees)
+    │       └── OBL-XX (demands)
+    ├── CAP-XX (capabilities)
+    ├── ALG-XX (algorithms)
+    └── IAR-XX (state holders)
+```
 
 This prefix table is a starter set; PRD instances may define additional prefixes as needed. Unrecognized prefixes should be treated as domain-specific `XXX-XX` rules as long as IDs are unique and cross-referenced.
 
