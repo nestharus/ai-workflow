@@ -31,5 +31,6 @@ paths = [
     '''\.secrets\.baseline''',
     '''\.audit/''',
     '''\.sonar/''',
+    '''\.obsidian/''',
     '''docs/.*''',
 ]

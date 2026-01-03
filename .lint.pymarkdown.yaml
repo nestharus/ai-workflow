@@ -11,5 +11,6 @@ included_paths:
   - "docs/processes/**/*.md"
   - "docs/testing/**/*.md"
   - "docs/usage/**/*.md"
+  - ".tasks/plans/**/*.md"
   # README files in subdirectories
   - "scripts/knowledge/README.md"
