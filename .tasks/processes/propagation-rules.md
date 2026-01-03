@@ -112,11 +112,11 @@ def infer_barrier(invariant: str, contract: Contract) -> str:
 
 ## Obligation Propagation (Bottom-Up)
 
-Obligations bubble up from leaf components/state holders to ancestors.
+Obligations bubble up from leaf components to ancestors.
 
 ### Rules
 
-1. **Leaves declare demands**: IAR and leaf CON declare what they require
+1. **Leaves declare demands**: Components with state storage invariants (e.g., INV-STORES-FILE-REGISTRY) and leaf CON declare what they require
 2. **Propagation stops when satisfied**: If a surface satisfies the obligation, it stops
 3. **Leaked obligations accumulate**: Unsatisfied obligations leak to callers
 

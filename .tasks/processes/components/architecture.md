@@ -7,7 +7,7 @@ Component packages are where **components** live. A component package groups:
 - `CON-XX` contracts (on surfaces; bundles of guarantees and demands)
 - `CAP-XX` capabilities (what the component is responsible for; derived from GOAL)
 - `ALG-XX` algorithms (Mermaid flowcharts + cross-references back to PRD IDs)
-- `IAR-XX` state holders (internal state owned by the component)
+- `INV-STORES-*` invariants describing state storage requirements (e.g., INV-STORES-FILE-REGISTRY)
 
 This module defines the standard structure for component packages. It intentionally
 specifies **invariants on inputs/outputs** (what they MUST include / guarantee), not
@@ -23,7 +23,7 @@ COM-XX (component)
 │       └── OBL-XX (demands)
 ├── CAP-XX (capabilities — what this component does)
 ├── ALG-XX (algorithms — how it does it)
-└── IAR-XX (state holders — internal state)
+└── INV-STORES-* (state storage invariants)
 ```
 
 **Key relationships:**
@@ -38,7 +38,7 @@ COM-XX (component)
 ## Invariants
 
 - **INV-COM-01 — PRD traceability:** every `COM-XX` / `SUR-XX` / `CON-XX` / `CAP-XX` /
-  `ALG-XX` / `IAR-XX` section MUST cite PRD IDs via `Cross-references:` or `Implements:`.
+  `ALG-XX` / `INV-STORES-*` section MUST cite PRD IDs via `Cross-references:` or `Implements:`.
 - **INV-COM-02 — Surfaces are invariant contracts:** surfaces MUST be documented as
   contract bundles per `.tasks/processes/design map structure.md`.
 - **INV-COM-03 — Start with one component:** begin with a single root component package
@@ -48,7 +48,7 @@ COM-XX (component)
   data types, or example payload shapes inside component packages; express "shape"
   requirements as invariant IDs and reference them.
 - **INV-COM-05 — Architectural components allowed:** a `COM-XX` may exist only to
-  compose other components (no algorithms/state); it still participates in the graph and
+  compose other components (no algorithms/state storage); it still participates in the graph and
   must reference relevant invariants and boundaries.
 - **INV-COM-06 — Capability tracking:** every `COM-XX` MUST declare its capabilities
   (`CAP-XX`) with traceability to PRD goals (`GOAL-XX`).
@@ -108,9 +108,11 @@ Contracts: (CON-__, CON-__)
 - ALG-__: {algorithm name}
   Guarantees: (INV-__)
 
-#### State Holders
+#### State Storage Invariants
 
-- IAR-__: {state holder name}
+- INV-STORES-__: {description of state storage requirement}
+  Kind: {queue|table|cache|file-registry|...}
+  Cross-references: (requires: INV-__; decided-by: ADR-###)
 
 ## Contracts (CON-XX)
 
@@ -179,12 +181,12 @@ flowchart TD
   ... (Mermaid flowchart; cite PRD IDs in Cross-references)
 ```
 
-## State Holders (IAR-XX)
+## State Storage Invariants (INV-STORES-*)
 
-### IAR-__: {state holder name}
+### INV-STORES-__: {description of state storage requirement}
 
-Kind: {queue|table|cache|...}
-Invariants: (INV-__)
+Kind: {queue|table|cache|file-registry|...}
+Cross-references: (requires: INV-__; decided-by: ADR-###)
 ````
 
 ## Reference Example (splitting)

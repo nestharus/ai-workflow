@@ -59,7 +59,7 @@ algorithm, or rule receives a unique identifier following these conventions:
 | `CAP-XX` | Capability (component responsibility; derived from GOAL) | `CAP-03` File discovery |
 | `OBL-XX` | Obligation (boundary-specific constraint; localized INV) | `OBL-02` Valid path required |
 | `ALG-XX` | Algorithm (documented in Components; not embedded in PRDs) | `ALG-01` Fact extraction |
-| `IAR-XX` | Internal artifact / state holder | `IAR-04` FileRegistry |
+| `IAR-XX` | Internal artifact (deprecated; use component invariants for state storage) | `IAR-04` FileRegistry (legacy) |
 | `MET-XX` | Success metric (measurable verification) | `MET-01` Fact extraction accuracy |
 | `TEST-XX` | Test artifact / verification evidence | `TEST-01` Webhook signature verification tests |
 | `Q-XX` | Open question (unresolved decision requiring future input) | `Q-01` PDF input support |
@@ -84,7 +84,7 @@ COM-XX (component)
     │       └── OBL-XX (demands)
     ├── CAP-XX (capabilities)
     ├── ALG-XX (algorithms)
-    └── IAR-XX (state holders)
+    └── INV-XX (component invariants, including state storage requirements)
 ```
 
 This prefix table is a starter set; PRD instances may define additional prefixes as needed. Unrecognized prefixes should be treated as domain-specific `XXX-XX` rules as long as IDs are unique and cross-referenced.
@@ -369,7 +369,8 @@ Algorithms do not live in PRDs. They live in component packages under a sibling
 **Guidelines:**
 
 - Treat each component as a package of component composition (`COM-XX`), `ALG-XX`
-  algorithms, and state holders (`IAR-XX`), plus its exposed surfaces (`CON-XX`).
+  algorithms, component invariants (`INV-XX`) describing state storage requirements,
+  and exposed surfaces (`CON-XX`).
 - Start with a single root component (`components/architecture.md`) that contains all
   algorithms; split into additional component packages only when the decomposition is
   clear.

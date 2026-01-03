@@ -11,7 +11,7 @@ link to PRD/Design Map IDs.
 
 ## Context
 
-- Links: (GOAL-__, INV-__, SET-__, ART-__, COM-__, CON-__, IAR-__, TASK-__)
+- Links: (GOAL-__, INV-__, SET-__, ART-__, COM-__, CON-__, TASK-__)
 - Drivers: (INV-__, SET-__, MET-__) (IDs only)
 
 ## Decision
@@ -34,5 +34,5 @@ link to PRD/Design Map IDs.
 ## References
 
 - PRD: (INV-__, {DOMAIN}-__)
-- Design Map: (COM-__, CON-__, ART-__, IAR-__, OBL-__)
+- Design Map: (COM-__, CON-__, ART-__, OBL-__, INV-STORES-__)
 - Plan: (PHASE-__, TASK-__)

@@ -1,14 +1,13 @@
 # Design Map Structure
 
-A Design Map defines **components**, **state holders** (`IAR-XX`), and
-**contracts/boundaries** (`CON-XX`), and maps them back to PRD IDs.
+A Design Map defines **components** and **contracts/boundaries** (`CON-XX`), and maps them back to PRD IDs.
 Decision rationale must not be embedded in the Design Map; link to ADRs by ID only:
 `(decided-by: ADR-###)`.
 ADRs live in `.tasks/processes/adr/`.
 
 ## Invariants
 
-- **INV-DM-01 — PRD traceability:** every `COM-XX` / `CON-XX` / `IAR-XX` node MUST cite
+- **INV-DM-01 — PRD traceability:** every `COM-XX` / `CON-XX` node MUST cite
   PRD IDs via `Implements:` or `Cross-references:`.
 - **INV-DM-02 — Derived requirements allowed, PRD escalation only for ambiguity:** Design
   Map nodes MAY introduce derived requirements discovered during exploration
@@ -17,8 +16,7 @@ ADRs live in `.tasks/processes/adr/`.
   autonomous derivation fails, the Design Map MUST surface the missing requirement(s)
   needed to decide (not the decision), and those missing requirements MUST be escalated
   to the PRD (typically as Q-XX).
-- **INV-DM-03 — Boundary obligations:** every introduced boundary (`CON-XX` and any
-  `IAR-XX` that creates a boundary) MUST list its boundary obligation IDs (`OBL-XX`)
+- **INV-DM-03 — Boundary obligations:** every introduced boundary (`CON-XX`) MUST list its boundary obligation IDs (`OBL-XX`)
   (without describing algorithms here).
 - **INV-DM-04 — ADR-only decisions:** decisions appear only as `(decided-by: ADR-###)`
   with no rationale prose in PRD/Plan/Design Map.
@@ -65,8 +63,6 @@ Design Map IDs (this document):
 - `CON-XX` — contract (bundle of INV/OBL on a surface; what the surface guarantees/demands)
 - `CAP-XX` — capability (component responsibility; derived from GOAL-XX)
 - `ALG-XX` — algorithm (implementation logic within a component)
-- `IAR-XX` — internal artifact / state holder (queue, table, topic, cache, internal API,
-  filesystem path)
 - `OBL-XX` — obligation (boundary-specific constraint; localized INV at a contract)
 
 **Structural model:**
@@ -79,7 +75,7 @@ COM-XX (component)
 │       └── OBL-XX (demands)
 ├── CAP-XX (capabilities — what this component does)
 ├── ALG-XX (algorithms — how it does it)
-└── IAR-XX (state holders — internal state)
+└── INV-XX (component invariants — including state storage requirements)
 ```
 
 **Key relationships:**
@@ -102,7 +98,7 @@ For deterministic derivation from a Design Map instance:
   - its capabilities (`CAP-*`) — what this component is responsible for;
   - its surface (`SUR-XX`) — 1:1 with the component;
   - its algorithms (`ALG-*`) — implementation logic;
-  - its state holders (`IAR-*`) — internal state.
+  - its invariants (`INV-*`) — component guarantees, including state storage requirements (e.g., INV-STORES-FILE-REGISTRY).
 - Each `SUR-XX` must specify:
   - owner component (`COM-XX`);
   - its contracts (`CON-*`) — what this surface exposes.
@@ -118,10 +114,6 @@ For deterministic derivation from a Design Map instance:
   - owning component (`COM-XX`);
   - guarantees (`INV-*`) — what invariants this algorithm promises;
   - we detect violations when ALG guarantees ≠ CON guarantees.
-- Each `IAR-XX` must specify:
-  - owning component (`COM-XX`);
-  - kind (queue, table, topic, cache, internal-api, filesystem, job, timer);
-  - state invariants (what the artifact MUST represent/include/guarantee).
 
 ## Minimal Node Templates
 
@@ -160,9 +152,10 @@ Contracts: (CON-__, CON-__)
 - ALG-__: {algorithm name}
   Guarantees: (INV-__)
 
-### State Holders
+### Component Invariants
 
-- IAR-__: {state holder name}
+- INV-__: {component invariant, e.g., state storage requirements}
+  Example: INV-STORES-FILE-REGISTRY — Component maintains a file registry with {properties}
 ```
 
 ### Surface Template
@@ -209,25 +202,26 @@ Needs: ({DOMAIN}-__, Q-__)
 **Note:** Contracts are one-sided (owned by a surface). Communication between components
 happens when ALGs in one COM interact through their SUR's CONs with another COM's SUR.
 
-### State Holder Template
+### Component Invariant Template
 
 ```markdown
-## State Holder: IAR-__
+## Component Invariant: INV-__
 
 Owner: (COM-__)
-Kind: {queue|topic|table|index|cache|internal-api|filesystem|job|timer}
+Type: {state-storage|consistency|performance|security|...}
 Cross-references (optional): (requires: INV-__; uses: RES-__; satisfies: SET-__;
   decided-by: ADR-###)
 Needs: ({DOMAIN}-__, Q-__)
 
-### State Invariants (what this state holder guarantees)
+### Description
 
-- INV-__ — {invariant the state holder enforces}
+{What this invariant guarantees about the component}
 
-### Access Obligations (what accessors must satisfy)
-
-- OBL-__ — {obligation for accessing this state}
+Examples:
+- INV-STORES-FILE-REGISTRY — Component maintains a persistent file registry storing {properties}
+- INV-CACHES-PARSED-RESULTS — Component caches parsed results in memory with {eviction policy}
+- INV-QUEUES-PENDING-TASKS — Component maintains a queue of pending tasks with {ordering guarantees}
 ```
 
-**Note:** State holders are internal to a component. They are not directly accessible
-from outside; access goes through the component's surface contracts.
+**Note:** State storage invariants describe what state a component maintains and its properties.
+Access to state is always through the component's surface contracts, not directly.

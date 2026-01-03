@@ -50,7 +50,7 @@ A design map defines:
 
 * **Components** (COM-IDs)
 * **Contracts** (CON-IDs), representing surfaces between components or between a component and an artifact
-* **Internal artifacts and boundaries** (IAR-IDs), representing state holders and internal interfaces
+* **Component invariants** (INV-STORES-*, INV-*), describing state storage requirements and other guarantees
 * **Boundary obligations** (OBL-IDs), representing enforceable obligations at surfaces
 
 The design map enforces PRD traceability and specifies when derived requirements may remain local versus when ambiguities must be escalated back into the PRD.
@@ -82,7 +82,7 @@ RGD operates over a set of algorithm units at each layer. The initial unit may b
 Each unit is treated as a package containing:
 
 * An algorithm flowchart
-* State holders (if any)
+* Component invariants describing state storage (if any)
 * Surfaces (if any)
 
 ### 3.2 Entry points: requirements seed vs algorithm seed
@@ -186,7 +186,7 @@ flowchart TD
   D -->|Yes| E[Local completion at this scope]
   D -->|No| F[One-step decomposition]
   F --> G[Design map: components, contracts, obligations]
-  G --> H[Component packages: algorithms, surfaces, state holders]
+  G --> H[Component packages: algorithms, surfaces, invariants]
   H --> C
   E --> I{Algorithm seed path?}
   I -->|Yes| J[Extract PRD from accumulated evidence]
@@ -250,11 +250,11 @@ RGD treats a surface as an enforceable boundary characterized by invariant oblig
 
 The contract is expressed in terms of what must be guaranteed, using identifiers that can be traced to PRD invariants. This approach is aligned with contract-based reasoning in software design, while remaining independent of concrete schema declarations. ([Software Engineering ETH Zurich][6])
 
-### 5.2 State holders and ownership rules
+### 5.2 State storage invariants and ownership rules
 
-State holders are represented as internal artifacts with explicit ownership and invariants. The goal is to confine mutation and make invalidation rules explicit.
+State storage requirements are expressed as component invariants (e.g., INV-STORES-FILE-REGISTRY) with explicit ownership and guarantees. The goal is to confine mutation and make invalidation rules explicit.
 
-In the lint dispatcher case study, the FileRegistry abstraction is documented as a state holder that owns file state and caches, with explicit ownership rules and mutation boundaries designed to preserve invariants during parallel execution.
+In the lint dispatcher case study, the FileRegistry abstraction is documented via a state storage invariant that specifies how the component owns file state and caches, with explicit ownership rules and mutation boundaries designed to preserve invariants during parallel execution.
 
 ### 5.3 Error behavior as algorithm structure
 

@@ -13,7 +13,7 @@ classical code parses structure.
 │   ┌─────────────────────────────────────────────────────────┐   │
 │   │  Required Structural Corpus (parseable)                 │   │
 │   │                                                         │   │
-│   │  • Node declarations (COM, SUR, CON, CAP, ALG, IAR)     │   │
+│   │  • Node declarations (COM, SUR, CON, CAP, ALG)          │   │
 │   │  • Relationship fields (Owner, Surface, Derived-from)  │   │
 │   │  • Invariant/obligation references (INV, OBL)          │   │
 │   │  • Cross-references with typed relations               │   │
@@ -50,7 +50,7 @@ properties:
   capabilities: [CAP-XX, ...]
   surface: SUR-XX             # 1:1 relationship
   algorithms: [ALG-XX, ...]
-  state_holders: [IAR-XX, ...]
+  invariants: [INV-XX, ...]   # state storage invariants (e.g., INV-STORES-FILE-REGISTRY)
 ```
 
 ### SUR-XX (Surface)
@@ -96,17 +96,6 @@ properties:
   guarantees: [INV-XX, ...]   # invariants this algorithm promises
 ```
 
-### IAR-XX (State Holder)
-
-```yaml
-id: IAR-XX
-type: state_holder
-properties:
-  owner: COM-XX               # owning component
-  kind: string                # queue, table, topic, cache, internal-api, filesystem, job, timer
-  invariants: [INV-XX, ...]   # state invariants
-  access_obligations: [OBL-XX, ...] # obligations for accessors
-```
 
 ### INV-XX (Invariant)
 
@@ -116,6 +105,8 @@ type: invariant
 properties:
   description: string         # what must always be true
   scope: string               # system-wide or localized
+  kind: string                # optional: for state storage invariants (queue, table, topic, cache, internal-api, filesystem, job, timer)
+  access_obligations: [OBL-XX, ...] # optional: obligations for state accessors
 ```
 
 ### OBL-XX (Obligation)
@@ -149,7 +140,7 @@ Edges are derived from the properties above:
 | `has_contract` | SUR-XX | CON-XX | `SUR.contracts` / `CON.surface` |
 | `has_capability` | COM-XX | CAP-XX | `COM.capabilities` / `CAP.owner` |
 | `has_algorithm` | COM-XX | ALG-XX | `COM.algorithms` / `ALG.owner` |
-| `has_state` | COM-XX | IAR-XX | `COM.state_holders` / `IAR.owner` |
+| `has_invariant` | COM-XX | INV-XX | `COM.invariants` |
 | `composed_of` | COM-XX | COM-XX | `COM.composed_of` |
 | `guarantees` | CON-XX | INV-XX | `CON.guarantees` |
 | `guarantees` | ALG-XX | INV-XX | `ALG.guarantees` |
@@ -184,10 +175,7 @@ COM-XX (component)
     │                       │
     │                       └── guarantees ──► INV-XX
     │
-    ├── has_state ──► IAR-XX
-    │                   │
-    │                   ├── invariants ──► INV-XX
-    │                   └── access_obligations ──► OBL-XX
+    ├── has_invariant ──► INV-XX (state storage invariants)
     │
     └── composed_of ──► COM-XX (for architectural components)
 ```
@@ -209,8 +197,8 @@ Nodes are detected by header patterns:
 ## Capability: (CAP-\d+)
 ## Algorithm: (ALG-\d+)
 ### ALG-(\d+): .*
-## State Holder: (IAR-\d+)
-### IAR-(\d+): .*
+## Invariant: (INV-\d+)
+### INV-(\d+): .*
 ```
 
 ### 2. Property Extraction
@@ -267,7 +255,7 @@ nodes:
       surface: SUR-01
       capabilities: [CAP-01, CAP-02]
       algorithms: [ALG-01]
-      state_holders: []
+      invariants: [INV-STORES-FILE-REGISTRY]
 
   - id: SUR-01
     type: surface
@@ -327,9 +315,9 @@ These operations combine multiple primitives atomically:
 | Operation | Effect | Used By |
 |-----------|--------|---------|
 | `create_component` | Creates COM-XX + SUR-XX + owns_surface edge | CREATE COM |
-| `modify_component` | Updates CAP/ALG/IAR/CON properties and edges | MODIFY COM |
+| `modify_component` | Updates CAP/ALG/INV/CON properties and edges | MODIFY COM |
 | `remove_component` | Removes COM-XX + SUR-XX + owned nodes (after redirects) | REMOVE COM |
-| `split_component` | Creates N COMs, redistributes CAP/ALG/IAR, updates edges | SPLIT COM |
+| `split_component` | Creates N COMs, redistributes CAP/ALG/INV, updates edges | SPLIT COM |
 | `merge_components` | Combines nodes into one COM, removes originals | MERGE COM |
 | `create_algorithm` | Creates ALG-XX, links owner COM, infers CAP | CREATE ALG |
 | `modify_algorithm` | Updates ALG guarantees and inferred CAP | MODIFY ALG |
@@ -348,7 +336,7 @@ After any compound operation:
 
 The graph schema defines:
 
-1. **Node types**: COM, SUR, CON, CAP, ALG, IAR, INV, OBL, GOAL
+1. **Node types**: COM, SUR, CON, CAP, ALG, INV, OBL, GOAL
 2. **Edge types**: Derived from ownership and reference properties
 3. **Parsing rules**: Regex patterns for extracting from markdown
 4. **Violation detection**: Where mismatches indicate bugs
