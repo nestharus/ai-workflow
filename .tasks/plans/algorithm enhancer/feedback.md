@@ -2,14 +2,19 @@
 
 ## Purpose
 
-Detects optimization opportunities in distributed algorithms by analyzing the decorated graph from the [Algorithm Graph Creator](../algorithm%20graph%20creator/feedback.md). This system finds **optimization violations**—mismatches between how capabilities are used and their optimal execution patterns.
+Detects optimization opportunities in distributed algorithms by analyzing the
+decorated graph from the [Algorithm Graph Creator](../algorithm%20graph%20creator/feedback.md).
+This system finds **optimization violations**—mismatches between how capabilities
+are used and their optimal execution patterns.
 
-This is the **optimization counterpart** to the [Bug Finder](../algorithm%20bug%20finder/feedback.md). While bug finder detects correctness violations, the enhancer detects performance anti-patterns.
+This is the **optimization counterpart** to the [Bug Finder](../algorithm%20bug%20finder/feedback.md).
+While bug finder detects correctness violations, the enhancer detects performance
+anti-patterns.
 
 | Tool | Question | Domain |
 |------|----------|--------|
 | Bug Finder | "Is this correct?" | Constraint satisfaction |
-| **Enhancer** | "Can this be faster?" | Operational context vs. capability profiles |
+| **Enhancer** | "Can this be faster?" | Execution invariants vs. capability obligations |
 
 ---
 
@@ -17,26 +22,26 @@ This is the **optimization counterpart** to the [Bug Finder](../algorithm%20bug%
 
 The enhancer consumes a `DecoratedGraph` from the graph creator, which contains:
 
-- Nodes with operational context (`caller_context`) and capabilities
-- Capability profiles (batchable, cacheable, optimal_context)
-- Surfaces with context transformations (`receives_context`, `emits_context`)
+* Nodes with execution invariants (`execution_invariants`) and capabilities
+* Capability profiles (batchable, cacheable, execution_obligations)
+* Surfaces with invariant transformations (`receives_invariants`, `emits_invariants`)
 
 ---
 
 ## Optimization Violation Types
 
-### Type 1: Context/Capability Mismatch
+### Type 1: Execution Invariant/Obligation Mismatch
 
-A capability is invoked in a context that doesn't match its optimal pattern.
+A capability is invoked with invariants that don't satisfy its execution obligations.
 
 ```mermaid
 classDiagram
-    class ContextCapabilityMismatch {
+    class ExecutionMismatch {
         +str component_id
         +str capability
         +CapabilityProfile capability_profile
-        +str caller_context
-        +str optimal_context
+        +str execution_invariants
+        +str execution_obligations
         +str recommendation
     }
 
@@ -44,10 +49,10 @@ classDiagram
         +str semantic
         +bool batchable
         +bool cacheable
-        +str optimal_context
+        +str execution_obligations
     }
 
-    ContextCapabilityMismatch --> CapabilityProfile : references
+    ExecutionMismatch --> CapabilityProfile : references
 ```
 
 **Detection:**
@@ -55,7 +60,7 @@ classDiagram
 ```mermaid
 flowchart TB
     subgraph entrypoint["🚀 Entry"]
-        start([find_context_mismatches])
+        start([find_execution_mismatches])
     end
 
     subgraph nodeLoop["📦 Node Iteration"]
@@ -65,11 +70,11 @@ flowchart TB
 
     subgraph analysis["🔍 Analysis"]
         getprofile["Get capability profile"]
-        check{"context_compatible?"}
+        check{"invariants satisfy\nobligations?"}
     end
 
     subgraph violation["⚠️ Violation Found"]
-        add[["Create ContextCapabilityMismatch\n• component_id\n• capability\n• caller_context\n• optimal_context\n• recommendation"]]
+        add[["Create ExecutionMismatch\n• component_id\n• capability\n• execution_invariants\n• execution_obligations\n• recommendation"]]
     end
 
     subgraph control["🔄 Control Flow"]
@@ -106,29 +111,29 @@ flowchart TB
     subgraph components["📦 Component Hierarchy"]
         direction TB
         subgraph caller["COM-A · Loop Caller"]
-            ctx_a["📍 caller_context: ∅"]
-            loop["🔁 for item in items:\n    COM-B.process(item)"]
+            ctx_a["📍 execution_invariants: empty set"]
+            loop["Loop over items calling COM-B"]
         end
 
         subgraph callee["COM-B · File Handler"]
-            ctx_b["📍 caller_context: INV-CTX-ITERATIVE"]
+            ctx_b["📍 execution_invariants: EXE-INV-ITERATIVE"]
             cap["🔧 capabilities: CAP-FILE-WRITE"]
         end
     end
 
-    subgraph profile["📋 CAP-FILE-WRITE Profile"]
-        batch["✓ batchable: true"]
-        optimal["🎯 optimal_context: INV-CTX-ATOMIC"]
+    subgraph profile["Profile: CAP-FILE-WRITE"]
+        batch["batchable: true"]
+        optimal["execution_obligations: EXE-INV-ATOMIC"]
     end
 
-    subgraph mismatch["🚨 CONTEXT MISMATCH DETECTED"]
-        issue["Expected: ATOMIC\nReceived: ITERATIVE"]
-        rec["💡 Recommendation:\n• Add batch API to surface\n• Implement caller-side batching"]
+    subgraph mismatch["EXECUTION MISMATCH DETECTED"]
+        issue["Obligations: ATOMIC\nInvariants: ITERATIVE"]
+        rec["Recommendation: Add batch API\nor implement caller-side batching"]
     end
 
     caller -->|"propagates\nITERATIVE"| callee
     callee -->|"exposes"| profile
-    profile -.->|"violates optimal"| mismatch
+    profile -.->|"invariants don't\nsatisfy obligations"| mismatch
 
     style components fill:#f8fafc,stroke:#64748b,stroke-width:2px
     style caller fill:#dbeafe,stroke:#2563eb
@@ -139,27 +144,27 @@ flowchart TB
 
 ---
 
-### Type 2: Missing Context Flattening
+### Type 2: Missing Execution Flattening
 
-An iterative or parallel context reaches a capability that needs atomic context, but no surface flattens the context.
+Iterative or parallel execution invariants reach a capability with atomic obligations, but no surface performs the transformation.
 
 ```mermaid
 classDiagram
     class MissingFlattening {
         +str capability
-        +str required_context
-        +str actual_context
+        +str required_obligations
+        +str actual_invariants
         +List~str~ path
         +str insertion_point
         +str recommendation
     }
 
-    class ContextPath {
+    class ExecutionPath {
         +List~Surface~ surfaces
         +trace(start, end) List~str~
     }
 
-    MissingFlattening --> ContextPath : traced via
+    MissingFlattening --> ExecutionPath : traced via
 ```
 
 **Detection:**
@@ -175,19 +180,19 @@ flowchart TB
         getcap[/"For each capability"/]
     end
 
-    subgraph checks["🔍 Context Analysis"]
+    subgraph checks["🔍 Execution Analysis"]
         getprofile["Get capability profile"]
-        needsatomic{"Needs ATOMIC?"}
-        hasiterative{"Has ITERATIVE\nin caller_context?"}
+        needsatomic{"Obligations require\nATOMIC?"}
+        hasiterative{"Has ITERATIVE\ninvariants?"}
     end
 
     subgraph pathAnalysis["🛤️ Path Tracing"]
-        trace["Trace context path\nfrom root to node"]
+        trace["Trace execution path\nfrom root to node"]
         findpoint["Find best\ninsertion point"]
     end
 
     subgraph violation["⚠️ Violation"]
-        add[["Create MissingFlattening\n• capability\n• required: ATOMIC\n• actual: ITERATIVE\n• path\n• insertion_point"]]
+        add[["Create MissingFlattening\n• capability\n• required_obligations: ATOMIC\n• actual_invariants: ITERATIVE\n• path\n• insertion_point"]]
     end
 
     subgraph control["🔄 Control"]
@@ -221,36 +226,36 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    subgraph pipeline["🔀 Context Propagation Pipeline"]
+    subgraph pipeline["🔀 Execution Propagation Pipeline"]
         direction TB
 
-        subgraph orchestrator["COM-01 · Parallel Orchestrator"]
-            inv01["🏷️ own_invariants: INV-CTX-PARALLEL"]
+        subgraph orchestrator["COM-01 Parallel Orchestrator"]
+            inv01["own_invariants: EXE-INV-PARALLEL"]
         end
 
-        subgraph surface["CON-01 · Surface (No Transform)"]
+        subgraph surface["CON-01 Surface (No Transform)"]
             direction LR
-            receives["📥 receives: PARALLEL"]
-            arrow1["→"]
-            emits["📤 emits: PARALLEL"]
-            passthrough["⚡ Pass-through!"]
+            receives["receives_invariants: PARALLEL"]
+            arrow1["transform"]
+            emits["emits_invariants: PARALLEL"]
+            passthrough["Pass-through"]
         end
 
-        subgraph worker["COM-02 · Worker"]
-            ctx02["📍 caller_context: PARALLEL"]
+        subgraph worker["COM-02 Worker"]
+            ctx02["execution_invariants: PARALLEL"]
         end
 
-        subgraph dbwriter["COM-03 · DB Writer"]
-            ctx03["📍 caller_context: PARALLEL"]
-            cap03["🔧 CAP-DB-WRITE"]
-            profile["🎯 optimal: ATOMIC"]
+        subgraph dbwriter["COM-03 DB Writer"]
+            ctx03["execution_invariants: PARALLEL"]
+            cap03["CAP-DB-WRITE"]
+            profile["execution_obligations: ATOMIC"]
         end
     end
 
-    subgraph violation["🚨 MISSING FLATTENING DETECTED"]
+    subgraph violation["MISSING FLATTENING DETECTED"]
         direction TB
-        issue["❌ Context Mismatch\nExpected: ATOMIC\nReceived: PARALLEL"]
-        insertion["💡 Fix Location: CON-01\n• Add queue for serialization\n• Add batch collector"]
+        issue["Execution Mismatch\nObligations: ATOMIC, Invariants: PARALLEL"]
+        insertion["Fix Location: CON-01\nAdd queue or batch collector"]
     end
 
     orchestrator -->|"PARALLEL"| surface
@@ -441,22 +446,22 @@ When a mismatch is detected, generate a focused prompt for LLM analysis:
 ```mermaid
 flowchart LR
     subgraph input["📥 Input"]
-        mismatch["ContextCapabilityMismatch\nobject"]
+        mismatch["ExecutionMismatch\nobject"]
     end
 
     subgraph promptGen["📝 Generated LLM Prompt"]
         direction TB
 
-        subgraph sec1["1️⃣ Caller Context"]
-            ctx["component_id\ncaller_context"]
+        subgraph sec1["1️⃣ Execution Invariants"]
+            ctx["component_id\nexecution_invariants"]
         end
 
         subgraph sec2["2️⃣ Capability Profile"]
-            prof["semantic\nbatchable\noptimal_context"]
+            prof["semantic\nbatchable\nexecution_obligations"]
         end
 
         subgraph sec3["3️⃣ The Mismatch"]
-            mis["Expected vs Actual\nContext Comparison"]
+            mis["Obligations vs Invariants\nComparison"]
         end
 
         subgraph sec4["4️⃣ Analysis Questions"]
@@ -502,7 +507,7 @@ classDiagram
         -DecoratedGraph graph
         +__init__(graph: DecoratedGraph)
         +find_optimization_violations() OptimizationReport
-        +find_context_mismatches() List~ContextCapabilityMismatch~
+        +find_execution_mismatches() List~ExecutionMismatch~
         +find_missing_flattenings() List~MissingFlattening~
         +find_batching_opportunities() List~BatchingOpportunity~
         +find_cacheable_redundancies() List~CacheableRedundancy~
@@ -512,12 +517,12 @@ classDiagram
     class DecoratedGraph {
         +Dict~str,Node~ nodes
         +get_capability_profile(cap_id) CapabilityProfile
-        +trace_context_path(start, end) List~str~
+        +trace_execution_path(start, end) List~str~
         +get_callers(node_id) List~str~
     }
 
     class OptimizationReport {
-        +List context_mismatches
+        +List execution_mismatches
         +List missing_flattenings
         +List batching_opportunities
         +List cacheable_redundancies
@@ -531,27 +536,27 @@ classDiagram
 
 ```mermaid
 flowchart LR
-    subgraph input["📥 Input"]
-        inputGraph[("DecoratedGraph\n• nodes\n• capabilities\n• profiles")]
+    subgraph input["Input"]
+        inputGraph[("DecoratedGraph")]
     end
 
-    subgraph enhancer["⚡ AlgorithmEnhancer"]
+    subgraph enhancer["AlgorithmEnhancer"]
         direction TB
         init["Initialize"]
         find["find_optimization_violations()"]
         init --> find
     end
 
-    subgraph detectors["🔍 Parallel Detectors"]
+    subgraph detectors["Parallel Detectors"]
         direction TB
-        cm["🔄 Context\nMismatches"]
-        mf["📉 Missing\nFlattening"]
-        bo["📦 Batching\nOpportunities"]
-        cr["💾 Cacheable\nRedundancies"]
+        cm["Execution Mismatches"]
+        mf["Missing Flattening"]
+        bo["Batching Opportunities"]
+        cr["Cacheable Redundancies"]
     end
 
-    subgraph output["📊 Output"]
-        report[["OptimizationReport\n━━━━━━━━━━━━━━━━\n• context_mismatches[]\n• missing_flattenings[]\n• batching_opportunities[]\n• cacheable_redundancies[]"]]
+    subgraph output["Output"]
+        report[["OptimizationReport"]]
     end
 
     inputGraph ==> enhancer
@@ -568,22 +573,22 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    subgraph input["📥 Input"]
+    subgraph input["Input"]
         start(["node, profile"])
     end
 
-    subgraph decision["🤔 Decision Tree"]
-        check1{"Batchable +\nITERATIVE?"}
-        check2{"PARALLEL\ncontext?"}
+    subgraph decision["Decision Tree"]
+        check1{"Batchable with ITERATIVE?"}
+        check2{"PARALLEL invariants?"}
     end
 
-    subgraph recommendations["💡 Recommendations"]
-        fix1["✨ Add batch API to surface\nor batch at caller"]
-        fix2["🔒 Add queue to serialize\nor add locking"]
-        fix3["🔍 Review context\ntransformation options"]
+    subgraph recommendations["Recommendations"]
+        fix1["Add batch API or batch at caller"]
+        fix2["Add queue to serialize or locking"]
+        fix3["Review transformation options"]
     end
 
-    subgraph output["📤 Output"]
+    subgraph output["Output"]
         return([recommendation string])
     end
 
@@ -607,7 +612,7 @@ flowchart TB
 ```mermaid
 classDiagram
     class OptimizationReport {
-        +List~ContextCapabilityMismatch~ context_mismatches
+        +List~ExecutionMismatch~ execution_mismatches
         +List~MissingFlattening~ missing_flattenings
         +List~BatchingOpportunity~ batching_opportunities
         +List~CacheableRedundancy~ cacheable_redundancies
@@ -616,7 +621,7 @@ classDiagram
         +get_by_component(component_id) List
     }
 
-    class ContextCapabilityMismatch {
+    class ExecutionMismatch {
         +str component_id
         +str capability
         +str recommendation
@@ -640,7 +645,7 @@ classDiagram
         +str recommendation
     }
 
-    OptimizationReport *-- "0..*" ContextCapabilityMismatch : context_mismatches
+    OptimizationReport *-- "0..*" ExecutionMismatch : execution_mismatches
     OptimizationReport *-- "0..*" MissingFlattening : missing_flattenings
     OptimizationReport *-- "0..*" BatchingOpportunity : batching_opportunities
     OptimizationReport *-- "0..*" CacheableRedundancy : cacheable_redundancies
@@ -650,30 +655,30 @@ classDiagram
 
 ```mermaid
 flowchart TB
-    subgraph report["📊 OptimizationReport"]
+    subgraph report["OptimizationReport"]
         direction TB
 
-        subgraph violations["🚨 Violation Collections"]
+        subgraph violations["Violation Collections"]
             direction LR
-            cm["🔄 context_mismatches\n[ContextCapabilityMismatch]"]
-            mf["📉 missing_flattenings\n[MissingFlattening]"]
-            bo["📦 batching_opportunities\n[BatchingOpportunity]"]
-            cr["💾 cacheable_redundancies\n[CacheableRedundancy]"]
+            cm["execution_mismatches"]
+            mf["missing_flattenings"]
+            bo["batching_opportunities"]
+            cr["cacheable_redundancies"]
         end
 
-        subgraph methods["🔧 Methods"]
+        subgraph methods["Methods"]
             direction LR
-            md["to_markdown()\n→ Human-readable report"]
-            sev["get_by_severity()\n→ Grouped by impact"]
-            comp["get_by_component(id)\n→ Filter by component"]
+            md["to_markdown()"]
+            sev["get_by_severity()"]
+            comp["get_by_component(id)"]
         end
     end
 
-    subgraph outputs["📤 Output Formats"]
+    subgraph outputs["Output Formats"]
         direction LR
-        markdown["📝 Markdown\nReport"]
-        severity["📈 Severity\nGroups"]
-        component["🎯 Component\nView"]
+        markdown["Markdown Report"]
+        severity["Severity Groups"]
+        component["Component View"]
     end
 
     violations --> methods
@@ -841,21 +846,22 @@ flowchart TB
 
 | Bug Finder Violation | Enhancer Violation |
 |---------------------|-------------------|
-| ExpectationViolation | ContextCapabilityMismatch |
+| ExpectationViolation | ExecutionMismatch |
 | ObligationLeakage | MissingFlattening |
 | ContextCollision | BatchingOpportunity |
 | IsolationReport | CacheableRedundancy |
 
 Both tools:
 1. Consume the decorated graph
-2. Analyze invariants/context propagation
+2. Analyze invariants/execution propagation
 3. Detect violations of declared constraints
 4. Generate reports with recommendations
 5. Trigger re-architecture when internal fixes are insufficient
 
 The difference is **what** they check:
-- Bug Finder: Correctness invariants (INV-ORDERED, OBL-SERIAL, etc.)
-- Enhancer: Optimization invariants (INV-CTX-*, capability profiles)
+
+* Bug Finder: Correctness invariants (INV-ORDERED, OBL-SERIAL, etc.)
+* Enhancer: Execution invariants (EXE-INV-*, capability profiles)
 
 ---
 
@@ -863,14 +869,15 @@ The difference is **what** they check:
 
 The Algorithm Enhancer:
 
-1. **Analyzes** operational context propagation through the graph
-2. **Compares** caller context against capability profiles
+1. **Analyzes** execution invariant propagation through the graph
+2. **Compares** execution invariants against capability obligations
 3. **Detects** four types of optimization violations
 4. **Recommends** fixes (internal optimization or re-architecture)
 5. **Triggers** decomposition when contract changes are needed
 
 Unlike simple single-component optimization, this approach:
-- Sees cross-boundary patterns (loop-over-batchable)
-- Traces context transformations through surfaces
-- Identifies where flattening should occur
-- Connects performance issues to architectural decisions
+
+* Sees cross-boundary patterns (loop-over-batchable)
+* Traces execution transformations through surfaces
+* Identifies where flattening should occur
+* Connects performance issues to architectural decisions
