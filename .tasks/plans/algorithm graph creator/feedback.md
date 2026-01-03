@@ -8,6 +8,34 @@ The graph is computed at analysis time from the component documents. Runtime dec
 
 ---
 
+## System Overview
+
+```mermaid
+mindmap
+  root((Algorithm Graph Creator))
+    Input
+      Component Documents
+      ID Namespace
+    Construction
+      Parse Structure
+      Infer Semantics
+      Build Edges
+    Decoration
+      Top-Down Cascade
+      Bottom-Up Demand
+      Context Propagation
+      Demand-Driven Pull
+    Output
+      Decorated Graph
+      Persisted Invariants
+    Consumers
+      Bug Finder
+      Enhancer
+      Decomposer
+```
+
+---
+
 ## Input: The ID System
 
 The architecture uses a comprehensive ID system that the graph creator parses:
@@ -28,7 +56,32 @@ The architecture uses a comprehensive ID system that the graph creator parses:
 
 All IDs are globally unique across the system.
 
-**Note:** `ResponsibilityPattern` is not an ID but a string from a fixed vocabulary (e.g., `file_io`, `validation`). See Step 1.5 for usage.
+**Note:** `ResponsibilityPattern` is not an ID but a string from a fixed vocabulary. The complete vocabulary:
+
+| Pattern | Behavior |
+|---------|----------|
+| `builder` | Construct data from parts |
+| `classifier` | Boolean predicate for condition checking |
+| `collector` | Build collection from iterable |
+| `entity` | Domain class with fields (database) |
+| `extractor` | Get one specific piece of data from any source |
+| `filter` | Yields elements that pass predicate (stream) |
+| `getter` | Return a private field |
+| `guard` | Guard clause for early return |
+| `mapper` | Map data between formats |
+| `mutator` | Set/modify one piece of data |
+| `orchestrator` | Sequential integration with no logic |
+| `projection` | Derived view of entities for transmission |
+| `reducer` | Reduce/aggregate data |
+| `router` | Route to one of N functions via labeled conditions |
+| `setter` | Set a private field |
+| `splitter` | Fan-out one stream to multiple streams |
+| `validator` | Validate data, throw on failure |
+| `visitor` | Accept callback for each element (typically mutations) |
+| `walker` | Yield individual elements (stream style) |
+| `zip` | Combine multiple streams index-by-index |
+
+See Step 1.5 for usage.
 
 **Note on Invariants vs Capabilities:**
 
@@ -237,10 +290,10 @@ flowchart TB
 
 | Capability | semantic | batch | cache | optimal | requires | responsibility_signature |
 |------------|----------|-------|-------|---------|----------|--------------------------|
-| CAP-FILE-READ | file_io | ✓ | ✓ | ATOMIC | INV-PATH-EXISTS | {file_io: 2, validation: 1} |
-| CAP-HASH-COMPUTE | cpu_pure | ✗ | ✓ | PARALLEL | — | {cpu_compute: 1} |
-| CAP-DB-WRITE | database_io | ✓ | ✗ | ATOMIC | INV-TRANSACTIONAL | {database_io: 1, validation: 1} |
-| CAP-AUTH-CHECK | security | ✗ | ✓ | ATOMIC | INV-AUTH-CONTEXT | {auth: 1} |
+| CAP-FILE-READ | file_io | ✓ | ✓ | ATOMIC | INV-PATH-EXISTS | {walker: 2, validator: 1} |
+| CAP-HASH-COMPUTE | cpu_pure | ✗ | ✓ | PARALLEL | — | {mapper: 1} |
+| CAP-DB-WRITE | database_io | ✓ | ✗ | ATOMIC | INV-TRANSACTIONAL | {mutator: 1, validator: 1} |
+| CAP-AUTH-CHECK | security | ✗ | ✓ | ATOMIC | INV-AUTH-CONTEXT | {classifier: 1} |
 
 These profiles are used by the [Algorithm Enhancer](../algorithm%20enhancer/feedback.md) to detect optimization opportunities.
 
@@ -644,8 +697,8 @@ flowchart TB
 - INV-49: Operates in loop context
 
 ### Responsibilities
-- file_io: 2
-- validation: 1
+- walker: 2
+- validator: 1
 ```
 
 **Contract Persistence Format:**
@@ -689,8 +742,8 @@ cacheable: true
 optimal_context: ATOMIC
 requires_invariants: [INV-03]
 responsibility_signature:
-  file_io: 2
-  validation: 1
+  walker: 2
+  validator: 1
 expressed_on: [CON-05, CON-08]
 supports: [CAP-14, CAP-15]  # CAP → CAP edges
 ```
