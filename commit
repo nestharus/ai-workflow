@@ -1,0 +1,2 @@
+#!/bin/bash
+aicommit2 --all --auto-select --confirm
