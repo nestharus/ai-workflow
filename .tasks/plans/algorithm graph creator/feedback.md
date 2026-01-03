@@ -4,7 +4,7 @@
 
 Creates a runtime graph representation of the distributed algorithm architecture. This graph serves as the foundation for both **bug finding** (constraint violation detection) and **algorithm enhancement** (meaningful slice extraction).
 
-The graph is computed at analysis time from the component documents. It does not modify the source documents—invariant propagation and decoration exist only in the runtime environment.
+The graph is computed at analysis time from the component documents. Runtime decoration is in-memory; inference outputs are persisted back to docs under AUTO-GENERATED blocks for incremental recomputation.
 
 ---
 
@@ -15,15 +15,20 @@ The architecture uses a comprehensive ID system that the graph creator parses:
 | ID Prefix | Meaning | Example |
 |-----------|---------|---------|
 | `COM-XX` | Component | `COM-05` (SchedulingDomain) |
-| `ALG-XX` | Algorithm (paired with COM) | `ALG-05` |
+| `SUR-XX` | Surface (owned by component; container of contracts) | `SUR-05` |
+| `ALG-XX` | Algorithm (globally unique; owned by a COM) | `ALG-05` |
 | `INV-STORES-XX` | Storage invariant (component persists data) | `INV-STORES-04` (FileRegistry) |
 | `CTX-XX` | Context (transient data) | `CTX-03` (ScheduleRequest) |
 | `ART-XX` | Artifact (operational metadata) | `ART-01` (CLI arguments) |
-| `CON-XX` | Contract/Surface (boundary between components) | `CON-05` |
+| `CON-XX` | Contract (one boundary inside a surface) | `CON-05` |
 | `INV-XX` | Invariant (correctness constraint) | `INV-02` (deterministic ordering) |
 | `OBL-XX` | Obligation (demanded behavior) | `OBL-20` (strict serial access) |
 | `SET-XX` | Setting/Context (execution environment) | `SET-05` (parallel execution) |
 | `CAP-XX` | Capability (feature/responsibility) | `CAP-03` (file discovery) |
+
+All IDs are globally unique across the system.
+
+**Note:** `ResponsibilityPattern` is not an ID but a string from a fixed vocabulary (e.g., `file_io`, `validation`). See Step 1.5 for usage.
 
 **Note on Invariants vs Capabilities:**
 
@@ -40,52 +45,89 @@ The architecture uses a comprehensive ID system that the graph creator parses:
 
 ### Step 1: Parse All Component Documents
 
+Each component document is parsed into a typed subgraph:
+
+- `COM` node (the component)
+- `SUR` node (exactly one per `COM`, references exposed contracts)
+- `ALG` nodes (many, under `COM`)
+- `CON` nodes (one per `ALG`, owned by the algorithm)
+
 ```mermaid
 flowchart LR
-    IN[Component documents] --> LOOP
+    IN[Component documents] --> PARSE[Parse markdown]
 
-    subgraph LOOP[For Each Document]
-        direction TB
-        A[Parse markdown] --> B[Extract INV/OBL/CAP IDs]
-        B --> C[Create graph node with IDs]
-    end
+    PARSE --> COM[COM node]
+    COM -->|owns_surface| SUR[SUR node]
+    COM -->|has_algorithm| ALG1[ALG node]
+    COM -->|has_algorithm| ALGN[ALG node]
 
-    LOOP --> OUT[Graph with nodes]
+    ALG1 -->|has_contract| CON1[CON node]
+    ALGN -->|has_contract| CONN[CON node]
+
+    SUR -.->|exposes| CON1
+    SUR -.->|exposes| CONN
 ```
 
-**IDs extracted from each document:**
+**IDs extracted during parsing (assigned to typed nodes):**
 
-| Prefix | Stored As |
+| Prefix | Stored On |
 |--------|-----------|
-| INV- | declared_invariants |
-| OBL- | declared_obligations |
-| CAP- | declared_capabilities |
-| INV-STORES- | storage_invariants |
-| CON- (out) | contracts_provided |
-| CON- (in) | contracts_consumed |
+| INV- | `ALG` (implementation invariants) and `CON` (interface invariants) |
+| OBL- | `CON` (obligations demanded by contract) |
+| CAP- | `CON` (capabilities offered by contract) |
+| INV-STORES- | `COM` (storage_invariants) |
+| CON- | `CON` nodes (contract identity + direction/signature) |
 
-### Step 1.5: Infer Implicit Invariants and Capabilities
+### Step 1.5: Infer Implicit Invariants, Capabilities, and Responsibilities
 
-The graph creator does not rely solely on declared invariants and capabilities. The LLM analyzes algorithm content and **infers** what the code implies but wasn't explicitly declared.
+The graph creator analyzes algorithm content and infers what the implementation implies but wasn't explicitly declared. Inference populates both the ALG (implementation details) and its CON (interface/contract).
 
 ```mermaid
 flowchart LR
     IN[Graph from Step 1] --> LOOP
 
-    subgraph LOOP[For Each Node]
+    subgraph LOOP[For Each Algorithm (ALG)]
         direction TB
-        A[Read algorithm text] --> B[LLM finds implied invariants]:::llm
-        B --> C[Merge with document invariants]
+        A[Read algorithm text] --> B[LLM infers outputs]:::llm
+        B --> C[Store on ALG + CON]
     end
 
-    LOOP --> OUT[Enriched graph]
+    LOOP --> MAT
+
+    subgraph MAT[Materialize Capabilities]
+        direction TB
+        D[Create CAP nodes] --> E[Add expresses edges from CON]
+    end
+
+    MAT --> OUT[Enriched graph with CON → CAP edges]
 
     classDef llm fill:#2196f3,color:#fff
 ```
 
-For each node, the LLM infers invariants, obligations, and capabilities from the algorithm content. These are unioned with declared values to produce `own_invariants`, `own_obligations`, and `own_capabilities`.
+**Inference outputs per ALG:**
 
-**Example:** Given algorithm content like `discover_files → sort results → validate each`, the LLM infers INV-ORDERED-OUTPUT, OBL-VALID-PATH, and CAP-FILE-DISCOVERY. These get added to own_invariants, own_obligations, and own_capabilities.
+| Field | Type | Description |
+|-------|------|-------------|
+| impl_invariants | `Set[INV]` | Implementation invariants (internal characteristics) |
+| responsibilities | `Multiset[ResponsibilityPattern]` | Responsibility patterns from fixed vocabulary |
+
+**Inference outputs per CON (ALG's contract):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| interface_invariants | `Set[INV]` | Interface invariants (boundary constraints) |
+| obligations | `Set[OBL]` | What the contract demands from callers |
+| capabilities | `Set[CAP]` | What the contract offers |
+
+For each `CAP` in `CON.capabilities`, a `CAP` node is created and an `expresses: CON → CAP` edge is added.
+
+**Derived fields on COM:**
+
+| Field | Derivation |
+|-------|------------|
+| provided_capabilities | Union of `CON.capabilities` for all exposed `CON` in `SUR` |
+
+**Example:** Given algorithm content like `discover_files → sort results → validate each`, the LLM infers INV-ORDERED-OUTPUT, OBL-VALID-PATH, and CAP-FILE-DISCOVERY, plus responsibility patterns and their capability mappings.
 
 ### Step 1.6: Baseline Invariant Checklist
 
@@ -127,50 +169,82 @@ The document grows only when the LLM consistently misses a specific invariant pa
 
 ### Step 1.7: Infer Capability Profiles
 
-Each capability carries **optimization metadata** describing its performance characteristics:
-
-| Field | Description |
-|-------|-------------|
-| id | CAP-XX identifier |
-| semantic | file_io, network_io, database_io, cpu_pure, memory_pure |
-| batchable | Can multiple calls be combined? |
-| cacheable | Can results be reused? |
-| optimal_context | ATOMIC, ITERATIVE, or PARALLEL |
-| requires_invariants | Invariants needed for safe operation |
-
-**Inference during graph construction:**
+Each capability carries metadata for optimization and decomposition analysis:
 
 ```mermaid
-flowchart LR
-    IN[Graph with capabilities] --> LOOP
-
-    subgraph LOOP[For Each Node's Capability]
-        direction TB
-        A[Read capability + algorithm] --> B[LLM determines profile]:::llm
-        B --> C[Store: semantic, batchable, cacheable, optimal_context]
-    end
-
-    LOOP --> OUT[Graph with capability profiles]
-
-    classDef llm fill:#1565c0,color:#fff
+erDiagram
+    CON ||--o{ CAP : "expresses"
+    CAP ||--o{ CAP : "supports"
+    CAP {
+        string id "CAP-XX"
+        enum semantic "file_io | network_io | database_io | cpu_pure | memory_pure | security"
+        bool batchable
+        bool cacheable
+        enum optimal_context "ATOMIC | ITERATIVE | PARALLEL"
+        set requires_invariants "Set[INV]"
+        multiset responsibility_signature "Multiset[ResponsibilityPattern]"
+        set expressed_on "Set[CON]"
+    }
+    CON {
+        string id "CON-XX"
+        set capabilities
+    }
 ```
 
-The LLM determines: semantic type, batchable, cacheable, and optimal context for each capability.
+| Field | Source | Description |
+|-------|--------|-------------|
+| id | Identity | CAP-XX identifier |
+| semantic | LLM | file_io, network_io, database_io, cpu_pure, memory_pure, security |
+| batchable | LLM | Can multiple calls be combined? |
+| cacheable | LLM | Can results be reused? |
+| optimal_context | LLM | ATOMIC, ITERATIVE, or PARALLEL |
+| requires_invariants | LLM | Invariants needed for safe operation |
+| responsibility_signature | Derived | Union of responsibility patterns from all providing ALGs |
+| expressed_on | Derived | Set of CONs that expose this capability |
+
+**Inference and derivation flow:**
+
+```mermaid
+flowchart TB
+    subgraph INFER[LLM Inference]
+        direction LR
+        A[Read CON + ALG context] --> B[Determine semantic, batchable, cacheable, optimal_context]:::llm
+        B --> C[Determine requires_invariants]:::llm
+    end
+
+    subgraph DERIVE[Graph Derivation]
+        direction LR
+        D[Collect all CON → CAP edges] --> E[expressed_on = providing CONs]
+        F[Collect ALG.responsibilities for each CON's ALG] --> G[responsibility_signature = union]
+    end
+
+    subgraph RESOLVE[Conflict Resolution]
+        direction LR
+        H{Multiple providers disagree on requires_invariants?}
+        H -->|yes| I[Union all + record ProfileConflict]:::warn
+        H -->|no| J[Use single value]
+    end
+
+    INFER --> DERIVE --> RESOLVE --> OUT[Complete CapabilityProfile]
+
+    classDef llm fill:#1565c0,color:#fff
+    classDef warn fill:#e65100,color:#fff
+```
+
+**Conflict policy:** If multiple providers disagree about `requires_invariants`, the canonical profile uses the union and records a `ProfileConflict` for review.
 
 **Example profiles:**
 
-| Capability | semantic | batch | cache | optimal | requires |
-|------------|----------|-------|-------|---------|----------|
-| CAP-FILE-READ | file_io | ✓ | ✓ | ATOMIC | INV-PATH-EXISTS |
-| CAP-HASH-COMPUTE | cpu_pure | ✗ | ✓ | PARALLEL | — |
-| CAP-DB-WRITE | database_io | ✓ | ✗ | ATOMIC | INV-TRANSACTIONAL |
-| CAP-AUTH-CHECK | security | ✗ | ✓ | ATOMIC | INV-AUTH-CONTEXT |
+| Capability | semantic | batch | cache | optimal | requires | responsibility_signature |
+|------------|----------|-------|-------|---------|----------|--------------------------|
+| CAP-FILE-READ | file_io | ✓ | ✓ | ATOMIC | INV-PATH-EXISTS | {file_io: 2, validation: 1} |
+| CAP-HASH-COMPUTE | cpu_pure | ✗ | ✓ | PARALLEL | — | {cpu_compute: 1} |
+| CAP-DB-WRITE | database_io | ✓ | ✗ | ATOMIC | INV-TRANSACTIONAL | {database_io: 1, validation: 1} |
+| CAP-AUTH-CHECK | security | ✗ | ✓ | ATOMIC | INV-AUTH-CONTEXT | {auth: 1} |
 
 These profiles are used by the [Algorithm Enhancer](../algorithm%20enhancer/feedback.md) to detect optimization opportunities.
 
 **Capability inference during algorithm updates:**
-
-When algorithms are modified, the LLM identifies NEW capabilities introduced:
 
 ```mermaid
 flowchart LR
@@ -182,24 +256,65 @@ flowchart LR
 
 ### Step 2: Build Edge Types
 
-The graph has multiple edge types:
+```mermaid
+flowchart LR
+    subgraph OWNERSHIP[Ownership Edges]
+        COM1[COM] -->|owns_surface| SUR1[SUR]
+        COM1 -->|has_algorithm| ALG1[ALG]
+        ALG1 -->|has_contract| CON1[CON]
+    end
 
-| Edge Type | Description |
-|-----------|-------------|
-| contract_edge | Interface boundary (contract_id, direction, signature) |
-| storage_edge | Access to component with storage invariant (read/write/read_write) |
-| composition_edge | Parent-child in hierarchy |
-| call_edge | Direct invocation (not via contract) |
+    subgraph CAPABILITY[Capability Edges]
+        CON1 -->|expresses| CAP1[CAP]
+        CAP1 -->|supports| CAP2[CAP]
+        SUR1 -.->|exposes| CON1
+    end
+```
 
-### Step 3: Extract Surface Properties
+| Category | Edge Type | Description |
+|----------|-----------|-------------|
+| Structural | owns_surface | `COM → SUR` (component owns its surface) |
+| Structural | has_algorithm | `COM → ALG` (component owns algorithms) |
+| Structural | has_contract | `ALG → CON` (algorithm owns its contract, 1:1) |
+| Structural | exposes | `SUR → CON` (surface exposes contracts, refs) |
+| Capability | expresses | `CON → CAP` (contract exposes capability to callers) |
+| Capability | supports | `CAP → CAP` (capability composition/dependency) |
+| Relational | contract_edge | Interface boundary (contract_id, direction, signature) |
+| Relational | storage_edge | Access to component with storage invariant (read/write/read_write) |
+| Relational | composition_edge | Parent-child in hierarchy |
+| Relational | call_edge | Direct invocation (not via contract) |
 
-For each contract (surface), extract:
+**Supports edge semantics:** `supports` edges represent capability composition or dependency, not hierarchy. They do not imply transitive expression—if `CAP-A supports CAP-B`, a contract expressing `CAP-A` does not automatically express `CAP-B`.
 
-| Group | Fields |
-|-------|--------|
-| Identity | id (CON-XX), source, target, signature |
-| Contract | expectations, guarantees |
-| Barrier | satisfies, passes, absorbs |
+### Step 3: Extract Contract Properties
+
+For each contract (CON), extract or derive:
+
+```mermaid
+erDiagram
+    CON {
+        string id "CON-XX"
+        string source "calling component"
+        string target "called component"
+        string signature "method signature"
+        list expectations "caller preconditions"
+        list guarantees "callee postconditions"
+        set capabilities "CAP-IDs expressed"
+        set interface_invariants "boundary INVs"
+        set obligations "caller OBLs"
+    }
+    CON ||--o{ CAP : "expresses"
+```
+
+| Group | Fields | Source |
+|-------|--------|--------|
+| Identity | id, source, target, signature | Parsed |
+| Contract | expectations, guarantees | Parsed |
+| Capabilities | capabilities | Inferred (Step 1.5) |
+| Constraints | interface_invariants, obligations | Inferred (Step 1.5) |
+| Barrier | satisfies, passes, absorbs | Inferred (Pass 2) |
+
+**Exposure semantics:** A capability is *exposed* if its contract is in `SUR.exposed_contracts`. Internal-only capabilities exist on contracts not referenced by any surface. This distinction enables ExposureLoad computation.
 
 ---
 
@@ -355,7 +470,7 @@ flowchart LR
     classDef search fill:#1565c0,color:#fff
 ```
 
-*Repeats for each capability on each node.*
+*Repeats for each `CAP` the current node expresses (for a `COM`, this is `COM.provided_capabilities`, derived from `expresses` edges).*
 
 **trace_back function:**
 
@@ -471,89 +586,133 @@ Capability profiles drive Pass 4: they declare what's needed, trace back to coll
 
 ---
 
-### Pass 5: Invariant Persistence & Incremental Recomputation
+### Pass 5: Persistence & Incremental Recomputation
 
-Discovered invariants must be **persisted back to source files**. This makes the graph creator incremental — only recompute what changed.
+Discovered data must be **persisted back to source files**. This makes the graph creator incremental — only recompute what changed.
+
+```mermaid
+flowchart TB
+    subgraph PERSIST[What Gets Persisted]
+        direction LR
+        ALG_P[ALG: impl_invariants, responsibilities]
+        CON_P[CON: interface_invariants, obligations, capabilities, barrier]
+        SUR_P[SUR: exposed_contracts]
+        CAP_P[CAP: profiles, supports edges]
+    end
+
+    subgraph DOCS[Document Structure]
+        direction TB
+        REQ[Requirements doc] --> COM_DOC[Component docs]
+        COM_DOC --> ALG_DOC[Algorithm sections]
+        ALG_DOC --> CON_DOC[Contract sections]
+    end
+
+    PERSIST --> DOCS
+```
 
 **Document Hierarchy:**
 
-| Document | Contents | Review Level |
+| Document | Contains | Review Level |
 |----------|----------|--------------|
 | Requirements doc | Canonical invariants, global IDs, system-level constraints | Tightly human-reviewed |
-| Component docs | References to requirements + LLM-discovered invariants | Standard review |
-| Surface docs | Contract properties (SATISFIES/PASSES/ABSORBS) | Standard review |
+| Component docs | COM metadata, SUR.exposed_contracts | Standard review |
+| Algorithm sections | ALG.impl_invariants, ALG.responsibilities | Standard review |
+| Contract sections | CON.interface_invariants, CON.obligations, CON.capabilities, barrier props | Standard review |
+| Capability cache | CAP profiles, supports edges | Auto-generated |
+
+**What Gets Persisted (by node type):**
+
+| Node | Fields | Location |
+|------|--------|----------|
+| ALG | impl_invariants, responsibilities | Algorithm section in component doc |
+| CON | interface_invariants, obligations, capabilities | Contract section in component doc |
+| CON | satisfies, passes, absorbs | Contract section (barrier) |
+| SUR | exposed_contracts | Component doc header |
+| CAP | profiles (semantic, batchable, etc.) | Capability cache |
+| CAP | supports edges | Capability cache |
+
+**Algorithm Persistence Format:**
+
+```markdown
+## ALG-05: ScheduleFiles
+
+<!-- AUTO-GENERATED -->
+<!-- Hash: a3f2b1c... -->
+
+### Implementation Invariants
+- INV-48: Produces sorted results
+- INV-49: Operates in loop context
+
+### Responsibilities
+- file_io: 2
+- validation: 1
+```
+
+**Contract Persistence Format:**
+
+```markdown
+## CON-05: ScheduleFiles Contract
+
+<!-- AUTO-GENERATED -->
+<!-- Hash: b4c3d2e... -->
+
+### Interface
+- CAP-12: File discovery
+- CAP-13: Path validation
+- OBL-05: Valid path input required
+- INV-50: Returns normalized paths
+
+### Barrier Properties
+- SATISFIES: INV-07 (thread safety via internal lock)
+- PASSES: INV-02, INV-48
+- ABSORBS: INV-15 (async context not relevant here)
+```
+
+**Surface Persistence Format:**
+
+```markdown
+## SUR-05: SchedulingDomain Surface
+
+### Exposed Contracts
+- CON-05: ScheduleFiles
+- CON-06: ValidatePaths
+```
+
+**Capability Cache Format:**
+
+```yaml
+# .tasks/cache/capabilities/CAP-12.yaml
+id: CAP-12
+semantic: file_io
+batchable: true
+cacheable: true
+optimal_context: ATOMIC
+requires_invariants: [INV-03]
+responsibility_signature:
+  file_io: 2
+  validation: 1
+expressed_on: [CON-05, CON-08]
+supports: [CAP-14, CAP-15]  # CAP → CAP edges
+```
 
 **Global ID Assignment:**
-
-Since all documents are loaded into memory during graph construction, IDs are globally coordinated:
 
 ```mermaid
 flowchart LR
     IN[Load all docs] --> COLLECT[Collect all existing IDs]
-    COLLECT --> NEXT[Determine next available ID]
+    COLLECT --> NEXT[Determine next available ID per type]
     NEXT --> ASSIGN[Assign IDs to new discoveries]
-    ASSIGN --> PERSIST[Write IDs back to docs]
+    ASSIGN --> PERSIST[Write back to docs/cache]
 ```
-
-- Requirements doc invariants: Human-assigned IDs (INV-01, INV-02, etc.)
-- Component discoveries: Get next sequential ID (if highest is INV-47, new gets INV-48)
-- Surface properties: Reference existing invariant IDs
 
 **Why Persist:**
 
 | Without Persistence | With Persistence |
 |---------------------|------------------|
 | Full recomputation every run | Only recompute changed elements |
-| LLM inference repeated for unchanged code | LLM inference cached in files |
-| Invariants exist only in runtime graph | Invariants are source of truth |
-| No history of discovered invariants | Changes tracked in version control |
-
-**What Gets Persisted:**
-
-| Location | Fields |
-|----------|--------|
-| Requirements doc | Canonical invariants with global IDs |
-| Component docs | Referenced invariants, discovered invariants, capability profiles |
-| Surface docs | SATISFIES, PASSES, ABSORBS classifications |
-| Metadata | algorithm_hash, surface_hash, last_computed |
-
-**Component Persistence Format:**
-
-```markdown
-## COM-05: SchedulingDomain
-
-### References (from requirements)
-- INV-02: Deterministic ordering
-- OBL-05: Valid path input
-
-### Discovered
-<!-- AUTO-GENERATED -->
-<!-- Algorithm hash: a3f2b1c... -->
-- INV-48: Produces sorted results
-- INV-49: Operates in loop context
-- CAP-12: File discovery
-
-### Capability Profiles
-<!-- AUTO-GENERATED -->
-CAP-12:
-  semantic: file_io
-  batchable: true
-  optimal_context: ATOMIC
-  requires_invariants: [INV-03]
-```
-
-**Surface Persistence Format:**
-
-```markdown
-## CON-05: SchedulingDomain → FileWriter
-
-### Barrier Properties
-<!-- AUTO-GENERATED -->
-<!-- Surface hash: b4c3d2e... -->
-- SATISFIES: INV-07 (thread safety via internal lock)
-- PASSES: INV-02, INV-48
-- ABSORBS: INV-15 (async context not relevant here)
-```
+| LLM inference repeated | LLM inference cached in files |
+| Graph exists only in memory | Source of truth in version control |
+| No history | Changes tracked in git |
 
 **Change Detection:**
 
@@ -599,15 +758,15 @@ flowchart LR
     classDef llm fill:#1565c0,color:#fff
 ```
 
-**recompute_component:**
+**recompute_algorithm:**
 
 ```mermaid
 flowchart LR
-    IN[Changed component] --> A[Read algorithm text]
-    A --> B[LLM discovers invariants]:::llm
-    B --> C[Merge with document invariants]
-    C --> D[LLM determines capability profiles]:::llm
-    D --> OUT[Updated node data]
+    IN[Changed ALG] --> A[Read algorithm text]
+    A --> B[LLM infers impl_invariants, responsibilities]:::llm
+    B --> C[LLM infers CON: interface_invariants, obligations, capabilities]:::llm
+    C --> D[Update CAP profiles for affected capabilities]:::llm
+    D --> OUT[Updated ALG + CON + CAP data]
 
     classDef llm fill:#1565c0,color:#fff
 ```
@@ -616,12 +775,15 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    IN[Changed nodes] --> EXPAND
+    IN[Changed ALG] --> EXPAND
 
     subgraph EXPAND[Expand to Related Nodes]
         direction TB
-        A[Each changed node] --> B[Add all ancestors above it]
-        A --> C[Add all descendants below it]
+        A[ALG changed] --> B[Include owning COM]
+        A --> C[Include owned CON]
+        C --> D[Include expressed CAPs]
+        D --> E[Include CAPs via supports edges]
+        B --> F[Include SUR if CON is exposed]
     end
 
     EXPAND --> OUT[Full set of nodes needing update]
@@ -629,25 +791,28 @@ flowchart LR
 
 **Propagation on Change:**
 
-When a component changes, propagation must update dependents:
+When an algorithm changes, propagation updates the subgraph:
 
 ```mermaid
-flowchart LR
-    IN[Affected node] --> A[Collect invariants from ancestors]
-    A --> B[Merge with node's own invariants]
-    B --> C[Collect context from callers]
-    C --> OUT[Node updated with inherited + own invariants and caller context]
+flowchart TB
+    ALG[ALG changed] --> CON[Update CON barrier props]
+    CON --> CAP[Update CAP profiles]
+    CAP --> SUP[Follow supports edges]
+    ALG --> COM[Recompute COM.provided_capabilities]
+    COM --> SUR[Update SUR.exposed_contracts if needed]
 ```
 
 **Cache Structure:**
 
 ```
 .tasks/cache/
-├── graph.json          # Serialized DecoratedGraph
-├── hashes.json         # Component → algorithm hash
-└── profiles/
-    ├── CAP-FILE-READ.json
-    └── CAP-DB-WRITE.json
+├── graph.json              # Serialized DecoratedGraph
+├── hashes/
+│   ├── ALG-05.hash         # Algorithm content hash
+│   └── CON-05.hash         # Contract content hash
+└── capabilities/
+    ├── CAP-12.yaml         # Profile + supports edges
+    └── CAP-13.yaml
 ```
 
 **Benefits:**
@@ -660,38 +825,80 @@ flowchart LR
 
 ### The Decorated Graph
 
-After all passes, each node has:
+After all passes, each node type has:
+
+**COM (Component):**
 
 | Source | Field | Description |
 |--------|-------|-------------|
-| Identity | id, type | Component (may have storage invariants) |
-| Document/Inference | own_invariants, own_obligations, own_capabilities | Declared + inferred |
-| Pass 1 | active_invariants | inherited + own |
-| Pass 2 | inherited_obligations | Demands from descendants |
-| Pass 3 | caller_context, requires_context | PARALLEL/ITERATIVE/ATOMIC |
+| Identity | id, type | `COM` node |
+| Derived | provided_capabilities | Union of `CON.capabilities` for exposed `CON` in `SUR` |
+| Pass 1 | active_invariants | Inherited + own |
 
-And each surface has a `DecoratedSurface`:
+**SUR (Surface):**
 
-| Field | Description |
-|-------|-------------|
-| id, source, target | Identity |
-| expectations | What caller expects |
-| guarantees | What callee provides |
-| satisfies | Obligations fulfilled here |
-| passes | Invariants that continue through |
-| absorbs | Invariants blocked here |
-| receives_context | Context from caller |
-| emits_context | Context after flattening |
+| Source | Field | Description |
+|--------|-------|-------------|
+| Identity | id | `SUR` node |
+| Structure | exposed_contracts | List of `CON` refs from component's algorithms |
 
-And each capability has a `CapabilityProfile`:
+**ALG (Algorithm):**
 
-| Field | Description |
-|-------|-------------|
-| id | CAP-XX |
-| semantic | file_io, network_io, cpu_pure, etc. |
-| batchable | Can multiple calls be combined |
-| cacheable | Can results be reused |
-| optimal_context | ATOMIC, ITERATIVE, or PARALLEL |
+| Source | Field | Description |
+|--------|-------|-------------|
+| Identity | id, type | `ALG` node |
+| Inference | impl_invariants | Implementation invariants (internal) |
+| Inference | responsibilities | `Multiset[ResponsibilityPattern]` |
+
+**CON (Contract):**
+
+| Source | Field | Description |
+|--------|-------|-------------|
+| Identity | id, source, target, signature | Contract identity |
+| Inference | interface_invariants | Interface invariants (boundary) |
+| Inference | obligations | What contract demands from callers |
+| Inference | capabilities | What contract offers |
+| Barrier | satisfies | Obligations fulfilled here |
+| Barrier | passes | Invariants that continue through |
+| Barrier | absorbs | Invariants blocked here |
+| Pass 3 | receives_context | Context from caller |
+| Pass 3 | emits_context | Context after flattening |
+
+**CAP (CapabilityProfile):**
+
+| Source | Field | Description |
+|--------|-------|-------------|
+| Identity | id | CAP-XX |
+| LLM | semantic | file_io, network_io, database_io, cpu_pure, memory_pure, security |
+| LLM | batchable | Can multiple calls be combined |
+| LLM | cacheable | Can results be reused |
+| LLM | optimal_context | ATOMIC, ITERATIVE, or PARALLEL |
+| LLM | requires_invariants | Invariants needed for safe operation |
+| Derived | responsibility_signature | Union of responsibility patterns from providers |
+| Derived | expressed_on | Set of CONs exposing this capability |
+
+**Edges:**
+
+```mermaid
+erDiagram
+    COM ||--|| SUR : "owns_surface"
+    COM ||--o{ ALG : "has_algorithm"
+    ALG ||--|| CON : "has_contract"
+    SUR ||--o{ CON : "exposes"
+    CON ||--o{ CAP : "expresses"
+    CAP ||--o{ CAP : "supports"
+```
+
+**Derived Indices (computed once, cached):**
+
+| Index | Type | Description |
+|-------|------|-------------|
+| capability_providers | `Map[CAP → Set[CON]]` | Which contracts express each capability |
+| capability_exposure | `Map[CAP → Set[SUR]]` | Which surfaces expose each capability (via their contracts) |
+| component_suite | `Map[COM → Set[CAP]]` | All capabilities a component provides (exposed + internal) |
+| exposed_suite | `Map[COM → Set[CAP]]` | Only capabilities exposed via SUR |
+
+These indices enable O(1) lookups for decomposition analysis.
 
 ---
 
@@ -807,16 +1014,44 @@ The final output is a fully decorated graph that can be:
 2. **Sliced** for meaningful algorithm segments (enhancer)
 3. **Visualized** for architecture understanding
 
-**Data:** nodes, surfaces, edges, capability_profiles
+**Data:** nodes (COM, SUR, ALG, CON, CAP), edges, derived indices, capability_profiles
 
 **Query Methods:**
 
 | Category | Methods |
 |----------|---------|
 | Invariants | get_active_invariants, get_inherited_obligations, get_surface_leakage |
-| Capabilities | get_capabilities, find_overlaps, find_divergence |
+| Capabilities | get_capabilities, get_providers, get_exposure |
 | Context | get_caller_context, find_mismatches, trace_path |
 | Pass 4 | get_invariant_gaps, trace_source |
+| Load Metrics | compute_resp_load, compute_exposure_load, compute_constraint_load |
+| Overlap Detection | find_identity_overlap, find_semantic_overlap, find_suite_overlap |
+
+**Load computation signatures:**
+
+```
+compute_resp_load(CAP) → int
+  Returns: sum of responsibility_signature counts
+
+compute_exposure_load(CAP) → int
+  Returns: |capability_exposure[CAP]| (number of surfaces exposing)
+
+compute_constraint_load(CAP) → int
+  Returns: |requires_invariants| + |obligations from expressing CONs|
+```
+
+**Overlap detection signatures:**
+
+```
+find_identity_overlap(COM, COM) → Set[CAP]
+  Returns: capabilities expressed by both components (exact match)
+
+find_semantic_overlap(COM, COM) → Map[semantic → Set[CAP]]
+  Returns: capabilities grouped by semantic type where both components contribute
+
+find_suite_overlap(COM, COM) → float
+  Returns: Jaccard similarity of component_suite[COM1] ∩ component_suite[COM2]
+```
 
 ---
 
@@ -834,14 +1069,14 @@ flowchart LR
 
     BUG --> V[Constraint violations]:::output
     ENH --> O[Optimization opportunities]:::output
-    DEC --> P[Architecture patterns]:::output
+    DEC --> P[Decomposition candidates]:::output
 
     classDef consumer fill:#1565c0,color:#fff
     classDef output fill:#7b1fa2,color:#fff
 ```
 
-| Consumer | Output |
-|----------|--------|
-| BugFinder | find_violations → List[Violation] |
-| Enhancer | find_optimization_violations (context mismatches, batching, flattenings) |
-| Decomposer | find_capability_overlaps, find_divergent_components, find_capability_patterns |
+| Consumer | Uses | Output |
+|----------|------|--------|
+| BugFinder | get_active_invariants, get_invariant_gaps | List[Violation] |
+| Enhancer | get_caller_context, find_mismatches | List[OptimizationOpportunity] |
+| Decomposer | compute_*_load, find_*_overlap, component_suite | List[DecompositionCandidate] |
