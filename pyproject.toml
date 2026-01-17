@@ -71,6 +71,11 @@ knowledge = [
     "torch>=2.9.1,<3.0.0",
     "transformers>=4.57.3,<4.58.0",
 ]
+demo = [
+    "numpy>=2.4.0,<2.5.0",
+    "matplotlib >=3.10.8,<3.11.0",
+    "ipython >=9.8.0,<9.9.0",
+]
 
 [project.scripts]
 # Runtime scripts
