@@ -1,0 +1,1824 @@
+# Library Assignments
+
+Each element below needs library labels as sublists.
+
+## Legal Libraries
+
+- `foundation`
+- `graph`
+- `field`
+- `storage`
+- `ingestion`
+- `embedding`
+- `patterns`
+- `uncertainty`
+- `exploration`
+- `workspace`
+- `deployment`
+- `verification`
+
+---
+
+## Components (32)
+
+- **Comp1**: Ingestion Stream (L731)
+  - primary: ingestion
+  - related: storage, foundation
+- **Comp2**: Graph Store (L733)
+  - primary: graph
+  - related: storage
+- **Comp3**: Field Solver (L735)
+  - primary: field
+  - related: graph, uncertainty
+- **Comp4**: Tiered Memory Manager (L737)
+  - primary: storage
+  - related: foundation
+- **Comp5**: Candidate Generator (L739)
+  - primary: exploration
+  - related: field, patterns
+- **Comp6**: Edge Validator (L741)
+  - primary: graph
+  - related: uncertainty, foundation
+- **Comp7**: Idea Manager (L743)
+  - primary: exploration
+  - related: patterns, graph
+- **Comp8**: Retrieval Planner (L745)
+  - primary: field
+  - related: graph, patterns
+- **Comp9**: Index Layer (L747)
+  - primary: storage
+  - related: embedding
+- **Comp10**: Telemetry and Replay Log (L749)
+  - primary: storage
+  - related: foundation
+- **Comp11**: Modality Router (L753)
+  - primary: ingestion
+  - related: foundation
+- **Comp12**: Tokenizer Stack (L755)
+  - primary: ingestion
+  - related: graph
+- **Comp13**: Graph Grammar Engine (L757)
+  - primary: ingestion
+  - related: graph, patterns
+- **Comp14**: Parse Forest Store (L759)
+  - primary: ingestion
+  - related: storage, uncertainty
+- **Comp15**: Grammar Library (L761)
+  - primary: ingestion
+  - related: patterns, storage
+- **Comp16**: Grammar Miner and Compiler (L763)
+  - primary: ingestion
+  - related: patterns, uncertainty
+- **Comp17**: Token Type Registry (L765)
+  - primary: ingestion
+  - related: foundation
+- **Comp18**: Coordinate System Registry (L767)
+  - primary: embedding
+  - related: storage
+- **Comp19**: Adapter and Alignment Trainer (L769)
+  - primary: embedding
+  - related: field, deployment
+- **Comp20**: Traversal Planner (L771)
+  - primary: graph
+  - related: field, exploration
+- **Comp21**: Re-ingestion Orchestrator (L773)
+  - primary: ingestion
+  - related: workspace, field
+- **Comp22**: Hippocampal Workspace Store (HWS) (L4851)
+  - primary: workspace
+  - related: storage, graph
+- **Comp23**: Proposal Gateway (NGW) (L4853)
+  - primary: workspace
+  - related: uncertainty, foundation
+- **Comp24**: Secondary Ingestion Engine (H2) (L4856)
+  - primary: ingestion
+  - related: workspace, storage
+- **Comp25**: Commit Controller (2SC) (L4858)
+  - primary: workspace
+  - related: foundation, storage
+- **Comp26**: Curriculum Manager (CURR) (L4860)
+  - primary: ingestion
+  - related: uncertainty, workspace
+- **Comp27**: Cold Solve Scheduler (ROOT) (L4862)
+  - primary: field
+  - related: graph, storage
+- **Comp28**: Surprise Budget Manager (SURP) (L4864)
+  - primary: uncertainty
+  - related: field, foundation
+- **Comp29**: Connectivity Monitor + Bridge Synthesizer (CONN) (L4866)
+  - primary: graph
+  - related: field, exploration
+- **Comp30**: Grammar Sandbox + Rule Promotion (GRAM-SBX) (L4868)
+  - primary: ingestion
+  - related: uncertainty, deployment
+- **Comp31**: Adapter Lifecycle Manager (ADAPT) (L4870)
+  - primary: embedding
+  - related: uncertainty, deployment
+- **Comp32**: Inquiry Planner (INQ) (L4873)
+  - primary: exploration
+  - related: uncertainty, field
+
+
+## Data Structures (63)
+
+- **D1**: Node (L779)
+  - primary: graph
+  - related: field, embedding, storage
+- **D2**: Edge (L796)
+  - primary: graph
+  - related: field, uncertainty
+- **D3**: Graph (L808)
+  - primary: graph
+  - related: storage
+- **D4**: ANN indices (L815)
+  - primary: storage
+  - related: embedding, field
+- **D5**: Event log (L823)
+  - primary: storage
+  - related: foundation
+- **D6**: ObservationRecord (L837)
+  - primary: foundation
+  - related: storage, embedding
+- **D7**: NodeState (L856)
+  - primary: field
+  - related: foundation, graph, storage
+- **D8**: EdgeBelief (L879)
+  - primary: graph
+  - related: foundation, storage, field, uncertainty
+- **D9**: ConflictRecord (L903)
+  - primary: uncertainty
+  - related: foundation, graph, storage
+- **D10**: Hypothesis (L922)
+  - primary: foundation
+  - related: storage, graph
+- **D11**: Epoch (L936)
+  - primary: storage
+  - related: graph, field
+- **D12**: Snapshot (L955)
+  - primary: storage
+  - related: graph, field
+- **D13**: EdgeBelief additions (L971)
+  - primary: graph
+  - related: uncertainty, field
+- **D14**: IndexVersion (L985)
+  - primary: storage
+  - related: embedding
+- **D15**: ConsolidationJob (L1001)
+  - primary: storage
+  - related: workspace, field
+- **D16**: Pattern (L1017)
+  - primary: patterns
+  - related: graph, storage
+- **D17**: PatternInstance (L1032)
+  - primary: patterns
+  - related: foundation, graph, storage
+- **D18**: PatternStats (L1049)
+  - primary: patterns
+  - related: uncertainty, storage
+- **D19**: FailureCase (L1067)
+  - primary: patterns
+  - related: foundation, storage, uncertainty
+- **D20**: FeedbackEvent (L1085)
+  - primary: uncertainty
+  - related: foundation, storage
+- **D21**: UserRiskProfile (L1101)
+  - primary: uncertainty
+  - related: foundation
+- **D22**: AmbiguityLedgerEntry (L1115)
+  - primary: uncertainty
+  - related: foundation, graph, storage
+- **D23**: ModuleLibrary (L1132)
+  - primary: patterns
+  - related: storage, graph
+- **D24**: FactorDictionary (L1153)
+  - primary: embedding
+  - related: storage, field
+- **D25**: PatternDecomposition (L1170)
+  - primary: patterns
+  - related: graph, storage
+- **D26**: TradeoffProfile (L1184)
+  - primary: patterns
+  - related: field, storage, uncertainty
+- **D27**: IdeaCandidate (L1208)
+  - primary: patterns
+  - related: exploration, graph, storage
+- **D28**: Graph token (L1229)
+  - primary: ingestion
+  - related: graph, embedding
+- **D29**: Grammar rule as graph rewrite (L1246)
+  - primary: ingestion
+  - related: graph, patterns
+- **D30**: Parse hypothesis (L1266)
+  - primary: ingestion
+  - related: uncertainty, graph
+- **D31**: Parse forest (L1283)
+  - primary: ingestion
+  - related: graph, patterns
+- **D32**: Coordinate system (L1298)
+  - primary: embedding
+  - related: ingestion
+- **D33**: Adapter map (L1312)
+  - primary: embedding
+  - related: field
+- **D34**: NoiseSeed (L1332)
+  - primary: exploration
+  - related: foundation, uncertainty, storage, graph
+- **D35**: ExplorationTrace (L1356)
+  - primary: exploration
+  - related: foundation, storage, uncertainty
+- **D36**: EvidenceBundle (L1372)
+  - primary: exploration
+  - related: foundation, graph, patterns
+- **D37**: CuriosityBudget (L1387)
+  - primary: exploration
+  - related: uncertainty
+- **D38**: IdeaToken (L1400)
+  - primary: exploration
+  - related: patterns, graph, storage
+- **D39**: Workspace (L1419)
+  - primary: workspace
+  - related: storage, graph
+- **D40**: WorkspaceEvent (L1438)
+  - primary: workspace
+  - related: foundation, storage
+- **D41**: WorkspaceGraph (L1460)
+  - primary: workspace
+  - related: foundation, graph, storage
+- **D42**: Capsule (L1499)
+  - primary: workspace
+  - related: foundation, graph, storage
+- **D43**: WorkspaceMessage (L1534)
+  - primary: workspace
+  - related: storage
+- **D44**: ReconcileRecord (L1548)
+  - primary: workspace
+  - related: storage, uncertainty
+- **D45**: WorkspaceCommitEnvelope (L1562)
+  - primary: workspace
+  - related: foundation, storage, uncertainty
+- **D46**: ManifoldView (L1581)
+  - primary: field
+  - related: storage
+- **D47**: ManifoldState (L1593)
+  - primary: field
+  - related: graph, storage, embedding
+- **D48**: TangentFrame (L1616)
+  - primary: field
+  - related: graph, embedding
+- **D49**: EdgeTransport (L1630)
+  - primary: field
+  - related: graph
+- **D50**: ConnectionLaplacian (L1643)
+  - primary: field
+  - related: graph
+- **D51**: BlendRecipe (L1656)
+  - primary: field
+  - related: storage
+- **D52**: CompositeField (ephemeral) (L1669)
+  - primary: field
+  - related: uncertainty
+- **D53**: TranslationProposal (L1680)
+  - primary: field
+  - related: deployment, foundation, uncertainty
+- **D54**: ABExperiment (L1696)
+  - primary: deployment
+  - related: storage, uncertainty
+- **D55**: HippocampalWorkspace (L1714)
+  - primary: workspace
+  - related: storage, graph, ingestion
+- **D56**: NeocortexProposal (L1729)
+  - primary: workspace
+  - related: foundation, storage, uncertainty
+- **D57**: CommitRecord (L1745)
+  - primary: workspace
+  - related: foundation, storage, uncertainty
+- **D58**: CurriculumStage (L1760)
+  - primary: ingestion
+  - related: uncertainty, storage
+- **D59**: SurpriseBudget (L1774)
+  - primary: uncertainty
+  - related: field
+- **D60**: ConnectivityState (L1785)
+  - primary: graph
+  - related: storage, field
+- **D61**: GrammarRuleCandidate (L1797)
+  - primary: ingestion
+  - related: uncertainty, storage, deployment
+- **D62**: AdapterCandidate (L1811)
+  - primary: embedding
+  - related: uncertainty, storage, deployment
+- **D63**: InquiryTask (L1826)
+  - primary: exploration
+  - related: uncertainty, storage
+
+
+## Lean Proofs (4)
+
+- **Lean1**: Existence and uniqueness of the field solution (L3758)
+  - primary: verification
+  - related: field, foundation
+- **Lean2**: Energy decreases under relaxation, convergence on fixed graph (L3773)
+  - primary: verification
+  - related: field, graph
+- **Lean3**: Noise attenuation, directions become more reliable (L3787)
+  - primary: verification
+  - related: field, uncertainty
+- **Lean4**: Tier caps bound compute and memory (L3801)
+  - primary: verification
+  - related: storage, foundation
+
+---
+
+## Goals (49)
+
+- **G1**: Reliable directions (L276)
+  - primary: field
+  - related: embedding, graph
+- **G2**: Multi-resolution understanding (L279)
+  - primary: patterns
+  - related: ingestion, field
+- **G3**: Revision as a first-class operation (L282)
+  - primary: field
+  - related: foundation, storage
+- **G4**: Bounded working set (L285)
+  - primary: storage
+  - related: field
+- **G5**: High recall with controllable cost (L288)
+  - primary: field
+  - related: patterns, storage
+- **G6**: Evidence permanence (L292)
+  - primary: foundation
+  - related: storage
+- **G7**: Ambiguity preservation (L296)
+  - primary: uncertainty
+  - related: foundation
+- **G8**: Confidence and diagnostics (L300)
+  - primary: uncertainty
+  - related: foundation
+- **G9**: Global consolidation (L304)
+  - primary: field
+  - related: storage, workspace
+- **G10**: Ambiguity preservation under consolidation (L308)
+  - primary: uncertainty
+  - related: field, foundation
+- **G11**: Robustness (L312)
+  - primary: field
+  - related: uncertainty
+- **G12**: Structural abstraction (L316)
+  - primary: patterns
+  - related: foundation
+- **G13**: Confidence-weighted promotion (L321)
+  - primary: uncertainty
+  - related: patterns, storage
+- **G14**: Failure memory (L326)
+  - primary: uncertainty
+  - related: foundation, storage
+- **G15**: Outcome feedback (L330)
+  - primary: uncertainty
+  - related: foundation
+- **G16**: Risk governance (L334)
+  - primary: uncertainty
+  - related: foundation
+- **G30**: Noise becomes a computable object (L339)
+  - primary: exploration
+  - related: uncertainty, foundation
+- **G31**: Noise becomes a queue (L343)
+  - primary: exploration
+  - related: storage
+- **G32**: Exploration is hypothesis-safe (L347)
+  - primary: exploration
+  - related: workspace, foundation
+- **G33**: Exploration is guided (L351)
+  - primary: exploration
+  - related: uncertainty, field
+- **G34**: LLM reasoning is used as a refinement tool (L355)
+  - primary: exploration
+  - related: patterns
+- **G35**: Distillation produces tokens (L359)
+  - primary: patterns
+  - related: exploration, ingestion
+- **G17**: Graphs are the grammar (L363)
+  - primary: ingestion
+  - related: graph
+- **G18**: Tokens are graph objects (L368)
+  - primary: ingestion
+  - related: graph, embedding
+- **G19**: Emergent structure (L373)
+  - primary: patterns
+  - related: ingestion, graph
+- **G20**: Multi-interpretation ingestion (L378)
+  - primary: ingestion
+  - related: uncertainty
+- **G21**: Computable directions across coordinate systems (L383)
+  - primary: embedding
+  - related: field
+- **G22**: Hippocampus workspace is first-class (L385)
+  - primary: workspace
+  - related: storage, graph
+- **G23**: Two-stage commit (L389)
+  - primary: workspace
+  - related: foundation, storage
+- **G24**: Low path dependence (L394)
+  - primary: ingestion
+  - related: field, workspace
+- **G25**: Paradigm shift support (L398)
+  - primary: uncertainty
+  - related: foundation, workspace
+- **G26**: Graph stays traversable (L402)
+  - primary: graph
+  - related: field
+- **G27**: Grammar evolution is safe (L407)
+  - primary: ingestion
+  - related: uncertainty, deployment
+- **G28**: Multi-coordinate adapters are governable (L411)
+  - primary: embedding
+  - related: deployment, uncertainty
+- **G29**: Hippocampus actively seeks evidence (L415)
+  - primary: exploration
+  - related: workspace, uncertainty
+- **G36**: Manifold as a first-class substrate (L423)
+  - primary: field
+  - related: storage
+- **G37**: Explicit translation operators (L428)
+  - primary: field
+  - related: embedding, graph
+- **G38**: Governed blending (L434)
+  - primary: field
+  - related: deployment, uncertainty
+- **G39**: Dragon closure (L440)
+  - primary: verification
+  - related: foundation
+- **G40**: Zero downtime sleep (L447)
+  - primary: storage
+  - related: deployment, workspace
+- **G41**: A/B continuous deployment (L453)
+  - primary: deployment
+  - related: storage, uncertainty
+- **G22**: Hippocampus workspace is first-class (L4895)
+  - primary: workspace
+  - related: storage, graph
+- **G23**: Two-stage commit (L4899)
+  - primary: workspace
+  - related: foundation, storage
+- **G24**: Low path dependence (L4904)
+  - primary: ingestion
+  - related: field, workspace
+- **G25**: Paradigm shift support (L4908)
+  - primary: uncertainty
+  - related: foundation, workspace
+- **G26**: Graph stays traversable (L4912)
+  - primary: graph
+  - related: field
+- **G27**: Grammar evolution is safe (L4917)
+  - primary: ingestion
+  - related: uncertainty, deployment
+- **G28**: Multi-coordinate adapters are governable (L4921)
+  - primary: embedding
+  - related: deployment, uncertainty
+- **G29**: Hippocampus actively seeks evidence (L4925)
+  - primary: exploration
+  - related: workspace, uncertainty 
+
+## Invariants (15)
+
+- **P1I1**: Evidence permanence [P1] (L527)
+  - primary: foundation
+  - related: storage
+- **P1I2**: Non-destructive updates [P1] (L534)
+  - primary: foundation
+  - related: storage
+- **P1I3**: Field state never overwrites history [P1] (L542)
+  - primary: foundation
+  - related: storage, field
+- **P1I4**: Ambiguity stays explicit [P1] (L546)
+  - primary: foundation
+  - related: uncertainty
+- **P1I5**: Compression keeps a lossless backstore [P1] (L553)
+  - primary: storage
+  - related: patterns
+- **P4I1**: Abstractions are derived artifacts [P1] (L558)
+  - primary: patterns
+  - related: foundation
+- **P4I2**: Expansion is always possible [P1] (L563)
+  - primary: patterns
+  - related: foundation
+- **P4I3**: Failure memory is append-only [P1] (L567)
+  - primary: foundation
+  - related: uncertainty, storage
+- **P4I4**: Governance never hides ambiguity silently [P1] (L571)
+  - primary: uncertainty
+  - related: foundation
+- **P9I1**: — Read coherence [P9] (L627)
+  - primary: storage
+  - related: workspace
+- **P9I2**: — Overlay is always writable [P9] (L637)
+  - primary: storage
+  - related: workspace
+- **P9I3**: — Blends are reversible [P9] (L641)
+  - primary: field
+  - related: foundation
+- **P9I4**: — No force becomes law silently [P9] (L645)
+  - primary: field
+  - related: foundation, uncertainty
+- **P9I5**: — Translation proposals are provenance-bearing [P9] (L651)
+  - primary: foundation
+  - related: field
+- **P9I6**: — A/B never breaks correctness [P9] (L660)
+  - primary: deployment
+  - related: storage
+
+## Claims (29)
+
+- **P4C1**: Lossless structural abstraction [P4] (L3196)
+  - primary: patterns
+  - related: foundation, verification
+- **P4C2**: MDL-driven abstraction reduces description length [P4] (L3211)
+  - primary: patterns
+  - related: verification
+- **P4C3**: Promotion guarantee [P4] (L3217)
+  - primary: patterns
+  - related: uncertainty, verification
+- **P4C4**: Failure memory suppression [P4] (L3223)
+  - primary: uncertainty
+  - related: patterns, verification
+- **P4C5**: Risk governance calibration [P4] (L3232)
+  - primary: uncertainty
+  - related: verification
+- **P1C1**: proof sketch [P1] (L3870)
+  - primary: foundation
+  - related: storage, verification
+- **P1C2**: and P1C3 proof sketch [P1] (L3882)
+  - primary: field
+  - related: graph, verification
+- **P1C4**: proof sketch [P1] (L3890)
+  - primary: uncertainty
+  - related: foundation, verification
+- **P1C5**: proof sketch [P1] (L3896)
+  - primary: field
+  - related: verification
+- **P2C1**: Snapshot consistency [P2] (L3906)
+  - primary: storage
+  - related: verification
+- **P2C2**: Non-blocking commit [P2] (L3916)
+  - primary: storage
+  - related: verification
+- **P2C3**: IRLS descent [P2] (L3927)
+  - primary: field
+  - related: verification
+- **P2C4**: Convergence to a stationary point [P2] (L3944)
+  - primary: field
+  - related: verification
+- **P2C5**: No evidence loss [P2] (L3955)
+  - primary: foundation
+  - related: storage, verification
+- **P5C1**: Multi-view canonical field solve exists and is unique [P5] (L3968)
+  - primary: field
+  - related: embedding, verification
+- **P5C2**: Rewrite steps preserve evidence permanence [P5] (L3977)
+  - primary: foundation
+  - related: ingestion, verification
+- **P5C3**: Packed forest representation preserves derivations [P5] (L3985)
+  - primary: ingestion
+  - related: patterns, verification
+- **P5C4**: Orthogonal adapter preserves geometry [P5] (L3995)
+  - primary: embedding
+  - related: verification
+- **P6C1**: Workspace isolation [P6] (L4006)
+  - primary: workspace
+  - related: storage, verification
+- **P6C2**: Snapshot consistency [P6] (L4015)
+  - primary: workspace
+  - related: storage, verification
+- **P6C3**: Safe reclamation [P6] (L4023)
+  - primary: storage
+  - related: verification
+- **P6C4**: Surprise budget prevents calcification by construction [P6] (L4031)
+  - primary: uncertainty
+  - related: field, workspace, verification
+- **P6C5**: Grammar promotion controls error [P6] (L4040)
+  - primary: ingestion
+  - related: uncertainty, verification
+- **P6C6**: Adapter rollout is safe under canary plus rollback [P6] (L4047)
+  - primary: deployment
+  - related: embedding, verification
+- **P7C1**: Evidence stays [P7] (L4059)
+  - primary: foundation
+  - related: exploration, verification
+- **P7C2**: Exploration stays bounded [P7] (L4070)
+  - primary: exploration
+  - related: verification
+- **P7C3**: Learning progress avoids irreducible noise fixation [P7] (L4100)
+  - primary: exploration
+  - related: uncertainty, verification
+- **P7C4**: Novelty helps coverage [P7] (L4111)
+  - primary: exploration
+  - related: verification
+- **P7C5**: Information gain guides ambiguity resolution [P7] (L4119)
+  - primary: exploration
+  - related: uncertainty, verification
+
+## Structures (46)
+
+- **ObservationRecord** [P1] (L791)
+  - primary: foundation
+  - related: storage, embedding
+- **NodeState** [P1] (L810)
+  - primary: field
+  - related: foundation, graph, storage
+- **EdgeBelief** [P1] (L833)
+  - primary: graph
+  - related: foundation, storage, field, uncertainty
+- **ConflictRecord** [P1] (L857)
+  - primary: uncertainty
+  - related: foundation, graph, storage
+- **Hypothesis** [P1] (L876)
+  - primary: foundation
+  - related: storage, graph
+- **Pattern** [P4] (L971)
+  - primary: patterns
+  - related: graph, storage
+- **PatternInstance** [P4] (L986)
+  - primary: patterns
+  - related: foundation, graph, storage
+- **PatternStats** [P4] (L1003)
+  - primary: patterns
+  - related: uncertainty, storage
+- **FailureCase** [P4] (L1021)
+  - primary: patterns
+  - related: foundation, storage, uncertainty
+- **FeedbackEvent** [P4] (L1039)
+  - primary: uncertainty
+  - related: foundation, storage
+- **UserRiskProfile** [P4] (L1055)
+  - primary: uncertainty
+- **AmbiguityLedgerEntry** [P4] (L1069)
+  - primary: uncertainty
+  - related: foundation, graph, storage
+- **ModuleLibrary** [P8] (L1086)
+  - primary: patterns
+  - related: storage, graph
+- **FactorDictionary** [P8] (L1107)
+  - primary: embedding
+  - related: storage, field
+- **PatternDecomposition** [P8] (L1124)
+  - primary: patterns
+  - related: graph, storage
+- **TradeoffProfile** [P8] (L1138)
+  - primary: patterns
+  - related: field, storage, uncertainty
+- **IdeaCandidate** [P8] (L1162)
+  - primary: patterns
+  - related: exploration, graph, storage
+- **NoiseSeed** [P7] (L1286)
+  - primary: exploration
+  - related: foundation, uncertainty, storage, graph
+- **ExplorationTrace** [P7] (L1310)
+  - primary: exploration
+  - related: foundation, storage, uncertainty
+- **EvidenceBundle** [P7] (L1326)
+  - primary: exploration
+  - related: foundation, graph, patterns
+- **CuriosityBudget** [P7] (L1341)
+  - primary: exploration
+  - related: uncertainty
+- **IdeaToken** [P7] (L1354)
+  - primary: exploration
+  - related: patterns, graph, storage
+- **Workspace** [P10] (L1373)
+  - primary: workspace
+  - related: storage, graph
+- **WorkspaceEvent** [P10] (L1392)
+  - primary: workspace
+  - related: foundation, storage
+- **WorkspaceGraph** [P10] (L1414)
+  - primary: workspace
+  - related: foundation, graph, storage
+- **Capsule** [P10] (L1453)
+  - primary: workspace
+  - related: foundation, graph, storage
+- **WorkspaceMessage** [P10] (L1488)
+  - primary: workspace
+  - related: storage
+- **ReconcileRecord** [P10] (L1502)
+  - primary: workspace
+  - related: storage, uncertainty
+- **WorkspaceCommitEnvelope** [P10] (L1516)
+  - primary: workspace
+  - related: foundation, storage, uncertainty
+- **ManifoldView** [P9] (L1535)
+  - primary: field
+  - related: storage
+- **ManifoldState** [P9] (L1547)
+  - primary: field
+  - related: graph, storage, embedding
+- **TangentFrame** [P9] (L1570)
+  - primary: field
+  - related: graph, embedding
+- **EdgeTransport** [P9] (L1584)
+  - primary: field
+  - related: graph
+- **ConnectionLaplacian** [P9] (L1597)
+  - primary: field
+  - related: graph
+- **BlendRecipe** [P9] (L1610)
+  - primary: field
+  - related: storage
+- **TranslationProposal** [P9] (L1634)
+  - primary: field
+  - related: deployment, foundation, uncertainty
+- **ABExperiment** [P9] (L1650)
+  - primary: deployment
+  - related: storage, uncertainty
+- **HippocampalWorkspace** [P6] (L1668)
+  - primary: workspace
+  - related: storage, graph, ingestion
+- **NeocortexProposal** [P6] (L1683)
+  - primary: workspace
+  - related: foundation, storage, uncertainty
+- **CommitRecord** [P6] (L1699)
+  - primary: workspace
+  - related: foundation, storage, uncertainty
+- **CurriculumStage** [P6] (L1714)
+  - primary: ingestion
+  - related: uncertainty, storage
+- **SurpriseBudget** [P6] (L1728)
+  - primary: uncertainty
+  - related: field
+- **ConnectivityState** [P6] (L1739)
+  - primary: graph
+  - related: storage, field
+- **GrammarRuleCandidate** [P6] (L1751)
+  - primary: ingestion
+  - related: uncertainty, storage, deployment
+- **AdapterCandidate** [P6] (L1765)
+  - primary: embedding
+  - related: uncertainty, storage, deployment
+- **InquiryTask** [P6] (L1780)
+  - primary: exploration
+  - related: uncertainty, storage
+
+## Algorithms (69)
+
+- **Algorithm 10**: Structural Abstraction Mining (sleep-time) [P4] (L1998)
+  - primary: patterns
+  - related: graph, storage
+- **Algorithm 11**: Online Pattern Instantiation (day-time) [P4] (L2030)
+  - primary: patterns
+  - related: graph, embedding
+- **Algorithm 12**: Expansion Compiler (decompress for LLM) [P4] (L2048)
+  - primary: patterns
+  - related: foundation, uncertainty
+- **Algorithm 13**: Confidence-weighted Pattern Promotion [P4] (L2073)
+  - primary: patterns
+  - related: uncertainty, storage
+- **Algorithm 14**: Failure Memory Write + Avoid [P4] (L2093)
+  - primary: patterns
+  - related: foundation, storage, uncertainty
+- **Algorithm 15**: Light Outcome Feedback Loop (bandit) [P4] (L2112)
+  - primary: uncertainty
+  - related: foundation, storage
+- **Algorithm 16**: Risk & Ambiguity Governance [P4] (L2125)
+  - primary: uncertainty
+  - related: foundation, storage
+- **Algorithm 1**: Streaming ingestion [P10] (L2432)
+  - primary: ingestion
+  - related: foundation, storage, graph, field, embedding
+- **Algorithm 2**: Idea candidate selection [P10] (L2472)
+  - primary: field
+  - related: foundation, storage, graph, exploration, patterns, embedding, uncertainty
+- **Algorithm 3**: Field relaxation on a subgraph [P10] (L2495)
+  - primary: field
+  - related: foundation, storage, graph, uncertainty
+- **Algorithm 4**: Tier promotion and demotion [P10] (L2518)
+  - primary: uncertainty
+  - related: foundation, storage, graph, field
+- **Algorithm 5**: Boundary detection without fixed chunking [P10] (L2538)
+  - primary: patterns
+  - related: foundation, storage, graph, field
+- **Algorithm 1** [P1] (L2553)
+  - primary: ingestion
+  - related: foundation, storage, graph, field, embedding
+- **Algorithm 2** [P1] (L2586)
+  - primary: field
+  - related: foundation, storage, graph, exploration, patterns, embedding, uncertainty
+- **Algorithm 3** [P1] (L2614)
+  - primary: field
+  - related: foundation, storage, graph, uncertainty
+- **Algorithm 4** [P1] (L2626)
+  - primary: uncertainty
+  - related: foundation, storage, graph, field
+- **Algorithm 5** [P1] (L2658)
+  - primary: patterns
+  - related: foundation, storage, graph, field
+- **Algorithm 6**: Global Consolidation [P2] (L2689)
+  - primary: workspace
+  - related: foundation, ingestion, storage
+- **Algorithm 7**: Robust Field Solve via IRLS [P2] (L2734)
+  - primary: field
+  - related: graph, uncertainty
+- **Algorithm 8**: Apply deltas after snapshot [P2] (L2767)
+  - primary: storage
+  - related: field, graph
+- **Algorithm 9**: Publish epoch with RCU semantics [P2] (L2785)
+  - primary: storage
+- **Algorithm 17** [P5] (L2802)
+  - primary: ingestion
+  - related: graph, storage
+- **Algorithm 18** [P5] (L2819)
+  - primary: ingestion
+  - related: graph, patterns
+- **Algorithm 19** [P5] (L2853)
+  - primary: ingestion
+  - related: foundation, storage, graph, field, embedding
+- **Algorithm 20** [P5] (L2879)
+  - primary: embedding
+  - related: field
+- **Algorithm 21** [P5] (L2898)
+  - primary: embedding
+  - related: field, storage
+- **Algorithm 22** [P5] (L2925)
+  - primary: embedding
+  - related: storage, deployment
+- **Algorithm 23** [P5] (L2959)
+  - primary: embedding
+  - related: field, graph
+- **Algorithm 24**: Hippocampal workspace session [P6] (L2982)
+  - primary: field
+  - related: foundation, storage, graph, exploration, patterns, embedding, uncertainty
+- **Algorithm 25**: Two-stage commit from neocortex to hippocampus [P6] (L3002)
+  - primary: workspace
+  - related: storage, foundation, uncertainty, field
+- **Algorithm 26**: Curriculum ingestion controller [P6] (L3032)
+  - primary: ingestion
+  - related: uncertainty, storage
+- **Algorithm 27**: Cold solve and re-rooting [P6] (L3047)
+  - primary: field
+  - related: graph, storage
+- **Algorithm 28**: Surprise budget and provenance override [P6] (L3062)
+  - primary: uncertainty
+  - related: field, foundation
+- **Algorithm 29**: Connectivity guard and bridge repair [P6] (L3077)
+  - primary: graph
+  - related: field, exploration
+- **Algorithm 30**: Grammar sandbox and promotion [P6] (L3091)
+  - primary: field
+  - related: foundation, storage, graph, uncertainty
+- **Algorithm 31**: Adapter lifecycle and drift management [P6] (L3110)
+  - primary: field
+  - related: foundation, storage, graph, uncertainty
+- **Algorithm 32**: Diagnostics-driven inquiry planning [P6] (L3136)
+  - primary: exploration
+  - related: uncertainty, field
+- **Algorithm 33** [P7] (L3159)
+  - primary: exploration
+  - related: uncertainty, field, graph, storage
+- **Algorithm 34** [P4] (L3238)
+  - primary: field
+  - related: foundation, storage, graph, uncertainty
+- **Algorithm 35** [P4] (L3256)
+  - primary: patterns
+  - related: uncertainty, verification
+- **Algorithm 36** [P4] (L3293)
+  - primary: uncertainty
+  - related: patterns, verification
+- **Algorithm 37** [P4] (L3312)
+  - primary: uncertainty
+  - related: verification
+- **Algorithm 38** [P4] (L3332)
+  - primary: uncertainty
+  - related: verification
+- **Algorithm 53**: OPEN_WORKSPACE [P10] (L3360)
+  - primary: workspace
+  - related: storage
+- **Algorithm 54**: CLOSE_WORKSPACE_CASCADE (structured lifetime) [P10] (L3373)
+  - primary: workspace
+  - related: storage
+- **Algorithm 55**: SPAWN_CHILD (fork-join) [P10] (L3385)
+  - primary: workspace
+  - related: storage, foundation
+- **Algorithm 56**: EXPORT_CAPSULE [P10] (L3403)
+  - primary: workspace
+  - related: foundation, graph, storage
+- **Algorithm 57**: IMPORT_CAPSULE (idempotent) [P10] (L3415)
+  - primary: workspace
+  - related: foundation, graph, storage
+- **Algorithm 58**: MESSAGE_SEND [P10] (L3439)
+  - primary: workspace
+  - related: storage
+- **Algorithm 59**: RECONCILE_CHILD_TO_PARENT [P10] (L3448)
+  - primary: workspace
+  - related: storage, uncertainty
+- **Algorithm 60**: COMMIT_TO_INGEST (no LLM diffs) [P10] (L3460)
+  - primary: workspace
+  - related: foundation, ingestion, storage
+- **Algorithm 61**: OVERLAP_SIGNATURE (structure + content) [P10] (L3470)
+  - primary: workspace
+  - related: graph, embedding
+- **Algorithm 62**: OVERLAP_DETECT [P10] (L3481)
+  - primary: workspace
+  - related: uncertainty
+- **Algorithm 63**: OSCILLATION_SIGNAL [P10] (L3493)
+  - primary: workspace
+  - related: uncertainty, field
+- **Algorithm 64**: WORKSPACE_GC [P10] (L3508)
+  - primary: workspace
+  - related: storage
+- **Algorithm 39** [P10] (L3518)
+  - primary: field
+  - related: foundation, storage, graph, uncertainty
+- **Algorithm 40** [P10] (L3531)
+  - primary: workspace
+  - related: graph, field
+- **Algorithm 41** [P10] (L3547)
+  - primary: workspace
+  - related: field, embedding
+- **Algorithm 42** [P10] (L3560)
+  - primary: workspace
+  - related: graph, patterns
+- **Algorithm 43** [P10] (L3579)
+  - primary: uncertainty
+  - related: foundation, storage, graph, field
+- **Algorithm 44**: — MANIFOLD_UPDATE_LOCAL (online) [P9] (L3604)
+  - primary: field
+  - related: graph, storage
+- **Algorithm 45**: — CHART_BUILD (incremental) [P9] (L3642)
+  - primary: field
+  - related: graph, embedding
+- **Algorithm 46**: — BUILD_CONNECTION_LAPLACIAN (incremental) [P9] (L3653)
+  - primary: field
+  - related: graph
+- **Algorithm 47**: — PROJECT_VECTOR_FIELDS (manifold → usable vectors) [P9] (L3668)
+  - primary: field
+  - related: graph, embedding
+- **Algorithm 48**: — BLEND_COMPUTE (runtime) [P9] (L3691)
+  - primary: field
+  - related: uncertainty
+- **Algorithm 49**: — MANIFOLD_TO_GRAPH_PROPOSALS (pullback) [P9] (L3708)
+  - primary: field
+  - related: foundation, graph, uncertainty
+- **Algorithm 50**: — FORCE_TO_TOPOLOGY_PROMOTION (governed) [P9] (L3727)
+  - primary: patterns
+  - related: foundation, storage, graph, field
+- **Algorithm 51**: — CONTINUOUS_SLEEP_NO_DOWNTIME [P9] (L3747)
+  - primary: storage
+  - related: deployment, field
+- **Algorithm 52**: — AB_ROLLOUT (shadow + canary + A/B) [P9] (L3770)
+  - primary: deployment
+  - related: storage, uncertainty
+
+## Maths (41)
+
+- **P8.1**: Define disentanglement for this architecture [P8] (L23)
+  - primary: patterns
+  - related: embedding, field
+- **P8.2**: How disentanglement fits into your current stack [P8] (L47)
+  - primary: patterns
+  - related: embedding, field
+- **P8.3**: Direction disentanglement in your system [P8] (L60)
+  - primary: embedding
+  - related: field, patterns
+- **P8.4**: Structural disentanglement in your system [P8] (L105)
+  - primary: patterns
+  - related: graph
+- **P8.5**: How to compute "functionality/purpose" of a pattern [P8] (L128)
+  - primary: patterns
+  - related: field, embedding
+- **P8.6**: Tradeoffs and why one pattern wins over another [P8] (L154)
+  - primary: patterns
+  - related: uncertainty, field
+- **P8.7**: Rebuilding content using disentangled patterns [P8] (L175)
+  - primary: patterns
+  - related: graph
+- **P8.8**: The new idea engine [P8] (L200)
+  - primary: exploration
+  - related: patterns, field
+- **P8.9**: Algorithms in pseudocode [P8] (L245)
+  - primary: patterns
+  - related: exploration
+- **P8.10**: Where the LLM sits [P8] (L249)
+  - primary: patterns
+  - related: exploration
+- **P2.2**: IRLS weight update rule [P2] (L1802)
+  - primary: field
+  - related: uncertainty
+- **P2.3**: Linear solve in each IRLS step [P2] (L1841)
+  - primary: field
+  - related: graph
+- **P4.1**: Structural abstraction as MDL graph compression [P4] (L1852)
+  - primary: patterns
+  - related: graph
+- **P4.2**: Pattern promotion as Bayesian reliability [P4] (L1878)
+  - primary: patterns
+  - related: uncertainty
+- **P4.3**: Failure memory as negative prior / gating brake [P4] (L1893)
+  - primary: uncertainty
+  - related: patterns
+- **P4.4**: Light outcome feedback as contextual bandit over system actions [P4] (L1907)
+  - primary: uncertainty
+- **P4.5**: Risk governance via selective prediction / conformal risk control [P4] (L1918)
+  - primary: uncertainty
+- **P5.1**: Graph grammar semantics [P5] (L1926)
+  - primary: ingestion
+  - related: graph
+- **P5.2**: Probabilistic and scored rewriting [P5] (L1944)
+  - primary: ingestion
+  - related: graph, uncertainty
+- **P5.3**: Multi-coordinate embeddings as a bundle with a canonical field [P5] (L1959)
+  - primary: embedding
+  - related: field
+- **P5.4**: Adapter learning [P5] (L1986)
+  - primary: embedding
+  - related: field
+- **P6.1**: Workspace overlay model [P6] (L2152)
+  - primary: workspace
+  - related: storage
+- **P6.2**: Two-stage commit as an admissibility filter [P6] (L2163)
+  - primary: workspace
+  - related: uncertainty, field
+- **P6.3**: Surprise budget as forced retention of high-provenance tension [P6] (L2186)
+  - primary: uncertainty
+  - related: field, foundation
+- **P6.4**: Connectivity targets [P6] (L2202)
+  - primary: graph
+  - related: field
+- **P6.5**: Adapter drift detection [P6] (L2211)
+  - primary: embedding
+  - related: uncertainty
+- **P9.1**: Discrete manifold (robust gated field) [P9] (L2221)
+  - primary: field
+  - related: graph
+- **P9.2**: Local tangent frames (projection basis) [P9] (L2239)
+  - primary: field
+  - related: graph, embedding
+- **P9.3**: Discrete parallel transport via connection Laplacian (solves the translation dragon) [P9] (L2249)
+  - primary: field
+  - related: graph, embedding
+- **P9.4**: Vector-diffusion distance (optional) [P9] (L2274)
+  - primary: field
+  - related: graph, embedding
+- **P9.5**: Field blending (control, not topology) [P9] (L2282)
+  - primary: field
+  - related: uncertainty
+- **P7.1**: Noise features [P7] (L2308)
+  - primary: exploration
+  - related: uncertainty, field
+- **P7.2**: Interestingness score [P7] (L2326)
+  - primary: exploration
+  - related: uncertainty, field
+- **P7.3**: Learning progress [P7] (L2337)
+  - primary: exploration
+  - related: uncertainty, field
+- **P7.4**: Novelty [P7] (L2352)
+  - primary: exploration
+  - related: embedding
+- **P7.5**: Information gain for inquiry selection [P7] (L2367)
+  - primary: exploration
+  - related: uncertainty
+- **P7.6**: Utility for scheduling [P7] (L2375)
+  - primary: exploration
+  - related: uncertainty
+- **P10.1**: Convergence-safe state model (event-set join) [P10] (L2389)
+  - primary: workspace
+  - related: foundation, storage
+- **P10.2**: Workspace graph as a graph CRDT (optional mode) [P10] (L2401)
+  - primary: workspace
+  - related: graph, storage
+- **P10.3**: Delta-state replication for workspaces (optional) [P10] (L2415)
+  - primary: workspace
+  - related: storage
+- **P10.4**: Overlap as near-duplicate detection [P10] (L2419)
+  - primary: workspace
+  - related: graph, embedding
+
+## Leans (8)
+
+- **P1 Lean 1** [P1] (L4207)
+  - primary: verification
+  - related: foundation, graph, storage
+- **P1 Lean 2** [P1] (L4233)
+  - primary: field
+  - related: graph, uncertainty, verification
+- **Lean 3**: IRLS descent and stationary point shape [P2] (L4332)
+  - primary: field
+  - related: verification
+- **Lean 4**: Snapshot and epoch invariants [P2] (L4377)
+  - primary: storage
+  - related: verification
+- **P5 Lean 1**: Distance preservation under orthogonal maps [P5] (L4418)
+  - primary: embedding
+  - related: verification
+- **P5 Lean 2**: Canonical field uniqueness with multi-view anchors [P5] (L4440)
+  - primary: embedding
+  - related: field, verification
+- **Lean 1**: Event-sourced isolation [P6] (L4460)
+  - primary: workspace
+  - related: storage, verification
+- **Lean 2**: RCU style reclamation condition as a predicate [P6] (L4490)
+  - primary: storage
+  - related: verification
+
+
+## Additional Elements (77)
+
+### Concepts (57)
+
+- **Spec v0.1: Graph-Conditioned Semantic Field Ingestion** (L1)
+  - primary: foundation
+  - related: field, ingestion, graph
+- **Problem** (L3)
+  - primary: foundation
+  - related: field, embedding
+- **Core move** (L7)
+  - primary: foundation
+  - related: field, graph, embedding 
+- **Structural disentanglement** (L25)
+  - primary: patterns
+  - related: graph
+- **Direction disentanglement** (L35)
+  - primary: patterns
+  - related: embedding, field
+- **Where the raw material comes from** (L49)
+  - primary: foundation
+  - related: patterns, ingestion, workspace
+- **Option B: ICA style independence** (L83)
+  - primary: embedding
+  - related: patterns
+- **Option C: NMF for parts-based factors** (L87)
+  - primary: patterns
+  - related: embedding
+- **Why your architecture makes this robust** (L91)
+  - primary: foundation
+  - related: uncertainty, patterns
+- **Module extraction idea** (L111)
+  - primary: patterns
+  - related: graph
+- **Mode 1: Compression rebuild** (L181)
+  - primary: patterns
+  - related: storage
+- **Mode 2: Transform rebuild** (L189)
+  - primary: patterns
+  - related: workspace, field
+- **New objects** (L204)
+  - primary: patterns
+  - related: exploration, embedding
+- **New pipeline** (L212)
+  - primary: exploration
+  - related: patterns, workspace
+- **P8 Bottom line** (L260)
+  - primary: patterns
+  - related: foundation, uncertainty 
+- **P5 components** (L715)
+  - primary: ingestion
+  - related: graph, embedding, patterns
+- **ConsolidationJob** (L955)
+  - primary: storage
+  - related: workspace, field
+- **P4 math** (L1850)
+  - primary: patterns
+  - related: uncertainty, graph
+- **P5 math** (L1924)
+  - primary: ingestion
+  - related: graph, embedding
+- **P6 math** (L2150)
+  - primary: workspace
+  - related: storage, uncertainty, field
+- **P9 math** (L2219)
+  - primary: field
+  - related: graph, embedding
+- **P7 math** (L2306)
+  - primary: exploration
+  - related: uncertainty, field
+- **P10 math** (L2387)
+  - primary: workspace
+  - related: storage, graph
+- **Modality routing and tokenizer selection** (L2804)
+  - primary: ingestion
+  - related: foundation
+- **Incremental graph grammar parsing with hypothesis beam** (L2821)
+  - primary: ingestion
+  - related: graph, uncertainty
+- **Rule application as graph rewrite with provenance** (L2855)
+  - primary: ingestion
+  - related: foundation, graph
+- **Grammar emergence from patterns** (L2881)
+  - primary: ingestion
+  - related: patterns, uncertainty
+- **Re-ingestion under reinterpretation** (L2961)
+  - primary: ingestion
+  - related: workspace, field 
+- **P10 core operations (tooling surface)** (L3344)
+  - primary: workspace
+  - related: storage, foundation
+- **Proof 1: Existence and uniqueness of the field solution** (L3802)
+  - primary: verification
+  - related: field
+- **Proof 2: Energy decreases under relaxation, convergence on fixed graph** (L3817)
+  - primary: verification
+  - related: field
+- **Proof 3: Noise attenuation, directions become more reliable** (L3831)
+  - primary: verification
+  - related: field, uncertainty
+- **Proof 4: Tier caps bound compute and memory** (L3845)
+  - primary: verification
+  - related: storage
+- **P1 claim set** (L3862)
+  - primary: verification
+  - related: foundation, field, uncertainty
+- **P1 Lean proof skeletons** (L4203)
+  - primary: verification
+  - related: foundation
+- **Lean: Lossless compress/expand** (L4278)
+  - primary: verification
+  - related: patterns
+- **Lean: Monotone failure brake** (L4309)
+  - primary: verification
+  - related: uncertainty
+- **Performance and memory** (L4538)
+  - primary: deployment
+  - related: storage
+- **Safety and stability** (L4545)
+  - primary: deployment
+  - related: uncertainty, foundation
+- **1. Tier-locality as the main speed lever** (L4559)
+  - primary: storage
+  - related: field
+- **2. Separate indices by tier and by embedding kind** (L4566)
+  - primary: storage
+  - related: embedding
+- **3. Quantize aggressively outside Focus** (L4571)
+  - primary: storage
+  - related: embedding
+- **4. Batch edge writes, defer compaction** (L4576)
+  - primary: storage
+  - related: graph
+- **5. Local field updates, global re-solves rarely** (L4581)
+  - primary: field
+  - related: storage
+- **6. Uncertainty-driven compute** (L4586)
+  - primary: uncertainty
+  - related: field
+- **7. Event-sourced replay** (L4591)
+  - primary: storage
+  - related: foundation
+- **Storage strategy** (L4600)
+  - primary: storage
+  - related: deployment
+- **Compute strategy** (L4611)
+  - primary: deployment
+  - related: field, uncertainty
+- **Hot path** (L4617)
+  - primary: deployment
+  - related: field, storage
+- **Performance control** (L4629)
+  - primary: deployment
+  - related: uncertainty, storage
+- **Memory and compaction** (L4661)
+  - primary: storage
+  - related: deployment
+- **Performance** (L4671)
+  - primary: deployment
+  - related: storage
+- **Memory** (L4679)
+  - primary: storage
+  - related: deployment
+- **Safety** (L4685)
+  - primary: deployment
+  - related: uncertainty, foundation
+- **Gap list resolved by P2** (L4715)
+  - primary: storage
+  - related: field, workspace
+- **P6 goals** (L4893)
+  - primary: workspace
+  - related: ingestion, uncertainty
+- **P6 components** (L4929)
+  - primary: workspace
+  - related: ingestion, storage, graph 
+
+### Structures (17)
+
+- **Option A: Sparse autoencoder or dictionary learning on canonical embeddings** (L62)
+  - primary: embedding
+  - related: patterns
+- **Node** (L733)
+  - primary: graph
+  - related: field, storage, embedding
+- **Edge** (L750)
+  - primary: graph
+  - related: field, uncertainty
+- **Graph** (L762)
+  - primary: graph
+  - related: storage
+- **ANN indices** (L769)
+  - primary: storage
+  - related: embedding, field
+- **Event log** (L777)
+  - primary: storage
+  - related: foundation
+- **Epoch** (L890)
+  - primary: storage
+  - related: graph, field
+- **Snapshot** (L909)
+  - primary: storage
+  - related: graph, field
+- **IndexVersion** (L939)
+  - primary: storage
+  - related: embedding
+- **Graph token** (L1183)
+  - primary: ingestion
+  - related: graph, embedding
+- **Grammar rule as graph rewrite** (L1200)
+  - primary: ingestion
+  - related: graph, patterns
+- **Parse hypothesis** (L1220)
+  - primary: ingestion
+  - related: uncertainty, graph
+- **Parse forest** (L1237)
+  - primary: ingestion
+  - related: graph, patterns
+- **Coordinate system** (L1252)
+  - primary: embedding
+  - related: ingestion
+- **Adapter map** (L1266)
+  - primary: embedding
+  - related: field
+- **Graph token embedding bundle and canonical projection** (L2900)
+  - primary: ingestion
+  - related: embedding, graph
+- **Traversal across coordinate systems** (L2927)
+  - primary: embedding
+  - related: field, graph 
+
+### Maths (3)
+
+- **CompositeField (ephemeral)** (L1623)
+  - primary: field
+  - related: uncertainty
+- **Orthogonal Procrustes map** (L1990)
+  - primary: embedding
+  - related: field
+- **General multi-view alignment** (L2146)
+  - primary: embedding
+  - related: field 
+
+
+## Additional Elements (0)
+
+
+## Additional Elements (149)
+
+### Concepts (137)
+
+- **P8.1 Define disentanglement for this architecture** (L23)
+  - primary: patterns
+  - related: 
+- **P8.2 How disentanglement fits into your current stack** (L47)
+  - primary: patterns
+  - related: 
+- **P8.5 How to compute "functionality/purpose" of a pattern** (L128)
+  - primary: patterns
+  - related: 
+- **P8.6 Tradeoffs and why one pattern wins over another** (L154)
+  - primary: patterns
+  - related: 
+- **P8.7 Rebuilding content using disentangled patterns** (L175)
+  - primary: patterns
+  - related: 
+- **P8.8 The new idea engine** (L200)
+  - primary: exploration
+  - related: 
+- **P8.10 Where the LLM sits** (L249)
+  - primary: patterns
+  - related: 
+- **P1I1 Evidence permanence** (L527)
+  - primary: foundation
+  - related: 
+- **P1I2 Non-destructive updates** (L534)
+  - primary: foundation
+  - related: 
+- **P1I3 Field state never overwrites history** (L542)
+  - primary: foundation
+  - related: 
+- **P1I4 Ambiguity stays explicit** (L546)
+  - primary: foundation
+  - related: 
+- **P1I5 Compression keeps a lossless backstore** (L553)
+  - primary: foundation
+  - related: 
+- **P4I1 Abstractions are derived artifacts** (L558)
+  - primary: patterns
+  - related: 
+- **P4I2 Expansion is always possible** (L563)
+  - primary: patterns
+  - related: 
+- **P4I3 Failure memory is append-only** (L567)
+  - primary: patterns
+  - related: 
+- **P4I4 Governance never hides ambiguity silently** (L571)
+  - primary: patterns
+  - related: 
+- **P9I1 — Read coherence** (L627)
+  - primary: deployment
+  - related: 
+- **P9I2 — Overlay is always writable** (L637)
+  - primary: deployment
+  - related: 
+- **P9I3 — Blends are reversible** (L641)
+  - primary: deployment
+  - related: 
+- **P9I4 — No force becomes law silently** (L645)
+  - primary: deployment
+  - related: 
+- **P9I5 — Translation proposals are provenance-bearing** (L651)
+  - primary: deployment
+  - related: 
+- **P9I6 — A/B never breaks correctness** (L660)
+  - primary: deployment
+  - related: 
+- **EdgeBelief additions** (L925)
+  - primary: foundation
+  - related: 
+- **P2.2 IRLS weight update rule** (L1802)
+  - primary: field
+  - related: 
+- **P2.3 Linear solve in each IRLS step** (L1841)
+  - primary: field
+  - related: 
+- **P4.1 Structural abstraction as MDL graph compression** (L1852)
+  - primary: patterns
+  - related: 
+- **P4.2 Pattern promotion as Bayesian reliability** (L1878)
+  - primary: patterns
+  - related: 
+- **P4.3 Failure memory as negative prior / gating brake** (L1893)
+  - primary: patterns
+  - related: 
+- **P4.4 Light outcome feedback as contextual bandit over system actions** (L1907)
+  - primary: patterns
+  - related: 
+- **P4.5 Risk governance via selective prediction / conformal risk control** (L1918)
+  - primary: patterns
+  - related: 
+- **P5.1 Graph grammar semantics** (L1926)
+  - primary: ingestion
+  - related: 
+- **P5.2 Probabilistic and scored rewriting** (L1944)
+  - primary: ingestion
+  - related: 
+- **Algorithm 10: Structural Abstraction Mining (sleep-time)** (L1998)
+  - primary: patterns
+  - related: 
+- **Algorithm 11: Online Pattern Instantiation (day-time)** (L2030)
+  - primary: patterns
+  - related: 
+- **Algorithm 12: Expansion Compiler (decompress for LLM)** (L2048)
+  - primary: patterns
+  - related: 
+- **Algorithm 13: Confidence-weighted Pattern Promotion** (L2073)
+  - primary: patterns
+  - related: 
+- **Algorithm 14: Failure Memory Write + Avoid** (L2093)
+  - primary: patterns
+  - related: 
+- **Algorithm 15: Light Outcome Feedback Loop (bandit)** (L2112)
+  - primary: exploration
+  - related: 
+- **Algorithm 16: Risk & Ambiguity Governance** (L2125)
+  - primary: patterns
+  - related: 
+- **P6.1 Workspace overlay model** (L2152)
+  - primary: workspace
+  - related: 
+- **P6.2 Two-stage commit as an admissibility filter** (L2163)
+  - primary: workspace
+  - related: 
+- **P6.3 Surprise budget as forced retention of high-provenance tension** (L2186)
+  - primary: workspace
+  - related: 
+- **P6.4 Connectivity targets** (L2202)
+  - primary: workspace
+  - related: 
+- **P9.1 Discrete manifold (robust gated field)** (L2221)
+  - primary: field
+  - related:
+- **P9.2 Local tangent frames (projection basis)** (L2239)
+  - primary: field
+  - related:
+- **P9.3 Discrete parallel transport via connection Laplacian (solves the translation dragon)** (L2249)
+  - primary: field
+  - related:
+- **P9.4 Vector-diffusion distance (optional)** (L2274)
+  - primary: field
+  - related:
+- **P9.5 Field blending (control, not topology)** (L2282)
+  - primary: field
+  - related: 
+- **P7.1 Noise features** (L2308)
+  - primary: exploration
+  - related:
+- **P7.2 Interestingness score** (L2326)
+  - primary: exploration
+  - related:
+- **P7.3 Learning progress** (L2337)
+  - primary: exploration
+  - related:
+- **P7.4 Novelty** (L2352)
+  - primary: exploration
+  - related:
+- **P7.5 Information gain for inquiry selection** (L2367)
+  - primary: exploration
+  - related:
+- **P7.6 Utility for scheduling** (L2375)
+  - primary: exploration
+  - related: 
+- **P10.1 Convergence-safe state model (event-set join)** (L2389)
+  - primary: workspace
+  - related:
+- **P10.2 Workspace graph as a graph CRDT (optional mode)** (L2401)
+  - primary: workspace
+  - related:
+- **P10.3 Delta-state replication for workspaces (optional)** (L2415)
+  - primary: workspace
+  - related:
+- **P10.4 Overlap as near-duplicate detection** (L2419)
+  - primary: workspace
+  - related: 
+- **Algorithm 1: Streaming ingestion** (L2432)
+  - primary: ingestion
+  - related:
+- **Algorithm 2: Idea candidate selection** (L2472)
+  - primary: exploration
+  - related:
+- **Algorithm 3: Field relaxation on a subgraph** (L2495)
+  - primary: field
+  - related:
+- **Algorithm 4: Tier promotion and demotion** (L2518)
+  - primary: ingestion
+  - related:
+- **Algorithm 5: Boundary detection without fixed chunking** (L2538)
+  - primary: ingestion
+  - related: 
+- **Algorithm 6: Global Consolidation** (L2689)
+  - primary: storage
+  - related:
+- **Algorithm 7: Robust Field Solve via IRLS** (L2734)
+  - primary: field
+  - related: 
+- **Algorithm 24: Hippocampal workspace session** (L2982)
+  - primary: workspace
+  - related:
+- **Algorithm 25: Two-stage commit from neocortex to hippocampus** (L3002)
+  - primary: workspace
+  - related:
+- **Algorithm 26: Curriculum ingestion controller** (L3032)
+  - primary: ingestion
+  - related:
+- **Algorithm 27: Cold solve and re-rooting** (L3047)
+  - primary: workspace
+  - related:
+- **Algorithm 28: Surprise budget and provenance override** (L3062)
+  - primary: workspace
+  - related:
+- **Algorithm 29: Connectivity guard and bridge repair** (L3077)
+  - primary: workspace
+  - related:
+- **Algorithm 30: Grammar sandbox and promotion** (L3091)
+  - primary: workspace
+  - related: 
+- **P4C1 Lossless structural abstraction** (L3196)
+  - primary: verification
+  - related:
+- **P4C2 MDL-driven abstraction reduces description length** (L3211)
+  - primary: verification
+  - related:
+- **P4C3 Promotion guarantee** (L3217)
+  - primary: verification
+  - related:
+- **P4C4 Failure memory suppression** (L3223)
+  - primary: verification
+  - related:
+- **P4C5 Risk governance calibration** (L3232)
+  - primary: verification
+  - related: 
+- **Algorithm 53: OPEN_WORKSPACE** (L3360)
+  - primary: workspace
+  - related:
+- **Algorithm 54: CLOSE_WORKSPACE_CASCADE (structured lifetime)** (L3373)
+  - primary: workspace
+  - related:
+- **Algorithm 55: SPAWN_CHILD (fork-join)** (L3385)
+  - primary: workspace
+  - related:
+- **Algorithm 56: EXPORT_CAPSULE** (L3403)
+  - primary: workspace
+  - related:
+- **Algorithm 57: IMPORT_CAPSULE (idempotent)** (L3415)
+  - primary: workspace
+  - related:
+- **Algorithm 58: MESSAGE_SEND** (L3439)
+  - primary: workspace
+  - related:
+- **Algorithm 59: RECONCILE_CHILD_TO_PARENT** (L3448)
+  - primary: workspace
+  - related:
+- **Algorithm 60: COMMIT_TO_INGEST (no LLM diffs)** (L3460)
+  - primary: workspace
+  - related:
+- **Algorithm 61: OVERLAP_SIGNATURE (structure + content)** (L3470)
+  - primary: workspace
+  - related:
+- **Algorithm 62: OVERLAP_DETECT** (L3481)
+  - primary: workspace
+  - related:
+- **Algorithm 63: OSCILLATION_SIGNAL** (L3493)
+  - primary: workspace
+  - related:
+- **Algorithm 64: WORKSPACE_GC** (L3508)
+  - primary: workspace
+  - related: 
+- **Algorithm 44 — MANIFOLD_UPDATE_LOCAL (online)** (L3604)
+  - primary: field
+  - related:
+- **Algorithm 45 — CHART_BUILD (incremental)** (L3642)
+  - primary: field
+  - related:
+- **Algorithm 46 — BUILD_CONNECTION_LAPLACIAN (incremental)** (L3653)
+  - primary: field
+  - related:
+- **Algorithm 47 — PROJECT_VECTOR_FIELDS (manifold → usable vectors)** (L3668)
+  - primary: field
+  - related:
+- **Algorithm 48 — BLEND_COMPUTE (runtime)** (L3691)
+  - primary: field
+  - related:
+- **Algorithm 49 — MANIFOLD_TO_GRAPH_PROPOSALS (pullback)** (L3708)
+  - primary: field
+  - related:
+- **Algorithm 50 — FORCE_TO_TOPOLOGY_PROMOTION (governed)** (L3727)
+  - primary: field
+  - related:
+- **Algorithm 51 — CONTINUOUS_SLEEP_NO_DOWNTIME** (L3747)
+  - primary: deployment
+  - related:
+- **Algorithm 52 — AB_ROLLOUT (shadow + canary + A/B)** (L3770)
+  - primary: deployment
+  - related: 
+- **P1C1 proof sketch** (L3870)
+  - primary: verification
+  - related:
+- **P1C2 and P1C3 proof sketch** (L3882)
+  - primary: verification
+  - related:
+- **P1C4 proof sketch** (L3890)
+  - primary: verification
+  - related:
+- **P1C5 proof sketch** (L3896)
+  - primary: verification
+  - related:
+- **P2C2 Non-blocking commit** (L3916)
+  - primary: verification
+  - related:
+- **P2C3 IRLS descent** (L3927)
+  - primary: verification
+  - related:
+- **P2C4 Convergence to a stationary point** (L3944)
+  - primary: verification
+  - related:
+- **P2C5 No evidence loss** (L3955)
+  - primary: verification
+  - related: 
+- **P5C1 Multi-view canonical field solve exists and is unique** (L3968)
+  - primary: verification
+  - related:
+- **P5C2 Rewrite steps preserve evidence permanence** (L3977)
+  - primary: verification
+  - related:
+- **P5C3 Packed forest representation preserves derivations** (L3985)
+  - primary: verification
+  - related:
+- **P6C1 Workspace isolation** (L4006)
+  - primary: verification
+  - related:
+- **P6C3 Safe reclamation** (L4023)
+  - primary: verification
+  - related:
+- **P6C4 Surprise budget prevents calcification by construction** (L4031)
+  - primary: verification
+  - related:
+- **P6C5 Grammar promotion controls error** (L4040)
+  - primary: verification
+  - related:
+- **P7C1 Evidence stays** (L4059)
+  - primary: verification
+  - related:
+- **P7C2 Exploration stays bounded** (L4070)
+  - primary: verification
+  - related:
+- **P7C3 Learning progress avoids irreducible noise fixation** (L4100)
+  - primary: verification
+  - related:
+- **P7C4 Novelty helps coverage** (L4111)
+  - primary: verification
+  - related:
+- **P7C5 Information gain guides ambiguity resolution** (L4119)
+  - primary: verification
+  - related: 
+- **Lean 3: IRLS descent and stationary point shape** (L4332)
+  - primary: verification
+  - related:
+- **P5 Lean 2: Canonical field uniqueness with multi-view anchors** (L4440)
+  - primary: verification
+  - related:
+- **Lean 1: Event-sourced isolation** (L4460)
+  - primary: verification
+  - related:
+- **Lean 2: RCU style reclamation condition as a predicate** (L4490)
+  - primary: verification
+  - related: 
+- **P10 non-goals** (L4525)
+  - primary: deployment
+  - related:
+- **P4 non-functionals** (L4536)
+  - primary: deployment
+  - related:
+- **Performance targets** (L4551)
+  - primary: deployment
+  - related:
+- **Optimization and memory strategies** (L4557)
+  - primary: deployment
+  - related:
+- **P1 non-functionals** (L4596)
+  - primary: deployment
+  - related:
+- **P5 non-functionals** (L4627)
+  - primary: deployment
+  - related:
+- **P7 non-functionals** (L4669)
+  - primary: deployment
+  - related: 
+- **Gap G2.1** (L4717)
+  - primary: verification
+  - related:
+- **Gap G2.2** (L4723)
+  - primary: verification
+  - related:
+- **Gap G2.3** (L4729)
+  - primary: verification
+  - related:
+- **Gap G9.1 — "Manifold" is implicit** (L4778)
+  - primary: verification
+  - related:
+- **Gap G9.2 — Translation operators are underspecified ("vector ↔ manifold")** (L4781)
+  - primary: verification
+  - related:
+- **Gap G9.3 — Blending rules are not formal** (L4794)
+  - primary: verification
+  - related:
+- **Gap G9.4 — Sleep must be always-on** (L4797)
+  - primary: verification
+  - related:
+- **Gap G9.5 — Deployment needs A/B + rollback semantics** (L4800)
+  - primary: verification
+  - related: 
+
+### Structures (11)
+
+- **P5.3 Multi-coordinate embeddings as a bundle with a canonical field** (L1959)
+  - primary: embedding
+  - related: 
+- **P5.4 Adapter learning** (L1986)
+  - primary: embedding
+  - related: 
+- **P6.5 Adapter drift detection** (L2211)
+  - primary: embedding
+  - related: 
+- **Algorithm 8: Apply deltas after snapshot** (L2767)
+  - primary: storage
+  - related: 
+- **Algorithm 9: Publish epoch with RCU semantics** (L2785)
+  - primary: storage
+  - related: 
+- **Algorithm 31: Adapter lifecycle and drift management** (L3110)
+  - primary: embedding
+  - related: 
+- **Algorithm 32: Diagnostics-driven inquiry planning** (L3136)
+  - primary: storage
+  - related: 
+- **P2C1 Snapshot consistency** (L3906)
+  - primary: storage
+  - related: 
+- **P5C4 Orthogonal adapter preserves geometry** (L3995)
+  - primary: embedding
+  - related: 
+- **P6C2 Snapshot consistency** (L4015)
+  - primary: storage
+  - related: 
+- **P6C6 Adapter rollout is safe under canary plus rollback** (L4047)
+  - primary: embedding
+  - related: 
+
+### Maths (1)
+
+- **P5 Lean 1: Distance preservation under orthogonal maps** (L4418)
+  - primary: field
+  - related: 
+

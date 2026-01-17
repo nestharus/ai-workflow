@@ -1,8 +1,10 @@
-### S1 Problem statement
+## Spec v0.1: Graph-Conditioned Semantic Field Ingestion
+
+### Problem
 
 Raw embeddings give underspecified directions. Global clustering over those directions drifts. Chunking breaks associations. The system needs directions that stay reliable as meaning evolves.
 
-### S2 Core approach
+### Core move
 
 Treat embeddings as observations. Treat the graph as structure. Compute a semantic field over the graph. Use that field as the working direction system.
 
@@ -86,7 +88,7 @@ ICA explicitly searches for statistically independent components. This can be us
 
 If you want factors to behave like "parts" that add up (good for certain counts and structured features), NMF is a known tool.
 
-### S3 Why your architecture makes this robust
+### Why your architecture makes this robust
 
 Locatello's result basically says: if you only see (x), the factorization is underdetermined.
 
@@ -240,6 +242,10 @@ Noise becomes one input. The main generative driver becomes "pattern transfer + 
 
 DreamCoder is a useful reference point for the "learn a library of components and a search policy, then reuse them" loop, even though your substrate is graphs rather than programs.
 
+## P8.9 Algorithms in pseudocode
+
+See Algorithms 39-43 in the Algorithms section.
+
 ## P8.10 Where the LLM sits
 
 The LLM is useful for:
@@ -251,7 +257,7 @@ The LLM is useful for:
 
 The LLM does not need to be the primary disentanglement engine. The math and graph constraints do that work.
 
-## S4 Disentanglement feasibility
+## P8 Bottom line
 
 Disentanglement in your architecture becomes feasible because you have:
 
@@ -267,150 +273,146 @@ That combination supplies the inductive biases that the disentanglement literatu
 
 # Goals
 
-## G1 Reliable directions
+1. **Reliable directions**
 
    * Directions conditioned on structure, rather than raw span text.
-
-## G2 Multi-resolution understanding
+2. **Multi-resolution understanding**
 
    * Coarse-to-fine ingestion without fixed chunking as the main primitive.
-
-## G3 Revision as a first-class operation
+3. **Revision as a first-class operation**
 
    * Meaning shifts propagate through the field and graph.
-
-## G4 Bounded working set
+4. **Bounded working set**
 
    * Explicit focus, active, contextual, inactive tiers with promotion and demotion.
-
-## G5 High recall with controllable cost
+5. **High recall with controllable cost**
 
    * Cheap candidate generation, expensive validation only where needed.
 
-## G6 Evidence permanence
+G6. **Evidence permanence**
 
    * Raw spans and all derived claims remain traceable to original spans.
 
-## G7 Ambiguity preservation
+G7. **Ambiguity preservation**
 
    * Conflicts stay explicit and queryable. Averaging does not erase forks.
 
-## G8 Confidence and diagnostics
+G8. **Confidence and diagnostics**
 
    * System produces measurable uncertainty, tension, and the next information it wants.
 
-## G9 Global consolidation
+G9. **Global consolidation**
 
    * Local patching accumulates. Periodic consolidation realigns the field across the full graph while ingestion keeps running.
 
-## G10 Ambiguity preservation under consolidation
+G10. **Ambiguity preservation under consolidation**
 
    * Consolidation keeps conflict artifacts and hypothesis forks. It reduces drift and improves consistency. It does not collapse multi-modal meaning into a single "average truth."
 
-## G11 Robustness
+G11. **Robustness**
 
    * Large disagreements stop dominating smoothing. Disagreements become diagnostics.
 
-## G12 Structural abstraction
+**G12 Structural abstraction**
 
 * Compress graph memory into reusable patterns.
 * Expand patterns into evidence bundles when feeding the LLM.
 
-## G13 Confidence-weighted promotion
+**G13 Confidence-weighted promotion**
 
 * Promote abstractions when confidence rises.
 * Keep low-confidence abstractions as hypotheses.
 
-## G14 Failure memory
+**G14 Failure memory**
 
 * Store explicit "bad pattern" memory and use it as a brake.
 
-## G15 Outcome feedback
+**G15 Outcome feedback**
 
 * Use light task outcomes to tune promotion, gating, and retrieval policies.
 
-## G16 Risk governance
+**G16 Risk governance**
 
 * Surface ambiguity proportional to risk and user profile.
 * Enable abstention / deferral for high-risk outputs.
 
-## G30 Noise becomes a computable object
+**G30 Noise becomes a computable object**
 
 * Every anomaly becomes a NoiseSeed with metrics and provenance.
 
-## G31 Noise becomes a queue
+**G31 Noise becomes a queue**
 
 * The system keeps a backlog of "interesting threads," explores them when budget exists.
 
-## G32 Exploration is hypothesis-safe
+**G32 Exploration is hypothesis-safe**
 
 * Exploration writes into workspace overlays and hypothesis branches, then commits via P6 2SC.
 
-## G33 Exploration is guided
+**G33 Exploration is guided**
 
 * Use learning progress, novelty, and information gain, avoid chasing irreducible randomness.
 
-## G34 LLM reasoning is used as a refinement tool
+**G34 LLM reasoning is used as a refinement tool**
 
 * LLM proposes structure, missing evidence, and disambiguations, bounded by budgets.
 
-## G35 Distillation produces tokens
+**G35 Distillation produces tokens**
 
 * Repeated, useful noise becomes IdeaTokens, PatternCandidates, GrammarRules.
 
-## G17 Graphs are the grammar
+**G17 Graphs are the grammar**
 
 * A grammar is a set of typed graph rewrite rules.
 * Parsing is graph rewriting plus scoring.
 
-## G18 Tokens are graph objects
+**G18 Tokens are graph objects**
 
 * Tokens exist inside a grammar as nodes, hyperedges, subgraphs, and pattern instances.
 * Tokens can come from text spans, from graph coordinates, or from both.
 
-## G19 Emergent structure
+**G19 Emergent structure**
 
 * Structure appears when encountered.
 * New grammars and token types can emerge from recurring subgraphs and successful parses.
 
-## G20 Multi-interpretation ingestion
+**G20 Multi-interpretation ingestion**
 
 * Ingestion maintains a parse forest of competing hypotheses.
 * Re-ingestion happens by replaying evidence through a different grammar set or a different hypothesis mixture.
 
-## G21 Computable directions across coordinate systems
+**G21 Computable directions across coordinate systems**
 
-## G22 Hippocampus workspace is first-class
+**G22 Hippocampus workspace is first-class**
 
 * Hippocampus runs a fast, branching workspace graph, separate from long-term memory.
 
-## G23 Two-stage commit
+**G23 Two-stage commit**
 
 * Neocortex outputs proposals.
 * Hippocampus re-ingests, re-parses, re-solves, then commits or quarantines.
 
-## G24 Low path dependence
+**G24 Low path dependence**
 
 * Curriculum ingestion and periodic cold solves reduce first-mover geometry lock-in.
 
-## G25 Paradigm shift support
+**G25 Paradigm shift support**
 
 * High-provenance disruptive evidence gets a forced path to branch or restructure, via surprise budget.
 
-## G26 Graph stays traversable
+**G26 Graph stays traversable**
 
 * Gating, retraction, and poison containment keep redundant paths and preserve reachability.
 * Small-world mesh targets guide bridge redundancy.
 
-## G27 Grammar evolution is safe
+**G27 Grammar evolution is safe**
 
 * Grammar rules emerge, then sandbox, then promote with measurable error bounds.
 
-## G28 Multi-coordinate adapters are governable
+**G28 Multi-coordinate adapters are governable**
 
 * Adapters are versioned, canaried, drift-detected, rolled back.
 
-## G29 Hippocampus actively seeks evidence
+**G29 Hippocampus actively seeks evidence**
 
 * Diagnostics drive which ambiguity to resolve next, using expected uncertainty reduction.
 
@@ -418,71 +420,71 @@ That combination supplies the inductive biases that the disentanglement literatu
 * Traversal and matching use explicit coordinate transforms, so math stays consistent as you move across token types and domains.
 
 
-## G36 Manifold as a first-class substrate
+G36. **Manifold as a first-class substrate**
 
 * Explicit `ManifoldState` objects exist per epoch and hypothesis.
 * Readers pin a `ManifoldView` (epoch + log cut) and see a coherent geometry.
 
-## G37 Explicit translation operators
+G37. **Explicit translation operators**
 
 * Graph/observations → manifold (lift)
 * manifold → vector fields (project)
 * manifold → graph proposals (pullback)
 
-## G38 Governed blending
+G38. **Governed blending**
 
 * Ephemeral blending is always allowed.
 * Cached blending is allowed but versioned.
 * Promotion of blends into topology requires a governed commit.
 
-## G39 Dragon closure
+G39. **Dragon closure**
 
 * Every open gap becomes either:
   * an implemented method,
   * an explicit bypass rule, or
   * a deliberate non-goal with an alternative.
 
-## G40 Zero downtime sleep
+G40. **Zero downtime sleep**
 
 * Consolidation runs continuously.
 * Overlay remains writable.
 * No downtime for reads or writes.
 
-## G41 A/B continuous deployment
+G41. **A/B continuous deployment**
 
 * Shadow → canary → ramp → graduate/rollback is supported for epochs, adapters, grammar, and blend recipes.
 
-## G42 Workspace is first-class
+G42 Workspace is first-class
 * A workspace is an addressable object with a stable ID, base snapshot, and event log.
 
-## G43 Structured lifetime (parent closes children)
+G43 Structured lifetime (parent closes children)
 * Child workspaces cannot outlive their parent.
 * Cancellation and closure propagate down the tree.
 
-## G44 Fork-join parallel thought
+G44 Fork-join parallel thought
 * A parent workspace can spawn many children.
 * Children can run independently and export results for reconciliation.
 
-## G45 Capsules and messages
+G45 Capsules and messages
 * Workspaces exchange information as portable subgraph capsules with manifests, lineage, and fingerprints.
 
-## G46 Commit via ingest (no LLM diffs)
+G46 Commit via ingest (no LLM diffs)
 * The LLM does not compute deltas.
 * The workspace submits graph-form artifacts to ingest; ingest computes canonicalization, conflicts, and candidates.
 
-## G47 Overlap detection across workspaces
+G47 Overlap detection across workspaces
 * Detect overlap and near-duplication across all open workspaces.
 * Enable loop/oscillation detection and dedup.
 
-## G48 Convergence-safe merge primitives
+G48 Convergence-safe merge primitives
 * Provide deterministic, idempotent merge building blocks (CRDT-style joins where applicable).
 * Where semantic conflict exists, preserve ambiguity instead of overwriting.
 
-## G49 Bounded view compilation
+G49 Bounded view compilation
 * Provide a deterministic mechanism to compile a bounded view of a large workspace into a context window.
 * The LLM can expand/contract the view by manipulating focus pointers in the workspace.
 
-## G50 Observability and budgets
+G50 Observability and budgets
 * Every workspace operation is logged.
 * Quotas bound memory growth, fanout, and commit volume.
 
@@ -490,45 +492,33 @@ That combination supplies the inductive biases that the disentanglement literatu
 
 # Claims
 
-## C1 Field embeddings exist and are unique
+C1. **Field embeddings exist and are unique** under mild anchoring conditions.
+C2. **Local relaxation converges** to the field solution on a fixed graph.
+C3. **Field embeddings attenuate underspecified noise** relative to raw embeddings, under a simple noise model.
+C4. **Tier promotion logic bounds RAM and compute** independent of total corpus size.
+C5. **Ingestion produces stable idea handles** via graph-supported clustering, rather than geometry-only clustering.
 
-Under mild anchoring conditions.
-
-## C2 Local relaxation converges
-
-To the field solution on a fixed graph.
-
-## C3 Field embeddings attenuate underspecified noise
-
-Relative to raw embeddings, under a simple noise model.
-
-## C4 Tier promotion logic bounds RAM and compute
-
-Independent of total corpus size.
-
-## C5 Ingestion produces stable idea handles
-
-Via graph-supported clustering, rather than geometry-only clustering.
-
-### P4C1 Lossless structural compression
+**P4C1 Lossless structural compression**
 
 * Abstractions are reversible (original evidence graph can be reconstructed from pattern instances + residual edges).
 
-### P4C2 MDL-driven abstraction reduces description length
+**P4C2 MDL-driven abstraction reduces description length**
 
 * Given a candidate pattern set, choosing patterns by MDL yields shorter descriptions than raw graph encoding (for those patterns). (Algorithm is heuristic; objective is principled.)
 
-### P4C3 Confidence-weighted promotion has probabilistic meaning
+**P4C3 Confidence-weighted promotion has probabilistic meaning**
 
 * Promotion threshold can be expressed as a posterior guarantee on pattern reliability.
 
-### P4C4 Failure memory decreases repeat error probability
+**P4C4 Failure memory decreases repeat error probability**
 
 * Under a simple policy update rule, repeated failed patterns are increasingly suppressed.
 
-### P4C5 Risk governance provides calibrated deferral
+**P4C5 Risk governance provides calibrated deferral**
 
 * Conformal or conformalized selective methods can provide distribution-free risk/coverage control for abstention decisions.
+
+Proofs and Lean skeletons appear below.
 
 ---
 
@@ -586,25 +576,25 @@ A lossless or near-lossless backstore remains available for re-evaluation and au
 
 # P6 invariants
 
-### P6I1 Workspace isolation
+**P6I1 Workspace isolation**
 
 * HWS changes do not mutate long-term memory (LTM) directly.
 * LTM changes only via commit events.
 
-### P6I2 Evidence permanence
+**P6I2 Evidence permanence**
 
 * Every committed memory object traces to evidence, or is flagged "structural-only" and linked to anchored objects.
 
-### P6I3 Snapshot reads
+**P6I3 Snapshot reads**
 
 * Readers see a stable epoch snapshot.
 * Writers create overlays and commit new epochs, similar to MVCC / snapshot isolation.
 
-### P6I4 Safe reclamation
+**P6I4 Safe reclamation**
 
 * Old snapshots are reclaimed after a grace period, similar to RCU.
 
-### P6I5 Governance never discards ambiguity
+**P6I5 Governance never discards ambiguity**
 
 * Ambiguities may be hidden from UI by policy, yet remain in the ambiguity ledger with risk metadata.
 
@@ -612,20 +602,20 @@ A lossless or near-lossless backstore remains available for re-evaluation and au
 
 # P7 invariants
 
-### P7I1 Seeds are append-only
+**P7I1 Seeds are append-only**
 
 * NoiseSeeds and traces live in the event log.
 
-### P7I2 Seeds never directly rewrite LTM
+**P7I2 Seeds never directly rewrite LTM**
 
 * Seeds refine into hypotheses inside workspace overlays.
 * Commit goes through P6 2SC.
 
-### P7I3 Noise never disappears
+**P7I3 Noise never disappears**
 
 * Even when downweighted, the seed remains in the ledger, with a status.
 
-### P7I4 Curiosity respects risk governance
+**P7I4 Curiosity respects risk governance**
 
 * High-risk ambiguity is surfaced, or deferred, based on user profile (P4).
 
@@ -678,41 +668,32 @@ All A/B routing is read-view based. The write path is unified (event log). Candi
 
 # P10 invariants
 
-### P10I1 Isolation
-
+P10I1 Isolation
 * Workspace edits never directly mutate LTM.
 
-### P10I2 Snapshot base
-
+P10I2 Snapshot base
 * Each workspace pins a base LTM snapshot (epoch_id, lsn_end) for read coherence.
 
-### P10I3 Structured concurrency closure
-
+P10I3 Structured concurrency closure
 * If a workspace closes, all descendants close.
 
-### P10I4 Idempotent import/export
-
+P10I4 Idempotent import/export
 * Importing the same capsule twice has no effect beyond the first import.
 
-### P10I5 Loop-free capsule routing
-
+P10I5 Loop-free capsule routing
 * A workspace rejects any capsule whose hop-trace already contains that workspace.
 
-### P10I6 Convergence of replicated workspace state
-
+P10I6 Convergence of replicated workspace state
 * If two replicas of a workspace (or two reconciliation runs) apply the same set of workspace events, they converge to the same WSG state.
 
-### P10I7 Partial persistence
-
+P10I7 Partial persistence
 * Only explicitly exported regions may be submitted to ingest.
 * Private scratch content may remain uncommitted and is GC-able.
 
-### P10I8 Overlap registry monotonicity
-
+P10I8 Overlap registry monotonicity
 * Fingerprints and lineage records are append-only within a workspace session.
 
-### P10I9 Risk and provenance propagate
-
+P10I9 Risk and provenance propagate
 * Workspace-created objects are marked either provenance-anchored or structural-only.
 * Risk tags propagate with capsules and commit envelopes.
 
@@ -720,53 +701,36 @@ All A/B routing is read-view based. The write path is unified (event log). Candi
 
 # Components
 
-## Comp1 Ingestion Stream
+1. **Ingestion Stream**
+2. **Graph Store**
+3. **Field Solver**
+4. **Tiered Memory Manager**
+5. **Candidate Generator**
+6. **Edge Validator**
+7. **Idea Manager**
+8. **Retrieval Planner**
+9. **Index Layer**
+10. **Telemetry and Replay Log**
 
-## Comp2 Graph Store
+## P5 components
 
-## Comp3 Field Solver
-
-## Comp4 Tiered Memory Manager
-
-## Comp5 Candidate Generator
-
-## Comp6 Edge Validator
-
-## Comp7 Idea Manager
-
-## Comp8 Retrieval Planner
-
-## Comp9 Index Layer
-
-## Comp10 Telemetry and Replay Log
-
-## Comp11 Modality Router
-
-## Comp12 Tokenizer Stack
-
-## Comp13 Graph Grammar Engine
-
-## Comp14 Parse Forest Store
-
-## Comp15 Grammar Library
-
-## Comp16 Grammar Miner and Compiler
-
-## Comp17 Token Type Registry
-
-## Comp18 Coordinate System Registry
-
-## Comp19 Adapter and Alignment Trainer
-
-## Comp20 Traversal Planner
-
-## Comp21 Re-ingestion Orchestrator
+1. **Modality Router**
+2. **Tokenizer Stack**
+3. **Graph Grammar Engine**
+4. **Parse Forest Store**
+5. **Grammar Library**
+6. **Grammar Miner and Compiler**
+7. **Token Type Registry**
+8. **Coordinate System Registry**
+9. **Adapter and Alignment Trainer**
+10. **Traversal Planner**
+11. **Re-ingestion Orchestrator**
 
 ---
 
 # Data structures
 
-## D1 Node
+## Node
 
 ```
 Node {
@@ -783,7 +747,7 @@ Node {
 }
 ```
 
-## D2 Edge
+## Edge
 
 ```
 Edge {
@@ -795,14 +759,14 @@ Edge {
 }
 ```
 
-## D3 Graph
+## Graph
 
 Use a typed, weighted multigraph.
 
 * Active tiers in RAM: adjacency lists per node, plus per-edge type partitions.
 * Inactive tier on disk: LSM-backed edge table keyed by (src, type, dst).
 
-## D4 ANN indices
+## ANN indices
 
 Separate indices per tier and per embedding kind.
 
@@ -810,7 +774,7 @@ Separate indices per tier and per embedding kind.
 * Context: HNSW for x vectors.
 * Inactive: IVF+PQ or HNSW+PQ depending on scale.
 
-## D5 Event log
+## Event log
 
 Append-only ingestion events for replay:
 
@@ -822,7 +786,9 @@ Event {
 }
 ```
 
-### D6 ObservationRecord
+## P1 data structures
+
+### ObservationRecord
 
 Stores what the embedder saw and produced, independent of later structure changes.
 
@@ -841,7 +807,7 @@ ObservationRecord {
 
 Reason: later re-embedding with a different model changes results. Keeping the original observation preserves the historical signal.
 
-### D7 NodeState
+### NodeState
 
 Stores field state over time and across hypotheses.
 
@@ -864,7 +830,7 @@ Node keeps pointers:
 * `node.current_state[hyp_id] -> state_id`
 * `node.state_history -> list<StateId>`
 
-### D8 EdgeBelief
+### EdgeBelief
 
 Edge weights become beliefs with provenance and status.
 
@@ -888,7 +854,7 @@ Effective smoothing weight:
 
 * `w_eff = w_base * g`
 
-### D9 ConflictRecord
+### ConflictRecord
 
 Explicit ambiguity store.
 
@@ -907,7 +873,7 @@ ConflictRecord {
 }
 ```
 
-### D10 Hypothesis
+### Hypothesis
 
 Branch container.
 
@@ -921,7 +887,7 @@ Hypothesis {
 }
 ```
 
-## D11 Epoch
+## Epoch
 
 A versioned read view of the system.
 
@@ -940,7 +906,7 @@ Epoch {
 }
 ```
 
-## D12 Snapshot
+## Snapshot
 
 A consistent cut for offline compute.
 
@@ -954,9 +920,9 @@ Snapshot {
 }
 ```
 
-Snapshot semantics align with snapshot isolation style "time travel" reads in MVCC.
+Snapshot semantics align with snapshot isolation style "time travel" reads in MVCC. ([Microsoft][13])
 
-## D13 EdgeBelief additions
+## EdgeBelief additions
 
 Robust weighting is explicit and per hypothesis.
 
@@ -970,7 +936,7 @@ EdgeBelief {
 }
 ```
 
-## D14 IndexVersion
+## IndexVersion
 
 Versioned index artifacts with atomic promotion.
 
@@ -986,7 +952,7 @@ IndexVersion {
 }
 ```
 
-## D15 ConsolidationJob
+## ConsolidationJob
 
 ```
 ConsolidationJob {
@@ -1000,7 +966,9 @@ ConsolidationJob {
 }
 ```
 
-### D16 Pattern
+## P4 data structures
+
+### Pattern
 
 A reusable structural template.
 
@@ -1015,7 +983,7 @@ Pattern {
 }
 ```
 
-### D17 PatternInstance
+### PatternInstance
 
 Binds a pattern to a concrete part of the evidence graph.
 
@@ -1032,7 +1000,7 @@ PatternInstance {
 }
 ```
 
-### D18 PatternStats
+### PatternStats
 
 Confidence-weighted promotion state.
 
@@ -1050,7 +1018,7 @@ PatternStats {
 }
 ```
 
-### D19 FailureCase
+### FailureCase
 
 Explicit bad memory.
 
@@ -1068,7 +1036,7 @@ FailureCase {
 }
 ```
 
-### D20 FeedbackEvent
+### FeedbackEvent
 
 Light outcome signal.
 
@@ -1084,7 +1052,7 @@ FeedbackEvent {
 }
 ```
 
-### D21 UserRiskProfile
+### UserRiskProfile
 
 Governance control surface.
 
@@ -1098,7 +1066,7 @@ UserRiskProfile {
 }
 ```
 
-### D22 AmbiguityLedgerEntry
+### AmbiguityLedgerEntry
 
 ```text
 AmbiguityLedgerEntry {
@@ -1113,7 +1081,9 @@ AmbiguityLedgerEntry {
 }
 ```
 
-### D23 ModuleLibrary
+## P8 data structures
+
+### ModuleLibrary
 
 Library of reusable structural components extracted from patterns.
 
@@ -1134,7 +1104,7 @@ Module {
 }
 ```
 
-### D24 FactorDictionary
+### FactorDictionary
 
 Sparse factor basis for canonical embeddings.
 
@@ -1151,7 +1121,7 @@ FactorDictionary {
 }
 ```
 
-### D25 PatternDecomposition
+### PatternDecomposition
 
 Pattern represented as modules plus wiring.
 
@@ -1165,7 +1135,7 @@ PatternDecomposition {
 }
 ```
 
-### D26 TradeoffProfile
+### TradeoffProfile
 
 Characterizes pattern functionality and performance across contexts.
 
@@ -1189,7 +1159,7 @@ TradeoffProfile {
 }
 ```
 
-### D27 IdeaCandidate
+### IdeaCandidate
 
 Proposed pattern substitution or hybrid.
 
@@ -1208,7 +1178,9 @@ IdeaCandidate {
 }
 ```
 
-## D28 Graph token
+## P5 data structures
+
+## Graph token
 
 A token that exists in a grammar, not necessarily in text.
 
@@ -1225,7 +1197,7 @@ GraphToken {
 }
 ```
 
-## D29 Grammar rule as graph rewrite
+## Grammar rule as graph rewrite
 
 Use an algebraic graph transformation style rule object.
 
@@ -1243,9 +1215,9 @@ Rule {
 }
 ```
 
-This matches standard graph transformation and graph grammar formalisms in the DPO family.
+This matches standard graph transformation and graph grammar formalisms in the DPO family. ([ACM Digital Library][1])
 
-## D30 Parse hypothesis
+## Parse hypothesis
 
 A single interpretation state, contains a token graph plus mappings back to evidence.
 
@@ -1262,7 +1234,7 @@ ParseHypothesis {
 }
 ```
 
-## D31 Parse forest
+## Parse forest
 
 Packed storage of many hypotheses sharing substructure.
 
@@ -1275,9 +1247,9 @@ ParseForest {
 }
 ```
 
-This mirrors packed forest and graph-structured stack ideas used to control ambiguity blow-up in GLR style parsing.
+This mirrors packed forest and graph-structured stack ideas used to control ambiguity blow-up in GLR style parsing. ([IJCAI][2])
 
-## D32 Coordinate system
+## Coordinate system
 
 A named vector space plus its mapping to a canonical space.
 
@@ -1291,7 +1263,7 @@ CoordSystem {
 }
 ```
 
-## D33 Adapter map
+## Adapter map
 
 A transform between spaces.
 
@@ -1307,9 +1279,11 @@ AdapterMap {
 }
 ```
 
-Multi-view alignment and fusion is a standard frame for coordinating multiple embedding spaces.
+Multi-view alignment and fusion is a standard frame for coordinating multiple embedding spaces. ([arXiv][3])
 
-### D34 NoiseSeed
+## P7 data structures
+
+### NoiseSeed
 
 ```text
 NoiseSeed {
@@ -1333,7 +1307,7 @@ NoiseSeed {
 }
 ```
 
-### D35 ExplorationTrace
+### ExplorationTrace
 
 ```text
 ExplorationTrace {
@@ -1349,7 +1323,7 @@ ExplorationTrace {
 }
 ```
 
-### D36 EvidenceBundle
+### EvidenceBundle
 
 ```text
 EvidenceBundle {
@@ -1364,7 +1338,7 @@ EvidenceBundle {
 }
 ```
 
-### D37 CuriosityBudget
+### CuriosityBudget
 
 ```text
 CuriosityBudget {
@@ -1377,7 +1351,7 @@ CuriosityBudget {
 }
 ```
 
-### D38 IdeaToken
+### IdeaToken
 
 A stable "thread" once substantiated.
 
@@ -1394,7 +1368,9 @@ IdeaToken {
 }
 ```
 
-### D39 Workspace
+## P10 data structures
+
+### Workspace
 
 ```
 Workspace {
@@ -1413,7 +1389,7 @@ Workspace {
 }
 ```
 
-### D40 WorkspaceEvent
+### WorkspaceEvent
 
 ```
 WorkspaceEvent {
@@ -1435,7 +1411,7 @@ WorkspaceEvent {
 Notes:
 * remove_* is implemented via tombstones (never physical delete in-session).
 
-### D41 WorkspaceGraph
+### WorkspaceGraph
 
 ```
 WorkspaceGraph {
@@ -1474,7 +1450,7 @@ OriginRef {
 }
 ```
 
-### D42 Capsule
+### Capsule
 
 ```
 Capsule {
@@ -1509,7 +1485,7 @@ CapsuleFingerprint {
 }
 ```
 
-### D43 WorkspaceMessage
+### WorkspaceMessage
 
 ```
 WorkspaceMessage {
@@ -1523,7 +1499,7 @@ WorkspaceMessage {
 }
 ```
 
-### D44 ReconcileRecord
+### ReconcileRecord
 
 ```
 ReconcileRecord {
@@ -1537,7 +1513,7 @@ ReconcileRecord {
 }
 ```
 
-### D45 WorkspaceCommitEnvelope
+### WorkspaceCommitEnvelope
 
 ```
 WorkspaceCommitEnvelope {
@@ -1553,7 +1529,10 @@ WorkspaceCommitEnvelope {
 }
 ```
 
-### D46 ManifoldView
+
+## P9 data structures
+
+### ManifoldView
 
 A pinned read view.
 
@@ -1565,7 +1544,7 @@ ManifoldView {
 }
 ```
 
-### D47 ManifoldState
+### ManifoldState
 
 The explicit manifold state per epoch/hypothesis.
 
@@ -1588,7 +1567,7 @@ ManifoldState {
 }
 ```
 
-### D48 TangentFrame
+### TangentFrame
 
 A local chart basis for node i.
 
@@ -1602,7 +1581,7 @@ TangentFrame {
 }
 ```
 
-### D49 EdgeTransport
+### EdgeTransport
 
 A discrete parallel transport operator between tangent frames.
 
@@ -1615,7 +1594,7 @@ EdgeTransport {
 }
 ```
 
-### D50 ConnectionLaplacian
+### ConnectionLaplacian
 
 A block Laplacian over tangent bundles.
 
@@ -1628,7 +1607,7 @@ ConnectionLaplacian {
 }
 ```
 
-### D51 BlendRecipe
+### BlendRecipe
 
 ```text
 BlendRecipe {
@@ -1641,7 +1620,7 @@ BlendRecipe {
 }
 ```
 
-### D52 CompositeField (ephemeral)
+### CompositeField (ephemeral)
 
 ```text
 CompositeField {
@@ -1652,7 +1631,7 @@ CompositeField {
 }
 ```
 
-### D53 TranslationProposal
+### TranslationProposal
 
 ```text
 TranslationProposal {
@@ -1668,7 +1647,7 @@ TranslationProposal {
 }
 ```
 
-### D54 ABExperiment
+### ABExperiment
 
 ```text
 ABExperiment {
@@ -1683,7 +1662,10 @@ ABExperiment {
 }
 ```
 
-### D55 HippocampalWorkspace
+
+## P6 data structures
+
+### HippocampalWorkspace
 
 ```text
 HippocampalWorkspace {
@@ -1698,7 +1680,7 @@ HippocampalWorkspace {
 }
 ```
 
-### D56 NeocortexProposal
+### NeocortexProposal
 
 ```text
 NeocortexProposal {
@@ -1714,7 +1696,7 @@ NeocortexProposal {
 }
 ```
 
-### D57 CommitRecord
+### CommitRecord
 
 ```text
 CommitRecord {
@@ -1729,7 +1711,7 @@ CommitRecord {
 }
 ```
 
-### D58 CurriculumStage
+### CurriculumStage
 
 ```text
 CurriculumStage {
@@ -1743,7 +1725,7 @@ CurriculumStage {
 }
 ```
 
-### D59 SurpriseBudget
+### SurpriseBudget
 
 ```text
 SurpriseBudget {
@@ -1754,7 +1736,7 @@ SurpriseBudget {
 }
 ```
 
-### D60 ConnectivityState
+### ConnectivityState
 
 ```text
 ConnectivityState {
@@ -1766,7 +1748,7 @@ ConnectivityState {
 }
 ```
 
-### D61 GrammarRuleCandidate
+### GrammarRuleCandidate
 
 ```text
 GrammarRuleCandidate {
@@ -1780,7 +1762,7 @@ GrammarRuleCandidate {
 }
 ```
 
-### D62 AdapterCandidate
+### AdapterCandidate
 
 ```text
 AdapterCandidate {
@@ -1795,7 +1777,7 @@ AdapterCandidate {
 }
 ```
 
-### D63 InquiryTask
+### InquiryTask
 
 ```text
 InquiryTask {
@@ -1809,11 +1791,335 @@ InquiryTask {
 }
 ```
 
+## P10 data structures
+
+### Workspace
+
+```
+Workspace {
+  ws_id: WsId
+  agent_id: AgentId
+  parent_ws: WsId?          // null for root
+  base_epoch: EpochId
+  base_lsn_end: LogOffset
+  created_t: Time
+  ttl: Duration
+  status: enum {open, closing, closed}
+  children: set<WsId>
+  wsg: WorkspaceGraphRef
+  event_log: WorkspaceEventLogRef
+  indices: {ann_index?, wl_index?, text_index?}
+}
+```
+
+### WorkspaceEvent
+
+```
+WorkspaceEvent {
+  ev_id: EvId
+  ws_id: WsId
+  parent_ev: EvId?          // causal link (optional)
+  t: Time
+  kind: enum {
+    add_node, add_edge, update_attr, remove_node, remove_edge,
+    import_capsule, export_capsule,
+    create_child, close_ws,
+    add_note, add_link, add_tag,
+    viewport_set_focus
+  }
+  payload: bytes
+}
+```
+
+Notes:
+* remove_* is implemented via tombstones (never physical delete in-session).
+
+### WorkspaceGraph
+
+```
+WorkspaceGraph {
+  nodes: map<NodeId, NodeRec>
+  edges: map<EdgeId, EdgeRec>
+  tombstones: {nodes: set<NodeId>, edges: set<EdgeId>}
+}
+
+NodeRec {
+  node_id: NodeId
+  type: TypeId?               // optional; open vocabulary
+  attrs: map<string, Value>
+  provenance: list<SpanRef>   // may be empty
+  structural_only: bool
+  risk_tags: set<RiskTag>
+  origin: OriginRef
+}
+
+EdgeRec {
+  edge_id: EdgeId
+  src: NodeId
+  dst: NodeId
+  etype: TypeId?
+  attrs: map<string, Value>
+  provenance: list<SpanRef>
+  structural_only: bool
+  risk_tags: set<RiskTag>
+  origin: OriginRef
+}
+
+OriginRef {
+  source: enum {ltm_import, agent_create, child_import, tool_import}
+  capsule_id: CapsuleId?      // if imported
+  ws_id: WsId
+  ev_id: EvId
+}
+```
+
+### Capsule
+
+```
+Capsule {
+  capsule_id: CapsuleId
+  created_t: Time
+  origin_ws: WsId
+  base_epoch: EpochId
+  base_lsn_end: LogOffset
+
+  // Portable payload
+  subgraph: bytes              // graph encoding
+  manifest: CapsuleManifest
+  fingerprint: CapsuleFingerprint
+  hop_trace: list<WsId>
+}
+
+CapsuleManifest {
+  region_id: RegionId
+  node_ids: list<NodeId>
+  edge_ids: list<EdgeId>
+  dependencies: list<DependencyRef>
+  invariants: list<InvariantHint>
+  intent: string?
+  risk_tags: set<RiskTag>
+}
+
+CapsuleFingerprint {
+  wl_hash: string              // Weisfeiler-Lehman style structure hash
+  minhash: bytes               // set resemblance sketch
+  simhash: uint64              // cosine-like sketch
+  embed_centroid: float[d]?    // optional
+}
+```
+
+### WorkspaceMessage
+
+```
+WorkspaceMessage {
+  msg_id: MsgId
+  from_ws: WsId
+  to_ws: WsId
+  sent_t: Time
+  kind: enum {capsule, control, status}
+  capsule: Capsule?
+  note: string?
+}
+```
+
+### ReconcileRecord
+
+```
+ReconcileRecord {
+  parent_ws: WsId
+  child_ws: WsId
+  child_capsule: CapsuleId
+  decision: enum {imported, imported_as_branch, parked, rejected}
+  reasons: list<string>
+  overlap: float
+  created_t: Time
+}
+```
+
+### WorkspaceCommitEnvelope
+
+```
+WorkspaceCommitEnvelope {
+  env_id: EnvId
+  ws_id: WsId
+  base_epoch: EpochId
+  base_lsn_end: LogOffset
+  exported_capsules: list<CapsuleId>
+  payload: bytes              // graph-form artifacts
+  provenance: list<SpanRef>
+  risk_tags: set<RiskTag>
+  requested_actions: enum {ingest_only, ingest_and_propose_promotion}
+}
+```
+
+---
+
+# Math
+
+## Objects
+
+Let (G_t = (V_t, E_t)) be a time-varying weighted multigraph.
+
+* (V_t): nodes (evidence nodes plus idea nodes).
+* (E_t): typed edges with weights (w_{ij} \ge 0).
+* Embedding dimension: (d).
+* Base embedding observation for node (i): (b_i \in \mathbb{R}^d).
+* Field embedding for node (i): (x_i \in \mathbb{R}^d).
+
+Stack all node vectors into a matrix (X \in \mathbb{R}^{|V|\times d}) and (B \in \mathbb{R}^{|V|\times d}).
+
+## Energy
+
+Define a quadratic energy over the graph:
+
+[
+\mathcal{E}(X) =
+\sum_{(i,j)\in E} w_{ij},\lVert x_i - x_j\rVert^2
+;+;
+\sum_{i\in V} \alpha_i ,\lVert x_i - b_i\rVert^2
+;+;
+\sum_{i\in V}\mu_i ,\lVert x_i\rVert^2
+]
+
+* First term: structural smoothness.
+* Second term: observation anchoring.
+* Third term: mild regularization, also handles disconnected components.
+
+This is the same mathematical family as Gaussian random fields and harmonic functions on a graph, except each “label” is a (d)-vector.
+It is also graph filtering in graph signal processing language.
+
+## Closed form
+
+Let (L) be the weighted graph Laplacian induced by (w_{ij}). Let (A = \mathrm{diag}(\alpha_i)) and (M = \mathrm{diag}(\mu_i)).
+
+Then the minimizer satisfies:
+
+[
+(L + A + M) X = A B
+]
+
+For each dimension (k\in{1,\dots,d}), solve:
+
+[
+(L + A + M) x^{(k)} = A b^{(k)}
+]
+
+So this is (d) linear solves on the same SPD matrix.
+
+## P1 math update
+
+v0.1 used a quadratic smoothness energy. It converges and yields one answer. P1 keeps that and adds gating, robust loss, and branching.
+
+### P1.1 Gated smoothness energy
+
+Replace the v0.1 edge term with a gated term:
+
+[
+\mathcal{E}(X) =
+\sum_{(i,j)\in E} w_{ij},g_{ij},\lVert x_i - x_j\rVert^2
++
+\sum_i \alpha_i \lVert x_i - b_i\rVert^2
++
+\sum_i \mu_i \lVert x_i\rVert^2
+]
+
+* (g_{ij}\in[0,1]) is an edge gate.
+* contradiction edges default to small (g_{ij}) until validated.
+
+This keeps the same linear system form per hypothesis:
+[
+(L_g + A + M)X = AB
+]
+where (L_g) is the Laplacian built from (w_{ij}g_{ij}).
+
+This sits in the same family as Gaussian fields and harmonic energy minimization on graphs. ([MLG Cambridge][1])
+
+### P1.2 Robust option for smoothing
+
+Add an optional robust edge loss to prevent silent averaging across large conflicts.
+
+Replace squared distance with Huber loss:
+[
+\rho_\delta(z)=
+\begin{cases}
+\frac{1}{2}z^2 & |z|\le \delta \
+\delta(|z|-\frac{1}{2}\delta) & |z|>\delta
+\end{cases}
+]
+
+Edge term becomes:
+[
+\sum_{(i,j)} w_{ij}g_{ij},\rho_\delta(\lVert x_i-x_j\rVert)
+]
+
+Huber loss is a standard robust estimator that reduces the pull of large disagreements. ([Project Euclid][2])
+
+### P1.3 Diagnostics quantities
+
+Add these definitions and store them in `NodeState` and `EdgeBelief`.
+
+Anchor residual:
+[
+r_i = \lVert x_i - b_i\rVert
+]
+
+Edge tension:
+[
+t_{ij} = w_{ij} g_{ij},\lVert x_i-x_j\rVert^2
+]
+
+Node tension:
+[
+T_i = \sum_{j\in N(i)} t_{ij}
+]
+
+Confidence proxy:
+[
+c_i = \sigma\big(-a r_i - b T_i - c u_i\big)
+]
+with tunable scalars (a,b,c) and logistic (\sigma).
+
+A higher residual and higher tension yields lower confidence.
+
+### P1.4 Hypothesis branching model
+
+When conflict persists, allow multiple hypotheses (h).
+Each hypothesis has its own field (X^{(h)}) over the fork scope.
+
+This matches mixture thinking and EM-style refinement in the general sense of maintaining multiple latent assignments. ([JSTOR][3])
+
+
+## P2 math
+
+### P2.1 Robust, gated objective per hypothesis
+
+For a hypothesis (h), define field variables (X^{(h)} = {x_i^{(h)}}_{i\in V}).
+
+Let (d_{ij}^{(h)} = \lVert x_i^{(h)} - x_j^{(h)} \rVert).
+
+Robust objective:
+[
+\mathcal{E}^{(h)}(X) =
+\sum_{(i,j)\in E} w_{ij},g_{ij}^{(h)},\rho_{\delta_{ij}}(d_{ij}^{(h)})
++
+\sum_i \alpha_i \lVert x_i^{(h)} - b_i \rVert^2
++
+\sum_i \mu_i \lVert x_i^{(h)} \rVert^2
+]
+
+* (w_{ij}): base structural weight
+* (g_{ij}^{(h)}\in[0,1]): smoothing gate from P1 (status-aware)
+* (\rho_{\delta}): robust loss
+
+Huber is the default robust loss:
+[
+\rho_\delta(r)=
+\begin{cases}
 \frac{1}{2}r^2 & r \le \delta \
 \delta r - \frac{1}{2}\delta^2 & r > \delta
 \end{cases}
 ]
-Huber comes from robust estimation work.
+Huber comes from robust estimation work. ([Project Euclid][2])
 
 This keeps "everything is a hypothesis" intact. The objective is per hypothesis branch.
 
@@ -1853,8 +2159,8 @@ Then the surrogate objective at iteration (k) becomes a weighted quadratic:
 
 Minimizing this surrogate is a Laplacian system solve with weights (\tilde{w}).
 
-IRLS for robust regression is a standard approach.
-IRLS as MM is covered in MM tutorials and more recent analyses.
+IRLS for robust regression is a standard approach. ([Taylor & Francis Online][3])
+IRLS as MM is covered in MM tutorials and more recent analyses. ([Taylor & Francis Online][4])
 
 ### P2.3 Linear solve in each IRLS step
 
@@ -1863,7 +2169,9 @@ Let (L_{\tilde{w}}) be the Laplacian built from (\tilde{w}*{ij}^{(k,h)}). As bef
 (L*{\tilde{w}} + A + M) X^{(h)} = A B
 ]
 
-For scale, this is an SDD system. Nearly linear-time solvers exist in theory, and practical iterative solvers with preconditioning work well.
+For scale, this is an SDD system. Nearly linear-time solvers exist in theory, and practical iterative solvers with preconditioning work well. ([CMU School of Computer Science][5])
+
+## P4 math
 
 ### P4.1 Structural abstraction as MDL graph compression
 
@@ -1879,7 +2187,7 @@ Goal (sleep-time):
 (\mathcal{P}^*, \mathcal{I}^*) = \arg\min_{\mathcal{P},\mathcal{I}} L(G,\mathcal{P},\mathcal{I})
 ]
 
-This is the same principle used in MDL-based graph summarization systems: include a structure if it reduces total description length.
+This is the same principle used in MDL-based graph summarization systems: include a structure if it reduces total description length. ([EDA Dashboard][1])
 
 #### Confidence-weighted MDL
 
@@ -1929,11 +2237,15 @@ Define an action set (\mathcal{A}) over system knobs, e.g.:
 * choose promote vs branch vs retract
 * choose bridge candidates to validate
 
-Observe reward (r_t) from task outcome (light feedback). Use contextual bandit updates (UCB/Thompson) to adapt policy with sublinear regret under standard assumptions.
+Observe reward (r_t) from task outcome (light feedback). Use contextual bandit updates (UCB/Thompson) to adapt policy with sublinear regret under standard assumptions. ([Stanford University][3])
 
 ### P4.5 Risk governance via selective prediction / conformal risk control
 
-Use uncertainty (residual/tension/variance) as a heuristic score, then conformalize deferral thresholds for calibrated risk control.
+Use uncertainty (residual/tension/variance) as a heuristic score, then conformalize deferral thresholds for calibrated risk control. ([People @ EECS][2])
+
+
+
+## P5 math
 
 ## P5.1 Graph grammar semantics
 
@@ -1949,15 +2261,15 @@ where:
 * (K) is the interface preserved during rewriting
 * (R) is the replacement graph
 
-DPO and related algebraic approaches define when a match is valid and how rewriting constructs the new graph via pushouts.
+DPO and related algebraic approaches define when a match is valid and how rewriting constructs the new graph via pushouts. ([University of Leicester Computer Science][4])
 
-For language-like parsing on graphs, HRG and related formalisms provide the “context-free grammar for graphs” analogue.
+For language-like parsing on graphs, HRG and related formalisms provide the “context-free grammar for graphs” analogue. ([People CS Umeå][5])
 
 ## P5.2 Probabilistic and scored rewriting
 
 Attach a score to each rule application. This can be probability or cost.
 
-Probabilistic graph grammars exist with rule probabilities inducing derivation probabilities.
+Probabilistic graph grammars exist with rule probabilities inducing derivation probabilities. ([Springer][6])
 
 Define a derivation score for a hypothesis (h):
 [
@@ -1993,7 +2305,7 @@ Canonical field solve per hypothesis stays the same Laplacian style objective, n
 \sum_i \mu_i |x_i|^2
 ]
 
-Multi-view alignment and fusion is a standard concept, including correlation-based alignment like CCA and mapping-based approaches like Procrustes.
+Multi-view alignment and fusion is a standard concept, including correlation-based alignment like CCA and mapping-based approaches like Procrustes. ([arXiv][3])
 
 ## P5.4 Adapter learning
 
@@ -2005,9 +2317,11 @@ For paired vectors ((u_k, v_k)) in two spaces, find an orthogonal matrix (R) min
 [
 \min_{R^\top R = I} |UR - V|_F
 
+## P4 algorithms
+
 ### Algorithm 10: Structural Abstraction Mining (sleep-time)
 
-Runs inside Algorithm 9 (Global Consolidation) after snapshot creation, before index build.
+Runs inside Algorithm 6 (Global Consolidation) after snapshot creation, before index build.
 
 ```pseudo
 function STRUCTURAL_ABSTRACTION_MINE(snapshot snap):
@@ -2035,7 +2349,7 @@ function STRUCTURAL_ABSTRACTION_MINE(snapshot snap):
   return (P, I)
 ```
 
-MDL summarization and "replace subgraph with single vertex" is a known compression pattern in graph summarization and grammar induction lines of work.
+MDL summarization and "replace subgraph with single vertex" is a known compression pattern in graph summarization and grammar induction lines of work. ([EDA Dashboard][1])
 
 ### Algorithm 11: Online Pattern Instantiation (day-time)
 
@@ -2053,7 +2367,7 @@ function TRY_INSTANTIATE_PATTERNS(new_node v, hyp h):
         ATTACH_MACRONODE(inst)                       // optional macro node in contextual tier
 ```
 
-This is the "reuse patterns with alterations" hook: slot bindings vary per instance. Case-based reasoning is the classic framing for retrieve → reuse → revise → retain.
+This is the "reuse patterns with alterations" hook: slot bindings vary per instance. Case-based reasoning is the classic framing for retrieve → reuse → revise → retain. ([IIIA-CSIC][4])
 
 ### Algorithm 12: Expansion Compiler (decompress for LLM)
 
@@ -2078,7 +2392,7 @@ function COMPILE_CONTEXT_FOR_LLM(query q, budget B, risk_profile R):
   return pack
 ```
 
-This matches "compressed memory + reflection/summary + expansion on demand" patterns seen in long-term agent memory and hierarchical retrieval systems.
+This matches "compressed memory + reflection/summary + expansion on demand" patterns seen in long-term agent memory and hierarchical retrieval systems. ([arXiv][5])
 
 ### Algorithm 13: Confidence-weighted Pattern Promotion
 
@@ -2117,7 +2431,7 @@ function PATTERN_SCORE(pat_id, ctx):
   return base * brake
 ```
 
-This is aligned with storing self-reflective "lessons" from mistakes for later avoidance in agent memory work.
+This is aligned with storing self-reflective "lessons" from mistakes for later avoidance in agent memory work. ([OpenReview][6])
 
 ### Algorithm 15: Light Outcome Feedback Loop (bandit)
 
@@ -2130,7 +2444,7 @@ function POLICY_STEP(context φ):
   STORE_FEEDBACK_EVENT(φ, a, r)
 ```
 
-Bandit foundations and safe online learning to re-rank provide the template for "light feedback, safe updates."
+Bandit foundations and safe online learning to re-rank provide the template for "light feedback, safe updates." ([Stanford University][3])
 
 ### Algorithm 16: Risk & Ambiguity Governance
 
@@ -2148,23 +2462,25 @@ function GOVERN_OUTPUT(answer_candidates, ambiguity_metrics, user_profile R):
     return BEST_ANSWER(answer_candidates)
 ```
 
-Conformal / selective frameworks supply calibrated abstention and risk control patterns for deferral decisions.
+Conformal / selective frameworks supply calibrated abstention and risk control patterns for deferral decisions. ([People @ EECS][2])
 
 ]
-This preserves distances and angles in the mapped space. Manifold alignment via Procrustes uses this idea.
+This preserves distances and angles in the mapped space. Manifold alignment via Procrustes uses this idea. ([ICML][7])
 
 ### General multi-view alignment
 
-Use alignment and fusion approaches from multi-view representation learning when orthogonal mapping feels too rigid.
+Use alignment and fusion approaches from multi-view representation learning when orthogonal mapping feels too rigid. ([arXiv][3])
+
+## P6 math
 
 ### P6.1 Workspace overlay model
 
-Let \(G^{(e)}\) be the long-term graph at epoch \(e\).
-HWS stores an overlay \(\Delta G\) such that the workspace view is:
-\[
+Let (G^{(e)}) be the long-term graph at epoch (e).
+HWS stores an overlay (\Delta G) such that the workspace view is:
+[
 G^{\text{hws}} = G^{(e)} \oplus \Delta G
-\]
-Reads use \(G^{(e)}\) or \(G^{\text{hws}}\) depending on scope.
+]
+Reads use (G^{(e)}) or (G^{\text{hws}}) depending on scope.
 
 This is the same principle as snapshot isolation, readers see a stable snapshot while writers create new versions.
 
@@ -2222,6 +2538,9 @@ Monitor an online error series (E_t) for an adapter, like retrieval regression o
 Use adaptive-window drift detection for change points.
 
 ---
+
+
+## P9 math
 
 ### P9.1 Discrete manifold (robust gated field)
 
@@ -2308,6 +2627,8 @@ The composite field guides traversal and scheduling; it never directly mutates W
 
 ---
 
+## P7 math
+
 ### P7.1 Noise features
 
 For a seed (s), define a feature vector:
@@ -2339,7 +2660,7 @@ Weights can be:
 
 ### P7.3 Learning progress
 
-Use improvement, not raw error. This avoids fixation on irreducible randomness.
+Use improvement, not raw error. This avoids fixation on irreducible randomness. ([arXiv][p7-1])
 
 For a trace (t) on seed (s):
 [
@@ -2350,7 +2671,7 @@ where (\mathcal{L}) can be a blend of tension and residual:
 \mathcal{L}(s)=\alpha T(s) + \beta r(s)
 ]
 
-This aligns with "learning progress" intrinsic motivation in IAC-style systems.
+This aligns with "learning progress" intrinsic motivation in IAC-style systems. ([Swarthmore Computer Science][p7-5])
 
 ### P7.4 Novelty
 
@@ -2363,9 +2684,9 @@ nov(s)=\min_{p \in \mathcal{P}} |z(s)-z(p)|
 where (z(\cdot)) is a structural embedding of the seed subgraph or pattern.
 
 **Prediction novelty**
-Use an exploration bonus based on prediction error of a fixed target representation, similar in spirit to RND.
+Use an exploration bonus based on prediction error of a fixed target representation, similar in spirit to RND. ([arXiv][p7-6])
 
-Novelty search literature supports novelty as a primary driver for open-ended discovery.
+Novelty search literature supports novelty as a primary driver for open-ended discovery. ([Swarthmore Computer Science][p7-2])
 
 ### P7.5 Information gain for inquiry selection
 
@@ -2373,7 +2694,7 @@ For candidate inquiry action (a):
 [
 IG(a) = H(\Theta \mid D) - \mathbb{E}_{y \sim p(y \mid a,D)}[H(\Theta \mid D \cup (a,y))]
 ]
-This is the classic expected informativeness frame for selecting data.
+This is the classic expected informativeness frame for selecting data. ([MIT Press Direct][p7-3])
 
 ### P7.6 Utility for scheduling
 
@@ -2387,7 +2708,93 @@ subject to budgets:
 
 ---
 
-### P10.1 Convergence-safe state model (event-set join)
+# P9 math
+
+## P9.1 Discrete manifold (robust gated field)
+
+Per hypothesis h, the manifold is induced by the robust gated objective (P1–P2), which is a weighted graph-smoothing + anchoring energy.
+
+Let W_eff encode the effective conductance:
+
+* W_eff(e) = w_base(e) * gate(e,h) * robust_weight(e,h)
+
+Then the per-hypothesis solve is:
+
+[L_{W_eff} + A + M] X = A B
+
+The graph Laplacian can be decomposed as a sum of per-edge rank-1 terms:
+
+L = Σ_{(i,j)∈E} w_{ij} (e_i - e_j)(e_i - e_j)^T
+
+This decomposition is the basis for low-rank updates when edge weights change.
+
+## P9.2 Local tangent frames (projection basis)
+
+For node i, compute a weighted covariance of neighbor displacements:
+
+C_i = Σ_{j∈N(i)} W_eff(i,j) (x_j - x_i)(x_j - x_i)^T
+
+Let U_i be the top-m eigenvectors of C_i. U_i is the local tangent basis.
+
+This is the standard “local PCA / local tangent space” idea used in manifold learning (e.g., LTSA-style pipelines).
+
+## P9.3 Discrete parallel transport via connection Laplacian (solves the translation dragon)
+
+Local frames alone do not let you compare directions across distant nodes; you need transport.
+
+Define an edge-wise orthogonal alignment between frames:
+
+R_ij = argmin_{R ∈ O(m)} || U_i R - U_j ||_F
+
+(Orthogonal Procrustes; solved by SVD.)
+
+Build a connection graph operator on tangent vectors:
+
+* For each edge (i,j): block weight S_{ij} = W_eff(i,j) R_ij
+* Block degree D_{ii} = (Σ_j W_eff(i,j)) I_m
+
+Define the connection Laplacian operator:
+
+L_conn = D - S
+
+This operator generalizes scalar Laplacians to vector fields and supports:
+
+* smoothing vector fields
+* constructing near-parallel coordinates
+* defining vector-diffusion distances
+
+## P9.4 Vector-diffusion distance (optional)
+
+Use top eigenpairs of a normalized connection Laplacian (VDM) to embed nodes so that both proximity and alignment are captured.
+
+This provides a principled “wormhole” signal:
+
+* nodes that are not structurally adjacent can be geometrically close if a consistent transport exists.
+
+## P9.5 Field blending (control, not topology)
+
+Primitive scalar fields include:
+
+* goal distance d_q(i) (query similarity)
+* tension T(i)
+* residual r(i)
+* uncertainty u(i)
+* risk(i)
+* novelty nov(i)
+
+A BlendRecipe defines a composite score:
+
+S_q(i) = Σ_k λ_k field_k(i)
+
+Optional tangent gradient uses local transport + finite differences:
+
+∇_t S(i) ≈ Σ_{j∈N(i)} W_eff(i,j) (S(j) - S(i)) * R_ij^T 1
+
+The composite field guides traversal and scheduling; it never directly mutates W_eff/A/M.
+
+
+
+## P10.1 Convergence-safe state model (event-set join)
 
 Represent a workspace state as:
 
@@ -2428,35 +2835,44 @@ Overlap between two capsules/regions is estimated using a multi-stage signature:
 This supports fast approximate overlap queries over many workspaces.
 ---
 
+# Algorithms
+
 ## Algorithm 1: Streaming ingestion
 
 Goal: create evidence nodes, create idea handles, build edges, update tiers, update the field locally.
 
-Ingestion becomes append-only for state. `x` updates create `NodeState` records.
-
 ```pseudo
 function INGEST_STREAM(stream):
-  for span in STREAM_TO_SPANS(stream):
+  for span in STREAM_TO_SPANS(stream):                 // sentence-level or structure markers
     v = NEW_NODE(level=EVIDENCE, span_ref=span.ref)
 
-    b = EMBED(span.text)
-    STORE ObservationRecord(node=v.id, b=b, embedder_id, version, input_hash)
-
-    INIT NodeState for each active hypothesis h:
-      state = NEW_STATE(node=v.id, hyp=h, x=b, u=HIGH, r=0, T=0)
-      v.current_state[h] = state.id
+    v.b = EMBED(span.text)                             // base observation
+    v.x = v.b                                          // init field state
+    v.u = HIGH
+    v.tier = FOCUS
+    v.a = INIT_ACTIVATION()
 
     GRAPH.ADD_NODE(v)
-    ADD_EDGES_WITH_BELIEFS(v, span.text)        // creates EdgeBelief with g default values
 
-    ATTACH_TO_IDEAS(v)                          // membership edges become EdgeBelief too
+    // structural edges
+    ADD_ADJACENCY_EDGES(v)
+    ADD_CONTAINMENT_EDGES(v)
+    ADD_REFERENCE_EDGES(v, span.text)
 
+    // idea attachment
+    candidates = FIND_IDEA_CANDIDATES(v.x)              // ANN over idea nodes in context+inactive
+    best = SELECT_OR_CREATE_IDEA(candidates, v)
+
+    GRAPH.ADD_EDGE(v.id, best.id, type=MEMBERSHIP, w=INIT_MEMBERSHIP_WEIGHT(v,best))
+
+    // tier maintenance
+    UPDATE_ACTIVATION(v)
     PROMOTE_DEMOTE_TIERS()
 
+    // local field update
     AFFECTED = NEIGHBORHOOD(v, radius=r_tier(v.tier))
-    FIELD_UPDATE_WITH_DIAGNOSTICS(AFFECTED)
+    FIELD_RELAX(AFFECTED, steps=s_tier(v.tier))
 
-    CONFLICT_SCAN_AND_QUEUE(AFFECTED)
     UPDATE_INDICES(AFFECTED)
     LOG_EVENT(...)
 ```
@@ -2486,31 +2902,26 @@ Validation is where hard constraints live. Geometry proposes. Validation commits
 
 ## Algorithm 3: Field relaxation on a subgraph
 
-Field update computes diagnostics and uses gates.
+Gauss-Seidel style update on the quadratic objective.
 
-```pseudo
-function FIELD_UPDATE_WITH_DIAGNOSTICS(nodes S):
-  for hypothesis h in ACTIVE_HYPOTHESES_IN_SCOPE(S):
-    FIELD_RELAX_GATED(S, h, steps=s_tier)
+For a node (i), the coordinate-wise optimal update is:
 
-    // compute diagnostics
-    for i in S:
-      x = STATE(i,h).x
-      b = OBS(i).b
-      r = NORM(x - b)
-      T = SUM_{(i,j)} w_eff(i,j,h) * NORM2(x - STATE(j,h).x)
-      APPEND_STATE_METRICS(i,h,r,T)
-
-    for each edge (i,j) touching S:
-      t = w_eff(i,j) * NORM2(STATE(i,h).x - STATE(j,h).x)
-      UPDATE_EDGE_TENSION(edge_id, t)
-```
-
-Coordinate update under gated quadratic stays closed form:
 [
 x_i \leftarrow
-\frac{\alpha_i b_i + \sum_{j} w_{ij}g_{ij} x_j}{\alpha_i + \mu_i + \sum_{j} w_{ij}g_{ij}}
+\frac{\alpha_i b_i + \sum_{j\in N(i)} w_{ij} x_j}{\alpha_i + \mu_i + \sum_{j\in N(i)} w_{ij}}
 ]
+
+```pseudo
+function FIELD_RELAX(nodes S, steps T):
+  repeat T times:
+    for i in SHUFFLE(S):
+      denom = alpha[i] + mu[i] + SUM_{j in N(i)} w[i,j]
+      numer = alpha[i] * b[i] + SUM_{j in N(i)} w[i,j] * x[j]
+      x[i] = numer / denom
+    UPDATE_UNCERTAINTY(S)
+```
+
+This is the vector-valued version of harmonic updates used in Gaussian fields style graph methods.
 
 ## Algorithm 4: Tier promotion and demotion
 
@@ -2543,9 +2954,74 @@ function STREAM_TO_SPANS(stream):
   yield span
 ```
 
-## Algorithm 6: Conflict scan
+## P1 algorithms
 
-Conflict scan detects high tension and residual to identify ambiguity.
+These are deltas on v0.1 pseudocode.
+
+### Algorithm 1
+
+Ingestion becomes append-only for state.
+
+Patch `INGEST_STREAM` so `x` updates create `NodeState` records.
+
+```pseudo
+function INGEST_STREAM(stream):
+  for span in STREAM_TO_SPANS(stream):
+    v = NEW_NODE(level=EVIDENCE, span_ref=span.ref)
+
+    b = EMBED(span.text)
+    STORE ObservationRecord(node=v.id, b=b, embedder_id, version, input_hash)
+
+    INIT NodeState for each active hypothesis h:
+      state = NEW_STATE(node=v.id, hyp=h, x=b, u=HIGH, r=0, T=0)
+      v.current_state[h] = state.id
+
+    GRAPH.ADD_NODE(v)
+    ADD_EDGES_WITH_BELIEFS(v, span.text)        // creates EdgeBelief with g default values
+
+    ATTACH_TO_IDEAS(v)                          // membership edges become EdgeBelief too
+
+    PROMOTE_DEMOTE_TIERS()
+
+    AFFECTED = NEIGHBORHOOD(v, radius=r_tier(v.tier))
+    FIELD_UPDATE_WITH_DIAGNOSTICS(AFFECTED)
+
+    CONFLICT_SCAN_AND_QUEUE(AFFECTED)
+    UPDATE_INDICES(AFFECTED)
+    LOG_EVENT(...)
+```
+
+### Algorithm 2
+
+Field update computes diagnostics and uses gates.
+
+```pseudo
+function FIELD_UPDATE_WITH_DIAGNOSTICS(nodes S):
+  for hypothesis h in ACTIVE_HYPOTHESES_IN_SCOPE(S):
+    FIELD_RELAX_GATED(S, h, steps=s_tier)
+
+    // compute diagnostics
+    for i in S:
+      x = STATE(i,h).x
+      b = OBS(i).b
+      r = NORM(x - b)
+      T = SUM_{(i,j)} w_eff(i,j,h) * NORM2(x - STATE(j,h).x)
+      APPEND_STATE_METRICS(i,h,r,T)
+
+    for each edge (i,j) touching S:
+      t = w_eff(i,j) * NORM2(STATE(i,h).x - STATE(j,h).x)
+      UPDATE_EDGE_TENSION(edge_id, t)
+```
+
+Coordinate update under gated quadratic stays closed form:
+[
+x_i \leftarrow
+\frac{\alpha_i b_i + \sum_{j} w_{ij}g_{ij} x_j}{\alpha_i + \mu_i + \sum_{j} w_{ij}g_{ij}}
+]
+
+### Algorithm 3
+
+Conflict scan.
 
 ```pseudo
 function CONFLICT_SCAN_AND_QUEUE(nodes S):
@@ -2555,7 +3031,7 @@ function CONFLICT_SCAN_AND_QUEUE(nodes S):
       CREATE_OR_UPDATE_CONFLICT_RECORD(i, edges)
 ```
 
-## Algorithm 7: Conflict resolution
+### Algorithm 4
 
 Resolution loop increases confidence by seeking targeted evidence.
 
@@ -2587,7 +3063,7 @@ function RESOLVE_CONFLICTS(budget):
     budget -= COST(verdict)
 ```
 
-## Algorithm 8: Hypothesis branching
+### Algorithm 5
 
 Hypothesis branching preserves ambiguity instead of averaging it.
 
@@ -2615,7 +3091,10 @@ function BRANCH_HYPOTHESIS(conflict c):
 
 Branching stays local to keep memory and compute bounded.
 
-### Algorithm 9: Global Consolidation
+
+## P2 algorithms
+
+### Algorithm 6: Global Consolidation
 
 This is the "sleep" phase. It keeps ingestion running via snapshot isolation + versioned commit.
 
@@ -2651,16 +3130,16 @@ function GLOBAL_CONSOLIDATION(trigger):
   RETIRE_OLD_EPOCHS()
 ```
 
-Snapshot isolation is the foundation for the consistent snapshot step.
-Atomic publish semantics follow RCU style "publish pointer, wait grace period, reclaim old."
+Snapshot isolation is the foundation for the consistent snapshot step. ([Microsoft][1])
+Atomic publish semantics follow RCU style "publish pointer, wait grace period, reclaim old." ([Kernel.org][6])
 
-Event sourcing stays the audit layer that makes rebuilds reproducible.
+Event sourcing stays the audit layer that makes rebuilds reproducible. ([Microsoft Learn][7])
 
 #### Notes on BUILD_INDICES
 
-This is a versioned build, then swap. The Lucene style segment approach is a practical reference point for "build new segments, then open them" behavior.
+This is a versioned build, then swap. The Lucene style segment approach is a practical reference point for "build new segments, then open them" behavior. ([Mike McCandless Blog][8])
 
-### Algorithm 65: Robust Field Solve via IRLS
+### Algorithm 7: Robust Field Solve via IRLS
 
 Runs per hypothesis on the snapshot.
 
@@ -2693,7 +3172,7 @@ Default stopping rule:
 * or max iteration count
 * plus max per-iteration solver tolerance schedule
 
-### Algorithm 66: Apply deltas after snapshot
+### Algorithm 8: Apply deltas after snapshot
 
 This absorbs "daytime patches" that happened during the offline run.
 
@@ -2711,7 +3190,7 @@ function APPLY_DELTAS(epoch_new, from lsn0, to lsn1):
 
 This keeps the new epoch aligned with live changes while keeping the offline solve isolated.
 
-### Algorithm 67: Publish epoch with RCU semantics
+### Algorithm 9: Publish epoch with RCU semantics
 
 ```pseudo
 function PUBLISH_EPOCH(epoch_new):
@@ -2723,7 +3202,10 @@ function PUBLISH_EPOCH(epoch_new):
   WAIT_GRACE_PERIOD()
 ```
 
-RCU provides the pattern: readers run lock-free against a stable snapshot while writer swaps the pointer then waits a grace period before reclaim.
+RCU provides the pattern: readers run lock-free against a stable snapshot while writer swaps the pointer then waits a grace period before reclaim. ([Kernel.org][6])
+
+
+## P5 algorithms
 
 ## Algorithm 17
 
@@ -2774,7 +3256,7 @@ function PARSE_REGION(region, dom, tokset):
   return forest
 ```
 
-This mirrors the packed-forest idea used to manage ambiguity growth in GLR style parsing.
+This mirrors the packed-forest idea used to manage ambiguity growth in GLR style parsing. ([IJCAI][2])
 
 ## Algorithm 19
 
@@ -2800,7 +3282,7 @@ function APPLY_RULE(h, match m):
   return h2
 ```
 
-Graph transformation via DPO gives a formal foundation for safe rewrites and composition.
+Graph transformation via DPO gives a formal foundation for safe rewrites and composition. ([University of Leicester Computer Science][4])
 
 ## Algorithm 20
 
@@ -2819,7 +3301,7 @@ function MINE_AND_COMPILE_GRAMMAR(snapshot snap, dom):
         GRAMMAR_LIBRARY.ADD(rule)
 ```
 
-Hyperedge replacement and related graph grammar formalisms provide a language for “graph as grammar”.
+Hyperedge replacement and related graph grammar formalisms provide a language for “graph as grammar”. ([People CS Umeå][5])
 
 ## Algorithm 21
 
@@ -2845,8 +3327,8 @@ function EMBED_TOKEN(tok):
   STORE_CANONICAL_ANCHOR(tok, b_bar)
 ```
 
-Graph embeddings and substructure signatures like WL-based features and graph-level embeddings are standard tools.
-Code embeddings from AST structure exist as well.
+Graph embeddings and substructure signatures like WL-based features and graph-level embeddings are standard tools. ([Journal of Machine Learning Research][8])
+Code embeddings from AST structure exist as well. ([ACM Digital Library][9])
 
 ## Algorithm 22
 
@@ -2901,7 +3383,9 @@ function REINTERPRET(epoch e, region R, new_grammar_set G*):
   SCHEDULE_GLOBAL_CONSOLIDATION()
 ```
 
-Graph parsing for HRG and related grammars is studied, and complexity varies a lot by restrictions, so this is designed with hypothesis beams and domain restrictions.
+Graph parsing for HRG and related grammars is studied, and complexity varies a lot by restrictions, so this is designed with hypothesis beams and domain restrictions. ([ACL Anthology][10])
+
+## P6 algorithms
 
 ### Algorithm 24: Hippocampal workspace session
 
@@ -3077,7 +3561,12 @@ Active learning literature gives the template for selecting data to reduce uncer
 
 ---
 
-### Algorithm 33: Noise scan
+
+## P7 algorithms
+
+### Algorithm 33
+
+#### Noise scan
 
 Runs after any of:
 
@@ -3109,25 +3598,54 @@ function NSCAN(epoch e, workspace_view W):
   return seeds
 ```
 
-**P4C2 proof sketch: MDL-driven abstraction reduces description length**
+
+## P4 proofs
+
+### P4C1 Lossless structural abstraction
+
+**Claim.** Given PatternLibrary (\mathcal{P}) and PatternInstances (\mathcal{I}) where each instance stores a node map into the original graph plus residual edges, there exists an expansion function (\mathrm{Expand}) such that:
+[
+\mathrm{Expand}(\mathrm{Compress}(G)) = G
+]
+**Sketch.**
+
+* Compression stores a partition-like cover: each matched subgraph is represented by an instance with explicit mapping to original node IDs.
+* Residual edges capture anything inside the covered region that the pattern template does not encode.
+* Expansion replays the stored mapping and unions all residual edges plus uncovered edges.
+* No information is discarded; only re-represented.
+
+This mirrors the "replace subgraph with a single vertex" compression model used in graph summarization / grammar induction lines. ([EDA Dashboard][1])
+
+### P4C2 MDL-driven abstraction reduces description length
 
 **Claim.** Given a candidate pattern set, choosing patterns by MDL yields shorter descriptions than raw graph encoding (for those patterns). (Algorithm is heuristic; objective is principled.)
 
 **Sketch.** The objective directly minimizes description length. Greedy selection may not find global optimum but provides local improvement guarantees standard in submodular-style optimization.
 
-**P4C3 proof sketch: Promotion guarantee**
+### P4C3 Promotion guarantee
 
 **Claim.** If a pattern is promoted only when (\Pr(\theta_p \ge \tau) \ge 1-\delta), then promotion implies a posterior reliability guarantee.
 
 **Sketch.** Direct from the posterior CDF of the Beta distribution.
 
-**P4C5 proof sketch: Risk governance calibration**
+### P4C4 Failure memory suppression
 
-**Claim.** Conformal prediction can convert heuristic uncertainty into prediction sets with distribution-free coverage, and selective conformal risk control combines deferral with risk control.
+**Claim.** Under (\text{score} \propto \exp(-\eta F)) with (F) increasing in failure count, repeated failures monotonically decrease selection probability in softmax-like selection.
+
+**Sketch.**
+
+* Exponential brake is monotone decreasing in (F).
+* If (F) increases with failures, score decreases with failures.
+
+### P4C5 Risk governance calibration
+
+**Claim.** Conformal prediction can convert heuristic uncertainty into prediction sets with distribution-free coverage, and selective conformal risk control combines deferral with risk control. ([People @ EECS][2])
 
 **Sketch.** Conformal coverage guarantee is standard; selection layer trades coverage vs abstention.
 
-### Algorithm 34: Thread queue update
+### Algorithm 34
+
+#### Thread queue update
 
 ```pseudo
 function UPDATE_THREAD_QUEUE(new_seeds):
@@ -3143,7 +3661,9 @@ function UPDATE_THREAD_QUEUE(new_seeds):
       s.status = parked
 ```
 
-### Algorithm 35: Explore a seed
+### Algorithm 35
+
+#### Explore a seed
 
 Two-stage: cheap structure first, then LLM refinement when value exists.
 
@@ -3176,9 +3696,11 @@ function EXPLORE_SEED(seed s):
   UPDATE_FAILURE_MEMORY(s, trace)
 ```
 
-LLM-driven curiosity and intrinsic reward signals for LLM training and auditing exist in recent work, so "LLM used as refiner" fits the current research direction.
+LLM-driven curiosity and intrinsic reward signals for LLM training and auditing exist in recent work, so "LLM used as refiner" fits the current research direction. ([arXiv][p7-7])
 
-### Algorithm 36: Distill traces into tokens
+### Algorithm 36
+
+#### Distill traces into tokens
 
 ```pseudo
 function DISTILL(epoch e):
@@ -3193,9 +3715,11 @@ function DISTILL(epoch e):
       QUARANTINE_SIGNATURE(c.signature)
 ```
 
-Learning progress guided exploration and goal selection is a standard curiosity mechanism in intrinsic motivation systems.
+Learning progress guided exploration and goal selection is a standard curiosity mechanism in intrinsic motivation systems. ([Swarthmore Computer Science][p7-5])
 
-### Algorithm 37: Curiosity scheduler
+### Algorithm 37
+
+#### Curiosity scheduler
 
 Online plus sleep-time pass.
 
@@ -3213,7 +3737,9 @@ function SLEEP_CURIOSITY_PASS(snapshot snap):
   DISTILL(snap.epoch)
 ```
 
-### Algorithm 38: Decay and cleanup
+### Algorithm 38
+
+#### Decay and cleanup
 
 ```pseudo
 function SEED_DECAY(seed s):
@@ -3223,7 +3749,7 @@ function SEED_DECAY(seed s):
     s.status = quarantined
 ```
 
-### P10I10 Memory layer operations
+## P10 core operations (tooling surface)
 
 The memory layer must support the following operations. A coordination system may call them, but P10 does not define the policy for when.
 
@@ -3236,6 +3762,8 @@ The memory layer must support the following operations. A coordination system ma
 * WS_QUERY(ws_id, query_spec) -> results
 * WS_VIEW(ws_id, viewport_spec) -> prompt_pack
 * WS_COMMIT(ws_id, exported_capsules, intent) -> commit_envelope
+
+## P10 algorithms
 
 ### Algorithm 53: OPEN_WORKSPACE
 
@@ -3395,7 +3923,9 @@ WORKSPACE_GC(ws_id):
 ```
 
 
-### Algorithm 39: Factor learning in sleep
+### Algorithm 39
+
+Factor learning in sleep
 
 ```pseudo
 function LEARN_FACTORS(epoch e):
@@ -3404,9 +3934,11 @@ function LEARN_FACTORS(epoch e):
   STORE_FACTOR_DICT(D, Enc, version=e)
 ```
 
-Basis: sparse coding style factorization.
+Basis: sparse coding style factorization. ([Nature][1])
 
-### Algorithm 40: Module mining from pattern graphs
+### Algorithm 40
+
+Module mining from pattern graphs
 
 ```pseudo
 function MINE_MODULES(patterns P):
@@ -3420,7 +3952,9 @@ function MINE_MODULES(patterns P):
   return M
 ```
 
-### Algorithm 41: Build pattern functionality profiles
+### Algorithm 41
+
+Build pattern functionality profiles
 
 ```pseudo
 function BUILD_PROFILES(pattern_instances I, Enc):
@@ -3431,7 +3965,9 @@ function BUILD_PROFILES(pattern_instances I, Enc):
     UPDATE_EFFECT_PROFILE(inst.pattern_id, DELTA_ENERGY(inst))
 ```
 
-### Algorithm 42: Idea proposal via substitution and hybridization
+### Algorithm 42
+
+Idea proposal via substitution and hybridization
 
 ```pseudo
 function PROPOSE_IDEAS(context subgraph G, Enc):
@@ -3448,7 +3984,9 @@ function PROPOSE_IDEAS(context subgraph G, Enc):
   return TOPK(candidates ∪ hybrids)
 ```
 
-### Algorithm 43: Simulate and validate an idea candidate
+### Algorithm 43
+
+Simulate and validate an idea candidate
 
 ```pseudo
 function EVALUATE_IDEA(candidate c):
@@ -3468,6 +4006,8 @@ function EVALUATE_IDEA(candidate c):
 
 
 ---
+
+# P9 algorithms
 
 ## Algorithm 44 — MANIFOLD_UPDATE_LOCAL (online)
 
@@ -3663,7 +4203,169 @@ Side-effect rule:
 * shadow is always read-only
 * canary/A-B must route writes through the same event-log + 2SC pipeline, to avoid divergent world states
 
-## Lean1 Existence and uniqueness of the field solution
+
+
+## Algorithm 53: OPEN_WORKSPACE
+
+```pseudo
+OPEN_WORKSPACE(agent_id, base_epoch, base_lsn_end, ttl):
+  ws = new Workspace
+  ws.base_epoch = base_epoch
+  ws.base_lsn_end = base_lsn_end
+  ws.status = open
+  ws.ttl = ttl
+  ws.event_log = empty
+  return ws
+```
+
+## Algorithm 54: CLOSE_WORKSPACE_CASCADE (structured lifetime)
+
+```pseudo
+CLOSE_WORKSPACE_CASCADE(ws_id):
+  if ws.status != open: return
+  ws.status = closing
+  for child in ws.children:
+    CLOSE_WORKSPACE_CASCADE(child)
+  ws.status = closed
+  WGC.schedule(ws_id)
+```
+
+## Algorithm 55: SPAWN_CHILD (fork-join)
+
+```pseudo
+SPAWN_CHILD(parent_ws, ttl, seed_capsules):
+  child = OPEN_WORKSPACE(agent_id = parent.agent_id,
+                         base_epoch = parent.base_epoch,
+                         base_lsn_end = parent.base_lsn_end,
+                         ttl = ttl)
+  child.parent_ws = parent.ws_id
+  parent.children.add(child.ws_id)
+
+  for cap in seed_capsules:
+    WS_IMPORT(child.ws_id, cap)
+
+  log event create_child
+  return child.ws_id
+```
+
+## Algorithm 56: EXPORT_CAPSULE
+
+```pseudo
+EXPORT_CAPSULE(ws_id, selection_spec):
+  subgraph = EXTRACT_SUBGRAPH(ws_id, selection_spec)
+  fp = OVERLAP_SIGNATURE(subgraph)
+  cap = Capsule(subgraph, manifest, fp)
+  cap.hop_trace = [ws_id]
+  log event export_capsule
+  return cap
+```
+
+## Algorithm 57: IMPORT_CAPSULE (idempotent)
+
+```pseudo
+IMPORT_CAPSULE(ws_id, cap):
+  // loop guard
+  if ws_id in cap.hop_trace: reject
+
+  // idempotence
+  if cap.capsule_id in ws.import_registry: return existing_record
+
+  // remap IDs to avoid collision
+  mapping = BUILD_ID_REMAP(ws_id, cap.manifest)
+  APPLY_SUBGRAPH_WITH_REMAP(ws_id, cap.subgraph, mapping)
+
+  // record lineage
+  ws.import_registry.add(cap.capsule_id)
+  log event import_capsule
+
+  // update overlap index
+  OVI.add(ws_id, cap.fingerprint)
+
+  return import_record
+```
+
+## Algorithm 58: MESSAGE_SEND
+
+```pseudo
+MESSAGE_SEND(from_ws, to_ws, cap, note):
+  cap.hop_trace.append(to_ws)
+  msg = WorkspaceMessage(from_ws, to_ws, cap, note)
+  MSG.deliver(msg)
+```
+
+## Algorithm 59: RECONCILE_CHILD_TO_PARENT
+
+```pseudo
+RECONCILE_CHILD_TO_PARENT(parent_ws, child_ws, selection_spec):
+  cap = EXPORT_CAPSULE(child_ws, selection_spec)
+  overlap = OVERLAP_QUERY(parent_ws, cap.fingerprint)
+
+  // RECON does not decide policy; it only computes signals.
+  rec = ReconcileRecord(parent_ws, child_ws, cap.capsule_id, overlap)
+  return rec, cap
+```
+
+## Algorithm 60: COMMIT_TO_INGEST (no LLM diffs)
+
+```pseudo
+COMMIT_TO_INGEST(ws_id, exported_capsules, intent):
+  payload = BUILD_GRAPH_PAYLOAD(ws_id, exported_capsules)
+  env = WorkspaceCommitEnvelope(ws_id, payload, base_epoch, base_lsn_end)
+  CGW.submit_to_ingest(env)
+  return env
+```
+
+## Algorithm 61: OVERLAP_SIGNATURE (structure + content)
+
+```pseudo
+OVERLAP_SIGNATURE(subgraph):
+  wl_hash  = WL_HASH(subgraph, iterations = k)
+  shingle_set = SHINGLES(subgraph)                // labels, edge types, local WL labels
+  minhash = MINHASH(shingle_set)
+  simhash = SIMHASH(EMBED(shingle_set))
+  return {wl_hash, minhash, simhash}
+```
+
+## Algorithm 62: OVERLAP_DETECT
+
+```pseudo
+OVERLAP_DETECT(fingerprint_a, fingerprint_b):
+  // fast filters
+  if HAMMING(simhash_a, simhash_b) > H: return low_overlap
+
+  // approximate set similarity
+  j_hat = MINHASH_ESTIMATE(minhash_a, minhash_b)
+  return j_hat
+```
+
+## Algorithm 63: OSCILLATION_SIGNAL
+
+```pseudo
+OSCILLATION_SIGNAL(ws_id, window):
+  // Detect repeated edits with high overlap and low net progress.
+  // This is a signal for an external coordinator, not an automatic stop.
+
+  recent_exports = exports_in_window(ws_id, window)
+  if count(recent_exports) < N: return none
+
+  overlaps = pairwise_overlap(recent_exports)
+  if median(overlaps) > tau_overlap and net_progress(ws_id, window) < eps:
+    return signal("oscillation_suspected")
+```
+
+## Algorithm 64: WORKSPACE_GC
+
+```pseudo
+WORKSPACE_GC(ws_id):
+  // Only for closed workspaces or expired TTL.
+  // Preserve audit log pointers, remove bulk graph payload.
+  compact event log; drop scratch-only regions; keep exported capsules and commit envelopes.
+```
+---
+
+# Proofs
+
+## Proof 1: Existence and uniqueness of the field solution
 
 **Claim C1.** If (\alpha_i + \mu_i > 0) for every connected component, then (\mathcal{E}(X)) has a unique minimizer.
 
@@ -3678,7 +4380,7 @@ Side-effect rule:
 
 This is standard for Laplacian-regularized objectives and Gaussian field style constructions.
 
-## Lean2 Energy decreases under relaxation, convergence on fixed graph
+## Proof 2: Energy decreases under relaxation, convergence on fixed graph
 
 **Claim C2.** The update
 [
@@ -3692,7 +4394,7 @@ monotonically decreases (\mathcal{E}) when updating one node at a time with othe
 * The update sets (x_i) to the exact minimizer of (\mathcal{E}) restricted to coordinate block (i).
 * Block coordinate descent on a strictly convex quadratic decreases energy each step and converges to the unique minimizer.
 
-## Lean3 Noise attenuation, directions become more reliable
+## Proof 3: Noise attenuation, directions become more reliable
 
 **Claim C3.** Under the model (b = s + \varepsilon), with zero-mean iid noise and a smoothness prior where neighboring nodes share similar (s), the field solution (x) has lower expected error than (b) along high-frequency graph modes.
 
@@ -3706,7 +4408,7 @@ monotonically decreases (\mathcal{E}) when updating one node at a time with othe
 
 This is graph filtering language from graph signal processing.
 
-## Lean4 Tier caps bound compute and memory
+## Proof 4: Tier caps bound compute and memory
 
 **Claim C4.** If tier caps ((K,M,N)) are enforced, then:
 
@@ -3719,25 +4421,17 @@ This is graph filtering language from graph signal processing.
 * All RAM operations are restricted to capped tiers.
 * Inactive tier lives on disk and is accessed via ANN and edge lookups.
 
-### P1C1 Evidence permanence
+## P1 proofs
 
-Evidence permanence holds under all operations.
+Add these claims and proof sketches to the Proofs section.
 
-### P1C2 Unique field minimizer
+### P1 claim set
 
-Gated quadratic field per hypothesis has a unique minimizer under the same anchoring condition as v0.1.
-
-### P1C3 Field relaxation convergence
-
-Field relaxation converges per hypothesis.
-
-### P1C4 Persistent conflict durability
-
-Persistent conflict produces a durable ambiguity artifact (ConflictRecord or Hypothesis branch).
-
-### P1C5 Robust loss convergence
-
-Robust loss reduces influence of large disagreements while preserving convergence to a minimizer.
+P1C1. Evidence permanence holds under all operations.
+P1C2. Gated quadratic field per hypothesis has a unique minimizer under the same anchoring condition as v0.1.
+P1C3. Field relaxation converges per hypothesis.
+P1C4. Persistent conflict produces a durable ambiguity artifact (ConflictRecord or Hypothesis branch).
+P1C5. Robust loss reduces influence of large disagreements while preserving convergence to a minimizer.
 
 ### P1C1 proof sketch
 
@@ -3757,13 +4451,23 @@ For a fixed hypothesis (h), gated quadratic energy remains strictly convex when 
 The matrix (Q = L_g + A + M) stays SPD.
 Coordinate descent decreases energy and converges to the unique minimizer.
 
-This is the same style of argument used for harmonic energy minimization on graphs.
+This is the same style of argument used for harmonic energy minimization on graphs. ([MLG Cambridge][1])
 
 ### P1C4 proof sketch
 
 Conflict scores derive from residual and tension.
 If tension remains above threshold after validator updates and local relaxation, the policy triggers branching.
 Since branching is append-only and the conflict record persists, ambiguity becomes durable.
+
+### P1C5 proof sketch
+
+Huber loss is convex. The overall objective remains convex in (X) for fixed gates.
+Standard convex optimization results give convergence for block coordinate descent and for IRLS approximations.
+
+Huber's original robust estimation work provides the loss and its properties. ([Project Euclid][2])
+
+
+## P2 proofs
 
 ### P2C1 Snapshot consistency
 
@@ -3773,7 +4477,7 @@ Sketch:
 
 * Event log defines a total order of mutations.
 * Snapshot at (l_0) reads all events (\le l_0).
-* MVCC snapshot isolation gives a consistent read view that stays stable while writes continue.
+* MVCC snapshot isolation gives a consistent read view that stays stable while writes continue. ([Microsoft][1])
 
 ### P2C2 Non-blocking commit
 
@@ -3784,24 +4488,24 @@ Sketch:
 * Readers dereference one global epoch pointer at entry.
 * All reads use that epoch's stores and indices.
 * Writer publishes new epoch by atomic swap.
-* RCU grace period ensures old epoch memory remains valid for all readers started before swap.
+* RCU grace period ensures old epoch memory remains valid for all readers started before swap. ([Kernel.org][6])
 
 ### P2C3 IRLS descent
 
-Each IRLS iteration decreases \(\mathcal{E}\).
+Each IRLS iteration decreases (\mathcal{E}).
 
 Sketch for Huber:
 
 * IRLS weight construction corresponds to a majorization of the robust term.
-* The surrogate \(\tilde{\mathcal{E}}^{(k)}\) satisfies:
+* The surrogate (\tilde{\mathcal{E}}^{(k)}) satisfies:
 
-  * \(\tilde{\mathcal{E}}^{(k)}(X) \ge \mathcal{E}(X)\) for all \(X\)
-  * \(\tilde{\mathcal{E}}^{(k)}(X^{(k)}) = \mathcal{E}(X^{(k)})\)
+  * (\tilde{\mathcal{E}}^{(k)}(X) \ge \mathcal{E}(X)) for all (X)
+  * (\tilde{\mathcal{E}}^{(k)}(X^{(k)}) = \mathcal{E}(X^{(k)}))
 * Minimizing the surrogate gives:
-  \[
+  [
   \mathcal{E}(X^{(k+1)}) \le \tilde{\mathcal{E}}^{(k)}(X^{(k+1)}) \le \tilde{\mathcal{E}}^{(k)}(X^{(k)}) = \mathcal{E}(X^{(k)})
-  \]
-  This is MM logic.
+  ]
+  This is MM logic. ([Taylor & Francis Online][4])
 
 ### P2C4 Convergence to a stationary point
 
@@ -3812,7 +4516,7 @@ Sketch:
 * Under standard MM conditions (continuity, proper majorizer, tangency), every limit point of ({X^{(k)}}) is a stationary point.
 * If (\rho) is convex (Huber), then (\mathcal{E}) is convex, so the stationary point is a global minimizer.
 
-References for MM stationary point behavior and MM in signal processing.
+References for MM stationary point behavior and MM in signal processing. ([arXiv][9])
 
 ### P2C5 No evidence loss
 
@@ -3822,7 +4526,10 @@ Sketch:
 * It leaves ObservationRecords, prior NodeStates, ConflictRecords, hypotheses, and the event log intact.
 * Therefore any prior world state can be reconstructed by choosing an older epoch or replaying events.
 
-Event sourcing is the established pattern for this audit and replay property.
+Event sourcing is the established pattern for this audit and replay property. ([Microsoft Learn][7])
+
+
+## P5 proofs and proof obligations
 
 ## P5C1 Multi-view canonical field solve exists and is unique
 
@@ -3843,8 +4550,8 @@ Proof obligation in Lean:
 
 ## P5C3 Packed forest representation preserves derivations
 
-For the string case, packed forests and graph-structured stacks are standard ways to share substructure and represent ambiguity compactly in GLR style parsing.
-For graph grammars, completeness depends on grammar restrictions and parsing algorithm. HRG parsing has known polynomial-time recognition under restrictions, and general cases can be hard.
+For the string case, packed forests and graph-structured stacks are standard ways to share substructure and represent ambiguity compactly in GLR style parsing. ([IJCAI][2])
+For graph grammars, completeness depends on grammar restrictions and parsing algorithm. HRG parsing has known polynomial-time recognition under restrictions, and general cases can be hard. ([ACL Anthology][10])
 
 Spec requirement:
 
@@ -3853,12 +4560,14 @@ Spec requirement:
 
 ## P5C4 Orthogonal adapter preserves geometry
 
-If (A_v) is orthogonal, then (|A_v x - A_v y| = |x-y|). This gives stable similarity across mapped spaces. Procrustes-based alignment provides a practical way to fit such maps.
+If (A_v) is orthogonal, then (|A_v x - A_v y| = |x-y|). This gives stable similarity across mapped spaces. Procrustes-based alignment provides a practical way to fit such maps. ([ICML][7])
 
 Lean target:
 
 * prove distance preservation for orthogonal matrices
 * prove the Procrustes minimizer exists under standard assumptions, optional
+
+## P6 proofs and proof obligations
 
 ### P6C1 Workspace isolation
 
@@ -3871,7 +4580,7 @@ Lean target:
 
 ### P6C2 Snapshot consistency
 
-**Claim.** Readers obtain a stable view \(G^{\(e\)}\) while commits create \(G^{(e+1)}\).
+**Claim.** Readers obtain a stable view (G^{(e)}) while commits create (G^{(e+1)}).
 **Sketch.**
 
 * MVCC style: writers create new versions, readers keep old.
@@ -3909,6 +4618,9 @@ Lean target:
 * Canarying is a standard safety pattern for deployments.
 
 ---
+
+
+## P7 proofs and proof obligations
 
 ### P7C1 Evidence stays
 
@@ -3982,15 +4694,15 @@ Optional guarantee path:
 
 * If the exploration objective satisfies adaptive submodularity, adaptive greedy stays near-optimal.
 
-## Lean5 Core quadratic energy proofs
+# Lean proof skeletons
 
-Lean is a good fit for the quadratic core: uniqueness, strict convexity, and "energy decreases" lemmas. Mathlib already covers a wide range of linear algebra and analysis.
+Lean is a good fit for the quadratic core: uniqueness, strict convexity, and “energy decreases” lemmas. Mathlib already covers a wide range of linear algebra and analysis.
 
-Below is a Lean + mathlib4 skeleton. It targets the key proof obligations. It uses placeholders where you would connect to existing lemmas about positive definiteness and strict convexity.
+Below is a Lean 4 + mathlib4 skeleton. It targets the key proof obligations. It uses placeholders where you would connect to existing lemmas about positive definiteness and strict convexity.
 
 ```lean
 /-
-Lean + mathlib4 skeleton.
+Lean 4 + mathlib4 skeleton.
 Goal: formalize uniqueness of minimizer for quadratic energy on finite graphs.
 
 This file assumes:
@@ -4054,13 +4766,15 @@ end GraphField
 
 This is the proof "spine" for C1 and C2. After that, you can build the vector-valued version by applying the scalar proof (d) times.
 
+## P1 Lean proof skeletons
+
 Two tracks: quadratic uniqueness and state machine invariants.
 
-### Lean8 Gated quadratic uniqueness
+### Lean 1:
 
 Gated quadratic uniqueness.
 
-This extends the earlier SPD quadratic lemma. It uses `Matrix.PosDef` from mathlib.
+This extends the earlier SPD quadratic lemma. It uses `Matrix.PosDef` from mathlib. ([Lean Community][4])
 
 ```lean
 import Mathlib.LinearAlgebra.Matrix.PosDef
@@ -4082,7 +4796,7 @@ theorem unique_minimizer_of_posDef (hQ : Matrix.PosDef Q) :
 end GraphFieldGated
 ```
 
-### Lean9 Evidence permanence invariants
+### Lean 2:
 
 Evidence permanence invariants.
 
@@ -4125,7 +4839,9 @@ end IngestionInvariants
 
 This proves the shape of "no evidence gets lost" formally once the `step` function encodes append-only behavior.
 
-### Lean6 Lossless compress/expand
+## P4 Lean skeletons
+
+### Lean: Lossless compress/expand
 
 ```lean
 -- Sketch: define a graph, pattern instances with explicit node maps, and prove expand ∘ compress = id.
@@ -4156,7 +4872,7 @@ theorem expand_compress_id
 end PatternCompression
 ```
 
-### Lean7 Monotone failure brake
+### Lean: Monotone failure brake
 
 ```lean
 namespace FailureBrake
@@ -4176,7 +4892,10 @@ end FailureBrake
 
 (When making this formal, use `Antitone` for the decreasing property.)
 
-### Lean10 IRLS descent and stationary point shape
+
+## P2 Lean skeletons
+
+### Lean 3: IRLS descent and stationary point shape
 
 Lean formalization target: one coordinate dimension at a time, finite node set, convex Huber robust objective.
 
@@ -4219,9 +4938,9 @@ theorem mm_limitpoint_stationary
 end RobustIRLS
 ```
 
-This aligns with the MM descent logic used in MM references.
+This aligns with the MM descent logic used in MM references. ([Taylor & Francis Online][4])
 
-### Lean11 Snapshot and epoch invariants
+### Lean 4: Snapshot and epoch invariants
 
 Model as an event log plus an epoch pointer.
 
@@ -4259,7 +4978,12 @@ end EpochSafety
 
 This is a placeholder spine. To make it real, the `Store` and `applyUpTo` definitions encode the log replay semantics and the epoch pointer swap rules.
 
-### Lean12 Distance preservation under orthogonal maps
+
+## P5 Lean skeletons
+
+## Lean 1
+
+### Distance preservation under orthogonal maps
 
 ```lean
 import Mathlib.LinearAlgebra.Matrix.Orthogonal
@@ -4281,7 +5005,9 @@ theorem orthogonal_preserves_norm
 end CoordMaps
 ```
 
-### Lean13 Canonical field uniqueness with multi-view anchors
+## Lean 2
+
+### Canonical field uniqueness with multi-view anchors
 
 ```lean
 import Mathlib.LinearAlgebra.Matrix.PosDef
@@ -4299,7 +5025,9 @@ theorem canonical_field_unique
 
 end CanonField
 
-### Lean14 Event-sourced isolation
+## P6 Lean skeletons
+
+### Lean 1: Event-sourced isolation
 
 ```lean
 namespace Hippocampus
@@ -4329,7 +5057,7 @@ theorem workspace_isolation
 end Hippocampus
 ```
 
-### Lean15 RCU style reclamation condition as a predicate
+### Lean 2: RCU style reclamation condition as a predicate
 
 ```lean
 namespace Reclaim
@@ -4348,233 +5076,951 @@ theorem reclaim_monotone
 end Reclaim
 ```
 
-### P10I11 P6 two-stage commit integration
+```
+```
 
-Workspace commits go through ingest + hippocampus decision (commit/branch/quarantine).
+## P10 integration points
 
-### P10I12 P7 exploration integration
+1) With P6 two-stage commit
+* Workspace commits go through ingest + hippocampus decision (commit/branch/quarantine).
 
-Explorers can run in child workspaces; exported traces and subgraphs are reconciled.
+2) With P7 exploration
+* Explorers can run in child workspaces; exported traces and subgraphs are reconciled.
 
-### P10I13 P9 manifold integration
+3) With P9 manifold
+* Workspaces may optionally run a local field solve for ranking/diagnostics; not required.
 
-Workspaces may optionally run a local field solve for ranking/diagnostics; not required.
+---
 
-### P10I14 No global spawn policy
+## P10 non-goals
 
-No global policy for when to spawn children or how to allocate budgets.
-
-### P10I15 No automatic conflict resolution
-
-No automatic resolution of semantic conflict; ambiguity is preserved and surfaced.
-
-### P10I16 No mandatory schema objects
-
-No requirement that the LLM use specific schema objects (idea nodes/facets). Those are allowed but not mandatory.
+* No global policy for when to spawn children or how to allocate budgets.
+* No automatic resolution of semantic conflict; ambiguity is preserved and surfaced.
+* No requirement that the LLM use specific schema objects (idea nodes/facets). Those are allowed but not mandatory.
 
 ---
 
 # Non-functionals
 
 
-### P4I5 Abstraction reduces working-set size
+## P4 non-functionals
 
-Macro-nodes stand in for repeated subgraphs, while evidence remains in inactive storage.
+### Performance and memory
 
-### P4I6 Expansion is demand-driven
+* **Abstraction reduces working-set size**: macro-nodes stand in for repeated subgraphs, while evidence remains in inactive storage.
+* **Expansion is demand-driven**: expand only to token budget and risk profile.
+* **Pattern mining is sleep-time**: runs during global consolidation, amortized.
+* **Online matching is bounded**: local structural match only around focus/active tiers.
 
-Expand only to token budget and risk profile.
+### Safety and stability
 
-### P4I7 Pattern mining is sleep-time
+* **Failure memory is prioritized** in replay and learning (similar spirit to prioritized replay). ([arXiv][7])
+* **Safe online learning**: keep "policy deltas" small, prefer conservative exploration (safe re-ranking literature is a good template). ([Proceedings of Machine Learning Research][8])
+* **Governance is separate**: it sits above retrieval/field state and never destroys evidence.
 
-Runs during global consolidation, amortized.
+## Performance targets
 
-### P4I8 Online matching is bounded
+* Ingestion: amortized sublinear in corpus size per span.
+* Field updates: local, bounded by tier neighborhoods.
+* Retrieval: bounded latency with tiered ANN plus graph expansion budget.
 
-Local structural match only around focus/active tiers.
+## Optimization and memory strategies
 
-### P4I9 Failure memory is prioritized
+### 1. Tier-locality as the main speed lever
 
-Prioritized in replay and learning (similar spirit to prioritized replay).
+* Keep Focus, Active, Context in RAM.
+* Keep Inactive on disk, accessed via ANN and edge tables.
 
-### P4I10 Safe online learning
+This is the same design principle as virtual memory and tiered recall systems.
 
-Keep "policy deltas" small, prefer conservative exploration (safe re-ranking literature is a good template).
+### 2. Separate indices by tier and by embedding kind
 
-### P4I11 Governance is separate
+* HNSW for fast recall in Context.
+* PQ or IVF+PQ for Inactive scale.
 
-It sits above retrieval/field state and never destroys evidence.
+### 3. Quantize aggressively outside Focus
 
-### NFG1 Ingestion performance
+* Store inactive embeddings as int8 PQ codes.
+* Keep only centroids and a small residual cache in RAM.
 
-Amortized sublinear in corpus size per span.
+### 4. Batch edge writes, defer compaction
 
-### P2I1 Field update locality
+* Use LSM-style batching for high ingest rates.
+* Periodic compaction merges edge runs.
 
-Local, bounded by tier neighborhoods.
+### 5. Local field updates, global re-solves rarely
 
-### NFG3 Retrieval latency
+* Per span: relax only within a hop radius determined by tier.
+* Global solve: scheduled offline or during low load, used to reduce drift.
 
-Bounded latency with tiered ANN plus graph expansion budget.
+### 6. Uncertainty-driven compute
 
-### P1I13 Tier-locality storage
+* High uncertainty nodes get more validation and more relaxation steps.
+* Low uncertainty nodes get cheap maintenance.
 
-Keep Focus, Active, Context in RAM. Keep Inactive on disk, accessed via ANN and edge tables. This is the same design principle as virtual memory and tiered recall systems.
+### 7. Event-sourced replay
 
-### P1I14 Index structure by tier
+* Every mutation is an event.
+* Enables rebuilds, A/B comparisons, and regression debugging.
 
-HNSW for fast recall in Context. PQ or IVF+PQ for Inactive scale.
+## P1 non-functionals
 
-### P1I15 Inactive embedding quantization
+This patch adds storage, so performance needs explicit handling.
 
-Store inactive embeddings as int8 PQ codes. Keep only centroids and a small residual cache in RAM.
+### Storage strategy
 
-### P1I16 Edge write batching
+* Raw spans: immutable compressed store, dedup by content hash
+* ObservationRecord: float16 or float32 backstore on disk
+* ANN store: PQ codes for scale and speed, full vector backstore for audits ([ACM Digital Library][5])
+* Graph edges: LSM-backed edge table for high write rates ([UMass Boston CS][6])
+* NodeState history:
 
-Use LSM-style batching for high ingest rates. Periodic compaction merges edge runs.
+  * RAM keeps current states for Focus, Active, Context
+  * disk keeps full history, optionally delta-compressed
 
-### P2I2 Local field updates bounded
+### Compute strategy
 
-Per span: relax only within a hop radius determined by tier. Global solve: scheduled offline or during low load, used to reduce drift.
+* Local relaxation bounded by tier caps
+* Conflict resolution budgeted as a background loop with strict quotas
+* Validator calls rate-limited and triggered by tension
 
-### P2I6 Uncertainty-driven compute
+### Hot path
 
-High uncertainty nodes get more validation and more relaxation steps. Low uncertainty nodes get cheap maintenance.
+Ingestion hot path stays:
 
-### P1I6 Event-sourced replay
+* embed once
+* add edges
+* local relax
+* push conflict candidates
+  Heavy work runs on the conflict queue.
 
-Every mutation is an event. Enables rebuilds, A/B comparisons, and regression debugging.
+## P5 non-functionals
 
-### P1I7 Raw spans are immutable
+## Performance control
 
-Immutable compressed store, dedup by content hash.
+Graph parsing and graph rewriting can get expensive fast, so P5 adds hard controls.
 
-### P1I8 ObservationRecord persistence
+1. **Grammar class restrictions per tier**
 
-Float16 or float32 backstore on disk.
+* Focus and Active: restricted grammars with cheap matching and bounded-degree neighborhoods.
+* Context and Sleep: heavier grammars and deeper matching.
 
-### P1I9 ANN store with full backstore
+Graph grammar parsing complexity varies widely across grammar classes and restrictions. ([sciencedirect.com][11])
 
-PQ codes for scale and speed, full vector backstore for audits.
+2. **Match candidate acceleration**
 
-### P1I11 Graph edge durability
+* Index rule LHS patterns by WL-style neighborhood signatures.
+* Use WL hashing to prune match candidates before subgraph matching. ([Journal of Machine Learning Research][8])
 
-LSM-backed edge table for high write rates.
+3. **Hypothesis beam and packed storage**
 
-### P1I10 NodeState history persistence
+* Strict beam width per region.
+* Packed DAG sharing across hypotheses, similar in spirit to graph-structured stacks for ambiguity. ([IJCAI][2])
 
-RAM keeps current states for Focus, Active, Context. Disk keeps full history, optionally delta-compressed.
+4. **Coordinate transforms cached**
 
-### P2I3 Local relaxation bounded
+* Cache canonical projections (A_v b_i^{(v)}).
+* Refit adapters in sleep-time, then bulk-refresh projections during consolidation.
 
-Local relaxation bounded by tier caps.
+5. **Domain embedders remain specialized**
 
-### P2I4 Conflict resolution strict quotas
+* Text embedder stays as the semantic anchor.
+* Graph embedder covers topology.
+* Code embedder covers AST and code structure. ([ACM Digital Library][9])
 
-Conflict resolution budgeted as a background loop with strict quotas.
+## Memory and compaction
 
-### P2I5 Validator rate limiting
-
-Validator calls rate-limited and triggered by tension.
-
-### P1I12 Ingestion hot path
-
-Embed once, add edges, local relax, push conflict candidates. Heavy work runs on the conflict queue.
-
-### P5I3 Grammar class restrictions per tier
-
-Focus and Active: restricted grammars with cheap matching and bounded-degree neighborhoods. Context and Sleep: heavier grammars and deeper matching. Graph grammar parsing complexity varies widely across grammar classes and restrictions.
-
-### P5I4 Match candidate indexing
-
-Index rule LHS patterns by WL-style neighborhood signatures. Use WL hashing to prune match candidates before subgraph matching.
-
-### P5I2 Strict beam width
-
-Strict beam width per region. Packed DAG sharing across hypotheses, similar in spirit to graph-structured stacks for ambiguity.
-
-### P5I5 Coordinate transforms cached
-
-Cache canonical projections (A_v b_i^{(v)}). Refit adapters in sleep-time, then bulk-refresh projections during consolidation.
-
-### P5I6 Domain embedders specialized
-
-Text embedder stays as the semantic anchor. Graph embedder covers topology. Code embedder covers AST and code structure.
-
-### P5I1 Parse forest versioning
-
-Parse forests are versioned by epoch. Old hypotheses compact via P2 sleep cycle, with provenance and failures retained.
+* Parse forests are versioned by epoch.
+* Old hypotheses compact via P2 sleep cycle, with provenance and failures retained.
 
 ---
 
 
-### P7I7 Exploration hard budgets
+## P7 non-functionals
 
-Hard budgets: `explore_budget`, `llm_budget`.
+### Performance
 
-### P7I8 Beam limits per seed
+* Hard budgets: `explore_budget`, `llm_budget`
+* Beam limits: number of hypotheses spawned per seed
+* Cheap probes first, LLM second
+* Packed forests reuse (P5), overlays reuse (P6)
+* Sleep pass does deeper mining, online pass stays shallow
 
-Number of hypotheses spawned per seed is limited.
+### Memory
 
-### P7I11 Cheap probes first
+* Seeds are compact, mostly metrics plus anchors
+* Traces compress into signatures and aggregate stats
+* Archived seeds remain queryable for audit
 
-Cheap probes first, LLM second.
+### Safety
 
-### P7I12 Forest and overlay reuse
-
-Packed forests reuse (P5), overlays reuse (P6).
-
-### P7I13 Sleep vs online depth
-
-Sleep pass does deeper mining, online pass stays shallow.
-
-### P7I14 Seed compactness
-
-Seeds are compact, mostly metrics plus anchors.
-
-### P7I15 Trace compression
-
-Traces compress into signatures and aggregate stats.
-
-### P7I5 Archived seed queryability
-
-Archived seeds remain queryable for audit.
-
-### P7I9 Governance gating
-
-Risk tags influence whether exploration runs automatically, or requires user branch choice.
-
-### P7I10 High-risk surfaces ambiguity
-
-High-risk seeds can trigger "surface ambiguity" behavior instead of silent repair.
-
-### P7I6 Failure memory blocks loops
-
-Failure memory blocks infinite loops on unproductive seeds.
+* Governance gating: risk tags influence whether exploration runs automatically, or requires user branch choice
+* High-risk seeds can trigger "surface ambiguity" behavior instead of silent repair
+* Failure memory blocks infinite loops on unproductive seeds
 
 ---
 
-## Comp22 Hippocampal Workspace Store (HWS)
+# Spec gaps and proof obligations
 
-## Comp23 Proposal Gateway (NGW)
-for neocortex outputs
+1. Edge types and default weights per type.
+2. Anchor policy (\alpha_i) by node level and tier.
+3. Validation budget policy, including when an LLM is called.
+4. Merge and split rules for idea nodes.
+5. Exact uncertainty update rule (u_i) tied to residuals or local variance.
 
-## Comp24 Secondary Ingestion Engine (H2)
+fixing concrete defaults for those five points and adding a more formal probabilistic interpretation where (x) is the MAP estimate of a Gaussian Markov random field
 
-## Comp25 Commit Controller (2SC)
+---
 
-## Comp26 Curriculum Manager (CURR)
+# Gap list resolved by P1
 
-## Comp27 Cold Solve Scheduler (ROOT)
+* Field overwrites: resolved by `NodeState` append-only history
+* Edge overwrites: resolved by `EdgeBelief` with status, gate, evidence, tension
+* Merges losing alternatives: resolved by non-destructive aliasing plus lineage
+* Ambiguity averaged away: resolved by conflict ledger plus branching
+* Quantization losing detail: resolved by lossless or near-lossless backstore
+* Missing diagnostics: resolved by residual, tension, uncertainty, confidence proxies
+* Missing information seeking: resolved by conflict resolution loop
 
-## Comp28 Surprise Budget Manager (SURP)
+## Gap list resolved by P2
 
-## Comp29 Connectivity Monitor + Bridge Synthesizer (CONN)
+### Gap G2.1
 
-## Comp30 Grammar Sandbox + Rule Promotion (GRAM-SBX)
+Global solve exists only as a note. There is no algorithm, no snapshot semantics, no commit semantics.
 
-## Comp31 Adapter Lifecycle Manager (ADAPT)
-with drift detection
+**Resolution:** Algorithm 6 (Global Consolidation) provides snapshot isolation, IRLS solve, delta catch-up, and RCU-style atomic publish.
 
-## Comp32 Inquiry Planner (INQ)
-for evidence seeking
+### Gap G2.2
+
+Robust loss exists as an option. There is no IRLS update rule, no storage for robust weights, no convergence argument.
+
+**Resolution:** Algorithm 7 (Robust Field Solve via IRLS) specifies the full IRLS loop with Huber weight updates. EdgeBelief stores `rw` (robust weights per hypothesis). P2C3 and P2C4 provide descent and convergence proofs.
+
+### Gap G2.3
+
+Index rebuild and swap is implied. There is no non-blocking swap protocol or rollback story.
+
+**Resolution:** Algorithm 6 includes BUILD_INDICES and Algorithm 9 (Publish epoch with RCU semantics) provides non-blocking atomic swap with grace period. IndexVersion tracks versioned index artifacts.
+
+
+---
+
+
+# P7 references
+
+Foundations that match "noise as intrinsic signal":
+
+* Schmidhuber, compression progress and curiosity as improvement, avoids chasing unpredictable noise. ([arXiv][p7-1])
+* Oudeyer et al., Intelligent Adaptive Curiosity, learning progress signal. ([Swarthmore Computer Science][p7-5])
+* Pathak et al., curiosity via self-supervised prediction error. ([arXiv][p7-8])
+* Burda et al., RND exploration bonus as novelty proxy. ([arXiv][p7-6])
+* Lehman and Stanley, novelty search for open-ended discovery. ([Swarthmore Computer Science][p7-2])
+* MacKay, expected informativeness for active data selection. ([MIT Press Direct][p7-3])
+* Cohn, Ghahramani, Jordan, active learning with statistical models. ([arXiv][p7-9])
+* Golovin and Krause, adaptive submodularity and greedy guarantees. ([arXiv][p7-4])
+
+Recent LLM-adjacent curiosity signals and intrinsic rewards:
+
+* CDE, curiosity-driven exploration for RL with verifiable rewards in LLMs. ([arXiv][p7-7])
+* Online intrinsic rewards from LLM feedback. ([RLJ][p7-10])
+* Curiosity-driven auditing for LLMs. ([AAAI Open Journal Systems][p7-11])
+* Learning progress guided goal generation with LLMs. ([OpenReview][p7-12])
+
+[p7-1]: https://arxiv.org/pdf/0812.4360?utm_source=chatgpt.com "Driven by Compression Progress"
+[p7-2]: https://www.cs.swarthmore.edu/~meeden/DevelopmentalRobotics/lehman_ecj11.pdf?utm_source=chatgpt.com "Evolution through the Search for Novelty Alone"
+[p7-3]: https://direct.mit.edu/neco/article-pdf/4/4/590/812354/neco.1992.4.4.590.pdf?utm_source=chatgpt.com "Information-Based Objective Functions for Active Data ..."
+[p7-4]: https://arxiv.org/abs/1003.3967?utm_source=chatgpt.com "Adaptive Submodularity: Theory and Applications in Active Learning and Stochastic Optimization"
+[p7-5]: https://www.cs.swarthmore.edu/~meeden/DevelopmentalRobotics/iac07.pdf?utm_source=chatgpt.com "Intrinsic Motivation Systems for Autonomous Mental ..."
+[p7-6]: https://arxiv.org/abs/1810.12894?utm_source=chatgpt.com "[1810.12894] Exploration by Random Network Distillation"
+[p7-7]: https://arxiv.org/abs/2509.09675?utm_source=chatgpt.com "CDE: Curiosity-Driven Exploration for Efficient Reinforcement Learning in Large Language Models"
+[p7-8]: https://arxiv.org/abs/1705.05363?utm_source=chatgpt.com "Curiosity-driven Exploration by Self-supervised Prediction"
+[p7-9]: https://arxiv.org/abs/cs/9603104?utm_source=chatgpt.com "Active Learning with Statistical Models"
+[p7-10]: https://rlj.cs.umass.edu/2025/papers/RLJ_RLC_2025_6.pdf?utm_source=chatgpt.com "Online Intrinsic Rewards for Decision Making Agents from ..."
+[p7-11]: https://ojs.aaai.org/index.php/AAAI/article/view/34991?utm_source=chatgpt.com "CALM: Curiosity-Driven Auditing for Large Language Models"
+[p7-12]: https://openreview.net/pdf/4bb02ca2d2da5049b02530d30c64bbe3fc4545fa.pdf?utm_source=chatgpt.com "LEARNING PROGRESS-GUIDED LLM GOAL GENERA"
+
+---
+
+# P9 gaps closed
+
+P9 closes the remaining implementability gaps that show up once the system is treated as a **continuous learner** with a **manifold-first runtime**.
+
+### Gap G9.1 — “Manifold” is implicit
+Earlier patches define a robust gated field objective and solve it, but do not name or version the induced geometry as an explicit runtime object.
+
+### Gap G9.2 — Translation operators are underspecified (“vector ↔ manifold”)
+The specs rely on:
+
+* base vectors `b` (observations)
+* canonical field vectors `x` (latent geometry)
+* diagnostics (tension/residual)
+
+…but do not specify:
+
+* how to extract stable **directional** information (tangent vectors / charts)
+* how to compare directions across space (parallel transport)
+* how to turn persistent “geometric shortcuts” into **auditable structural proposals**
+
+### Gap G9.3 — Blending rules are not formal
+Blending of control signals (tension, novelty, risk, goal distance) is necessary, but the boundary between **control** (fields) and **law** (topology) must be explicit.
+
+### Gap G9.4 — Sleep must be always-on
+“Sleep” (global consolidation) cannot assume ingestion pauses or read pauses. It must run under continuous writes with stable reads and no downtime.
+
+### Gap G9.5 — Deployment needs A/B + rollback semantics
+Epoch publish must support shadow evaluation, canary traffic shifting, A/B experiments, and instant rollback.
+
+---
+
+# P1 history and papers used
+
+Graph field base:
+
+* Zhu, Ghahramani, Lafferty. Gaussian fields and harmonic functions on graphs. ([MLG Cambridge][1])
+
+Graph signal processing framing:
+
+* Shuman et al. Signal processing on graphs tutorial overview. ([Hajim School of Engineering][7])
+
+Robust loss:
+
+* Huber 1964 robust estimation paper. ([Project Euclid][2])
+
+Mixture and latent assignment mechanics:
+
+* Dempster, Laird, Rubin 1977 EM algorithm. ([JSTOR][3])
+
+Tiered memory inspiration:
+
+* MemGPT paper. ([arXiv][8])
+
+Hierarchical retrieval neighbors:
+
+* RAPTOR. ([arXiv][9])
+* GraphRAG. ([arXiv][10])
+
+Tiered storage and indexing:
+
+* LSM-tree. ([UMass Boston CS][6])
+* HNSW for ANN. ([arXiv][11])
+* Product quantization. ([ACM Digital Library][5])
+
+Lean proof infrastructure:
+
+* mathlib4 docs and `Matrix.PosDef`. ([Lean Community][12])
+
+# P9 Dragon ledger (all closed)
+
+The v0.1 “spec gaps and proof obligations” plus the additional manifold/continuous-learning gaps are all resolved under P1–P9.
+
+| ID | Gap / “dragon” | Resolution type | Resolution in spec |
+|---:|---|---|---|
+| D1 | Edge types and default weights | solved | defaults defined (P4/P9) + learn deltas via feedback |
+| D2 | Anchor policy α by level/tier | solved | explicit table policy + curriculum overrides |
+| D3 | Validation budget policy | solved | budgets + two-stage commit + scheduling |
+| D4 | Merge/split rules for idea nodes | solved | non-destructive aliasing + lineage |
+| D5 | Exact uncertainty update rule | solved | u is explicit diagnostic field (EWMA over r/T/var/conflicts) |
+| D6 | Vector ↔ manifold translation | solved | charts + connection Laplacian transport + pullback proposals |
+| D7 | Force → topology promotion | solved | governed promotion (reproduced + stable + guardrails) |
+| D8 | Cross-epoch comparability | solved | pinned reads by lsn + optional anchor-based alignment |
+| D9 | LLM latent → topology inverse | bypassed | forbidden; must go through proposal→validate→commit |
+| D10 | Zero downtime sleep | solved | snapshot + delta catch-up + routing |
+| D11 | A/B continuous deployment | solved | shadow + canary + rollback + graduate |
+
+---
+
+[1]: https://mlg.eng.cam.ac.uk/zoubin/papers/zgl.pdf?utm_source=chatgpt.com "Semi-Supervised Learning Using Gaussian Fields and ..."
+[2]: https://projecteuclid.org/journals/annals-of-mathematical-statistics/volume-35/issue-1/Robust-Estimation-of-a-Location-Parameter/10.1214/aoms/1177703732.full?utm_source=chatgpt.com "Robust Estimation of a Location Parameter"
+[3]: https://www.jstor.org/stable/2984875?utm_source=chatgpt.com "Maximum Likelihood from Incomplete Data via the EM ..."
+[4]: https://leanprover-community.github.io/mathlib4_docs/Mathlib/LinearAlgebra/Matrix/PosDef.html?utm_source=chatgpt.com "Mathlib.LinearAlgebra.Matrix.PosDef"
+[5]: https://dl.acm.org/doi/10.1109/TPAMI.2010.57?utm_source=chatgpt.com "Product Quantization for Nearest Neighbor Search"
+[6]: https://www.cs.umb.edu/~poneil/lsmtree.pdf?utm_source=chatgpt.com "The Log-Structured Merge-Tree (LSM-Tree)"
+[7]: https://www.hajim.rochester.edu/ece/sites/gmateos/ECE442/Readings/graph_sp_1.pdf?utm_source=chatgpt.com "The Emerging Field of Signal Processing on Graphs"
+[8]: https://arxiv.org/abs/2310.08560?utm_source=chatgpt.com "MemGPT: Towards LLMs as Operating Systems"
+[9]: https://arxiv.org/abs/2401.18059?utm_source=chatgpt.com "RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval"
+[10]: https://arxiv.org/abs/2404.16130?utm_source=chatgpt.com "A Graph RAG Approach to Query-Focused Summarization"
+[11]: https://arxiv.org/abs/1603.09320?utm_source=chatgpt.com "Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs"
+[12]: https://leanprover-community.github.io/mathlib4_docs/Mathlib?utm_source=chatgpt.com "Mathlib"
+[13]: https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/tr-95-51.pdf?utm_source=chatgpt.com "A Critique of ANSI SQL Isolation Levels"
+[14]: https://www.tandfonline.com/doi/abs/10.1080/03610927708827533?utm_source=chatgpt.com "Robust regression using iteratively reweighted least-squares"
+[15]: https://www.tandfonline.com/doi/abs/10.1198/0003130042836?utm_source=chatgpt.com "A Tutorial on MM Algorithms: The American Statistician"
+[16]: https://www.cs.cmu.edu/~glmiller/Publications/Papers/CKMPPRX14.pdf?utm_source=chatgpt.com "Solving SDD Linear Systems in Nearly mlog n Time"
+[17]: https://www.kernel.org/doc/ols/2002/ols2002-pages-338-367.pdf?utm_source=chatgpt.com "Read Copy Update"
+[18]: https://learn.microsoft.com/en-us/azure/architecture/patterns/event-sourcing?utm_source=chatgpt.com "Event Sourcing pattern - Azure Architecture Center"
+[19]: https://blog.mikemccandless.com/2017/09/lucenes-near-real-time-segment-index.html?utm_source=chatgpt.com "Lucene's near-real-time segment index replication"
+[20]: https://arxiv.org/pdf/1705.04651?utm_source=chatgpt.com "A Majorization–Minimization Algorithm Approach"
+[21]: https://proceedings.mlr.press/v89/mukhoty19a/mukhoty19a.pdf?utm_source=chatgpt.com "Globally-convergent Iteratively Reweighted Least Squares for ..."
+[22]: https://palomar.home.ece.ust.hk/papers/2017/SunBabuPalomar-TSP2017%20-%20MM.pdf?utm_source=chatgpt.com "Majorization-Minimization Algorithms in Signal Processing, ..."
+[23]: https://www.microsoft.com/en-us/research/wp-content/uploads/2011/12/MVCC-published-revised.pdf?utm_source=chatgpt.com "High-Performance Concurrency Control Mechanisms for ..."
+---
+
+# P6: Hippocampus control plane
+
+Adds explicit hippocampus workspace, two-stage commit from neocortex, curriculum and re-rooting, surprise budget, connectivity guardrails, grammar sandbox, adapter lifecycle, and diagnostics-driven inquiry.
+
+This patch is additive to P1–P5.
+
+## P6 goals
+
+**G22 Hippocampus workspace is first-class**
+
+* Hippocampus runs a fast, branching workspace graph, separate from long-term memory.
+
+**G23 Two-stage commit**
+
+* Neocortex outputs proposals.
+* Hippocampus re-ingests, re-parses, re-solves, then commits or quarantines.
+
+**G24 Low path dependence**
+
+* Curriculum ingestion and periodic cold solves reduce first-mover geometry lock-in.
+
+**G25 Paradigm shift support**
+
+* High-provenance disruptive evidence gets a forced path to branch or restructure, via surprise budget.
+
+**G26 Graph stays traversable**
+
+* Gating, retraction, and poison containment keep redundant paths and preserve reachability.
+* Small-world mesh targets guide bridge redundancy.
+
+**G27 Grammar evolution is safe**
+
+* Grammar rules emerge, then sandbox, then promote with measurable error bounds.
+
+**G28 Multi-coordinate adapters are governable**
+
+* Adapters are versioned, canaried, drift-detected, rolled back.
+
+**G29 Hippocampus actively seeks evidence**
+
+* Diagnostics drive which ambiguity to resolve next, using expected uncertainty reduction.
+
+## P6 components
+
+1. **Hippocampal Workspace Store (HWS)**
+2. **Proposal Gateway (NGW)** for neocortex outputs
+3. **Secondary Ingestion Engine (H2)**
+4. **Commit Controller (2SC)**
+5. **Curriculum Manager (CURR)**
+6. **Cold Solve Scheduler (ROOT)**
+7. **Surprise Budget Manager (SURP)**
+8. **Connectivity Monitor + Bridge Synthesizer (CONN)**
+9. **Grammar Sandbox + Rule Promotion (GRAM-SBX)**
+10. **Adapter Lifecycle Manager (ADAPT)** with drift detection
+11. **Inquiry Planner (INQ)** for evidence seeking
+
+## P6 invariants
+
+**P6I1 Workspace isolation**
+
+* HWS changes do not mutate long-term memory (LTM) directly.
+* LTM changes only via commit events.
+
+**P6I2 Evidence permanence**
+
+* Every committed memory object traces to evidence, or is flagged "structural-only" and linked to anchored objects.
+
+**P6I3 Snapshot reads**
+
+* Readers see a stable epoch snapshot.
+* Writers create overlays and commit new epochs, similar to MVCC / snapshot isolation.
+
+**P6I4 Safe reclamation**
+
+* Old snapshots are reclaimed after a grace period, similar to RCU.
+
+**P6I5 Governance never discards ambiguity**
+
+* Ambiguities may be hidden from UI by policy, yet remain in the ambiguity ledger with risk metadata.
+
+## P6 data structures
+
+### HippocampalWorkspace
+
+```text
+HippocampalWorkspace {
+  hws_id: HwsId
+  base_epoch: EpochId
+  region: RegionRef
+  forest: ParseForestRef            // packed hypotheses
+  overlay_graph: GraphOverlayRef    // copy-on-write overlay on top of base epoch
+  active_hyps: list<HypId>
+  created_t: Time
+  ttl: Duration
+}
+```
+
+### NeocortexProposal
+
+```text
+NeocortexProposal {
+  prop_id: PropId
+  base_epoch: EpochId
+  region: RegionRef
+  payload: { tokens, edges, candidate_rules?, candidate_adapters? }
+  provenance: list<SpanRef>
+  confidence: float
+  prov_score: float
+  risk_tags: set<RiskTag>
+  created_t: Time
+}
+```
+
+### CommitRecord
+
+```text
+CommitRecord {
+  commit_id: CommitId
+  prop_id: PropId
+  base_epoch: EpochId
+  new_epoch: EpochId
+  decision: enum {committed, branched, quarantined, rejected}
+  reasons: list<Reason>
+  metrics: { residual, tension, variance }
+  created_t: Time
+}
+```
+
+### CurriculumStage
+
+```text
+CurriculumStage {
+  stage_id: enum {bootstrap, expansion, open}
+  default_alpha: float
+  default_gate: float
+  beam_width: int
+  validation_budget: int
+  grammar_policy: GrammarPolicyRef
+  adapter_policy: AdapterPolicyRef
+}
+```
+
+### SurpriseBudget
+
+```text
+SurpriseBudget {
+  domain: DomainId
+  window: TimeWindow
+  budget: float
+  spent: float
+}
+```
+
+### ConnectivityState
+
+```text
+ConnectivityState {
+  epoch: EpochId
+  cluster_graph: SuperGraphRef
+  articulation_candidates: list<NodeId>
+  bridge_candidates: list<EdgeId>
+  redundancy_targets: {k_paths, long_links_per_cluster}
+}
+```
+
+### GrammarRuleCandidate
+
+```text
+GrammarRuleCandidate {
+  rule_id: RuleId
+  source_pattern: PatId?
+  domain: DomainId
+  version: int
+  status: enum {shadow, canary, promoted, rolled_back}
+  stats: {precision, conflict_rate, drift_rate}
+  posterior: BetaParams
+}
+```
+
+### AdapterCandidate
+
+```text
+AdapterCandidate {
+  map_id: MapId
+  src: CSId
+  dst: CSId
+  version: int
+  status: enum {shadow, canary, promoted, rolled_back}
+  fit_error: float
+  drift_score: float
+  updated_t: Time
+}
+```
+
+### InquiryTask
+
+```text
+InquiryTask {
+  task_id: TaskId
+  target: enum {node, edge, hypothesis, rule, adapter}
+  target_id: bytes
+  objective: enum {reduce_uncertainty, resolve_conflict, validate_bridge}
+  expected_gain: float
+  cost: float
+  created_t: Time
+}
+```
+
+## P6 math
+
+### P6.1 Workspace overlay model
+
+Let \(G^{(e)}\) be the long-term graph at epoch \(e\).
+HWS stores an overlay \(\Delta G\) such that the workspace view is:
+\[
+G^{\text{hws}} = G^{(e)} \oplus \Delta G
+\]
+Reads use \(G^{(e)}\) or \(G^{\text{hws}}\) depending on scope.
+
+This is the same principle as snapshot isolation, readers see a stable snapshot while writers create new versions.
+
+### P6.2 Two-stage commit as an admissibility filter
+
+Neocortex emits proposal \(P\).
+Hippocampus produces a set of re-ingested hypotheses \(\{h_k\}\) with scores:
+\[
+S(h_k) = \log P(\text{parse}_k) - \lambda T(h_k) - \gamma C(h_k) - \eta R(h_k)
+\]
+
+* \(T\) tension from field diagnostics
+* \(C\) complexity
+* \(R\) risk penalty from governance layer
+
+Commit selects:
+\[
+h^* = \arg\max_k S(h_k)
+\]
+then applies a promotion rule:
+\[
+\Pr(\theta_{h^*} \ge \tau) \ge 1-\delta
+\Rightarrow \text{commit}
+\]
+else branch or quarantine.
+
+### P6.3 Surprise budget as forced retention of high-provenance tension
+
+Define surprise of evidence \(e\):
+\[
+\text{surp}(e) = \text{prov}(e) \cdot \sigma(T_e)
+\]
+When \(\text{surp}(e)\) is high, the system spends budget to avoid suppressing it via reweighting.
+
+Implementation hook in IRLS:
+
+* robust weights \(w(r)\) are lower bounded for high-provenance residuals:
+  \[
+  w'(r,e) = \max(w(r), w_{\min}\cdot \mathbf{1}[\text{prov}(e)\ge p_0])
+  \]
+  Effect: high-provenance conflict remains active, then forces branch or re-anchor.
+
+### P6.4 Connectivity targets
+
+Define a cluster graph \(H\) whose nodes are communities in \(G\).
+Target: small-world style redundancy, keep average path length low and maintain multiple inter-cluster bridges.
+
+Practical invariant:
+
+* for each cluster pair \((A,B)\) with frequent co-retrieval, maintain at least \(k\) disjoint bridge candidates.
+
+### P6.5 Adapter drift detection
+
+Monitor an online error series \(E_t\) for an adapter, like retrieval regression or alignment loss.
+Use adaptive-window drift detection for change points.
+
+## P6 algorithms
+
+### Algorithm 24: Hippocampal workspace session
+
+```pseudo
+function HWS_OPEN(region R, base_epoch e):
+  hws.base_epoch = e
+  hws.overlay_graph = NEW_OVERLAY(e)
+  hws.forest = INIT_PARSE_FOREST(R)
+  return hws
+
+function HWS_STEP(hws, proposal_or_input X):
+  // build workspace tokens and graphs
+  forest = PARSE_REGION_WITH_P5(hws, X)
+  RUN_LOCAL_FIELD_REPAIR(hws.overlay_graph, forest.active_hyps)
+  UPDATE_DIAGNOSTICS(hws)
+  return hws
+
+function HWS_CLOSE(hws):
+  ARCHIVE(hws)         // TTL based
+```
+
+### Algorithm 25: Two-stage commit from neocortex to hippocampus
+
+```pseudo
+function HIPPOCAMPUS_2SC(proposal P):
+  // Stage 0: admission
+  if P.prov_score < P0 and P.confidence < C0:
+    return QUARANTINE(P, reason="low provenance")
+
+  // Stage 1: secondary ingestion into HWS
+  hws = HWS_OPEN(P.region, P.base_epoch)
+  hws = HWS_STEP(hws, P.payload)
+
+  // Stage 2: choose best hypothesis and decision
+  h_star = SELECT_BEST_HYP(hws.forest, metrics=hws.diagnostics, risk=P.risk_tags)
+
+  decision = DECIDE_COMMIT_BRANCH_QUAR(h_star, budgets=SURP, curr=CURR.stage)
+  record = WRITE_COMMIT_RECORD(P, h_star, decision)
+
+  if decision == committed:
+    APPLY_COMMIT_AS_NEW_EPOCH(h_star)     // append events, build indices async
+  if decision == branched:
+    STORE_BRANCH(h_star)                  // keep both
+  if decision == quarantined:
+    STORE_QUARANTINED(P, h_star)
+
+  return record
+```
+
+This resembles snapshot read plus write-as-new-version discipline.
+
+### Algorithm 26: Curriculum ingestion controller
+
+```pseudo
+function CURRICULUM_STAGE(epoch e, stats):
+  if e < E_BOOT: return bootstrap
+  if stats.drift_high or stats.conflict_high: return expansion
+  return open
+
+function APPLY_CURRICULUM_PARAMS(stage):
+  set default_alpha, gate, beam_width, validation_budget
+  set grammar_policy, adapter_policy
+```
+
+Curriculum learning is a standard stabilization strategy.
+
+### Algorithm 27: Cold solve and re-rooting
+
+```pseudo
+function SHOULD_COLD_SOLVE(global_metrics M):
+  return (M.path_dependence_score > θp) or (M.adapter_drift > θd) or (M.tension > θt)
+
+function GLOBAL_CONSOLIDATION_COLD(epoch e):
+  snap = SNAPSHOT_EVIDENCE_LOG(e)                  // raw event log
+  REBUILD_GRAPH_FROM_EVIDENCE(snap)                // no warm-start states
+  REFIT_ADAPTERS(snap)
+  REMINE_PATTERNS_AND_GRAMMARS(snap)
+  SOLVE_CANONICAL_FIELD(snap)
+  SWAP_IN_NEW_INDICES_AT_EPOCH_BOUNDARY()
+```
+
+### Algorithm 28: Surprise budget and provenance override
+
+```pseudo
+function HANDLE_DISRUPTIVE_EVIDENCE(hws, evidence e):
+  surp = prov(e) * sigmoid(tension_contrib(e))
+  if surp < S0: return
+
+  if SURP.budget_remaining(domain(e)) > surp:
+    SURP.spend(surp)
+    CLAMP_ROBUST_WEIGHTS_FOR(e)          // keep it active in solve
+    FORCE_BRANCH_IF_CONFLICT(hws, e)     // preserve both sides
+  else:
+    QUEUE_FOR_GLOBAL_REVIEW(e)
+```
+
+### Algorithm 29: Connectivity guard and bridge repair
+
+```pseudo
+function ON_GATE_CHANGE(epoch e, updates U):
+  affected = FIND_AFFECTED_CLUSTERS(U)
+  for cluster in affected:
+    if RISK_OF_DISCONNECT(cluster, e):
+      bridges = PROPOSE_BRIDGES(cluster, e)        // embedding + co-retrieval
+      VALIDATE_BRIDGES(bridges)                    // inquiry tasks
+      ADD_SKIP_CONNECTIONS(accepted_bridges)
+```
+
+Small-world connectivity is the target pattern.
+
+### Algorithm 30: Grammar sandbox and promotion
+
+```pseudo
+function GRAMMAR_SANDBOX(rule r):
+  r.status = shadow
+  results = RUN_SHADOW_PARSE(r, heldout_regions)
+
+  UPDATE_RULE_STATS(r, results)
+  if POSTERIOR_OK(r) and FAILURE_RATE_OK(r):
+    r.status = canary
+    CANARY_RUN(rule=r, fraction=f)                // small percentage of ingestions
+    if CANARY_OK(r):
+      PROMOTE_RULE(r)
+    else:
+      ROLL_BACK_RULE(r)
+```
+
+Packed forests and shared parse forests are a known strategy to manage ambiguity in parsing.
+
+### Algorithm 31: Adapter lifecycle and drift management
+
+```pseudo
+function ADAPTER_FIT(src_cs, dst_cs, paired_samples):
+  cand = FIT_MAP(paired_samples)
+  cand.status = shadow
+  E0 = EVAL_OFFLINE(cand)
+
+  if E0 > EMAX: return REJECT(cand)
+
+  cand.status = canary
+  CANARY_ROUTE(cand, traffic=f)                    // apply to a subset
+  if CANARY_METRICS_OK(cand):
+    PROMOTE(cand)
+  else:
+    ROLLBACK(cand)
+
+function ADAPTER_DRIFT_MONITOR(adapter a):
+  series = STREAM_ALIGNMENT_ERRORS(a)
+  if ADWIN_DETECT(series):                         // change point
+    TRIGGER_REFIT(a)
+```
+
+ADWIN is a standard drift detector with adaptive windowing.
+Canary rollouts are a standard safety practice for changing live systems.
+
+### Algorithm 32: Diagnostics-driven inquiry planning
+
+```pseudo
+function PLAN_INQUIRIES(epoch e):
+  candidates = FIND_HIGH_VALUE_AMBIGUITIES(e)        // high usage, high tension, high variance
+  tasks = []
+  for c in candidates:
+    gain = EST_EXPECTED_UNCERTAINTY_REDUCTION(c)
+    cost = EST_COST(c)
+    tasks.append((gain/cost, MAKE_TASK(c)))
+
+  return TOPK(tasks, budget=validation_budget)
+```
+
+Active learning literature gives the template for selecting data to reduce uncertainty efficiently.
+
+## P6 proofs and proof obligations
+
+### P6C1 Workspace isolation
+
+**Claim.** LTM mutates only by commit events.
+**Sketch.**
+
+* HWS writes into overlay views.
+* Commit controller is the only path that emits LTM events.
+* Event log is append-only.
+
+### P6C2 Snapshot consistency
+
+**Claim.** Readers obtain a stable view \(G^{(e)}\) while commits create \(G^{(e+1)}\).
+**Sketch.**
+
+* MVCC style: writers create new versions, readers keep old.
+* Equivalent discipline is described by snapshot isolation.
+
+### P6C3 Safe reclamation
+
+**Claim.** Old epochs are reclaimed after all readers leave, via grace periods.
+**Sketch.**
+
+* Track reader epochs.
+* Reclaim when min reader epoch advances past reclaim target, same pattern as RCU grace periods.
+
+### P6C4 Surprise budget prevents calcification by construction
+
+**Claim.** High-provenance disruptive evidence cannot be suppressed purely by robust downweighting once clamped, it either forces branching or forces re-anchoring in some hypothesis.
+**Sketch.**
+
+* Weight clamp ensures it continues contributing to the objective.
+* If conflict persists, solver yields high tension.
+* Policy forces branch or re-anchor when tension and provenance exceed thresholds.
+
+### P6C5 Grammar promotion controls error
+
+**Claim.** Beta posterior gating yields bounded promotion risk under the assumed win/loss observation model.
+**Sketch.**
+
+* Same as P4 promotion proof pattern.
+
+### P6C6 Adapter rollout is safe under canary plus rollback
+
+**Claim.** Rollout can be limited to fraction \(f\) and reverted on regression.
+**Sketch.**
+
+* Canarying is a standard safety pattern for deployments.
+
+## P6 Lean skeletons
+
+### Lean 1: Event-sourced isolation
+
+```lean
+namespace Hippocampus
+
+-- Abstract sketch
+inductive Event
+| CommitEdge : Nat → Nat → Event
+| CommitNode : Nat → Event
+
+structure LTMState where
+  edges : Nat → Nat → Prop
+
+def apply_event : LTMState → Event → LTMState := by
+  intro s e
+  cases e with
+  | CommitEdge u v =>
+      exact { edges := fun a b => s.edges a b ∨ (a = u ∧ b = v) }
+  | CommitNode n =>
+      exact s
+
+-- Workspace updates do not call apply_event
+theorem workspace_isolation
+  (s : LTMState) (ws_updates : Nat) :
+  ∃ s' : LTMState, s' = s := by
+  exact ⟨s, rfl⟩
+
+end Hippocampus
+```
+
+### Lean 2: RCU style reclamation condition as a predicate
+
+```lean
+namespace Reclaim
+
+def safe_to_reclaim (target_epoch : Nat) (reader_epochs : List Nat) : Prop :=
+  ∀ r ∈ reader_epochs, r > target_epoch
+
+theorem reclaim_monotone
+  (t : Nat) (rs1 rs2 : List Nat)
+  (h : ∀ r ∈ rs2, r ∈ rs1) :
+  safe_to_reclaim t rs1 → safe_to_reclaim t rs2 := by
+  intro h1 r hr2
+  have hr1 : r ∈ rs1 := h r hr2
+  exact h1 r hr1
+
+end Reclaim
+```
+
+## P6 non-functionals
+
+### Performance
+
+* **Overlay graphs**: copy-on-write adjacency, shared base epoch.
+* **Packed forests**: share hypothesis substructure, reduce branching blowup.
+* **Budgets everywhere**: beam width, inquiry budget, surprise budget, canary fraction.
+* **Cold solve**: scheduled offline, swap at epoch boundary.
+
+### Memory
+
+* Epoch snapshots are compacted using grace-period rules, reclaim after readers finish, similar to RCU.
+* Quarantined proposals and failures remain stored, but can be compressed into pattern-level statistics over time.
+
+### Safety
+
+* Canary for grammar rules and adapters.
+* Rollback always available via versioned rule sets and adapter maps.
+* Risk governance still gates surfacing and commitment.
+
+
+---
+

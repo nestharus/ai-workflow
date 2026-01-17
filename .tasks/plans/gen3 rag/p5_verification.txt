@@ -1,0 +1,86 @@
+P5 Patch Application Verification Report
+========================================
+
+Date: $(date)
+Files Modified:
+  - plan.md
+  - applied.md
+  - gaps.md
+
+P5 Content Added to plan.md:
+----------------------------
+
+✓ Goals (G17-G21):
+  - G17: Graphs are the grammar
+  - G18: Tokens are graph objects
+  - G19: Emergent structure
+  - G20: Multi-interpretation ingestion
+  - G21: Computable directions across coordinate systems
+
+✓ Components (11 new components):
+  - Modality Router
+  - Tokenizer Stack
+  - Graph Grammar Engine
+  - Parse Forest Store
+  - Grammar Library
+  - Grammar Miner and Compiler
+  - Token Type Registry
+  - Coordinate System Registry
+  - Adapter and Alignment Trainer
+  - Traversal Planner
+  - Re-ingestion Orchestrator
+
+✓ Data Structures (6 new structures):
+  - GraphToken
+  - Rule (Grammar rule as graph rewrite)
+  - ParseHypothesis
+  - ParseForest
+  - CoordSystem
+  - AdapterMap
+
+✓ Math Sections (P5.1-P5.4):
+  - P5.1: Graph grammar semantics
+  - P5.2: Probabilistic and scored rewriting
+  - P5.3: Multi-coordinate embeddings as a bundle
+  - P5.4: Adapter learning
+
+✓ Algorithms (Algorithm 17-23):
+  - Algorithm 17: Modality routing and tokenizer selection
+  - Algorithm 18: Incremental graph grammar parsing
+  - Algorithm 19: Rule application as graph rewrite
+  - Algorithm 20: Grammar emergence from patterns
+  - Algorithm 21: Graph token embedding bundle
+  - Algorithm 22: Traversal across coordinate systems
+  - Algorithm 23: Re-ingestion under reinterpretation
+
+✓ Claims and Proofs (P5C1-P5C4):
+  - P5C1: Multi-view canonical field solve exists and is unique
+  - P5C2: Rewrite steps preserve evidence permanence
+  - P5C3: Packed forest representation preserves derivations
+  - P5C4: Orthogonal adapter preserves geometry
+
+✓ Lean Skeletons (2 new):
+  - Lean 1: Distance preservation under orthogonal maps
+  - Lean 2: Canonical field uniqueness with multi-view anchors
+
+✓ Non-functionals:
+  - Performance control (grammar class restrictions, match acceleration, etc.)
+  - Memory and compaction strategies
+
+applied.md Updates:
+------------------
+✓ All P5 labels marked as [x] applied
+
+gaps.md Updates:
+----------------
+✓ P5 proof obligations marked as APPLIED
+✓ 7 new gaps added (GAP-P5.1 through GAP-P5.7):
+  - Grammar class restrictions per tier
+  - Rule scoring model specification
+  - Parse forest beam width policy
+  - Adapter fitting frequency and triggers
+  - Grammar promotion criteria
+  - Token type registry and coordination
+  - Re-ingestion scheduling policy
+
+Status: COMPLETE
