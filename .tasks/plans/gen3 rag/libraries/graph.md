@@ -132,17 +132,24 @@ Use a typed, weighted multigraph.
 
 ---
 
-## Comp12 Tokenizer Stack
-
----
-
-## Comp13 Graph Grammar Engine
-
----
-
 ## Comp20 Traversal Planner
 
 ---
 
 ## Comp29 Connectivity Monitor + Bridge Synthesizer (CONN)
 
+---
+
+## D13 EdgeBelief additions
+
+Robust weighting is explicit and per hypothesis.
+
+```
+EdgeBelief {
+  ...
+  g: float                        // gate in [0,1]
+  rw: map<HypId, float>           // robust weight in [0,1]
+  rw_eps: float                   // epsilon used in rw update
+  delta: float                    // robust scale parameter
+}
+```

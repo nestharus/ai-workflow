@@ -14,26 +14,40 @@ Field geometry, semantic field computation, relaxation, robust objectives, IRLS 
 
 ## Algorithm 3: Field relaxation on a subgraph
 
-Gauss-Seidel style update on the quadratic objective.
+Field update computes diagnostics and uses gates.
 
-For a node (i), the coordinate-wise optimal update is:
+```pseudo
+function FIELD_UPDATE_WITH_DIAGNOSTICS(nodes S):
+  for hypothesis h in ACTIVE_HYPOTHESES_IN_SCOPE(S):
+    FIELD_RELAX_GATED(S, h, steps=s_tier)
 
+    // compute diagnostics
+    for i in S:
+      x = STATE(i,h).x
+      b = OBS(i).b
+      r = NORM(x - b)
+      T = SUM_{(i,j)} w_eff(i,j,h) * NORM2(x - STATE(j,h).x)
+      APPEND_STATE_METRICS(i,h,r,T)
+
+    for each edge (i,j) touching S:
+      t = w_eff(i,j) * NORM2(STATE(i,h).x - STATE(j,h).x)
+      UPDATE_EDGE_TENSION(edge_id, t)
+```
+
+Coordinate update under gated quadratic stays closed form:
 [
 x_i \leftarrow
-\frac{\alpha_i b_i + \sum_{j\in N(i)} w_{ij} x_j}{\alpha_i + \mu_i + \sum_{j\in N(i)} w_{ij}}
+\frac{\alpha_i b_i + \sum_{j} w_{ij}g_{ij} x_j}{\alpha_i + \mu_i + \sum_{j} w_{ij}g_{ij}}
 ]
 
 ```pseudo
-function FIELD_RELAX(nodes S, steps T):
+function FIELD_RELAX_GATED(nodes S, hypothesis h, steps T):
   repeat T times:
     for i in SHUFFLE(S):
-      denom = alpha[i] + mu[i] + SUM_{j in N(i)} w[i,j]
-      numer = alpha[i] * b[i] + SUM_{j in N(i)} w[i,j] * x[j]
-      x[i] = numer / denom
-    UPDATE_UNCERTAINTY(S)
+      denom = alpha[i] + mu[i] + SUM_{j in N(i)} w[i,j] * g[i,j,h]
+      numer = alpha[i] * b[i] + SUM_{j in N(i)} w[i,j] * g[i,j,h] * x[j,h]
+      x[i,h] = numer / denom
 ```
-
-This is the vector-valued version of harmonic updates used in Gaussian fields style graph methods.
 
 ---
 
@@ -336,7 +350,6 @@ Optional tangent gradient uses local transport + finite differences:
 
 The composite field guides traversal and scheduling; it never directly mutates W_eff/A/M.
 
-
 ---
 
 ---
@@ -551,8 +564,6 @@ Incremental manifold updates after events, without global regeneration.
 function MANIFOLD_UPDATE_LOCAL(view, event ev):
   APPLY_EVENT_TO_OVERLAY(ev)                    // append-only log; overlay materialization
 
-
-
   S = LOCAL_SCOPE(ev)                           // bounded neighborhood
   X0 = READ_X(view.epoch_id, view.hyp_id)       // warm start
 
@@ -678,53 +689,17 @@ function MANIFOLD_TO_GRAPH_PROPOSALS(view, budget):
 
 ---
 
-### P1C2 and P1C3 proof sketch
+## C1 Field embeddings exist and are unique
 
-For a fixed hypothesis (h), gated quadratic energy remains strictly convex when (\alpha_i + \mu_i > 0) per connected component.
-The matrix (Q = L_g + A + M) stays SPD.
-Coordinate descent decreases energy and converges to the unique minimizer.
+Under mild anchoring conditions.
 
-This is the same style of argument used for harmonic energy minimization on graphs. ([MLG Cambridge][1])
+## C2 Local relaxation converges
 
----
+To the field solution on a fixed graph.
 
-### P1C5 Robust loss convergence
+## C3 Field embeddings attenuate underspecified noise
 
-Robust loss reduces influence of large disagreements while preserving convergence to a minimizer.
-
----
-
-### P2C3 IRLS descent
-
-Each IRLS iteration decreases \(\mathcal{E}\).
-
-Sketch for Huber:
-
-* IRLS weight construction corresponds to a majorization of the robust term.
-* The surrogate \(\tilde{\mathcal{E}}^{(k)}\) satisfies:
-
-  * \(\tilde{\mathcal{E}}^{(k)}(X) \ge \mathcal{E}(X)\) for all \(X\)
-  * \(\tilde{\mathcal{E}}^{(k)}(X^{(k)}) = \mathcal{E}(X^{(k)})\)
-* Minimizing the surrogate gives:
-  \[
-  \mathcal{E}(X^{(k+1)}) \le \tilde{\mathcal{E}}^{(k)}(X^{(k+1)}) \le \tilde{\mathcal{E}}^{(k)}(X^{(k)}) = \mathcal{E}(X^{(k)})
-  \]
-  This is MM logic. ([Taylor & Francis Online][4])
-
----
-
-### P2C4 Convergence to a stationary point
-
-Sketch:
-
-* MM descent yields a monotone non-increasing objective sequence.
-* (\mathcal{E}) is bounded below, so objective values converge.
-* Under standard MM conditions (continuity, proper majorizer, tangency), every limit point of ({X^{(k)}}) is a stationary point.
-* If (\rho) is convex (Huber), then (\mathcal{E}) is convex, so the stationary point is a global minimizer.
-
-References for MM stationary point behavior and MM in signal processing. ([arXiv][9])
-
----
+Relative to raw embeddings, under a simple noise model.
 
 ## P5C1 Multi-view canonical field solve exists and is unique
 
@@ -983,54 +958,7 @@ Optional tangent gradient uses local transport + finite differences:
 
 The composite field guides traversal and scheduling; it never directly mutates W_eff/A/M.
 
-
 ---
-
----
-
-## Algorithm 50 — FORCE_TO_TOPOLOGY_PROMOTION (governed)
-
-Turns persistent, reproduced utility into topology, without collapsing diagnostics.
-
-```pseudo
-function FORCE_TO_TOPOLOGY_PROMOTION(prop):
-  if prop.risk_tags high: return QUARANTINE
-
-  if NOT REPRODUCED(prop, N_runs):
-    return KEEP_EPHEMERAL
-
-  if NOT STABLE_ACROSS_EPOCHS(prop, K_epochs):
-    return KEEP_AS_HYPOTHESIS
-
-  if violates_guardrails(prop):
-    return REJECT
-
-  return SUBMIT_TO_2SC(prop)     // validation -> commit -> epoch publish
-```
-
----
-
-### Lean12 Distance preservation under orthogonal maps
-
-```lean
-import Mathlib.LinearAlgebra.Matrix.Orthogonal
-import Mathlib.Analysis.NormedSpace.Basic
-
-namespace CoordMaps
-
-open Matrix
-
-variable {n : Type} [Fintype n] [DecidableEq n]
-
--- Sketch: for an orthogonal matrix R, show ‖R.mulVec x - R.mulVec y‖ = ‖x - y‖.
-theorem orthogonal_preserves_norm
-  (R : Matrix n n ℝ) (hR : R.IsOrtho) (x y : n → ℝ) :
-  ‖R.mulVec x - R.mulVec y‖ = ‖x - y‖ := by
-  -- use inner-product preservation lemmas from IsOrtho
-  sorry
-
-end CoordMaps
-```
 
 ---
 
@@ -1075,3 +1003,237 @@ Validator calls rate-limited and triggered by tension.
 
 High uncertainty nodes get more validation and more relaxation steps. Low uncertainty nodes get cheap maintenance.
 
+---
+
+### D53 TranslationProposal
+
+```text
+TranslationProposal {
+  prop_id: PropId
+  kind: enum {bridge_edge, rule_candidate, pattern_candidate, adapter_candidate}
+  base_view: ManifoldView
+  payload: bytes
+  evidence: EvidenceBundleRef
+  deltas: {ΔT, Δr, Δrisk, Δlatency}
+  expected_gain: float
+  risk_tags: set<RiskTag>
+  status: enum {shadow, canary, promoted, rejected}
+}
+```
+
+---
+
+---
+
+### P9I3 — Blends are reversible
+
+No blend may become the only representation of its primitives. `BlendRecipe` must be explicit and all primitives remain computable.
+
+---
+
+---
+
+### P9I4 — No force becomes law silently
+
+Fields may guide traversal and scheduling.
+
+Fields may only alter topology (edge gates, bridges, anchor policies) via two-stage commit + governance.
+
+---
+
+---
+
+### Algorithm 31: Adapter lifecycle and drift management
+
+```pseudo
+function ADAPTER_FIT(src_cs, dst_cs, paired_samples):
+  cand = FIT_MAP(paired_samples)
+  cand.status = shadow
+  E0 = EVAL_OFFLINE(cand)
+
+  if E0 > EMAX: return REJECT(cand)
+
+  cand.status = canary
+  CANARY_ROUTE(cand, traffic=f)                    // apply to a subset
+  if CANARY_METRICS_OK(cand):
+    PROMOTE(cand)
+  else:
+    ROLLBACK(cand)
+
+function ADAPTER_DRIFT_MONITOR(adapter a):
+  series = STREAM_ALIGNMENT_ERRORS(a)
+  if ADWIN_DETECT(series):                         // change point
+    TRIGGER_REFIT(a)
+```
+
+ADWIN is a standard drift detector with adaptive windowing.
+Canary rollouts are a standard safety practice for changing live systems.
+
+---
+
+---
+
+## Algorithm 2: Idea candidate selection
+
+Idea-first means “create handles early, refine later”.
+
+```pseudo
+function SELECT_OR_CREATE_IDEA(candidates, v):
+  for idea in TOPK(candidates):
+    if PASS_FAST_GATE(v, idea):                        // cosine, overlap, structure checks
+      if PASS_VALIDATION(v, idea):                     // optional LLM/classifier
+        return idea
+
+  // else create a provisional idea handle
+  idea = NEW_NODE(level=IDEA, span_ref=null)
+  idea.b = v.b                                         // seed from evidence
+  idea.x = v.x
+  idea.u = HIGH
+  idea.tier = CONTEXT
+  GRAPH.ADD_NODE(idea)
+  return idea
+```
+
+Validation is where hard constraints live. Geometry proposes. Validation commits.
+
+---
+
+### P7I1 Seeds are append-only
+
+* NoiseSeeds and traces live in the event log.
+
+---
+
+### P7I2 Seeds never directly rewrite LTM
+
+* Seeds refine into hypotheses inside workspace overlays.
+* Commit goes through P6 2SC.
+
+---
+
+### P7I3 Noise never disappears
+
+* Even when downweighted, the seed remains in the ledger, with a status.
+
+---
+
+### P7I4 Curiosity respects risk governance
+
+* High-risk ambiguity is surfaced, or deferred, based on user profile (P4).
+
+---
+
+---
+
+## Algorithm 7: Conflict resolution
+
+Resolution loop increases confidence by seeking targeted evidence.
+
+```pseudo
+function RESOLVE_CONFLICTS(budget):
+  while budget > 0:
+    c = POP_HIGHEST_SCORE_CONFLICT()
+    if c == none: break
+
+    e = PICK_HIGHEST_TENSION_EDGE(c)
+    spans = FETCH_SPANS(e.src, e.dst)
+    verdict, conf, evidence = VALIDATE_EDGE(e.type, spans)
+
+    UPDATE EdgeBelief(e):
+      status = verdict
+      conf = conf
+      evidence += evidence
+
+    if verdict == supported:
+      INCREASE_GATE(e.g)
+    if verdict == contradicted:
+      DECREASE_GATE(e.g)
+      if PERSISTENT(c):
+        BRANCH_HYPOTHESIS(c)
+
+    LOCAL = NEIGHBORHOOD({e.src, e.dst}, radius=r_conflict)
+    FIELD_UPDATE_WITH_DIAGNOSTICS(LOCAL)
+
+    budget -= COST(verdict)
+```
+
+---
+
+---
+
+### P2C3 IRLS descent
+
+Each IRLS iteration decreases \(\mathcal{E}\).
+
+Sketch for Huber:
+
+* IRLS weight construction corresponds to a majorization of the robust term.
+* The surrogate \(\tilde{\mathcal{E}}^{(k)}\) satisfies:
+
+  * \(\tilde{\mathcal{E}}^{(k)}(X) \ge \mathcal{E}(X)\) for all \(X\)
+  * \(\tilde{\mathcal{E}}^{(k)}(X^{(k)}) = \mathcal{E}(X^{(k)})\)
+* Minimizing the surrogate gives:
+  \[
+  \mathcal{E}(X^{(k+1)}) \le \tilde{\mathcal{E}}^{(k)}(X^{(k+1)}) \le \tilde{\mathcal{E}}^{(k)}(X^{(k)}) = \mathcal{E}(X^{(k)})
+  \]
+  This is MM logic. ([Taylor & Francis Online][4])
+
+---
+
+---
+
+### P2C4 Convergence to a stationary point
+
+Sketch:
+
+* MM descent yields a monotone non-increasing objective sequence.
+* (\mathcal{E}) is bounded below, so objective values converge.
+* Under standard MM conditions (continuity, proper majorizer, tangency), every limit point of ({X^{(k)}}) is a stationary point.
+* If (\rho) is convex (Huber), then (\mathcal{E}) is convex, so the stationary point is a global minimizer.
+
+References for MM stationary point behavior and MM in signal processing. ([arXiv][9])
+
+---
+
+---
+
+### Algorithm 24: Hippocampal workspace session
+
+```pseudo
+function HWS_OPEN(region R, base_epoch e):
+  hws.base_epoch = e
+  hws.overlay_graph = NEW_OVERLAY(e)
+  hws.forest = INIT_PARSE_FOREST(R)
+  return hws
+
+function HWS_STEP(hws, proposal_or_input X):
+  // build workspace tokens and graphs
+  forest = PARSE_REGION_WITH_P5(hws, X)
+  RUN_LOCAL_FIELD_REPAIR(hws.overlay_graph, forest.active_hyps)
+  UPDATE_DIAGNOSTICS(hws)
+  return hws
+
+function HWS_CLOSE(hws):
+  ARCHIVE(hws)         // TTL based
+```
+
+---
+
+---
+
+### Algorithm 27: Cold solve and re-rooting
+
+```pseudo
+function SHOULD_COLD_SOLVE(global_metrics M):
+  return (M.path_dependence_score > θp) or (M.adapter_drift > θd) or (M.tension > θt)
+
+function GLOBAL_CONSOLIDATION_COLD(epoch e):
+  snap = SNAPSHOT_EVIDENCE_LOG(e)                  // raw event log
+  REBUILD_GRAPH_FROM_EVIDENCE(snap)                // no warm-start states
+  REFIT_ADAPTERS(snap)
+  REMINE_PATTERNS_AND_GRAMMARS(snap)
+  SOLVE_CANONICAL_FIELD(snap)
+  SWAP_IN_NEW_INDICES_AT_EPOCH_BOUNDARY()
+```
+
+---

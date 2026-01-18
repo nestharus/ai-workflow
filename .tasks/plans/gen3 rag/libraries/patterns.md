@@ -795,52 +795,8 @@ Promotion rule:
 \Rightarrow \text{promote}(p)
 ]
 
-### P4.3 Failure memory as negative prior / gating brake
-
-Let (F(\cdot)) be a failure score predicted from FailureCase signatures and context features.
-
-Convert to a multiplicative brake on pattern usage:
-[
-\text{use_score}(p,ctx) = \text{base_score}(p,ctx)\cdot \exp(-\eta F(p,ctx))
-]
-
-Optionally, apply it to edge gates (g) inside instances derived from that pattern:
-[
-g_{ij}^{(h)} \leftarrow g_{ij}^{(h)} \cdot \exp(-\eta F(p,ctx))
-]
-
-### P4.4 Light outcome feedback as contextual bandit over system actions
-
-Define an action set (\mathcal{A}) over system knobs, e.g.:
-
-* choose which patterns to expand to LLM
-* choose which conflicts to validate next
-* choose promote vs branch vs retract
-* choose bridge candidates to validate
-
-Observe reward (r_t) from task outcome (light feedback). Use contextual bandit updates (UCB/Thompson) to adapt policy with sublinear regret under standard assumptions. ([Stanford University][3])
-
-### P4.5 Risk governance via selective prediction / conformal risk control
-
-Use uncertainty (residual/tension/variance) as a heuristic score, then conformalize deferral thresholds for calibrated risk control. ([People @ EECS][2])
-
----
 
 ## P5 math
-
-## P5.1 Graph grammar semantics
-
-Represent the current world as a typed hypergraph (G).
-
-A rule (p) is a rewrite:
-[
-L \xleftarrow{l} K \xrightarrow{r} R
-]
-where:
-
-* (L) is the match pattern
-* (K) is the interface preserved during rewriting
-* (R) is the replacement graph
 
 ---
 
@@ -864,43 +820,6 @@ Hyperedge replacement and related graph grammar formalisms provide a language fo
 ---
 
 **G19 Emergent structure**
-
----
-
-### P4I3 Failure memory is append-only
-
-* Failure events accumulate and are only compacted by "sleep" with provenance kept.
-
----
-
-### P4I4 Governance never hides ambiguity silently
-
-* If the system suppresses an ambiguity from the user view, it still writes it into the ambiguity ledger with risk score and rationale.
-
----
-
----
-
-### Algorithm 16: Risk & Ambiguity Governance
-
-```pseudo
-function GOVERN_OUTPUT(answer_candidates, ambiguity_metrics, user_profile R):
-  risk = COMPUTE_RISK(ambiguity_metrics, R.domain, R.risk_tolerance)
-
-  WRITE_AMBIGUITY_LEDGER(ambiguity_metrics, risk)
-
-  if risk > TH_DEFERRAL(R):
-    return DEFERRAL_OUTPUT(ambiguity_report, request_clarification)
-  else if risk > TH_SURFACE(R):
-    return ANSWER_WITH_AMBIGUITY_BOUNDS(answer_candidates, ambiguity_report)
-  else:
-    return BEST_ANSWER(answer_candidates)
-```
-
-Conformal / selective frameworks supply calibrated abstention and risk control patterns for deferral decisions. ([People @ EECS][2])
-
-]
-This preserves distances and angles in the mapped space. Manifold alignment via Procrustes uses this idea. ([ICML][7])
 
 ---
 
@@ -944,3 +863,88 @@ Keep "policy deltas" small, prefer conservative exploration (safe re-ranking lit
 
 It sits above retrieval/field state and never destroys evidence.
 
+---
+
+## Algorithm 20
+
+### Grammar emergence from patterns
+
+Turns P4 patterns into executable grammar rules.
+
+```pseudo
+function MINE_AND_COMPILE_GRAMMAR(snapshot snap, dom):
+  patterns = STRUCTURAL_ABSTRACTION_MINE(snap)         // P4 Algorithm 10
+  for pat in patterns:
+    if pat.conf >= TH_RULE_CANDIDATE:
+      rule = COMPILE_PATTERN_TO_RULE(pat, dom)         // lhs is pat, rhs emits macro token
+      SHADOW_RUN(rule)                                 // collect precision, failure cases
+      if PROMOTION_TEST(rule):                         // confidence-weighted
+        GRAMMAR_LIBRARY.ADD(rule)
+```
+
+Hyperedge replacement and related graph grammar formalisms provide a language for "graph as grammar". ([People CS Umeå][5])
+
+---
+
+---
+
+## G19 Emergent structure
+
+* Structure appears when encountered.
+* New grammars and token types can emerge from recurring subgraphs and successful parses.
+
+---
+
+---
+
+## Algorithm 5: Boundary detection without fixed chunking
+
+Use change in direction as a signal, plus structure cues. Bayesian online changepoint detection is a clean option.
+
+```pseudo
+function STREAM_TO_SPANS(stream):
+  run BOCPD over feature z_t = [cos(b_t, b_{t-1}), punctuation, heading, entity_shift]
+  emit boundary when P(changepoint) > tau
+  yield span
+```
+
+---
+
+### Grammar emergence from patterns
+
+Turns P4 patterns into executable grammar rules.
+
+```pseudo
+function MINE_AND_COMPILE_GRAMMAR(snapshot snap, dom):
+  patterns = STRUCTURAL_ABSTRACTION_MINE(snap)         // P4 Algorithm 10
+  for pat in patterns:
+    if pat.conf >= TH_RULE_CANDIDATE:
+      rule = COMPILE_PATTERN_TO_RULE(pat, dom)         // lhs is pat, rhs emits macro token
+      SHADOW_RUN(rule)                                 // collect precision, failure cases
+      if PROMOTION_TEST(rule):                         // confidence-weighted
+        GRAMMAR_LIBRARY.ADD(rule)
+```
+
+Hyperedge replacement and related graph grammar formalisms provide a language for "graph as grammar". ([People CS Umeå][5])
+
+---
+
+---
+
+### P4C2 MDL-driven abstraction reduces description length
+
+**Claim.** Given a candidate pattern set, choosing patterns by MDL yields shorter descriptions than raw graph encoding (for those patterns). (Algorithm is heuristic; objective is principled.)
+
+**Sketch.** The objective directly minimizes description length. Greedy selection may not find global optimum but provides local improvement guarantees standard in submodular-style optimization.
+
+---
+
+---
+
+### P4C3 Promotion guarantee
+
+**Claim.** If a pattern is promoted only when (\Pr(\theta_p \ge \tau) \ge 1-\delta), then promotion implies a posterior reliability guarantee.
+
+**Sketch.** Direct from the posterior CDF of the Beta distribution.
+
+---

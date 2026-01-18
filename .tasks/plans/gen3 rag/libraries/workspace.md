@@ -23,7 +23,6 @@ Workspace {
 }
 ```
 
-
 ---
 
 ### D40 WorkspaceEvent
@@ -47,7 +46,6 @@ WorkspaceEvent {
 
 Notes:
 * remove_* is implemented via tombstones (never physical delete in-session).
-
 
 ---
 
@@ -90,7 +88,6 @@ OriginRef {
 }
 ```
 
-
 ---
 
 ### D42 Capsule
@@ -128,7 +125,6 @@ CapsuleFingerprint {
 }
 ```
 
-
 ---
 
 ### D43 WorkspaceMessage
@@ -145,7 +141,6 @@ WorkspaceMessage {
 }
 ```
 
-
 ---
 
 ### D44 ReconcileRecord
@@ -161,7 +156,6 @@ ReconcileRecord {
   created_t: Time
 }
 ```
-
 
 ---
 
@@ -181,8 +175,6 @@ WorkspaceCommitEnvelope {
 }
 ```
 
-
-
 ---
 
 ### D55 HippocampalWorkspace
@@ -199,7 +191,6 @@ HippocampalWorkspace {
   ttl: Duration
 }
 ```
-
 
 ---
 
@@ -219,7 +210,6 @@ NeocortexProposal {
 }
 ```
 
-
 ---
 
 ### D57 CommitRecord
@@ -237,7 +227,6 @@ CommitRecord {
 }
 ```
 
-
 ---
 
 ### P6.1 Workspace overlay model
@@ -250,7 +239,6 @@ G^{\text{hws}} = G^{(e)} \oplus \Delta G
 Reads use \(G^{(e)}\) or \(G^{\text{hws}}\) depending on scope.
 
 This is the same principle as snapshot isolation, readers see a stable snapshot while writers create new versions.
-
 
 ---
 
@@ -277,7 +265,6 @@ then applies a promotion rule:
 ]
 else branch or quarantine.
 
-
 ---
 
 ### P10.1 Convergence-safe state model (event-set join)
@@ -291,7 +278,6 @@ Where:
 * Join is deterministic, commutative, associative, and idempotent (a semilattice join).
 
 This implies: if any two replicas/reconciliations apply the same set of events, they converge to the same state.
-
 
 ---
 
@@ -309,13 +295,11 @@ To maintain the graph invariant that edges reference existing vertices, use a st
 
 P10 defaults to remove-wins for safety in a workspace (deleting a node removes its edges), implemented with tombstones.
 
-
 ---
 
 ## P10.3 Delta-state replication for workspaces (optional)
 
 Workspaces may sync their event logs as deltas rather than full states. This is compatible with delta-state CRDT designs where small delta fragments are joined into the replica state.
-
 
 ---
 
@@ -329,7 +313,6 @@ Overlap between two capsules/regions is estimated using a multi-stage signature:
 
 This supports fast approximate overlap queries over many workspaces.
 ---
-
 
 ---
 
@@ -378,7 +361,6 @@ Event sourcing stays the audit layer that makes rebuilds reproducible. ([Microso
 
 This is a versioned build, then swap. The Lucene style segment approach is a practical reference point for "build new segments, then open them" behavior. ([Mike McCandless Blog][8])
 
-
 ---
 
 ### Algorithm 25: Two-stage commit from neocortex to hippocampus
@@ -411,7 +393,6 @@ function HIPPOCAMPUS_2SC(proposal P):
 
 This resembles snapshot read plus write-as-new-version discipline.
 
-
 ---
 
 ### Algorithm 53: OPEN_WORKSPACE
@@ -427,7 +408,6 @@ OPEN_WORKSPACE(agent_id, base_epoch, base_lsn_end, ttl):
   return ws
 ```
 
-
 ---
 
 ### Algorithm 54: CLOSE_WORKSPACE_CASCADE (structured lifetime)
@@ -441,7 +421,6 @@ CLOSE_WORKSPACE_CASCADE(ws_id):
   ws.status = closed
   WGC.schedule(ws_id)
 ```
-
 
 ---
 
@@ -463,7 +442,6 @@ SPAWN_CHILD(parent_ws, ttl, seed_capsules):
   return child.ws_id
 ```
 
-
 ---
 
 ### Algorithm 56: EXPORT_CAPSULE
@@ -477,7 +455,6 @@ EXPORT_CAPSULE(ws_id, selection_spec):
   log event export_capsule
   return cap
 ```
-
 
 ---
 
@@ -505,7 +482,6 @@ IMPORT_CAPSULE(ws_id, cap):
   return import_record
 ```
 
-
 ---
 
 ### Algorithm 58: MESSAGE_SEND
@@ -516,7 +492,6 @@ MESSAGE_SEND(from_ws, to_ws, cap, note):
   msg = WorkspaceMessage(from_ws, to_ws, cap, note)
   MSG.deliver(msg)
 ```
-
 
 ---
 
@@ -532,7 +507,6 @@ RECONCILE_CHILD_TO_PARENT(parent_ws, child_ws, selection_spec):
   return rec, cap
 ```
 
-
 ---
 
 ### Algorithm 60: COMMIT_TO_INGEST (no LLM diffs)
@@ -544,7 +518,6 @@ COMMIT_TO_INGEST(ws_id, exported_capsules, intent):
   CGW.submit_to_ingest(env)
   return env
 ```
-
 
 ---
 
@@ -559,7 +532,6 @@ OVERLAP_SIGNATURE(subgraph):
   return {wl_hash, minhash, simhash}
 ```
 
-
 ---
 
 ### Algorithm 62: OVERLAP_DETECT
@@ -573,7 +545,6 @@ OVERLAP_DETECT(fingerprint_a, fingerprint_b):
   j_hat = MINHASH_ESTIMATE(minhash_a, minhash_b)
   return j_hat
 ```
-
 
 ---
 
@@ -592,7 +563,6 @@ OSCILLATION_SIGNAL(ws_id, window):
     return signal("oscillation_suspected")
 ```
 
-
 ---
 
 ### Algorithm 64: WORKSPACE_GC
@@ -603,8 +573,6 @@ WORKSPACE_GC(ws_id):
   // Preserve audit log pointers, remove bulk graph payload.
   compact event log; drop scratch-only regions; keep exported capsules and commit envelopes.
 ```
-
-
 
 ---
 
@@ -624,7 +592,6 @@ function MINE_MODULES(patterns P):
   return M
 ```
 
-
 ---
 
 ### Algorithm 41
@@ -639,7 +606,6 @@ function BUILD_PROFILES(pattern_instances I, Enc):
     UPDATE_CONTEXT_PROFILE(inst.pattern_id, inst.neighborhood_types)
     UPDATE_EFFECT_PROFILE(inst.pattern_id, DELTA_ENERGY(inst))
 ```
-
 
 ---
 
@@ -662,7 +628,6 @@ function PROPOSE_IDEAS(context subgraph G, Enc):
   return TOPK(candidates ∪ hybrids)
 ```
 
-
 ---
 
 ### P6C1 Workspace isolation
@@ -674,7 +639,6 @@ function PROPOSE_IDEAS(context subgraph G, Enc):
 * Commit controller is the only path that emits LTM events.
 * Event log is append-only.
 
-
 ---
 
 ### P6C2 Snapshot consistency
@@ -684,7 +648,6 @@ function PROPOSE_IDEAS(context subgraph G, Enc):
 
 * MVCC style: writers create new versions, readers keep old.
 * Equivalent discipline is described by snapshot isolation.
-
 
 ---
 
@@ -717,7 +680,6 @@ theorem workspace_isolation
 
 end Hippocampus
 ```
-
 
 ---
 
@@ -793,7 +755,6 @@ end Hippocampus
 * Every workspace operation is logged.
 * Quotas bound memory growth, fanout, and commit volume.
 
-
 ---
 
 ## P10 core operations (tooling surface)
@@ -813,48 +774,6 @@ The memory layer must support the following operations. A coordination system ma
 ---
 
 ## P6 math
-
-## P6.1 Workspace overlay model
-
-Workspace overlays base epoch with copy-on-write semantics for nodes and edges.
-
-## P6.2 Two-stage commit as an admissibility filter
-
-Proposals from hippocampus go through tension and provenance checks before entering neocortex.
-
-## P6.3 Surprise budget as forced retention of high-provenance tension
-
-High-provenance disagreements are marked and not silently resolved.
-
-## P6.4 Connectivity targets
-
-Graph maintains connectivity bounds to prevent fragmentation.
-
-## P6.5 Adapter drift detection
-
-Monitor embedding adapter fit error over time to detect distribution shift.
-
----
-
-## P10 math
-
-## P10.1 Convergence-safe state model (event-set join)
-
-Workspaces use event-sourced state with deterministic merge semantics.
-
-## P10.2 Workspace graph as a graph CRDT (optional mode)
-
-For distributed collaboration, workspaces can use CRDT semantics.
-
-## P10.3 Delta-state replication for workspaces (optional)
-
-Efficient synchronization via delta-state propagation.
-
-## P10.4 Overlap as near-duplicate detection
-
-Detect overlapping or redundant work across workspaces using content signatures.
-
----
 
 ## P6 goals
 
@@ -880,100 +799,6 @@ Detect overlapping or redundant work across workspaces using content signatures.
 7. **Grammar Sandbox**
 8. **Adapter Lifecycle Manager**
 9. **Inquiry Planner**
-
----
-
-### Algorithm 24: Hippocampal workspace session
-
-```pseudo
-function HWS_OPEN(region R, base_epoch e):
-  hws.base_epoch = e
-  hws.overlay_graph = NEW_OVERLAY(e)
-  hws.forest = INIT_PARSE_FOREST(R)
-  return hws
-
-function HWS_STEP(hws, proposal_or_input X):
-  // build workspace tokens and graphs
-  forest = PARSE_REGION_WITH_P5(hws, X)
-  RUN_LOCAL_FIELD_REPAIR(hws.overlay_graph, forest.active_hyps)
-  UPDATE_DIAGNOSTICS(hws)
-  return hws
-
-function HWS_CLOSE(hws):
-  ARCHIVE(hws)         // TTL based
-```
-
----
-
-### Algorithm 27: Cold solve and re-rooting
-
-```pseudo
-function SHOULD_COLD_SOLVE(global_metrics M):
-  return (M.path_dependence_score > θp) or (M.adapter_drift > θd) or (M.tension > θt)
-
-function GLOBAL_CONSOLIDATION_COLD(epoch e):
-  snap = SNAPSHOT_EVIDENCE_LOG(e)                  // raw event log
-  REBUILD_GRAPH_FROM_EVIDENCE(snap)                // no warm-start states
-  REFIT_ADAPTERS(snap)
-  REMINE_PATTERNS_AND_GRAMMARS(snap)
-  SOLVE_CANONICAL_FIELD(snap)
-  SWAP_IN_NEW_INDICES_AT_EPOCH_BOUNDARY()
-```
-
----
-
-### Algorithm 28: Surprise budget and provenance override
-
-```pseudo
-function HANDLE_DISRUPTIVE_EVIDENCE(hws, evidence e):
-  surp = prov(e) * sigmoid(tension_contrib(e))
-  if surp < S0: return
-
-  if SURP.budget_remaining(domain(e)) > surp:
-    SURP.spend(surp)
-    CLAMP_ROBUST_WEIGHTS_FOR(e)          // keep it active in solve
-    FORCE_BRANCH_IF_CONFLICT(hws, e)     // preserve both sides
-  else:
-    QUEUE_FOR_GLOBAL_REVIEW(e)
-```
-
----
-
-### Algorithm 29: Connectivity guard and bridge repair
-
-```pseudo
-function ON_GATE_CHANGE(epoch e, updates U):
-  affected = FIND_AFFECTED_CLUSTERS(U)
-  for cluster in affected:
-    if RISK_OF_DISCONNECT(cluster, e):
-      bridges = PROPOSE_BRIDGES(cluster, e)        // embedding + co-retrieval
-      VALIDATE_BRIDGES(bridges)                    // inquiry tasks
-      ADD_SKIP_CONNECTIONS(accepted_bridges)
-```
-
-Small-world connectivity is the target pattern.
-
----
-
-### Algorithm 30: Grammar sandbox and promotion
-
-```pseudo
-function GRAMMAR_SANDBOX(rule r):
-  r.status = shadow
-  results = RUN_SHADOW_PARSE(r, heldout_regions)
-
-  UPDATE_RULE_STATS(r, results)
-  if POSTERIOR_OK(r) and FAILURE_RATE_OK(r):
-    r.status = canary
-    CANARY_RUN(rule=r, fraction=f)                // small percentage of ingestions
-    if CANARY_OK(r):
-      PROMOTE_RULE(r)
-    else:
-      ROLL_BACK_RULE(r)
-```
-
-Packed forests and shared parse forests are a known strategy to manage ambiguity in parsing.
-
 
 ---
 
@@ -1006,7 +831,6 @@ Packed forests and shared parse forests are a known strategy to manage ambiguity
 ### P6I5 Governance never discards ambiguity
 
 * Ambiguities may be hidden from UI by policy, yet remain in the ambiguity ledger with risk metadata.
-
 
 ---
 
@@ -1082,22 +906,6 @@ The memory layer must support the following operations. A coordination system ma
 
 ---
 
-## D15 ConsolidationJob
-
-```
-ConsolidationJob {
-  job_id: JobId
-  snapshot_id: SnapshotId
-  target_epoch_id: EpochId
-  hypotheses: list<HypId>
-  solver: SolverConfig
-  started_t: Time
-  finished_t: Time?
-}
-```
-
----
-
 ## Comp22 Hippocampal Workspace Store (HWS)
 
 ---
@@ -1109,7 +917,6 @@ for neocortex outputs
 ---
 
 ## Comp25 Commit Controller (2SC)
-
 
 ---
 
@@ -1136,5 +943,21 @@ No automatic resolution of semantic conflict; ambiguity is preserved and surface
 ### P10I16 No mandatory schema objects
 
 No requirement that the LLM use specific schema objects (idea nodes/facets). Those are allowed but not mandatory.
+
+---
+
+---
+
+## Algorithm 6: Conflict scan
+
+Conflict scan detects high tension and residual to identify ambiguity.
+
+```pseudo
+function CONFLICT_SCAN_AND_QUEUE(nodes S):
+  for i in S:
+    if STATE(i,main).T > TH_TENSION or STATE(i,main).r > TH_RESID:
+      edges = TOPK_EDGES_BY_TENSION(i)
+      CREATE_OR_UPDATE_CONFLICT_RECORD(i, edges)
+```
 
 ---

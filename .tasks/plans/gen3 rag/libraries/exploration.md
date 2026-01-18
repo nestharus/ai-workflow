@@ -508,57 +508,6 @@ subject to budgets:
 
 ---
 
-## Algorithm 2: Idea candidate selection
-
-Idea-first means “create handles early, refine later”.
-
-```pseudo
-function SELECT_OR_CREATE_IDEA(candidates, v):
-  for idea in TOPK(candidates):
-    if PASS_FAST_GATE(v, idea):                        // cosine, overlap, structure checks
-      if PASS_VALIDATION(v, idea):                     // optional LLM/classifier
-        return idea
-
-  // else create a provisional idea handle
-  idea = NEW_NODE(level=IDEA, span_ref=null)
-  idea.b = v.b                                         // seed from evidence
-  idea.x = v.x
-  idea.u = HIGH
-  idea.tier = CONTEXT
-  GRAPH.ADD_NODE(idea)
-  return idea
-```
-
-Validation is where hard constraints live. Geometry proposes. Validation commits.
-
-
----
-
-### P7I1 Seeds are append-only
-
-* NoiseSeeds and traces live in the event log.
-
----
-
-### P7I2 Seeds never directly rewrite LTM
-
-* Seeds refine into hypotheses inside workspace overlays.
-* Commit goes through P6 2SC.
-
----
-
-### P7I3 Noise never disappears
-
-* Even when downweighted, the seed remains in the ledger, with a status.
-
----
-
-### P7I4 Curiosity respects risk governance
-
-* High-risk ambiguity is surfaced, or deferred, based on user profile (P4).
-
----
-
 ## Comp5 Candidate Generator
 
 (Component definition from plan.md - to be elaborated)
@@ -640,5 +589,51 @@ Seeds are compact, mostly metrics plus anchors.
 ### P7I15 Trace compression
 
 Traces compress into signatures and aggregate stats.
+
+---
+
+---
+
+### Algorithm 32: Diagnostics-driven inquiry planning
+
+```pseudo
+function PLAN_INQUIRIES(epoch e):
+  candidates = FIND_HIGH_VALUE_AMBIGUITIES(e)        // high usage, high tension, high variance
+  tasks = []
+  for c in candidates:
+    gain = EST_EXPECTED_UNCERTAINTY_REDUCTION(c)
+    cost = EST_COST(c)
+    tasks.append((gain/cost, MAKE_TASK(c)))
+
+  return TOPK(tasks, budget=validation_budget)
+```
+
+Active learning literature gives the template for selecting data to reduce uncertainty efficiently.
+
+---
+
+---
+
+---
+
+### Algorithm 43
+
+Simulate and validate an idea candidate
+
+```pseudo
+function EVALUATE_IDEA(candidate c):
+  hws = HWS_OPEN(region=c.region, base_epoch=c.epoch)
+  APPLY_REWRITE_IN_WORKSPACE(hws, c.rewrite)
+  RUN_LOCAL_FIELD_REPAIR(hws)
+  delta = MEASURE_DELTA(hws, baseline)
+
+  if delta.good:
+    bundle = COMPILE_EVIDENCE_BUNDLE(c, hws)
+    llm = LLM_REFINE(bundle)                   // label + missing evidence
+    STORE_IDEA_TOKEN(c, delta, llm)
+    return PROMOTE_AS_HYPOTHESIS(c)
+  else:
+    RECORD_FAILURE(c)
+```
 
 ---

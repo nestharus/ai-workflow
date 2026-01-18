@@ -21,24 +21,6 @@ All A/B routing is read-view based. The write path is unified (event log). Candi
 
 ---
 
-### D53 TranslationProposal
-
-```text
-TranslationProposal {
-  prop_id: PropId
-  kind: enum {bridge_edge, rule_candidate, pattern_candidate, adapter_candidate}
-  base_view: ManifoldView
-  payload: bytes
-  evidence: EvidenceBundleRef
-  deltas: {ΔT, Δr, Δrisk, Δlatency}
-  expected_gain: float
-  risk_tags: set<RiskTag>
-  status: enum {shadow, canary, promoted, rejected}
-}
-```
-
----
-
 ### D54 ABExperiment
 
 ```text
@@ -52,100 +34,6 @@ ABExperiment {
   guardrails: {max_regression, rollback_thresholds}
   status: enum {shadow, canary, ramp, hold, rollback, graduate}
 }
-```
-
----
-
-### D61 GrammarRuleCandidate
-
-```text
-GrammarRuleCandidate {
-  rule_id: RuleId
-  source_pattern: PatId?
-  domain: DomainId
-  version: int
-  status: enum {shadow, canary, promoted, rolled_back}
-  stats: {precision, conflict_rate, drift_rate}
-  posterior: BetaParams
-}
-```
-
----
-
-### D62 AdapterCandidate
-
-```text
-AdapterCandidate {
-  map_id: MapId
-  src: CSId
-  dst: CSId
-  version: int
-  status: enum {shadow, canary, promoted, rolled_back}
-  fit_error: float
-  drift_score: float
-  updated_t: Time
-}
-```
-
----
-
-## Algorithm 22
-
-### Traversal across coordinate systems
-
-Travel uses canonical field coordinates, while still allowing domain-native similarity when needed.
-
-```pseudo
-function TRAVERSE(query q, start_nodes S):
-  q_bundle = EMBED_QUERY_BUNDLE(q)                     // per domain, per view
-  q_canon = CANONICALIZE(q_bundle)
-
-  frontier = PRIORITY_QUEUE()
-  for s in S:
-    frontier.push(s, score = SIM_CANON(q_canon, X(s)))
-
-  while budget remains:
-    v = frontier.pop()
-    yield v
-
-    for edge in OUT_EDGES(v):
-      u = edge.dst
-
-      // canonical travel
-      score = SIM_CANON(q_canon, X(u)) - EDGE_COST(edge)
-
-      // optional domain boost when token types match
-      if SHARE_COORD_SYSTEM(u, q_bundle):
-        score += λ * SIM_DOMAIN(q_bundle, u)
-
-      frontier.push(u, score)
-```
-
-"Topology changes into different coordinate systems" becomes "travel happens in canonical space, with local boosts in native spaces."
-
----
-
-## Algorithm 51 — CONTINUOUS_SLEEP_NO_DOWNTIME
-
-Sleep runs as continuous background consolidation with snapshot isolation and delta catch-up.
-
-```pseudo
-function CONTINUOUS_SLEEP_NO_DOWNTIME(trigger):
-  lsn0 = EVENT_LOG.TAIL_LSN()
-  snap = CREATE_SNAPSHOT(lsn0)
-
-  // Build candidate epoch from snapshot
-  epoch_new = BUILD_EPOCH(snap)
-  BUILD_INDICES(epoch_new)
-  BUILD_CHARTS(epoch_new)
-  BUILD_CONN_OPERATOR(epoch_new)
-
-  // Catch up while ingestion continues
-  lsn1 = EVENT_LOG.TAIL_LSN()
-  APPLY_DELTAS(epoch_new, from=lsn0, to=lsn1)
-
-  REGISTER_CANDIDATE(epoch_new, ready_lsn=lsn1)
-  START_AB_EXPERIMENT(control=ACTIVE_EPOCH, candidate=epoch_new, start_lsn=lsn1)
 ```
 
 ---
@@ -284,49 +172,6 @@ Graph grammar parsing complexity varies widely across grammar classes and restri
 
 ---
 
-### P9I1 — Read coherence
-
-Every request pins a view:
-
-* `epoch_id`
-* `lsn_end` (event-log offset)
-* `hyp_id`
-
-All reads for the request use that pinned view.
-
----
-
-### P9I2 — Overlay is always writable
-
-Ingestion and workspace commits append to the event log continuously. The overlay applier may lag, but never blocks writes.
-
----
-
-### P9I3 — Blends are reversible
-
-No blend may become the only representation of its primitives. `BlendRecipe` must be explicit and all primitives remain computable.
-
----
-
-### P9I4 — No force becomes law silently
-
-Fields may guide traversal and scheduling.
-
-Fields may only alter topology (edge gates, bridges, anchor policies) via two-stage commit + governance.
-
----
-
-### P9I5 — Translation proposals are provenance-bearing
-
-Any manifold→graph proposal must carry:
-
-* evidence bundle
-* diagnostics deltas
-* risk tags
-* stability window
-
----
-
 ## P10 non-goals
 
 * No global policy for when to spawn children or how to allocate budgets.
@@ -456,7 +301,6 @@ Ingestion hot path stays:
 
 ---
 
-
 ### NFG1 Ingestion performance
 
 Amortized sublinear in corpus size per span.
@@ -466,5 +310,16 @@ Amortized sublinear in corpus size per span.
 ### NFG3 Retrieval latency
 
 Bounded latency with tiered ANN plus graph expansion budget.
+
+---
+
+---
+
+### P6C6 Adapter rollout is safe under canary plus rollback
+
+**Claim.** Rollout can be limited to fraction (f) and reverted on regression.
+**Sketch.**
+
+* Canarying is a standard safety pattern for deployments.
 
 ---

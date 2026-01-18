@@ -329,7 +329,7 @@ Each element below needs library labels as sublists.
 
 ---
 
-## Goals (49)
+## Goals (58)
 
 - **G1**: Reliable directions (L276)
   - primary: field
@@ -477,9 +477,36 @@ Each element below needs library labels as sublists.
   - related: deployment, uncertainty
 - **G29**: Hippocampus actively seeks evidence (L4925)
   - primary: exploration
-  - related: workspace, uncertainty 
+  - related: workspace, uncertainty
+- **G42**: Workspace is first-class (workspace)
+  - primary: workspace
+  - related: storage, graph
+- **G43**: Structured lifetime (parent closes children) (workspace)
+  - primary: workspace
+  - related: foundation
+- **G44**: Fork-join parallel thought (workspace)
+  - primary: workspace
+  - related: storage, foundation
+- **G45**: Capsules and messages (workspace)
+  - primary: workspace
+  - related: foundation, graph, storage
+- **G46**: Commit via ingest (no LLM diffs) (workspace)
+  - primary: workspace
+  - related: ingestion, foundation, storage
+- **G47**: Overlap detection across workspaces (workspace)
+  - primary: workspace
+  - related: graph, embedding, uncertainty
+- **G48**: Convergence-safe merge primitives (workspace)
+  - primary: workspace
+  - related: foundation, storage
+- **G49**: Bounded view compilation (workspace)
+  - primary: workspace
+  - related: patterns, field
+- **G50**: Observability and budgets (workspace)
+  - primary: workspace
+  - related: uncertainty, storage
 
-## Invariants (15)
+## Invariants (81)
 
 - **P1I1**: Evidence permanence [P1] (L527)
   - primary: foundation
@@ -495,7 +522,7 @@ Each element below needs library labels as sublists.
   - related: uncertainty
 - **P1I5**: Compression keeps a lossless backstore [P1] (L553)
   - primary: storage
-  - related: patterns
+  - related: foundation, patterns
 - **P4I1**: Abstractions are derived artifacts [P1] (L558)
   - primary: patterns
   - related: foundation
@@ -526,8 +553,206 @@ Each element below needs library labels as sublists.
 - **P9I6**: — A/B never breaks correctness [P9] (L660)
   - primary: deployment
   - related: storage
+- **P10I1**: Isolation (workspace)
+  - primary: workspace
+  - related: foundation, storage
+- **P10I10**: Memory layer operations (embedding, workspace)
+  - primary: workspace
+  - related: embedding, storage
+- **P10I11**: P6 two-stage commit integration (workspace)
+  - primary: workspace
+  - related: ingestion, foundation
+- **P10I12**: P7 exploration integration (workspace)
+  - primary: workspace
+  - related: exploration
+- **P10I13**: P9 manifold integration (workspace)
+  - primary: workspace
+  - related: field
+- **P10I14**: No global spawn policy (workspace)
+  - primary: workspace
+  - related: foundation
+- **P10I15**: No automatic conflict resolution (workspace)
+  - primary: workspace
+  - related: uncertainty, foundation
+- **P10I16**: No mandatory schema objects (workspace)
+  - primary: workspace
+  - related: foundation
+- **P10I2**: Snapshot base (workspace)
+  - primary: workspace
+  - related: storage
+- **P10I3**: Structured concurrency closure (workspace)
+  - primary: workspace
+  - related: foundation
+- **P10I4**: Idempotent import/export (workspace)
+  - primary: workspace
+  - related: foundation
+- **P10I5**: Loop-free capsule routing (workspace)
+  - primary: workspace
+  - related: foundation
+- **P10I6**: Convergence of replicated workspace state (workspace)
+  - primary: workspace
+  - related: foundation, storage
+- **P10I7**: Partial persistence (workspace)
+  - primary: workspace
+  - related: storage
+- **P10I8**: Overlap registry monotonicity (workspace)
+  - primary: workspace
+  - related: foundation, storage
+- **P10I9**: Risk and provenance propagate (workspace)
+  - primary: workspace
+  - related: foundation, uncertainty
+- **P1I10**: NodeState history persistence (storage)
+  - primary: storage
+  - related: foundation
+- **P1I11**: Graph edge durability (storage)
+  - primary: storage
+  - related: graph
+- **P1I12**: Ingestion hot path (storage)
+  - primary: ingestion
+  - related: storage, field
+- **P1I13**: Tier-locality storage (storage)
+  - primary: storage
+  - related: field
+- **P1I14**: Index structure by tier (storage)
+  - primary: storage
+  - related: embedding
+- **P1I15**: Inactive embedding quantization (storage)
+  - primary: storage
+  - related: embedding
+- **P1I16**: Edge write batching (storage)
+  - primary: storage
+  - related: graph
+- **P1I6**: Event-sourced replay (storage)
+  - primary: storage
+  - related: foundation
+- **P1I7**: Raw spans are immutable (storage)
+  - primary: storage
+  - related: foundation
+- **P1I8**: ObservationRecord persistence (storage)
+  - primary: storage
+  - related: foundation, embedding
+- **P1I9**: ANN store with full backstore (storage)
+  - primary: storage
+  - related: embedding
+- **P2I1**: Field update locality (field)
+  - primary: field
+  - related: graph
+- **P2I2**: Local field updates bounded (field)
+  - primary: field
+  - related: graph, uncertainty
+- **P2I3**: Local relaxation bounded (field)
+  - primary: field
+  - related: graph, storage
+- **P2I4**: Conflict resolution strict quotas (field)
+  - primary: field
+  - related: uncertainty
+- **P2I5**: Validator rate limiting (field)
+  - primary: field
+  - related: uncertainty
+- **P2I6**: Uncertainty-driven compute (field)
+  - primary: field
+  - related: uncertainty
+- **P4I10**: Safe online learning (patterns)
+  - primary: patterns
+  - related: uncertainty, deployment
+- **P4I11**: Governance is separate (patterns)
+  - primary: patterns
+  - related: uncertainty, foundation
+- **P4I5**: Abstraction reduces working-set size (patterns)
+  - primary: patterns
+  - related: storage
+- **P4I6**: Expansion is demand-driven (patterns)
+  - primary: patterns
+  - related: foundation
+- **P4I7**: Pattern mining is sleep-time (patterns)
+  - primary: patterns
+  - related: storage, workspace
+- **P4I8**: Online matching is bounded (patterns)
+  - primary: patterns
+  - related: field
+- **P4I9**: Failure memory is prioritized (patterns)
+  - primary: patterns
+  - related: uncertainty, storage
+- **P5I1**: Parse forest versioning (embedding)
+  - primary: embedding
+  - related: ingestion, storage
+- **P5I2**: Strict beam width (embedding)
+  - primary: embedding
+  - related: ingestion, uncertainty
+- **P5I3**: Grammar class restrictions per tier (embedding)
+  - primary: embedding
+  - related: ingestion, field
+- **P5I4**: Match candidate indexing (embedding)
+  - primary: embedding
+  - related: ingestion, graph
+- **P5I5**: Coordinate transforms cached (embedding)
+  - primary: embedding
+  - related: field, storage
+- **P5I6**: Domain embedders specialized (embedding)
+  - primary: embedding
+  - related: foundation
+- **P6I1**: Workspace isolation (workspace)
+  - primary: workspace
+  - related: foundation, storage
+- **P6I2**: Evidence permanence (workspace)
+  - primary: workspace
+  - related: foundation, storage
+- **P6I3**: Snapshot reads (workspace)
+  - primary: workspace
+  - related: storage
+- **P6I4**: Safe reclamation (workspace)
+  - primary: workspace
+  - related: storage
+- **P6I5**: Governance never discards ambiguity (workspace)
+  - primary: workspace
+  - related: uncertainty, foundation
+- **P7I1**: Seeds are append-only (exploration)
+  - primary: exploration
+  - related: foundation, storage
+- **P7I10**: High-risk surfaces ambiguity (exploration)
+  - primary: exploration
+  - related: uncertainty, foundation
+- **P7I11**: Cheap probes first (exploration)
+  - primary: exploration
+  - related: uncertainty
+- **P7I12**: Forest and overlay reuse (exploration)
+  - primary: exploration
+  - related: workspace, ingestion
+- **P7I13**: Sleep vs online depth (exploration)
+  - primary: exploration
+  - related: workspace
+- **P7I14**: Seed compactness (exploration)
+  - primary: exploration
+  - related: storage
+- **P7I15**: Trace compression (exploration)
+  - primary: exploration
+  - related: storage
+- **P7I2**: Seeds never directly rewrite LTM (exploration)
+  - primary: exploration
+  - related: workspace, foundation
+- **P7I3**: Noise never disappears (exploration)
+  - primary: exploration
+  - related: foundation, storage
+- **P7I4**: Curiosity respects risk governance (exploration)
+  - primary: exploration
+  - related: uncertainty, foundation
+- **P7I5**: Archived seed queryability (exploration)
+  - primary: exploration
+  - related: storage
+- **P7I6**: Failure memory blocks loops (exploration)
+  - primary: exploration
+  - related: uncertainty, patterns
+- **P7I7**: Exploration hard budgets (exploration)
+  - primary: exploration
+  - related: uncertainty
+- **P7I8**: Beam limits per seed (exploration)
+  - primary: exploration
+  - related: uncertainty
+- **P7I9**: Governance gating (exploration)
+  - primary: exploration
+  - related: uncertainty, foundation
 
-## Claims (29)
+## Claims (35)
 
 - **P4C1**: Lossless structural abstraction [P4] (L3196)
   - primary: patterns
@@ -616,6 +841,24 @@ Each element below needs library labels as sublists.
 - **P7C5**: Information gain guides ambiguity resolution [P7] (L4119)
   - primary: exploration
   - related: uncertainty, verification
+- **C1**: Field embeddings exist and are unique (field)
+  - primary: field
+  - related: foundation, verification
+- **C2**: Local relaxation converges (field)
+  - primary: field
+  - related: graph, verification
+- **C3**: Field embeddings attenuate underspecified noise (field)
+  - primary: field
+  - related: uncertainty, verification
+- **C4**: Tier promotion logic bounds RAM and compute (field)
+  - primary: storage
+  - related: foundation, verification
+- **C5**: Ingestion produces stable idea handles (field)
+  - primary: ingestion
+  - related: graph, foundation, verification
+- **P1C3**: Field relaxation convergence (verification)
+  - primary: field
+  - related: graph, verification
 
 ## Structures (46)
 
@@ -757,7 +1000,7 @@ Each element below needs library labels as sublists.
   - primary: exploration
   - related: uncertainty, storage
 
-## Algorithms (69)
+## Algorithms (90)
 
 - **Algorithm 10**: Structural Abstraction Mining (sleep-time) [P4] (L1998)
   - primary: patterns
@@ -780,6 +1023,69 @@ Each element below needs library labels as sublists.
 - **Algorithm 16**: Risk & Ambiguity Governance [P4] (L2125)
   - primary: uncertainty
   - related: foundation, storage
+- **Algorithm 17**: Modality routing and tokenizer selection [P5] (ingestion)
+  - primary: ingestion
+  - related: foundation, embedding
+- **Algorithm 18**: Incremental graph grammar parsing with hypothesis beam [P5] (ingestion)
+  - primary: ingestion
+  - related: graph, patterns, uncertainty
+- **Algorithm 19**: Rule application as graph rewrite with provenance [P5] (ingestion)
+  - primary: ingestion
+  - related: foundation, graph, storage
+- **Algorithm 20**: Grammar emergence from patterns [P5] (embedding)
+  - primary: patterns
+  - related: ingestion, embedding
+- **Algorithm 21**: Graph token embedding bundle and canonical projection [P5] (embedding)
+  - primary: embedding
+  - related: ingestion, field, storage
+- **Algorithm 22**: Traversal across coordinate systems [P5] (deployment, embedding)
+  - primary: embedding
+  - related: field, deployment, graph
+- **Algorithm 23**: Re-ingestion under reinterpretation [P5] (embedding)
+  - primary: ingestion
+  - related: workspace, field, embedding
+- **Algorithm 33**: Noise scan [P7] (embedding, exploration)
+  - primary: exploration
+  - related: field, uncertainty, embedding
+- **Algorithm 34**: Thread queue update [P7] (embedding, field)
+  - primary: exploration
+  - related: field, uncertainty, embedding
+- **Algorithm 35**: Explore a seed [P7] (embedding, patterns, verification)
+  - primary: exploration
+  - related: patterns, uncertainty, verification
+- **Algorithm 36**: Distill traces into tokens [P7] (embedding, uncertainty, verification)
+  - primary: exploration
+  - related: patterns, uncertainty, verification
+- **Algorithm 37**: Curiosity scheduler [P7] (embedding, uncertainty, verification)
+  - primary: exploration
+  - related: uncertainty, verification
+- **Algorithm 38**: Decay and cleanup [P7] (embedding, uncertainty, verification)
+  - primary: exploration
+  - related: uncertainty, verification
+- **Algorithm 39**: Factor learning in sleep [P8] (embedding, field)
+  - primary: embedding
+  - related: field, patterns
+- **Algorithm 40**: Module mining from pattern graphs [P8] (embedding, workspace)
+  - primary: patterns
+  - related: graph, workspace
+- **Algorithm 41**: Build pattern functionality profiles [P8] (embedding, workspace)
+  - primary: patterns
+  - related: embedding, field
+- **Algorithm 42**: Idea proposal via substitution and hybridization [P8] (embedding, workspace)
+  - primary: exploration
+  - related: patterns, field, workspace
+- **Algorithm 43**: Simulate and validate an idea candidate [P8] (embedding, uncertainty)
+  - primary: exploration
+  - related: workspace, uncertainty, field
+- **Algorithm 65**: Robust Field Solve via IRLS [P2] (field)
+  - primary: field
+  - related: graph, uncertainty
+- **Algorithm 66**: Apply deltas after snapshot [P2] (storage)
+  - primary: storage
+  - related: field, graph
+- **Algorithm 67**: Publish epoch with RCU semantics [P2] (storage)
+  - primary: storage
+  - related: foundation
 - **Algorithm 1**: Streaming ingestion [P10] (L2432)
   - primary: ingestion
   - related: foundation, storage, graph, field, embedding
@@ -1090,7 +1396,7 @@ Each element below needs library labels as sublists.
   - primary: workspace
   - related: graph, embedding
 
-## Leans (8)
+## Leans (19)
 
 - **P1 Lean 1** [P1] (L4207)
   - primary: verification
@@ -1116,7 +1422,63 @@ Each element below needs library labels as sublists.
 - **Lean 2**: RCU style reclamation condition as a predicate [P6] (L4490)
   - primary: storage
   - related: verification
+- **Lean5**: Core quadratic energy proofs (verification)
+  - primary: verification
+  - related: field, foundation
+- **Lean6**: Lossless compress/expand (verification)
+  - primary: verification
+  - related: patterns
+- **Lean7**: Monotone failure brake (verification)
+  - primary: verification
+  - related: uncertainty, patterns
+- **Lean8**: Gated quadratic uniqueness (foundation, verification)
+  - primary: verification
+  - related: field, foundation
+- **Lean9**: Evidence permanence invariants (field, foundation, verification)
+  - primary: verification
+  - related: foundation, storage
+- **Lean10**: IRLS descent and stationary point shape (field, verification)
+  - primary: verification
+  - related: field
+- **Lean11**: Snapshot and epoch invariants (storage, verification)
+  - primary: verification
+  - related: storage, foundation
+- **Lean12**: Distance preservation under orthogonal maps (embedding, field, verification)
+  - primary: verification
+  - related: embedding, field
+- **Lean13**: Canonical field uniqueness with multi-view anchors (embedding, verification)
+  - primary: verification
+  - related: embedding, field
+- **Lean14**: Event-sourced isolation (verification, workspace)
+  - primary: verification
+  - related: workspace, storage
+- **Lean15**: RCU style reclamation condition as a predicate (storage, verification)
+  - primary: verification
+  - related: storage
 
+## Statements (4)
+
+- **S1**: Problem statement (foundation)
+  - primary: foundation
+  - related: field, embedding
+- **S2**: Core approach (foundation)
+  - primary: foundation
+  - related: field, graph, embedding
+- **S3**: Why your architecture makes this robust (foundation)
+  - primary: foundation
+  - related: uncertainty, patterns, graph
+- **S4**: Disentanglement feasibility (foundation)
+  - primary: foundation
+  - related: patterns, embedding, graph
+
+## Non-functional Goals (2)
+
+- **NFG1**: Ingestion performance (deployment)
+  - primary: deployment
+  - related: ingestion, storage
+- **NFG3**: Retrieval latency (deployment)
+  - primary: deployment
+  - related: field, storage
 
 ## Additional Elements (77)
 
@@ -1400,10 +1762,7 @@ Each element below needs library labels as sublists.
   - related: 
 - **P1I4 Ambiguity stays explicit** (L546)
   - primary: foundation
-  - related: 
-- **P1I5 Compression keeps a lossless backstore** (L553)
-  - primary: foundation
-  - related: 
+  - related:
 - **P4I1 Abstractions are derived artifacts** (L558)
   - primary: patterns
   - related: 

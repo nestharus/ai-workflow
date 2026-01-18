@@ -2504,6 +2504,13 @@ function FIELD_UPDATE_WITH_DIAGNOSTICS(nodes S):
     for each edge (i,j) touching S:
       t = w_eff(i,j) * NORM2(STATE(i,h).x - STATE(j,h).x)
       UPDATE_EDGE_TENSION(edge_id, t)
+
+function FIELD_RELAX_GATED(nodes S, hypothesis h, steps T):
+  repeat T times:
+    for i in SHUFFLE(S):
+      denom = alpha[i] + mu[i] + SUM_{j in N(i)} w[i,j] * g[i,j,h]
+      numer = alpha[i] * b[i] + SUM_{j in N(i)} w[i,j] * g[i,j,h] * x[j,h]
+      x[i,h] = numer / denom
 ```
 
 Coordinate update under gated quadratic stays closed form:

@@ -19,7 +19,7 @@ ID_PATTERNS = [
     (r'Algorithm\s+\d+', 'Algorithm'),
     (r'P\d+I\d+', 'Invariant'),
     (r'P\d+C\d+', 'PatchClaim'),
-    (r'C\d+', 'Claim'),          # General claims C1, C2, etc.
+    (r'(?<!\d)C\d+', 'Claim'),    # General claims C1, C2, etc. (not P5C1)
     (r'P\d+\.\d+', 'Math'),
     (r'P\d+\s+Lean\s+\d+', 'Lean'),
     (r'Lean\d+', 'Lean'),        # Lean1, Lean2, etc. (no space)
