@@ -95,6 +95,26 @@ Optionally, apply it to edge gates (g) inside instances derived from that patter
 g_{ij}^{(h)} \leftarrow g_{ij}^{(h)} \cdot \exp(-\eta F(p,ctx))
 ]
 
+### Lean7 Monotone failure brake [(=Lean7)]
+
+```lean
+namespace FailureBrake
+
+open Real
+
+def brake (η F : ℝ) : ℝ := Real.exp (-η * F)
+
+theorem brake_monotone {η : ℝ} (hη : 0 < η) :
+  Monotone (fun F => brake η F) := by
+  -- exp(-ηF) is monotone decreasing in F, so this is Antitone;
+  -- write the correct lemma as Antitone if preferred.
+  sorry
+
+end FailureBrake
+```
+
+(When making this formal, use `Antitone` for the decreasing property.)
+
 ### P4.4 Light outcome feedback as contextual bandit over system actions [(=P4.4)]
 
 Define an action set (\mathcal{A}) over system knobs, e.g.:

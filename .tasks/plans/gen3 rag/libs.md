@@ -650,49 +650,49 @@
   - primary: workspace
   - related: uncertainty, storage
 - [(=Lean1)]
-  - primary: verification
+  - primary: field
   - related: field, foundation
 - [(=Lean2)]
-  - primary: verification
+  - primary: field
   - related: field, graph
 - [(=Lean3)]
-  - primary: verification
+  - primary: field
   - related: field, uncertainty
 - [(=Lean4)]
-  - primary: verification
+  - primary: storage
   - related: storage, foundation
 - [(=Lean5)]
-  - primary: verification
+  - primary: field
   - related: field, foundation
 - [(=Lean6)]
-  - primary: verification
+  - primary: patterns
   - related: patterns
 - [(=Lean7)]
-  - primary: verification
+  - primary: uncertainty
   - related: uncertainty, patterns
 - [(=Lean8)]
-  - primary: verification
+  - primary: field
   - related: field, foundation
 - [(=Lean9)]
-  - primary: verification
+  - primary: foundation
   - related: foundation, storage
 - [(=Lean10)]
-  - primary: verification
+  - primary: field
   - related: field
 - [(=Lean11)]
-  - primary: verification
+  - primary: storage
   - related: storage, foundation
 - [(=Lean12)]
-  - primary: verification
+  - primary: embedding
   - related: embedding, field
 - [(=Lean13)]
-  - primary: verification
+  - primary: field
   - related: embedding, field
 - [(=Lean14)]
-  - primary: verification
+  - primary: workspace
   - related: workspace, storage
 - [(=Lean15)]
-  - primary: verification
+  - primary: storage
   - related: storage
 - [(=NFG1)]
   - primary: deployment

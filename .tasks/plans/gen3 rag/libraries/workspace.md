@@ -475,6 +475,36 @@ WORKSPACE_GC(ws_id):
 * Commit controller is the only path that emits LTM events.
 * Event log is append-only.
 
+### Lean14 Event-sourced isolation [(=Lean14)]
+
+```lean
+namespace Hippocampus
+
+-- Abstract sketch
+inductive Event
+| CommitEdge : Nat → Nat → Event
+| CommitNode : Nat → Event
+
+structure LTMState where
+  edges : Nat → Nat → Prop
+
+def apply_event : LTMState → Event → LTMState := by
+  intro s e
+  cases e with
+  | CommitEdge u v =>
+      exact { edges := fun a b => s.edges a b ∨ (a = u ∧ b = v) }
+  | CommitNode n =>
+      exact s
+
+-- Workspace updates do not call apply_event
+theorem workspace_isolation
+  (s : LTMState) (ws_updates : Nat) :
+  ∃ s' : LTMState, s' = s := by
+  exact ⟨s, rfl⟩
+
+end Hippocampus
+```
+
 ### P6C2 Snapshot consistency [(=P6C2)]
 
 **Claim.** Readers obtain a stable view \(G^{\(e\)}\) while commits create \(G^{(e+1)}\).
@@ -709,4 +739,3 @@ Sandboxes candidate grammar rules, measures performance, promotes based on confi
 
 ## Comp31 Adapter Lifecycle Manager (ADAPT) [(=Comp31)]
 with drift detection
-

@@ -566,6 +566,166 @@ Proof obligation in Lean:
 * show SPD of (L + A + M)
 * show unique minimizer exists
 
+## Lean1 Existence and uniqueness of the field solution [(=Lean1)]
+
+**Claim C1.** If (\alpha_i + \mu_i > 0) for every connected component, then (\mathcal{E}(X)) has a unique minimizer.
+
+**Sketch**
+
+* (\mathcal{E}(X)) is a sum of convex quadratics in (X).
+* The Hessian in each dimension is (Q = L + A + M).
+* (L) is positive semidefinite.
+* (A+M) contributes positive diagonal mass on anchored nodes.
+* That makes (Q) positive definite on each connected component that has at least one anchored node, so the quadratic is strictly convex, so the minimizer is unique.
+* The linear system ((L+A+M)X = AB) has a unique solution.
+
+This is standard for Laplacian-regularized objectives and Gaussian field style constructions.
+
+## Lean2 Energy decreases under relaxation, convergence on fixed graph [(=Lean2)]
+
+**Claim C2.** The update
+[
+x_i \leftarrow \frac{\alpha_i b_i + \sum_j w_{ij} x_j}{\alpha_i + \mu_i + \sum_j w_{ij}}
+]
+monotonically decreases (\mathcal{E}) when updating one node at a time with others fixed. Repeating converges to the unique minimizer.
+
+**Sketch**
+
+* (\mathcal{E}) is quadratic and separable per node when holding neighbors fixed.
+* The update sets (x_i) to the exact minimizer of (\mathcal{E}) restricted to coordinate block (i).
+* Block coordinate descent on a strictly convex quadratic decreases energy each step and converges to the unique minimizer.
+
+## Lean3 Noise attenuation, directions become more reliable [(=Lean3)]
+
+**Claim C3.** Under the model (b = s + \varepsilon), with zero-mean iid noise and a smoothness prior where neighboring nodes share similar (s), the field solution (x) has lower expected error than (b) along high-frequency graph modes.
+
+**Sketch**
+
+* In one dimension, the solution is linear: (x = (L+A+M)^{-1}A b = S b).
+* In the Laplacian eigenbasis, this is a low-pass graph filter with transfer function roughly (h(\lambda)=\alpha/(\alpha+\lambda+\mu)).
+* High-frequency components have large (\lambda), so (h(\lambda)) shrinks those components.
+* If noise injects energy broadly, high-frequency noise gets attenuated more than the low-frequency signal.
+* So expected MSE decreases in regimes where the signal is graph-smooth and noise is less graph-smooth.
+
+This is graph filtering language from graph signal processing.
+
+## Lean5 Core quadratic energy proofs [(=Lean5)]
+
+Lean is a good fit for the quadratic core: uniqueness, strict convexity, and "energy decreases" lemmas. Mathlib already covers a wide range of linear algebra and analysis.
+
+Below is a Lean + mathlib4 skeleton. It targets the key proof obligations. It uses placeholders where you would connect to existing lemmas about positive definiteness and strict convexity.
+
+```lean
+/-
+Lean + mathlib4 skeleton.
+Goal: formalize uniqueness of minimizer for quadratic energy on finite graphs.
+
+This file assumes:
+  - a finite set of nodes ι
+  - embeddings live in (ι → ℝ^d) or (ι → ℝ) per coordinate
+  - energy E(x) = xᵀ Q x - 2 cᵀ x + const
+  - Q is symmetric positive definite
+-/
+
+import Mathlib.LinearAlgebra.Matrix.Symmetric
+import Mathlib.LinearAlgebra.Matrix.PositiveDefinite
+import Mathlib.Analysis.Convex.Quadratic
+import Mathlib.Analysis.NormedSpace.OperatorNorm
+
+open scoped BigOperators
+open Matrix
+
+namespace GraphField
+
+variable {ι : Type} [Fintype ι] [DecidableEq ι]
+
+-- Coordinate-wise view: one embedding dimension at a time.
+-- x : ι → ℝ can be represented as a vector over a finite basis.
+
+-- Abstract quadratic form: Q : Matrix ι ι ℝ, c : ι → ℝ
+variable (Q : Matrix ι ι ℝ) (c : ι → ℝ)
+
+def energy (x : ι → ℝ) : ℝ :=
+  (Matrix.dotProduct x (Q.mulVec x)) - 2 * (Matrix.dotProduct c x)
+
+-- Core theorem: SPD Q gives unique minimizer.
+theorem unique_minimizer_of_posDef
+    (hQ : Matrix.PosDef Q) :
+    ∃! x* : ι → ℝ, ∀ x : ι → ℝ, energy Q c x* ≤ energy Q c x := by
+  -- Strategy:
+  -- 1) show energy is strictly convex using hQ
+  -- 2) strict convexity on a finite-dimensional real vector space gives unique minimizer
+  -- 3) minimizer characterized by Q x* = c
+  -- mathlib has lemmas connecting PosDef to StrictConvex for quadratic forms
+  sorry
+
+-- One-step coordinate descent decreases energy.
+-- Needs a definition of the coordinate update operator for node i.
+variable (i : ι)
+
+def coordUpdate (x : ι → ℝ) : ι → ℝ := by
+  -- implement x with coordinate i replaced by argmin of energy along that coordinate
+  -- for quadratic energy, this is closed form
+  exact x
+
+theorem energy_decreases_coordUpdate
+    (hQ : Matrix.PosDef Q) :
+    ∀ x : ι → ℝ, energy Q c (coordUpdate Q c i x) ≤ energy Q c x := by
+  -- Strategy:
+  -- energy restricted to coordinate i is a 1D strictly convex quadratic
+  -- coordUpdate picks its minimizer
+  sorry
+
+end GraphField
+```
+
+This is the proof "spine" for C1 and C2. After that, you can build the vector-valued version by applying the scalar proof (d) times.
+
+### Lean8 Gated quadratic uniqueness [(=Lean8)]
+
+Gated quadratic uniqueness.
+
+This extends the earlier SPD quadratic lemma. It uses `Matrix.PosDef` from mathlib.
+
+```lean
+import Mathlib.LinearAlgebra.Matrix.PosDef
+import Mathlib.Analysis.Convex.Quadratic
+
+namespace GraphFieldGated
+
+variable {ι : Type} [Fintype ι] [DecidableEq ι]
+variable (Q : Matrix ι ι ℝ) (c : ι → ℝ)
+
+def energy (x : ι → ℝ) : ℝ :=
+  (Matrix.dotProduct x (Q.mulVec x)) - 2 * (Matrix.dotProduct c x)
+
+theorem unique_minimizer_of_posDef (hQ : Matrix.PosDef Q) :
+    ∃! x* : ι → ℝ, ∀ x, energy Q c x* ≤ energy Q c x := by
+  -- use strict convexity of quadratic form from PosDef
+  sorry
+
+end GraphFieldGated
+```
+
+### Lean13 Canonical field uniqueness with multi-view anchors [(=Lean13)]
+
+```lean
+import Mathlib.LinearAlgebra.Matrix.PosDef
+
+namespace CanonField
+
+variable {ι : Type} [Fintype ι] [DecidableEq ι]
+
+-- Q = L + A + M is SPD, so quadratic energy has unique minimizer.
+theorem canonical_field_unique
+  (Q : Matrix ι ι ℝ) (hQ : Matrix.PosDef Q) (bbar : ι → ℝ) :
+  ∃! x* : ι → ℝ, True := by
+  -- reuse earlier quadratic minimizer theorem shape
+  sorry
+
+end CanonField
+```
+
 ## G1 Reliable directions [(=G1)]
 
    * Directions conditioned on structure, rather than raw span text.
@@ -694,6 +854,51 @@ Sketch:
 
 References for MM stationary point behavior and MM in signal processing.
 
+### Lean10 IRLS descent and stationary point shape [(=Lean10)]
+
+Lean formalization target: one coordinate dimension at a time, finite node set, convex Huber robust objective.
+
+```lean
+import Mathlib.Analysis.Convex.Function
+import Mathlib.Analysis.SpecialFunctions.Pow
+import Mathlib.LinearAlgebra.Matrix.PosDef
+
+open scoped BigOperators
+namespace RobustIRLS
+
+variable {ι : Type} [Fintype ι] [DecidableEq ι]
+
+-- A scalar per node. Vector case is d copies.
+def huber (δ : ℝ) (r : ℝ) : ℝ :=
+  if r ≤ δ then (1/2) * r^2 else δ*r - (1/2)*δ^2
+
+-- Graph objective in scalar form:
+-- sum_e w_e * huber(δ_e, |x_i - x_j|) + anchor terms + reg terms
+-- This file sketches the proof spine. Details require additional lemmas.
+
+theorem irls_majorizes
+  (/* assumptions on δ, eps, weights */) :
+  True := by
+  -- show surrogate >= objective and tangency at current iterate
+  sorry
+
+theorem irls_descent
+  (/* assumptions: majorizer property, exact minimization of surrogate */) :
+  True := by
+  -- prove E(x_{k+1}) ≤ E(x_k)
+  sorry
+
+theorem mm_limitpoint_stationary
+  (/* assumptions: continuity, bounded below, tangency, majorization */) :
+  True := by
+  -- standard MM theorem: any cluster point is stationary
+  sorry
+
+end RobustIRLS
+```
+
+This aligns with the MM descent logic used in MM references.
+
 ### P1C2 Unique field minimizer [(=P1C2)]
 
 Gated quadratic field per hypothesis has a unique minimizer under the same anchoring condition as v0.1.
@@ -733,4 +938,3 @@ Validation is where hard constraints live. Geometry proposes. Validation commits
 ### P2I6 Uncertainty-driven compute [(=P2I6)]
 
 High uncertainty nodes get more validation and more relaxation steps. Low uncertainty nodes get cheap maintenance.
-

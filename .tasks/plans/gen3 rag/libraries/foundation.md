@@ -121,6 +121,49 @@ Proof obligation in Lean:
 
 * inductive invariant over events: every token has a path to some ObservationRecord or is marked structural-only and tied to anchor nodes
 
+### Lean9 Evidence permanence invariants [(=Lean9)]
+
+Evidence permanence invariants.
+
+Model the system as an event-sourced state machine and prove invariants by induction over event lists.
+
+```lean
+namespace IngestionInvariants
+
+inductive Event
+| addNode : Nat → Event
+| addObs  : Nat → Event
+| addEdge : Nat → Event
+| addState : Nat → Event
+| updateGate : Nat → Event
+| branchHyp : Nat → Event
+
+structure Store where
+  hasSpan : Nat → Prop
+  hasObs  : Nat → Prop
+  hasState : Nat → Prop
+
+def step : Store → Event → Store := by
+  intro s e
+  -- define how store evolves for each event
+  exact s
+
+def invariantEvidence (s : Store) : Prop :=
+  ∀ n, s.hasObs n → s.hasSpan n
+
+theorem invariant_preserved :
+  ∀ (s0 : Store) (es : List Event),
+    invariantEvidence s0 →
+    invariantEvidence (es.foldl step s0) := by
+  intro s0 es h
+  -- list induction on es
+  sorry
+
+end IngestionInvariants
+```
+
+This proves the shape of "no evidence gets lost" formally once the `step` function encodes append-only behavior.
+
 ### P1C1 Evidence permanence [(=P1C1)]
 
 Evidence permanence holds under all operations.

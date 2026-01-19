@@ -399,6 +399,37 @@ function STREAM_TO_SPANS(stream):
 
 * Abstractions are reversible (original evidence graph can be reconstructed from pattern instances + residual edges).
 
+### Lean6 Lossless compress/expand [(=Lean6)]
+
+```lean
+-- Sketch: define a graph, pattern instances with explicit node maps, and prove expand ∘ compress = id.
+
+namespace PatternCompression
+
+structure Graph (V E : Type) where
+  edges : E → V × V
+
+structure PatternInstance (V PV : Type) where
+  nodeMap : PV → V
+  residualEdges : List (V × V)
+
+def compress {V E PV : Type} (G : Graph V E) : List (PatternInstance V PV) := by
+  exact []
+
+def expand {V E PV : Type} (I : List (PatternInstance V PV)) : Graph V (V×V) := by
+  refine ⟨?edges⟩
+  intro e; exact e
+
+theorem expand_compress_id
+  {V E PV : Type} (G : Graph V E) :
+  expand (compress (V:=V) (E:=E) (PV:=PV) G) = (by
+    -- extensional equality proof would go here
+    exact G) := by
+  sorry
+
+end PatternCompression
+```
+
 ### P4C2 MDL-driven abstraction reduces description length [(=P4C2)]
 
 * Given a candidate pattern set, choosing patterns by MDL yields shorter descriptions than raw graph encoding (for those patterns). (Algorithm is heuristic; objective is principled.)
@@ -524,4 +555,3 @@ P6 (+[P6]) "sleep" is the right place to run heavy disentanglement.
 You already mine patterns. P4 patterns still tend to be "fat."
 
 You now add module extraction:
-

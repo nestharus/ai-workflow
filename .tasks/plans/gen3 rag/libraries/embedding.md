@@ -88,6 +88,28 @@ Canonical field solve per hypothesis stays the same Laplacian style objective, n
 
 Multi-view alignment and fusion is a standard concept, including correlation-based alignment like CCA and mapping-based approaches like Procrustes.
 
+### Lean12 Distance preservation under orthogonal maps [(=Lean12)]
+
+```lean
+import Mathlib.LinearAlgebra.Matrix.Orthogonal
+import Mathlib.Analysis.NormedSpace.Basic
+
+namespace CoordMaps
+
+open Matrix
+
+variable {n : Type} [Fintype n] [DecidableEq n]
+
+-- Sketch: for an orthogonal matrix R, show ‖R.mulVec x - R.mulVec y‖ = ‖x - y‖.
+theorem orthogonal_preserves_norm
+  (R : Matrix n n ℝ) (hR : R.IsOrtho) (x y : n → ℝ) :
+  ‖R.mulVec x - R.mulVec y‖ = ‖x - y‖ := by
+  -- use inner-product preservation lemmas from IsOrtho
+  sorry
+
+end CoordMaps
+```
+
 ## P5.4 Adapter learning [(=P5.4)]
 
 Two practical adapter forms:

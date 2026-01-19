@@ -49,6 +49,44 @@ function PUBLISH_EPOCH(epoch_new):
 
 RCU provides the pattern: readers run lock-free against a stable snapshot while writer swaps the pointer then waits a grace period before reclaim.
 
+### Lean11 Snapshot and epoch invariants [(=Lean11)]
+
+Model as an event log plus an epoch pointer.
+
+```lean
+namespace EpochSafety
+
+inductive Event
+| addNode : Nat → Event
+| addEdge : Nat → Event
+| addObs  : Nat → Event
+| addState : Nat → Event
+
+structure Store where
+  applied : Nat → Prop            -- events applied up to lsn
+  hasObs  : Nat → Prop
+  hasSpan : Nat → Prop
+
+def applyUpTo (s : Store) (lsn : Nat) : Store := s
+
+def snapshotConsistent (s : Store) (lsn : Nat) : Prop :=
+  True
+
+def epochPublishSafe : Prop := True
+
+theorem snapshot_consistency :
+  ∀ s lsn, snapshotConsistent (applyUpTo s lsn) lsn := by
+  intro; trivial
+
+theorem publish_atomic_epoch :
+  epochPublishSafe := by
+  trivial
+
+end EpochSafety
+```
+
+This is a placeholder spine. To make it real, the `Store` and `applyUpTo` definitions encode the log replay semantics and the epoch pointer swap rules.
+
 ## Algorithm 51 — CONTINUOUS_SLEEP_NO_DOWNTIME [(=Algorithm 51)]
 
 Sleep runs as continuous background consolidation with snapshot isolation and delta catch-up.
@@ -79,6 +117,25 @@ function CONTINUOUS_SLEEP_NO_DOWNTIME(trigger):
 
 * Track reader epochs.
 * Reclaim when min reader epoch advances past reclaim target, same pattern as RCU grace periods.
+
+### Lean15 RCU style reclamation condition as a predicate [(=Lean15)]
+
+```lean
+namespace Reclaim
+
+def safe_to_reclaim (target_epoch : Nat) (reader_epochs : List Nat) : Prop :=
+  ∀ r ∈ reader_epochs, r > target_epoch
+
+theorem reclaim_monotone
+  (t : Nat) (rs1 rs2 : List Nat)
+  (h : ∀ r ∈ rs2, r ∈ rs1) :
+  safe_to_reclaim t rs1 → safe_to_reclaim t rs2 := by
+  intro h1 r hr2
+  have hr1 : r ∈ rs1 := h r hr2
+  exact h1 r hr1
+
+end Reclaim
+```
 
 ### P1I6 Event-sourced replay [(=P1I6)]
 
@@ -265,6 +322,19 @@ Event sourcing stays the audit layer that makes rebuilds reproducible.
 ## C4 Tier promotion logic bounds RAM and compute [(=C4)]
 
 Independent of total corpus size.
+
+## Lean4 Tier caps bound compute and memory [(=Lean4)]
+
+**Claim C4.** If tier caps ((K,M,N)) are enforced, then:
+
+* Field updates cost (O(d \cdot |E_{local}|)) with (|E_{local}|) bounded by tier neighborhood size.
+* Focus and active tier latency is bounded independent of total corpus size.
+* Total memory in RAM is (O((K+M+N)\cdot d + |E_{RAM}|)).
+
+**Sketch**
+
+* All RAM operations are restricted to capped tiers.
+* Inactive tier lives on disk and is accessed via ANN and edge lookups.
 
 ## Algorithm 8: Hypothesis branching [(=Algorithm 8)]
 
