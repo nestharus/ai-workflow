@@ -137,8 +137,6 @@ Basis: sparse coding style factorization.
 * Every token type has one or more embedding spaces.
 * Traversal and matching use explicit coordinate transforms, so math stays consistent as you move across token types and domains.
 
----
-
 ## G28 Multi-coordinate adapters are governable [(=G28)]
 
 * Adapters are versioned, canaried, drift-detected, rolled back.

@@ -93,12 +93,78 @@ S(h) = \sum_{\text{rule apps } a \in h} \log P(a) ;-; \lambda \cdot \text{Tensio
 * Complexity penalizes overly complex parses
 
 ## Algorithm 17 [(=Algorithm 17)]
+Modality routing and tokenizer selection (+[T7])
+
+Starts from raw unstructured input.
+
+```pseudo
+function ROUTE_AND_TOKENIZE(input stream):
+  regions = SEGMENT_STREAM(stream)              // rough boundaries
+  for region in regions:
+    dom = PREDICT_DOMAIN(region)                // English, code, table, image, logs, mixed
+    tokset = TOKENIZER_STACK[dom].TOKENIZE(region)
+    yield (region, dom, tokset)
+```
+
+Domain routing can be light at first and later refined using hypothesis outcomes.
 
 ## Algorithm 18 [(=Algorithm 18)]
+Incremental graph grammar parsing with hypothesis beam (+[T8])
+
+Grammar is applied to tokens to produce new graph tokens and token graphs.
+
+```pseudo
+function PARSE_REGION(region, dom, tokset):
+  forest = INIT_PARSE_FOREST(region)
+
+  // seed hypothesis with raw token graph
+  h0 = NEW_HYP(region, dom)
+  h0.token_graph = BUILD_TOKEN_GRAPH(tokset)          // adjacency edges, containment edges
+  PUSH(forest.active_hyps, h0)
+
+  for step in 1..MAX_STEPS:
+    next = []
+    for h in TOPK_BY_SCORE(forest.active_hyps, BEAM):
+      matches = RULE_MATCH_INDEX[dom].CANDIDATE_MATCHES(h.token_graph)
+
+      for m in matches:
+        if PASS_FAST_MATCH_CHECK(m):
+          h2 = APPLY_RULE(h, m)                       // graph rewrite, emits GraphTokens
+          SCORE_UPDATE(h2)                            // rule prob, tension, complexity
+          next.append(h2)
+
+    forest = PACK_AND_MERGE(forest, next)             // share subgraphs across hyps
+    if STOP_CONDITION(forest): break
+
+  return forest
+```
+
+This mirrors the packed-forest idea used to manage ambiguity growth in GLR style parsing.
 
 ## Algorithm 19 [(=Algorithm 19)]
+Rule application as graph rewrite with provenance (+[T9])
 
----
+Uses DPO-like rewrite semantics, keeps non-destructive update invariants.
+
+```pseudo
+function APPLY_RULE(h, match m):
+  rule = m.rule
+  g2 = COPY_VIEW(h.token_graph)
+
+  // rewrite in a new graph view, never overwrites the old view
+  g2 = GRAPH_REWRITE_DPO(g2, rule, m)                 // produces new graph
+
+  // emit tokens from rhs
+  emitted = EMIT_TOKENS(rule.emit, bindings=m.bindings, hyp=h.hyp_id)
+  ATTACH_PROVENANCE(emitted, m.support_spans)
+
+  h2 = NEW_HYP_FROM(h)
+  h2.token_graph = g2
+  h2.bindings += (rule, m.bindings)
+  return h2
+```
+
+Graph transformation via DPO gives a formal foundation for safe rewrites and composition.
 
 ### Algorithm 26: Curriculum ingestion controller [(=Algorithm 26)]
 
@@ -225,6 +291,23 @@ ParseForest {
 This mirrors packed forest and graph-structured stack ideas used to control ambiguity blow-up in GLR style parsing.
 
 ## Algorithm 23 [(=Algorithm 23)]
+Re-ingestion under reinterpretation (+[T13])
+This is the controlled way to replay the same evidence through a new grammar set or new adapters.
+
+```pseudo
+function REINTERPRET(epoch e, region R, new_grammar_set G*):
+  snap = CREATE_SNAPSHOT(e.snapshot_lsn)
+  forest = PARSE_REGION(R, dom=ROUTE(R), tokset=EXTRACT_RAW_TOKENS(R), grammar=G*)
+  hyps = SELECT_TOP_HYPOTHESES(forest)
+
+  for h in hyps:
+    INTEGRATE_PARSE_GRAPH_AS_HYPOTHESIS(h)             // creates tokens, edges, anchors
+    RUN_LOCAL_FIELD_REPAIR(h.scope)
+
+  SCHEDULE_GLOBAL_CONSOLIDATION()
+```
+
+Graph parsing for HRG and related grammars is studied, and complexity varies a lot by restrictions, so this is designed with hypothesis beams and domain restrictions.
 
 ## C5 Ingestion produces stable idea handles [(=C5)]
 

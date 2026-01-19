@@ -676,10 +676,62 @@ function CONFLICT_SCAN_AND_QUEUE(nodes S):
 ```
 
 ## Algorithm 21 [(=Algorithm 21)]
+Graph token embedding bundle and canonical projection (+[T11])
 
+Every new graph token gets multi-embedder observations plus canonical anchor.
+
+```pseudo
+function EMBED_TOKEN(tok):
+  obs = []
+
+  if tok.provenance has spans:
+    obs.append( TEXT_EMBED(tok.support_text) )
+
+  obs.append( STRUCT_EMBED(tok.graph_coords) )         // WL hashes, graph2vec, GNN, etc.
+  if tok.tok_type in CODE_TYPES:
+    obs.append( CODE_EMBED(tok.graph_coords) )
+
+  // map each obs into canonical space and combine by confidence
+  b_bar = WEIGHTED_CANONICAL_COMBINE(obs, adapters, confidences)
+
+  STORE_OBSERVATIONS(tok, obs)
+  STORE_CANONICAL_ANCHOR(tok, b_bar)
+```
+
+Graph embeddings and substructure signatures like WL-based features and graph-level embeddings are standard tools. ([Journal of Machine Learning Research][8])
+Code embeddings from AST structure exist as well. ([ACM Digital Library][9])
 
 ## Algorithm 22 [(=Algorithm 22)]
+Traversal across coordinate systems (+[T12])
+Travel uses canonical field coordinates, while still allowing domain-native similarity when needed.
 
+```pseudo
+function TRAVERSE(query q, start_nodes S):
+  q_bundle = EMBED_QUERY_BUNDLE(q)                     // per domain, per view
+  q_canon = CANONICALIZE(q_bundle)
+
+  frontier = PRIORITY_QUEUE()
+  for s in S:
+    frontier.push(s, score = SIM_CANON(q_canon, X(s)))
+
+  while budget remains:
+    v = frontier.pop()
+    yield v
+
+    for edge in OUT_EDGES(v):
+      u = edge.dst
+
+      // canonical travel
+      score = SIM_CANON(q_canon, X(u)) - EDGE_COST(edge)
+
+      // optional domain boost when token types match
+      if SHARE_COORD_SYSTEM(u, q_bundle):
+        score += λ * SIM_DOMAIN(q_bundle, u)
+
+      frontier.push(u, score)
+```
+
+“Topology changes into different coordinate systems” becomes “travel happens in canonical space, with local boosts in native spaces.”
 
 ## Comp1 Ingestion Stream [(=Comp1)]
 Main streaming ingestion pipeline.

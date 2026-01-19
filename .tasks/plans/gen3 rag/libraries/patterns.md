@@ -500,8 +500,22 @@ Keep "policy deltas" small, prefer conservative exploration (safe re-ranking lit
 It sits above retrieval/field state and never destroys evidence.
 
 ## Algorithm 20 [(=Algorithm 20)]
+Grammar emergence from patterns (+[T10])
 
----
+Turns P4 (+[P4]) patterns into executable grammar rules.
+
+```pseudo
+function MINE_AND_COMPILE_GRAMMAR(snapshot snap, dom):
+  patterns = STRUCTURAL_ABSTRACTION_MINE(snap)         // P4 Algorithm 10
+  for pat in patterns:
+    if pat.conf >= TH_RULE_CANDIDATE:
+      rule = COMPILE_PATTERN_TO_RULE(pat, dom)         // lhs is pat, rhs emits macro token
+      SHADOW_RUN(rule)                                 // collect precision, failure cases
+      if PROMOTION_TEST(rule):                         // confidence-weighted
+        GRAMMAR_LIBRARY.ADD(rule)
+```
+
+Hyperedge replacement and related graph grammar formalisms provide a language for “graph as grammar”.
 
 ## G19 Emergent structure [(=G19)]
 
@@ -534,8 +548,7 @@ function BUILD_PROFILES(pattern_instances I, Enc):
 ```
 
 ## P8.1 Define disentanglement for this architecture [(=P8.1)]
-
-
+Disentanglement here is structural (+[T1]) and directional (+[T2]); module extraction is detailed in (+[T3]).
 ## P8.2 How disentanglement fits into your current stack [(=P8.2)]
 
 **Where the raw material comes from**

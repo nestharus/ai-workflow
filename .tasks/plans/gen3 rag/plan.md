@@ -17,7 +17,7 @@ This aligns with:
 ---
 
 ## P8.1 Define disentanglement for this architecture [(=P8.1)]
-
+Disentanglement here is structural (+[T1]) and directional (+[T2]); module extraction is detailed in (+[T3]).
 ### T1 Structural disentanglement [(=T1)]
 
 Take complex patterns and decompose them into smaller reusable modules with typed interfaces.
@@ -350,6 +350,9 @@ The LLM does not need to be the primary disentanglement engine. The math and gra
 
 ## G21 Computable directions across coordinate systems [(=G21)]
 
+* Every token type has one or more embedding spaces.
+* Traversal and matching use explicit coordinate transforms, so math stays consistent as you move across token types and domains.
+
 ## G22 Hippocampus workspace is first-class [(=G22)]
 
 * Hippocampus runs a fast, branching workspace graph, separate from long-term memory.
@@ -383,10 +386,6 @@ The LLM does not need to be the primary disentanglement engine. The math and gra
 ## G29 Hippocampus actively seeks evidence [(=G29)]
 
 * Diagnostics drive which ambiguity to resolve next, using expected uncertainty reduction.
-
-* Every token type has one or more embedding spaces.
-* Traversal and matching use explicit coordinate transforms, so math stays consistent as you move across token types and domains.
-
 
 ## G36 Manifold as a first-class substrate [(=G36)]
 
@@ -2706,8 +2705,7 @@ function PUBLISH_EPOCH(epoch_new):
 RCU provides the pattern: readers run lock-free against a stable snapshot while writer swaps the pointer then waits a grace period before reclaim.
 
 ## Algorithm 17 [(=Algorithm 17)]
-
-### T7 Modality routing and tokenizer selection [(=T7)]
+Modality routing and tokenizer selection (+[T7])
 
 Starts from raw unstructured input.
 
@@ -2722,9 +2720,12 @@ function ROUTE_AND_TOKENIZE(input stream):
 
 Domain routing can be light at first and later refined using hypothesis outcomes.
 
-## Algorithm 18 [(=Algorithm 18)]
+## T7 Modality routing and tokenizer selection [(=T7)]
 
-### T8 Incremental graph grammar parsing with hypothesis beam [(=T8)]
+See Algorithm 17 (+[Algorithm 17]).
+
+## Algorithm 18 [(=Algorithm 18)]
+Incremental graph grammar parsing with hypothesis beam (+[T8])
 
 Grammar is applied to tokens to produce new graph tokens and token graphs.
 
@@ -2756,9 +2757,12 @@ function PARSE_REGION(region, dom, tokset):
 
 This mirrors the packed-forest idea used to manage ambiguity growth in GLR style parsing.
 
-## Algorithm 19 [(=Algorithm 19)]
+## T8 Incremental graph grammar parsing with hypothesis beam [(=T8)]
 
-### T9 Rule application as graph rewrite with provenance [(=T9)]
+See Algorithm 18 (+[Algorithm 18]).
+
+## Algorithm 19 [(=Algorithm 19)]
+Rule application as graph rewrite with provenance (+[T9])
 
 Uses DPO-like rewrite semantics, keeps non-destructive update invariants.
 
@@ -2782,9 +2786,12 @@ function APPLY_RULE(h, match m):
 
 Graph transformation via DPO gives a formal foundation for safe rewrites and composition.
 
-## Algorithm 20 [(=Algorithm 20)]
+## T9 Rule application as graph rewrite with provenance [(=T9)]
 
-### T10 Grammar emergence from patterns [(=T10)]
+See Algorithm 19 (+[Algorithm 19]).
+
+## Algorithm 20 [(=Algorithm 20)]
+Grammar emergence from patterns (+[T10])
 
 Turns P4 (+[P4]) patterns into executable grammar rules.
 
@@ -2801,9 +2808,12 @@ function MINE_AND_COMPILE_GRAMMAR(snapshot snap, dom):
 
 Hyperedge replacement and related graph grammar formalisms provide a language for “graph as grammar”.
 
-## Algorithm 21 [(=Algorithm 21)]
+## T10 Grammar emergence from patterns [(=T10)]
 
-### T11 Graph token embedding bundle and canonical projection [(=T11)]
+See Algorithm 20 (+[Algorithm 20]).
+
+## Algorithm 21 [(=Algorithm 21)]
+Graph token embedding bundle and canonical projection (+[T11])
 
 Every new graph token gets multi-embedder observations plus canonical anchor.
 
@@ -2828,10 +2838,12 @@ function EMBED_TOKEN(tok):
 Graph embeddings and substructure signatures like WL-based features and graph-level embeddings are standard tools. ([Journal of Machine Learning Research][8])
 Code embeddings from AST structure exist as well. ([ACM Digital Library][9])
 
+## T11 Graph token embedding bundle and canonical projection [(=T11)]
+
+See Algorithm 21 (+[Algorithm 21]).
+
 ## Algorithm 22 [(=Algorithm 22)]
-
-### T12 Traversal across coordinate systems [(=T12)]
-
+Traversal across coordinate systems (+[T12])
 Travel uses canonical field coordinates, while still allowing domain-native similarity when needed.
 
 ```pseudo
@@ -2862,10 +2874,12 @@ function TRAVERSE(query q, start_nodes S):
 
 “Topology changes into different coordinate systems” becomes “travel happens in canonical space, with local boosts in native spaces.”
 
+## T12 Traversal across coordinate systems [(=T12)]
+
+See Algorithm 22 (+[Algorithm 22]).
+
 ## Algorithm 23 [(=Algorithm 23)]
-
-### T13 Re-ingestion under reinterpretation [(=T13)]
-
+Re-ingestion under reinterpretation (+[T13])
 This is the controlled way to replay the same evidence through a new grammar set or new adapters.
 
 ```pseudo
@@ -2882,6 +2896,10 @@ function REINTERPRET(epoch e, region R, new_grammar_set G*):
 ```
 
 Graph parsing for HRG and related grammars is studied, and complexity varies a lot by restrictions, so this is designed with hypothesis beams and domain restrictions.
+
+## T13 Re-ingestion under reinterpretation [(=T13)]
+
+See Algorithm 23 (+[Algorithm 23]).
 
 ### Algorithm 24: Hippocampal workspace session [(=Algorithm 24)]
 

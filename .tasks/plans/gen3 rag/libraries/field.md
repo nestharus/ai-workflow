@@ -681,6 +681,8 @@ end GraphField
 
 This is the proof "spine" for C1 and C2. After that, you can build the vector-valued version by applying the scalar proof (d) times.
 
+Two tracks: quadratic uniqueness and state machine invariants.
+
 ### Lean8 Gated quadratic uniqueness [(=Lean8)]
 
 Gated quadratic uniqueness.
@@ -724,7 +726,6 @@ theorem canonical_field_unique
   sorry
 
 end CanonField
-```
 
 ## G1 Reliable directions [(=G1)]
 

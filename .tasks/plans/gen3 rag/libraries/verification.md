@@ -44,100 +44,19 @@ Goal: represent a pattern as "modules + wiring" rather than a monolith.
 
 ### T10 Grammar emergence from patterns [(=T10)]
 
-Turns P4 (+[P4]) patterns into executable grammar rules.
-
-```pseudo
-function MINE_AND_COMPILE_GRAMMAR(snapshot snap, dom):
-  patterns = STRUCTURAL_ABSTRACTION_MINE(snap)         // P4 Algorithm 10
-  for pat in patterns:
-    if pat.conf >= TH_RULE_CANDIDATE:
-      rule = COMPILE_PATTERN_TO_RULE(pat, dom)         // lhs is pat, rhs emits macro token
-      SHADOW_RUN(rule)                                 // collect precision, failure cases
-      if PROMOTION_TEST(rule):                         // confidence-weighted
-        GRAMMAR_LIBRARY.ADD(rule)
-```
-
-Hyperedge replacement and related graph grammar formalisms provide a language for “graph as grammar”.
-
+See Algorithm 20 (+[Algorithm 20]).
 
 ### T11 Graph token embedding bundle and canonical projection [(=T11)]
 
-Every new graph token gets multi-embedder observations plus canonical anchor.
-
-```pseudo
-function EMBED_TOKEN(tok):
-  obs = []
-
-  if tok.provenance has spans:
-    obs.append( TEXT_EMBED(tok.support_text) )
-
-  obs.append( STRUCT_EMBED(tok.graph_coords) )         // WL hashes, graph2vec, GNN, etc.
-  if tok.tok_type in CODE_TYPES:
-    obs.append( CODE_EMBED(tok.graph_coords) )
-
-  // map each obs into canonical space and combine by confidence
-  b_bar = WEIGHTED_CANONICAL_COMBINE(obs, adapters, confidences)
-
-  STORE_OBSERVATIONS(tok, obs)
-  STORE_CANONICAL_ANCHOR(tok, b_bar)
-```
-
-Graph embeddings and substructure signatures like WL-based features and graph-level embeddings are standard tools. ([Journal of Machine Learning Research][8])
-Code embeddings from AST structure exist as well. ([ACM Digital Library][9])
-
+See Algorithm 21 (+[Algorithm 21]).
 
 ### T12 Traversal across coordinate systems [(=T12)]
 
-Travel uses canonical field coordinates, while still allowing domain-native similarity when needed.
-
-```pseudo
-function TRAVERSE(query q, start_nodes S):
-  q_bundle = EMBED_QUERY_BUNDLE(q)                     // per domain, per view
-  q_canon = CANONICALIZE(q_bundle)
-
-  frontier = PRIORITY_QUEUE()
-  for s in S:
-    frontier.push(s, score = SIM_CANON(q_canon, X(s)))
-
-  while budget remains:
-    v = frontier.pop()
-    yield v
-
-    for edge in OUT_EDGES(v):
-      u = edge.dst
-
-      // canonical travel
-      score = SIM_CANON(q_canon, X(u)) - EDGE_COST(edge)
-
-      // optional domain boost when token types match
-      if SHARE_COORD_SYSTEM(u, q_bundle):
-        score += λ * SIM_DOMAIN(q_bundle, u)
-
-      frontier.push(u, score)
-```
-
-“Topology changes into different coordinate systems” becomes “travel happens in canonical space, with local boosts in native spaces.”
-
+See Algorithm 22 (+[Algorithm 22]).
 
 ### T13 Re-ingestion under reinterpretation [(=T13)]
 
-This is the controlled way to replay the same evidence through a new grammar set or new adapters.
-
-```pseudo
-function REINTERPRET(epoch e, region R, new_grammar_set G*):
-  snap = CREATE_SNAPSHOT(e.snapshot_lsn)
-  forest = PARSE_REGION(R, dom=ROUTE(R), tokset=EXTRACT_RAW_TOKENS(R), grammar=G*)
-  hyps = SELECT_TOP_HYPOTHESES(forest)
-
-  for h in hyps:
-    INTEGRATE_PARSE_GRAPH_AS_HYPOTHESIS(h)             // creates tokens, edges, anchors
-    RUN_LOCAL_FIELD_REPAIR(h.scope)
-
-  SCHEDULE_GLOBAL_CONSOLIDATION()
-```
-
-Graph parsing for HRG and related grammars is studied, and complexity varies a lot by restrictions, so this is designed with hypothesis beams and domain restrictions.
-
+See Algorithm 23 (+[Algorithm 23]).
 
 #### T14 Notes on BUILD_INDICES [(=T14)]
 
@@ -200,73 +119,12 @@ Use alignment and fusion approaches from multi-view representation learning when
 
 ### T7 Modality routing and tokenizer selection [(=T7)]
 
-Starts from raw unstructured input.
-
-```pseudo
-function ROUTE_AND_TOKENIZE(input stream):
-  regions = SEGMENT_STREAM(stream)              // rough boundaries
-  for region in regions:
-    dom = PREDICT_DOMAIN(region)                // English, code, table, image, logs, mixed
-    tokset = TOKENIZER_STACK[dom].TOKENIZE(region)
-    yield (region, dom, tokset)
-```
-
-Domain routing can be light at first and later refined using hypothesis outcomes.
-
+See Algorithm 17 (+[Algorithm 17]).
 
 ### T8 Incremental graph grammar parsing with hypothesis beam [(=T8)]
 
-Grammar is applied to tokens to produce new graph tokens and token graphs.
-
-```pseudo
-function PARSE_REGION(region, dom, tokset):
-  forest = INIT_PARSE_FOREST(region)
-
-  // seed hypothesis with raw token graph
-  h0 = NEW_HYP(region, dom)
-  h0.token_graph = BUILD_TOKEN_GRAPH(tokset)          // adjacency edges, containment edges
-  PUSH(forest.active_hyps, h0)
-
-  for step in 1..MAX_STEPS:
-    next = []
-    for h in TOPK_BY_SCORE(forest.active_hyps, BEAM):
-      matches = RULE_MATCH_INDEX[dom].CANDIDATE_MATCHES(h.token_graph)
-
-      for m in matches:
-        if PASS_FAST_MATCH_CHECK(m):
-          h2 = APPLY_RULE(h, m)                       // graph rewrite, emits GraphTokens
-          SCORE_UPDATE(h2)                            // rule prob, tension, complexity
-          next.append(h2)
-
-    forest = PACK_AND_MERGE(forest, next)             // share subgraphs across hyps
-    if STOP_CONDITION(forest): break
-
-  return forest
-```
-
-This mirrors the packed-forest idea used to manage ambiguity growth in GLR style parsing.
-
+See Algorithm 18 (+[Algorithm 18]).
 
 ### T9 Rule application as graph rewrite with provenance [(=T9)]
 
-Uses DPO-like rewrite semantics, keeps non-destructive update invariants.
-
-```pseudo
-function APPLY_RULE(h, match m):
-  rule = m.rule
-  g2 = COPY_VIEW(h.token_graph)
-
-  // rewrite in a new graph view, never overwrites the old view
-  g2 = GRAPH_REWRITE_DPO(g2, rule, m)                 // produces new graph
-
-  // emit tokens from rhs
-  emitted = EMIT_TOKENS(rule.emit, bindings=m.bindings, hyp=h.hyp_id)
-  ATTACH_PROVENANCE(emitted, m.support_spans)
-
-  h2 = NEW_HYP_FROM(h)
-  h2.token_graph = g2
-  h2.bindings += (rule, m.bindings)
-  return h2
-```
-
-Graph transformation via DPO gives a formal foundation for safe rewrites and composition.
+See Algorithm 19 (+[Algorithm 19]).

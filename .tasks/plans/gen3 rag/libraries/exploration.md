@@ -478,10 +478,6 @@ Optional guarantee path:
 
 * Diagnostics drive which ambiguity to resolve next, using expected uncertainty reduction.
 
-* Every token type has one or more embedding spaces.
-* Traversal and matching use explicit coordinate transforms, so math stays consistent as you move across token types and domains.
-
-
 ## Comp5 Candidate Generator [(=Comp5)]
 
 ## Comp7 Idea Manager [(=Comp7)]
