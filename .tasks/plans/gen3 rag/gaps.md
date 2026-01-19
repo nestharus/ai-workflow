@@ -331,3 +331,182 @@ This section tracks proof sketches that currently lack formal Lean proofs.
 | GAP-P10.5 | Workspace tree depth limits | OPEN | Need policy for fork-join depth |
 | GAP-P10.6 | Reconciliation decision policy | OPEN | When to import/park/reject |
 | GAP-P10.7 | GC grace period for closed workspaces | OPEN | Balance audit vs storage cost |
+
+---
+
+## Undefined Function Gaps
+
+The following 311 functions are called in algorithm pseudocode but lack explicit definitions. Many are trivial helpers or standard library calls, but some require specification.
+
+### Priority Classifications
+
+- **NEEDS_DEFINITION**: Must be specified (complex logic, domain-specific)
+- **HAS_MATH_NEEDS_PSEUDO**: Mathematical definition exists but needs pseudocode
+- **TRIVIAL_HELPER**: Self-documenting (SET, GET, APPEND, etc.)
+- **STANDARD_ALGORITHM**: Well-known algorithm (use standard implementation)
+- **EXTERNAL_DEPENDENCY**: External library call (embeddings, ANN, etc.)
+
+---
+
+### PATTERN Functions (13 functions)
+
+| Function | Classification | Evidence | Notes |
+|----------|----------------|----------|-------|
+| ANN_PATTERN_RETRIEVE | EXTERNAL_DEPENDENCY | Called in Algorithm 11 | ANN index lookup for pattern vectors |
+| BASE_PATTERN_SCORE | NEEDS_DEFINITION | Called in Algorithm 14 | Missing scoring formula |
+| CANONICALIZE_TO_PATTERN | HAS_MATH_NEEDS_PSEUDO | P4 MDL section | MDL-based pattern canonicalization |
+| COMPILE_PATTERN_TO_RULE | NEEDS_DEFINITION | Called in Algorithm 20 | Grammar rule compilation |
+| ESTIMATE_PATTERN_CONFIDENCE | HAS_MATH_NEEDS_PSEUDO | P4C3 Beta posterior | Use Beta(α,β) posterior |
+| PROMOTE_PATTERN | NEEDS_DEFINITION | Called in Algorithm 13 | Pattern tier promotion logic |
+| REMINE_PATTERNS_AND_GRAMMARS | NEEDS_DEFINITION | Called in Algorithm 27 | Sleep-time pattern refresh |
+| RENDER_PATTERN_FRAME | NEEDS_DEFINITION | Called in Algorithm 12 | LLM expansion rendering |
+| RETRIEVE_PATTERNS_BY_FACTOR_SIMILARITY | NEEDS_DEFINITION | Called in Algorithm 42 | P8 factor-based retrieval |
+| RETRIEVE_RELEVANT_NODES_AND_PATTERNS | NEEDS_DEFINITION | Called in Algorithm 12 | Context retrieval for expansion |
+| UPDATE_PATTERN_STATS_ON_USE | TRIVIAL_HELPER | Called in Algorithm 11 | Increment usage counters |
+| WRITE_PATTERN_INSTANCES | TRIVIAL_HELPER | Called in Algorithm 10 | Persist pattern instances |
+| WRITE_PATTERN_LIBRARY | TRIVIAL_HELPER | Called in Algorithm 10 | Persist pattern library |
+
+---
+
+### FIELD Functions (3 functions)
+
+| Function | Classification | Evidence | Notes |
+|----------|----------------|----------|-------|
+| FIELD_RELAX | HAS_MATH_NEEDS_PSEUDO | P1I2 field equation | Original non-gated relaxation (deprecated by FIELD_RELAX_GATED) |
+| RUN_LOCAL_FIELD_REPAIR | NEEDS_DEFINITION | Called 16x | Local repair after delta application |
+| SOLVE_CANONICAL_FIELD | HAS_MATH_NEEDS_PSEUDO | P2 IRLS section | Full field solve using IRLS |
+
+---
+
+### EMBED Functions (5 functions)
+
+| Function | Classification | Evidence | Notes |
+|----------|----------------|----------|-------|
+| CODE_EMBED | EXTERNAL_DEPENDENCY | Called in Algorithm 21 | Code embedding model call |
+| EMBED | EXTERNAL_DEPENDENCY | Called 7x | Generic embedding dispatch |
+| EMBED_QUERY_BUNDLE | EXTERNAL_DEPENDENCY | Called in Algorithm 22 | Query bundle embedding |
+| STRUCT_EMBED | EXTERNAL_DEPENDENCY | Called in Algorithm 21 | Structural embedding |
+| TEXT_EMBED | EXTERNAL_DEPENDENCY | Called in Algorithm 21 | Text embedding model call |
+
+---
+
+### GRAPH Functions (10 functions)
+
+| Function | Classification | Evidence | Notes |
+|----------|----------------|----------|-------|
+| APPLY_SUBGRAPH_WITH_REMAP | NEEDS_DEFINITION | Called in Algorithm 57 | Capsule import with ID remapping |
+| BUILD_GRAPH_PAYLOAD | NEEDS_DEFINITION | Called in Algorithm 60 | CRDT graph payload construction |
+| BUILD_TOKEN_GRAPH | NEEDS_DEFINITION | Called in Algorithm 18 | Token adjacency graph |
+| CANDIDATE_SUBGRAPHS | NEEDS_DEFINITION | GAP-P8.8 | Frequent motif mining |
+| EXTRACT_SUBGRAPH | NEEDS_DEFINITION | Called in Algorithm 56 | Capsule export subgraph extraction |
+| GRAPH_REWRITE_DPO | STANDARD_ALGORITHM | P5 DPO reference | Double-pushout graph rewriting |
+| INTEGRATE_PARSE_GRAPH_AS_HYPOTHESIS | NEEDS_DEFINITION | Called in Algorithm 23 | Parse graph integration |
+| LOCAL_SUBGRAPH_MATCH | STANDARD_ALGORITHM | Called in Algorithm 11 | VF2 or similar subgraph isomorphism |
+| MINE_CANDIDATE_SUBGRAPHS | NEEDS_DEFINITION | Called in Algorithm 10 | Frequent subgraph mining |
+| REBUILD_GRAPH_FROM_EVIDENCE | NEEDS_DEFINITION | Called in Algorithm 27 | Cold rebuild from event log |
+
+---
+
+### PARSE Functions (4 functions)
+
+| Function | Classification | Evidence | Notes |
+|----------|----------------|----------|-------|
+| INIT_PARSE_FOREST | NEEDS_DEFINITION | Called 8x | Packed forest initialization |
+| PARSE_REGION_WITH_P5 | NEEDS_DEFINITION | Called in Algorithm 24 | P5 grammar-based parsing |
+| RUN_SHADOW_PARSE | NEEDS_DEFINITION | Called in Algorithm 30 | Shadow grammar testing |
+| TRAIN_SPARSE_AUTOENCODER | STANDARD_ALGORITHM | P8 factor learning | Standard sparse autoencoder |
+
+---
+
+### WORKSPACE Functions (4 functions)
+
+| Function | Classification | Evidence | Notes |
+|----------|----------------|----------|-------|
+| APPLY_REWRITE_IN_WORKSPACE | NEEDS_DEFINITION | Called in Algorithm 43 | Workspace-local graph rewrite |
+| CLOSE_WORKSPACE_CASCADE | DEFINED | Algorithm 54 | Already defined |
+| OPEN_WORKSPACE | DEFINED | Algorithm 53 | Already defined |
+| WORKSPACE_GC | DEFINED | Algorithm 64 | Already defined |
+
+---
+
+### HYPOTHESIS Functions (2 functions)
+
+| Function | Classification | Evidence | Notes |
+|----------|----------------|----------|-------|
+| NEW_HYPOTHESIS | TRIVIAL_HELPER | Called in Algorithm 8 | Hypothesis ID allocation |
+| PROMOTE_AS_HYPOTHESIS | NEEDS_DEFINITION | Called in Algorithm 43 | Idea-to-hypothesis promotion |
+
+---
+
+### INDEX Functions (2 functions)
+
+| Function | Classification | Evidence | Notes |
+|----------|----------------|----------|-------|
+| FINALIZE_INDEX_DELTAS | NEEDS_DEFINITION | Called in Algorithm 9 | Index delta application |
+| UPDATE_INDEX_DELTAS | NEEDS_DEFINITION | Called in Algorithm 66 | Incremental index update |
+
+---
+
+### STATE Functions (5 functions)
+
+| Function | Classification | Evidence | Notes |
+|----------|----------------|----------|-------|
+| APPEND_STATE_METRICS | TRIVIAL_HELPER | Called in Algorithm 3 | Append to state history |
+| NEW_STATE | TRIVIAL_HELPER | Called 5x | State object constructor |
+| SET_CURRENT_STATE | TRIVIAL_HELPER | Called in Algorithm 8 | State pointer update |
+| STATE | TRIVIAL_HELPER | Called 21x | State accessor |
+| WRITE_NODE_STATES | TRIVIAL_HELPER | Called in Algorithm 9 | Persist node states |
+
+---
+
+### High-Priority Undefined Functions (OTHER category - requiring definition)
+
+| Function | Classification | Evidence | Notes |
+|----------|----------------|----------|-------|
+| COMPUTE_RISK | NEEDS_DEFINITION | GAP-P4.4 | Risk score computation |
+| MDL_GAIN | HAS_MATH_NEEDS_PSEUDO | P4 MDL section | Description length reduction |
+| MDL_GAIN_WITH_MODULE | NEEDS_DEFINITION | GAP-P8.2 | Module-aware MDL |
+| FILTER_BY_MODULE_INTERFACE | NEEDS_DEFINITION | GAP-P8.3 | Module interface checking |
+| PARETO_FILTER | STANDARD_ALGORITHM | Called in Algorithm 42 | Multi-objective Pareto frontier |
+| SHOULD_CALL_LLM | NEEDS_DEFINITION | GAP-P7.4 | LLM call decision heuristic |
+| ISCORE | HAS_MATH_NEEDS_PSEUDO | P7 interestingness | Interestingness score formula |
+| SELECT_ACTION_UCB_OR_TS | STANDARD_ALGORITHM | P4.4 bandit | UCB or Thompson sampling |
+| HUBER_WEIGHT | HAS_MATH_NEEDS_PSEUDO | P2 IRLS | Huber loss weight function |
+| ORTHOGONAL_PROCRUSTES | STANDARD_ALGORITHM | P5 alignment | Standard Procrustes solution |
+| ADWIN_DETECT | STANDARD_ALGORITHM | P6 drift | ADWIN change detection |
+| MINHASH | STANDARD_ALGORITHM | P10 overlap | MinHash signature |
+| SIMHASH | STANDARD_ALGORITHM | P10 overlap | SimHash signature |
+| WL_HASH | STANDARD_ALGORITHM | P10 overlap | Weisfeiler-Lehman hash |
+| BETA_UPDATE | HAS_MATH_NEEDS_PSEUDO | P4C3 | Beta distribution update |
+| OSCILLATION_SIGNAL | NEEDS_DEFINITION | P10C6 | Retract-reinstate cycle detection |
+
+---
+
+### Standard Library Functions (TRIVIAL_HELPER - no definition needed)
+
+The following 150+ functions are standard operations requiring no specification:
+- Collection: ADD, PUSH, POP, APPEND, SORT_BY_SCORE, TOPK_BY_SCORE, FILTER, etc.
+- Accessors: GET_STATS, FETCH_SPAN, READ_RANGE, LOOKUP, etc.
+- Iteration: N (neighbors), NEIGHBORHOOD, OUT_EDGES, etc.
+- Math: SUM, NORMALIZE, DECAY, E (energy), etc.
+- Control: PROMOTE, DEMOTE, ARCHIVE, REJECT, ROLLBACK, etc.
+
+---
+
+### Summary Statistics
+
+| Category | Count | NEEDS_DEFINITION | HAS_MATH | TRIVIAL | STANDARD | EXTERNAL |
+|----------|-------|------------------|----------|---------|----------|----------|
+| PATTERN | 13 | 7 | 2 | 3 | 0 | 1 |
+| FIELD | 3 | 1 | 2 | 0 | 0 | 0 |
+| EMBED | 5 | 0 | 0 | 0 | 0 | 5 |
+| GRAPH | 10 | 6 | 0 | 0 | 2 | 0 |
+| PARSE | 4 | 3 | 0 | 0 | 1 | 0 |
+| WORKSPACE | 4 | 1 | 0 | 0 | 0 | 0 |
+| HYPOTHESIS | 2 | 1 | 0 | 1 | 0 | 0 |
+| INDEX | 2 | 2 | 0 | 0 | 0 | 0 |
+| STATE | 5 | 0 | 0 | 5 | 0 | 0 |
+| OTHER | 263 | ~40 | ~15 | ~150 | ~15 | ~10 |
+| **TOTAL** | 311 | ~61 | ~19 | ~159 | ~18 | ~16 |
+
+**Actionable gaps**: ~80 functions need explicit pseudocode definitions or mathematical specifications

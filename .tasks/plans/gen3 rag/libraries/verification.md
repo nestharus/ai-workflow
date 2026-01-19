@@ -1,12 +1,8 @@
-# Verification Library
-
-Claims formalization, Lean skeletons, proof obligations, invariant checking.
-
 # Lean proof skeletons
 
 Lean is a good fit for the quadratic core: uniqueness, strict convexity, and “energy decreases” lemmas. Mathlib already covers a wide range of linear algebra and analysis.
 
-Below is a Lean 4 + mathlib4 skeleton. It targets the key proof obligations. It uses placeholders where you would connect to existing lemmas about positive definiteness and strict convexity.
+Below is a Lean 4 (+[Lean5]) + mathlib4 skeleton. It targets the key proof obligations. It uses placeholders where you would connect to existing lemmas about positive definiteness and strict convexity.
 
 ```lean
 /-
@@ -72,11 +68,11 @@ theorem energy_decreases_coordUpdate
 end GraphField
 ```
 
-This is the proof "spine" for C1 and C2. After that, you can build the vector-valued version by applying the scalar proof (d) times.
+This is the proof "spine" for C1 (+[C1]) and C2. After that, you can build the vector-valued version by applying the scalar proof (d) times.
 
 ---
 
-### Lean8 Gated quadratic uniqueness
+### Lean8 Gated quadratic uniqueness [(=Lean8)]
 
 This extends the earlier SPD quadratic lemma. It uses `Matrix.PosDef` from mathlib. ([Lean Community][4])
 
@@ -102,7 +98,7 @@ end GraphFieldGated
 
 ---
 
-### Lean9 Evidence permanence invariants
+### Lean9 Evidence permanence invariants [(=Lean9)]
 
 Model the system as an event-sourced state machine and prove invariants by induction over event lists.
 
@@ -145,7 +141,7 @@ This proves the shape of "no evidence gets lost" formally once the `step` functi
 
 ---
 
-### Lean10 IRLS descent and stationary point shape
+### Lean10 IRLS descent and stationary point shape [(=Lean10)]
 
 Lean formalization target: one coordinate dimension at a time, finite node set, convex Huber robust objective.
 
@@ -188,11 +184,11 @@ theorem mm_limitpoint_stationary
 end RobustIRLS
 ```
 
-This aligns with the MM descent logic used in MM references. ([Taylor & Francis Online][4])
+This aligns with the MM descent logic used in MM references.
 
 ---
 
-### Lean11 Snapshot and epoch invariants
+### Lean11 Snapshot and epoch invariants [(=Lean11)]
 
 Model as an event log plus an epoch pointer.
 
@@ -232,7 +228,7 @@ This is a placeholder spine. To make it real, the `Store` and `applyUpTo` defini
 
 ---
 
-### Lean12 Distance preservation under orthogonal maps
+### Lean12 Distance preservation under orthogonal maps [(=Lean12)]
 
 ```lean
 import Mathlib.LinearAlgebra.Matrix.Orthogonal
@@ -256,7 +252,7 @@ end CoordMaps
 
 ---
 
-### Lean13 Canonical field uniqueness with multi-view anchors
+### Lean13 Canonical field uniqueness with multi-view anchors [(=Lean13)]
 
 ```lean
 import Mathlib.LinearAlgebra.Matrix.PosDef
@@ -276,7 +272,7 @@ end CanonField
 
 ---
 
-### Lean14 Event-sourced isolation
+### Lean14 Event-sourced isolation [(=Lean14)]
 
 ```lean
 namespace Hippocampus
@@ -308,7 +304,7 @@ end Hippocampus
 
 ---
 
-### Lean15 RCU style reclamation condition as a predicate
+### Lean15 RCU style reclamation condition as a predicate [(=Lean15)]
 
 ```lean
 namespace Reclaim
@@ -332,7 +328,7 @@ end Reclaim
 
 ---
 
-## G39 Dragon closure
+## G39 Dragon closure [(=G39)]
 
 * Every open gap becomes either:
   * an implemented method,
@@ -374,83 +370,10 @@ end PatternCompression
 
 ---
 
-## Proof 1: Existence and uniqueness of the field solution
-
-**Claim C1.** If (\alpha_i + \mu_i > 0) for every connected component, then (\mathcal{E}(X)) has a unique minimizer.
-
-**Sketch**
-
-* (\mathcal{E}(X)) is a sum of convex quadratics in (X).
-* The Hessian in each dimension is (Q = L + A + M).
-* (L) is positive semidefinite.
-* (A+M) contributes positive diagonal mass on anchored nodes.
-* That makes (Q) positive definite on each connected component that has at least one anchored node, so the quadratic is strictly convex, so the minimizer is unique.
-* The linear system ((L+A+M)X = AB) has a unique solution.
-
-This is standard for Laplacian-regularized objectives and Gaussian field style constructions.
 
 ---
 
-## Proof 2: Energy decreases under relaxation, convergence on fixed graph
-
-**Claim C2.** The update
-[
-x_i \leftarrow \frac{\alpha_i b_i + \sum_j w_{ij} x_j}{\alpha_i + \mu_i + \sum_j w_{ij}}
-]
-monotonically decreases (\mathcal{E}) when updating one node at a time with others fixed. Repeating converges to the unique minimizer.
-
-**Sketch**
-
-* (\mathcal{E}) is quadratic and separable per node when holding neighbors fixed.
-* The update sets (x_i) to the exact minimizer of (\mathcal{E}) restricted to coordinate block (i).
-* Block coordinate descent on a strictly convex quadratic decreases energy each step and converges to the unique minimizer.
-
----
-
-## Proof 3: Noise attenuation, directions become more reliable
-
-**Claim C3.** Under the model (b = s + \varepsilon), with zero-mean iid noise and a smoothness prior where neighboring nodes share similar (s), the field solution (x) has lower expected error than (b) along high-frequency graph modes.
-
-**Sketch**
-
-* In one dimension, the solution is linear: (x = (L+A+M)^{-1}A b = S b).
-* In the Laplacian eigenbasis, this is a low-pass graph filter with transfer function roughly (h(\lambda)=\alpha/(\alpha+\lambda+\mu)).
-* High-frequency components have large (\lambda), so (h(\lambda)) shrinks those components.
-* If noise injects energy broadly, high-frequency noise gets attenuated more than the low-frequency signal.
-* So expected MSE decreases in regimes where the signal is graph-smooth and noise is less graph-smooth.
-
-This is graph filtering language from graph signal processing.
-
----
-
-## Proof 4: Tier caps bound compute and memory
-
-**Claim C4.** If tier caps ((K,M,N)) are enforced, then:
-
-* Field updates cost (O(d \cdot |E_{local}|)) with (|E_{local}|) bounded by tier neighborhood size.
-* Focus and active tier latency is bounded independent of total corpus size.
-* Total memory in RAM is (O((K+M+N)\cdot d + |E_{RAM}|)).
-
-**Sketch**
-
-* All RAM operations are restricted to capped tiers.
-* Inactive tier lives on disk and is accessed via ANN and edge lookups.
-
----
-
-### P1 claim set
-
-P1C1. Evidence permanence holds under all operations.
-P1C2. Gated quadratic field per hypothesis has a unique minimizer under the same anchoring condition as v0.1.
-P1C3. Field relaxation converges per hypothesis.
-P1C4. Persistent conflict produces a durable ambiguity artifact (ConflictRecord or Hypothesis branch).
-P1C5. Robust loss reduces influence of large disagreements while preserving convergence to a minimizer.
-
----
-
----
-
-### Lean: Monotone failure brake
+### Lean7 Monotone failure brake [(=Lean7)]
 
 ```lean
 namespace FailureBrake
@@ -472,7 +395,7 @@ end FailureBrake
 
 ---
 
-## Lean1 Existence and uniqueness of the field solution
+## Lean1 Existence and uniqueness of the field solution [(=Lean1)]
 
 **Claim C1.** If (\alpha_i + \mu_i > 0) for every connected component, then (\mathcal{E}(X)) has a unique minimizer.
 
@@ -489,7 +412,7 @@ This is standard for Laplacian-regularized objectives and Gaussian field style c
 
 ---
 
-## Lean2 Energy decreases under relaxation, convergence on fixed graph
+## Lean2 Energy decreases under relaxation, convergence on fixed graph [(=Lean2)]
 
 **Claim C2.** The update
 [
@@ -505,7 +428,7 @@ monotonically decreases (\mathcal{E}) when updating one node at a time with othe
 
 ---
 
-## Lean3 Noise attenuation, directions become more reliable
+## Lean3 Noise attenuation, directions become more reliable [(=Lean3)]
 
 **Claim C3.** Under the model (b = s + \varepsilon), with zero-mean iid noise and a smoothness prior where neighboring nodes share similar (s), the field solution (x) has lower expected error than (b) along high-frequency graph modes.
 
@@ -521,7 +444,7 @@ This is graph filtering language from graph signal processing.
 
 ---
 
-## Lean4 Tier caps bound compute and memory
+## Lean4 Tier caps bound compute and memory [(=Lean4)]
 
 **Claim C4.** If tier caps ((K,M,N)) are enforced, then:
 
@@ -534,55 +457,7 @@ This is graph filtering language from graph signal processing.
 * All RAM operations are restricted to capped tiers.
 * Inactive tier lives on disk and is accessed via ANN and edge lookups.
 
-### P1C1 Evidence permanence
-
-Evidence permanence holds under all operations.
-
-### P1C2 Unique field minimizer
-
-Gated quadratic field per hypothesis has a unique minimizer under the same anchoring condition as v0.1.
-
-### P1C3 Field relaxation convergence
-
-Field relaxation converges per hypothesis.
-
-### P1C4 Persistent conflict durability
-
-Persistent conflict produces a durable ambiguity artifact (ConflictRecord or Hypothesis branch).
-
-### P1C5 Robust loss convergence
-
-Robust loss reduces influence of large disagreements while preserving convergence to a minimizer.
-
-### P1C1 proof sketch
-
-By construction:
-
-* all raw spans remain in the raw store referenced by `SpanRef`
-* each node creation writes an `ObservationRecord`
-* each derived update appends to event log
-* node states append to `NodeState` history
-* merges and splits create alias edges and lineage pointers
-
-Therefore any current state and any prior state is reconstructible from the append-only log plus raw store.
-
-### P1C2 and P1C3 proof sketch
-
-For a fixed hypothesis (h), gated quadratic energy remains strictly convex when (\alpha_i + \mu_i > 0) per connected component.
-The matrix (Q = L_g + A + M) stays SPD.
-Coordinate descent decreases energy and converges to the unique minimizer.
-
-This is the same style of argument used for harmonic energy minimization on graphs.
-
-### P1C4 proof sketch
-
-Conflict scores derive from residual and tension.
-If tension remains above threshold after validator updates and local relaxation, the policy triggers branching.
-Since branching is append-only and the conflict record persists, ambiguity becomes durable.
-
----
-
-## Lean5 Core quadratic energy proofs
+## Lean5 Core quadratic energy proofs [(=Lean5)]
 
 Lean is a good fit for the quadratic core: uniqueness, strict convexity, and "energy decreases" lemmas. Mathlib already covers a wide range of linear algebra and analysis.
 
@@ -656,78 +531,7 @@ This is the proof "spine" for C1 and C2. After that, you can build the vector-va
 
 Two tracks: quadratic uniqueness and state machine invariants.
 
-### Lean8 Gated quadratic uniqueness
-
-Gated quadratic uniqueness.
-
-This extends the earlier SPD quadratic lemma. It uses `Matrix.PosDef` from mathlib.
-
-```lean
-import Mathlib.LinearAlgebra.Matrix.PosDef
-import Mathlib.Analysis.Convex.Quadratic
-
-namespace GraphFieldGated
-
-variable {ι : Type} [Fintype ι] [DecidableEq ι]
-variable (Q : Matrix ι ι ℝ) (c : ι → ℝ)
-
-def energy (x : ι → ℝ) : ℝ :=
-  (Matrix.dotProduct x (Q.mulVec x)) - 2 * (Matrix.dotProduct c x)
-
-theorem unique_minimizer_of_posDef (hQ : Matrix.PosDef Q) :
-    ∃! x* : ι → ℝ, ∀ x, energy Q c x* ≤ energy Q c x := by
-  -- use strict convexity of quadratic form from PosDef
-  sorry
-
-end GraphFieldGated
-```
-
-### Lean9 Evidence permanence invariants
-
-Evidence permanence invariants.
-
-Model the system as an event-sourced state machine and prove invariants by induction over event lists.
-
-```lean
-namespace IngestionInvariants
-
-inductive Event
-| addNode : Nat → Event
-| addObs  : Nat → Event
-| addEdge : Nat → Event
-| addState : Nat → Event
-| updateGate : Nat → Event
-| branchHyp : Nat → Event
-
-structure Store where
-  hasSpan : Nat → Prop
-  hasObs  : Nat → Prop
-  hasState : Nat → Prop
-
-def step : Store → Event → Store := by
-  intro s e
-  -- define how store evolves for each event
-  exact s
-
-def invariantEvidence (s : Store) : Prop :=
-  ∀ n, s.hasObs n → s.hasSpan n
-
-theorem invariant_preserved :
-  ∀ (s0 : Store) (es : List Event),
-    invariantEvidence s0 →
-    invariantEvidence (es.foldl step s0) := by
-  intro s0 es h
-  -- list induction on es
-  sorry
-
-end IngestionInvariants
-```
-
-This proves the shape of "no evidence gets lost" formally once the `step` function encodes append-only behavior.
-
----
-
-## Lean6 Lossless compress/expand
+## Lean6 Lossless compress/expand [(=Lean6)]
 
 ```lean
 -- Sketch: define a graph, pattern instances with explicit node maps, and prove expand ∘ compress = id.
@@ -760,3 +564,8 @@ end PatternCompression
 
 ---
 
+## P1C6: Evidence permanence proof sketch [(=P1C6)] (+[P1C1])
+
+## P1C7: Unique field minimizer and convergence proof sketch [(=P1C7)] (+[P1C2]) (+[P1C3])
+
+## P1C8: Persistent conflict durability proof sketch [(=P1C8)] (+[P1C4])

@@ -1,0 +1,804 @@
+Parsing libs.md for expected library assignments...
+Found 404 IDs in libs.md
+
+Found 12 library files
+
+======================================================================
+DUPLICATE IDs (appearing more than once across all library files):
+======================================================================
+
+  Algorithm 1 (should be in: ingestion)
+    Found 2 times:
+      - ingestion.md:7 <-- KEEP
+      - ingestion.md:118 <-- KEEP
+
+  Algorithm 10 (should be in: patterns)
+    Found 2 times:
+      - embedding.md:115 <-- REMOVE
+      - patterns.md:384 <-- KEEP
+
+  Algorithm 11 (should be in: patterns)
+    Found 2 times:
+      - embedding.md:147 <-- REMOVE
+      - patterns.md:418 <-- KEEP
+
+  Algorithm 12 (should be in: patterns)
+    Found 2 times:
+      - embedding.md:165 <-- REMOVE
+      - patterns.md:438 <-- KEEP
+
+  Algorithm 13 (should be in: patterns)
+    Found 2 times:
+      - embedding.md:190 <-- REMOVE
+      - patterns.md:465 <-- KEEP
+
+  Algorithm 14 (should be in: patterns)
+    Found 2 times:
+      - embedding.md:210 <-- REMOVE
+      - patterns.md:487 <-- KEEP
+
+  Algorithm 15 (should be in: uncertainty)
+    Found 3 times:
+      - embedding.md:229 <-- REMOVE
+      - exploration.md:413 <-- REMOVE
+      - uncertainty.md:133 <-- KEEP
+
+  Algorithm 16 (should be in: uncertainty)
+    Found 2 times:
+      - embedding.md:242 <-- REMOVE
+      - uncertainty.md:148 <-- KEEP
+
+  Algorithm 2 (should be in: field)
+    Found 2 times:
+      - field.md:357 <-- KEEP
+      - field.md:1076 <-- KEEP
+
+  Algorithm 24 (should be in: field)
+    Found 4 times:
+      - embedding.md:511 <-- REMOVE
+      - field.md:436 <-- KEEP
+      - field.md:1200 <-- KEEP
+      - ingestion.md:603 <-- REMOVE
+
+  Algorithm 25 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:531 <-- REMOVE
+      - ingestion.md:623 <-- REMOVE
+      - workspace.md:366 <-- KEEP
+
+  Algorithm 26 (should be in: ingestion)
+    Found 3 times:
+      - embedding.md:561 <-- REMOVE
+      - ingestion.md:236 <-- KEEP
+      - ingestion.md:653 <-- KEEP
+
+  Algorithm 27 (should be in: field)
+    Found 4 times:
+      - embedding.md:576 <-- REMOVE
+      - field.md:458 <-- KEEP
+      - field.md:1224 <-- KEEP
+      - ingestion.md:668 <-- REMOVE
+
+  Algorithm 28 (should be in: uncertainty)
+    Found 3 times:
+      - embedding.md:591 <-- REMOVE
+      - ingestion.md:683 <-- REMOVE
+      - uncertainty.md:186 <-- KEEP
+
+  Algorithm 29 (should be in: graph)
+    Found 3 times:
+      - embedding.md:606 <-- REMOVE
+      - graph.md:59 <-- KEEP
+      - ingestion.md:698 <-- REMOVE
+
+  Algorithm 3 (should be in: field)
+    Found 2 times:
+      - field.md:15 <-- KEEP
+      - field.md:387 <-- KEEP
+
+  Algorithm 31 (should be in: field)
+    Found 4 times:
+      - embedding.md:620 <-- REMOVE
+      - field.md:496 <-- KEEP
+      - field.md:1046 <-- KEEP
+      - ingestion.md:712 <-- REMOVE
+
+  Algorithm 32 (should be in: exploration)
+    Found 4 times:
+      - embedding.md:646 <-- REMOVE
+      - exploration.md:254 <-- KEEP
+      - exploration.md:597 <-- KEEP
+      - ingestion.md:738 <-- REMOVE
+
+  Algorithm 33 (should be in: exploration)
+    Found 3 times:
+      - embedding.md:664 <-- REMOVE
+      - exploration.md:272 <-- KEEP
+      - ingestion.md:756 <-- REMOVE
+
+  Algorithm 34 (should be in: exploration)
+    Found 3 times:
+      - embedding.md:714 <-- REMOVE
+      - field.md:524 <-- REMOVE
+      - ingestion.md:806 <-- REMOVE
+
+  Algorithm 35 (should be in: exploration)
+    Found 3 times:
+      - embedding.md:730 <-- REMOVE
+      - ingestion.md:822 <-- REMOVE
+      - patterns.md:560 <-- REMOVE
+
+  Algorithm 36 (should be in: exploration)
+    Found 2 times:
+      - embedding.md:765 <-- REMOVE
+      - ingestion.md:857 <-- REMOVE
+
+  Algorithm 37 (should be in: exploration)
+    Found 2 times:
+      - embedding.md:782 <-- REMOVE
+      - ingestion.md:874 <-- REMOVE
+
+  Algorithm 38 (should be in: exploration)
+    Found 2 times:
+      - embedding.md:800 <-- REMOVE
+      - ingestion.md:892 <-- REMOVE
+
+  Algorithm 39 (should be in: embedding)
+    Found 3 times:
+      - embedding.md:981 <-- KEEP
+      - field.md:544 <-- REMOVE
+      - ingestion.md:1073 <-- REMOVE
+
+  Algorithm 40 (should be in: patterns)
+    Found 3 times:
+      - embedding.md:992 <-- REMOVE
+      - ingestion.md:1084 <-- REMOVE
+      - workspace.md:579 <-- REMOVE
+
+  Algorithm 41 (should be in: patterns)
+    Found 3 times:
+      - embedding.md:1006 <-- REMOVE
+      - ingestion.md:1098 <-- REMOVE
+      - workspace.md:597 <-- REMOVE
+
+  Algorithm 42 (should be in: exploration)
+    Found 3 times:
+      - embedding.md:1017 <-- REMOVE
+      - ingestion.md:1109 <-- REMOVE
+      - workspace.md:612 <-- REMOVE
+
+  Algorithm 43 (should be in: exploration)
+    Found 3 times:
+      - embedding.md:1034 <-- REMOVE
+      - exploration.md:619 <-- KEEP
+      - ingestion.md:1126 <-- REMOVE
+
+  Algorithm 5 (should be in: patterns)
+    Found 2 times:
+      - patterns.md:508 <-- KEEP
+      - patterns.md:900 <-- KEEP
+
+  Algorithm 53 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:824 <-- REMOVE
+      - ingestion.md:916 <-- REMOVE
+      - workspace.md:398 <-- KEEP
+
+  Algorithm 54 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:837 <-- REMOVE
+      - ingestion.md:929 <-- REMOVE
+      - workspace.md:413 <-- KEEP
+
+  Algorithm 55 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:849 <-- REMOVE
+      - ingestion.md:941 <-- REMOVE
+      - workspace.md:427 <-- KEEP
+
+  Algorithm 56 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:867 <-- REMOVE
+      - ingestion.md:959 <-- REMOVE
+      - workspace.md:447 <-- KEEP
+
+  Algorithm 57 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:879 <-- REMOVE
+      - ingestion.md:971 <-- REMOVE
+      - workspace.md:461 <-- KEEP
+
+  Algorithm 58 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:903 <-- REMOVE
+      - ingestion.md:995 <-- REMOVE
+      - workspace.md:487 <-- KEEP
+
+  Algorithm 59 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:912 <-- REMOVE
+      - ingestion.md:1004 <-- REMOVE
+      - workspace.md:498 <-- KEEP
+
+  Algorithm 60 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:924 <-- REMOVE
+      - ingestion.md:1016 <-- REMOVE
+      - workspace.md:512 <-- KEEP
+
+  Algorithm 61 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:934 <-- REMOVE
+      - ingestion.md:1026 <-- REMOVE
+      - workspace.md:524 <-- KEEP
+
+  Algorithm 62 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:945 <-- REMOVE
+      - ingestion.md:1037 <-- REMOVE
+      - workspace.md:537 <-- KEEP
+
+  Algorithm 63 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:957 <-- REMOVE
+      - ingestion.md:1049 <-- REMOVE
+      - workspace.md:551 <-- KEEP
+
+  Algorithm 64 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:972 <-- REMOVE
+      - ingestion.md:1064 <-- REMOVE
+      - workspace.md:568 <-- KEEP
+
+  Algorithm 9 (should be in: storage)
+    Found 2 times:
+      - storage.md:713 <-- KEEP
+      - workspace.md:319 <-- REMOVE
+
+  D10 (should be in: foundation)
+    Found 2 times:
+      - foundation.md:77 <-- KEEP
+      - storage.md:351 <-- REMOVE
+
+  D16 (should be in: patterns)
+    Found 2 times:
+      - patterns.md:177 <-- KEEP
+      - storage.md:438 <-- REMOVE
+
+  D17 (should be in: patterns)
+    Found 2 times:
+      - patterns.md:194 <-- KEEP
+      - storage.md:453 <-- REMOVE
+
+  D18 (should be in: patterns)
+    Found 2 times:
+      - patterns.md:213 <-- KEEP
+      - storage.md:470 <-- REMOVE
+
+  D19 (should be in: patterns)
+    Found 2 times:
+      - patterns.md:233 <-- KEEP
+      - storage.md:488 <-- REMOVE
+
+  D20 (should be in: uncertainty)
+    Found 2 times:
+      - storage.md:506 <-- REMOVE
+      - uncertainty.md:34 <-- KEEP
+
+  D21 (should be in: uncertainty)
+    Found 2 times:
+      - storage.md:522 <-- REMOVE
+      - uncertainty.md:52 <-- KEEP
+
+  D22 (should be in: uncertainty)
+    Found 2 times:
+      - storage.md:536 <-- REMOVE
+      - uncertainty.md:68 <-- KEEP
+
+  D23 (should be in: patterns)
+    Found 2 times:
+      - patterns.md:253 <-- KEEP
+      - storage.md:551 <-- REMOVE
+
+  D24 (should be in: embedding)
+    Found 2 times:
+      - embedding.md:40 <-- KEEP
+      - storage.md:572 <-- REMOVE
+
+  D25 (should be in: patterns)
+    Found 2 times:
+      - patterns.md:276 <-- KEEP
+      - storage.md:589 <-- REMOVE
+
+  D26 (should be in: patterns)
+    Found 2 times:
+      - patterns.md:292 <-- KEEP
+      - storage.md:603 <-- REMOVE
+
+  D27 (should be in: patterns)
+    Found 2 times:
+      - patterns.md:318 <-- KEEP
+      - storage.md:627 <-- REMOVE
+
+  D34 (should be in: exploration)
+    Found 2 times:
+      - embedding.md:1169 <-- REMOVE
+      - exploration.md:54 <-- KEEP
+
+  D35 (should be in: exploration)
+    Found 2 times:
+      - embedding.md:1193 <-- REMOVE
+      - exploration.md:80 <-- KEEP
+
+  D36 (should be in: exploration)
+    Found 2 times:
+      - embedding.md:1209 <-- REMOVE
+      - exploration.md:98 <-- KEEP
+
+  D37 (should be in: exploration)
+    Found 2 times:
+      - embedding.md:1224 <-- REMOVE
+      - exploration.md:115 <-- KEEP
+
+  D38 (should be in: exploration)
+    Found 2 times:
+      - embedding.md:1237 <-- REMOVE
+      - exploration.md:130 <-- KEEP
+
+  D39 (should be in: workspace)
+    Found 2 times:
+      - embedding.md:1254 <-- REMOVE
+      - workspace.md:7 <-- KEEP
+
+  D40 (should be in: workspace)
+    Found 2 times:
+      - embedding.md:1273 <-- REMOVE
+      - workspace.md:28 <-- KEEP
+
+  D41 (should be in: workspace)
+    Found 2 times:
+      - embedding.md:1295 <-- REMOVE
+      - workspace.md:52 <-- KEEP
+
+  D42 (should be in: workspace)
+    Found 2 times:
+      - embedding.md:1334 <-- REMOVE
+      - workspace.md:93 <-- KEEP
+
+  D43 (should be in: workspace)
+    Found 2 times:
+      - embedding.md:1369 <-- REMOVE
+      - workspace.md:130 <-- KEEP
+
+  D44 (should be in: workspace)
+    Found 2 times:
+      - embedding.md:1383 <-- REMOVE
+      - workspace.md:146 <-- KEEP
+
+  D45 (should be in: workspace)
+    Found 2 times:
+      - embedding.md:1397 <-- REMOVE
+      - workspace.md:162 <-- KEEP
+
+  D46 (should be in: field)
+    Found 2 times:
+      - embedding.md:1413 <-- REMOVE
+      - field.md:93 <-- KEEP
+
+  D47 (should be in: field)
+    Found 2 times:
+      - embedding.md:1425 <-- REMOVE
+      - field.md:107 <-- KEEP
+
+  D48 (should be in: field)
+    Found 2 times:
+      - embedding.md:1448 <-- REMOVE
+      - field.md:132 <-- KEEP
+
+  D49 (should be in: field)
+    Found 2 times:
+      - embedding.md:1462 <-- REMOVE
+      - field.md:148 <-- KEEP
+
+  D50 (should be in: field)
+    Found 2 times:
+      - embedding.md:1475 <-- REMOVE
+      - field.md:163 <-- KEEP
+
+  D51 (should be in: field)
+    Found 2 times:
+      - embedding.md:1488 <-- REMOVE
+      - field.md:178 <-- KEEP
+
+  D52 (should be in: field)
+    Found 2 times:
+      - embedding.md:1501 <-- REMOVE
+      - field.md:858 <-- KEEP
+
+  D53 (should be in: field)
+    Found 3 times:
+      - embedding.md:1512 <-- REMOVE
+      - field.md:193 <-- KEEP
+      - field.md:1008 <-- KEEP
+
+  D54 (should be in: deployment)
+    Found 2 times:
+      - deployment.md:24 <-- KEEP
+      - embedding.md:1528 <-- REMOVE
+
+  D55 (should be in: workspace)
+    Found 2 times:
+      - embedding.md:1543 <-- REMOVE
+      - workspace.md:180 <-- KEEP
+
+  D56 (should be in: workspace)
+    Found 2 times:
+      - embedding.md:1558 <-- REMOVE
+      - workspace.md:197 <-- KEEP
+
+  D57 (should be in: workspace)
+    Found 2 times:
+      - embedding.md:1574 <-- REMOVE
+      - workspace.md:215 <-- KEEP
+
+  D58 (should be in: ingestion)
+    Found 2 times:
+      - embedding.md:1589 <-- REMOVE
+      - ingestion.md:49 <-- KEEP
+
+  D59 (should be in: uncertainty)
+    Found 2 times:
+      - embedding.md:1603 <-- REMOVE
+      - uncertainty.md:85 <-- KEEP
+
+  D6 (should be in: foundation)
+    Found 2 times:
+      - foundation.md:56 <-- KEEP
+      - storage.md:266 <-- REMOVE
+
+  D60 (should be in: graph)
+    Found 2 times:
+      - embedding.md:1614 <-- REMOVE
+      - graph.md:32 <-- KEEP
+
+  D61 (should be in: ingestion)
+    Found 3 times:
+      - embedding.md:1626 <-- REMOVE
+      - ingestion.md:65 <-- KEEP
+      - ingestion.md:564 <-- KEEP
+
+  D62 (should be in: embedding)
+    Found 3 times:
+      - embedding.md:59 <-- KEEP
+      - embedding.md:1640 <-- KEEP
+      - embedding.md:1791 <-- KEEP
+
+  D63 (should be in: exploration)
+    Found 2 times:
+      - embedding.md:1655 <-- REMOVE
+      - exploration.md:149 <-- KEEP
+
+  D7 (should be in: field)
+    Found 2 times:
+      - field.md:68 <-- KEEP
+      - storage.md:285 <-- REMOVE
+
+  D8 (should be in: graph)
+    Found 2 times:
+      - graph.md:5 <-- KEEP
+      - storage.md:308 <-- REMOVE
+
+  D9 (should be in: uncertainty)
+    Found 2 times:
+      - storage.md:332 <-- REMOVE
+      - uncertainty.md:13 <-- KEEP
+
+  Lean10 (should be in: verification)
+    Found 2 times:
+      - field.md:758 <-- REMOVE
+      - verification.md:148 <-- KEEP
+
+  Lean11 (should be in: verification)
+    Found 2 times:
+      - storage.md:101 <-- REMOVE
+      - verification.md:195 <-- KEEP
+
+  Lean12 (should be in: verification)
+    Found 2 times:
+      - embedding.md:1065 <-- REMOVE
+      - verification.md:235 <-- KEEP
+
+  Lean13 (should be in: verification)
+    Found 2 times:
+      - embedding.md:1089 <-- REMOVE
+      - verification.md:259 <-- KEEP
+
+  Lean14 (should be in: verification)
+    Found 2 times:
+      - verification.md:279 <-- KEEP
+      - workspace.md:654 <-- REMOVE
+
+  Lean15 (should be in: verification)
+    Found 2 times:
+      - storage.md:141 <-- REMOVE
+      - verification.md:311 <-- KEEP
+
+  Lean8 (should be in: verification)
+    Found 2 times:
+      - verification.md:79 <-- KEEP
+      - verification.md:659 <-- KEEP
+
+  Lean9 (should be in: verification)
+    Found 3 times:
+      - field.md:715 <-- REMOVE
+      - verification.md:105 <-- KEEP
+      - verification.md:685 <-- KEEP
+
+  P10I10 (should be in: workspace)
+    Found 3 times:
+      - embedding.md:810 <-- REMOVE
+      - ingestion.md:902 <-- REMOVE
+      - workspace.md:893 <-- KEEP
+
+  P1C1 (should be in: foundation)
+    Found 2 times:
+      - verification.md:537 <-- REMOVE
+      - verification.md:557 <-- REMOVE
+
+  P1C2 (should be in: field)
+    Found 2 times:
+      - verification.md:541 <-- REMOVE
+      - verification.md:569 <-- REMOVE
+
+  P1C4 (should be in: uncertainty)
+    Found 2 times:
+      - verification.md:549 <-- REMOVE
+      - verification.md:577 <-- REMOVE
+
+  P4.1 (should be in: patterns)
+    Found 2 times:
+      - patterns.md:339 <-- KEEP
+      - patterns.md:757 <-- KEEP
+
+  P4.2 (should be in: patterns)
+    Found 2 times:
+      - patterns.md:367 <-- KEEP
+      - patterns.md:783 <-- KEEP
+
+  P4C2 (should be in: patterns)
+    Found 2 times:
+      - patterns.md:544 <-- KEEP
+      - patterns.md:934 <-- KEEP
+
+  P4C3 (should be in: patterns)
+    Found 2 times:
+      - patterns.md:552 <-- KEEP
+      - patterns.md:944 <-- KEEP
+
+  P6.4 (should be in: graph)
+    Found 2 times:
+      - embedding.md:267 <-- REMOVE
+      - graph.md:47 <-- KEEP
+
+  P6.5 (should be in: embedding)
+    Found 2 times:
+      - embedding.md:276 <-- KEEP
+      - embedding.md:1810 <-- KEEP
+
+  P6C1 (should be in: workspace)
+    Found 2 times:
+      - foundation.md:413 <-- REMOVE
+      - workspace.md:633 <-- KEEP
+
+  P6C2 (should be in: workspace)
+    Found 2 times:
+      - foundation.md:424 <-- REMOVE
+      - workspace.md:644 <-- KEEP
+
+  P6C3 (should be in: storage)
+    Found 2 times:
+      - foundation.md:434 <-- REMOVE
+      - storage.md:91 <-- KEEP
+
+  P6C4 (should be in: uncertainty)
+    Found 2 times:
+      - foundation.md:444 <-- REMOVE
+      - uncertainty.md:217 <-- KEEP
+
+  P6C5 (should be in: ingestion)
+    Found 2 times:
+      - foundation.md:455 <-- REMOVE
+      - ingestion.md:265 <-- KEEP
+
+  P6C6 (should be in: deployment)
+    Found 3 times:
+      - deployment.md:71 <-- KEEP
+      - deployment.md:318 <-- KEEP
+      - foundation.md:464 <-- REMOVE
+
+  P7.1 (should be in: exploration)
+    Found 3 times:
+      - embedding.md:367 <-- REMOVE
+      - exploration.md:165 <-- KEEP
+      - exploration.md:430 <-- KEEP
+
+  P7.2 (should be in: exploration)
+    Found 3 times:
+      - embedding.md:385 <-- REMOVE
+      - exploration.md:185 <-- KEEP
+      - exploration.md:448 <-- KEEP
+
+  P7.3 (should be in: exploration)
+    Found 3 times:
+      - embedding.md:396 <-- REMOVE
+      - exploration.md:198 <-- KEEP
+      - exploration.md:459 <-- KEEP
+
+  P7.4 (should be in: exploration)
+    Found 3 times:
+      - embedding.md:411 <-- REMOVE
+      - exploration.md:215 <-- KEEP
+      - exploration.md:474 <-- KEEP
+
+  P7.5 (should be in: exploration)
+    Found 3 times:
+      - embedding.md:426 <-- REMOVE
+      - exploration.md:232 <-- KEEP
+      - exploration.md:489 <-- KEEP
+
+  P7.6 (should be in: exploration)
+    Found 3 times:
+      - embedding.md:434 <-- REMOVE
+      - exploration.md:242 <-- KEEP
+      - exploration.md:497 <-- KEEP
+
+  P7C1 (should be in: foundation)
+    Found 2 times:
+      - foundation.md:97 <-- KEEP
+      - foundation.md:475 <-- KEEP
+
+  P7C2 (should be in: exploration)
+    Found 2 times:
+      - exploration.md:308 <-- KEEP
+      - foundation.md:488 <-- REMOVE
+
+  P7C3 (should be in: exploration)
+    Found 2 times:
+      - exploration.md:340 <-- KEEP
+      - foundation.md:520 <-- REMOVE
+
+  P7C4 (should be in: exploration)
+    Found 2 times:
+      - exploration.md:353 <-- KEEP
+      - foundation.md:533 <-- REMOVE
+
+  P7C5 (should be in: exploration)
+    Found 2 times:
+      - exploration.md:363 <-- KEEP
+      - foundation.md:543 <-- REMOVE
+
+  P9.1 (should be in: field)
+    Found 3 times:
+      - embedding.md:283 <-- REMOVE
+      - field.md:263 <-- KEEP
+      - field.md:879 <-- KEEP
+
+  P9.2 (should be in: field)
+    Found 3 times:
+      - embedding.md:301 <-- REMOVE
+      - field.md:283 <-- KEEP
+      - field.md:897 <-- KEEP
+
+  P9.3 (should be in: field)
+    Found 3 times:
+      - embedding.md:311 <-- REMOVE
+      - field.md:295 <-- KEEP
+      - field.md:907 <-- KEEP
+
+  P9.4 (should be in: field)
+    Found 3 times:
+      - embedding.md:336 <-- REMOVE
+      - field.md:322 <-- KEEP
+      - field.md:932 <-- KEEP
+
+  P9.5 (should be in: field)
+    Found 3 times:
+      - embedding.md:344 <-- REMOVE
+      - field.md:332 <-- KEEP
+      - field.md:940 <-- KEEP
+
+  P9I3 (should be in: field)
+    Found 2 times:
+      - field.md:54 <-- KEEP
+      - field.md:1028 <-- KEEP
+
+  P9I4 (should be in: field)
+    Found 2 times:
+      - field.md:60 <-- KEEP
+      - field.md:1036 <-- KEEP
+
+======================================================================
+IDs IN WRONG LIBRARY (not in their primary library):
+======================================================================
+
+  Algorithm 34
+    Expected in: exploration
+    Found in: ['embedding.md:714', 'field.md:524', 'ingestion.md:806']
+
+  Algorithm 35
+    Expected in: exploration
+    Found in: ['embedding.md:730', 'ingestion.md:822', 'patterns.md:560']
+
+  Algorithm 36
+    Expected in: exploration
+    Found in: ['embedding.md:765', 'ingestion.md:857']
+
+  Algorithm 37
+    Expected in: exploration
+    Found in: ['embedding.md:782', 'ingestion.md:874']
+
+  Algorithm 38
+    Expected in: exploration
+    Found in: ['embedding.md:800', 'ingestion.md:892']
+
+  Algorithm 40
+    Expected in: patterns
+    Found in: ['embedding.md:992', 'ingestion.md:1084', 'workspace.md:579']
+
+  Algorithm 41
+    Expected in: patterns
+    Found in: ['embedding.md:1006', 'ingestion.md:1098', 'workspace.md:597']
+
+  Algorithm 42
+    Expected in: exploration
+    Found in: ['embedding.md:1017', 'ingestion.md:1109', 'workspace.md:612']
+
+  P1C1
+    Expected in: foundation
+    Found in: ['verification.md:537', 'verification.md:557']
+
+  P1C2
+    Expected in: field
+    Found in: ['verification.md:541', 'verification.md:569']
+
+  P1C3
+    Expected in: field
+    Found in: ['verification.md:545']
+
+  P1C4
+    Expected in: uncertainty
+    Found in: ['verification.md:549', 'verification.md:577']
+
+  P1C5
+    Expected in: field
+    Found in: ['verification.md:553']
+
+  P1I12
+    Expected in: ingestion
+    Found in: ['storage.md:201']
+
+  P7I1
+    Expected in: exploration
+    Found in: ['field.md:1101']
+
+  P7I2
+    Expected in: exploration
+    Found in: ['field.md:1107']
+
+  P7I3
+    Expected in: exploration
+    Found in: ['field.md:1114']
+
+  P7I4
+    Expected in: exploration
+    Found in: ['field.md:1120']
+
+======================================================================
+SUMMARY:
+======================================================================
+  Total IDs in libs.md: 404
+  Total unique IDs in library files: 404
+  Total ID occurrences: 586
+  IDs with duplicates: 132
+  IDs in wrong library: 18
+  Entries to remove (to achieve 1 per ID): 182

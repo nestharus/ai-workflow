@@ -1,0 +1,41 @@
+
+REFERENCES NEEDING ANNOTATION:
+--------------------------------------------------------------------------------
+L25: "...aph template or a grammar rewrite rule (P4/P5)" -> P4 (no annotation)
+L25: "...template or a grammar rewrite rule (P4/P5)" -> P5 (no annotation)
+L49: "* P4: Pattern library + instances" -> P4 (no annotation)
+L50: "* P5: Grammar rules and parse forests" -> P5 (no annotation)
+L51: "* P6: Hippocampus workspace + 2-stage commit..." -> P6 (no annotation)
+L52: "* P7: Seed queue and exploration traces (goo..." -> P7 (no annotation)
+L54: "P6 "sleep" is the right place to run heavy..." -> P6 (no annotation)
+L89: "You already mine patterns. P4 patterns still tend to be "fat."" -> P4 (no annotation)
+L101: "...inciple as your MDL compression work in P4, just one level deeper. It turns patter..." -> P4 (no annotation)
+L120: "...tility: downstream task success deltas (P4 feedback)" -> P4 (no annotation)
+L178: "* commit via P6 2-stage commit" -> P6 (no annotation)
+L317: "...d hypothesis branches, then commits via P6 2SC." -> P6 (no annotation)
+L590: "* Commit goes through P6 2SC." -> P6 (no annotation)
+L598: "...ed, or deferred, based on user profile (P4)." -> P4 (no annotation)
+L1974: "Runs inside Algorithm 9 (Global Consolidation) after snapshot c..." -> Algorithm 9 (no annotation)
+L2192: "...induced by the robust gated objective (P1–P2), which is a weighted graph-smoothin..." -> P1 (no annotation)
+L2192: "...duced by the robust gated objective (P1–P2), which is a weighted graph-smoothing +..." -> P2 (no annotation)
+L2289: "* (prov) provenance score (P6)" -> P6 (no annotation)
+L2290: "* (risk) governance risk (P4)" -> P4 (no annotation)
+L2302: "* adapted via P4 light feedback (reward shaping)" -> P4 (no annotation)
+L2378: "P10 defaults to remove-wins for safety in a..." -> P10 (no annotation)
+L2780: "Turns P4 patterns into executable grammar rules...." -> P4 (no annotation)
+L3083: "**P4C2 proof sketch: MDL-driven abstraction re..." -> P4C2 (no annotation)
+L3089: "**P4C3 proof sketch: Promotion guarantee**" -> P4C3 (no annotation)
+L3095: "**P4C5 proof sketch: Risk governance calibrati..." -> P4C5 (no annotation)
+L3199: "...coordination system may call them, but P10 does not define the policy for when." -> P10 (no annotation)
+L4475: "...ed by epoch. Old hypotheses compact via P2 sleep cycle, with provenance and failur..." -> P2 (no annotation)
+L4494: "Packed forests reuse (P5), overlays reuse (P6)." -> P5 (no annotation)
+L4494: "...ked forests reuse (P5), overlays reuse (P6)." -> P6 (no annotation)
+
+================================================================================
+SUMMARY
+================================================================================
+Total references found: 29
+With annotation: 0
+Without annotation: 29
+
+Needs attention: 29 references missing annotations

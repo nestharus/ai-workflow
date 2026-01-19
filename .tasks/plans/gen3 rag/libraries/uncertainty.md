@@ -1,16 +1,10 @@
-# Uncertainty Library
-
-Ambiguity ledger, risk tagging, failure memory, confidence scoring, selective prediction.
-
----
-
-### P4I4 Governance never hides ambiguity silently
+### P4I4 Governance never hides ambiguity silently (=[P4]) [(=P4I4)]
 
 * If the system suppresses an ambiguity from the user view, it still writes it into the ambiguity ledger with risk score and rationale.
 
 ---
 
-### D9 ConflictRecord
+### D9 ConflictRecord [(=D9)]
 
 Explicit ambiguity store.
 
@@ -31,7 +25,7 @@ ConflictRecord {
 
 ---
 
-### D20 FeedbackEvent
+### D20 FeedbackEvent [(=D20)]
 
 Light outcome signal.
 
@@ -49,7 +43,7 @@ FeedbackEvent {
 
 ---
 
-### D21 UserRiskProfile
+### D21 UserRiskProfile [(=D21)]
 
 Governance control surface.
 
@@ -65,7 +59,7 @@ UserRiskProfile {
 
 ---
 
-### D22 AmbiguityLedgerEntry
+### D22 AmbiguityLedgerEntry [(=D22)]
 
 ```text
 AmbiguityLedgerEntry {
@@ -82,7 +76,7 @@ AmbiguityLedgerEntry {
 
 ---
 
-### D59 SurpriseBudget
+### D59 SurpriseBudget [(=D59)]
 
 ```text
 SurpriseBudget {
@@ -95,7 +89,7 @@ SurpriseBudget {
 
 ---
 
-### P4.3 Failure memory as negative prior / gating brake
+### P4.3 Failure memory as negative prior / gating brake [(=P4.3)]
 
 Let (F(\cdot)) be a failure score predicted from FailureCase signatures and context features.
 
@@ -111,7 +105,7 @@ g_{ij}^{(h)} \leftarrow g_{ij}^{(h)} \cdot \exp(-\eta F(p,ctx))
 
 ---
 
-### P4.4 Light outcome feedback as contextual bandit over system actions
+### P4.4 Light outcome feedback as contextual bandit over system actions [(=P4.4)]
 
 Define an action set (\mathcal{A}) over system knobs, e.g.:
 
@@ -124,13 +118,13 @@ Observe reward (r_t) from task outcome (light feedback). Use contextual bandit u
 
 ---
 
-### P4.5 Risk governance via selective prediction / conformal risk control
+### P4.5 Risk governance via selective prediction / conformal risk control [(=P4.5)]
 
 Use uncertainty (residual/tension/variance) as a heuristic score, then conformalize deferral thresholds for calibrated risk control. ([People @ EECS][2])
 
 ---
 
-### Algorithm 15: Light Outcome Feedback Loop (bandit)
+### Algorithm 15: Light Outcome Feedback Loop (bandit) [(=Algorithm 15)]
 
 ```pseudo
 function POLICY_STEP(context φ):
@@ -145,7 +139,7 @@ Bandit foundations and safe online learning to re-rank provide the template for 
 
 ---
 
-### Algorithm 16: Risk & Ambiguity Governance
+### Algorithm 16: Risk & Ambiguity Governance [(=Algorithm 16)]
 
 ```pseudo
 function GOVERN_OUTPUT(answer_candidates, ambiguity_metrics, user_profile R):
@@ -165,7 +159,7 @@ Conformal / selective frameworks supply calibrated abstention and risk control p
 
 ---
 
-### P6.3 Surprise budget as forced retention of high-provenance tension
+### P6.3 Surprise budget as forced retention of high-provenance tension [(=P6.3)]
 
 Define surprise of evidence (e):
 [
@@ -183,7 +177,7 @@ Implementation hook in IRLS:
 
 ---
 
-### Algorithm 28: Surprise budget and provenance override
+### Algorithm 28: Surprise budget and provenance override [(=Algorithm 28)]
 
 ```pseudo
 function HANDLE_DISRUPTIVE_EVIDENCE(hws, evidence e):
@@ -200,13 +194,13 @@ function HANDLE_DISRUPTIVE_EVIDENCE(hws, evidence e):
 
 ---
 
-### P4C4 Failure memory decreases repeat error probability
+### P4C4 Failure memory decreases repeat error probability [(=P4C4)]
 
 * Under a simple policy update rule, repeated failed patterns are increasingly suppressed.
 
 ---
 
-### P4C5 Risk governance calibration
+### P4C5 Risk governance provides calibrated deferral [(=P4C5)]
 
 **Claim.** Conformal prediction can convert heuristic uncertainty into prediction sets with distribution-free coverage, and selective conformal risk control combines deferral with risk control. ([People @ EECS][2])
 
@@ -214,7 +208,7 @@ function HANDLE_DISRUPTIVE_EVIDENCE(hws, evidence e):
 
 ---
 
-### P6C4 Surprise budget prevents calcification by construction
+### P6C4 Surprise budget prevents calcification by construction [(=P6C4)]
 
 **Claim.** High-provenance disruptive evidence cannot be suppressed purely by robust downweighting once clamped, it either forces branching or forces re-anchoring in some hypothesis.
 **Sketch.**
@@ -225,70 +219,65 @@ function HANDLE_DISRUPTIVE_EVIDENCE(hws, evidence e):
 
 ---
 
-## G7 Ambiguity preservation
+## G7 Ambiguity preservation [(=G7)]
 
 * Conflicts stay explicit and queryable. Averaging does not erase forks.
 
 ---
 
-## G8 Confidence and diagnostics
+## G8 Confidence and diagnostics [(=G8)]
 
 * System produces measurable uncertainty, tension, and the next information it wants.
 
 ---
 
-## G10 Ambiguity preservation under consolidation
+## G10 Ambiguity preservation under consolidation [(=G10)]
 
 * Consolidation keeps conflict artifacts and hypothesis forks. It reduces drift and improves consistency. It does not collapse multi-modal meaning into a single "average truth."
 
 ---
 
-## G13 Confidence-weighted promotion
+## G13 Confidence-weighted promotion [(=G13)]
 
 * Promote abstractions when confidence rises.
 * Keep low-confidence abstractions as hypotheses.
 
 ---
 
-## G14 Failure memory
+## G14 Failure memory [(=G14)]
 
 * Store explicit "bad pattern" memory and use it as a brake.
 
 ---
 
-## G15 Outcome feedback
+## G15 Outcome feedback [(=G15)]
 
 * Use light task outcomes to tune promotion, gating, and retrieval policies.
 
 ---
 
-## G16 Risk governance
+## G16 Risk governance [(=G16)]
 
 * Surface ambiguity proportional to risk and user profile.
 * Enable abstention / deferral for high-risk outputs.
 
 ---
 
-## G25 Paradigm shift support
+## G25 Paradigm shift support [(=G25)]
 
 * High-provenance disruptive evidence gets a forced path to branch or restructure, via surprise budget.
 
 ---
 
-## 6. Uncertainty-driven compute
-
-* High uncertainty nodes get more validation and more relaxation steps.
-* Low uncertainty nodes get cheap maintenance.
-
 ---
 
-## Comp28 Surprise Budget Manager (SURP)
+## Comp28 Surprise Budget Manager (SURP) [(=Comp28)]
 
 ---
 
 ---
 
-## Algorithm 4: Tier promotion and demotion
+## Algorithm 4: Tier promotion and demotion [(=Algorithm 4)]
 
 Explicit focus, active, contextual, inactive logic, inspired by virtual memory style thinking.
 
@@ -307,5 +296,11 @@ function PROMOTE_DEMOTE_TIERS():
 ```
 
 Caps are hard safety rails.
+
+---
+
+### P1C4 Persistent conflict durability [(=P1C4)]
+
+Persistent conflict produces a durable ambiguity artifact (ConflictRecord or Hypothesis branch).
 
 ---

@@ -1,18 +1,5 @@
-# Deployment Library
 
-A/B testing, canary deployments, rollback, zero-downtime, shadow evaluation.
-
----
-
-## Performance targets
-
-* Ingestion: amortized sublinear in corpus size per span.
-* Field updates: local, bounded by tier neighborhoods.
-* Retrieval: bounded latency with tiered ANN plus graph expansion budget.
-
----
-
-### P9I6 — A/B never breaks correctness
+### P9I6 — A/B never breaks correctness (=[P9]) [(=P9I6)]
 
 All A/B routing is read-view based. The write path is unified (event log). Candidate arms are either:
 
@@ -21,7 +8,7 @@ All A/B routing is read-view based. The write path is unified (event log). Candi
 
 ---
 
-### D54 ABExperiment
+### D54 ABExperiment [(=D54)]
 
 ```text
 ABExperiment {
@@ -38,7 +25,7 @@ ABExperiment {
 
 ---
 
-## Algorithm 52 — AB_ROLLOUT (shadow + canary + A/B)
+## Algorithm 52 — AB_ROLLOUT (shadow + canary + A/B) [(=Algorithm 52)]
 
 ```pseudo
 function AB_ROLLOUT(exp):
@@ -68,7 +55,7 @@ Side-effect rule:
 
 ---
 
-### P6C6 Adapter rollout is safe under canary plus rollback
+### P6C6 Adapter rollout is safe under canary plus rollback [(=P6C6)]
 
 **Claim.** Rollout can be limited to fraction (f) and reverted on regression.
 **Sketch.**
@@ -77,237 +64,25 @@ Side-effect rule:
 
 ---
 
-## G41 A/B continuous deployment
+## G41 A/B continuous deployment [(=G41)]
 
 * Shadow → canary → ramp → graduate/rollback is supported for epochs, adapters, grammar, and blend recipes.
 
 ---
 
-## Performance and memory
-
-* **Abstraction reduces working-set size**: macro-nodes stand in for repeated subgraphs, while evidence remains in inactive storage.
-* **Expansion is demand-driven**: expand only to token budget and risk profile.
-* **Pattern mining is sleep-time**: runs during global consolidation, amortized.
-* **Online matching is bounded**: local structural match only around focus/active tiers.
-
 ---
-
-## Safety and stability
-
-* **Failure memory is prioritized** in replay and learning (similar spirit to prioritized replay). ([arXiv][7])
-* **Safe online learning**: keep "policy deltas" small, prefer conservative exploration (safe re-ranking literature is a good template). ([Proceedings of Machine Learning Research][8])
-* **Governance is separate**: it sits above retrieval/field state and never destroys evidence.
-
----
-
-## Compute strategy
-
-* Local relaxation bounded by tier caps
-* Conflict resolution budgeted as a background loop with strict quotas
-* Validator calls rate-limited and triggered by tension
-
----
-
-## Hot path
-
-Ingestion hot path stays:
-
-* embed once
-* add edges
-* local relax
-* push conflict candidates
-  Heavy work runs on the conflict queue.
-
----
-
-## Performance control
-
-Graph parsing and graph rewriting can get expensive fast, so P5 adds hard controls.
-
-1. **Grammar class restrictions per tier**
-
-* Focus and Active: restricted grammars with cheap matching and bounded-degree neighborhoods.
-* Context and Sleep: heavier grammars and deeper matching.
-
-Graph grammar parsing complexity varies widely across grammar classes and restrictions. ([sciencedirect.com][11])
-
-2. **Match candidate acceleration**
-
-* Index rule LHS patterns by WL-style neighborhood signatures.
-* Use WL hashing to prune match candidates before subgraph matching. ([Journal of Machine Learning Research][8])
-
-3. **Hypothesis beam and packed storage**
-
-* Strict beam width per region.
-* Packed DAG sharing across hypotheses, similar in spirit to graph-structured stacks for ambiguity. ([IJCAI][2])
-
-4. **Coordinate transforms cached**
-
-* Cache canonical projections (A_v b_i^{(v)}).
-* Refit adapters in sleep-time, then bulk-refresh projections during consolidation.
-
-5. **Domain embedders remain specialized**
-
-* Text embedder stays as the semantic anchor.
-* Graph embedder covers topology.
-* Code embedder covers AST and code structure. ([ACM Digital Library][9])
-
----
-
-## Performance
-
-* Hard budgets: `explore_budget`, `llm_budget`
-* Beam limits: number of hypotheses spawned per seed
-* Cheap probes first, LLM second
-* Packed forests reuse (P5), overlays reuse (P6)
-* Sleep pass does deeper mining, online pass stays shallow
-
----
-
-## Safety
-
-* Governance gating: risk tags influence whether exploration runs automatically, or requires user branch choice
-* High-risk seeds can trigger "surface ambiguity" behavior instead of silent repair
-* Failure memory blocks infinite loops on unproductive seeds
-
----
-
-## P10 non-goals
-
-* No global policy for when to spawn children or how to allocate budgets.
-* No automatic resolution of semantic conflict; ambiguity is preserved and surfaced.
-* No requirement that the LLM use specific schema objects (idea nodes/facets). Those are allowed but not mandatory.
 
 ---
 
 ---
 
-## P4 non-functionals
-
-### Performance and memory
-
-* **Abstraction reduces working-set size**: macro-nodes stand in for repeated subgraphs, while evidence remains in inactive storage.
-* **Expansion is demand-driven**: expand only to token budget and risk profile.
-* **Pattern mining is sleep-time**: runs during global consolidation, amortized.
-* **Online matching is bounded**: local structural match only around focus/active tiers.
-
-### Safety and stability
-
-* **Failure memory is prioritized** in replay and learning (similar spirit to prioritized replay). ([arXiv][7])
-* **Safe online learning**: keep "policy deltas" small, prefer conservative exploration (safe re-ranking literature is a good template). ([Proceedings of Machine Learning Research][8])
-* **Governance is separate**: it sits above retrieval/field state and never destroys evidence.
-
----
-
-## Optimization and memory strategies
-
-### 1. Tier-locality as the main speed lever
-
-* Keep Focus, Active, Context in RAM.
-* Keep Inactive on disk, accessed via ANN and edge tables.
-
-This is the same design principle as virtual memory and tiered recall systems.
-
-### 2. Separate indices by tier and by embedding kind
-
-* HNSW for fast recall in Context.
-* PQ or IVF+PQ for Inactive scale.
-
-### 3. Quantize aggressively outside Focus
-
-* Store inactive embeddings as int8 PQ codes.
-* Keep only centroids and a small residual cache in RAM.
-
-### 4. Batch edge writes, defer compaction
-
-* Use LSM-style batching for high ingest rates.
-* Periodic compaction merges edge runs.
-
-### 5. Local field updates, global re-solves rarely
-
-* Per span: relax only within a hop radius determined by tier.
-* Global solve: scheduled offline or during low load, used to reduce drift.
-
-### 6. Uncertainty-driven compute
-
-* High uncertainty nodes get more validation and more relaxation steps.
-* Low uncertainty nodes get cheap maintenance.
-
-### 7. Event-sourced replay
-
-* Every mutation is an event.
-* Enables rebuilds, A/B comparisons, and regression debugging.
-
----
-
-## P1 non-functionals
-
-This patch adds storage, so performance needs explicit handling.
-
-### Storage strategy
-
-* Raw spans: immutable compressed store, dedup by content hash
-* ObservationRecord: float16 or float32 backstore on disk
-* ANN store: PQ codes for scale and speed, full vector backstore for audits ([ACM Digital Library][5])
-* Graph edges: LSM-backed edge table for high write rates ([UMass Boston CS][6])
-* NodeState history:
-
-  * RAM keeps current states for Focus, Active, Context
-  * disk keeps full history, optionally delta-compressed
-
-### Compute strategy
-
-* Local relaxation bounded by tier caps
-* Conflict resolution budgeted as a background loop with strict quotas
-* Validator calls rate-limited and triggered by tension
-
-### Hot path
-
-Ingestion hot path stays:
-
-* embed once
-* add edges
-* local relax
-* push conflict candidates
-  Heavy work runs on the conflict queue.
-
----
-
-## P5 non-functionals
-
----
-
-## P7 non-functionals
-
-### Performance
-
-* Hard budgets: `explore_budget`, `llm_budget`
-* Beam limits: number of hypotheses spawned per seed
-* Cheap probes first, LLM second
-* Packed forests reuse (P5), overlays reuse (P6)
-* Sleep pass does deeper mining, online pass stays shallow
-
-### Memory
-
-* Seeds are compact, mostly metrics plus anchors
-* Traces compress into signatures and aggregate stats
-* Archived seeds remain queryable for audit
-
-### Safety
-
-* Governance gating: risk tags influence whether exploration runs automatically, or requires user branch choice
-* High-risk seeds can trigger "surface ambiguity" behavior instead of silent repair
-* Failure memory blocks infinite loops on unproductive seeds
-
----
-
-### NFG1 Ingestion performance
+### NFG1 Ingestion performance [(=NFG1)]
 
 Amortized sublinear in corpus size per span.
 
 ---
 
-### NFG3 Retrieval latency
+### NFG3 Retrieval latency [(=NFG3)]
 
 Bounded latency with tiered ANN plus graph expansion budget.
 
@@ -315,11 +90,3 @@ Bounded latency with tiered ANN plus graph expansion budget.
 
 ---
 
-### P6C6 Adapter rollout is safe under canary plus rollback
-
-**Claim.** Rollout can be limited to fraction (f) and reverted on regression.
-**Sketch.**
-
-* Canarying is a standard safety pattern for deployments.
-
----

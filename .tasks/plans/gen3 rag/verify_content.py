@@ -88,10 +88,38 @@ def scan_declarations_and_references(lines: list[str]) -> tuple[dict, dict]:
     return declarations, references
 
 
+def has_id_pattern(line: str) -> bool:
+    """Check if a line contains a recognized ID pattern."""
+    id_patterns = [
+        r'Algorithm\s+\d+',
+        r'P\d+I\d+',
+        r'P\d+C\d+',
+        r'P\d+\.\d+',
+        r'Lean\d+',
+        r'Lean\s+\d+',
+        r'G\d+',
+        r'D\d+',
+        r'Comp\d+',
+        r'S\d+',
+        r'H\d+',
+        r'NFG\d+',
+        r'REF\d+',
+    ]
+    for pat in id_patterns:
+        if re.search(pat, line):
+            return True
+    return False
+
+
 def get_section_body(lines: list[str], start_idx: int) -> tuple[str, str, int, list[int]]:
     """Extract header and body from a section.
 
     Returns: (header, body, line_count, line_indices)
+
+    Document model is FLAT - sections don't contain subsections.
+    Stops at:
+    - Any header (##, ###, etc.) - all headers start new sections
+    - --- separator lines (explicit section delimiters)
     """
     if start_idx >= len(lines):
         return "", "", 0, []
@@ -101,16 +129,21 @@ def get_section_body(lines: list[str], start_idx: int) -> tuple[str, str, int, l
     if not match:
         return "", "", 0, []
 
-    level = len(match.group(1))
     header = first_line.strip()
     body_lines = []
     line_indices = [start_idx]  # Include header line
 
     for i in range(start_idx + 1, len(lines)):
         line = lines[i]
-        m = re.match(r'^(#+)\s', line)
-        if m and len(m.group(1)) <= level:
+
+        # Stop at --- separator (common section delimiter)
+        if line.strip() == '---':
             break
+
+        # Stop at ANY header - flat document model
+        if re.match(r'^#+\s', line):
+            break
+
         body_lines.append(line.rstrip())
         line_indices.append(i)
 

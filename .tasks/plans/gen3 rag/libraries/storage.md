@@ -1,15 +1,11 @@
-# Storage Library
-
-Versioned snapshots, epochs, indexes, atomic commits, MVCC semantics.
-
-### P1I5 Compression keeps a lossless backstore
+### P1I5 Compression keeps a lossless backstore (=[P1]) [(=P1I5)]
 
 ANN codes and quantized vectors are allowed.
 A lossless or near-lossless backstore remains available for re-evaluation and auditing.
 
 ---
 
-### P9I1 — Read coherence
+### P9I1 — Read coherence (=[P9]) [(=P9I1)]
 
 Every request pins a view:
 
@@ -21,13 +17,13 @@ All reads for the request use that pinned view.
 
 ---
 
-### P9I2 — Overlay is always writable
+### P9I2 — Overlay is always writable (=[P9]) [(=P9I2)]
 
 Ingestion and workspace commits append to the event log continuously. The overlay applier may lag, but never blocks writes.
 
 ---
 
-### Algorithm 66: Apply deltas after snapshot
+### Algorithm 66: Apply deltas after snapshot [(=Algorithm 66)]
 
 This absorbs "daytime patches" that happened during the offline run.
 
@@ -47,7 +43,7 @@ This keeps the new epoch aligned with live changes while keeping the offline sol
 
 ---
 
-### Algorithm 67: Publish epoch with RCU semantics
+### Algorithm 67: Publish epoch with RCU semantics [(=Algorithm 67)]
 
 ```pseudo
 function PUBLISH_EPOCH(epoch_new):
@@ -63,7 +59,7 @@ RCU provides the pattern: readers run lock-free against a stable snapshot while 
 
 ---
 
-## Algorithm 51 — CONTINUOUS_SLEEP_NO_DOWNTIME
+## Algorithm 51 — CONTINUOUS_SLEEP_NO_DOWNTIME [(=Algorithm 51)]
 
 Sleep runs as continuous background consolidation with snapshot isolation and delta catch-up.
 
@@ -88,7 +84,7 @@ function CONTINUOUS_SLEEP_NO_DOWNTIME(trigger):
 
 ---
 
-### P6C3 Safe reclamation
+### P6C3 Safe reclamation [(=P6C3)]
 
 **Claim.** Old epochs are reclaimed after all readers leave, via grace periods.
 **Sketch.**
@@ -98,150 +94,80 @@ function CONTINUOUS_SLEEP_NO_DOWNTIME(trigger):
 
 ---
 
-### Lean11 Snapshot and epoch invariants
-
-Model as an event log plus an epoch pointer.
-
-```lean
-namespace EpochSafety
-
-inductive Event
-| addNode : Nat → Event
-| addEdge : Nat → Event
-| addObs  : Nat → Event
-| addState : Nat → Event
-
-structure Store where
-  applied : Nat → Prop            -- events applied up to lsn
-  hasObs  : Nat → Prop
-  hasSpan : Nat → Prop
-
-def applyUpTo (s : Store) (lsn : Nat) : Store := s
-
-def snapshotConsistent (s : Store) (lsn : Nat) : Prop :=
-  True
-
-def epochPublishSafe : Prop := True
-
-theorem snapshot_consistency :
-  ∀ s lsn, snapshotConsistent (applyUpTo s lsn) lsn := by
-  intro; trivial
-
-theorem publish_atomic_epoch :
-  epochPublishSafe := by
-  trivial
-
-end EpochSafety
-```
-
-This is a placeholder spine. To make it real, the `Store` and `applyUpTo` definitions encode the log replay semantics and the epoch pointer swap rules.
-
----
-
-### Lean15 RCU style reclamation condition as a predicate
-
-```lean
-namespace Reclaim
-
-def safe_to_reclaim (target_epoch : Nat) (reader_epochs : List Nat) : Prop :=
-  ∀ r ∈ reader_epochs, r > target_epoch
-
-theorem reclaim_monotone
-  (t : Nat) (rs1 rs2 : List Nat)
-  (h : ∀ r ∈ rs2, r ∈ rs1) :
-  safe_to_reclaim t rs1 → safe_to_reclaim t rs2 := by
-  intro h1 r hr2
-  have hr1 : r ∈ rs1 := h r hr2
-  exact h1 r hr1
-
-end Reclaim
-```
-
-```
-```
-
----
-
-### P1I6 Event-sourced replay
+### P1I6 Event-sourced replay [(=P1I6)]
 
 Every mutation is an event. Enables rebuilds, A/B comparisons, and regression debugging.
 
 ---
 
-### P1I7 Raw spans are immutable
+### P1I7 Raw spans are immutable [(=P1I7)]
 
 Immutable compressed store, dedup by content hash.
 
 ---
 
-### P1I8 ObservationRecord persistence
+### P1I8 ObservationRecord persistence [(=P1I8)]
 
 Float16 or float32 backstore on disk.
 
 ---
 
-### P1I9 ANN store with full backstore
+### P1I9 ANN store with full backstore [(=P1I9)]
 
-PQ codes for scale and speed, full vector backstore for audits. ([ACM Digital Library][5])
+PQ codes for scale and speed, full vector backstore for audits.
 
 ---
 
-### P1I10 NodeState history persistence
+### P1I10 NodeState history persistence [(=P1I10)]
 
 RAM keeps current states for Focus, Active, Context. Disk keeps full history, optionally delta-compressed.
 
 ---
 
-### P1I11 Graph edge durability
+### P1I11 Graph edge durability [(=P1I11)]
 
-LSM-backed edge table for high write rates. ([UMass Boston CS][6])
-
----
-
-### P1I12 Ingestion hot path
-
-Embed once, add edges, local relax, push conflict candidates. Heavy work runs on the conflict queue.
+LSM-backed edge table for high write rates.
 
 ---
 
-### P1I13 Tier-locality storage
+### P1I13 Tier-locality storage [(=P1I13)]
 
 Keep Focus, Active, Context in RAM. Keep Inactive on disk, accessed via ANN and edge tables. This is the same design principle as virtual memory and tiered recall systems.
 
 ---
 
-### P1I14 Index structure by tier
+### P1I14 Index structure by tier [(=P1I14)]
 
 HNSW for fast recall in Context. PQ or IVF+PQ for Inactive scale.
 
 ---
 
-### P1I15 Inactive embedding quantization
+### P1I15 Inactive embedding quantization [(=P1I15)]
 
 Store inactive embeddings as int8 PQ codes. Keep only centroids and a small residual cache in RAM.
 
 ---
 
-### P1I16 Edge write batching
+### P1I16 Edge write batching [(=P1I16)]
 
 Use LSM-style batching for high ingest rates. Periodic compaction merges edge runs.
 
 ---
 
-## G4 Bounded working set
+## G4 Bounded working set [(=G4)]
 
 * Explicit focus, active, contextual, inactive tiers with promotion and demotion.
 
 ---
 
-## G40 Zero downtime sleep
+## G40 Zero downtime sleep [(=G40)]
 
 * Consolidation runs continuously.
 * Overlay remains writable.
 * No downtime for reads or writes.
 ---
 
-## D4 ANN indices
+## D4 ANN indices [(=D4)]
 
 Separate indices per tier and per embedding kind.
 
@@ -251,7 +177,7 @@ Separate indices per tier and per embedding kind.
 
 ---
 
-## D5 Event log
+## D5 Event log [(=D5)]
 
 Append-only ingestion events for replay:
 
@@ -263,108 +189,7 @@ Event {
 }
 ```
 
-### D6 ObservationRecord
-
-Stores what the embedder saw and produced, independent of later structure changes.
-
-```
-ObservationRecord {
-  obs_id: ObsId
-  node_id: NodeId
-  embedder_id: string
-  embedder_version: string
-  input_hash: bytes32
-  span_ref: SpanRef
-  b: Vector[d]                // float16 or float32 backstore
-  created_t: Time
-}
-```
-
-Reason: later re-embedding with a different model changes results. Keeping the original observation preserves the historical signal.
-
-### D7 NodeState
-
-Stores field state over time and across hypotheses.
-
-```
-NodeState {
-  state_id: StateId
-  node_id: NodeId
-  hyp_id: HypId               // hypothesis branch
-  x: Vector[d]
-  u: float                    // uncertainty
-  r: float                    // anchor residual ||x - b||
-  T: float                    // node tension sum_j t_ij
-  created_t: Time
-  parent_state: StateId?      // lineage for revisions
-}
-```
-
-Node keeps pointers:
-
-* `node.current_state[hyp_id] -> state_id`
-* `node.state_history -> list<StateId>`
-
-### D8 EdgeBelief
-
-Edge weights become beliefs with provenance and status.
-
-```
-EdgeBelief {
-  edge_id: EdgeId
-  src: NodeId
-  dst: NodeId
-  type: EdgeType
-  w_base: float               // structural prior
-  g: float                    // gate in [0,1], belief that smoothing applies
-  status: Status              // proposed | supported | contradicted | unknown
-  conf: float                 // confidence in status
-  t: float                    // edge tension = w_eff * ||x_i - x_j||^2
-  evidence: list<SpanRef>     // validator spans or rationale anchors
-  updated_t: Time
-}
-```
-
-Effective smoothing weight:
-
-* `w_eff = w_base * g`
-
-### D9 ConflictRecord
-
-Explicit ambiguity store.
-
-```
-ConflictRecord {
-  conflict_id: ConflictId
-  edge_ids: list<EdgeId>
-  node_ids: list<NodeId>
-  hyp_id: HypId
-  score: float                // based on tensions and residuals
-  kind: kind                  // contradiction | underspecified | boundary
-  opened_t: Time
-  last_checked_t: Time
-  status: open | resolved | branched
-  resolution: bytes?          // optional link to decision event
-}
-```
-
-### D10 Hypothesis
-
-Branch container.
-
-```
-Hypothesis {
-  hyp_id: HypId
-  parent: HypId?
-  scope_nodes: set<NodeId>      // local fork scope
-  created_t: Time
-  weight: float                 // prior weight for selection
-}
-```
-
----
-
-## D11 Epoch
+## D11 Epoch [(=D11)]
 
 A versioned read view of the system.
 
@@ -385,7 +210,7 @@ Epoch {
 
 ---
 
-## D12 Snapshot
+## D12 Snapshot [(=D12)]
 
 A consistent cut for offline compute.
 
@@ -403,7 +228,7 @@ Snapshot semantics align with snapshot isolation style "time travel" reads in MV
 
 ---
 
-## D14 IndexVersion
+## D14 IndexVersion [(=D14)]
 
 Versioned index artifacts with atomic promotion.
 
@@ -421,7 +246,7 @@ IndexVersion {
 
 ---
 
-## D15 ConsolidationJob
+## D15 ConsolidationJob [(=D15)]
 
 ```
 ConsolidationJob {
@@ -435,282 +260,21 @@ ConsolidationJob {
 }
 ```
 
-### D16 Pattern
-
-A reusable structural template.
-
-```text
-Pattern {
-  pat_id: PatId
-  graph: PatternGraph              // small typed multigraph with slots
-  slot_schema: list<SlotSpec>      // slot types: Entity, Concept, Number, Time, etc.
-  canonical_text: string?          // optional "frame" text for LLM expansion
-  created_t: Time
-  version: int
-}
-```
-
-### D17 PatternInstance
-
-Binds a pattern to a concrete part of the evidence graph.
-
-```text
-PatternInstance {
-  inst_id: InstId
-  pat_id: PatId
-  hyp_id: HypId
-  node_map: Map<PatternNode, NodeId>    // lossless mapping
-  edge_map: Map<PatternEdge, EdgeId>    // optional
-  residual_edges: list<EdgeId>          // edges inside match that pattern does not cover
-  support_spans: list<SpanRef>
-  created_t: Time
-}
-```
-
-### D18 PatternStats
-
-Confidence-weighted promotion state.
-
-```text
-PatternStats {
-  pat_id: PatId
-  hyp_id: HypId
-  uses: int
-  wins: int                  // "worked" outcomes
-  losses: int                // "failed" outcomes
-  prov_score: float          // provenance aggregate
-  θ_posterior: BetaParams    // (a,b) for reliability
-  promoted_level: enum {candidate, stable, pinned}
-  updated_t: Time
-}
-```
-
-### D19 FailureCase
-
-Explicit bad memory.
-
-```text
-FailureCase {
-  fail_id: FailId
-  pat_id: PatId?
-  inst_id: InstId?
-  signature: bytes32            // pattern + context hash
-  context_features: bytes       // compact feature vector
-  reason: enum {validator_reject, user_correction, task_fail}
-  evidence: list<SpanRef>
-  severity: float
-  created_t: Time
-}
-```
-
-### D20 FeedbackEvent
-
-Light outcome signal.
-
-```text
-FeedbackEvent {
-  fb_id: FbId
-  kind: enum {task_success, task_fail, user_edit, click, dwell, correction}
-  target: enum {pattern, edge, node, retrieval_plan}
-  target_id: bytes
-  reward: float                 // normalized
-  context_features: bytes
-  created_t: Time
-}
-```
-
-### D21 UserRiskProfile
-
-Governance control surface.
-
-```text
-UserRiskProfile {
-  user_id: UserId
-  domain: enum {general, medical, legal, finance, ops, ...}
-  risk_tolerance: float         // 0..1
-  deferral_preference: enum {ask_me, hedge, decide}
-  audit_level: enum {low, medium, high}
-}
-```
-
-### D22 AmbiguityLedgerEntry
-
-```text
-AmbiguityLedgerEntry {
-  amb_id: AmbId
-  node_ids: list<NodeId>
-  edge_ids: list<EdgeId>
-  hyp_ids: list<HypId>
-  metrics: {r, T, var}         // residual/tension/variance
-  risk_score: float
-  surfaced: bool
-  created_t: Time
-}
-```
-
-### D23 ModuleLibrary
-
-Library of reusable structural components extracted from patterns.
-
-```text
-ModuleLibrary {
-  modules: Map<ModuleId, Module>
-  interface_index: Map<InterfaceSignature, list<ModuleId>>
-  usage_stats: Map<ModuleId, ModuleStats>
-}
-
-Module {
-  mod_id: ModuleId
-  subgraph: PatternGraph              // stable reusable component
-  interface: InterfaceSpec            // typed slots and boundary edges
-  provenance: list<PatId>             // patterns this was extracted from
-  mdl_gain: float                     // compression gain
-  created_t: Time
-}
-```
-
-### D24 FactorDictionary
-
-Sparse factor basis for canonical embeddings.
-
-```text
-FactorDictionary {
-  dict_id: DictId
-  D: Matrix[d_C × K]                  // factor directions, columns normalized
-  Enc: EncoderFunc                    // x -> sparse coefficients a
-  version: int
-  epoch: EpochId
-  fit_error: float
-  sparsity: float                     // mean |a|_0
-  created_t: Time
-}
-```
-
-### D25 PatternDecomposition
-
-Pattern represented as modules plus wiring.
-
-```text
-PatternDecomposition {
-  pat_id: PatId
-  modules: list<ModuleId>
-  wiring: list<WiringConstraint>      // how modules connect
-  residual_edges: list<EdgeSpec>      // edges not covered by modules
-  compression_ratio: float
-}
-```
-
-### D26 TradeoffProfile
-
-Characterizes pattern functionality and performance across contexts.
-
-```text
-TradeoffProfile {
-  pat_id: PatId
-  factor_profile: SparseDistribution  // distribution over factor activations
-  context_profile: Distribution       // contexts where pattern appears
-  effect_metrics: {
-    delta_E: float                    // mean energy reduction
-    delta_T: float                    // mean tension reduction
-    win_rate: float                   // task success rate
-    cost: float                       // compute and memory footprint
-    stability: float
-    generality: float
-    brittleness: float
-    interpretability: float
-  }
-  pareto_rank: int                    // rank on Pareto frontier
-  updated_t: Time
-}
-```
-
-### D27 IdeaCandidate
-
-Proposed pattern substitution or hybrid.
-
-```text
-IdeaCandidate {
-  cand_id: CandId
-  kind: enum {substitution, hybrid}
-  region: RegionRef                   // where to apply
-  source_patterns: list<PatId>        // patterns being combined/transferred
-  rewrite: RewriteSpec                // graph transformation
-  predicted_gain: float               // expected effect delta
-  factor_match_score: float           // how well factors align
-  interface_compat: float             // interface compatibility score
-  created_t: Time
-  epoch: EpochId
-}
-```
 
 ---
 
-## 1. Tier-locality as the main speed lever
-
-* Keep Focus, Active, Context in RAM.
-* Keep Inactive on disk, accessed via ANN and edge tables.
-
-This is the same design principle as virtual memory and tiered recall systems.
+---
 
 ---
 
-## 2. Separate indices by tier and by embedding kind
+---
 
-* HNSW for fast recall in Context.
-* PQ or IVF+PQ for Inactive scale.
 
 ---
 
-## 3. Quantize aggressively outside Focus
-
-* Store inactive embeddings as int8 PQ codes.
-* Keep only centroids and a small residual cache in RAM.
-
 ---
 
-## 4. Batch edge writes, defer compaction
-
-* Use LSM-style batching for high ingest rates.
-* Periodic compaction merges edge runs.
-
----
-
-## 5. Local field updates, global re-solves rarely
-
-* Per span: relax only within a hop radius determined by tier.
-* Global solve: scheduled offline or during low load, used to reduce drift.
-
----
-
-## Storage strategy
-
-* Raw spans: immutable compressed store, dedup by content hash
-* ObservationRecord: float16 or float32 backstore on disk
-* ANN store: PQ codes for scale and speed, full vector backstore for audits ([ACM Digital Library][5])
-* Graph edges: LSM-backed edge table for high write rates ([UMass Boston CS][6])
-* NodeState history:
-
-  * RAM keeps current states for Focus, Active, Context
-  * disk keeps full history, optionally delta-compressed
-
----
-
-## Memory and compaction
-
-* Parse forests are versioned by epoch.
-* Old hypotheses compact via P2 sleep cycle, with provenance and failures retained.
-
----
-
-## Memory
-
-* Seeds are compact, mostly metrics plus anchors
-* Traces compress into signatures and aggregate stats
-* Archived seeds remain queryable for audit
-
----
-
-### Algorithm 9: Global Consolidation
+### Algorithm 9: Global Consolidation [(=Algorithm 9)]
 
 This is the "sleep" phase. It keeps ingestion running via snapshot isolation + versioned commit.
 
@@ -746,9 +310,6 @@ function GLOBAL_CONSOLIDATION(trigger):
   RETIRE_OLD_EPOCHS()
 ```
 
-Snapshot isolation is the foundation for the consistent snapshot step. ([Microsoft][1])
-Atomic publish semantics follow RCU style "publish pointer, wait grace period, reclaim old." ([Kernel.org][6])
-
 Event sourcing stays the audit layer that makes rebuilds reproducible. ([Microsoft Learn][7])
 
 #### Notes on BUILD_INDICES
@@ -757,38 +318,33 @@ This is a versioned build, then swap. The Lucene style segment approach is a pra
 
 ---
 
-### 7. Event-sourced replay
-
-* Every mutation is an event.
-* Enables rebuilds, A/B comparisons, and regression debugging.
-
 ---
 
-## Comp4 Tiered Memory Manager
+## Comp4 Tiered Memory Manager [(=Comp4)]
 
 (Component definition pending - see plan.md L737)
 
 ---
 
-## Comp9 Index Layer
+## Comp9 Index Layer [(=Comp9)]
 
 (Component definition pending - see plan.md L747)
 
 ---
 
-## Comp10 Telemetry and Replay Log
+## Comp10 Telemetry and Replay Log [(=Comp10)]
 
 (Component definition pending - see plan.md L749)
 
 ---
 
-## C4 Tier promotion logic bounds RAM and compute
+## C4 Tier promotion logic bounds RAM and compute [(=C4)]
 
 Independent of total corpus size.
 
 ---
 
-## Algorithm 8: Hypothesis branching
+## Algorithm 8: Hypothesis branching [(=Algorithm 8)]
 
 Hypothesis branching preserves ambiguity instead of averaging it.
 
@@ -818,7 +374,7 @@ Branching stays local to keep memory and compute bounded.
 
 ---
 
-### P2C1 Snapshot consistency
+### P2C1 Snapshot consistency [(=P2C1)]
 
 Snapshot created at LSN (l_0) defines a consistent view.
 
@@ -832,7 +388,7 @@ Sketch:
 
 ---
 
-### P2C2 Non-blocking commit
+### P2C2 Non-blocking commit [(=P2C2)]
 
 Atomic pointer swap gives epoch-level consistency for readers.
 
@@ -844,3 +400,5 @@ Sketch:
 * RCU grace period ensures old epoch memory remains valid for all readers started before swap. ([Kernel.org][6])
 
 ---
+
+## T14 Notes on BUILD_INDICES [(=T14)]
