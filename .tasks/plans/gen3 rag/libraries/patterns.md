@@ -25,8 +25,6 @@ Now "pattern transfer" becomes:
 * find a new context whose factor-needs match a pattern's factor profile
 * verify via effect metrics and local solve
 
----
-
 ## P8.6 Tradeoffs and why one pattern wins over another [(=P8.6)]
 
 Once you have effect metrics, tradeoffs become explicit.
@@ -48,15 +46,13 @@ Then you can answer:
 
 This is the missing bridge from "patterns exist" to "patterns have reasons."
 
----
-
 ## P8.7 Rebuilding content using disentangled patterns [(=P8.7)]
 
 Rebuild here means: re-represent a region using a different set of modules and factors, then re-evaluate.
 
 Two modes:
 
-### Mode 1: Compression rebuild
+**Mode 1: Compression rebuild**
 
 * replace subgraphs with module tokens
 * preserve residual edges
@@ -64,7 +60,7 @@ Two modes:
 
 This is your existing compression principle, upgraded from "pattern tokens" to "module tokens."
 
-### Mode 2: Transform rebuild
+**Mode 2: Transform rebuild**
 
 * propose substitutions: module A → module B in a compatible interface slot
 * propose hybrids: glue module A's interface to module B's interior using a connector module
@@ -74,8 +70,6 @@ This is your existing compression principle, upgraded from "pattern tokens" to "
 * commit via P6 2-stage commit
 
 That is "try the idea without polluting memory."
-
----
 
 ## P8.10 Where the LLM sits [(=P8.10)]
 
@@ -95,13 +89,9 @@ The LLM does not need to be the primary disentanglement engine. The math and gra
 * Abstractions never replace raw evidence nodes.
 * Abstractions only reference evidence via explicit instance mappings.
 
----
-
 ### P4I2 Expansion is always possible (=[P4]) [(=P4I2)]
 
 * Any abstraction presented to the LLM expands to a concrete evidence set with span references.
-
----
 
 ### D16 Pattern [(=D16)]
 
@@ -117,8 +107,6 @@ Pattern {
   version: int
 }
 ```
-
----
 
 ### D17 PatternInstance [(=D17)]
 
@@ -136,8 +124,6 @@ PatternInstance {
   created_t: Time
 }
 ```
-
----
 
 ### D18 PatternStats [(=D18)]
 
@@ -157,8 +143,6 @@ PatternStats {
 }
 ```
 
----
-
 ### D19 FailureCase [(=D19)]
 
 Explicit bad memory.
@@ -176,8 +160,6 @@ FailureCase {
   created_t: Time
 }
 ```
-
----
 
 ### D23 ModuleLibrary [(=D23)]
 
@@ -200,8 +182,6 @@ Module {
 }
 ```
 
----
-
 ### D25 PatternDecomposition [(=D25)]
 
 Pattern represented as modules plus wiring.
@@ -215,8 +195,6 @@ PatternDecomposition {
   compression_ratio: float
 }
 ```
-
----
 
 ### D26 TradeoffProfile [(=D26)]
 
@@ -242,8 +220,6 @@ TradeoffProfile {
 }
 ```
 
----
-
 ### D27 IdeaCandidate [(=D27)]
 
 Proposed pattern substitution or hybrid.
@@ -263,8 +239,6 @@ IdeaCandidate {
 }
 ```
 
----
-
 ### P4.1 Structural abstraction as MDL graph compression [(=P4.1)]
 
 Let (G) be the evidence graph view (snapshot epoch). Let (\mathcal{P}) be a set of candidate patterns and (\mathcal{I}) a set of pattern instances covering subgraphs of (G).
@@ -279,19 +253,7 @@ Goal (sleep-time):
 (\mathcal{P}^*, \mathcal{I}^*) = \arg\min_{\mathcal{P},\mathcal{I}} L(G,\mathcal{P},\mathcal{I})
 ]
 
-This is the same principle used in MDL-based graph summarization systems: include a structure if it reduces total description length. ([EDA Dashboard][1])
-
-#### Confidence-weighted MDL
-
-Add a penalty for low-confidence patterns:
-[
-L'(G,\mathcal{P},\mathcal{I}) = L(G,\mathcal{P},\mathcal{I}) + \sum_{p\in\mathcal{P}} \lambda \cdot \phi(\text{conf}(p))
-]
-where (\phi) decreases as confidence increases (example: (\phi(c)= -\log(c+\epsilon))).
-
-This aligns with "abstract with confidence".
-
----
+This is the same principle used in MDL-based graph summarization systems: include a structure if it reduces total description length.
 
 ### P4.2 Pattern promotion as Bayesian reliability [(=P4.2)]
 
@@ -307,8 +269,6 @@ Promotion rule:
 \Pr(\theta_p \ge \tau) \ge 1-\delta
 \Rightarrow \text{promote}(p)
 ]
-
----
 
 ### Algorithm 10: Structural Abstraction Mining (sleep-time) [(=Algorithm 10)]
 
@@ -340,9 +300,7 @@ function STRUCTURAL_ABSTRACTION_MINE(snapshot snap):
   return (P, I)
 ```
 
-MDL summarization and "replace subgraph with single vertex" is a known compression pattern in graph summarization and grammar induction lines of work. ([EDA Dashboard][1])
-
----
+MDL summarization and "replace subgraph with single vertex" is a known compression pattern in graph summarization and grammar induction lines of work.
 
 ### Algorithm 11: Online Pattern Instantiation (day-time) [(=Algorithm 11)]
 
@@ -360,9 +318,7 @@ function TRY_INSTANTIATE_PATTERNS(new_node v, hyp h):
         ATTACH_MACRONODE(inst)                       // optional macro node in contextual tier
 ```
 
-This is the "reuse patterns with alterations" hook: slot bindings vary per instance. Case-based reasoning is the classic framing for retrieve → reuse → revise → retain. ([IIIA-CSIC][4])
-
----
+This is the "reuse patterns with alterations" hook: slot bindings vary per instance. Case-based reasoning is the classic framing for retrieve → reuse → revise → retain.
 
 ### Algorithm 12: Expansion Compiler (decompress for LLM) [(=Algorithm 12)]
 
@@ -387,9 +343,7 @@ function COMPILE_CONTEXT_FOR_LLM(query q, budget B, risk_profile R):
   return pack
 ```
 
-This matches "compressed memory + reflection/summary + expansion on demand" patterns seen in long-term agent memory and hierarchical retrieval systems. ([arXiv][5])
-
----
+This matches "compressed memory + reflection/summary + expansion on demand" patterns seen in long-term agent memory and hierarchical retrieval systems.
 
 ### Algorithm 13: Confidence-weighted Pattern Promotion [(=Algorithm 13)]
 
@@ -411,8 +365,6 @@ function UPDATE_PATTERN_CONFIDENCE(pat_id, outcome):
 
 "Pinned pattern" is the abstraction analogue of pinned facts.
 
----
-
 ### Algorithm 14: Failure Memory Write + Avoid [(=Algorithm 14)]
 
 ```pseudo
@@ -430,61 +382,30 @@ function PATTERN_SCORE(pat_id, ctx):
   return base * brake
 ```
 
-This is aligned with storing self-reflective "lessons" from mistakes for later avoidance in agent memory work. ([OpenReview][6])
+This is aligned with storing self-reflective "lessons" from mistakes for later avoidance in agent memory work.
 
----
+## Algorithm 5: Boundary detection without fixed chunking [(=Algorithm 5)]
 
-### Algorithm 5: Boundary detection without fixed chunking [(=Algorithm 5)]
-
-Hypothesis branching preserves ambiguity instead of averaging it.
+Use change in direction as a signal, plus structure cues. Bayesian online changepoint detection is a clean option.
 
 ```pseudo
-function BRANCH_HYPOTHESIS(conflict c):
-  h0 = c.hyp_id
-  h1 = NEW_HYPOTHESIS(parent=h0, scope=c.node_ids)
-
-  for node i in c.node_ids:
-    // copy current state into new hypothesis
-    s0 = STATE(i,h0)
-    s1 = NEW_STATE(node=i, hyp=h1, x=s0.x, u=s0.u, r=s0.r, T=s0.T, parent_state=s0.id)
-    SET_CURRENT_STATE(i,h1,s1)
-
-  // split gates for edges in scope
-  for edge e touching scope:
-    if e.status == contradicted:
-      SET_GATE(e,h0, small)
-      SET_GATE(e,h1, small)
-    else:
-      COPY_GATE(e,h0 -> h1)
-
-  MARK_CONFLICT(c, status="branched")
+function STREAM_TO_SPANS(stream):
+  run BOCPD over feature z_t = [cos(b_t, b_{t-1}), punctuation, heading, entity_shift]
+  emit boundary when P(changepoint) > tau
+  yield span
 ```
-
-Branching stays local to keep memory and compute bounded.
-
----
 
 ### P4C1 Lossless structural compression [(=P4C1)]
 
 * Abstractions are reversible (original evidence graph can be reconstructed from pattern instances + residual edges).
 
----
-
 ### P4C2 MDL-driven abstraction reduces description length [(=P4C2)]
 
-**Claim.** Given a candidate pattern set, choosing patterns by MDL yields shorter descriptions than raw graph encoding (for those patterns). (Algorithm is heuristic; objective is principled.)
-
-**Sketch.** The objective directly minimizes description length. Greedy selection may not find global optimum but provides local improvement guarantees standard in submodular-style optimization.
-
----
+* Given a candidate pattern set, choosing patterns by MDL yields shorter descriptions than raw graph encoding (for those patterns). (Algorithm is heuristic; objective is principled.)
 
 ### P4C3 Confidence-weighted promotion has probabilistic meaning [(=P4C3)]
 
-**Claim.** If a pattern is promoted only when (\Pr(\theta_p \ge \tau) \ge 1-\delta), then promotion implies a posterior reliability guarantee.
-
-**Sketch.** Direct from the posterior CDF of the Beta distribution.
-
----
+* Promotion threshold can be expressed as a posterior guarantee on pattern reliability.
 
 ## Algorithm 50 — FORCE_TO_TOPOLOGY_PROMOTION (governed) [(=Algorithm 50)]
 
@@ -506,165 +427,48 @@ function FORCE_TO_TOPOLOGY_PROMOTION(prop):
   return SUBMIT_TO_2SC(prop)     // validation -> commit -> epoch publish
 ```
 
----
-
 ## G2 Multi-resolution understanding [(=G2)]
 
-* Coarse-to-fine ingestion without fixed chunking as the main primitive.
-
----
+   * Coarse-to-fine ingestion without fixed chunking as the main primitive.
 
 ## G12 Structural abstraction [(=G12)]
 
 * Compress graph memory into reusable patterns.
 * Expand patterns into evidence bundles when feeding the LLM.
 
----
-
 ## G35 Distillation produces tokens [(=G35)]
 
 * Repeated, useful noise becomes IdeaTokens, PatternCandidates, GrammarRules.
-
-
----
-
-## Option C: NMF for parts-based factors
-
-If you want factors to behave like "parts" that add up (good for certain counts and structured features), NMF is a known tool.
-
----
-
-## Mode 1: Compression rebuild
-
-* replace subgraphs with module tokens
-* preserve residual edges
-* keep provenance pointers
-
-This is your existing compression principle, upgraded from "pattern tokens" to "module tokens."
-
----
-
-## Mode 2: Transform rebuild
-
-* propose substitutions: module A → module B in a compatible interface slot
-* propose hybrids: glue module A's interface to module B's interior using a connector module
-* run local solve
-* evaluate effect metrics
-* store as a new hypothesis first
-* commit via P6 2-stage commit
-
-That is "try the idea without polluting memory."
-
----
-
-## New objects
-
-* ModuleLibrary
-* FactorDictionary
-* PatternDecomposition graph (pattern = modules + wiring)
-* TradeoffProfile (metrics + contexts)
-* IdeaCandidate (a proposed substitution or hybrid with predicted gain)
-
----
-
-## P8 Bottom line
-
-Disentanglement in your architecture becomes feasible because you have structured constraints and observable outcomes.
-
----
-
-
-## P4 math
-
-## P5 math
-
----
-
-## Grammar emergence from patterns
-
-Turns P4 (+[P4]) patterns into executable grammar rules.
-
-```pseudo
-function MINE_AND_COMPILE_GRAMMAR(snapshot snap, dom):
-  patterns = STRUCTURAL_ABSTRACTION_MINE(snap)         // P4 Algorithm 10
-  for pat in patterns:
-    if pat.conf >= TH_RULE_CANDIDATE:
-      rule = COMPILE_PATTERN_TO_RULE(pat, dom)         // lhs is pat, rhs emits macro token
-      SHADOW_RUN(rule)                                 // collect precision, failure cases
-      if PROMOTION_TEST(rule):                         // confidence-weighted
-        GRAMMAR_LIBRARY.ADD(rule)
-```
-
-Hyperedge replacement and related graph grammar formalisms provide a language for "graph as grammar". ([People CS Umeå][5])
-
----
-
-**G19 (+[G19]) Emergent structure**
-
----
 
 ### P4I5 Abstraction reduces working-set size [(=P4I5)]
 
 Macro-nodes stand in for repeated subgraphs, while evidence remains in inactive storage.
 
----
-
 ### P4I6 Expansion is demand-driven [(=P4I6)]
 
 Expand only to token budget and risk profile.
-
----
 
 ### P4I7 Pattern mining is sleep-time [(=P4I7)]
 
 Runs during global consolidation, amortized.
 
----
-
 ### P4I8 Online matching is bounded [(=P4I8)]
 
 Local structural match only around focus/active tiers.
 
----
-
 ### P4I9 Failure memory is prioritized [(=P4I9)]
 
-Prioritized in replay and learning (similar spirit to prioritized replay). ([arXiv][7])
-
----
+Prioritized in replay and learning (similar spirit to prioritized replay).
 
 ### P4I10 Safe online learning [(=P4I10)]
 
-Keep "policy deltas" small, prefer conservative exploration (safe re-ranking literature is a good template). ([Proceedings of Machine Learning Research][8])
-
----
+Keep "policy deltas" small, prefer conservative exploration (safe re-ranking literature is a good template).
 
 ### P4I11 Governance is separate [(=P4I11)]
 
 It sits above retrieval/field state and never destroys evidence.
 
----
-
 ## Algorithm 20 [(=Algorithm 20)]
-
-### Grammar emergence from patterns
-
-Turns P4 (+[P4]) patterns into executable grammar rules.
-
-```pseudo
-function MINE_AND_COMPILE_GRAMMAR(snapshot snap, dom):
-  patterns = STRUCTURAL_ABSTRACTION_MINE(snap)         // P4 Algorithm 10
-  for pat in patterns:
-    if pat.conf >= TH_RULE_CANDIDATE:
-      rule = COMPILE_PATTERN_TO_RULE(pat, dom)         // lhs is pat, rhs emits macro token
-      SHADOW_RUN(rule)                                 // collect precision, failure cases
-      if PROMOTION_TEST(rule):                         // confidence-weighted
-        GRAMMAR_LIBRARY.ADD(rule)
-```
-
-Hyperedge replacement and related graph grammar formalisms provide a language for "graph as grammar". ([People CS Umeå][5])
-
----
 
 ---
 
@@ -672,47 +476,6 @@ Hyperedge replacement and related graph grammar formalisms provide a language fo
 
 * Structure appears when encountered.
 * New grammars and token types can emerge from recurring subgraphs and successful parses.
-
----
-
----
-
-### Grammar emergence from patterns
-
-Turns P4 (+[P4]) patterns into executable grammar rules.
-
-```pseudo
-function MINE_AND_COMPILE_GRAMMAR(snapshot snap, dom):
-  patterns = STRUCTURAL_ABSTRACTION_MINE(snap)         // P4 Algorithm 10
-  for pat in patterns:
-    if pat.conf >= TH_RULE_CANDIDATE:
-      rule = COMPILE_PATTERN_TO_RULE(pat, dom)         // lhs is pat, rhs emits macro token
-      SHADOW_RUN(rule)                                 // collect precision, failure cases
-      if PROMOTION_TEST(rule):                         // confidence-weighted
-        GRAMMAR_LIBRARY.ADD(rule)
-```
-
-Hyperedge replacement and related graph grammar formalisms provide a language for "graph as grammar". ([People CS Umeå][5])
-
----
-
----
-
-## T1 Structural disentanglement [(=T1)]
-
-## T2 Direction disentanglement [(=T2)]
-
-## T3 Module extraction idea [(=T3)]
-
-## T4 Confidence-weighted MDL [(=T4)]
-
-## T8 Incremental graph grammar parsing with hypothesis beam [(=T8)]
-
-## T9 Rule application as graph rewrite with provenance [(=T9)]
-
-## T10 Grammar emergence from patterns [(=T10)]
-
----
 
 ### Algorithm 40: Module mining from pattern graphs [(=Algorithm 40)]
 
@@ -728,8 +491,6 @@ function MINE_MODULES(patterns P):
   return M
 ```
 
----
-
 ### Algorithm 41: Build pattern functionality profiles [(=Algorithm 41)]
 
 ```pseudo
@@ -741,4 +502,26 @@ function BUILD_PROFILES(pattern_instances I, Enc):
     UPDATE_EFFECT_PROFILE(inst.pattern_id, DELTA_ENERGY(inst))
 ```
 
----
+## P8.1 Define disentanglement for this architecture [(=P8.1)]
+
+
+## P8.2 How disentanglement fits into your current stack [(=P8.2)]
+
+**Where the raw material comes from**
+
+You already generate the right artifacts:
+
+* P4: Pattern library + instances
+* P5: Grammar rules and parse forests
+* P6: Hippocampus workspace + 2-stage commit + global consolidation
+* P7: Seed queue and exploration traces (good for "where patterns fail" and "where patterns transfer")
+
+P6 (+[P6]) "sleep" is the right place to run heavy disentanglement.
+
+
+## P8.4 Structural disentanglement in your system [(=P8.4)]
+
+You already mine patterns. P4 patterns still tend to be "fat."
+
+You now add module extraction:
+

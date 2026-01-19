@@ -17,8 +17,6 @@ Workspace {
 }
 ```
 
----
-
 ### D40 WorkspaceEvent [(=D40)]
 
 ```
@@ -40,8 +38,6 @@ WorkspaceEvent {
 
 Notes:
 * remove_* is implemented via tombstones (never physical delete in-session).
-
----
 
 ### D41 WorkspaceGraph [(=D41)]
 
@@ -82,8 +78,6 @@ OriginRef {
 }
 ```
 
----
-
 ### D42 Capsule [(=D42)]
 
 ```
@@ -119,8 +113,6 @@ CapsuleFingerprint {
 }
 ```
 
----
-
 ### D43 WorkspaceMessage [(=D43)]
 
 ```
@@ -135,8 +127,6 @@ WorkspaceMessage {
 }
 ```
 
----
-
 ### D44 ReconcileRecord [(=D44)]
 
 ```
@@ -150,8 +140,6 @@ ReconcileRecord {
   created_t: Time
 }
 ```
-
----
 
 ### D45 WorkspaceCommitEnvelope [(=D45)]
 
@@ -169,8 +157,6 @@ WorkspaceCommitEnvelope {
 }
 ```
 
----
-
 ### D55 HippocampalWorkspace [(=D55)]
 
 ```text
@@ -185,8 +171,6 @@ HippocampalWorkspace {
   ttl: Duration
 }
 ```
-
----
 
 ### D56 NeocortexProposal [(=D56)]
 
@@ -204,8 +188,6 @@ NeocortexProposal {
 }
 ```
 
----
-
 ### D57 CommitRecord [(=D57)]
 
 ```text
@@ -221,8 +203,6 @@ CommitRecord {
 }
 ```
 
----
-
 ### P6.1 Workspace overlay model [(=P6.1)]
 
 Let \(G^{(e)}\) be the long-term graph at epoch \(e\).
@@ -233,8 +213,6 @@ G^{\text{hws}} = G^{(e)} \oplus \Delta G
 Reads use \(G^{(e)}\) or \(G^{\text{hws}}\) depending on scope.
 
 This is the same principle as snapshot isolation, readers see a stable snapshot while writers create new versions.
-
----
 
 ### P6.2 Two-stage commit as an admissibility filter [(=P6.2)]
 
@@ -259,8 +237,6 @@ then applies a promotion rule:
 ]
 else branch or quarantine.
 
----
-
 ### P10.1 Convergence-safe state model (event-set join) [(=P10.1)]
 
 Represent a workspace state as:
@@ -272,8 +248,6 @@ Where:
 * Join is deterministic, commutative, associative, and idempotent (a semilattice join).
 
 This implies: if any two replicas/reconciliations apply the same set of events, they converge to the same state.
-
----
 
 ## P10.2 Workspace graph as a graph CRDT (optional mode) [(=P10.2)]
 
@@ -289,13 +263,9 @@ To maintain the graph invariant that edges reference existing vertices, use a st
 
 P10 (+[P10]) defaults to remove-wins for safety in a workspace (deleting a node removes its edges), implemented with tombstones.
 
----
-
 ## P10.3 Delta-state replication for workspaces (optional) [(=P10.3)]
 
 Workspaces may sync their event logs as deltas rather than full states. This is compatible with delta-state CRDT designs where small delta fragments are joined into the replica state.
-
----
 
 ## P10.4 Overlap as near-duplicate detection [(=P10.4)]
 
@@ -306,8 +276,6 @@ Overlap between two capsules/regions is estimated using a multi-stage signature:
 3) Cosine-like similarity: SimHash over embedded shingles
 
 This supports fast approximate overlap queries over many workspaces.
----
-
 ---
 
 ### Algorithm 25: Two-stage commit from neocortex to hippocampus [(=Algorithm 25)]
@@ -340,8 +308,6 @@ function HIPPOCAMPUS_2SC(proposal P):
 
 This resembles snapshot read plus write-as-new-version discipline.
 
----
-
 ### Algorithm 53: OPEN_WORKSPACE [(=Algorithm 53)]
 
 ```pseudo
@@ -355,8 +321,6 @@ OPEN_WORKSPACE(agent_id, base_epoch, base_lsn_end, ttl):
   return ws
 ```
 
----
-
 ### Algorithm 54: CLOSE_WORKSPACE_CASCADE (structured lifetime) [(=Algorithm 54)]
 
 ```pseudo
@@ -368,8 +332,6 @@ CLOSE_WORKSPACE_CASCADE(ws_id):
   ws.status = closed
   WGC.schedule(ws_id)
 ```
-
----
 
 ### Algorithm 55: SPAWN_CHILD (fork-join) [(=Algorithm 55)]
 
@@ -389,8 +351,6 @@ SPAWN_CHILD(parent_ws, ttl, seed_capsules):
   return child.ws_id
 ```
 
----
-
 ### Algorithm 56: EXPORT_CAPSULE [(=Algorithm 56)]
 
 ```pseudo
@@ -402,8 +362,6 @@ EXPORT_CAPSULE(ws_id, selection_spec):
   log event export_capsule
   return cap
 ```
-
----
 
 ### Algorithm 57: IMPORT_CAPSULE (idempotent) [(=Algorithm 57)]
 
@@ -429,8 +387,6 @@ IMPORT_CAPSULE(ws_id, cap):
   return import_record
 ```
 
----
-
 ### Algorithm 58: MESSAGE_SEND [(=Algorithm 58)]
 
 ```pseudo
@@ -439,8 +395,6 @@ MESSAGE_SEND(from_ws, to_ws, cap, note):
   msg = WorkspaceMessage(from_ws, to_ws, cap, note)
   MSG.deliver(msg)
 ```
-
----
 
 ### Algorithm 59: RECONCILE_CHILD_TO_PARENT [(=Algorithm 59)]
 
@@ -454,8 +408,6 @@ RECONCILE_CHILD_TO_PARENT(parent_ws, child_ws, selection_spec):
   return rec, cap
 ```
 
----
-
 ### Algorithm 60: COMMIT_TO_INGEST (no LLM diffs) [(=Algorithm 60)]
 
 ```pseudo
@@ -465,8 +417,6 @@ COMMIT_TO_INGEST(ws_id, exported_capsules, intent):
   CGW.submit_to_ingest(env)
   return env
 ```
-
----
 
 ### Algorithm 61: OVERLAP_SIGNATURE (structure + content) [(=Algorithm 61)]
 
@@ -479,8 +429,6 @@ OVERLAP_SIGNATURE(subgraph):
   return {wl_hash, minhash, simhash}
 ```
 
----
-
 ### Algorithm 62: OVERLAP_DETECT [(=Algorithm 62)]
 
 ```pseudo
@@ -492,8 +440,6 @@ OVERLAP_DETECT(fingerprint_a, fingerprint_b):
   j_hat = MINHASH_ESTIMATE(minhash_a, minhash_b)
   return j_hat
 ```
-
----
 
 ### Algorithm 63: OSCILLATION_SIGNAL [(=Algorithm 63)]
 
@@ -510,8 +456,6 @@ OSCILLATION_SIGNAL(ws_id, window):
     return signal("oscillation_suspected")
 ```
 
----
-
 ### Algorithm 64: WORKSPACE_GC [(=Algorithm 64)]
 
 ```pseudo
@@ -521,7 +465,6 @@ WORKSPACE_GC(ws_id):
   compact event log; drop scratch-only regions; keep exported capsules and commit envelopes.
 ```
 
----
 
 ### P6C1 Workspace isolation [(=P6C1)]
 
@@ -532,8 +475,6 @@ WORKSPACE_GC(ws_id):
 * Commit controller is the only path that emits LTM events.
 * Event log is append-only.
 
----
-
 ### P6C2 Snapshot consistency [(=P6C2)]
 
 **Claim.** Readers obtain a stable view \(G^{\(e\)}\) while commits create \(G^{(e+1)}\).
@@ -542,113 +483,59 @@ WORKSPACE_GC(ws_id):
 * MVCC style: writers create new versions, readers keep old.
 * Equivalent discipline is described by snapshot isolation.
 
----
-
 ## G42 Workspace is first-class [(=G42)]
-
 * A workspace is an addressable object with a stable ID, base snapshot, and event log.
 
----
-
 ## G43 Structured lifetime (parent closes children) [(=G43)]
-
 * Child workspaces cannot outlive their parent.
 * Cancellation and closure propagate down the tree.
 
----
-
 ## G44 Fork-join parallel thought [(=G44)]
-
 * A parent workspace can spawn many children.
 * Children can run independently and export results for reconciliation.
 
----
-
 ## G45 Capsules and messages [(=G45)]
-
 * Workspaces exchange information as portable subgraph capsules with manifests, lineage, and fingerprints.
 
----
-
 ## G46 Commit via ingest (no LLM diffs) [(=G46)]
-
 * The LLM does not compute deltas.
 * The workspace submits graph-form artifacts to ingest; ingest computes canonicalization, conflicts, and candidates.
 
----
-
 ## G47 Overlap detection across workspaces [(=G47)]
-
 * Detect overlap and near-duplication across all open workspaces.
 * Enable loop/oscillation detection and dedup.
 
----
-
 ## G48 Convergence-safe merge primitives [(=G48)]
-
 * Provide deterministic, idempotent merge building blocks (CRDT-style joins where applicable).
 * Where semantic conflict exists, preserve ambiguity instead of overwriting.
 
----
-
 ## G49 Bounded view compilation [(=G49)]
-
 * Provide a deterministic mechanism to compile a bounded view of a large workspace into a context window.
 * The LLM can expand/contract the view by manipulating focus pointers in the workspace.
 
----
-
 ## G50 Observability and budgets [(=G50)]
-
 * Every workspace operation is logged.
 * Quotas bound memory growth, fanout, and commit volume.
 
 ---
-
-## P10 (+[P10]) core operations (tooling surface)
-
-The memory layer must support the following operations. A coordination system may call them, but P10 (+[P10]) does not define the policy for when.
-
-* WS_OPEN(agent_id, base_epoch, base_lsn_end, ttl) -> ws_id
-* WS_CLOSE(ws_id, reason)
-* WS_SPAWN_CHILD(parent_ws_id, ttl, seed_capsules[]) -> child_ws_id
-* WS_EXPORT(parent_ws_id, selection_spec) -> capsule
-* WS_IMPORT(ws_id, capsule) -> import_record
-* WS_SEND(from_ws, to_ws, capsule, note)
-* WS_QUERY(ws_id, query_spec) -> results
-* WS_VIEW(ws_id, viewport_spec) -> prompt_pack
-* WS_COMMIT(ws_id, exported_capsules, intent) -> commit_envelope
-
----
-
----
-
 
 ### P6I1 Workspace isolation (=[P6]) [(=P6I1)]
 
 * HWS changes do not mutate long-term memory (LTM) directly.
 * LTM changes only via commit events.
 
----
-
 ### P6I2 Evidence permanence (=[P6]) [(=P6I2)]
 
 * Every committed memory object traces to evidence, or is flagged "structural-only" and linked to anchored objects.
-
----
 
 ### P6I3 Snapshot reads (=[P6]) [(=P6I3)]
 
 * Readers see a stable epoch snapshot.
 * Writers create overlays and commit new epochs, similar to MVCC / snapshot isolation.
 
----
-
 ### P6I4 Safe reclamation (=[P6]) [(=P6I4)]
 
 * Old snapshots are reclaimed after a grace period, similar to RCU.
-
----
 
 ### P6I5 Governance never discards ambiguity (=[P6]) [(=P6I5)]
 
@@ -656,54 +543,40 @@ The memory layer must support the following operations. A coordination system ma
 
 ---
 
+# P7 invariants
+
 ### P10I1 Isolation (=[P10]) [(=P10I1)]
 
 * Workspace edits never directly mutate LTM.
-
----
 
 ### P10I2 Snapshot base (=[P10]) [(=P10I2)]
 
 * Each workspace pins a base LTM snapshot (epoch_id, lsn_end) for read coherence.
 
----
-
 ### P10I3 Structured concurrency closure (=[P10]) [(=P10I3)]
 
 * If a workspace closes, all descendants close.
-
----
 
 ### P10I4 Idempotent import/export (=[P10]) [(=P10I4)]
 
 * Importing the same capsule twice has no effect beyond the first import.
 
----
-
 ### P10I5 Loop-free capsule routing (=[P10]) [(=P10I5)]
 
 * A workspace rejects any capsule whose hop-trace already contains that workspace.
 
----
-
 ### P10I6 Convergence of replicated workspace state (=[P10]) [(=P10I6)]
 
 * If two replicas of a workspace (or two reconciliation runs) apply the same set of workspace events, they converge to the same WSG state.
-
----
 
 ### P10I7 Partial persistence (=[P10]) [(=P10I7)]
 
 * Only explicitly exported regions may be submitted to ingest.
 * Private scratch content may remain uncommitted and is GC-able.
 
----
-
 ### P10I8 Overlap registry monotonicity (=[P10]) [(=P10I8)]
 
 * Fingerprints and lineage records are append-only within a workspace session.
-
----
 
 ### P10I9 Risk and provenance propagate (=[P10]) [(=P10I9)]
 
@@ -726,21 +599,12 @@ The memory layer must support the following operations. A coordination system ma
 * WS_VIEW(ws_id, viewport_spec) -> prompt_pack
 * WS_COMMIT(ws_id, exported_capsules, intent) -> commit_envelope
 
----
-
 ## Comp22 Hippocampal Workspace Store (HWS) [(=Comp22)]
 
----
-
 ## Comp23 Proposal Gateway (NGW) [(=Comp23)]
-
 for neocortex outputs
 
----
-
 ## Comp25 Commit Controller (2SC) [(=Comp25)]
-
----
 
 ### P10I11 P6 two-stage commit integration [(=P10I11)]
 
@@ -768,7 +632,6 @@ No requirement that the LLM use specific schema objects (idea nodes/facets). Tho
 
 ---
 
----
 
 ## Algorithm 6: Conflict scan [(=Algorithm 6)]
 
@@ -782,4 +645,68 @@ function CONFLICT_SCAN_AND_QUEUE(nodes S):
       CREATE_OR_UPDATE_CONFLICT_RECORD(i, edges)
 ```
 
+## Algorithm 21 [(=Algorithm 21)]
+
+
+## Algorithm 22 [(=Algorithm 22)]
+
+
+## Comp1 Ingestion Stream [(=Comp1)]
+Main streaming ingestion pipeline.
+
+
+## Comp11 Modality Router [(=Comp11)]
+Routes raw input to appropriate tokenizer based on detected modality.
+
+
+## Comp12 Tokenizer Stack [(=Comp12)]
+Domain-specific tokenization engines for text, code, tables, images, etc.
+
+
+## Comp13 Graph Grammar Engine [(=Comp13)]
+Applies graph rewrite rules to token graphs to build parse hypotheses.
+
+
+## Comp14 Parse Forest Store [(=Comp14)]
+Stores packed parse forests with shared substructure across hypotheses.
+
+
+## Comp15 Grammar Library [(=Comp15)]
+Repository of graph rewrite rules organized by domain and version.
+
+
+## Comp16 Grammar Miner and Compiler [(=Comp16)]
+Discovers patterns and compiles them into executable grammar rules.
+
+
+## Comp17 Token Type Registry [(=Comp17)]
+Central registry of token types with schemas and versioning.
+
+
+## Comp18 Coordinate System Registry [(=Comp18)]
+
+
+## Comp19 Adapter and Alignment Trainer [(=Comp19)]
+
+
+## Comp21 Re-ingestion Orchestrator [(=Comp21)]
+Manages controlled replay of evidence through new grammars or adapters.
+
 ---
+
+
+## Comp24 Secondary Ingestion Engine (H2) [(=Comp24)]
+Hippocampal workspace ingestion engine for hypothesis exploration.
+
+
+## Comp26 Curriculum Manager (CURR) [(=Comp26)]
+Controls ingestion parameters based on curriculum stage (bootstrap, expansion, open).
+
+
+## Comp30 Grammar Sandbox + Rule Promotion (GRAM-SBX) [(=Comp30)]
+Sandboxes candidate grammar rules, measures performance, promotes based on confidence.
+
+
+## Comp31 Adapter Lifecycle Manager (ADAPT) [(=Comp31)]
+with drift detection
+

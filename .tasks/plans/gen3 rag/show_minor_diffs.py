@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Show the exact differences in "true duplicates" that are 99-100% similar.
+Show minor differences between plan.md and library files for exact/close matches.
+Uses annotation-based splitting [(=ID)] to determine section boundaries.
 """
 
 import re
@@ -8,136 +9,214 @@ from pathlib import Path
 from difflib import unified_diff, SequenceMatcher
 
 
-def get_section_until_same_level(lines: list[str], start_idx: int, level: int) -> str:
-    """Get content from start until next header of same or higher level."""
-    content_lines = [lines[start_idx]]
+# Legal ID patterns (for [(=ID)] annotations)
+ID_PATTERNS_LEGAL = [
+    r'Algorithm \d+',
+    r'Comp\d+',
+    r'D\d+',
+    r'G\d+',
+    r'C\d+',
+    r'S\d+',
+    r'T\d+',
+    r'P\d+I\d+',
+    r'P\d+C\d+',
+    r'P\d+\.\d+',
+    r'Lean\d+',
+    r'NFG\d+',
+]
 
-    for i in range(start_idx + 1, len(lines)):
+# Annotation pattern for declarations
+ANNOTATION_PATTERN = re.compile(r'\[\(=([^\]]+)\)\]')
+
+
+def is_legal_id(text):
+    """Check if text matches a legal ID pattern."""
+    for pattern in ID_PATTERNS_LEGAL:
+        if re.match(f'^{pattern}$', text):
+            return True
+    return False
+
+
+def extract_sections_by_annotation(lines):
+    """Extract sections based on [(=ID)] annotations.
+
+    Returns: {id: (header_line, body_text, line_num)}
+    """
+    sections = {}
+
+    i = 0
+    while i < len(lines):
         line = lines[i]
-        match = re.match(r'^(#+)\s', line)
-        if match and len(match.group(1)) <= level:
-            break
-        content_lines.append(line)
+        match = ANNOTATION_PATTERN.search(line)
 
-    return '\n'.join(content_lines)
+        if match and is_legal_id(match.group(1)):
+            id_name = match.group(1)
+            header_line = line
+            line_num = i + 1
+
+            # Collect body until next annotation or EOF
+            body_lines = []
+            i += 1
+            while i < len(lines):
+                next_match = ANNOTATION_PATTERN.search(lines[i])
+                if next_match and is_legal_id(next_match.group(1)):
+                    break
+                body_lines.append(lines[i])
+                i += 1
+
+            sections[id_name] = (header_line, '\n'.join(body_lines).strip(), line_num)
+        else:
+            i += 1
+
+    return sections
+
+
+def normalize_body(body):
+    """Normalize body for comparison."""
+    lines = [l.strip() for l in body.splitlines() if l.strip()]
+    return '\n'.join(lines)
 
 
 def main():
-    plan_path = Path(__file__).parent / "plan.md"
-    content = plan_path.read_text(encoding='utf-8')
-    lines = content.split('\n')
+    base = Path(__file__).parent
+    plan_path = base / "plan.md"
+    libs_dir = base / "libraries"
 
-    # Pairs to check (from the 99.x% matches)
-    pairs_to_check = [
-        ("Algorithm 32: Diagnostics-driven inquiry planning", 3544, 5887, 99.3),
-        ("Algorithm 53: OPEN_WORKSPACE", 3768, 4208, 99.8),
-        ("Algorithm 54: CLOSE_WORKSPACE_CASCADE", 3781, 4221, 99.8),
-        ("Algorithm 55: SPAWN_CHILD", 3793, 4233, 99.9),
-        ("Algorithm 56: EXPORT_CAPSULE", 3811, 4251, 99.8),
-        ("Algorithm 57: IMPORT_CAPSULE", 3823, 4263, 99.9),
-        ("Algorithm 58: MESSAGE_SEND", 3847, 4287, 99.7),
-        ("Algorithm 59: RECONCILE_CHILD_TO_PARENT", 3856, 4296, 99.9),
-        ("Algorithm 60: COMMIT_TO_INGEST", 3868, 4308, 99.8),
-        ("Algorithm 61: OVERLAP_SIGNATURE", 3878, 4318, 99.9),
-        ("Algorithm 62: OVERLAP_DETECT", 3889, 4329, 99.8),
-        ("Algorithm 63: OSCILLATION_SIGNAL", 3901, 4341, 99.9),
-        ("Algorithm 64: WORKSPACE_GC", 3916, 4356, 99.1),
-        ("P10 data structures", 1371, 1794, 99.9),
-        ("P6 Lean skeletons", 5028, 5953, 99.6),
-        ("P6 algorithms", 3388, 5731, 99.9),
-        ("P6 invariants", 577, 5513, 99.6),
-        ("P6 proofs and proof obligations", 4570, 5903, 99.7),
-        ("P6C2 Snapshot consistency", 4581, 5914, 99.2),
-        ("P9.2 Local tangent frames", 2563, 2731, 99.3),
-        ("P9.4 Vector-diffusion distance", 2598, 2766, 99.2),
-        ("P9.5 Field blending", 2606, 2774, 99.3),
-        ("WorkspaceCommitEnvelope", 1516, 1939, 99.3),
-        ("Lean 1: Event-sourced isolation", 5030, 5955, 100.0),  # Check this one too
-    ]
+    # Read plan.md
+    plan_content = plan_path.read_text(encoding='utf-8')
+    plan_lines = plan_content.split('\n')
 
-    print("="*80)
-    print("DETAILED DIFF ANALYSIS FOR 'TRUE DUPLICATES' WITH <100% SIMILARITY")
-    print("="*80)
+    # Extract sections from plan.md
+    print("Extracting sections from plan.md...")
+    plan_sections = extract_sections_by_annotation(plan_lines)
+    print(f"Found {len(plan_sections)} sections in plan.md\n")
 
-    for name, line1, line2, sim in pairs_to_check:
-        # Find the actual lines
-        idx1 = line1 - 1
-        idx2 = line2 - 1
+    # Extract from all library files
+    library_sections = {}
+    for lib_file in sorted(libs_dir.glob("*.md")):
+        lib_name = lib_file.stem
+        content = lib_file.read_text(encoding='utf-8')
+        lines = content.split('\n')
+        sections = extract_sections_by_annotation(lines)
+        for id_name, (header, body, line_num) in sections.items():
+            library_sections[id_name] = (header, body, lib_name, line_num)
 
-        # Get header level
-        match1 = re.match(r'^(#+)', lines[idx1])
-        match2 = re.match(r'^(#+)', lines[idx2])
+    print(f"Found {len(library_sections)} sections in library files\n")
 
-        if not match1 or not match2:
-            print(f"\nSkipping {name} - couldn't find headers")
+    # Find matches and categorize by similarity
+    exact_matches = []
+    close_matches = []
+    partial_matches = []
+
+    for id_name, (lib_header, lib_body, lib_name, lib_line) in sorted(library_sections.items()):
+        if id_name not in plan_sections:
             continue
 
-        level1 = len(match1.group(1))
-        level2 = len(match2.group(1))
+        plan_header, plan_body, plan_line = plan_sections[id_name]
 
-        content1 = get_section_until_same_level(lines, idx1, level1)
-        content2 = get_section_until_same_level(lines, idx2, level2)
+        lib_body_norm = normalize_body(lib_body)
+        plan_body_norm = normalize_body(plan_body)
 
-        # Normalize for comparison
-        lines1 = [l.rstrip() for l in content1.split('\n')]
-        lines2 = [l.rstrip() for l in content2.split('\n')]
+        if lib_body_norm == plan_body_norm:
+            exact_matches.append((id_name, lib_name, 100.0, plan_line, lib_line))
+        elif lib_body_norm and plan_body_norm:
+            sim = SequenceMatcher(None, plan_body_norm, lib_body_norm).ratio()
+            if sim > 0.95:
+                exact_matches.append((id_name, lib_name, sim * 100, plan_line, lib_line))
+            elif sim > 0.80:
+                close_matches.append((id_name, lib_name, sim * 100, plan_line, lib_line,
+                                     plan_header, plan_body, lib_header, lib_body))
+            elif sim > 0.50:
+                partial_matches.append((id_name, lib_name, sim * 100, plan_line, lib_line,
+                                       plan_header, plan_body, lib_header, lib_body))
 
-        # Remove empty lines at end
-        while lines1 and not lines1[-1].strip():
-            lines1.pop()
-        while lines2 and not lines2[-1].strip():
-            lines2.pop()
+    print("=" * 80)
+    print("MINOR DIFF ANALYSIS: plan.md vs libraries (annotation-based)")
+    print("=" * 80)
 
-        # Check if truly identical after normalization
-        if lines1 == lines2:
-            print(f"\n{name} (lines {line1} vs {line2}): IDENTICAL after whitespace normalization")
-            continue
+    print(f"\n--- Summary ---")
+    print(f"Exact matches (>95%): {len(exact_matches)}")
+    print(f"Close matches (80-95%): {len(close_matches)}")
+    print(f"Partial matches (50-80%): {len(partial_matches)}")
 
-        # Show the diff
-        print(f"\n{'='*80}")
-        print(f"{name}")
-        print(f"Lines {line1} vs {line2} | Similarity: {sim}%")
-        print("="*80)
+    # Show exact matches that aren't 100%
+    near_exact = [(id_name, lib, sim, pl, ll) for id_name, lib, sim, pl, ll in exact_matches if sim < 100]
+    if near_exact:
+        print(f"\n{'=' * 80}")
+        print("NEAR-EXACT MATCHES (95-100%) - Minor differences:")
+        print("=" * 80)
+        for id_name, lib_name, sim, plan_line, lib_line in near_exact:
+            print(f"\n  {id_name} ({lib_name}): {sim:.1f}%")
+            print(f"    plan.md line {plan_line}, library line {lib_line}")
 
-        diff = list(unified_diff(lines1, lines2, lineterm='', n=1))
+            # Get the actual bodies to show diff
+            plan_header, plan_body, _ = plan_sections[id_name]
+            lib_header, lib_body, _, _ = library_sections[id_name]
 
-        if not diff:
-            print("No diff (identical after normalization)")
-        else:
-            # Show only the actual changes
-            for line in diff:
-                if line.startswith('---') or line.startswith('+++'):
-                    continue
-                if line.startswith('@@'):
-                    print(f"\n{line}")
-                elif line.startswith('-'):
-                    print(f"  FIRST:  {line[1:][:70]}")
-                elif line.startswith('+'):
-                    print(f"  SECOND: {line[1:][:70]}")
+            plan_lines_list = [l.rstrip() for l in plan_body.split('\n')]
+            lib_lines_list = [l.rstrip() for l in lib_body.split('\n')]
 
-        # Summarize the type of difference
-        diff_types = set()
-        for i, (l1, l2) in enumerate(zip(lines1, lines2)):
-            if l1 != l2:
-                # Check what kind of difference
-                if l1.startswith('#') and l2.startswith('#'):
-                    if l1.lstrip('#').strip() == l2.lstrip('#').strip():
-                        diff_types.add("header_level")
-                    else:
-                        diff_types.add("header_text")
-                elif l1.strip() == '' or l2.strip() == '':
-                    diff_types.add("whitespace")
-                elif l1.strip() == '---' or l2.strip() == '---':
-                    diff_types.add("separator")
-                elif '```' in l1 or '```' in l2:
-                    diff_types.add("code_fence")
-                else:
-                    diff_types.add("content")
+            # Show unified diff
+            diff = list(unified_diff(plan_lines_list, lib_lines_list,
+                                    fromfile='plan.md', tofile=f'{lib_name}.md',
+                                    lineterm='', n=1))
+            if diff:
+                for line in diff[2:]:  # Skip --- and +++ lines
+                    if line.startswith('@@'):
+                        print(f"    {line}")
+                    elif line.startswith('-'):
+                        print(f"      PLAN: {line[1:][:60]}")
+                    elif line.startswith('+'):
+                        print(f"      LIB:  {line[1:][:60]}")
 
-        if len(lines1) != len(lines2):
-            diff_types.add(f"line_count ({len(lines1)} vs {len(lines2)})")
+    # Show close matches
+    if close_matches:
+        print(f"\n{'=' * 80}")
+        print("CLOSE MATCHES (80-95%) - Need review:")
+        print("=" * 80)
+        for id_name, lib_name, sim, plan_line, lib_line, plan_header, plan_body, lib_header, lib_body in close_matches:
+            print(f"\n  {id_name} ({lib_name}): {sim:.1f}%")
+            print(f"    plan.md line {plan_line}, library line {lib_line}")
 
-        print(f"\nDifference types: {', '.join(diff_types) if diff_types else 'none'}")
+            plan_lines_list = [l.rstrip() for l in plan_body.split('\n')]
+            lib_lines_list = [l.rstrip() for l in lib_body.split('\n')]
+
+            diff = list(unified_diff(plan_lines_list, lib_lines_list,
+                                    fromfile='plan.md', tofile=f'{lib_name}.md',
+                                    lineterm='', n=1))
+            if diff:
+                diff_count = 0
+                for line in diff[2:]:
+                    if line.startswith('@@'):
+                        print(f"    {line}")
+                    elif line.startswith('-'):
+                        print(f"      PLAN: {line[1:][:70]}")
+                        diff_count += 1
+                    elif line.startswith('+'):
+                        print(f"      LIB:  {line[1:][:70]}")
+                        diff_count += 1
+                    if diff_count > 20:  # Limit output
+                        print(f"      ... (truncated)")
+                        break
+
+    # Show partial matches
+    if partial_matches:
+        print(f"\n{'=' * 80}")
+        print("PARTIAL MATCHES (50-80%) - Significant differences:")
+        print("=" * 80)
+        for id_name, lib_name, sim, plan_line, lib_line, plan_header, plan_body, lib_header, lib_body in partial_matches[:10]:
+            print(f"\n  {id_name} ({lib_name}): {sim:.1f}%")
+            print(f"    plan.md: {len(plan_body)} chars, library: {len(lib_body)} chars")
+
+    print(f"\n{'=' * 80}")
+    print("RECOMMENDATIONS:")
+    print("=" * 80)
+    if near_exact:
+        print(f"  - {len(near_exact)} near-exact matches: likely whitespace/formatting - sync from plan.md")
+    if close_matches:
+        print(f"  - {len(close_matches)} close matches: review diffs, sync from plan.md if appropriate")
+    if partial_matches:
+        print(f"  - {len(partial_matches)} partial matches: significant differences need investigation")
 
 
 if __name__ == "__main__":

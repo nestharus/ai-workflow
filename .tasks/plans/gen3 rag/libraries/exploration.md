@@ -2,6 +2,16 @@
 
 Noise becomes one input. The main generative driver becomes "pattern transfer + hybridization."
 
+**New objects**
+
+* ModuleLibrary
+* FactorDictionary
+* PatternDecomposition graph (pattern = modules + wiring)
+* TradeoffProfile (metrics + contexts)
+* IdeaCandidate (a proposed substitution or hybrid with predicted gain)
+
+**New pipeline**
+
 1. detect opportunity
 
    * a noise seed
@@ -33,8 +43,6 @@ Noise becomes one input. The main generative driver becomes "pattern transfer + 
 
 DreamCoder is a useful reference point for the "learn a library of components and a search policy, then reuse them" loop, even though your substrate is graphs rather than programs.
 
----
-
 ### D34 NoiseSeed [(=D34)]
 
 ```text
@@ -59,8 +67,6 @@ NoiseSeed {
 }
 ```
 
----
-
 ### D35 ExplorationTrace [(=D35)]
 
 ```text
@@ -77,8 +83,6 @@ ExplorationTrace {
 }
 ```
 
----
-
 ### D36 EvidenceBundle [(=D36)]
 
 ```text
@@ -94,8 +98,6 @@ EvidenceBundle {
 }
 ```
 
----
-
 ### D37 CuriosityBudget [(=D37)]
 
 ```text
@@ -108,8 +110,6 @@ CuriosityBudget {
   spent_llm: float
 }
 ```
-
----
 
 ### D38 IdeaToken [(=D38)]
 
@@ -128,8 +128,6 @@ IdeaToken {
 }
 ```
 
----
-
 ### D63 InquiryTask [(=D63)]
 
 ```text
@@ -144,7 +142,13 @@ InquiryTask {
 }
 ```
 
----
+\frac{1}{2}r^2 & r \le \delta \
+\delta r - \frac{1}{2}\delta^2 & r > \delta
+\end{cases}
+]
+Huber comes from robust estimation work.
+
+This keeps "everything is a hypothesis" intact. The objective is per hypothesis branch.
 
 ### P7.1 Noise features [(=P7.1)]
 
@@ -164,8 +168,6 @@ Sources for signals:
 * (risk) governance risk (P4)
 * (cost) predicted exploration cost
 
----
-
 ### P7.2 Interestingness score [(=P7.2)]
 
 [
@@ -177,9 +179,9 @@ Weights can be:
 * fixed per domain
 * adapted via P4 (+[P4]) light feedback (reward shaping)
 
----
-
 ### P7.3 Learning progress [(=P7.3)]
+
+Use improvement, not raw error. This avoids fixation on irreducible randomness.
 
 For a trace (t) on seed (s):
 [
@@ -190,7 +192,7 @@ where (\mathcal{L}) can be a blend of tension and residual:
 \mathcal{L}(s)=\alpha T(s) + \beta r(s)
 ]
 
----
+This aligns with "learning progress" intrinsic motivation in IAC-style systems.
 
 ### P7.4 Novelty [(=P7.4)]
 
@@ -203,8 +205,9 @@ nov(s)=\min_{p \in \mathcal{P}} |z(s)-z(p)|
 where (z(\cdot)) is a structural embedding of the seed subgraph or pattern.
 
 **Prediction novelty**
+Use an exploration bonus based on prediction error of a fixed target representation, similar in spirit to RND.
 
----
+Novelty search literature supports novelty as a primary driver for open-ended discovery.
 
 ### P7.5 Information gain for inquiry selection [(=P7.5)]
 
@@ -212,8 +215,7 @@ For candidate inquiry action (a):
 [
 IG(a) = H(\Theta \mid D) - \mathbb{E}_{y \sim p(y \mid a,D)}[H(\Theta \mid D \cup (a,y))]
 ]
-
----
+This is the classic expected informativeness frame for selecting data.
 
 ### P7.6 Utility for scheduling [(=P7.6)]
 
@@ -277,7 +279,23 @@ function NSCAN(epoch e, workspace_view W):
   return seeds
 ```
 
----
+**P4C2 (+[P4C2]) proof sketch: MDL-driven abstraction reduces description length**
+
+**Claim.** Given a candidate pattern set, choosing patterns by MDL yields shorter descriptions than raw graph encoding (for those patterns). (Algorithm is heuristic; objective is principled.)
+
+**Sketch.** The objective directly minimizes description length. Greedy selection may not find global optimum but provides local improvement guarantees standard in submodular-style optimization.
+
+**P4C3 (+[P4C3]) proof sketch: Promotion guarantee**
+
+**Claim.** If a pattern is promoted only when (\Pr(\theta_p \ge \tau) \ge 1-\delta), then promotion implies a posterior reliability guarantee.
+
+**Sketch.** Direct from the posterior CDF of the Beta distribution.
+
+**P4C5 (+[P4C5]) proof sketch: Risk governance calibration**
+
+**Claim.** Conformal prediction can convert heuristic uncertainty into prediction sets with distribution-free coverage, and selective conformal risk control combines deferral with risk control.
+
+**Sketch.** Conformal coverage guarantee is standard; selection layer trades coverage vs abstention.
 
 ### Algorithm 34: Thread queue update [(=Algorithm 34)]
 
@@ -294,8 +312,6 @@ function UPDATE_THREAD_QUEUE(new_seeds):
     else:
       s.status = parked
 ```
-
----
 
 ### Algorithm 35: Explore a seed [(=Algorithm 35)]
 
@@ -332,8 +348,6 @@ function EXPLORE_SEED(seed s):
 
 LLM-driven curiosity and intrinsic reward signals for LLM training and auditing exist in recent work, so "LLM used as refiner" fits the current research direction.
 
----
-
 ### Algorithm 36: Distill traces into tokens [(=Algorithm 36)]
 
 ```pseudo
@@ -350,8 +364,6 @@ function DISTILL(epoch e):
 ```
 
 Learning progress guided exploration and goal selection is a standard curiosity mechanism in intrinsic motivation systems.
-
----
 
 ### Algorithm 37: Curiosity scheduler [(=Algorithm 37)]
 
@@ -371,8 +383,6 @@ function SLEEP_CURIOSITY_PASS(snapshot snap):
   DISTILL(snap.epoch)
 ```
 
----
-
 ### Algorithm 38: Decay and cleanup [(=Algorithm 38)]
 
 ```pseudo
@@ -382,8 +392,6 @@ function SEED_DECAY(seed s):
   if FAILURE_HIGH(s) and LP_LOW(s):
     s.status = quarantined
 ```
-
----
 
 ### P7C2 Exploration stays bounded [(=P7C2)]
 
@@ -415,8 +423,6 @@ theorem finite_steps_under_budget
 end CuriosityBudget
 ```
 
----
-
 ### P7C3 Learning progress avoids irreducible noise fixation [(=P7C3)]
 
 **Claim.** A reward based on improvement de-prioritizes regions where prediction error stays high with little improvement.
@@ -428,8 +434,6 @@ end CuriosityBudget
 
 This is the core argument in compression progress and learning progress intrinsic motivation work.
 
----
-
 ### P7C4 Novelty helps coverage [(=P7C4)]
 
 **Claim.** Novelty-driven search supports open-ended discovery and avoids deception by objectives.
@@ -437,8 +441,6 @@ This is the core argument in compression progress and learning progress intrinsi
 **Sketch.**
 
 Novelty search literature demonstrates that novelty as an objective enables discovery of diverse solutions and avoids local optima in deceptive fitness landscapes.
-
----
 
 ### P7C5 Information gain guides ambiguity resolution [(=P7C5)]
 
@@ -452,74 +454,53 @@ Optional guarantee path:
 
 * If the exploration objective satisfies adaptive submodularity, adaptive greedy stays near-optimal.
 
----
-
 ## G30 Noise becomes a computable object [(=G30)]
 
 * Every anomaly becomes a NoiseSeed with metrics and provenance.
-
----
 
 ## G31 Noise becomes a queue [(=G31)]
 
 * The system keeps a backlog of "interesting threads," explores them when budget exists.
 
----
-
 ## G32 Exploration is hypothesis-safe [(=G32)]
 
 * Exploration writes into workspace overlays and hypothesis branches, then commits via P6 (+[P6]) 2SC.
-
----
 
 ## G33 Exploration is guided [(=G33)]
 
 * Use learning progress, novelty, and information gain, avoid chasing irreducible randomness.
 
----
-
 ## G34 LLM reasoning is used as a refinement tool [(=G34)]
 
 * LLM proposes structure, missing evidence, and disambiguations, bounded by budgets.
-
----
 
 ## G29 Hippocampus actively seeks evidence [(=G29)]
 
 * Diagnostics drive which ambiguity to resolve next, using expected uncertainty reduction.
 
----
+* Every token type has one or more embedding spaces.
+* Traversal and matching use explicit coordinate transforms, so math stays consistent as you move across token types and domains.
+
 
 ## Comp5 Candidate Generator [(=Comp5)]
 
----
-
 ## Comp7 Idea Manager [(=Comp7)]
 
----
-
 ## Comp32 Inquiry Planner (INQ) [(=Comp32)]
-
----
+for evidence seeking
 
 ### P7I1 Seeds are append-only (=[P7]) [(=P7I1)]
 
 * NoiseSeeds and traces live in the event log.
-
----
 
 ### P7I2 Seeds never directly rewrite LTM (=[P7]) [(=P7I2)]
 
 * Seeds refine into hypotheses inside workspace overlays.
 * Commit goes through P6 (+[P6]) 2SC.
 
----
-
 ### P7I3 Noise never disappears (=[P7]) [(=P7I3)]
 
 * Even when downweighted, the seed remains in the ledger, with a status.
-
----
 
 ### P7I4 Curiosity respects risk governance (=[P7]) [(=P7I4)]
 
@@ -527,11 +508,12 @@ Optional guarantee path:
 
 ---
 
+
+# P9 invariants
+
 ### P7I5 Archived seed queryability [(=P7I5)]
 
 Archived seeds remain queryable for audit.
-
----
 
 ### P7I6 Failure memory blocks loops [(=P7I6)]
 
@@ -543,55 +525,37 @@ Failure memory blocks infinite loops on unproductive seeds.
 
 Hard budgets: `explore_budget`, `llm_budget`.
 
----
-
 ### P7I8 Beam limits per seed [(=P7I8)]
 
 Number of hypotheses spawned per seed is limited.
-
----
 
 ### P7I9 Governance gating [(=P7I9)]
 
 Risk tags influence whether exploration runs automatically, or requires user branch choice.
 
----
-
 ### P7I10 High-risk surfaces ambiguity [(=P7I10)]
 
 High-risk seeds can trigger "surface ambiguity" behavior instead of silent repair.
-
----
 
 ### P7I11 Cheap probes first [(=P7I11)]
 
 Cheap probes first, LLM second.
 
----
-
 ### P7I12 Forest and overlay reuse [(=P7I12)]
 
 Packed forests reuse (P5), overlays reuse (P6).
-
----
 
 ### P7I13 Sleep vs online depth [(=P7I13)]
 
 Sleep pass does deeper mining, online pass stays shallow.
 
----
-
 ### P7I14 Seed compactness [(=P7I14)]
 
 Seeds are compact, mostly metrics plus anchors.
 
----
-
 ### P7I15 Trace compression [(=P7I15)]
 
 Traces compress into signatures and aggregate stats.
-
----
 
 ### Algorithm 42: Idea proposal via substitution and hybridization [(=Algorithm 42)]
 
@@ -609,8 +573,6 @@ function PROPOSE_IDEAS(context subgraph G, Enc):
   hybrids = GENERATE_HYBRIDS(candidates)       // module splice + connector search
   return TOPK(candidates ∪ hybrids)
 ```
-
----
 
 ### Algorithm 43: Simulate and validate an idea candidate [(=Algorithm 43)]
 
@@ -631,3 +593,14 @@ function EVALUATE_IDEA(candidate c):
 ```
 
 ---
+
+## G22 Hippocampus workspace is first-class [(=G22)]
+
+* Hippocampus runs a fast, branching workspace graph, separate from long-term memory.
+
+
+## G23 Two-stage commit [(=G23)]
+
+* Neocortex outputs proposals.
+* Hippocampus re-ingests, re-parses, re-solves, then commits or quarantines.
+

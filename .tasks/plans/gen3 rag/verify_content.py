@@ -14,230 +14,94 @@ from pathlib import Path
 from difflib import SequenceMatcher
 
 
-# ID patterns to look for
-ID_PATTERNS = [
-    (r'Algorithm\s+\d+', 'Algorithm'),
-    (r'P\d+I\d+', 'Invariant'),
-    (r'P\d+C\d+', 'PatchClaim'),
-    (r'(?<!\d)C\d+', 'Claim'),    # General claims C1, C2, etc. (not P5C1)
-    (r'P\d+\.\d+', 'Math'),
-    (r'P\d+\s+Lean\s+\d+', 'Lean'),
-    (r'Lean\d+', 'Lean'),        # Lean1, Lean2, etc. (no space)
-    (r'Lean\s+\d+', 'Lean'),     # Lean 1, Lean 2, etc. (with space)
-    (r'G\d+\.\d+', 'Gap'),       # G0.1, G1.1, G2.1, G9.1, etc.
-    (r'G\d+', 'Goal'),
-    (r'Gap\s+G\d+', 'Gap'),
-    (r'S\d+', 'Statement'),      # Problem statements
-    (r'D\d+', 'DataStructure'),  # Data structures
-    (r'Comp\d+', 'Component'),   # Components
-    (r'H\d+', 'Hypothesis'),     # Hypotheses (future)
-    (r'NFG\d+', 'NFG'),          # Non-functional goals
-    (r'REF\d+', 'Reference'),    # References/bibliography
+# Legal ID patterns (for [(=ID)] annotations)
+ID_PATTERNS_LEGAL = [
+    r'Algorithm \d+',
+    r'Comp\d+',
+    r'D\d+',
+    r'G\d+',
+    r'C\d+',
+    r'S\d+',
+    r'T\d+',
+    r'P\d+I\d+',
+    r'P\d+C\d+',
+    r'P\d+\.\d+',
+    r'Lean\d+',
+    r'NFG\d+',
 ]
 
-
-def extract_all_ids(text: str) -> list[tuple[str, str]]:
-    """Extract all IDs from text with their type."""
-    ids = []
-    for pattern, id_type in ID_PATTERNS:
-        for match in re.finditer(pattern, text):
-            ids.append((match.group(), id_type))
-    return ids
+# Annotation pattern for declarations
+ANNOTATION_PATTERN = re.compile(r'\[\(=([^\]]+)\)\]')
 
 
-def is_header_line(line: str) -> bool:
-    """Check if line is a markdown header."""
-    return bool(re.match(r'^#{1,4}\s', line))
-
-
-def find_id_in_line(line: str) -> tuple[str, str] | None:
-    """Find the first ID in a line, return (id, type) or None."""
-    for pattern, id_type in ID_PATTERNS:
-        m = re.search(pattern, line)
-        if m:
-            return (m.group(), id_type)
-    return None
-
-
-def scan_declarations_and_references(lines: list[str]) -> tuple[dict, dict]:
-    """Scan all lines for IDs, classify as declarations or references.
-
-    Returns:
-        declarations: {id: (line_idx, header_text)}
-        references: {id: [line_idx, ...]}
-    """
-    declarations = {}  # id -> (line_idx, header_text)
-    references = {}    # id -> [line_idx, ...]
-
-    for idx, line in enumerate(lines):
-        # Find all IDs in this line
-        for pattern, id_type in ID_PATTERNS:
-            for match in re.finditer(pattern, line):
-                id_str = match.group()
-
-                if is_header_line(line):
-                    # This is a declaration
-                    if id_str not in declarations:
-                        declarations[id_str] = (idx, line.strip())
-                else:
-                    # This is a reference
-                    if id_str not in references:
-                        references[id_str] = []
-                    references[id_str].append(idx)
-
-    return declarations, references
-
-
-def has_id_pattern(line: str) -> bool:
-    """Check if a line contains a recognized ID pattern."""
-    id_patterns = [
-        r'Algorithm\s+\d+',
-        r'P\d+I\d+',
-        r'P\d+C\d+',
-        r'P\d+\.\d+',
-        r'Lean\d+',
-        r'Lean\s+\d+',
-        r'G\d+',
-        r'D\d+',
-        r'Comp\d+',
-        r'S\d+',
-        r'H\d+',
-        r'NFG\d+',
-        r'REF\d+',
-    ]
-    for pat in id_patterns:
-        if re.search(pat, line):
+def is_legal_id(text):
+    """Check if text matches a legal ID pattern."""
+    for pattern in ID_PATTERNS_LEGAL:
+        if re.match(f'^{pattern}$', text):
             return True
     return False
 
 
-def get_section_body(lines: list[str], start_idx: int) -> tuple[str, str, int, list[int]]:
-    """Extract header and body from a section.
+def extract_sections_by_annotation(lines):
+    """Extract sections based on [(=ID)] annotations.
 
-    Returns: (header, body, line_count, line_indices)
-
-    Document model is FLAT - sections don't contain subsections.
-    Stops at:
-    - Any header (##, ###, etc.) - all headers start new sections
-    - --- separator lines (explicit section delimiters)
+    Returns: {id: (header_line, body_text, line_num)}
     """
-    if start_idx >= len(lines):
-        return "", "", 0, []
+    sections = {}
 
-    first_line = lines[start_idx]
-    match = re.match(r'^(#+)\s', first_line)
-    if not match:
-        return "", "", 0, []
-
-    header = first_line.strip()
-    body_lines = []
-    line_indices = [start_idx]  # Include header line
-
-    for i in range(start_idx + 1, len(lines)):
-        line = lines[i]
-
-        # Stop at --- separator (common section delimiter)
-        if line.strip() == '---':
-            break
-
-        # Stop at ANY header - flat document model
-        if re.match(r'^#+\s', line):
-            break
-
-        body_lines.append(line.rstrip())
-        line_indices.append(i)
-
-    # Normalize body
-    body = '\n'.join(body_lines).strip()
-
-    return header, body, len(body_lines) + 1, line_indices
-
-
-def extract_id_from_header(header: str) -> str:
-    """Extract the ID portion from a header for matching.
-
-    Examples:
-    - "## Algorithm 1: Streaming ingestion" -> "Algorithm 1"
-    - "### P1I1 Evidence permanence" -> "P1I1"
-    - "## G22 Hippocampus workspace" -> "G22"
-    """
-    clean = re.sub(r'^#+\s+', '', header).strip()
-
-    # Try various ID patterns
-    patterns = [
-        r'^(Algorithm\s+\d+)',           # Algorithm 1, Algorithm 52
-        r'^(P\d+I\d+)',                   # P1I1, P9I6
-        r'^(P\d+C\d+)',                   # P1C1, P6C5
-        r'^(P\d+\.\d+)',                  # P1.1, P9.5
-        r'^(P\d+\s+Lean\s+\d+)',          # P5 Lean 1
-        r'^(Lean\s+\d+)',                 # Lean 1
-        r'^(G\d+)',                       # G22, G6
-        r'^(Gap\s+G\d+)',                 # Gap G2
-    ]
-
-    for pat in patterns:
-        m = re.match(pat, clean)
-        if m:
-            return m.group(1)
-
-    # No ID pattern - use first 30 chars as identifier
-    return clean[:30]
-
-
-def find_section_header_for_line(lib_lines: list[str], line_idx: int) -> int:
-    """Find the section header that contains a given line."""
-    # Walk backwards to find the header
-    for i in range(line_idx, -1, -1):
-        if re.match(r'^#{2,3}\s', lib_lines[i]):
-            return i
-    return -1
-
-
-def find_content_in_libraries(body: str, lib_lines: list[str], min_match_len: int = 50) -> list[tuple[int, float]]:
-    """Find where body content appears in libraries.
-
-    Returns list of (header_line_idx, similarity) tuples.
-    """
-    if len(body) < min_match_len:
-        return []
-
-    # Take first significant chunk of body (skip empty lines)
-    body_chunk = body[:500].strip()
-    if not body_chunk:
-        return []
-
-    matches = []
-
-    # Search for body content in libraries
-    lib_text = '\n'.join(lib_lines)
-
-    # Try to find exact substring match first
-    pos = lib_text.find(body_chunk[:100])
-    if pos != -1:
-        # Find line number where match starts
-        line_idx = lib_text[:pos].count('\n')
-        # Back up to find the section header
-        header_idx = find_section_header_for_line(lib_lines, line_idx)
-        if header_idx >= 0:
-            matches.append((header_idx, 1.0))
-            return matches
-
-    # Fall back to fuzzy matching on sections
     i = 0
-    while i < len(lib_lines):
-        line = lib_lines[i]
-        if re.match(r'^#{2,3}\s', line):
-            _, lib_body, lib_len, _ = get_section_body(lib_lines, i)
-            if lib_body:
-                # Compare first 500 chars of bodies
-                sim = SequenceMatcher(None, body_chunk, lib_body[:500]).ratio()
-                if sim > 0.5:
-                    matches.append((i, sim))
-            i += max(1, lib_len)
+    while i < len(lines):
+        line = lines[i]
+        match = ANNOTATION_PATTERN.search(line)
+
+        if match and is_legal_id(match.group(1)):
+            id_name = match.group(1)
+            header_line = line
+            line_num = i + 1
+
+            # Collect body until next annotation or EOF
+            body_lines = []
+            i += 1
+            while i < len(lines):
+                next_match = ANNOTATION_PATTERN.search(lines[i])
+                if next_match and is_legal_id(next_match.group(1)):
+                    break
+                body_lines.append(lines[i])
+                i += 1
+
+            sections[id_name] = (header_line, '\n'.join(body_lines).strip(), line_num)
         else:
             i += 1
 
-    return sorted(matches, key=lambda x: -x[1])
+    return sections
+
+
+def find_references(lines):
+    """Find all (+[ID]) references in lines."""
+    ref_pattern = re.compile(r'\(\+\[([^\]]+)\]\)')
+    references = {}  # id -> [line_nums]
+
+    for idx, line in enumerate(lines):
+        for match in ref_pattern.finditer(line):
+            ref_id = match.group(1)
+            if ref_id not in references:
+                references[ref_id] = []
+            references[ref_id].append(idx + 1)
+
+    return references
+
+
+def normalize_body(body):
+    """Normalize body for comparison."""
+    lines = [l.strip() for l in body.splitlines() if l.strip()]
+    return '\n'.join(lines)
+
+
+def extract_label(header_line):
+    """Extract label from header line (text before [(=ID)] annotation)."""
+    header = re.sub(r'^#+\s*', '', header_line)
+    header = re.sub(r'\s*\[\(=[^\]]+\)\].*$', '', header)
+    return header.strip()
 
 
 def main():
@@ -249,179 +113,160 @@ def main():
     plan_content = plan_path.read_text(encoding='utf-8')
     plan_lines = plan_content.split('\n')
 
-    # Read all library files
-    all_lib_lines = []
-    lib_file_info = []  # [(filename, start_line, end_line), ...]
+    # Extract sections from plan.md using annotation-based splitting
+    print("Extracting sections from plan.md...")
+    plan_sections = extract_sections_by_annotation(plan_lines)
+    print(f"Found {len(plan_sections)} sections in plan.md\n")
 
+    # Extract from all library files
+    library_sections = {}
+    for lib_file in sorted(libs_dir.glob("*.md")):
+        lib_name = lib_file.stem
+        content = lib_file.read_text(encoding='utf-8')
+        lines = content.split('\n')
+        sections = extract_sections_by_annotation(lines)
+        for id_name, (header, body, line_num) in sections.items():
+            library_sections[id_name] = (header, body, lib_name, line_num)
+
+    print(f"Found {len(library_sections)} sections in library files\n")
+
+    # Find references in plan and libraries
+    plan_refs = find_references(plan_lines)
+    lib_refs = {}
     for lib_file in sorted(libs_dir.glob("*.md")):
         content = lib_file.read_text(encoding='utf-8')
         lines = content.split('\n')
-        start = len(all_lib_lines)
-        all_lib_lines.extend(lines)
-        lib_file_info.append((lib_file.name, start, len(all_lib_lines)))
+        refs = find_references(lines)
+        for ref_id, line_nums in refs.items():
+            if ref_id not in lib_refs:
+                lib_refs[ref_id] = []
+            lib_refs[ref_id].extend([(lib_file.stem, ln) for ln in line_nums])
 
     print("=" * 70)
-    print("CONTENT VERIFICATION: plan.md vs libraries/ (ID-based)")
+    print("CONTENT VERIFICATION: plan.md vs libraries/ (annotation-based)")
     print("=" * 70)
 
-    # Scan for declarations and references
-    plan_decls, plan_refs = scan_declarations_and_references(plan_lines)
-    lib_decls, lib_refs = scan_declarations_and_references(all_lib_lines)
-
-    print(f"\nPlan declarations: {len(plan_decls)}")
-    print(f"Plan references: {len(plan_refs)} unique IDs")
-    print(f"Library declarations: {len(lib_decls)}")
-
-    # Track line coverage
-    touched_lines = set()
-
-    # Match declarations by ID and compare bodies
+    # Compare bodies
     exact_matches = 0
     close_matches = 0
     partial_matches = 0
     mismatches = []
-    plan_only = []  # Declarations in plan but not in libs
-    lib_only = []   # Declarations in libs but not in plan
+    missing_in_plan = []
+    missing_in_libraries = []
 
-    for id_str, (plan_idx, plan_header) in plan_decls.items():
-        # Get plan body
-        _, plan_body, plan_len, plan_line_indices = get_section_body(plan_lines, plan_idx)
-        touched_lines.update(plan_line_indices)
+    for id_name, (lib_header, lib_body, lib_name, line_num) in sorted(library_sections.items()):
+        if id_name not in plan_sections:
+            missing_in_plan.append((id_name, lib_name))
+            continue
 
-        if id_str in lib_decls:
-            lib_idx, lib_header = lib_decls[id_str]
-            _, lib_body, _, _ = get_section_body(all_lib_lines, lib_idx)
+        plan_header, plan_body, plan_line = plan_sections[id_name]
 
-            # Compare bodies
-            if plan_body and lib_body:
-                sim = SequenceMatcher(None, plan_body, lib_body).ratio()
+        # Compare bodies
+        lib_body_norm = normalize_body(lib_body)
+        plan_body_norm = normalize_body(plan_body)
 
-                if sim > 0.95:
-                    exact_matches += 1
-                elif sim > 0.80:
-                    close_matches += 1
-                elif sim > 0.50:
-                    partial_matches += 1
-                    mismatches.append({
-                        'line': plan_idx + 1,
-                        'id': id_str,
-                        'similarity': sim,
-                        'plan_len': len(plan_body),
-                        'lib_len': len(lib_body),
-                        'type': 'partial'
-                    })
-                else:
-                    mismatches.append({
-                        'line': plan_idx + 1,
-                        'id': id_str,
-                        'similarity': sim,
-                        'plan_len': len(plan_body),
-                        'lib_len': len(lib_body),
-                        'type': 'mismatch'
-                    })
-            elif plan_body and not lib_body:
-                plan_only.append({
-                    'line': plan_idx + 1,
-                    'id': id_str,
-                    'header': plan_header[:60],
-                    'reason': 'empty lib body'
+        if lib_body_norm == plan_body_norm:
+            exact_matches += 1
+        elif lib_body_norm and plan_body_norm:
+            sim = SequenceMatcher(None, plan_body_norm, lib_body_norm).ratio()
+            if sim > 0.95:
+                exact_matches += 1
+            elif sim > 0.80:
+                close_matches += 1
+            elif sim > 0.50:
+                partial_matches += 1
+                mismatches.append({
+                    'id': id_name,
+                    'lib': lib_name,
+                    'similarity': sim,
+                    'plan_len': len(plan_body_norm),
+                    'lib_len': len(lib_body_norm),
+                    'type': 'partial'
                 })
             else:
-                exact_matches += 1  # Both empty or lib has content
+                mismatches.append({
+                    'id': id_name,
+                    'lib': lib_name,
+                    'similarity': sim,
+                    'plan_len': len(plan_body_norm),
+                    'lib_len': len(lib_body_norm),
+                    'type': 'mismatch'
+                })
+        elif plan_body_norm and not lib_body_norm:
+            mismatches.append({
+                'id': id_name,
+                'lib': lib_name,
+                'similarity': 0,
+                'plan_len': len(plan_body_norm),
+                'lib_len': 0,
+                'type': 'empty_lib'
+            })
         else:
-            plan_only.append({
-                'line': plan_idx + 1,
-                'id': id_str,
-                'header': plan_header[:60],
-                'reason': 'not in libs'
-            })
+            exact_matches += 1
 
-    # Find lib-only declarations
-    for id_str, (lib_idx, lib_header) in lib_decls.items():
-        if id_str not in plan_decls:
-            lib_only.append({
-                'line': lib_idx + 1,
-                'id': id_str,
-                'header': lib_header[:60]
-            })
+    for id_name in plan_sections:
+        if id_name not in library_sections:
+            missing_in_libraries.append(id_name)
 
-    # Find references without declarations
+    # Find orphan references
+    all_declared = set(plan_sections.keys()) | set(library_sections.keys())
     orphan_refs = []
-    for id_str, ref_lines in plan_refs.items():
-        if id_str not in plan_decls and id_str not in lib_decls:
-            orphan_refs.append({
-                'id': id_str,
-                'ref_count': len(ref_lines),
-                'first_line': ref_lines[0] + 1
-            })
+    for ref_id, locations in {**plan_refs, **lib_refs}.items():
+        if ref_id not in all_declared:
+            orphan_refs.append((ref_id, len(locations) if isinstance(locations, list) else locations))
 
-    # Summary
-    total_decls = len(plan_decls)
-    matched = exact_matches + close_matches + partial_matches
+    # Report
     print(f"\n--- ID Match Results ---")
     print(f"Exact matches (>95%): {exact_matches}")
     print(f"Close matches (80-95%): {close_matches}")
     print(f"Partial matches (50-80%): {partial_matches}")
-    print(f"Mismatches (<50%): {len([m for m in mismatches if m['type'] == 'mismatch'])}")
-    print(f"Plan-only declarations: {len(plan_only)}")
-    print(f"Lib-only declarations: {len(lib_only)}")
+    print(f"Mismatches (<50% or empty): {len([m for m in mismatches if m['type'] in ('mismatch', 'empty_lib')])}")
+    print(f"Missing in plan: {len(missing_in_plan)}")
+    print(f"Missing in libraries: {len(missing_in_libraries)}")
     print(f"Orphan references: {len(orphan_refs)}")
 
     if mismatches:
         print("\n" + "=" * 70)
         print(f"CONTENT DIFFERENCES - {len(mismatches)} IDs")
         print("=" * 70)
-        for m in sorted(mismatches, key=lambda x: x['similarity'])[:20]:
-            print(f"  L{m['line']}: {m['id']} ({m['similarity']*100:.0f}%) - plan:{m['plan_len']} lib:{m['lib_len']} chars")
+        for m in sorted(mismatches, key=lambda x: x['similarity'])[:30]:
+            print(f"  {m['id']} ({m['lib']}): {m['similarity']*100:.0f}% - plan:{m['plan_len']} lib:{m['lib_len']} chars")
 
-    if plan_only:
+    if missing_in_libraries:
         print("\n" + "=" * 70)
-        print(f"PLAN-ONLY DECLARATIONS - {len(plan_only)} IDs not in libraries")
+        print(f"MISSING IN LIBRARIES - {len(missing_in_libraries)} IDs")
         print("=" * 70)
-        for p in plan_only[:30]:
-            print(f"  L{p['line']}: {p['id']} - {p['header']} ({p['reason']})")
+        for id_name in missing_in_libraries[:50]:
+            print(f"  {id_name}")
+        if len(missing_in_libraries) > 50:
+            print(f"  ... and {len(missing_in_libraries) - 50} more")
 
-    if lib_only:
+    if missing_in_plan:
         print("\n" + "=" * 70)
-        print(f"LIB-ONLY DECLARATIONS - {len(lib_only)} IDs not in plan")
+        print(f"MISSING IN PLAN - {len(missing_in_plan)} IDs")
         print("=" * 70)
-        for l in lib_only[:20]:
-            print(f"  L{l['line']}: {l['id']} - {l['header']}")
+        for id_name, lib_name in missing_in_plan[:20]:
+            print(f"  {id_name} ({lib_name})")
 
     if orphan_refs:
         print("\n" + "=" * 70)
         print(f"ORPHAN REFERENCES - {len(orphan_refs)} IDs referenced but never declared")
         print("=" * 70)
-        for o in orphan_refs[:20]:
-            print(f"  {o['id']} - {o['ref_count']} refs, first at L{o['first_line']}")
+        for ref_id, count in orphan_refs[:20]:
+            print(f"  {ref_id} - {count} refs")
 
-    # Find untouched non-blank lines
-    untouched = []
-    for idx, line in enumerate(plan_lines):
-        if idx not in touched_lines:
-            stripped = line.strip()
-            # Skip blank lines, horizontal rules, and top-level # headers
-            if stripped and stripped != '---' and not stripped.startswith('# '):
-                untouched.append((idx + 1, stripped[:80]))
-
-    if untouched:
-        print("\n" + "=" * 70)
-        print(f"UNTOUCHED LINES - {len(untouched)} non-blank lines never processed")
-        print("=" * 70)
-        for line_num, content in untouched[:50]:
-            print(f"  L{line_num}: {content}")
-        if len(untouched) > 50:
-            print(f"  ... and {len(untouched) - 50} more")
-    else:
-        print("\n✓ All non-blank lines were processed")
-
-    total_ok = exact_matches + close_matches
     print("\n" + "=" * 70)
-    print(f"RESULT: {total_ok}/{total_decls} exact/close ({100*total_ok/total_decls:.1f}%)")
-    print(f"Line coverage: {len(touched_lines)}/{len(plan_lines)} lines touched")
+    print("SUMMARY:")
     print("=" * 70)
+    print(f"  Plan sections: {len(plan_sections)}")
+    print(f"  Library sections: {len(library_sections)}")
+    print(f"  Exact/close matches: {exact_matches + close_matches}")
+    print(f"  Mismatches: {len(mismatches)}")
+    print(f"  Missing in libraries: {len(missing_in_libraries)}")
+    print(f"  Missing in plan: {len(missing_in_plan)}")
+    print(f"  Orphan references: {len(orphan_refs)}")
 
-    return 0 if len(plan_only) == 0 and len([m for m in mismatches if m['type'] == 'mismatch']) == 0 else 1
+    return 0 if len(missing_in_libraries) == 0 and len(mismatches) == 0 else 1
 
 
 if __name__ == "__main__":

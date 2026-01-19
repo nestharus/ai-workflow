@@ -3,8 +3,6 @@
 ANN codes and quantized vectors are allowed.
 A lossless or near-lossless backstore remains available for re-evaluation and auditing.
 
----
-
 ### P9I1 — Read coherence (=[P9]) [(=P9I1)]
 
 Every request pins a view:
@@ -15,13 +13,9 @@ Every request pins a view:
 
 All reads for the request use that pinned view.
 
----
-
 ### P9I2 — Overlay is always writable (=[P9]) [(=P9I2)]
 
 Ingestion and workspace commits append to the event log continuously. The overlay applier may lag, but never blocks writes.
-
----
 
 ### Algorithm 66: Apply deltas after snapshot [(=Algorithm 66)]
 
@@ -41,8 +35,6 @@ function APPLY_DELTAS(epoch_new, from lsn0, to lsn1):
 
 This keeps the new epoch aligned with live changes while keeping the offline solve isolated.
 
----
-
 ### Algorithm 67: Publish epoch with RCU semantics [(=Algorithm 67)]
 
 ```pseudo
@@ -55,9 +47,7 @@ function PUBLISH_EPOCH(epoch_new):
   WAIT_GRACE_PERIOD()
 ```
 
-RCU provides the pattern: readers run lock-free against a stable snapshot while writer swaps the pointer then waits a grace period before reclaim. ([Kernel.org][6])
-
----
+RCU provides the pattern: readers run lock-free against a stable snapshot while writer swaps the pointer then waits a grace period before reclaim.
 
 ## Algorithm 51 — CONTINUOUS_SLEEP_NO_DOWNTIME [(=Algorithm 51)]
 
@@ -82,8 +72,6 @@ function CONTINUOUS_SLEEP_NO_DOWNTIME(trigger):
   START_AB_EXPERIMENT(control=ACTIVE_EPOCH, candidate=epoch_new, start_lsn=lsn1)
 ```
 
----
-
 ### P6C3 Safe reclamation [(=P6C3)]
 
 **Claim.** Old epochs are reclaimed after all readers leave, via grace periods.
@@ -92,80 +80,55 @@ function CONTINUOUS_SLEEP_NO_DOWNTIME(trigger):
 * Track reader epochs.
 * Reclaim when min reader epoch advances past reclaim target, same pattern as RCU grace periods.
 
----
-
 ### P1I6 Event-sourced replay [(=P1I6)]
 
 Every mutation is an event. Enables rebuilds, A/B comparisons, and regression debugging.
-
----
 
 ### P1I7 Raw spans are immutable [(=P1I7)]
 
 Immutable compressed store, dedup by content hash.
 
----
-
 ### P1I8 ObservationRecord persistence [(=P1I8)]
 
 Float16 or float32 backstore on disk.
-
----
 
 ### P1I9 ANN store with full backstore [(=P1I9)]
 
 PQ codes for scale and speed, full vector backstore for audits.
 
----
-
 ### P1I10 NodeState history persistence [(=P1I10)]
 
 RAM keeps current states for Focus, Active, Context. Disk keeps full history, optionally delta-compressed.
-
----
 
 ### P1I11 Graph edge durability [(=P1I11)]
 
 LSM-backed edge table for high write rates.
 
----
-
 ### P1I13 Tier-locality storage [(=P1I13)]
 
 Keep Focus, Active, Context in RAM. Keep Inactive on disk, accessed via ANN and edge tables. This is the same design principle as virtual memory and tiered recall systems.
-
----
 
 ### P1I14 Index structure by tier [(=P1I14)]
 
 HNSW for fast recall in Context. PQ or IVF+PQ for Inactive scale.
 
----
-
 ### P1I15 Inactive embedding quantization [(=P1I15)]
 
 Store inactive embeddings as int8 PQ codes. Keep only centroids and a small residual cache in RAM.
-
----
 
 ### P1I16 Edge write batching [(=P1I16)]
 
 Use LSM-style batching for high ingest rates. Periodic compaction merges edge runs.
 
----
-
 ## G4 Bounded working set [(=G4)]
 
-* Explicit focus, active, contextual, inactive tiers with promotion and demotion.
-
----
+   * Explicit focus, active, contextual, inactive tiers with promotion and demotion.
 
 ## G40 Zero downtime sleep [(=G40)]
 
 * Consolidation runs continuously.
 * Overlay remains writable.
 * No downtime for reads or writes.
----
 
 ## D4 ANN indices [(=D4)]
 
@@ -174,8 +137,6 @@ Separate indices per tier and per embedding kind.
 * Focus and Active: brute force scan or small HNSW.
 * Context: HNSW for x vectors.
 * Inactive: IVF+PQ or HNSW+PQ depending on scale.
-
----
 
 ## D5 Event log [(=D5)]
 
@@ -208,8 +169,6 @@ Epoch {
 }
 ```
 
----
-
 ## D12 Snapshot [(=D12)]
 
 A consistent cut for offline compute.
@@ -224,9 +183,7 @@ Snapshot {
 }
 ```
 
-Snapshot semantics align with snapshot isolation style "time travel" reads in MVCC. ([Microsoft][13])
-
----
+Snapshot semantics align with snapshot isolation style "time travel" reads in MVCC.
 
 ## D14 IndexVersion [(=D14)]
 
@@ -244,8 +201,6 @@ IndexVersion {
 }
 ```
 
----
-
 ## D15 ConsolidationJob [(=D15)]
 
 ```
@@ -259,20 +214,6 @@ ConsolidationJob {
   finished_t: Time?
 }
 ```
-
-
----
-
----
-
----
-
----
-
-
----
-
----
 
 ### Algorithm 9: Global Consolidation [(=Algorithm 9)]
 
@@ -310,39 +251,20 @@ function GLOBAL_CONSOLIDATION(trigger):
   RETIRE_OLD_EPOCHS()
 ```
 
-Event sourcing stays the audit layer that makes rebuilds reproducible. ([Microsoft Learn][7])
+Snapshot isolation is the foundation for the consistent snapshot step.
+Atomic publish semantics follow RCU style "publish pointer, wait grace period, reclaim old."
 
-#### Notes on BUILD_INDICES
-
-This is a versioned build, then swap. The Lucene style segment approach is a practical reference point for "build new segments, then open them" behavior. ([Mike McCandless Blog][8])
-
----
-
----
+Event sourcing stays the audit layer that makes rebuilds reproducible.
 
 ## Comp4 Tiered Memory Manager [(=Comp4)]
 
-(Component definition pending - see plan.md L737)
-
----
-
 ## Comp9 Index Layer [(=Comp9)]
 
-(Component definition pending - see plan.md L747)
-
----
-
 ## Comp10 Telemetry and Replay Log [(=Comp10)]
-
-(Component definition pending - see plan.md L749)
-
----
 
 ## C4 Tier promotion logic bounds RAM and compute [(=C4)]
 
 Independent of total corpus size.
-
----
 
 ## Algorithm 8: Hypothesis branching [(=Algorithm 8)]
 
@@ -372,8 +294,6 @@ function BRANCH_HYPOTHESIS(conflict c):
 
 Branching stays local to keep memory and compute bounded.
 
----
-
 ### P2C1 Snapshot consistency [(=P2C1)]
 
 Snapshot created at LSN (l_0) defines a consistent view.
@@ -382,11 +302,7 @@ Sketch:
 
 * Event log defines a total order of mutations.
 * Snapshot at (l_0) reads all events (\le l_0).
-* MVCC snapshot isolation gives a consistent read view that stays stable while writes continue. ([Microsoft][1])
-
----
-
----
+* MVCC snapshot isolation gives a consistent read view that stays stable while writes continue.
 
 ### P2C2 Non-blocking commit [(=P2C2)]
 
@@ -397,8 +313,4 @@ Sketch:
 * Readers dereference one global epoch pointer at entry.
 * All reads use that epoch's stores and indices.
 * Writer publishes new epoch by atomic swap.
-* RCU grace period ensures old epoch memory remains valid for all readers started before swap. ([Kernel.org][6])
-
----
-
-## T14 Notes on BUILD_INDICES [(=T14)]
+* RCU grace period ensures old epoch memory remains valid for all readers started before swap.

@@ -4,8 +4,6 @@
 
 ## Comp27 Cold Solve Scheduler (ROOT) [(=Comp27)]
 
----
-
 ## Algorithm 3: Field relaxation on a subgraph [(=Algorithm 3)]
 
 Field update computes diagnostics and uses gates.
@@ -26,15 +24,7 @@ function FIELD_UPDATE_WITH_DIAGNOSTICS(nodes S):
     for each edge (i,j) touching S:
       t = w_eff(i,j) * NORM2(STATE(i,h).x - STATE(j,h).x)
       UPDATE_EDGE_TENSION(edge_id, t)
-```
 
-Coordinate update under gated quadratic stays closed form:
-[
-x_i \leftarrow
-\frac{\alpha_i b_i + \sum_{j} w_{ij}g_{ij} x_j}{\alpha_i + \mu_i + \sum_{j} w_{ij}g_{ij}}
-]
-
-```pseudo
 function FIELD_RELAX_GATED(nodes S, hypothesis h, steps T):
   repeat T times:
     for i in SHUFFLE(S):
@@ -43,21 +33,21 @@ function FIELD_RELAX_GATED(nodes S, hypothesis h, steps T):
       x[i,h] = numer / denom
 ```
 
----
+Coordinate update under gated quadratic stays closed form:
+[
+x_i \leftarrow
+\frac{\alpha_i b_i + \sum_{j} w_{ij}g_{ij} x_j}{\alpha_i + \mu_i + \sum_{j} w_{ij}g_{ij}}
+]
 
 ### P9I3 — Blends are reversible (=[P9]) [(=P9I3)]
 
 No blend may become the only representation of its primitives. `BlendRecipe` must be explicit and all primitives remain computable.
-
----
 
 ### P9I4 — No force becomes law silently (=[P9]) [(=P9I4)]
 
 Fields may guide traversal and scheduling.
 
 Fields may only alter topology (edge gates, bridges, anchor policies) via two-stage commit + governance.
-
----
 
 ### D7 NodeState [(=D7)]
 
@@ -82,8 +72,6 @@ Node keeps pointers:
 * `node.current_state[hyp_id] -> state_id`
 * `node.state_history -> list<StateId>`
 
----
-
 ### D46 ManifoldView [(=D46)]
 
 A pinned read view.
@@ -95,8 +83,6 @@ ManifoldView {
   hyp_id: HypId
 }
 ```
-
----
 
 ### D47 ManifoldState [(=D47)]
 
@@ -121,8 +107,6 @@ ManifoldState {
 }
 ```
 
----
-
 ### D48 TangentFrame [(=D48)]
 
 A local chart basis for node i.
@@ -137,8 +121,6 @@ TangentFrame {
 }
 ```
 
----
-
 ### D49 EdgeTransport [(=D49)]
 
 A discrete parallel transport operator between tangent frames.
@@ -151,8 +133,6 @@ EdgeTransport {
   weight: float                     // typically W_eff(edge)
 }
 ```
-
----
 
 ### D50 ConnectionLaplacian [(=D50)]
 
@@ -167,8 +147,6 @@ ConnectionLaplacian {
 }
 ```
 
----
-
 ### D51 BlendRecipe [(=D51)]
 
 ```text
@@ -181,8 +159,6 @@ BlendRecipe {
   constraints: {risk_caps, novelty_caps, max_abs_weight, ...}
 }
 ```
-
----
 
 ### D53 TranslationProposal [(=D53)]
 
@@ -199,8 +175,6 @@ TranslationProposal {
   status: enum {shadow, canary, promoted, rejected}
 }
 ```
-
----
 
 ### P2.2 IRLS weight update rule [(=P2.2)]
 
@@ -238,10 +212,8 @@ Then the surrogate objective at iteration (k) becomes a weighted quadratic:
 
 Minimizing this surrogate is a Laplacian system solve with weights (\tilde{w}).
 
-IRLS for robust regression is a standard approach.
-IRLS as MM is covered in MM tutorials and more recent analyses.
-
----
+IRLS for robust regression is a standard approach. ([Taylor & Francis Online][3])
+IRLS as MM is covered in MM tutorials and more recent analyses. ([Taylor & Francis Online][4])
 
 ### P2.3 Linear solve in each IRLS step [(=P2.3)]
 
@@ -250,7 +222,7 @@ Let (L_{\tilde{w}}) be the Laplacian built from (\tilde{w}*{ij}^{(k,h)}). As bef
 (L*{\tilde{w}} + A + M) X^{(h)} = A B
 ]
 
----
+For scale, this is an SDD system. Nearly linear-time solvers exist in theory, and practical iterative solvers with preconditioning work well.
 
 ### P9.1 Discrete manifold (robust gated field) [(=P9.1)]
 
@@ -270,8 +242,6 @@ L = Σ_{(i,j)∈E} w_{ij} (e_i - e_j)(e_i - e_j)^T
 
 This decomposition is the basis for low-rank updates when edge weights change.
 
----
-
 ### P9.2 Local tangent frames (projection basis) [(=P9.2)]
 
 For node i, compute a weighted covariance of neighbor displacements:
@@ -281,8 +251,6 @@ C_i = Σ_{j∈N(i)} W_eff(i,j) (x_j - x_i)(x_j - x_i)^T
 Let U_i be the top-m eigenvectors of C_i. U_i is the local tangent basis.
 
 This is the standard "local PCA / local tangent space" idea used in manifold learning (e.g., LTSA-style pipelines).
-
----
 
 ### P9.3 Discrete parallel transport via connection Laplacian (solves the translation dragon) [(=P9.3)]
 
@@ -309,8 +277,6 @@ This operator generalizes scalar Laplacians to vector fields and supports:
 * constructing near-parallel coordinates
 * defining vector-diffusion distances
 
----
-
 ### P9.4 Vector-diffusion distance (optional) [(=P9.4)]
 
 Use top eigenpairs of a normalized connection Laplacian (VDM) to embed nodes so that both proximity and alignment are captured.
@@ -318,8 +284,6 @@ Use top eigenpairs of a normalized connection Laplacian (VDM) to embed nodes so 
 This provides a principled "wormhole" signal:
 
 * nodes that are not structurally adjacent can be geometrically close if a consistent transport exists.
-
----
 
 ### P9.5 Field blending (control, not topology) [(=P9.5)]
 
@@ -342,7 +306,6 @@ Optional tangent gradient uses local transport + finite differences:
 
 The composite field guides traversal and scheduling; it never directly mutates W_eff/A/M.
 
----
 
 ---
 
@@ -379,8 +342,6 @@ Default stopping rule:
 * or max iteration count
 * plus max per-iteration solver tolerance schedule
 
----
-
 ### Algorithm 24: Hippocampal workspace session [(=Algorithm 24)]
 
 ```pseudo
@@ -401,8 +362,6 @@ function HWS_CLOSE(hws):
   ARCHIVE(hws)         // TTL based
 ```
 
----
-
 ### Algorithm 27: Cold solve and re-rooting [(=Algorithm 27)]
 
 ```pseudo
@@ -417,8 +376,6 @@ function GLOBAL_CONSOLIDATION_COLD(epoch e):
   SOLVE_CANONICAL_FIELD(snap)
   SWAP_IN_NEW_INDICES_AT_EPOCH_BOUNDARY()
 ```
-
----
 
 ### Algorithm 30: Grammar sandbox and promotion [(=Algorithm 30)]
 
@@ -438,8 +395,6 @@ function GRAMMAR_SANDBOX(rule r):
 ```
 
 Packed forests and shared parse forests are a known strategy to manage ambiguity in parsing.
-
----
 
 ### Algorithm 31: Adapter lifecycle and drift management [(=Algorithm 31)]
 
@@ -467,8 +422,6 @@ function ADAPTER_DRIFT_MONITOR(adapter a):
 ADWIN is a standard drift detector with adaptive windowing.
 Canary rollouts are a standard safety practice for changing live systems.
 
----
-
 ## Algorithm 44 — MANIFOLD_UPDATE_LOCAL (online) [(=Algorithm 44)]
 
 Incremental manifold updates after events, without global regeneration.
@@ -476,6 +429,8 @@ Incremental manifold updates after events, without global regeneration.
 ```pseudo
 function MANIFOLD_UPDATE_LOCAL(view, event ev):
   APPLY_EVENT_TO_OVERLAY(ev)                    // append-only log; overlay materialization
+
+
 
   S = LOCAL_SCOPE(ev)                           // bounded neighborhood
   X0 = READ_X(view.epoch_id, view.hyp_id)       // warm start
@@ -505,8 +460,6 @@ Implementation notes (optional accelerators):
 * warm-started iterative solves are the baseline
 * rank-k Cholesky update/downdate is an optional accelerator when the sparsity pattern is stable
 
----
-
 ## Algorithm 45 — CHART_BUILD (incremental) [(=Algorithm 45)]
 
 ```pseudo
@@ -517,8 +470,6 @@ function CHART_BUILD(view, nodes S, m):
     U, evals = TOP_EIGENVECTORS(C, m)
     STORE TangentFrame(i, view.hyp_id, U, evals, built_lsn=view.lsn_end)
 ```
-
----
 
 ## Algorithm 46 — BUILD_CONNECTION_LAPLACIAN (incremental) [(=Algorithm 46)]
 
@@ -534,8 +485,6 @@ function BUILD_CONNECTION_LAPLACIAN(view, nodes S):
 
   UPDATE_CONNECTION_OPERATOR(view.hyp_id)
 ```
-
----
 
 ## Algorithm 47 — PROJECT_VECTOR_FIELDS (manifold → usable vectors) [(=Algorithm 47)]
 
@@ -560,8 +509,6 @@ function SMOOTH_VECTOR_FIELD(view, v, λ):
   return y
 ```
 
----
-
 ## Algorithm 48 — BLEND_COMPUTE (runtime) [(=Algorithm 48)]
 
 ```pseudo
@@ -578,8 +525,6 @@ function BLEND_COMPUTE(view, query q, recipe R):
 
   return CompositeField(view, R, score, grad)
 ```
-
----
 
 ## Algorithm 49 — MANIFOLD_TO_GRAPH_PROPOSALS (pullback) [(=Algorithm 49)]
 
@@ -599,8 +544,6 @@ function MANIFOLD_TO_GRAPH_PROPOSALS(view, budget):
           props.add(MAKE_PROPOSAL(i,j,bundle,gain,risk))
   return TOPK(props, budget)
 ```
-
----
 
 ## C1 Field embeddings exist and are unique [(=C1)]
 
@@ -623,44 +566,30 @@ Proof obligation in Lean:
 * show SPD of (L + A + M)
 * show unique minimizer exists
 
----
-
 ## G1 Reliable directions [(=G1)]
 
-* Directions conditioned on structure, rather than raw span text.
-
----
+   * Directions conditioned on structure, rather than raw span text.
 
 ## G3 Revision as a first-class operation [(=G3)]
 
-* Meaning shifts propagate through the field and graph.
-
----
+   * Meaning shifts propagate through the field and graph.
 
 ## G5 High recall with controllable cost [(=G5)]
 
-* Cheap candidate generation, expensive validation only where needed.
-
----
+   * Cheap candidate generation, expensive validation only where needed.
 
 ## G9 Global consolidation [(=G9)]
 
-* Local patching accumulates. Periodic consolidation realigns the field across the full graph while ingestion keeps running.
-
----
+   * Local patching accumulates. Periodic consolidation realigns the field across the full graph while ingestion keeps running.
 
 ## G11 Robustness [(=G11)]
 
-* Large disagreements stop dominating smoothing. Disagreements become diagnostics.
-
----
+   * Large disagreements stop dominating smoothing. Disagreements become diagnostics.
 
 ## G36 Manifold as a first-class substrate [(=G36)]
 
 * Explicit `ManifoldState` objects exist per epoch and hypothesis.
 * Readers pin a `ManifoldView` (epoch + log cut) and see a coherent geometry.
-
----
 
 ## G37 Explicit translation operators [(=G37)]
 
@@ -668,15 +597,11 @@ Proof obligation in Lean:
 * manifold → vector fields (project)
 * manifold → graph proposals (pullback)
 
----
-
 ## G38 Governed blending [(=G38)]
 
 * Ephemeral blending is always allowed.
 * Cached blending is allowed but versioned.
 * Promotion of blends into topology requires a governed commit.
-
----
 
 ### D52 CompositeField (ephemeral) [(=D52)]
 
@@ -689,39 +614,25 @@ CompositeField {
 }
 ```
 
----
-
 ### P2I1 Field update locality [(=P2I1)]
 
 Local, bounded by tier neighborhoods.
-
----
 
 ### P2I2 Local field updates bounded [(=P2I2)]
 
 Per span: relax only within a hop radius determined by tier. Global solve: scheduled offline or during low load, used to reduce drift.
 
----
-
 ### P2I3 Local relaxation bounded [(=P2I3)]
 
 Local relaxation bounded by tier caps.
-
----
 
 ### P2I4 Conflict resolution strict quotas [(=P2I4)]
 
 Conflict resolution budgeted as a background loop with strict quotas.
 
----
-
 ### P2I5 Validator rate limiting [(=P2I5)]
 
 Validator calls rate-limited and triggered by tension.
-
----
-
----
 
 ## Algorithm 7: Conflict resolution [(=Algorithm 7)]
 
@@ -755,10 +666,6 @@ function RESOLVE_CONFLICTS(budget):
     budget -= COST(verdict)
 ```
 
----
-
----
-
 ### P2C3 IRLS descent [(=P2C3)]
 
 Each IRLS iteration decreases \(\mathcal{E}\).
@@ -774,10 +681,7 @@ Sketch for Huber:
   \[
   \mathcal{E}(X^{(k+1)}) \le \tilde{\mathcal{E}}^{(k)}(X^{(k+1)}) \le \tilde{\mathcal{E}}^{(k)}(X^{(k)}) = \mathcal{E}(X^{(k)})
   \]
-
----
-
----
+  This is MM logic.
 
 ### P2C4 Convergence to a stationary point [(=P2C4)]
 
@@ -788,23 +692,45 @@ Sketch:
 * Under standard MM conditions (continuity, proper majorizer, tangency), every limit point of ({X^{(k)}}) is a stationary point.
 * If (\rho) is convex (Huber), then (\mathcal{E}) is convex, so the stationary point is a global minimizer.
 
----
+References for MM stationary point behavior and MM in signal processing.
 
 ### P1C2 Unique field minimizer [(=P1C2)]
 
 Gated quadratic field per hypothesis has a unique minimizer under the same anchoring condition as v0.1.
 
----
-
 ### P1C3 Field relaxation convergence [(=P1C3)]
 
 Field relaxation converges per hypothesis.
-
----
 
 ### P1C5 Robust loss convergence [(=P1C5)]
 
 Robust loss reduces influence of large disagreements while preserving convergence to a minimizer.
 
----
+## Algorithm 2: Idea candidate selection [(=Algorithm 2)]
+
+Idea-first means “create handles early, refine later”.
+
+```pseudo
+function SELECT_OR_CREATE_IDEA(candidates, v):
+  for idea in TOPK(candidates):
+    if PASS_FAST_GATE(v, idea):                        // cosine, overlap, structure checks
+      if PASS_VALIDATION(v, idea):                     // optional LLM/classifier
+        return idea
+
+  // else create a provisional idea handle
+  idea = NEW_NODE(level=IDEA, span_ref=null)
+  idea.b = v.b                                         // seed from evidence
+  idea.x = v.x
+  idea.u = HIGH
+  idea.tier = CONTEXT
+  GRAPH.ADD_NODE(idea)
+  return idea
+```
+
+Validation is where hard constraints live. Geometry proposes. Validation commits.
+
+
+### P2I6 Uncertainty-driven compute [(=P2I6)]
+
+High uncertainty nodes get more validation and more relaxation steps. Low uncertainty nodes get cheap maintenance.
 

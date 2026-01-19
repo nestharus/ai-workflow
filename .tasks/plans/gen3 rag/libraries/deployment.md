@@ -8,6 +8,8 @@ All A/B routing is read-view based. The write path is unified (event log). Candi
 
 ---
 
+# P10 invariants
+
 ### D54 ABExperiment [(=D54)]
 
 ```text
@@ -22,8 +24,6 @@ ABExperiment {
   status: enum {shadow, canary, ramp, hold, rollback, graduate}
 }
 ```
-
----
 
 ## Algorithm 52 — AB_ROLLOUT (shadow + canary + A/B) [(=Algorithm 52)]
 
@@ -53,8 +53,6 @@ Side-effect rule:
 * shadow is always read-only
 * canary/A-B must route writes through the same event-log + 2SC pipeline, to avoid divergent world states
 
----
-
 ### P6C6 Adapter rollout is safe under canary plus rollback [(=P6C6)]
 
 **Claim.** Rollout can be limited to fraction (f) and reverted on regression.
@@ -68,25 +66,10 @@ Side-effect rule:
 
 * Shadow → canary → ramp → graduate/rollback is supported for epochs, adapters, grammar, and blend recipes.
 
----
-
----
-
----
-
----
-
 ### NFG1 Ingestion performance [(=NFG1)]
 
 Amortized sublinear in corpus size per span.
 
----
-
 ### NFG3 Retrieval latency [(=NFG3)]
 
 Bounded latency with tiered ANN plus graph expansion budget.
-
----
-
----
-

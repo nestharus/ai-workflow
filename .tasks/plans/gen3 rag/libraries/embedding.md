@@ -29,14 +29,12 @@ ICA explicitly searches for statistically independent components. This can be us
 
 If you want factors to behave like "parts" that add up (good for certain counts and structured features), NMF is a known tool.
 
----
-
 ### D24 FactorDictionary [(=D24)]
 
 Sparse factor basis for canonical embeddings.
 
 ```text
- FactorDictionary {
+FactorDictionary {
   dict_id: DictId
   D: Matrix[d_C × K]                  // factor directions, columns normalized
   Enc: EncoderFunc                    // x -> sparse coefficients a
@@ -47,8 +45,6 @@ Sparse factor basis for canonical embeddings.
   created_t: Time
 }
 ```
-
----
 
 ### D62 AdapterCandidate [(=D62)]
 
@@ -64,8 +60,6 @@ AdapterCandidate {
   updated_t: Time
 }
 ```
-
----
 
 ## P5.3 Multi-coordinate embeddings as a bundle with a canonical field [(=P5.3)]
 
@@ -92,7 +86,7 @@ Canonical field solve per hypothesis stays the same Laplacian style objective, n
 \sum_i \mu_i |x_i|^2
 ]
 
----
+Multi-view alignment and fusion is a standard concept, including correlation-based alignment like CCA and mapping-based approaches like Procrustes.
 
 ## P5.4 Adapter learning [(=P5.4)]
 
@@ -102,10 +96,6 @@ Two practical adapter forms:
 
 Monitor an online error series (E_t) for an adapter, like retrieval regression or alignment loss.
 Use adaptive-window drift detection for change points.
-
----
-
----
 
 ---
 
@@ -120,8 +110,6 @@ function LEARN_FACTORS(epoch e):
 
 Basis: sparse coding style factorization.
 
----
-
 ## G21 Computable directions across coordinate systems [(=G21)]
 
 * Every token type has one or more embedding spaces.
@@ -132,8 +120,6 @@ Basis: sparse coding style factorization.
 ## G28 Multi-coordinate adapters are governable [(=G28)]
 
 * Adapters are versioned, canaried, drift-detected, rolled back.
-
----
 
 ## D33 Adapter map [(=D33)]
 
@@ -153,18 +139,6 @@ AdapterMap {
 
 Multi-view alignment and fusion is a standard frame for coordinating multiple embedding spaces.
 
----
-
----
-
----
-
----
-
----
-
----
-
 ## D32 Coordinate system [(=D32)]
 
 A named vector space plus its mapping to a canonical space.
@@ -178,19 +152,3 @@ CoordSystem {
   canonical_map: MapId                // cs -> canonical transform
 }
 ```
-
----
-
----
-
----
-
----
-
----
-
----
-
----
-
----
