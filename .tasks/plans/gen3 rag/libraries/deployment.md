@@ -1,30 +1,4 @@
 
-### P9I6 — A/B never breaks correctness (=[P9]) [(=P9I6)]
-
-All A/B routing is read-view based. The write path is unified (event log). Candidate arms are either:
-
-* read-only (shadow), or
-* effect-isolated (canary with side effects gated through the same commit pipeline).
-
----
-
-# P10 invariants
-
-### D54 ABExperiment [(=D54)]
-
-```text
-ABExperiment {
-  exp_id: ExpId
-  control_epoch: EpochId
-  candidate_epoch: EpochId
-  start_lsn: LogOffset
-  traffic_split: float
-  metrics: {quality, latency, risk, conflict_rate, drift}
-  guardrails: {max_regression, rollback_thresholds}
-  status: enum {shadow, canary, ramp, hold, rollback, graduate}
-}
-```
-
 ## Algorithm 52 — AB_ROLLOUT (shadow + canary + A/B) [(=Algorithm 52)]
 
 ```pseudo
@@ -53,14 +27,20 @@ Side-effect rule:
 * shadow is always read-only
 * canary/A-B must route writes through the same event-log + 2SC pipeline, to avoid divergent world states
 
-### P6C6 Adapter rollout is safe under canary plus rollback [(=P6C6)]
+### D54 ABExperiment [(=D54)]
 
-**Claim.** Rollout can be limited to fraction (f) and reverted on regression.
-**Sketch.**
-
-* Canarying is a standard safety pattern for deployments.
-
----
+```text
+ABExperiment {
+  exp_id: ExpId
+  control_epoch: EpochId
+  candidate_epoch: EpochId
+  start_lsn: LogOffset
+  traffic_split: float
+  metrics: {quality, latency, risk, conflict_rate, drift}
+  guardrails: {max_regression, rollback_thresholds}
+  status: enum {shadow, canary, ramp, hold, rollback, graduate}
+}
+```
 
 ## G41 A/B continuous deployment [(=G41)]
 
@@ -73,3 +53,23 @@ Amortized sublinear in corpus size per span.
 ### NFG3 Retrieval latency [(=NFG3)]
 
 Bounded latency with tiered ANN plus graph expansion budget.
+
+### P6C6 Adapter rollout is safe under canary plus rollback [(=P6C6)]
+
+**Claim.** Rollout can be limited to fraction (f) and reverted on regression.
+**Sketch.**
+
+* Canarying is a standard safety pattern for deployments.
+
+---
+
+### P9I6 — A/B never breaks correctness (=[P9]) [(=P9I6)]
+
+All A/B routing is read-view based. The write path is unified (event log). Candidate arms are either:
+
+* read-only (shadow), or
+* effect-isolated (canary with side effects gated through the same commit pipeline).
+
+---
+
+# P10 invariants

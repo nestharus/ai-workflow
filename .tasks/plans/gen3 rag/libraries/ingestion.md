@@ -31,67 +31,6 @@ function INGEST_STREAM(stream):
     LOG_EVENT(...)
 ```
 
-### D58 CurriculumStage [(=D58)]
-
-```text
-CurriculumStage {
-  stage_id: enum {bootstrap, expansion, open}
-  default_alpha: float
-  default_gate: float
-  beam_width: int
-  validation_budget: int
-  grammar_policy: GrammarPolicyRef
-  adapter_policy: AdapterPolicyRef
-}
-```
-
-### D61 GrammarRuleCandidate [(=D61)]
-
-```text
-GrammarRuleCandidate {
-  rule_id: RuleId
-  source_pattern: PatId?
-  domain: DomainId
-  version: int
-  status: enum {shadow, canary, promoted, rolled_back}
-  stats: {precision, conflict_rate, drift_rate}
-  posterior: BetaParams
-}
-```
-
-## P5.1 Graph grammar semantics [(=P5.1)]
-
-Represent the current world as a typed hypergraph (G).
-
-A rule (p) is a rewrite:
-[
-L \xleftarrow{l} K \xrightarrow{r} R
-]
-where:
-
-* (L) is the match pattern
-* (K) is the interface preserved during rewriting
-* (R) is the replacement graph
-
-DPO and related algebraic approaches define when a match is valid and how rewriting constructs the new graph via pushouts.
-
-For language-like parsing on graphs, HRG and related formalisms provide the “context-free grammar for graphs” analogue.
-
-## P5.2 Probabilistic and scored rewriting [(=P5.2)]
-
-Attach a score to each rule application. This can be probability or cost.
-
-Probabilistic graph grammars exist with rule probabilities inducing derivation probabilities.
-
-Define a derivation score for a hypothesis (h):
-[
-S(h) = \sum_{\text{rule apps } a \in h} \log P(a) ;-; \lambda \cdot \text{Tension}(h);-;\gamma \cdot \text{Complexity}(h)
-]
-
-* (P(a)) from the rule score model
-* Tension comes from the field diagnostics inside the hypothesis
-* Complexity penalizes overly complex parses
-
 ## Algorithm 17 [(=Algorithm 17)]
 Modality routing and tokenizer selection (+[T7])
 
@@ -166,6 +105,25 @@ function APPLY_RULE(h, match m):
 
 Graph transformation via DPO gives a formal foundation for safe rewrites and composition.
 
+## Algorithm 23 [(=Algorithm 23)]
+Re-ingestion under reinterpretation (+[T13])
+This is the controlled way to replay the same evidence through a new grammar set or new adapters.
+
+```pseudo
+function REINTERPRET(epoch e, region R, new_grammar_set G*):
+  snap = CREATE_SNAPSHOT(e.snapshot_lsn)
+  forest = PARSE_REGION(R, dom=ROUTE(R), tokset=EXTRACT_RAW_TOKENS(R), grammar=G*)
+  hyps = SELECT_TOP_HYPOTHESES(forest)
+
+  for h in hyps:
+    INTEGRATE_PARSE_GRAPH_AS_HYPOTHESIS(h)             // creates tokens, edges, anchors
+    RUN_LOCAL_FIELD_REPAIR(h.scope)
+
+  SCHEDULE_GLOBAL_CONSOLIDATION()
+```
+
+Graph parsing for HRG and related grammars is studied, and complexity varies a lot by restrictions, so this is designed with hypothesis beams and domain restrictions.
+
 ### Algorithm 26: Curriculum ingestion controller [(=Algorithm 26)]
 
 ```pseudo
@@ -181,45 +139,9 @@ function APPLY_CURRICULUM_PARAMS(stage):
 
 Curriculum learning is a standard stabilization strategy.
 
-## P5C3 Packed forest representation preserves derivations [(=P5C3)]
+## C5 Ingestion produces stable idea handles [(=C5)]
 
-For the string case, packed forests and graph-structured stacks are standard ways to share substructure and represent ambiguity compactly in GLR style parsing.
-For graph grammars, completeness depends on grammar restrictions and parsing algorithm. HRG parsing has known polynomial-time recognition under restrictions, and general cases can be hard.
-
-Spec requirement:
-
-* grammar classes used online must satisfy a “uniform parsing budget” policy
-* heavy grammars run in sleep-time or under strict scope limits
-
-### P6C5 Grammar promotion controls error [(=P6C5)]
-
-**Claim.** Beta posterior gating yields bounded promotion risk under the assumed win/loss observation model.
-**Sketch.**
-
-* Same as P4 promotion proof pattern.
-
-## G17 Graphs are the grammar [(=G17)]
-
-* A grammar is a set of typed graph rewrite rules.
-* Parsing is graph rewriting plus scoring.
-
-## G18 Tokens are graph objects [(=G18)]
-
-* Tokens exist inside a grammar as nodes, hyperedges, subgraphs, and pattern instances.
-* Tokens can come from text spans, from graph coordinates, or from both.
-
-## G20 Multi-interpretation ingestion [(=G20)]
-
-* Ingestion maintains a parse forest of competing hypotheses.
-* Re-ingestion happens by replaying evidence through a different grammar set or a different hypothesis mixture.
-
-## G24 Low path dependence [(=G24)]
-
-* Curriculum ingestion and periodic cold solves reduce first-mover geometry lock-in.
-
-## G27 Grammar evolution is safe [(=G27)]
-
-* Grammar rules emerge, then sandbox, then promote with measurable error bounds.
+Via graph-supported clustering, rather than geometry-only clustering.
 
 ## D28 Graph token [(=D28)]
 
@@ -290,32 +212,103 @@ ParseForest {
 
 This mirrors packed forest and graph-structured stack ideas used to control ambiguity blow-up in GLR style parsing.
 
-## Algorithm 23 [(=Algorithm 23)]
-Re-ingestion under reinterpretation (+[T13])
-This is the controlled way to replay the same evidence through a new grammar set or new adapters.
+### D58 CurriculumStage [(=D58)]
 
-```pseudo
-function REINTERPRET(epoch e, region R, new_grammar_set G*):
-  snap = CREATE_SNAPSHOT(e.snapshot_lsn)
-  forest = PARSE_REGION(R, dom=ROUTE(R), tokset=EXTRACT_RAW_TOKENS(R), grammar=G*)
-  hyps = SELECT_TOP_HYPOTHESES(forest)
-
-  for h in hyps:
-    INTEGRATE_PARSE_GRAPH_AS_HYPOTHESIS(h)             // creates tokens, edges, anchors
-    RUN_LOCAL_FIELD_REPAIR(h.scope)
-
-  SCHEDULE_GLOBAL_CONSOLIDATION()
+```text
+CurriculumStage {
+  stage_id: enum {bootstrap, expansion, open}
+  default_alpha: float
+  default_gate: float
+  beam_width: int
+  validation_budget: int
+  grammar_policy: GrammarPolicyRef
+  adapter_policy: AdapterPolicyRef
+}
 ```
 
-Graph parsing for HRG and related grammars is studied, and complexity varies a lot by restrictions, so this is designed with hypothesis beams and domain restrictions.
+### D61 GrammarRuleCandidate [(=D61)]
 
-## C5 Ingestion produces stable idea handles [(=C5)]
+```text
+GrammarRuleCandidate {
+  rule_id: RuleId
+  source_pattern: PatId?
+  domain: DomainId
+  version: int
+  status: enum {shadow, canary, promoted, rolled_back}
+  stats: {precision, conflict_rate, drift_rate}
+  posterior: BetaParams
+}
+```
 
-Via graph-supported clustering, rather than geometry-only clustering.
+## G17 Graphs are the grammar [(=G17)]
+
+* A grammar is a set of typed graph rewrite rules.
+* Parsing is graph rewriting plus scoring.
+
+## G18 Tokens are graph objects [(=G18)]
+
+* Tokens exist inside a grammar as nodes, hyperedges, subgraphs, and pattern instances.
+* Tokens can come from text spans, from graph coordinates, or from both.
+
+## G20 Multi-interpretation ingestion [(=G20)]
+
+* Ingestion maintains a parse forest of competing hypotheses.
+* Re-ingestion happens by replaying evidence through a different grammar set or a different hypothesis mixture.
+
+## G24 Low path dependence [(=G24)]
+
+* Curriculum ingestion and periodic cold solves reduce first-mover geometry lock-in.
+
+## G27 Grammar evolution is safe [(=G27)]
+
+* Grammar rules emerge, then sandbox, then promote with measurable error bounds.
 
 ### P1I12 Ingestion hot path [(=P1I12)]
 
 Embed once, add edges, local relax, push conflict candidates. Heavy work runs on the conflict queue.
+
+## P5.1 Graph grammar semantics [(=P5.1)]
+
+Represent the current world as a typed hypergraph (G).
+
+A rule (p) is a rewrite:
+[
+L \xleftarrow{l} K \xrightarrow{r} R
+]
+where:
+
+* (L) is the match pattern
+* (K) is the interface preserved during rewriting
+* (R) is the replacement graph
+
+DPO and related algebraic approaches define when a match is valid and how rewriting constructs the new graph via pushouts.
+
+For language-like parsing on graphs, HRG and related formalisms provide the “context-free grammar for graphs” analogue.
+
+## P5.2 Probabilistic and scored rewriting [(=P5.2)]
+
+Attach a score to each rule application. This can be probability or cost.
+
+Probabilistic graph grammars exist with rule probabilities inducing derivation probabilities.
+
+Define a derivation score for a hypothesis (h):
+[
+S(h) = \sum_{\text{rule apps } a \in h} \log P(a) ;-; \lambda \cdot \text{Tension}(h);-;\gamma \cdot \text{Complexity}(h)
+]
+
+* (P(a)) from the rule score model
+* Tension comes from the field diagnostics inside the hypothesis
+* Complexity penalizes overly complex parses
+
+## P5C3 Packed forest representation preserves derivations [(=P5C3)]
+
+For the string case, packed forests and graph-structured stacks are standard ways to share substructure and represent ambiguity compactly in GLR style parsing.
+For graph grammars, completeness depends on grammar restrictions and parsing algorithm. HRG parsing has known polynomial-time recognition under restrictions, and general cases can be hard.
+
+Spec requirement:
+
+* grammar classes used online must satisfy a “uniform parsing budget” policy
+* heavy grammars run in sleep-time or under strict scope limits
 
 ## P5C4 Orthogonal adapter preserves geometry [(=P5C4)]
 
@@ -359,3 +352,10 @@ Cache canonical projections (A_v b_i^{(v)}). Refit adapters in sleep-time, then 
 
 Text embedder stays as the semantic anchor. Graph embedder covers topology. Code embedder covers AST and code structure.
 
+
+### P6C5 Grammar promotion controls error [(=P6C5)]
+
+**Claim.** Beta posterior gating yields bounded promotion risk under the assumed win/loss observation model.
+**Sketch.**
+
+* Same as P4 promotion proof pattern.

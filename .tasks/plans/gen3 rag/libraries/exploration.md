@@ -1,234 +1,3 @@
-## P8.8 The new idea engine [(=P8.8)]
-
-Noise becomes one input. The main generative driver becomes "pattern transfer + hybridization."
-
-**New objects**
-
-* ModuleLibrary
-* FactorDictionary
-* PatternDecomposition graph (pattern = modules + wiring)
-* TradeoffProfile (metrics + contexts)
-* IdeaCandidate (a proposed substitution or hybrid with predicted gain)
-
-**New pipeline**
-
-1. detect opportunity
-
-   * a noise seed
-   * a near-miss parse
-   * repeated conflict
-   * a region with high cost patterns
-2. compile context bundle
-
-   * local subgraph
-   * factor-needs signature
-   * constraints and risk tags
-3. propose candidates
-
-   * substitution candidates from similar factor profiles
-   * hybrid candidates from complementary tradeoffs
-4. simulate in workspace
-
-   * apply rewrite in hippocampal workspace overlay
-   * run local relaxation
-   * compute effect delta
-5. validate
-
-   * LLM labels and explains
-   * system checks provenance and constraints
-6. distill and promote
-
-   * if repeated success: promote module or pattern
-   * if repeated failure: store failure memory
-
-DreamCoder is a useful reference point for the "learn a library of components and a search policy, then reuse them" loop, even though your substrate is graphs rather than programs.
-
-### D34 NoiseSeed [(=D34)]
-
-```text
-NoiseSeed {
-  seed_id: SeedId
-  seed_type: enum {
-    high_tension, high_residual, high_variance,
-    grammar_near_miss, repeated_branching,
-    retrieval_dead_end, adapter_drift,
-    bridge_gap, concept_collision
-  }
-  target: enum {node, edge, subgraph, hypothesis, rule, adapter}
-  target_id: bytes
-  hyp_scope: HypScopeRef
-  provenance: list<SpanRef>            // may be empty for structural-only seeds
-  graph_coords: GraphCoordRef?         // subgraph anchors, match bindings
-  metrics: {T, r, var, novelty, recurrency}
-  prov_score: float
-  risk_tags: set<RiskTag>
-  created_t: Time
-  status: enum {queued, exploring, parked, promoted, quarantined, archived}
-}
-```
-
-### D35 ExplorationTrace [(=D35)]
-
-```text
-ExplorationTrace {
-  trace_id: TraceId
-  seed_id: SeedId
-  actions: list<ActionRecord>          // walk, expand, branch, validate, propose_rule, propose_bridge
-  before_metrics: {T, r, var}
-  after_metrics: {T, r, var}
-  evidence_used: list<SpanRef>
-  proposals: list<ProposalRef>         // graph deltas, new tokens, new rules, new bridges
-  outcome: enum {gain, neutral, loss}
-  created_t: Time
-}
-```
-
-### D36 EvidenceBundle [(=D36)]
-
-```text
-EvidenceBundle {
-  bundle_id: BundleId
-  seed_id: SeedId
-  neighborhood: list<NodeId|EdgeId>    // top-k by tension and relevance
-  competing_hyps: list<HypId>
-  support_spans: list<SpanRef>
-  near_miss_patterns: list<PatId>
-  candidate_bridges: list<EdgeCandidate>
-  budget_tokens: int
-}
-```
-
-### D37 CuriosityBudget [(=D37)]
-
-```text
-CuriosityBudget {
-  domain: DomainId
-  window: TimeWindow
-  explore_budget: float
-  llm_budget: float
-  spent_explore: float
-  spent_llm: float
-}
-```
-
-### D38 IdeaToken [(=D38)]
-
-A stable "thread" once substantiated.
-
-```text
-IdeaToken {
-  idea_id: IdeaId
-  label: string                        // human handle
-  tok_type: TokTypeId                  // Idea, HypothesisFrame, Pattern, RuleCandidate, BridgeCandidate
-  anchors: list<NodeId|SpanRef>
-  canonical_frame: string              // compact description for expansion
-  confidence: float
-  hyp_id: HypId
-  created_t: Time
-}
-```
-
-### D63 InquiryTask [(=D63)]
-
-```text
-InquiryTask {
-  task_id: TaskId
-  target: enum {node, edge, hypothesis, rule, adapter}
-  target_id: bytes
-  objective: enum {reduce_uncertainty, resolve_conflict, validate_bridge}
-  expected_gain: float
-  cost: float
-  created_t: Time
-}
-```
-
-\frac{1}{2}r^2 & r \le \delta \
-\delta r - \frac{1}{2}\delta^2 & r > \delta
-\end{cases}
-]
-Huber comes from robust estimation work.
-
-This keeps "everything is a hypothesis" intact. The objective is per hypothesis branch.
-
-### P7.1 Noise features [(=P7.1)]
-
-For a seed (s), define a feature vector:
-[
-\phi(s) = [T(s), r(s), \widehat{var}(s), nov(s), rec(s), prov(s), risk(s), cost(s)]
-]
-
-Sources for signals:
-
-* (T) tension from field edges
-* (r) anchor residual
-* (\widehat{var}) uncertainty proxy
-* (nov) novelty score
-* (rec) recurrence across time and contexts
-* (prov) provenance score (P6)
-* (risk) governance risk (P4)
-* (cost) predicted exploration cost
-
-### P7.2 Interestingness score [(=P7.2)]
-
-[
-I(s) = w_T T + w_r r + w_v \widehat{var} + w_n nov + w_{rec} rec + w_p prov - w_k risk - w_c cost
-]
-
-Weights can be:
-
-* fixed per domain
-* adapted via P4 (+[P4]) light feedback (reward shaping)
-
-### P7.3 Learning progress [(=P7.3)]
-
-Use improvement, not raw error. This avoids fixation on irreducible randomness.
-
-For a trace (t) on seed (s):
-[
-LP(s) = \max(0,; \mathcal{L}*{before}(s) - \mathcal{L}*{after}(s))
-]
-where (\mathcal{L}) can be a blend of tension and residual:
-[
-\mathcal{L}(s)=\alpha T(s) + \beta r(s)
-]
-
-This aligns with "learning progress" intrinsic motivation in IAC-style systems.
-
-### P7.4 Novelty [(=P7.4)]
-
-Two options, both usable.
-
-**Distance novelty**
-[
-nov(s)=\min_{p \in \mathcal{P}} |z(s)-z(p)|
-]
-where (z(\cdot)) is a structural embedding of the seed subgraph or pattern.
-
-**Prediction novelty**
-Use an exploration bonus based on prediction error of a fixed target representation, similar in spirit to RND.
-
-Novelty search literature supports novelty as a primary driver for open-ended discovery.
-
-### P7.5 Information gain for inquiry selection [(=P7.5)]
-
-For candidate inquiry action (a):
-[
-IG(a) = H(\Theta \mid D) - \mathbb{E}_{y \sim p(y \mid a,D)}[H(\Theta \mid D \cup (a,y))]
-]
-This is the classic expected informativeness frame for selecting data.
-
-### P7.6 Utility for scheduling [(=P7.6)]
-
-[
-U(s) = I(s) + \lambda LP(s) + \mu \max_{a \in A(s)} IG(a)
-]
-subject to budgets:
-[
-\sum cost(\text{explores}) \le B_{explore}, \quad \sum cost(\text{llm calls}) \le B_{llm}
-]
-
----
-
 ### Algorithm 32: Diagnostics-driven inquiry planning [(=Algorithm 32)]
 
 ```pseudo
@@ -393,6 +162,271 @@ function SEED_DECAY(seed s):
     s.status = quarantined
 ```
 
+### Algorithm 42: Idea proposal via substitution and hybridization [(=Algorithm 42)]
+
+```pseudo
+function PROPOSE_IDEAS(context subgraph G, Enc):
+  need = AGGREGATE_FACTORS(Enc, nodes_in(G))
+  candidates = RETRIEVE_PATTERNS_BY_FACTOR_SIMILARITY(need)
+
+  // filter by interface compatibility
+  candidates = FILTER_BY_MODULE_INTERFACE(candidates, G)
+
+  // tradeoff selection
+  candidates = PARETO_FILTER(candidates, metrics={stability,cost,robustness})
+
+  hybrids = GENERATE_HYBRIDS(candidates)       // module splice + connector search
+  return TOPK(candidates ∪ hybrids)
+```
+
+### Algorithm 43: Simulate and validate an idea candidate [(=Algorithm 43)]
+
+```pseudo
+function EVALUATE_IDEA(candidate c):
+  hws = HWS_OPEN(region=c.region, base_epoch=c.epoch)
+  APPLY_REWRITE_IN_WORKSPACE(hws, c.rewrite)
+  RUN_LOCAL_FIELD_REPAIR(hws)
+  delta = MEASURE_DELTA(hws, baseline)
+
+  if delta.good:
+    bundle = COMPILE_EVIDENCE_BUNDLE(c, hws)
+    llm = LLM_REFINE(bundle)                   // label + missing evidence
+    STORE_IDEA_TOKEN(c, delta, llm)
+    return PROMOTE_AS_HYPOTHESIS(c)
+  else:
+    RECORD_FAILURE(c)
+```
+
+---
+
+## Comp32 Inquiry Planner (INQ) [(=Comp32)]
+for evidence seeking
+
+## Comp5 Candidate Generator [(=Comp5)]
+
+## Comp7 Idea Manager [(=Comp7)]
+
+### D34 NoiseSeed [(=D34)]
+
+```text
+NoiseSeed {
+  seed_id: SeedId
+  seed_type: enum {
+    high_tension, high_residual, high_variance,
+    grammar_near_miss, repeated_branching,
+    retrieval_dead_end, adapter_drift,
+    bridge_gap, concept_collision
+  }
+  target: enum {node, edge, subgraph, hypothesis, rule, adapter}
+  target_id: bytes
+  hyp_scope: HypScopeRef
+  provenance: list<SpanRef>            // may be empty for structural-only seeds
+  graph_coords: GraphCoordRef?         // subgraph anchors, match bindings
+  metrics: {T, r, var, novelty, recurrency}
+  prov_score: float
+  risk_tags: set<RiskTag>
+  created_t: Time
+  status: enum {queued, exploring, parked, promoted, quarantined, archived}
+}
+```
+
+### D35 ExplorationTrace [(=D35)]
+
+```text
+ExplorationTrace {
+  trace_id: TraceId
+  seed_id: SeedId
+  actions: list<ActionRecord>          // walk, expand, branch, validate, propose_rule, propose_bridge
+  before_metrics: {T, r, var}
+  after_metrics: {T, r, var}
+  evidence_used: list<SpanRef>
+  proposals: list<ProposalRef>         // graph deltas, new tokens, new rules, new bridges
+  outcome: enum {gain, neutral, loss}
+  created_t: Time
+}
+```
+
+### D36 EvidenceBundle [(=D36)]
+
+```text
+EvidenceBundle {
+  bundle_id: BundleId
+  seed_id: SeedId
+  neighborhood: list<NodeId|EdgeId>    // top-k by tension and relevance
+  competing_hyps: list<HypId>
+  support_spans: list<SpanRef>
+  near_miss_patterns: list<PatId>
+  candidate_bridges: list<EdgeCandidate>
+  budget_tokens: int
+}
+```
+
+### D37 CuriosityBudget [(=D37)]
+
+```text
+CuriosityBudget {
+  domain: DomainId
+  window: TimeWindow
+  explore_budget: float
+  llm_budget: float
+  spent_explore: float
+  spent_llm: float
+}
+```
+
+### D38 IdeaToken [(=D38)]
+
+A stable "thread" once substantiated.
+
+```text
+IdeaToken {
+  idea_id: IdeaId
+  label: string                        // human handle
+  tok_type: TokTypeId                  // Idea, HypothesisFrame, Pattern, RuleCandidate, BridgeCandidate
+  anchors: list<NodeId|SpanRef>
+  canonical_frame: string              // compact description for expansion
+  confidence: float
+  hyp_id: HypId
+  created_t: Time
+}
+```
+
+### D63 InquiryTask [(=D63)]
+
+```text
+InquiryTask {
+  task_id: TaskId
+  target: enum {node, edge, hypothesis, rule, adapter}
+  target_id: bytes
+  objective: enum {reduce_uncertainty, resolve_conflict, validate_bridge}
+  expected_gain: float
+  cost: float
+  created_t: Time
+}
+```
+
+\frac{1}{2}r^2 & r \le \delta \
+\delta r - \frac{1}{2}\delta^2 & r > \delta
+\end{cases}
+]
+Huber comes from robust estimation work.
+
+This keeps "everything is a hypothesis" intact. The objective is per hypothesis branch.
+
+## G22 Hippocampus workspace is first-class [(=G22)]
+
+* Hippocampus runs a fast, branching workspace graph, separate from long-term memory.
+
+
+## G23 Two-stage commit [(=G23)]
+
+* Neocortex outputs proposals.
+* Hippocampus re-ingests, re-parses, re-solves, then commits or quarantines.
+
+
+## G29 Hippocampus actively seeks evidence [(=G29)]
+
+* Diagnostics drive which ambiguity to resolve next, using expected uncertainty reduction.
+
+## G30 Noise becomes a computable object [(=G30)]
+
+* Every anomaly becomes a NoiseSeed with metrics and provenance.
+
+## G31 Noise becomes a queue [(=G31)]
+
+* The system keeps a backlog of "interesting threads," explores them when budget exists.
+
+## G32 Exploration is hypothesis-safe [(=G32)]
+
+* Exploration writes into workspace overlays and hypothesis branches, then commits via P6 (+[P6]) 2SC.
+
+## G33 Exploration is guided [(=G33)]
+
+* Use learning progress, novelty, and information gain, avoid chasing irreducible randomness.
+
+## G34 LLM reasoning is used as a refinement tool [(=G34)]
+
+* LLM proposes structure, missing evidence, and disambiguations, bounded by budgets.
+
+### P7.1 Noise features [(=P7.1)]
+
+For a seed (s), define a feature vector:
+[
+\phi(s) = [T(s), r(s), \widehat{var}(s), nov(s), rec(s), prov(s), risk(s), cost(s)]
+]
+
+Sources for signals:
+
+* (T) tension from field edges
+* (r) anchor residual
+* (\widehat{var}) uncertainty proxy
+* (nov) novelty score
+* (rec) recurrence across time and contexts
+* (prov) provenance score (P6)
+* (risk) governance risk (P4)
+* (cost) predicted exploration cost
+
+### P7.2 Interestingness score [(=P7.2)]
+
+[
+I(s) = w_T T + w_r r + w_v \widehat{var} + w_n nov + w_{rec} rec + w_p prov - w_k risk - w_c cost
+]
+
+Weights can be:
+
+* fixed per domain
+* adapted via P4 (+[P4]) light feedback (reward shaping)
+
+### P7.3 Learning progress [(=P7.3)]
+
+Use improvement, not raw error. This avoids fixation on irreducible randomness.
+
+For a trace (t) on seed (s):
+[
+LP(s) = \max(0,; \mathcal{L}*{before}(s) - \mathcal{L}*{after}(s))
+]
+where (\mathcal{L}) can be a blend of tension and residual:
+[
+\mathcal{L}(s)=\alpha T(s) + \beta r(s)
+]
+
+This aligns with "learning progress" intrinsic motivation in IAC-style systems.
+
+### P7.4 Novelty [(=P7.4)]
+
+Two options, both usable.
+
+**Distance novelty**
+[
+nov(s)=\min_{p \in \mathcal{P}} |z(s)-z(p)|
+]
+where (z(\cdot)) is a structural embedding of the seed subgraph or pattern.
+
+**Prediction novelty**
+Use an exploration bonus based on prediction error of a fixed target representation, similar in spirit to RND.
+
+Novelty search literature supports novelty as a primary driver for open-ended discovery.
+
+### P7.5 Information gain for inquiry selection [(=P7.5)]
+
+For candidate inquiry action (a):
+[
+IG(a) = H(\Theta \mid D) - \mathbb{E}_{y \sim p(y \mid a,D)}[H(\Theta \mid D \cup (a,y))]
+]
+This is the classic expected informativeness frame for selecting data.
+
+### P7.6 Utility for scheduling [(=P7.6)]
+
+[
+U(s) = I(s) + \lambda LP(s) + \mu \max_{a \in A(s)} IG(a)
+]
+subject to budgets:
+[
+\sum cost(\text{explores}) \le B_{explore}, \quad \sum cost(\text{llm calls}) \le B_{llm}
+]
+
+---
+
 ### P7C2 Exploration stays bounded [(=P7C2)]
 
 **Claim.** Exploration terminates inside each window because spending is monotone and capped by budgets.
@@ -454,40 +488,33 @@ Optional guarantee path:
 
 * If the exploration objective satisfies adaptive submodularity, adaptive greedy stays near-optimal.
 
-## G30 Noise becomes a computable object [(=G30)]
-
-* Every anomaly becomes a NoiseSeed with metrics and provenance.
-
-## G31 Noise becomes a queue [(=G31)]
-
-* The system keeps a backlog of "interesting threads," explores them when budget exists.
-
-## G32 Exploration is hypothesis-safe [(=G32)]
-
-* Exploration writes into workspace overlays and hypothesis branches, then commits via P6 (+[P6]) 2SC.
-
-## G33 Exploration is guided [(=G33)]
-
-* Use learning progress, novelty, and information gain, avoid chasing irreducible randomness.
-
-## G34 LLM reasoning is used as a refinement tool [(=G34)]
-
-* LLM proposes structure, missing evidence, and disambiguations, bounded by budgets.
-
-## G29 Hippocampus actively seeks evidence [(=G29)]
-
-* Diagnostics drive which ambiguity to resolve next, using expected uncertainty reduction.
-
-## Comp5 Candidate Generator [(=Comp5)]
-
-## Comp7 Idea Manager [(=Comp7)]
-
-## Comp32 Inquiry Planner (INQ) [(=Comp32)]
-for evidence seeking
-
 ### P7I1 Seeds are append-only (=[P7]) [(=P7I1)]
 
 * NoiseSeeds and traces live in the event log.
+
+### P7I10 High-risk surfaces ambiguity [(=P7I10)]
+
+High-risk seeds can trigger "surface ambiguity" behavior instead of silent repair.
+
+### P7I11 Cheap probes first [(=P7I11)]
+
+Cheap probes first, LLM second.
+
+### P7I12 Forest and overlay reuse [(=P7I12)]
+
+Packed forests reuse (P5), overlays reuse (P6).
+
+### P7I13 Sleep vs online depth [(=P7I13)]
+
+Sleep pass does deeper mining, online pass stays shallow.
+
+### P7I14 Seed compactness [(=P7I14)]
+
+Seeds are compact, mostly metrics plus anchors.
+
+### P7I15 Trace compression [(=P7I15)]
+
+Traces compress into signatures and aggregate stats.
 
 ### P7I2 Seeds never directly rewrite LTM (=[P7]) [(=P7I2)]
 
@@ -529,74 +556,47 @@ Number of hypotheses spawned per seed is limited.
 
 Risk tags influence whether exploration runs automatically, or requires user branch choice.
 
-### P7I10 High-risk surfaces ambiguity [(=P7I10)]
+## P8.8 The new idea engine [(=P8.8)]
 
-High-risk seeds can trigger "surface ambiguity" behavior instead of silent repair.
+Noise becomes one input. The main generative driver becomes "pattern transfer + hybridization."
 
-### P7I11 Cheap probes first [(=P7I11)]
+**New objects**
 
-Cheap probes first, LLM second.
+* ModuleLibrary
+* FactorDictionary
+* PatternDecomposition graph (pattern = modules + wiring)
+* TradeoffProfile (metrics + contexts)
+* IdeaCandidate (a proposed substitution or hybrid with predicted gain)
 
-### P7I12 Forest and overlay reuse [(=P7I12)]
+**New pipeline**
 
-Packed forests reuse (P5), overlays reuse (P6).
+1. detect opportunity
 
-### P7I13 Sleep vs online depth [(=P7I13)]
+   * a noise seed
+   * a near-miss parse
+   * repeated conflict
+   * a region with high cost patterns
+2. compile context bundle
 
-Sleep pass does deeper mining, online pass stays shallow.
+   * local subgraph
+   * factor-needs signature
+   * constraints and risk tags
+3. propose candidates
 
-### P7I14 Seed compactness [(=P7I14)]
+   * substitution candidates from similar factor profiles
+   * hybrid candidates from complementary tradeoffs
+4. simulate in workspace
 
-Seeds are compact, mostly metrics plus anchors.
+   * apply rewrite in hippocampal workspace overlay
+   * run local relaxation
+   * compute effect delta
+5. validate
 
-### P7I15 Trace compression [(=P7I15)]
+   * LLM labels and explains
+   * system checks provenance and constraints
+6. distill and promote
 
-Traces compress into signatures and aggregate stats.
+   * if repeated success: promote module or pattern
+   * if repeated failure: store failure memory
 
-### Algorithm 42: Idea proposal via substitution and hybridization [(=Algorithm 42)]
-
-```pseudo
-function PROPOSE_IDEAS(context subgraph G, Enc):
-  need = AGGREGATE_FACTORS(Enc, nodes_in(G))
-  candidates = RETRIEVE_PATTERNS_BY_FACTOR_SIMILARITY(need)
-
-  // filter by interface compatibility
-  candidates = FILTER_BY_MODULE_INTERFACE(candidates, G)
-
-  // tradeoff selection
-  candidates = PARETO_FILTER(candidates, metrics={stability,cost,robustness})
-
-  hybrids = GENERATE_HYBRIDS(candidates)       // module splice + connector search
-  return TOPK(candidates ∪ hybrids)
-```
-
-### Algorithm 43: Simulate and validate an idea candidate [(=Algorithm 43)]
-
-```pseudo
-function EVALUATE_IDEA(candidate c):
-  hws = HWS_OPEN(region=c.region, base_epoch=c.epoch)
-  APPLY_REWRITE_IN_WORKSPACE(hws, c.rewrite)
-  RUN_LOCAL_FIELD_REPAIR(hws)
-  delta = MEASURE_DELTA(hws, baseline)
-
-  if delta.good:
-    bundle = COMPILE_EVIDENCE_BUNDLE(c, hws)
-    llm = LLM_REFINE(bundle)                   // label + missing evidence
-    STORE_IDEA_TOKEN(c, delta, llm)
-    return PROMOTE_AS_HYPOTHESIS(c)
-  else:
-    RECORD_FAILURE(c)
-```
-
----
-
-## G22 Hippocampus workspace is first-class [(=G22)]
-
-* Hippocampus runs a fast, branching workspace graph, separate from long-term memory.
-
-
-## G23 Two-stage commit [(=G23)]
-
-* Neocortex outputs proposals.
-* Hippocampus re-ingests, re-parses, re-solves, then commits or quarantines.
-
+DreamCoder is a useful reference point for the "learn a library of components and a search policy, then reuse them" loop, even though your substrate is graphs rather than programs.

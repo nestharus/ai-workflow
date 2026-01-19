@@ -1,97 +1,191 @@
 
-## P8.5 How to compute "functionality/purpose" of a pattern [(=P8.5)]
+### Algorithm 10: Structural Abstraction Mining (sleep-time) [(=Algorithm 10)]
 
-You want to detect that two uses share functionality even if surface structure differs.
+Runs inside Algorithm 9 (+[Algorithm 9]) (Global Consolidation) after snapshot creation, before index build.
 
-In your system, "function" is measurable via effects:
+```pseudo
+function STRUCTURAL_ABSTRACTION_MINE(snapshot snap):
+  C = MINE_CANDIDATE_SUBGRAPHS(snap.graph_view)       // motifs, stars, cliques, chains, rules
+  P = {}
+  I = {}
 
-A pattern instance has an effect signature:
+  for cand in C:
+    pat = CANONICALIZE_TO_PATTERN(cand)              // slotify entities, normalize types
+    score = MDL_GAIN(snap.graph_view, pat)           // Δ description length
+    conf  = ESTIMATE_PATTERN_CONFIDENCE(pat)         // from stats/provenance
+    score' = score - λ * penalty(conf)
 
-* energy reduction: (\Delta E) in its local neighborhood after relaxation
-* conflict resolution: change in tension / contradiction rate
-* retrieval utility: downstream task success deltas (P4 feedback)
-* cost: compute and memory footprint
+    if score' > 0:
+      P.add(pat)
 
-So define for a pattern (p):
+  // choose non-overlapping / best-cover instance set (greedy)
+  for pat in SORT_BY_SCORE(P):
+    matches = FIND_MATCHES(snap.graph_view, pat)
+    matches = FILTER_OVERLAPS(matches, I)
+    I.add(BEST_MATCHES(matches))
 
-* usage contexts: distribution over neighbor token types and domains
-* factor profile: distribution of sparse coefficients (a) across instances
-* effect metrics: (\mathbb{E}[\Delta E], \mathbb{E}[\Delta T], \text{win rate})
+  WRITE_PATTERN_LIBRARY(P)
+  WRITE_PATTERN_INSTANCES(I)
+  return (P, I)
+```
 
-That makes "purpose" computable.
+MDL summarization and "replace subgraph with single vertex" is a known compression pattern in graph summarization and grammar induction lines of work.
 
-Now "pattern transfer" becomes:
+### Algorithm 11: Online Pattern Instantiation (day-time) [(=Algorithm 11)]
 
-* find a new context whose factor-needs match a pattern's factor profile
-* verify via effect metrics and local solve
+Matches new evidence into existing abstractions without deleting evidence.
 
-## P8.6 Tradeoffs and why one pattern wins over another [(=P8.6)]
+```pseudo
+function TRY_INSTANTIATE_PATTERNS(new_node v, hyp h):
+  candidates = ANN_PATTERN_RETRIEVE(v.x, h)
+  for pat in TOPK(candidates):
+    if FAST_STRUCTURAL_GATE(pat, v):
+      match = LOCAL_SUBGRAPH_MATCH(pat, around=v, radius=r)
+      if match.found:
+        inst = CREATE_INSTANCE(pat, match, hyp=h)
+        UPDATE_PATTERN_STATS_ON_USE(pat, inst)
+        ATTACH_MACRONODE(inst)                       // optional macro node in contextual tier
+```
 
-Once you have effect metrics, tradeoffs become explicit.
+This is the "reuse patterns with alterations" hook: slot bindings vary per instance. Case-based reasoning is the classic framing for retrieve → reuse → revise → retain.
 
-Example metrics:
+### Algorithm 12: Expansion Compiler (decompress for LLM) [(=Algorithm 12)]
 
-* stability contribution (reduces tension)
-* generality (works across many contexts)
-* brittleness (failure rate, sensitivity to small changes)
-* interpretability (trace quality to spans and anchors)
-* cost
+Produces context packs that can be expanded by token budget.
 
-Compute a Pareto frontier over these metrics per domain.
+```pseudo
+function COMPILE_CONTEXT_FOR_LLM(query q, budget B, risk_profile R):
+  items = RETRIEVE_RELEVANT_NODES_AND_PATTERNS(q)
 
-Then you can answer:
+  pack = []
+  for item in PRIORITIZE(items, by=risk_and_relevance):
+    if item is PatternInstance:
+      frame = RENDER_PATTERN_FRAME(item)            // canonical_text + filled slots
+      evidence = SELECT_SUPPORT_SPANS(item, cap=B_remaining)
+      pack.add(frame)
+      pack.add(evidence)
+    else:
+      pack.add(FETCH_SPAN(item.span_ref))
 
-* "Pattern A beats pattern B here because A is cheaper and equally stable"
-* "Pattern B beats A when the domain is noisy because B is robust"
+    if TOKENS(pack) >= B: break
 
-This is the missing bridge from "patterns exist" to "patterns have reasons."
+  return pack
+```
 
-## P8.7 Rebuilding content using disentangled patterns [(=P8.7)]
+This matches "compressed memory + reflection/summary + expansion on demand" patterns seen in long-term agent memory and hierarchical retrieval systems.
 
-Rebuild here means: re-represent a region using a different set of modules and factors, then re-evaluate.
+### Algorithm 13: Confidence-weighted Pattern Promotion [(=Algorithm 13)]
 
-Two modes:
+```pseudo
+function UPDATE_PATTERN_CONFIDENCE(pat_id, outcome):
+  stats = GET_STATS(pat_id)
+  if outcome == win:   stats.wins += 1
+  if outcome == loss:  stats.losses += 1
+  stats.uses += 1
 
-**Mode 1: Compression rebuild**
+  stats.θ_posterior = BETA_UPDATE(stats.θ_posterior, outcome)
 
-* replace subgraphs with module tokens
-* preserve residual edges
-* keep provenance pointers
+  if P(θ >= τ | posterior) >= 1-δ and stats.uses >= Nmin:
+    PROMOTE_PATTERN(pat_id)                          // candidate -> stable -> pinned
 
-This is your existing compression principle, upgraded from "pattern tokens" to "module tokens."
+  if P(θ >= τ_low | posterior) < ε:
+    DEMOTE_OR_QUARANTINE(pat_id)
+```
 
-**Mode 2: Transform rebuild**
+"Pinned pattern" is the abstraction analogue of pinned facts.
 
-* propose substitutions: module A → module B in a compatible interface slot
-* propose hybrids: glue module A's interface to module B's interior using a connector module
-* run local solve
-* evaluate effect metrics
-* store as a new hypothesis first
-* commit via P6 2-stage commit
+### Algorithm 14: Failure Memory Write + Avoid [(=Algorithm 14)]
 
-That is "try the idea without polluting memory."
+```pseudo
+function RECORD_FAILURE(target, reason, evidence, severity, ctx):
+  f = NEW_FAILURE_CASE(target, reason, evidence, severity, ctx)
+  FAILURE_STORE.APPEND(f)
 
-## P8.10 Where the LLM sits [(=P8.10)]
+function FAILURE_BRAKE_SCORE(pat_id, ctx):
+  sig = HASH(pat_id, ctx_bucket(ctx))
+  return LOOKUP_FAILURE_RATE(sig)                   // smoothed count-based model
 
-The LLM is useful for:
+function PATTERN_SCORE(pat_id, ctx):
+  base = BASE_PATTERN_SCORE(pat_id, ctx)
+  brake = exp(-η * FAILURE_BRAKE_SCORE(pat_id, ctx))
+  return base * brake
+```
 
-* naming modules and ideas
-* interpreting tradeoffs in human terms
-* proposing missing evidence
-* proposing connector modules when interfaces almost match
+This is aligned with storing self-reflective "lessons" from mistakes for later avoidance in agent memory work.
 
-The LLM does not need to be the primary disentanglement engine. The math and graph constraints do that work.
+## Algorithm 20 [(=Algorithm 20)]
+Grammar emergence from patterns (+[T10])
 
----
+Turns P4 (+[P4]) patterns into executable grammar rules.
 
-### P4I1 Abstractions are derived artifacts (=[P4]) [(=P4I1)]
+```pseudo
+function MINE_AND_COMPILE_GRAMMAR(snapshot snap, dom):
+  patterns = STRUCTURAL_ABSTRACTION_MINE(snap)         // P4 Algorithm 10
+  for pat in patterns:
+    if pat.conf >= TH_RULE_CANDIDATE:
+      rule = COMPILE_PATTERN_TO_RULE(pat, dom)         // lhs is pat, rhs emits macro token
+      SHADOW_RUN(rule)                                 // collect precision, failure cases
+      if PROMOTION_TEST(rule):                         // confidence-weighted
+        GRAMMAR_LIBRARY.ADD(rule)
+```
 
-* Abstractions never replace raw evidence nodes.
-* Abstractions only reference evidence via explicit instance mappings.
+Hyperedge replacement and related graph grammar formalisms provide a language for “graph as grammar”.
 
-### P4I2 Expansion is always possible (=[P4]) [(=P4I2)]
+### Algorithm 40: Module mining from pattern graphs [(=Algorithm 40)]
 
-* Any abstraction presented to the LLM expands to a concrete evidence set with span references.
+```pseudo
+function MINE_MODULES(patterns P):
+  C = CANDIDATE_SUBGRAPHS(P)                   // frequent motifs + stable interfaces
+  M = {}
+  for cand in C:
+    gain = MDL_GAIN_WITH_MODULE(cand)
+    if gain > 0:
+      M.add(cand)
+  PROMOTE_TOP_MODULES(M)
+  return M
+```
+
+### Algorithm 41: Build pattern functionality profiles [(=Algorithm 41)]
+
+```pseudo
+function BUILD_PROFILES(pattern_instances I, Enc):
+  for inst in I:
+    a = Enc( CANONICAL_VECTOR(inst.macro_node) )
+    UPDATE_FACTOR_PROFILE(inst.pattern_id, a)
+    UPDATE_CONTEXT_PROFILE(inst.pattern_id, inst.neighborhood_types)
+    UPDATE_EFFECT_PROFILE(inst.pattern_id, DELTA_ENERGY(inst))
+```
+
+## Algorithm 5: Boundary detection without fixed chunking [(=Algorithm 5)]
+
+Use change in direction as a signal, plus structure cues. Bayesian online changepoint detection is a clean option.
+
+```pseudo
+function STREAM_TO_SPANS(stream):
+  run BOCPD over feature z_t = [cos(b_t, b_{t-1}), punctuation, heading, entity_shift]
+  emit boundary when P(changepoint) > tau
+  yield span
+```
+
+## Algorithm 50 — FORCE_TO_TOPOLOGY_PROMOTION (governed) [(=Algorithm 50)]
+
+Turns persistent, reproduced utility into topology, without collapsing diagnostics.
+
+```pseudo
+function FORCE_TO_TOPOLOGY_PROMOTION(prop):
+  if prop.risk_tags high: return QUARANTINE
+
+  if NOT REPRODUCED(prop, N_runs):
+    return KEEP_EPHEMERAL
+
+  if NOT STABLE_ACROSS_EPOCHS(prop, K_epochs):
+    return KEEP_AS_HYPOTHESIS
+
+  if violates_guardrails(prop):
+    return REJECT
+
+  return SUBMIT_TO_2SC(prop)     // validation -> commit -> epoch publish
+```
 
 ### D16 Pattern [(=D16)]
 
@@ -239,165 +333,23 @@ IdeaCandidate {
 }
 ```
 
-### P4.1 Structural abstraction as MDL graph compression [(=P4.1)]
+## G12 Structural abstraction [(=G12)]
 
-Let (G) be the evidence graph view (snapshot epoch). Let (\mathcal{P}) be a set of candidate patterns and (\mathcal{I}) a set of pattern instances covering subgraphs of (G).
+* Compress graph memory into reusable patterns.
+* Expand patterns into evidence bundles when feeding the LLM.
 
-Define a description length:
-[
-L(G, \mathcal{P}, \mathcal{I}) = L(\mathcal{P}) + L(\mathcal{I}) + L(\text{residual}(G \mid \mathcal{P},\mathcal{I}))
-]
+## G19 Emergent structure [(=G19)]
 
-Goal (sleep-time):
-[
-(\mathcal{P}^*, \mathcal{I}^*) = \arg\min_{\mathcal{P},\mathcal{I}} L(G,\mathcal{P},\mathcal{I})
-]
+* Structure appears when encountered.
+* New grammars and token types can emerge from recurring subgraphs and successful parses.
 
-This is the same principle used in MDL-based graph summarization systems: include a structure if it reduces total description length.
+## G2 Multi-resolution understanding [(=G2)]
 
-### P4.2 Pattern promotion as Bayesian reliability [(=P4.2)]
+   * Coarse-to-fine ingestion without fixed chunking as the main primitive.
 
-Each pattern (p) has an unknown reliability (\theta_p \in [0,1]) ("probability this pattern helps").
+## G35 Distillation produces tokens [(=G35)]
 
-Maintain Beta posterior:
-
-* prior: (\theta_p \sim \mathrm{Beta}(a_0,b_0))
-* after wins/losses: (\theta_p \mid \text{data} \sim \mathrm{Beta}(a_0+w,; b_0+\ell))
-
-Promotion rule:
-[
-\Pr(\theta_p \ge \tau) \ge 1-\delta
-\Rightarrow \text{promote}(p)
-]
-
-### Algorithm 10: Structural Abstraction Mining (sleep-time) [(=Algorithm 10)]
-
-Runs inside Algorithm 9 (+[Algorithm 9]) (Global Consolidation) after snapshot creation, before index build.
-
-```pseudo
-function STRUCTURAL_ABSTRACTION_MINE(snapshot snap):
-  C = MINE_CANDIDATE_SUBGRAPHS(snap.graph_view)       // motifs, stars, cliques, chains, rules
-  P = {}
-  I = {}
-
-  for cand in C:
-    pat = CANONICALIZE_TO_PATTERN(cand)              // slotify entities, normalize types
-    score = MDL_GAIN(snap.graph_view, pat)           // Δ description length
-    conf  = ESTIMATE_PATTERN_CONFIDENCE(pat)         // from stats/provenance
-    score' = score - λ * penalty(conf)
-
-    if score' > 0:
-      P.add(pat)
-
-  // choose non-overlapping / best-cover instance set (greedy)
-  for pat in SORT_BY_SCORE(P):
-    matches = FIND_MATCHES(snap.graph_view, pat)
-    matches = FILTER_OVERLAPS(matches, I)
-    I.add(BEST_MATCHES(matches))
-
-  WRITE_PATTERN_LIBRARY(P)
-  WRITE_PATTERN_INSTANCES(I)
-  return (P, I)
-```
-
-MDL summarization and "replace subgraph with single vertex" is a known compression pattern in graph summarization and grammar induction lines of work.
-
-### Algorithm 11: Online Pattern Instantiation (day-time) [(=Algorithm 11)]
-
-Matches new evidence into existing abstractions without deleting evidence.
-
-```pseudo
-function TRY_INSTANTIATE_PATTERNS(new_node v, hyp h):
-  candidates = ANN_PATTERN_RETRIEVE(v.x, h)
-  for pat in TOPK(candidates):
-    if FAST_STRUCTURAL_GATE(pat, v):
-      match = LOCAL_SUBGRAPH_MATCH(pat, around=v, radius=r)
-      if match.found:
-        inst = CREATE_INSTANCE(pat, match, hyp=h)
-        UPDATE_PATTERN_STATS_ON_USE(pat, inst)
-        ATTACH_MACRONODE(inst)                       // optional macro node in contextual tier
-```
-
-This is the "reuse patterns with alterations" hook: slot bindings vary per instance. Case-based reasoning is the classic framing for retrieve → reuse → revise → retain.
-
-### Algorithm 12: Expansion Compiler (decompress for LLM) [(=Algorithm 12)]
-
-Produces context packs that can be expanded by token budget.
-
-```pseudo
-function COMPILE_CONTEXT_FOR_LLM(query q, budget B, risk_profile R):
-  items = RETRIEVE_RELEVANT_NODES_AND_PATTERNS(q)
-
-  pack = []
-  for item in PRIORITIZE(items, by=risk_and_relevance):
-    if item is PatternInstance:
-      frame = RENDER_PATTERN_FRAME(item)            // canonical_text + filled slots
-      evidence = SELECT_SUPPORT_SPANS(item, cap=B_remaining)
-      pack.add(frame)
-      pack.add(evidence)
-    else:
-      pack.add(FETCH_SPAN(item.span_ref))
-
-    if TOKENS(pack) >= B: break
-
-  return pack
-```
-
-This matches "compressed memory + reflection/summary + expansion on demand" patterns seen in long-term agent memory and hierarchical retrieval systems.
-
-### Algorithm 13: Confidence-weighted Pattern Promotion [(=Algorithm 13)]
-
-```pseudo
-function UPDATE_PATTERN_CONFIDENCE(pat_id, outcome):
-  stats = GET_STATS(pat_id)
-  if outcome == win:   stats.wins += 1
-  if outcome == loss:  stats.losses += 1
-  stats.uses += 1
-
-  stats.θ_posterior = BETA_UPDATE(stats.θ_posterior, outcome)
-
-  if P(θ >= τ | posterior) >= 1-δ and stats.uses >= Nmin:
-    PROMOTE_PATTERN(pat_id)                          // candidate -> stable -> pinned
-
-  if P(θ >= τ_low | posterior) < ε:
-    DEMOTE_OR_QUARANTINE(pat_id)
-```
-
-"Pinned pattern" is the abstraction analogue of pinned facts.
-
-### Algorithm 14: Failure Memory Write + Avoid [(=Algorithm 14)]
-
-```pseudo
-function RECORD_FAILURE(target, reason, evidence, severity, ctx):
-  f = NEW_FAILURE_CASE(target, reason, evidence, severity, ctx)
-  FAILURE_STORE.APPEND(f)
-
-function FAILURE_BRAKE_SCORE(pat_id, ctx):
-  sig = HASH(pat_id, ctx_bucket(ctx))
-  return LOOKUP_FAILURE_RATE(sig)                   // smoothed count-based model
-
-function PATTERN_SCORE(pat_id, ctx):
-  base = BASE_PATTERN_SCORE(pat_id, ctx)
-  brake = exp(-η * FAILURE_BRAKE_SCORE(pat_id, ctx))
-  return base * brake
-```
-
-This is aligned with storing self-reflective "lessons" from mistakes for later avoidance in agent memory work.
-
-## Algorithm 5: Boundary detection without fixed chunking [(=Algorithm 5)]
-
-Use change in direction as a signal, plus structure cues. Bayesian online changepoint detection is a clean option.
-
-```pseudo
-function STREAM_TO_SPANS(stream):
-  run BOCPD over feature z_t = [cos(b_t, b_{t-1}), punctuation, heading, entity_shift]
-  emit boundary when P(changepoint) > tau
-  yield span
-```
-
-### P4C1 Lossless structural compression [(=P4C1)]
-
-* Abstractions are reversible (original evidence graph can be reconstructed from pattern instances + residual edges).
+* Repeated, useful noise becomes IdeaTokens, PatternCandidates, GrammarRules.
 
 ### Lean6 Lossless compress/expand [(=Lean6)]
 
@@ -430,6 +382,41 @@ theorem expand_compress_id
 end PatternCompression
 ```
 
+### P4.1 Structural abstraction as MDL graph compression [(=P4.1)]
+
+Let (G) be the evidence graph view (snapshot epoch). Let (\mathcal{P}) be a set of candidate patterns and (\mathcal{I}) a set of pattern instances covering subgraphs of (G).
+
+Define a description length:
+[
+L(G, \mathcal{P}, \mathcal{I}) = L(\mathcal{P}) + L(\mathcal{I}) + L(\text{residual}(G \mid \mathcal{P},\mathcal{I}))
+]
+
+Goal (sleep-time):
+[
+(\mathcal{P}^*, \mathcal{I}^*) = \arg\min_{\mathcal{P},\mathcal{I}} L(G,\mathcal{P},\mathcal{I})
+]
+
+This is the same principle used in MDL-based graph summarization systems: include a structure if it reduces total description length.
+
+### P4.2 Pattern promotion as Bayesian reliability [(=P4.2)]
+
+Each pattern (p) has an unknown reliability (\theta_p \in [0,1]) ("probability this pattern helps").
+
+Maintain Beta posterior:
+
+* prior: (\theta_p \sim \mathrm{Beta}(a_0,b_0))
+* after wins/losses: (\theta_p \mid \text{data} \sim \mathrm{Beta}(a_0+w,; b_0+\ell))
+
+Promotion rule:
+[
+\Pr(\theta_p \ge \tau) \ge 1-\delta
+\Rightarrow \text{promote}(p)
+]
+
+### P4C1 Lossless structural compression [(=P4C1)]
+
+* Abstractions are reversible (original evidence graph can be reconstructed from pattern instances + residual edges).
+
 ### P4C2 MDL-driven abstraction reduces description length [(=P4C2)]
 
 * Given a candidate pattern set, choosing patterns by MDL yields shorter descriptions than raw graph encoding (for those patterns). (Algorithm is heuristic; objective is principled.)
@@ -438,38 +425,22 @@ end PatternCompression
 
 * Promotion threshold can be expressed as a posterior guarantee on pattern reliability.
 
-## Algorithm 50 — FORCE_TO_TOPOLOGY_PROMOTION (governed) [(=Algorithm 50)]
+### P4I1 Abstractions are derived artifacts (=[P4]) [(=P4I1)]
 
-Turns persistent, reproduced utility into topology, without collapsing diagnostics.
+* Abstractions never replace raw evidence nodes.
+* Abstractions only reference evidence via explicit instance mappings.
 
-```pseudo
-function FORCE_TO_TOPOLOGY_PROMOTION(prop):
-  if prop.risk_tags high: return QUARANTINE
+### P4I10 Safe online learning [(=P4I10)]
 
-  if NOT REPRODUCED(prop, N_runs):
-    return KEEP_EPHEMERAL
+Keep "policy deltas" small, prefer conservative exploration (safe re-ranking literature is a good template).
 
-  if NOT STABLE_ACROSS_EPOCHS(prop, K_epochs):
-    return KEEP_AS_HYPOTHESIS
+### P4I11 Governance is separate [(=P4I11)]
 
-  if violates_guardrails(prop):
-    return REJECT
+It sits above retrieval/field state and never destroys evidence.
 
-  return SUBMIT_TO_2SC(prop)     // validation -> commit -> epoch publish
-```
+### P4I2 Expansion is always possible (=[P4]) [(=P4I2)]
 
-## G2 Multi-resolution understanding [(=G2)]
-
-   * Coarse-to-fine ingestion without fixed chunking as the main primitive.
-
-## G12 Structural abstraction [(=G12)]
-
-* Compress graph memory into reusable patterns.
-* Expand patterns into evidence bundles when feeding the LLM.
-
-## G35 Distillation produces tokens [(=G35)]
-
-* Repeated, useful noise becomes IdeaTokens, PatternCandidates, GrammarRules.
+* Any abstraction presented to the LLM expands to a concrete evidence set with span references.
 
 ### P4I5 Abstraction reduces working-set size [(=P4I5)]
 
@@ -491,64 +462,21 @@ Local structural match only around focus/active tiers.
 
 Prioritized in replay and learning (similar spirit to prioritized replay).
 
-### P4I10 Safe online learning [(=P4I10)]
-
-Keep "policy deltas" small, prefer conservative exploration (safe re-ranking literature is a good template).
-
-### P4I11 Governance is separate [(=P4I11)]
-
-It sits above retrieval/field state and never destroys evidence.
-
-## Algorithm 20 [(=Algorithm 20)]
-Grammar emergence from patterns (+[T10])
-
-Turns P4 (+[P4]) patterns into executable grammar rules.
-
-```pseudo
-function MINE_AND_COMPILE_GRAMMAR(snapshot snap, dom):
-  patterns = STRUCTURAL_ABSTRACTION_MINE(snap)         // P4 Algorithm 10
-  for pat in patterns:
-    if pat.conf >= TH_RULE_CANDIDATE:
-      rule = COMPILE_PATTERN_TO_RULE(pat, dom)         // lhs is pat, rhs emits macro token
-      SHADOW_RUN(rule)                                 // collect precision, failure cases
-      if PROMOTION_TEST(rule):                         // confidence-weighted
-        GRAMMAR_LIBRARY.ADD(rule)
-```
-
-Hyperedge replacement and related graph grammar formalisms provide a language for “graph as grammar”.
-
-## G19 Emergent structure [(=G19)]
-
-* Structure appears when encountered.
-* New grammars and token types can emerge from recurring subgraphs and successful parses.
-
-### Algorithm 40: Module mining from pattern graphs [(=Algorithm 40)]
-
-```pseudo
-function MINE_MODULES(patterns P):
-  C = CANDIDATE_SUBGRAPHS(P)                   // frequent motifs + stable interfaces
-  M = {}
-  for cand in C:
-    gain = MDL_GAIN_WITH_MODULE(cand)
-    if gain > 0:
-      M.add(cand)
-  PROMOTE_TOP_MODULES(M)
-  return M
-```
-
-### Algorithm 41: Build pattern functionality profiles [(=Algorithm 41)]
-
-```pseudo
-function BUILD_PROFILES(pattern_instances I, Enc):
-  for inst in I:
-    a = Enc( CANONICAL_VECTOR(inst.macro_node) )
-    UPDATE_FACTOR_PROFILE(inst.pattern_id, a)
-    UPDATE_CONTEXT_PROFILE(inst.pattern_id, inst.neighborhood_types)
-    UPDATE_EFFECT_PROFILE(inst.pattern_id, DELTA_ENERGY(inst))
-```
-
 ## P8.1 Define disentanglement for this architecture [(=P8.1)]
 Disentanglement here is structural (+[T1]) and directional (+[T2]); module extraction is detailed in (+[T3]).
+## P8.10 Where the LLM sits [(=P8.10)]
+
+The LLM is useful for:
+
+* naming modules and ideas
+* interpreting tradeoffs in human terms
+* proposing missing evidence
+* proposing connector modules when interfaces almost match
+
+The LLM does not need to be the primary disentanglement engine. The math and graph constraints do that work.
+
+---
+
 ## P8.2 How disentanglement fits into your current stack [(=P8.2)]
 
 **Where the raw material comes from**
@@ -568,3 +496,75 @@ P6 (+[P6]) "sleep" is the right place to run heavy disentanglement.
 You already mine patterns. P4 patterns still tend to be "fat."
 
 You now add module extraction:
+
+## P8.5 How to compute "functionality/purpose" of a pattern [(=P8.5)]
+
+You want to detect that two uses share functionality even if surface structure differs.
+
+In your system, "function" is measurable via effects:
+
+A pattern instance has an effect signature:
+
+* energy reduction: (\Delta E) in its local neighborhood after relaxation
+* conflict resolution: change in tension / contradiction rate
+* retrieval utility: downstream task success deltas (P4 feedback)
+* cost: compute and memory footprint
+
+So define for a pattern (p):
+
+* usage contexts: distribution over neighbor token types and domains
+* factor profile: distribution of sparse coefficients (a) across instances
+* effect metrics: (\mathbb{E}[\Delta E], \mathbb{E}[\Delta T], \text{win rate})
+
+That makes "purpose" computable.
+
+Now "pattern transfer" becomes:
+
+* find a new context whose factor-needs match a pattern's factor profile
+* verify via effect metrics and local solve
+
+## P8.6 Tradeoffs and why one pattern wins over another [(=P8.6)]
+
+Once you have effect metrics, tradeoffs become explicit.
+
+Example metrics:
+
+* stability contribution (reduces tension)
+* generality (works across many contexts)
+* brittleness (failure rate, sensitivity to small changes)
+* interpretability (trace quality to spans and anchors)
+* cost
+
+Compute a Pareto frontier over these metrics per domain.
+
+Then you can answer:
+
+* "Pattern A beats pattern B here because A is cheaper and equally stable"
+* "Pattern B beats A when the domain is noisy because B is robust"
+
+This is the missing bridge from "patterns exist" to "patterns have reasons."
+
+## P8.7 Rebuilding content using disentangled patterns [(=P8.7)]
+
+Rebuild here means: re-represent a region using a different set of modules and factors, then re-evaluate.
+
+Two modes:
+
+**Mode 1: Compression rebuild**
+
+* replace subgraphs with module tokens
+* preserve residual edges
+* keep provenance pointers
+
+This is your existing compression principle, upgraded from "pattern tokens" to "module tokens."
+
+**Mode 2: Transform rebuild**
+
+* propose substitutions: module A → module B in a compatible interface slot
+* propose hybrids: glue module A's interface to module B's interior using a connector module
+* run local solve
+* evaluate effect metrics
+* store as a new hypothesis first
+* commit via P6 2-stage commit
+
+That is "try the idea without polluting memory."
