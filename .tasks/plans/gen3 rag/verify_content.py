@@ -3,10 +3,9 @@
 Content verification: find plan.md elements and match by body content in libraries.
 
 Approach:
-1. Find all IDs in plan.md (Algorithm 1, G6, P1I1, etc.)
-2. Classify each as declaration (in header) or reference (in body)
-3. For declarations, extract body and match to libraries
-4. Track line coverage - report untouched non-blank lines
+1. Find all declared IDs in plan.md via ([=ID]) annotations
+2. For declarations, extract body and match to libraries
+3. Track references via (@[+ID]) usage
 """
 
 import re
@@ -14,7 +13,7 @@ from pathlib import Path
 from difflib import SequenceMatcher
 
 
-# Legal ID patterns (for [(=ID)] annotations)
+# Legal ID patterns (for ([=ID]) declarations)
 ID_PATTERNS_LEGAL = [
     r'Algorithm \d+',
     r'Comp\d+',
@@ -30,8 +29,17 @@ ID_PATTERNS_LEGAL = [
     r'NFG\d+',
 ]
 
-# Annotation pattern for declarations
-ANNOTATION_PATTERN = re.compile(r'\[\(=([^\]]+)\)\]')
+# Annotation pattern for declarations: ([=ID])
+ANNOTATION_PATTERN = re.compile(r'\(\[=([^\]]+)\]\)')
+
+
+def extract_all_declared_ids(lines):
+    """Extract every ID declared via ([=ID]) anywhere, including non-section IDs like P#."""
+    declared = set()
+    for line in lines:
+        for match in ANNOTATION_PATTERN.finditer(line):
+            declared.add(match.group(1))
+    return declared
 
 
 def is_legal_id(text):
@@ -43,7 +51,7 @@ def is_legal_id(text):
 
 
 def extract_sections_by_annotation(lines):
-    """Extract sections based on [(=ID)] annotations.
+    """Extract sections based on ([=ID]) declarations.
 
     Returns: {id: (header_line, body_text, line_num)}
     """
@@ -77,8 +85,8 @@ def extract_sections_by_annotation(lines):
 
 
 def find_references(lines):
-    """Find all (+[ID]) references in lines."""
-    ref_pattern = re.compile(r'\(\+\[([^\]]+)\]\)')
+    """Find all (@[+ID]) references in lines."""
+    ref_pattern = re.compile(r'\(@\[\+([^\]]+)\]\)')
     references = {}  # id -> [line_nums]
 
     for idx, line in enumerate(lines):
@@ -98,9 +106,9 @@ def normalize_body(body):
 
 
 def extract_label(header_line):
-    """Extract label from header line (text before [(=ID)] annotation)."""
+    """Extract label from header line (text before ([=ID]) declaration)."""
     header = re.sub(r'^#+\s*', '', header_line)
-    header = re.sub(r'\s*\[\(=[^\]]+\)\].*$', '', header)
+    header = re.sub(r'\s*\(\[=[^\]]+\]\).*$', '', header)
     return header.strip()
 
 
@@ -113,17 +121,20 @@ def main():
     plan_content = plan_path.read_text(encoding='utf-8')
     plan_lines = plan_content.split('\n')
 
-    # Extract sections from plan.md using annotation-based splitting
+    # Extract sections from plan.md using declaration-based splitting
     print("Extracting sections from plan.md...")
     plan_sections = extract_sections_by_annotation(plan_lines)
+    plan_declared_ids = extract_all_declared_ids(plan_lines)
     print(f"Found {len(plan_sections)} sections in plan.md\n")
 
     # Extract from all library files
     library_sections = {}
+    library_declared_ids = set()
     for lib_file in sorted(libs_dir.glob("*.md")):
         lib_name = lib_file.stem
         content = lib_file.read_text(encoding='utf-8')
         lines = content.split('\n')
+        library_declared_ids |= extract_all_declared_ids(lines)
         sections = extract_sections_by_annotation(lines)
         for id_name, (header, body, line_num) in sections.items():
             library_sections[id_name] = (header, body, lib_name, line_num)
@@ -208,8 +219,8 @@ def main():
         if id_name not in library_sections:
             missing_in_libraries.append(id_name)
 
-    # Find orphan references
-    all_declared = set(plan_sections.keys()) | set(library_sections.keys())
+    # Find orphan references: referenced IDs must be declared somewhere via ([=ID])
+    all_declared = plan_declared_ids | library_declared_ids
     orphan_refs = []
     for ref_id, locations in {**plan_refs, **lib_refs}.items():
         if ref_id not in all_declared:

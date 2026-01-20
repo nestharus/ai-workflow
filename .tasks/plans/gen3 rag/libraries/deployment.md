@@ -1,5 +1,5 @@
 
-## Algorithm 52 — AB_ROLLOUT (shadow + canary + A/B) [(=Algorithm 52)]
+## Algorithm 52 — AB_ROLLOUT (shadow + canary + A/B) ([=Algorithm 52])
 
 ```pseudo
 function AB_ROLLOUT(exp):
@@ -27,7 +27,7 @@ Side-effect rule:
 * shadow is always read-only
 * canary/A-B must route writes through the same event-log + 2SC pipeline, to avoid divergent world states
 
-### D54 ABExperiment [(=D54)]
+### D54 ABExperiment ([=D54])
 
 ```text
 ABExperiment {
@@ -42,19 +42,19 @@ ABExperiment {
 }
 ```
 
-## G41 A/B continuous deployment [(=G41)]
+## G41 A/B continuous deployment ([=G41])
 
 * Shadow → canary → ramp → graduate/rollback is supported for epochs, adapters, grammar, and blend recipes.
 
-### NFG1 Ingestion performance [(=NFG1)]
+### NFG1 Ingestion performance ([=NFG1])
 
 Amortized sublinear in corpus size per span.
 
-### NFG3 Retrieval latency [(=NFG3)]
+### NFG3 Retrieval latency ([=NFG3])
 
 Bounded latency with tiered ANN plus graph expansion budget.
 
-### P6C6 Adapter rollout is safe under canary plus rollback [(=P6C6)]
+### P6C6 Adapter rollout is safe under canary plus rollback ([=P6C6])
 
 **Claim.** Rollout can be limited to fraction (f) and reverted on regression.
 **Sketch.**
@@ -63,7 +63,7 @@ Bounded latency with tiered ANN plus graph expansion budget.
 
 ---
 
-### P9I6 — A/B never breaks correctness (=[P9]) [(=P9I6)]
+### P9I6 — A/B never breaks correctness (@[=P9]) ([=P9I6])
 
 All A/B routing is read-view based. The write path is unified (event log). Candidate arms are either:
 
@@ -72,4 +72,4 @@ All A/B routing is read-view based. The write path is unified (event log). Candi
 
 ---
 
-# P10 invariants
+# P10 invariants ([=P10])

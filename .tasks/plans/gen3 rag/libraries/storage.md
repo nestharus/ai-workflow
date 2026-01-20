@@ -1,4 +1,4 @@
-## Algorithm 51 — CONTINUOUS_SLEEP_NO_DOWNTIME [(=Algorithm 51)]
+## Algorithm 51 — CONTINUOUS_SLEEP_NO_DOWNTIME ([=Algorithm 51])
 
 Sleep runs as continuous background consolidation with snapshot isolation and delta catch-up.
 
@@ -21,7 +21,7 @@ function CONTINUOUS_SLEEP_NO_DOWNTIME(trigger):
   START_AB_EXPERIMENT(control=ACTIVE_EPOCH, candidate=epoch_new, start_lsn=lsn1)
 ```
 
-### Algorithm 66: Apply deltas after snapshot [(=Algorithm 66)]
+### Algorithm 66: Apply deltas after snapshot ([=Algorithm 66])
 
 This absorbs "daytime patches" that happened during the offline run.
 
@@ -39,7 +39,7 @@ function APPLY_DELTAS(epoch_new, from lsn0, to lsn1):
 
 This keeps the new epoch aligned with live changes while keeping the offline solve isolated.
 
-### Algorithm 67: Publish epoch with RCU semantics [(=Algorithm 67)]
+### Algorithm 67: Publish epoch with RCU semantics ([=Algorithm 67])
 
 ```pseudo
 function PUBLISH_EPOCH(epoch_new):
@@ -53,7 +53,7 @@ function PUBLISH_EPOCH(epoch_new):
 
 RCU provides the pattern: readers run lock-free against a stable snapshot while writer swaps the pointer then waits a grace period before reclaim.
 
-## Algorithm 8: Hypothesis branching [(=Algorithm 8)]
+## Algorithm 8: Hypothesis branching ([=Algorithm 8])
 
 Hypothesis branching preserves ambiguity instead of averaging it.
 
@@ -81,7 +81,7 @@ function BRANCH_HYPOTHESIS(conflict c):
 
 Branching stays local to keep memory and compute bounded.
 
-### Algorithm 9: Global Consolidation [(=Algorithm 9)]
+### Algorithm 9: Global Consolidation ([=Algorithm 9])
 
 This is the "sleep" phase. It keeps ingestion running via snapshot isolation + versioned commit.
 
@@ -122,17 +122,17 @@ Atomic publish semantics follow RCU style "publish pointer, wait grace period, r
 
 Event sourcing stays the audit layer that makes rebuilds reproducible.
 
-## C4 Tier promotion logic bounds RAM and compute [(=C4)]
+## C4 Tier promotion logic bounds RAM and compute ([=C4])
 
 Independent of total corpus size.
 
-## Comp10 Telemetry and Replay Log [(=Comp10)]
+## Comp10 Telemetry and Replay Log ([=Comp10])
 
-## Comp4 Tiered Memory Manager [(=Comp4)]
+## Comp4 Tiered Memory Manager ([=Comp4])
 
-## Comp9 Index Layer [(=Comp9)]
+## Comp9 Index Layer ([=Comp9])
 
-## D11 Epoch [(=D11)]
+## D11 Epoch ([=D11])
 
 A versioned read view of the system.
 
@@ -151,7 +151,7 @@ Epoch {
 }
 ```
 
-## D12 Snapshot [(=D12)]
+## D12 Snapshot ([=D12])
 
 A consistent cut for offline compute.
 
@@ -167,7 +167,7 @@ Snapshot {
 
 Snapshot semantics align with snapshot isolation style "time travel" reads in MVCC.
 
-## D14 IndexVersion [(=D14)]
+## D14 IndexVersion ([=D14])
 
 Versioned index artifacts with atomic promotion.
 
@@ -183,7 +183,7 @@ IndexVersion {
 }
 ```
 
-## D15 ConsolidationJob [(=D15)]
+## D15 ConsolidationJob ([=D15])
 
 ```
 ConsolidationJob {
@@ -197,7 +197,7 @@ ConsolidationJob {
 }
 ```
 
-## D4 ANN indices [(=D4)]
+## D4 ANN indices ([=D4])
 
 Separate indices per tier and per embedding kind.
 
@@ -205,7 +205,7 @@ Separate indices per tier and per embedding kind.
 * Context: HNSW for x vectors.
 * Inactive: IVF+PQ or HNSW+PQ depending on scale.
 
-## D5 Event log [(=D5)]
+## D5 Event log ([=D5])
 
 Append-only ingestion events for replay:
 
@@ -217,17 +217,17 @@ Event {
 }
 ```
 
-## G4 Bounded working set [(=G4)]
+## G4 Bounded working set ([=G4])
 
    * Explicit focus, active, contextual, inactive tiers with promotion and demotion.
 
-## G40 Zero downtime sleep [(=G40)]
+## G40 Zero downtime sleep ([=G40])
 
 * Consolidation runs continuously.
 * Overlay remains writable.
 * No downtime for reads or writes.
 
-### Lean11 Snapshot and epoch invariants [(=Lean11)]
+### Lean11 Snapshot and epoch invariants ([=Lean11])
 
 Model as an event log plus an epoch pointer.
 
@@ -265,7 +265,7 @@ end EpochSafety
 
 This is a placeholder spine. To make it real, the `Store` and `applyUpTo` definitions encode the log replay semantics and the epoch pointer swap rules.
 
-### Lean15 RCU style reclamation condition as a predicate [(=Lean15)]
+### Lean15 RCU style reclamation condition as a predicate ([=Lean15])
 
 ```lean
 namespace Reclaim
@@ -284,7 +284,7 @@ theorem reclaim_monotone
 end Reclaim
 ```
 
-## Lean4 Tier caps bound compute and memory [(=Lean4)]
+## Lean4 Tier caps bound compute and memory ([=Lean4])
 
 **Claim C4.** If tier caps ((K,M,N)) are enforced, then:
 
@@ -297,52 +297,54 @@ end Reclaim
 * All RAM operations are restricted to capped tiers.
 * Inactive tier lives on disk and is accessed via ANN and edge lookups.
 
-### P1I10 NodeState history persistence [(=P1I10)]
+### P1I10 NodeState history persistence ([=P1I10])
 
 RAM keeps current states for Focus, Active, Context. Disk keeps full history, optionally delta-compressed.
 
-### P1I11 Graph edge durability [(=P1I11)]
+### P1I11 Graph edge durability ([=P1I11])
 
 LSM-backed edge table for high write rates.
 
-### P1I13 Tier-locality storage [(=P1I13)]
+### P1I13 Tier-locality storage ([=P1I13])
 
 Keep Focus, Active, Context in RAM. Keep Inactive on disk, accessed via ANN and edge tables. This is the same design principle as virtual memory and tiered recall systems.
 
-### P1I14 Index structure by tier [(=P1I14)]
+### P1I14 Index structure by tier ([=P1I14])
 
 HNSW for fast recall in Context. PQ or IVF+PQ for Inactive scale.
 
-### P1I15 Inactive embedding quantization [(=P1I15)]
+### P1I15 Inactive embedding quantization ([=P1I15])
 
 Store inactive embeddings as int8 PQ codes. Keep only centroids and a small residual cache in RAM.
 
-### P1I16 Edge write batching [(=P1I16)]
+### P1I16 Edge write batching ([=P1I16])
 
 Use LSM-style batching for high ingest rates. Periodic compaction merges edge runs.
 
-### P1I5 Compression keeps a lossless backstore (=[P1]) [(=P1I5)]
+### P1I5 Compression keeps a lossless backstore (@[=P1]) ([=P1I5])
 
 ANN codes and quantized vectors are allowed.
 A lossless or near-lossless backstore remains available for re-evaluation and auditing.
 
-### P1I6 Event-sourced replay [(=P1I6)]
+# P4 invariants ([=P4])
+
+### P1I6 Event-sourced replay ([=P1I6])
 
 Every mutation is an event. Enables rebuilds, A/B comparisons, and regression debugging.
 
-### P1I7 Raw spans are immutable [(=P1I7)]
+### P1I7 Raw spans are immutable ([=P1I7])
 
 Immutable compressed store, dedup by content hash.
 
-### P1I8 ObservationRecord persistence [(=P1I8)]
+### P1I8 ObservationRecord persistence ([=P1I8])
 
 Float16 or float32 backstore on disk.
 
-### P1I9 ANN store with full backstore [(=P1I9)]
+### P1I9 ANN store with full backstore ([=P1I9])
 
 PQ codes for scale and speed, full vector backstore for audits.
 
-### P2C1 Snapshot consistency [(=P2C1)]
+### P2C1 Snapshot consistency ([=P2C1])
 
 Snapshot created at LSN (l_0) defines a consistent view.
 
@@ -352,7 +354,7 @@ Sketch:
 * Snapshot at (l_0) reads all events (\le l_0).
 * MVCC snapshot isolation gives a consistent read view that stays stable while writes continue.
 
-### P2C2 Non-blocking commit [(=P2C2)]
+### P2C2 Non-blocking commit ([=P2C2])
 
 Atomic pointer swap gives epoch-level consistency for readers.
 
@@ -363,7 +365,7 @@ Sketch:
 * Writer publishes new epoch by atomic swap.
 * RCU grace period ensures old epoch memory remains valid for all readers started before swap.
 
-### P6C3 Safe reclamation [(=P6C3)]
+### P6C3 Safe reclamation ([=P6C3])
 
 **Claim.** Old epochs are reclaimed after all readers leave, via grace periods.
 **Sketch.**
@@ -371,7 +373,7 @@ Sketch:
 * Track reader epochs.
 * Reclaim when min reader epoch advances past reclaim target, same pattern as RCU grace periods.
 
-### P9I1 — Read coherence (=[P9]) [(=P9I1)]
+### P9I1 — Read coherence (@[=P9]) ([=P9I1])
 
 Every request pins a view:
 
@@ -381,6 +383,6 @@ Every request pins a view:
 
 All reads for the request use that pinned view.
 
-### P9I2 — Overlay is always writable (=[P9]) [(=P9I2)]
+### P9I2 — Overlay is always writable (@[=P9]) ([=P9I2])
 
 Ingestion and workspace commits append to the event log continuously. The overlay applier may lag, but never blocks writes.

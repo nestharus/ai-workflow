@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Show minor differences between plan.md and library files for exact/close matches.
-Uses annotation-based splitting [(=ID)] to determine section boundaries.
+Uses declaration-based splitting ([=ID]) to determine section boundaries.
 """
 
 import re
@@ -9,7 +9,7 @@ from pathlib import Path
 from difflib import unified_diff, SequenceMatcher
 
 
-# Legal ID patterns (for [(=ID)] annotations)
+# Legal ID patterns (for ([=ID]) declarations)
 ID_PATTERNS_LEGAL = [
     r'Algorithm \d+',
     r'Comp\d+',
@@ -25,8 +25,8 @@ ID_PATTERNS_LEGAL = [
     r'NFG\d+',
 ]
 
-# Annotation pattern for declarations
-ANNOTATION_PATTERN = re.compile(r'\[\(=([^\]]+)\)\]')
+# Annotation pattern for declarations: ([=ID])
+ANNOTATION_PATTERN = re.compile(r'\(\[=([^\]]+)\]\)')
 
 
 def is_legal_id(text):
@@ -38,7 +38,7 @@ def is_legal_id(text):
 
 
 def extract_sections_by_annotation(lines):
-    """Extract sections based on [(=ID)] annotations.
+    """Extract sections based on ([=ID]) declarations.
 
     Returns: {id: (header_line, body_text, line_num)}
     """

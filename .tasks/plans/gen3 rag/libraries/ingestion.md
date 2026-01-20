@@ -1,4 +1,4 @@
-## Algorithm 1: Streaming ingestion [(=Algorithm 1)]
+## Algorithm 1: Streaming ingestion ([=Algorithm 1])
 
 Goal: create evidence nodes, create idea handles, build edges, update tiers, update the field locally.
 
@@ -31,8 +31,8 @@ function INGEST_STREAM(stream):
     LOG_EVENT(...)
 ```
 
-## Algorithm 17 [(=Algorithm 17)]
-Modality routing and tokenizer selection (+[T7])
+## Algorithm 17 ([=Algorithm 17])
+Modality routing and tokenizer selection (@[+T7])
 
 Starts from raw unstructured input.
 
@@ -47,8 +47,8 @@ function ROUTE_AND_TOKENIZE(input stream):
 
 Domain routing can be light at first and later refined using hypothesis outcomes.
 
-## Algorithm 18 [(=Algorithm 18)]
-Incremental graph grammar parsing with hypothesis beam (+[T8])
+## Algorithm 18 ([=Algorithm 18])
+Incremental graph grammar parsing with hypothesis beam (@[+T8])
 
 Grammar is applied to tokens to produce new graph tokens and token graphs.
 
@@ -80,8 +80,8 @@ function PARSE_REGION(region, dom, tokset):
 
 This mirrors the packed-forest idea used to manage ambiguity growth in GLR style parsing.
 
-## Algorithm 19 [(=Algorithm 19)]
-Rule application as graph rewrite with provenance (+[T9])
+## Algorithm 19 ([=Algorithm 19])
+Rule application as graph rewrite with provenance (@[+T9])
 
 Uses DPO-like rewrite semantics, keeps non-destructive update invariants.
 
@@ -105,8 +105,8 @@ function APPLY_RULE(h, match m):
 
 Graph transformation via DPO gives a formal foundation for safe rewrites and composition.
 
-## Algorithm 23 [(=Algorithm 23)]
-Re-ingestion under reinterpretation (+[T13])
+## Algorithm 23 ([=Algorithm 23])
+Re-ingestion under reinterpretation (@[+T13])
 This is the controlled way to replay the same evidence through a new grammar set or new adapters.
 
 ```pseudo
@@ -124,7 +124,7 @@ function REINTERPRET(epoch e, region R, new_grammar_set G*):
 
 Graph parsing for HRG and related grammars is studied, and complexity varies a lot by restrictions, so this is designed with hypothesis beams and domain restrictions.
 
-### Algorithm 26: Curriculum ingestion controller [(=Algorithm 26)]
+### Algorithm 26: Curriculum ingestion controller ([=Algorithm 26])
 
 ```pseudo
 function CURRICULUM_STAGE(epoch e, stats):
@@ -139,11 +139,11 @@ function APPLY_CURRICULUM_PARAMS(stage):
 
 Curriculum learning is a standard stabilization strategy.
 
-## C5 Ingestion produces stable idea handles [(=C5)]
+## C5 Ingestion produces stable idea handles ([=C5])
 
 Via graph-supported clustering, rather than geometry-only clustering.
 
-## D28 Graph token [(=D28)]
+## D28 Graph token ([=D28])
 
 A token that exists in a grammar, not necessarily in text.
 
@@ -160,7 +160,7 @@ GraphToken {
 }
 ```
 
-## D29 Grammar rule as graph rewrite [(=D29)]
+## D29 Grammar rule as graph rewrite ([=D29])
 
 Use an algebraic graph transformation style rule object.
 
@@ -180,7 +180,7 @@ Rule {
 
 This matches standard graph transformation and graph grammar formalisms in the DPO family.
 
-## D30 Parse hypothesis [(=D30)]
+## D30 Parse hypothesis ([=D30])
 
 A single interpretation state, contains a token graph plus mappings back to evidence.
 
@@ -197,7 +197,7 @@ ParseHypothesis {
 }
 ```
 
-## D31 Parse forest [(=D31)]
+## D31 Parse forest ([=D31])
 
 Packed storage of many hypotheses sharing substructure.
 
@@ -212,7 +212,7 @@ ParseForest {
 
 This mirrors packed forest and graph-structured stack ideas used to control ambiguity blow-up in GLR style parsing.
 
-### D58 CurriculumStage [(=D58)]
+### D58 CurriculumStage ([=D58])
 
 ```text
 CurriculumStage {
@@ -226,7 +226,7 @@ CurriculumStage {
 }
 ```
 
-### D61 GrammarRuleCandidate [(=D61)]
+### D61 GrammarRuleCandidate ([=D61])
 
 ```text
 GrammarRuleCandidate {
@@ -240,34 +240,34 @@ GrammarRuleCandidate {
 }
 ```
 
-## G17 Graphs are the grammar [(=G17)]
+## G17 Graphs are the grammar ([=G17])
 
 * A grammar is a set of typed graph rewrite rules.
 * Parsing is graph rewriting plus scoring.
 
-## G18 Tokens are graph objects [(=G18)]
+## G18 Tokens are graph objects ([=G18])
 
 * Tokens exist inside a grammar as nodes, hyperedges, subgraphs, and pattern instances.
 * Tokens can come from text spans, from graph coordinates, or from both.
 
-## G20 Multi-interpretation ingestion [(=G20)]
+## G20 Multi-interpretation ingestion ([=G20])
 
 * Ingestion maintains a parse forest of competing hypotheses.
 * Re-ingestion happens by replaying evidence through a different grammar set or a different hypothesis mixture.
 
-## G24 Low path dependence [(=G24)]
+## G24 Low path dependence ([=G24])
 
 * Curriculum ingestion and periodic cold solves reduce first-mover geometry lock-in.
 
-## G27 Grammar evolution is safe [(=G27)]
+## G27 Grammar evolution is safe ([=G27])
 
 * Grammar rules emerge, then sandbox, then promote with measurable error bounds.
 
-### P1I12 Ingestion hot path [(=P1I12)]
+### P1I12 Ingestion hot path ([=P1I12])
 
 Embed once, add edges, local relax, push conflict candidates. Heavy work runs on the conflict queue.
 
-## P5.1 Graph grammar semantics [(=P5.1)]
+## P5.1 Graph grammar semantics ([=P5.1])
 
 Represent the current world as a typed hypergraph (G).
 
@@ -285,7 +285,7 @@ DPO and related algebraic approaches define when a match is valid and how rewrit
 
 For language-like parsing on graphs, HRG and related formalisms provide the “context-free grammar for graphs” analogue.
 
-## P5.2 Probabilistic and scored rewriting [(=P5.2)]
+## P5.2 Probabilistic and scored rewriting ([=P5.2])
 
 Attach a score to each rule application. This can be probability or cost.
 
@@ -300,7 +300,7 @@ S(h) = \sum_{\text{rule apps } a \in h} \log P(a) ;-; \lambda \cdot \text{Tensio
 * Tension comes from the field diagnostics inside the hypothesis
 * Complexity penalizes overly complex parses
 
-## P5C3 Packed forest representation preserves derivations [(=P5C3)]
+## P5C3 Packed forest representation preserves derivations ([=P5C3])
 
 For the string case, packed forests and graph-structured stacks are standard ways to share substructure and represent ambiguity compactly in GLR style parsing.
 For graph grammars, completeness depends on grammar restrictions and parsing algorithm. HRG parsing has known polynomial-time recognition under restrictions, and general cases can be hard.
@@ -310,7 +310,7 @@ Spec requirement:
 * grammar classes used online must satisfy a “uniform parsing budget” policy
 * heavy grammars run in sleep-time or under strict scope limits
 
-## P5C4 Orthogonal adapter preserves geometry [(=P5C4)]
+## P5C4 Orthogonal adapter preserves geometry ([=P5C4])
 
 If (A_v) is orthogonal, then (|A_v x - A_v y| = |x-y|). This gives stable similarity across mapped spaces. Procrustes-based alignment provides a practical way to fit such maps.
 
@@ -320,40 +320,40 @@ Lean target:
 * prove the Procrustes minimizer exists under standard assumptions, optional
 
 
-### P5I1 Parse forest versioning [(=P5I1)]
+### P5I1 Parse forest versioning ([=P5I1])
 
-Parse forests are versioned by epoch. Old hypotheses compact via P2 (+[P2]) sleep cycle, with provenance and failures retained.
+Parse forests are versioned by epoch. Old hypotheses compact via P2 (@[+P2]) sleep cycle, with provenance and failures retained.
 
 ---
 
 
 
-### P5I2 Strict beam width [(=P5I2)]
+### P5I2 Strict beam width ([=P5I2])
 
 Strict beam width per region. Packed DAG sharing across hypotheses, similar in spirit to graph-structured stacks for ambiguity.
 
 
-### P5I3 Grammar class restrictions per tier [(=P5I3)]
+### P5I3 Grammar class restrictions per tier ([=P5I3])
 
 Focus and Active: restricted grammars with cheap matching and bounded-degree neighborhoods. Context and Sleep: heavier grammars and deeper matching. Graph grammar parsing complexity varies widely across grammar classes and restrictions.
 
 
-### P5I4 Match candidate indexing [(=P5I4)]
+### P5I4 Match candidate indexing ([=P5I4])
 
 Index rule LHS patterns by WL-style neighborhood signatures. Use WL hashing to prune match candidates before subgraph matching.
 
 
-### P5I5 Coordinate transforms cached [(=P5I5)]
+### P5I5 Coordinate transforms cached ([=P5I5])
 
 Cache canonical projections (A_v b_i^{(v)}). Refit adapters in sleep-time, then bulk-refresh projections during consolidation.
 
 
-### P5I6 Domain embedders specialized [(=P5I6)]
+### P5I6 Domain embedders specialized ([=P5I6])
 
 Text embedder stays as the semantic anchor. Graph embedder covers topology. Code embedder covers AST and code structure.
 
 
-### P6C5 Grammar promotion controls error [(=P6C5)]
+### P6C5 Grammar promotion controls error ([=P6C5])
 
 **Claim.** Beta posterior gating yields bounded promotion risk under the assumed win/loss observation model.
 **Sketch.**

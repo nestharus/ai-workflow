@@ -1,4 +1,4 @@
-## Algorithm 2: Idea candidate selection [(=Algorithm 2)]
+## Algorithm 2: Idea candidate selection ([=Algorithm 2])
 
 Idea-first means “create handles early, refine later”.
 
@@ -22,7 +22,7 @@ function SELECT_OR_CREATE_IDEA(candidates, v):
 Validation is where hard constraints live. Geometry proposes. Validation commits.
 
 
-### Algorithm 24: Hippocampal workspace session [(=Algorithm 24)]
+### Algorithm 24: Hippocampal workspace session ([=Algorithm 24])
 
 ```pseudo
 function HWS_OPEN(region R, base_epoch e):
@@ -42,7 +42,7 @@ function HWS_CLOSE(hws):
   ARCHIVE(hws)         // TTL based
 ```
 
-### Algorithm 27: Cold solve and re-rooting [(=Algorithm 27)]
+### Algorithm 27: Cold solve and re-rooting ([=Algorithm 27])
 
 ```pseudo
 function SHOULD_COLD_SOLVE(global_metrics M):
@@ -57,7 +57,7 @@ function GLOBAL_CONSOLIDATION_COLD(epoch e):
   SWAP_IN_NEW_INDICES_AT_EPOCH_BOUNDARY()
 ```
 
-## Algorithm 3: Field relaxation on a subgraph [(=Algorithm 3)]
+## Algorithm 3: Field relaxation on a subgraph ([=Algorithm 3])
 
 Field update computes diagnostics and uses gates.
 
@@ -92,7 +92,7 @@ x_i \leftarrow
 \frac{\alpha_i b_i + \sum_{j} w_{ij}g_{ij} x_j}{\alpha_i + \mu_i + \sum_{j} w_{ij}g_{ij}}
 ]
 
-### Algorithm 30: Grammar sandbox and promotion [(=Algorithm 30)]
+### Algorithm 30: Grammar sandbox and promotion ([=Algorithm 30])
 
 ```pseudo
 function GRAMMAR_SANDBOX(rule r):
@@ -111,7 +111,7 @@ function GRAMMAR_SANDBOX(rule r):
 
 Packed forests and shared parse forests are a known strategy to manage ambiguity in parsing.
 
-### Algorithm 31: Adapter lifecycle and drift management [(=Algorithm 31)]
+### Algorithm 31: Adapter lifecycle and drift management ([=Algorithm 31])
 
 ```pseudo
 function ADAPTER_FIT(src_cs, dst_cs, paired_samples):
@@ -137,7 +137,7 @@ function ADAPTER_DRIFT_MONITOR(adapter a):
 ADWIN is a standard drift detector with adaptive windowing.
 Canary rollouts are a standard safety practice for changing live systems.
 
-## Algorithm 44 — MANIFOLD_UPDATE_LOCAL (online) [(=Algorithm 44)]
+## Algorithm 44 — MANIFOLD_UPDATE_LOCAL (online) ([=Algorithm 44])
 
 Incremental manifold updates after events, without global regeneration.
 
@@ -175,7 +175,7 @@ Implementation notes (optional accelerators):
 * warm-started iterative solves are the baseline
 * rank-k Cholesky update/downdate is an optional accelerator when the sparsity pattern is stable
 
-## Algorithm 45 — CHART_BUILD (incremental) [(=Algorithm 45)]
+## Algorithm 45 — CHART_BUILD (incremental) ([=Algorithm 45])
 
 ```pseudo
 function CHART_BUILD(view, nodes S, m):
@@ -186,7 +186,7 @@ function CHART_BUILD(view, nodes S, m):
     STORE TangentFrame(i, view.hyp_id, U, evals, built_lsn=view.lsn_end)
 ```
 
-## Algorithm 46 — BUILD_CONNECTION_LAPLACIAN (incremental) [(=Algorithm 46)]
+## Algorithm 46 — BUILD_CONNECTION_LAPLACIAN (incremental) ([=Algorithm 46])
 
 ```pseudo
 function BUILD_CONNECTION_LAPLACIAN(view, nodes S):
@@ -201,7 +201,7 @@ function BUILD_CONNECTION_LAPLACIAN(view, nodes S):
   UPDATE_CONNECTION_OPERATOR(view.hyp_id)
 ```
 
-## Algorithm 47 — PROJECT_VECTOR_FIELDS (manifold → usable vectors) [(=Algorithm 47)]
+## Algorithm 47 — PROJECT_VECTOR_FIELDS (manifold → usable vectors) ([=Algorithm 47])
 
 Provides stable “direction vectors” by operating in the transported tangent bundle.
 
@@ -224,7 +224,7 @@ function SMOOTH_VECTOR_FIELD(view, v, λ):
   return y
 ```
 
-## Algorithm 48 — BLEND_COMPUTE (runtime) [(=Algorithm 48)]
+## Algorithm 48 — BLEND_COMPUTE (runtime) ([=Algorithm 48])
 
 ```pseudo
 function BLEND_COMPUTE(view, query q, recipe R):
@@ -241,7 +241,7 @@ function BLEND_COMPUTE(view, query q, recipe R):
   return CompositeField(view, R, score, grad)
 ```
 
-## Algorithm 49 — MANIFOLD_TO_GRAPH_PROPOSALS (pullback) [(=Algorithm 49)]
+## Algorithm 49 — MANIFOLD_TO_GRAPH_PROPOSALS (pullback) ([=Algorithm 49])
 
 Detect “geometric wormholes” and propose auditable bridges/rules.
 
@@ -260,7 +260,7 @@ function MANIFOLD_TO_GRAPH_PROPOSALS(view, budget):
   return TOPK(props, budget)
 ```
 
-### Algorithm 65: Robust Field Solve via IRLS [(=Algorithm 65)]
+### Algorithm 65: Robust Field Solve via IRLS ([=Algorithm 65])
 
 Runs per hypothesis on the snapshot.
 
@@ -293,7 +293,7 @@ Default stopping rule:
 * or max iteration count
 * plus max per-iteration solver tolerance schedule
 
-## Algorithm 7: Conflict resolution [(=Algorithm 7)]
+## Algorithm 7: Conflict resolution ([=Algorithm 7])
 
 Resolution loop increases confidence by seeking targeted evidence.
 
@@ -325,25 +325,25 @@ function RESOLVE_CONFLICTS(budget):
     budget -= COST(verdict)
 ```
 
-## C1 Field embeddings exist and are unique [(=C1)]
+## C1 Field embeddings exist and are unique ([=C1])
 
 Under mild anchoring conditions.
 
-## C2 Local relaxation converges [(=C2)]
+## C2 Local relaxation converges ([=C2])
 
 To the field solution on a fixed graph.
 
-## C3 Field embeddings attenuate underspecified noise [(=C3)]
+## C3 Field embeddings attenuate underspecified noise ([=C3])
 
 Relative to raw embeddings, under a simple noise model.
 
-## Comp27 Cold Solve Scheduler (ROOT) [(=Comp27)]
+## Comp27 Cold Solve Scheduler (ROOT) ([=Comp27])
 
-## Comp3 Field Solver [(=Comp3)]
+## Comp3 Field Solver ([=Comp3])
 
-## Comp8 Retrieval Planner [(=Comp8)]
+## Comp8 Retrieval Planner ([=Comp8])
 
-### D46 ManifoldView [(=D46)]
+### D46 ManifoldView ([=D46])
 
 A pinned read view.
 
@@ -355,7 +355,7 @@ ManifoldView {
 }
 ```
 
-### D47 ManifoldState [(=D47)]
+### D47 ManifoldState ([=D47])
 
 The explicit manifold state per epoch/hypothesis.
 
@@ -378,7 +378,7 @@ ManifoldState {
 }
 ```
 
-### D48 TangentFrame [(=D48)]
+### D48 TangentFrame ([=D48])
 
 A local chart basis for node i.
 
@@ -392,7 +392,7 @@ TangentFrame {
 }
 ```
 
-### D49 EdgeTransport [(=D49)]
+### D49 EdgeTransport ([=D49])
 
 A discrete parallel transport operator between tangent frames.
 
@@ -405,7 +405,7 @@ EdgeTransport {
 }
 ```
 
-### D50 ConnectionLaplacian [(=D50)]
+### D50 ConnectionLaplacian ([=D50])
 
 A block Laplacian over tangent bundles.
 
@@ -418,7 +418,7 @@ ConnectionLaplacian {
 }
 ```
 
-### D51 BlendRecipe [(=D51)]
+### D51 BlendRecipe ([=D51])
 
 ```text
 BlendRecipe {
@@ -431,7 +431,7 @@ BlendRecipe {
 }
 ```
 
-### D52 CompositeField (ephemeral) [(=D52)]
+### D52 CompositeField (ephemeral) ([=D52])
 
 ```text
 CompositeField {
@@ -442,7 +442,7 @@ CompositeField {
 }
 ```
 
-### D53 TranslationProposal [(=D53)]
+### D53 TranslationProposal ([=D53])
 
 ```text
 TranslationProposal {
@@ -458,7 +458,7 @@ TranslationProposal {
 }
 ```
 
-### D7 NodeState [(=D7)]
+### D7 NodeState ([=D7])
 
 Stores field state over time and across hypotheses.
 
@@ -481,44 +481,44 @@ Node keeps pointers:
 * `node.current_state[hyp_id] -> state_id`
 * `node.state_history -> list<StateId>`
 
-## G1 Reliable directions [(=G1)]
+## G1 Reliable directions ([=G1])
 
    * Directions conditioned on structure, rather than raw span text.
 
-## G11 Robustness [(=G11)]
+## G11 Robustness ([=G11])
 
    * Large disagreements stop dominating smoothing. Disagreements become diagnostics.
 
-## G3 Revision as a first-class operation [(=G3)]
+## G3 Revision as a first-class operation ([=G3])
 
    * Meaning shifts propagate through the field and graph.
 
-## G36 Manifold as a first-class substrate [(=G36)]
+## G36 Manifold as a first-class substrate ([=G36])
 
 * Explicit `ManifoldState` objects exist per epoch and hypothesis.
 * Readers pin a `ManifoldView` (epoch + log cut) and see a coherent geometry.
 
-## G37 Explicit translation operators [(=G37)]
+## G37 Explicit translation operators ([=G37])
 
 * Graph/observations → manifold (lift)
 * manifold → vector fields (project)
 * manifold → graph proposals (pullback)
 
-## G38 Governed blending [(=G38)]
+## G38 Governed blending ([=G38])
 
 * Ephemeral blending is always allowed.
 * Cached blending is allowed but versioned.
 * Promotion of blends into topology requires a governed commit.
 
-## G5 High recall with controllable cost [(=G5)]
+## G5 High recall with controllable cost ([=G5])
 
    * Cheap candidate generation, expensive validation only where needed.
 
-## G9 Global consolidation [(=G9)]
+## G9 Global consolidation ([=G9])
 
    * Local patching accumulates. Periodic consolidation realigns the field across the full graph while ingestion keeps running.
 
-## Lean1 Existence and uniqueness of the field solution [(=Lean1)]
+## Lean1 Existence and uniqueness of the field solution ([=Lean1])
 
 **Claim C1.** If (\alpha_i + \mu_i > 0) for every connected component, then (\mathcal{E}(X)) has a unique minimizer.
 
@@ -533,7 +533,7 @@ Node keeps pointers:
 
 This is standard for Laplacian-regularized objectives and Gaussian field style constructions.
 
-### Lean10 IRLS descent and stationary point shape [(=Lean10)]
+### Lean10 IRLS descent and stationary point shape ([=Lean10])
 
 Lean formalization target: one coordinate dimension at a time, finite node set, convex Huber robust objective.
 
@@ -578,7 +578,7 @@ end RobustIRLS
 
 This aligns with the MM descent logic used in MM references.
 
-### Lean13 Canonical field uniqueness with multi-view anchors [(=Lean13)]
+### Lean13 Canonical field uniqueness with multi-view anchors ([=Lean13])
 
 ```lean
 import Mathlib.LinearAlgebra.Matrix.PosDef
@@ -596,7 +596,7 @@ theorem canonical_field_unique
 
 end CanonField
 
-## Lean2 Energy decreases under relaxation, convergence on fixed graph [(=Lean2)]
+## Lean2 Energy decreases under relaxation, convergence on fixed graph ([=Lean2])
 
 **Claim C2.** The update
 [
@@ -610,7 +610,7 @@ monotonically decreases (\mathcal{E}) when updating one node at a time with othe
 * The update sets (x_i) to the exact minimizer of (\mathcal{E}) restricted to coordinate block (i).
 * Block coordinate descent on a strictly convex quadratic decreases energy each step and converges to the unique minimizer.
 
-## Lean3 Noise attenuation, directions become more reliable [(=Lean3)]
+## Lean3 Noise attenuation, directions become more reliable ([=Lean3])
 
 **Claim C3.** Under the model (b = s + \varepsilon), with zero-mean iid noise and a smoothness prior where neighboring nodes share similar (s), the field solution (x) has lower expected error than (b) along high-frequency graph modes.
 
@@ -624,7 +624,7 @@ monotonically decreases (\mathcal{E}) when updating one node at a time with othe
 
 This is graph filtering language from graph signal processing.
 
-## Lean5 Core quadratic energy proofs [(=Lean5)]
+## Lean5 Core quadratic energy proofs ([=Lean5])
 
 Lean is a good fit for the quadratic core: uniqueness, strict convexity, and "energy decreases" lemmas. Mathlib already covers a wide range of linear algebra and analysis.
 
@@ -698,7 +698,7 @@ This is the proof "spine" for C1 and C2. After that, you can build the vector-va
 
 Two tracks: quadratic uniqueness and state machine invariants.
 
-### Lean8 Gated quadratic uniqueness [(=Lean8)]
+### Lean8 Gated quadratic uniqueness ([=Lean8])
 
 Gated quadratic uniqueness.
 
@@ -724,19 +724,19 @@ theorem unique_minimizer_of_posDef (hQ : Matrix.PosDef Q) :
 end GraphFieldGated
 ```
 
-### P1C2 Unique field minimizer [(=P1C2)]
+### P1C2 Unique field minimizer ([=P1C2])
 
 Gated quadratic field per hypothesis has a unique minimizer under the same anchoring condition as v0.1.
 
-### P1C3 Field relaxation convergence [(=P1C3)]
+### P1C3 Field relaxation convergence ([=P1C3])
 
 Field relaxation converges per hypothesis.
 
-### P1C5 Robust loss convergence [(=P1C5)]
+### P1C5 Robust loss convergence ([=P1C5])
 
 Robust loss reduces influence of large disagreements while preserving convergence to a minimizer.
 
-### P2.2 IRLS weight update rule [(=P2.2)]
+### P2.2 IRLS weight update rule ([=P2.2])
 
 IRLS builds a quadratic surrogate by reweighting edges.
 
@@ -775,7 +775,7 @@ Minimizing this surrogate is a Laplacian system solve with weights (\tilde{w}).
 IRLS for robust regression is a standard approach. ([Taylor & Francis Online][3])
 IRLS as MM is covered in MM tutorials and more recent analyses. ([Taylor & Francis Online][4])
 
-### P2.3 Linear solve in each IRLS step [(=P2.3)]
+### P2.3 Linear solve in each IRLS step ([=P2.3])
 
 Let (L_{\tilde{w}}) be the Laplacian built from (\tilde{w}*{ij}^{(k,h)}). As before:
 [
@@ -784,7 +784,7 @@ Let (L_{\tilde{w}}) be the Laplacian built from (\tilde{w}*{ij}^{(k,h)}). As bef
 
 For scale, this is an SDD system. Nearly linear-time solvers exist in theory, and practical iterative solvers with preconditioning work well.
 
-### P2C3 IRLS descent [(=P2C3)]
+### P2C3 IRLS descent ([=P2C3])
 
 Each IRLS iteration decreases \(\mathcal{E}\).
 
@@ -801,7 +801,7 @@ Sketch for Huber:
   \]
   This is MM logic.
 
-### P2C4 Convergence to a stationary point [(=P2C4)]
+### P2C4 Convergence to a stationary point ([=P2C4])
 
 Sketch:
 
@@ -812,31 +812,31 @@ Sketch:
 
 References for MM stationary point behavior and MM in signal processing.
 
-### P2I1 Field update locality [(=P2I1)]
+### P2I1 Field update locality ([=P2I1])
 
 Local, bounded by tier neighborhoods.
 
-### P2I2 Local field updates bounded [(=P2I2)]
+### P2I2 Local field updates bounded ([=P2I2])
 
 Per span: relax only within a hop radius determined by tier. Global solve: scheduled offline or during low load, used to reduce drift.
 
-### P2I3 Local relaxation bounded [(=P2I3)]
+### P2I3 Local relaxation bounded ([=P2I3])
 
 Local relaxation bounded by tier caps.
 
-### P2I4 Conflict resolution strict quotas [(=P2I4)]
+### P2I4 Conflict resolution strict quotas ([=P2I4])
 
 Conflict resolution budgeted as a background loop with strict quotas.
 
-### P2I5 Validator rate limiting [(=P2I5)]
+### P2I5 Validator rate limiting ([=P2I5])
 
 Validator calls rate-limited and triggered by tension.
 
-### P2I6 Uncertainty-driven compute [(=P2I6)]
+### P2I6 Uncertainty-driven compute ([=P2I6])
 
 High uncertainty nodes get more validation and more relaxation steps. Low uncertainty nodes get cheap maintenance.
 
-## P5C1 Multi-view canonical field solve exists and is unique [(=P5C1)]
+## P5C1 Multi-view canonical field solve exists and is unique ([=P5C1])
 
 With anchors (\bar{b}_i) and (\alpha_i+\mu_i>0) per connected component, the canonical quadratic system remains SPD. Uniqueness follows the same argument as earlier field proofs, since the only change is the anchor target, not the Hessian structure.
 
@@ -845,7 +845,7 @@ Proof obligation in Lean:
 * show SPD of (L + A + M)
 * show unique minimizer exists
 
-### P9.1 Discrete manifold (robust gated field) [(=P9.1)]
+### P9.1 Discrete manifold (robust gated field) ([=P9.1])
 
 Per hypothesis h, the manifold is induced by the robust gated objective (P1–P2), which is a weighted graph-smoothing + anchoring energy.
 
@@ -863,7 +863,7 @@ L = Σ_{(i,j)∈E} w_{ij} (e_i - e_j)(e_i - e_j)^T
 
 This decomposition is the basis for low-rank updates when edge weights change.
 
-### P9.2 Local tangent frames (projection basis) [(=P9.2)]
+### P9.2 Local tangent frames (projection basis) ([=P9.2])
 
 For node i, compute a weighted covariance of neighbor displacements:
 
@@ -873,7 +873,7 @@ Let U_i be the top-m eigenvectors of C_i. U_i is the local tangent basis.
 
 This is the standard "local PCA / local tangent space" idea used in manifold learning (e.g., LTSA-style pipelines).
 
-### P9.3 Discrete parallel transport via connection Laplacian (solves the translation dragon) [(=P9.3)]
+### P9.3 Discrete parallel transport via connection Laplacian (solves the translation dragon) ([=P9.3])
 
 Local frames alone do not let you compare directions across distant nodes; you need transport.
 
@@ -898,7 +898,7 @@ This operator generalizes scalar Laplacians to vector fields and supports:
 * constructing near-parallel coordinates
 * defining vector-diffusion distances
 
-### P9.4 Vector-diffusion distance (optional) [(=P9.4)]
+### P9.4 Vector-diffusion distance (optional) ([=P9.4])
 
 Use top eigenpairs of a normalized connection Laplacian (VDM) to embed nodes so that both proximity and alignment are captured.
 
@@ -906,7 +906,7 @@ This provides a principled "wormhole" signal:
 
 * nodes that are not structurally adjacent can be geometrically close if a consistent transport exists.
 
-### P9.5 Field blending (control, not topology) [(=P9.5)]
+### P9.5 Field blending (control, not topology) ([=P9.5])
 
 Primitive scalar fields include:
 
@@ -930,11 +930,11 @@ The composite field guides traversal and scheduling; it never directly mutates W
 
 ---
 
-### P9I3 — Blends are reversible (=[P9]) [(=P9I3)]
+### P9I3 — Blends are reversible (@[=P9]) ([=P9I3])
 
 No blend may become the only representation of its primitives. `BlendRecipe` must be explicit and all primitives remain computable.
 
-### P9I4 — No force becomes law silently (=[P9]) [(=P9I4)]
+### P9I4 — No force becomes law silently (@[=P9]) ([=P9I4])
 
 Fields may guide traversal and scheduling.
 

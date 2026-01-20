@@ -1,4 +1,4 @@
-### Algorithm 39: Factor learning in sleep [(=Algorithm 39)]
+### Algorithm 39: Factor learning in sleep ([=Algorithm 39])
 
 ```pseudo
 function LEARN_FACTORS(epoch e):
@@ -9,7 +9,7 @@ function LEARN_FACTORS(epoch e):
 
 Basis: sparse coding style factorization.
 
-### D24 FactorDictionary [(=D24)]
+### D24 FactorDictionary ([=D24])
 
 Sparse factor basis for canonical embeddings.
 
@@ -26,7 +26,7 @@ FactorDictionary {
 }
 ```
 
-## D32 Coordinate system [(=D32)]
+## D32 Coordinate system ([=D32])
 
 A named vector space plus its mapping to a canonical space.
 
@@ -40,7 +40,7 @@ CoordSystem {
 }
 ```
 
-## D33 Adapter map [(=D33)]
+## D33 Adapter map ([=D33])
 
 A transform between spaces.
 
@@ -58,7 +58,7 @@ AdapterMap {
 
 Multi-view alignment and fusion is a standard frame for coordinating multiple embedding spaces.
 
-### D62 AdapterCandidate [(=D62)]
+### D62 AdapterCandidate ([=D62])
 
 ```text
 AdapterCandidate {
@@ -73,16 +73,16 @@ AdapterCandidate {
 }
 ```
 
-## G21 Computable directions across coordinate systems [(=G21)]
+## G21 Computable directions across coordinate systems ([=G21])
 
 * Every token type has one or more embedding spaces.
 * Traversal and matching use explicit coordinate transforms, so math stays consistent as you move across token types and domains.
 
-## G28 Multi-coordinate adapters are governable [(=G28)]
+## G28 Multi-coordinate adapters are governable ([=G28])
 
 * Adapters are versioned, canaried, drift-detected, rolled back.
 
-### Lean12 Distance preservation under orthogonal maps [(=Lean12)]
+### Lean12 Distance preservation under orthogonal maps ([=Lean12])
 
 ```lean
 import Mathlib.LinearAlgebra.Matrix.Orthogonal
@@ -104,7 +104,7 @@ theorem orthogonal_preserves_norm
 end CoordMaps
 ```
 
-## P5.3 Multi-coordinate embeddings as a bundle with a canonical field [(=P5.3)]
+## P5.3 Multi-coordinate embeddings as a bundle with a canonical field ([=P5.3])
 
 Each token (i) can have observations from multiple coordinate systems (v \in \mathcal{V}(i)):
 
@@ -131,18 +131,18 @@ Canonical field solve per hypothesis stays the same Laplacian style objective, n
 
 Multi-view alignment and fusion is a standard concept, including correlation-based alignment like CCA and mapping-based approaches like Procrustes.
 
-## P5.4 Adapter learning [(=P5.4)]
+## P5.4 Adapter learning ([=P5.4])
 
 Two practical adapter forms:
 
-### P6.5 Adapter drift detection [(=P6.5)]
+### P6.5 Adapter drift detection ([=P6.5])
 
 Monitor an online error series (E_t) for an adapter, like retrieval regression or alignment loss.
 Use adaptive-window drift detection for change points.
 
 ---
 
-## P8.3 Direction disentanglement in your system [(=P8.3)]
+## P8.3 Direction disentanglement in your system ([=P8.3])
 
 **Option A: Sparse autoencoder or dictionary learning on canonical embeddings**
 

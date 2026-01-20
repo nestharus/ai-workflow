@@ -1,4 +1,4 @@
-### Algorithm 29: Connectivity guard and bridge repair [(=Algorithm 29)]
+### Algorithm 29: Connectivity guard and bridge repair ([=Algorithm 29])
 
 ```pseudo
 function ON_GATE_CHANGE(epoch e, updates U):
@@ -12,15 +12,15 @@ function ON_GATE_CHANGE(epoch e, updates U):
 
 Small-world connectivity is the target pattern.
 
-## Comp2 Graph Store [(=Comp2)]
+## Comp2 Graph Store ([=Comp2])
 
-## Comp20 Traversal Planner [(=Comp20)]
+## Comp20 Traversal Planner ([=Comp20])
 
-## Comp29 Connectivity Monitor + Bridge Synthesizer (CONN) [(=Comp29)]
+## Comp29 Connectivity Monitor + Bridge Synthesizer (CONN) ([=Comp29])
 
-## Comp6 Edge Validator [(=Comp6)]
+## Comp6 Edge Validator ([=Comp6])
 
-## D1 Node [(=D1)]
+## D1 Node ([=D1])
 
 ```
 Node {
@@ -37,7 +37,7 @@ Node {
 }
 ```
 
-## D13 EdgeBelief additions [(=D13)]
+## D13 EdgeBelief additions ([=D13])
 
 Robust weighting is explicit and per hypothesis.
 
@@ -51,7 +51,7 @@ EdgeBelief {
 }
 ```
 
-## D2 Edge [(=D2)]
+## D2 Edge ([=D2])
 
 ```
 Edge {
@@ -63,14 +63,14 @@ Edge {
 }
 ```
 
-## D3 Graph [(=D3)]
+## D3 Graph ([=D3])
 
 Use a typed, weighted multigraph.
 
 * Active tiers in RAM: adjacency lists per node, plus per-edge type partitions.
 * Inactive tier on disk: LSM-backed edge table keyed by (src, type, dst).
 
-### D60 ConnectivityState [(=D60)]
+### D60 ConnectivityState ([=D60])
 
 ```text
 ConnectivityState {
@@ -82,7 +82,7 @@ ConnectivityState {
 }
 ```
 
-### D8 EdgeBelief [(=D8)]
+### D8 EdgeBelief ([=D8])
 
 Edge weights become beliefs with provenance and status.
 
@@ -106,12 +106,12 @@ Effective smoothing weight:
 
 * `w_eff = w_base * g`
 
-## G26 Graph stays traversable [(=G26)]
+## G26 Graph stays traversable ([=G26])
 
 * Gating, retraction, and poison containment keep redundant paths and preserve reachability.
 * Small-world mesh targets guide bridge redundancy.
 
-### P6.4 Connectivity targets [(=P6.4)]
+### P6.4 Connectivity targets ([=P6.4])
 
 Define a cluster graph (H) whose nodes are communities in (G).
 Target: small-world style redundancy, keep average path length low and maintain multiple inter-cluster bridges.
