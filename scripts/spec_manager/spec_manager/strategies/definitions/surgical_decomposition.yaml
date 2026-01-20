@@ -1,0 +1,51 @@
+name: surgical_decomposition
+version: "2.0"
+purpose: Surgically decompose prose into structured forms with full traceability and classification
+risk_addressed: Information loss during decomposition - every byte must be accounted for
+
+phases:
+  - decomposition
+  - cleaning
+  - classification
+  - linking
+
+when_conditions:
+  - has_prose_units
+  - coverage_tracking_enabled
+
+tools_used:
+  - surgeon_agent
+  - coverage_tracker
+
+implementation_class: spec_manager.strategies.implementations.surgical.SurgicalDecompositionStrategy
+
+operations:
+  - check_mobility     # Can fragment move independently?
+  - resolve_reference  # Resolve pronouns (it → a)
+  - resolve_order_dependency  # Resolve sequence (then → After [ID])
+  - annotate_dependency  # Add ([=ID]) to make referenceable
+  - split              # Split compound into atoms
+  - compose            # Compose multiple fragments into projection
+  - project            # Translate to structured form
+  - classify           # Route to library/evidence/gap/decision/discard
+  - link               # Establish relationships (inv → spec → evidence → decision)
+
+destinations:
+  - library    # Concrete specifications (algorithm, data structure, UX, invariant)
+  - evidence   # Supporting proofs (math, formal verification)
+  - gap        # Underspecifications needing resolution
+  - decision   # Tradeoff rationale (why X over Y)
+  - discard    # Noise (self-justification, adds nothing)
+
+relationships:
+  - spec_to_invariant  # Spec element satisfies invariant
+  - evidence_for       # Evidence proves spec is correct
+  - decision_for       # Decision justifies spec approach
+
+example:
+  input: |
+    a is red. it is also blue. that makes it happy.
+  output: |
+    Fragment 1: "a is red" -> PROJECTED to invariant (library)
+    Fragment 2: "a is also blue" -> PROJECTED to invariant (after resolving "it" -> "a")
+    Fragment 3: "that makes a happy" -> GAP (ambiguous: what is "that"?)

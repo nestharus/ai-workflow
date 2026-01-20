@@ -1,0 +1,148 @@
+{
+  "spec_folder": "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/test-spec-v3",
+  "created_at": "2026-01-19T22:37:04.483802",
+  "current_phase": "verification",
+  "phases": {
+    "staging": {
+      "phase": "staging",
+      "status": "completed",
+      "started_at": "2026-01-19T22:37:04.516662",
+      "completed_at": "2026-01-19T22:37:04.522783",
+      "error": null,
+      "outputs": {
+        "total_issues": 2,
+        "error_count": 0
+      },
+      "issues": [
+        {
+          "line_number": 14,
+          "line_text": "ce_id: reference to D2",
+          "category": "unannotated_reference",
+          "message": "Reference to D2 may need (@[+D2]) annotation",
+          "severity": "info",
+          "suggestion": null
+        },
+        {
+          "line_number": 16,
+          "line_text": "pipeline defined in Algorithm 1.",
+          "category": "unannotated_reference",
+          "message": "Reference to Algorithm 1 may need (@[+Algorithm 1]) annotation",
+          "severity": "info",
+          "suggestion": null
+        }
+      ]
+    },
+    "planning": {
+      "phase": "planning",
+      "status": "completed",
+      "started_at": "2026-01-19T22:37:04.540179",
+      "completed_at": "2026-01-19T22:37:04.580405",
+      "error": null,
+      "outputs": {
+        "id_comparison": {
+          "in_both": 3,
+          "only_in_source": [],
+          "only_in_target": [
+            "Algorithm 2",
+            "Algorithm 3",
+            "Algorithm 4",
+            "Algorithm 5",
+            "D3",
+            "D4",
+            "D5",
+            "G1",
+            "G2"
+          ]
+        },
+        "missing_in_registry": [],
+        "missing_in_libraries": [],
+        "sequence_issues": [],
+        "batches": [],
+        "conflicts": [],
+        "has_blocking_issues": false
+      },
+      "issues": []
+    },
+    "merging": {
+      "phase": "merging",
+      "status": "completed",
+      "started_at": "2026-01-19T22:37:04.593355",
+      "completed_at": "2026-01-19T22:37:04.632987",
+      "error": null,
+      "outputs": {
+        "dry_run": true,
+        "actions_planned": 1,
+        "actions_applied": 0,
+        "errors": [],
+        "success": true
+      },
+      "issues": []
+    },
+    "verification": {
+      "phase": "verification",
+      "status": "completed",
+      "started_at": "2026-01-19T22:37:04.648371",
+      "completed_at": "2026-01-19T22:37:04.693318",
+      "error": null,
+      "outputs": {
+        "is_valid": true,
+        "total_issues": 0,
+        "content_mismatches": [],
+        "duplicates": [],
+        "empty_stubs": [],
+        "assignment_issues": []
+      },
+      "issues": []
+    }
+  },
+  "inputs": [
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/test-spec-v3/inputs/p1.md"
+  ],
+  "processed": [],
+  "ambiguous_inputs": [
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/test-spec-v3/inputs/that-feature.md",
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/test-spec-v3/inputs/this-feature.md"
+  ],
+  "history": [
+    {
+      "timestamp": "2026-01-19T22:37:04.516672",
+      "event": "phase_started",
+      "phase": "staging"
+    },
+    {
+      "timestamp": "2026-01-19T22:37:04.522793",
+      "event": "phase_completed",
+      "phase": "staging"
+    },
+    {
+      "timestamp": "2026-01-19T22:37:04.540189",
+      "event": "phase_started",
+      "phase": "planning"
+    },
+    {
+      "timestamp": "2026-01-19T22:37:04.580417",
+      "event": "phase_completed",
+      "phase": "planning"
+    },
+    {
+      "timestamp": "2026-01-19T22:37:04.593365",
+      "event": "phase_started",
+      "phase": "merging"
+    },
+    {
+      "timestamp": "2026-01-19T22:37:04.633017",
+      "event": "phase_completed",
+      "phase": "merging"
+    },
+    {
+      "timestamp": "2026-01-19T22:37:04.648380",
+      "event": "phase_started",
+      "phase": "verification"
+    },
+    {
+      "timestamp": "2026-01-19T22:37:04.693329",
+      "event": "phase_completed",
+      "phase": "verification"
+    }
+  ]
+}

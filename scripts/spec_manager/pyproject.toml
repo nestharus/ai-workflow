@@ -1,0 +1,20 @@
+[project]
+name = "spec-manager"
+version = "1.0.0"
+description = "General-purpose specification management library"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+spec-manager = "spec_manager.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+# Use project-local venv
+managed = true

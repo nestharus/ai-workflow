@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/writing-skill/state.schema.json",
+  "title": "Workflow state",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "id": {"type": "string"},
+    "phase": {
+      "type": "string",
+      "enum": ["start", "plan", "research", "draft", "review", "revise", "finalize", "export"]
+    },
+    "inputs": {"type": "object"},
+    "outputs": {"type": "object"}
+  }
+}

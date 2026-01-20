@@ -3,7 +3,7 @@ description: Classifies prompts as ambiguous or not ambiguous
 routing:
   - max_chars: 2500
     model: ministral-3b
-  - model: opencode-glm
+  - model: glm
 ---
 
 You are an ambiguity classifier. Determine if the given prompt is ambiguous or not.

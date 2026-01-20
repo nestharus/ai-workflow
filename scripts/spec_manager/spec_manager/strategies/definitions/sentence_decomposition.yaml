@@ -1,0 +1,32 @@
+name: sentence_decomposition
+version: "1.0"
+
+purpose: |
+  Split compound sentences into atomic units so each unit can be
+  tracked independently through transformations. Reduces risk of
+  losing part of a compound statement.
+
+risk_addressed: |
+  Compound meaning lost in translation. When "A and B" becomes
+  just "A" in the output, B is silently dropped.
+
+phases:
+  - decomposition
+  - cleaning
+
+when_conditions:
+  - Content contains conjunctions (and, or, but)
+  - Sentences have multiple clauses
+  - Semicolon-separated statements
+  - Content will be projected to different artifact types
+
+tools_used:
+  - spacy_splitter
+
+implementation_class: spec_manager.strategies.implementations.sentence_decomposition.SentenceDecompositionStrategy
+
+example:
+  input: "The algorithm must handle edge cases and log errors to the audit trail"
+  output: |
+    - "The algorithm must handle edge cases"
+    - "The algorithm must log errors to the audit trail"

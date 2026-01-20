@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat AGENTS.md"
+            "command": "cat \"$PWD/AGENTS.md\""
           }
         ]
       }

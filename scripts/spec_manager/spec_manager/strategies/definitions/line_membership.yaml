@@ -1,0 +1,25 @@
+name: line_membership
+version: "1.0"
+
+purpose: |
+  Track source-to-target line mapping to ensure every line is
+  accounted for (either mapped or explicitly dropped).
+
+risk_addressed: |
+  Lines dropped without notice during transformation. The
+  membership guarantee ensures we know where every line went.
+
+phases:
+  - verification
+  - cleaning
+
+when_conditions:
+  - Transforming content between representations
+  - Merging multiple sources
+  - Any operation that changes line structure
+
+tools_used:
+  - line_comparator
+  - diff_tool
+
+implementation_class: null  # Implemented via CoverageVerificationStrategy

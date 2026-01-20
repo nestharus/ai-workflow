@@ -1,0 +1,91 @@
+{
+  "spec_folder": "../../.tasks/plans/qa-gen3-test",
+  "created_at": "2026-01-20T04:54:41.302734",
+  "current_phase": "staging",
+  "phases": {
+    "staging": {
+      "phase": "staging",
+      "status": "in_progress",
+      "started_at": "2026-01-20T05:19:39.621900",
+      "completed_at": "2026-01-20T04:54:45.469534",
+      "error": null,
+      "outputs": {
+        "total_passes": 3,
+        "input_units": 91,
+        "output_units": 710,
+        "strategies_used": [
+          "sentence_decomposition"
+        ],
+        "converged": true,
+        "evolution_triggers": [
+          "prose_stuck: 100.0% -> 100.0%"
+        ]
+      },
+      "issues": [
+        {
+          "category": "strategy_gap",
+          "message": "Strategy gap: prose_stuck: 100.0% -> 100.0% (629 units)",
+          "severity": "warning"
+        }
+      ]
+    },
+    "planning": {
+      "phase": "planning",
+      "status": "not_started",
+      "started_at": null,
+      "completed_at": null,
+      "error": null,
+      "outputs": {},
+      "issues": []
+    },
+    "merging": {
+      "phase": "merging",
+      "status": "not_started",
+      "started_at": null,
+      "completed_at": null,
+      "error": null,
+      "outputs": {},
+      "issues": []
+    },
+    "verification": {
+      "phase": "verification",
+      "status": "not_started",
+      "started_at": null,
+      "completed_at": null,
+      "error": null,
+      "outputs": {},
+      "issues": []
+    }
+  },
+  "inputs": [
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/qa-gen3-test/patches/p0.md",
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/qa-gen3-test/patches/p1.md",
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/qa-gen3-test/patches/p2.md",
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/qa-gen3-test/patches/p4.md",
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/qa-gen3-test/patches/p5.md",
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/qa-gen3-test/patches/p6.md",
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/qa-gen3-test/patches/p7.md",
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/qa-gen3-test/patches/p8.md",
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/qa-gen3-test/patches/p9.md",
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/qa-gen3-test/patches/p10.md"
+  ],
+  "processed": [],
+  "ambiguous_inputs": [],
+  "history": [
+    {
+      "timestamp": "2026-01-20T04:54:45.231026",
+      "event": "phase_started",
+      "phase": "staging"
+    },
+    {
+      "timestamp": "2026-01-20T04:54:45.469547",
+      "event": "phase_completed",
+      "phase": "staging"
+    },
+    {
+      "timestamp": "2026-01-20T05:19:39.621909",
+      "event": "phase_started",
+      "phase": "staging"
+    }
+  ]
+}

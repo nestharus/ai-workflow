@@ -1,0 +1,27 @@
+name: entity_resolution
+version: "1.0"
+
+purpose: |
+  Resolve vague references like "the algorithm" or "patch this"
+  to specific IDs. Uses context from surrounding content and
+  previous patches.
+
+risk_addressed: |
+  Vague references make it unclear what is being modified.
+  "Patch the relaxation algorithm" - which one? Without resolution,
+  changes might be applied to wrong element.
+
+phases:
+  - resolution
+
+when_conditions:
+  - Content contains vague references ("the algorithm", "this")
+  - Patch references another patch without specific IDs
+  - Pronouns refer to previous content
+
+tools_used:
+  - context_analyzer
+  - id_matcher
+  - reference_resolver
+
+implementation_class: null  # Uses EntityResolver directly, not a Strategy subclass

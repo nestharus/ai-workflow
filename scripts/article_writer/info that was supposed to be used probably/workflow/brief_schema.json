@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/writing-skill/brief.schema.json",
+  "title": "Writing brief",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "topic": {"type": "string"},
+    "objective": {"type": "string"},
+    "venue": {"type": "string"},
+    "reach_goal": {"type": "string", "enum": ["depth", "breadth", "conversion", ""], "default": ""},
+    "audience": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "primary": {"type": "string"},
+        "topic_knowledge": {"type": "string", "enum": ["general", "intermediate", "expert", ""], "default": ""},
+        "backgrounds": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "piece_type": {"type": "string"},
+    "constraints": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "target_word_count": {"type": ["integer", "null"], "minimum": 0},
+        "include_citations": {"type": "boolean", "default": false}
+      }
+    }
+  }
+}

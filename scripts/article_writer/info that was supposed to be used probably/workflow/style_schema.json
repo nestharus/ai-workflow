@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/writing-skill/style.schema.json",
+  "title": "Style guide",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "name": {"type": "string"},
+    "description": {"type": "string"},
+    "voice": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "tone": {"type": "integer", "minimum": 0, "maximum": 10},
+        "humor": {"type": "integer", "minimum": 0, "maximum": 10},
+        "opinion": {"type": "integer", "minimum": 0, "maximum": 10},
+        "technical": {"type": "integer", "minimum": 0, "maximum": 10}
+      }
+    },
+    "formatting": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "emojis": {"type": "integer", "minimum": 0, "maximum": 10},
+        "em_dashes": {"type": "integer", "minimum": 0, "maximum": 10},
+        "blockquotes": {"type": "string", "enum": ["never", "rare", "occasional", "frequent"]}
+      }
+    },
+    "structure": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "opening": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["direct", "contextual", "narrative", "tension"]}
+        },
+        "closing": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["summary", "call_to_action", "open_question", "callback", "provocation", "key_takeaways"]}
+        },
+        "visual_breaks": {"type": "string", "enum": ["minimal", "moderate", "generous"]},
+        "examples": {"type": "string", "enum": ["none", "some", "many"]},
+        "example_types": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["lists", "tables", "diagrams", "code_snippets", "quotes", "case_studies"]}
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "author_role": {"type": "string"},
+        "author_topic_knowledge": {"type": "integer", "minimum": 0, "maximum": 10},
+        "audience_role": {"type": "string"},
+        "audience_topic_knowledge": {"type": "integer", "minimum": 0, "maximum": 10},
+        "author_relationship_to_audience": {"type": "integer", "minimum": 0, "maximum": 10}
+      }
+    }
+  }
+}

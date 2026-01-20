@@ -1,0 +1,240 @@
+{
+  "spec_folder": "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/test-spec-v2",
+  "created_at": "2026-01-19T21:44:11.655753",
+  "current_phase": "verification",
+  "phases": {
+    "staging": {
+      "phase": "staging",
+      "status": "completed",
+      "started_at": "2026-01-19T21:44:43.557398",
+      "completed_at": "2026-01-19T21:44:43.563726",
+      "error": null,
+      "outputs": {
+        "total_issues": 8,
+        "error_count": 0
+      },
+      "issues": [
+        {
+          "line_number": 80,
+          "line_text": "function depends on D3 config. Different s",
+          "category": "unannotated_reference",
+          "message": "Reference to D3 may need (@[+D3]) annotation",
+          "severity": "info",
+          "suggestion": null
+        },
+        {
+          "line_number": 99,
+          "line_text": "d letter queue like D5.",
+          "category": "unannotated_reference",
+          "message": "Reference to D5 may need (@[+D5]) annotation",
+          "severity": "info",
+          "suggestion": null
+        },
+        {
+          "line_number": 101,
+          "line_text": "Actually D5 isn't defined yet. ",
+          "category": "unannotated_reference",
+          "message": "Reference to D5 may need (@[+D5]) annotation",
+          "severity": "info",
+          "suggestion": null
+        },
+        {
+          "line_number": 106,
+          "line_text": "inal_event (copy of D1)",
+          "category": "unannotated_reference",
+          "message": "Reference to D1 may need (@[+D1]) annotation",
+          "severity": "info",
+          "suggestion": null
+        },
+        {
+          "line_number": 120,
+          "line_text": "over limit: move to D5",
+          "category": "unannotated_reference",
+          "message": "Reference to D5 may need (@[+D5]) annotation",
+          "severity": "info",
+          "suggestion": null
+        },
+        {
+          "line_number": 122,
+          "line_text": "onflicts a bit with G2 - at-least-once mea",
+          "category": "unannotated_reference",
+          "message": "Reference to G2 may need (@[+G2]) annotation",
+          "severity": "info",
+          "suggestion": null
+        },
+        {
+          "line_number": 123,
+          "line_text": "able max_retries in D3?",
+          "category": "unannotated_reference",
+          "message": "Reference to D3 may need (@[+D3]) annotation",
+          "severity": "info",
+          "suggestion": null
+        },
+        {
+          "line_number": 161,
+          "line_text": "Depends on Algorithm 5 working correctly a",
+          "category": "unannotated_reference",
+          "message": "Reference to Algorithm 5 may need (@[+Algorithm 5]) annotation",
+          "severity": "info",
+          "suggestion": null
+        }
+      ]
+    },
+    "planning": {
+      "phase": "planning",
+      "status": "completed",
+      "started_at": "2026-01-19T21:44:43.579820",
+      "completed_at": "2026-01-19T21:44:43.615380",
+      "error": null,
+      "outputs": {
+        "id_comparison": {
+          "in_both": 13,
+          "only_in_source": [],
+          "only_in_target": []
+        },
+        "missing_in_registry": [],
+        "missing_in_libraries": [
+          "Algorithm 1",
+          "Algorithm 2",
+          "Algorithm 3",
+          "Algorithm 4",
+          "Algorithm 5",
+          "D1",
+          "D2",
+          "D3",
+          "D5",
+          "G1",
+          "G2",
+          "G3",
+          "G4"
+        ],
+        "sequence_issues": [],
+        "batches": [
+          {
+            "id": "extract_1",
+            "description": "Extract 4 IDs to data",
+            "ids": [
+              "D1",
+              "D2",
+              "D3",
+              "D5"
+            ],
+            "operation": "extract",
+            "source_library": null,
+            "target_library": "data",
+            "priority": 1
+          },
+          {
+            "id": "extract_2",
+            "description": "Extract 5 IDs to algorithms",
+            "ids": [
+              "Algorithm 1",
+              "Algorithm 2",
+              "Algorithm 3",
+              "Algorithm 4",
+              "Algorithm 5"
+            ],
+            "operation": "extract",
+            "source_library": null,
+            "target_library": "algorithms",
+            "priority": 1
+          },
+          {
+            "id": "extract_3",
+            "description": "Extract 4 IDs to goals",
+            "ids": [
+              "G1",
+              "G2",
+              "G3",
+              "G4"
+            ],
+            "operation": "extract",
+            "source_library": null,
+            "target_library": "goals",
+            "priority": 1
+          }
+        ],
+        "conflicts": [],
+        "has_blocking_issues": false
+      },
+      "issues": []
+    },
+    "merging": {
+      "phase": "merging",
+      "status": "completed",
+      "started_at": "2026-01-19T21:44:43.630218",
+      "completed_at": "2026-01-19T21:44:43.680246",
+      "error": null,
+      "outputs": {
+        "dry_run": false,
+        "actions_planned": 13,
+        "actions_applied": 13,
+        "errors": [],
+        "success": true
+      },
+      "issues": []
+    },
+    "verification": {
+      "phase": "verification",
+      "status": "completed",
+      "started_at": "2026-01-19T21:44:43.694098",
+      "completed_at": "2026-01-19T21:44:43.729035",
+      "error": null,
+      "outputs": {
+        "is_valid": true,
+        "total_issues": 0,
+        "content_mismatches": [],
+        "duplicates": [],
+        "empty_stubs": [],
+        "assignment_issues": []
+      },
+      "issues": []
+    }
+  },
+  "inputs": [
+    "/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/test-spec-v2/initial-design.md"
+  ],
+  "processed": [],
+  "history": [
+    {
+      "timestamp": "2026-01-19T21:44:43.557406",
+      "event": "phase_started",
+      "phase": "staging"
+    },
+    {
+      "timestamp": "2026-01-19T21:44:43.563737",
+      "event": "phase_completed",
+      "phase": "staging"
+    },
+    {
+      "timestamp": "2026-01-19T21:44:43.579830",
+      "event": "phase_started",
+      "phase": "planning"
+    },
+    {
+      "timestamp": "2026-01-19T21:44:43.615391",
+      "event": "phase_completed",
+      "phase": "planning"
+    },
+    {
+      "timestamp": "2026-01-19T21:44:43.630227",
+      "event": "phase_started",
+      "phase": "merging"
+    },
+    {
+      "timestamp": "2026-01-19T21:44:43.680256",
+      "event": "phase_completed",
+      "phase": "merging"
+    },
+    {
+      "timestamp": "2026-01-19T21:44:43.694105",
+      "event": "phase_started",
+      "phase": "verification"
+    },
+    {
+      "timestamp": "2026-01-19T21:44:43.729045",
+      "event": "phase_completed",
+      "phase": "verification"
+    }
+  ]
+}
