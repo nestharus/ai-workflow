@@ -31,14 +31,11 @@ class Label:
 # Regex patterns for extracting labels
 PATTERNS = {
     'goal': [
-        r'^\*{0,2}(G\d+)[.\s*]',  # G6, G17, **G42**
         r'^#+\s*\*{0,2}(G\d+)',   # ## G6, ### **G17**
     ],
     'invariant': [
         r'^\*{0,2}(P\d+I\d+)',    # P4I1, **P6I2**
         r'^#+\s*\*{0,2}(P\d+I\d+)',
-        r'^\*{0,2}(I\d+)\s',      # Legacy P1: I1, I2 (without patch prefix)
-        r'^#+\s*(I\d+)\s',
     ],
     'claim': [
         r'^\*{0,2}(P\d+C\d+)',    # P1C1, P5C3
@@ -46,11 +43,9 @@ PATTERNS = {
     ],
     'math': [
         r'^#+\s*(P\d+\.\d+)',     # ## P1.1, ## P6.3
-        r'^#+\s*(P\d+\.M\d+)',    # ## P10.M1 (variant)
     ],
     'algorithm': [
         r'^#+\s*(Algorithm\s*\d+)',  # ## Algorithm 6
-        r'^#+\s*(P\d+\.\d+)',        # Legacy P1: ### P1.1 (in algorithms section)
     ],
     'gap': [
         r'^#+\s*(Gap\s+G\d+\.\d+)',  # ### Gap G2.1
@@ -60,7 +55,6 @@ PATTERNS = {
     ],
     'lean': [
         r'^#+\s*(Lean\s*\d+)',       # ## Lean 1
-        r'^#+\s*(Track\s*[A-Z])',    # Legacy P1: ### Track A
     ],
     'data_structure': [
         r'^##\s+([A-Z][a-zA-Z]+(?:Record|State|Belief|View|Graph|Event|Seed|Token|Budget|Workspace|Message|Capsule|Manifest|Fingerprint)?)\s*$',
@@ -76,8 +70,6 @@ def normalize_label(raw: str) -> str:
     normalized = re.sub(r'Algorithm\s+', 'Algorithm', normalized)
     # Normalize "Lean 1" to "Lean1"
     normalized = re.sub(r'Lean\s+', 'Lean', normalized)
-    # Normalize "Track A" to "TrackA"
-    normalized = re.sub(r'Track\s+', 'Track', normalized)
     # Normalize "Gap G2.1" to "GapG2.1"
     normalized = re.sub(r'Gap\s+', 'Gap', normalized)
     return normalized
@@ -110,12 +102,6 @@ def extract_labels(file_path: Path) -> List[Label]:
                     if category == 'data_structure':
                         # Skip common words that aren't data structures
                         if raw_label.lower() in {'the', 'this', 'that', 'when', 'where', 'what', 'patch', 'scope', 'notes'}:
-                            continue
-
-                    # Handle algorithm detection in correct section
-                    if category == 'algorithm' and 'P' in raw_label:
-                        # P#.# format - only count as algorithm if in algorithms section
-                        if 'algorithm' not in current_section.lower():
                             continue
 
                     labels.append(Label(
@@ -200,15 +186,18 @@ def main():
         print("       python check_gaps.py --all")
         sys.exit(1)
 
-    base_dir = Path(__file__).parent
+    base_dir = Path(__file__).resolve().parents[1]
+    patch_dir = base_dir / "patches"
     applied_path = base_dir / "applied.md"
 
     if sys.argv[1] == "--all":
         # Check all patch files
-        patch_files = sorted(base_dir.glob("p*.md"))
-        patch_files = [p for p in patch_files if p.name != "pattern_spec.md"]
+        patch_files = sorted(patch_dir.glob("p*.md"))
     else:
-        patch_files = [base_dir / sys.argv[1]]
+        patch_arg = Path(sys.argv[1])
+        if not patch_arg.is_absolute():
+            patch_arg = patch_dir / patch_arg
+        patch_files = [patch_arg]
 
     for patch_path in patch_files:
         if not patch_path.exists():

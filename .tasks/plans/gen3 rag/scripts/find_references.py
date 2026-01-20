@@ -217,7 +217,7 @@ def main():
     """Main entry point."""
     import sys
 
-    plan_file = Path(__file__).parent / 'plan.md'
+    plan_file = Path(__file__).resolve().parents[1] / 'plan.md'
 
     if not plan_file.exists():
         print(f"Error: {plan_file} not found")

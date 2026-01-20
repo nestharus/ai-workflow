@@ -103,7 +103,7 @@ def main() -> int:
     parser.add_argument(
         "--base",
         type=Path,
-        default=Path(__file__).parent,
+        default=Path(__file__).resolve().parents[1],
         help="Base directory (defaults to this script's directory)",
     )
     parser.add_argument(

@@ -69,11 +69,9 @@ def extract_sequences(lines: list[str]) -> dict[str, list[tuple[int, int, str, s
         match = re.search(r'\bG(\d+)\b', line)
         if match:
             is_header = re.match(r'^#{1,3}\s', line)
-            is_bold = re.match(r'^\*\*G\d+', line)
-            is_numbered = re.match(r'^G\d+\.', line)
             is_gap = 'Gap G' in line
 
-            if is_header or is_bold or is_numbered:
+            if is_header:
                 num = int(match.group(1))
                 content = get_section_content(lines, i) if is_header else line
 
@@ -239,7 +237,7 @@ def analyze_sequence(name: str, items: list[tuple[int, int, str, str]]) -> dict:
 
 
 def main():
-    base = Path(__file__).parent
+    base = Path(__file__).resolve().parents[1]
     plan_path = base / "plan.md"
 
     content = plan_path.read_text(encoding='utf-8')

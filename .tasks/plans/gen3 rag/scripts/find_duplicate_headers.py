@@ -116,7 +116,7 @@ def validate_patterns(headers: list[Header]) -> dict[str, list[Header]]:
 
 
 def main():
-    plan_path = Path(__file__).parent / "plan.md"
+    plan_path = Path(__file__).resolve().parents[1] / "plan.md"
     content = plan_path.read_text(encoding='utf-8')
 
     headers = extract_headers(content)

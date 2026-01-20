@@ -92,7 +92,7 @@ def extract_declared_ids(lines: list[str]) -> set[str]:
 
 
 def main() -> None:
-    base = Path(__file__).parent
+    base = Path(__file__).resolve().parents[1]
     plan_path = base / "plan.md"
     libs_dir = base / "libraries"
     libs_md = base / "libs.md"

@@ -84,7 +84,7 @@ def parse_plan_headers(filepath: Path) -> list[Entry]:
 
         # Remove # prefix and any annotations like ([=P1]) or (@[=P1])
         clean = re.sub(r'^#+\s*', '', line)
-        clean = re.sub(r'\s*\([=+@]\[[^\]]+\]\)\s*', ' ', clean).strip()
+        clean = re.sub(r'\s*\((?:@\[[=+][^\]]+\]|\[=[^\]]+\])\)\s*', ' ', clean).strip()
 
         # Try to extract ID and label
         # Patterns: "ID Label", "ID: Label", "ID - Label"
@@ -112,7 +112,7 @@ def parse_plan_headers(filepath: Path) -> list[Entry]:
 
 
 def main():
-    base = Path(__file__).parent
+    base = Path(__file__).resolve().parents[1]
     plan_path = base / "plan.md"
     libs_path = base / "libs.md"
 

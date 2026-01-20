@@ -14,7 +14,7 @@ def get_plan_headers(content: str) -> list[tuple[int, str, str]]:
         match = re.match(r'^(#{2,3})\s+(.+)$', line)
         if match:
             level = match.group(1)
-            text = re.sub(r'\([=+@]\[[^\]]+\]\)', '', match.group(2)).strip()
+            text = re.sub(r'\((?:@\[[=+][^\]]+\]|\[=[^\]]+\])\)', '', match.group(2)).strip()
             headers.append((i + 1, level, text))
     return headers
 
@@ -30,7 +30,7 @@ def get_libs_elements(content: str) -> set[str]:
 
 
 def main():
-    base = Path(__file__).parent
+    base = Path(__file__).resolve().parents[1]
     plan_content = (base / "plan.md").read_text(encoding='utf-8')
     libs_content = (base / "libs.md").read_text(encoding='utf-8')
 
