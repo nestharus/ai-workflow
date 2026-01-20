@@ -70,3 +70,6 @@ out/
 *.duckdb
 *.duckdb.wal
 to_adapt/
+
+# Auto Claude data directory
+.auto-claude/
