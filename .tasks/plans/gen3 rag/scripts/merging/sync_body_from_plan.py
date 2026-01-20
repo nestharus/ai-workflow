@@ -4,9 +4,12 @@ Sync body content from plan.md to library files.
 For each section that exists in both, replace library body with plan body.
 """
 
+from __future__ import annotations
+
+import argparse
 import re
-from pathlib import Path
 from difflib import SequenceMatcher
+from pathlib import Path
 
 
 # Legal ID patterns (for ([=ID]) declarations)
@@ -21,8 +24,10 @@ ID_PATTERNS_LEGAL = [
     r'P\d+I\d+',
     r'P\d+C\d+',
     r'P\d+\.\d+',
+    r'P\d+',
     r'Lean\d+',
     r'NFG\d+',
+    r'Gap G\d+\.\d+',
 ]
 
 # Annotation pattern for declarations: ([=ID])
@@ -78,7 +83,31 @@ def normalize_body(body):
     return '\n'.join(lines)
 
 
-def main():
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Sync library section bodies to match plan.md.",
+    )
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write changes to library files (default: dry-run).",
+    )
+    mode_group.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would change without writing (default).",
+    )
+    parser.add_argument(
+        "--min-similarity",
+        type=float,
+        default=0.50,
+        help="Minimum similarity ratio to sync (default: 0.50).",
+    )
+    args = parser.parse_args()
+    apply_changes = args.apply
+    min_similarity = args.min_similarity
+
     base = Path(__file__).resolve().parents[2]
     plan_path = base / "plan.md"
     libs_dir = base / "libraries"
@@ -91,6 +120,9 @@ def main():
     print("Extracting sections from plan.md...")
     plan_sections = extract_sections_by_annotation(plan_lines)
     print(f"Found {len(plan_sections)} sections in plan.md\n")
+
+    if not apply_changes:
+        print("DRY RUN: pass --apply to write changes.\n")
 
     total_synced = 0
     total_identical = 0
@@ -131,14 +163,18 @@ def main():
                 continue
 
             # Calculate similarity
-            sim = SequenceMatcher(None, plan_body_norm, lib_body_norm).ratio() if (plan_body_norm and lib_body_norm) else 0
+            sim = (
+                SequenceMatcher(None, plan_body_norm, lib_body_norm).ratio()
+                if (plan_body_norm and lib_body_norm)
+                else 0
+            )
 
             # Sync if:
-            # - >50% similar, OR
-            # - library is a stub (< 20 chars normalized) and plan has content, OR
-            # - library content is very different but plan is source of truth
+            # - similarity meets the threshold, OR
+            # - library is a stub (< 20 chars normalized) and plan has content
             is_lib_stub = len(lib_body_norm) < 20
-            if sim >= 0.50 or (is_lib_stub and plan_body_norm) or (sim < 0.50 and plan_body_norm):
+            should_sync = sim >= min_similarity or (is_lib_stub and plan_body_norm)
+            if should_sync:
                 # Replace library section with plan body (keep library header)
                 # Format: header line + newline + body lines
                 plan_body_lines = plan_body.split('\n') if plan_body else []
@@ -151,13 +187,16 @@ def main():
 
                 synced_count += 1
                 modified = True
-                print(f"  {id_name}: synced ({sim*100:.0f}% similar)")
+                action = "synced" if apply_changes else "would sync"
+                print(f"  {id_name}: {action} ({sim*100:.0f}% similar)")
 
         if modified:
-            # Write back
-            new_content = '\n'.join(new_lines)
-            lib_file.write_text(new_content, encoding='utf-8')
-            print(f"{lib_name}.md: {synced_count} synced, {identical_count} identical")
+            if apply_changes:
+                new_content = '\n'.join(new_lines)
+                lib_file.write_text(new_content, encoding='utf-8')
+                print(f"{lib_name}.md: {synced_count} synced, {identical_count} identical")
+            else:
+                print(f"{lib_name}.md: {synced_count} would sync, {identical_count} identical")
         else:
             print(f"{lib_name}.md: {identical_count} identical (no changes)")
 
@@ -165,7 +204,10 @@ def main():
         total_identical += identical_count
 
     print(f"\n{'=' * 60}")
-    print(f"TOTAL: {total_synced} sections synced, {total_identical} identical")
+    if apply_changes:
+        print(f"TOTAL: {total_synced} sections synced, {total_identical} identical")
+    else:
+        print(f"TOTAL: {total_synced} sections would sync, {total_identical} identical")
 
 
 if __name__ == "__main__":

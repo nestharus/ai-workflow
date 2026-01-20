@@ -5,6 +5,7 @@ Sort library sections alphabetically by ID while preserving header+body content.
 
 from __future__ import annotations
 
+import argparse
 import re
 from pathlib import Path
 
@@ -20,8 +21,10 @@ ID_PATTERNS_LEGAL = [
     r"P\d+I\d+",
     r"P\d+C\d+",
     r"P\d+\.\d+",
+    r"P\d+",
     r"Lean\d+",
     r"NFG\d+",
+    r"Gap G\d+\.\d+",
 ]
 
 ANNOTATION_PATTERN = re.compile(r"\(\[=([^\]]+)\]\)")
@@ -61,7 +64,7 @@ def extract_sections(lines: list[str]) -> tuple[list[str], list[tuple[str, list[
     return prefix, sections
 
 
-def sort_library_file(path: Path) -> bool:
+def sort_library_file(path: Path, apply_changes: bool) -> bool:
     content = path.read_text(encoding="utf-8")
     lines = content.split("\n")
     has_trailing_newline = content.endswith("\n")
@@ -82,23 +85,47 @@ def sort_library_file(path: Path) -> bool:
     new_content = "\n".join(new_lines)
     if has_trailing_newline and not new_content.endswith("\n"):
         new_content += "\n"
-    path.write_text(new_content, encoding="utf-8")
+    if apply_changes:
+        path.write_text(new_content, encoding="utf-8")
     return True
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Sort library sections alphabetically by ID.",
+    )
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write changes to library files (default: dry-run).",
+    )
+    mode_group.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would change without writing (default).",
+    )
+    args = parser.parse_args()
+    apply_changes = args.apply
+
     base = Path(__file__).resolve().parents[2]
     libs_dir = base / "libraries"
 
     updated = 0
     for lib_file in sorted(libs_dir.glob("*.md")):
-        if sort_library_file(lib_file):
+        if sort_library_file(lib_file, apply_changes):
             updated += 1
-            print(f"sorted: {lib_file.name}")
+            if apply_changes:
+                print(f"sorted: {lib_file.name}")
+            else:
+                print(f"would sort: {lib_file.name}")
         else:
             print(f"unchanged: {lib_file.name}")
 
-    print(f"\nUpdated {updated} library file(s).")
+    if apply_changes:
+        print(f"\nUpdated {updated} library file(s).")
+    else:
+        print(f"\nWould update {updated} library file(s).")
 
 
 if __name__ == "__main__":

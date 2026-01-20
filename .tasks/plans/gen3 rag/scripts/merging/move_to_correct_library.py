@@ -5,8 +5,32 @@ Move items from wrong files to their correct library per libs.md.
 Extracts section content from source file, adds to destination file, removes from source.
 """
 
+from __future__ import annotations
+
+import argparse
 import re
+from collections import defaultdict
 from pathlib import Path
+
+
+ID_PATTERNS_LEGAL = [
+    r"Algorithm \d+",
+    r"Comp\d+",
+    r"D\d+",
+    r"G\d+",
+    r"C\d+",
+    r"S\d+",
+    r"T\d+",
+    r"P\d+I\d+",
+    r"P\d+C\d+",
+    r"P\d+\.\d+",
+    r"P\d+",
+    r"Lean\d+",
+    r"NFG\d+",
+    r"Gap G\d+\.\d+",
+]
+
+ANNOTATION_PATTERN = re.compile(r"\(\[=([^\]]+)\]\)")
 
 
 def parse_libs_md(libs_path: Path) -> dict[str, str]:
@@ -36,20 +60,15 @@ def parse_libs_md(libs_path: Path) -> dict[str, str]:
     return assignments
 
 
+def is_legal_id(text: str) -> bool:
+    return any(re.fullmatch(pattern, text) for pattern in ID_PATTERNS_LEGAL)
+
+
 def extract_id_from_header(header: str) -> str | None:
     """Extract the ID from a header line."""
-    clean = re.sub(r'^#+\s+', '', header).strip()
-
-    patterns = [
-        r'^(Comp\d+)', r'^(D\d+)', r'^(Algorithm \d+)', r'^(G\d+)',
-        r'^(P\d+I\d+)', r'^(P\d+C\d+)', r'^(P\d+\.\d+)', r'^(Lean\d+)',
-        r'^(NFG\d+)', r'^(S\d+)', r'^(C\d+)', r'^(P6C\d+)', r'^(P9I\d+)',
-    ]
-
-    for pat in patterns:
-        m = re.match(pat, clean)
-        if m:
-            return m.group(1)
+    match = ANNOTATION_PATTERN.search(header)
+    if match and is_legal_id(match.group(1)):
+        return match.group(1)
     return None
 
 
@@ -85,9 +104,9 @@ def get_section_text(lines: list[str], start_idx: int) -> tuple[int, int, str]:
 
 def scan_library_file(lib_file: Path) -> dict[str, dict]:
     """Scan a library file for declarations."""
-    declarations = {}
-    content = lib_file.read_text(encoding='utf-8')
-    lines = content.split('\n')
+    declarations: dict[str, dict] = {}
+    content = lib_file.read_text(encoding="utf-8")
+    lines = content.split("\n")
 
     i = 0
     while i < len(lines):
@@ -111,7 +130,7 @@ def scan_library_file(lib_file: Path) -> dict[str, dict]:
 
 def remove_section_from_file(filepath: Path, full_text: str) -> bool:
     """Remove a section from a file."""
-    content = filepath.read_text(encoding='utf-8')
+    content = filepath.read_text(encoding="utf-8")
 
     # Try various patterns
     patterns = [
@@ -129,14 +148,14 @@ def remove_section_from_file(filepath: Path, full_text: str) -> bool:
             new_content = content.replace(pattern, replacement, 1)
             while "\n\n\n" in new_content:
                 new_content = new_content.replace("\n\n\n", "\n\n")
-            filepath.write_text(new_content, encoding='utf-8')
+            filepath.write_text(new_content, encoding="utf-8")
             return True
 
     if full_text in content:
         new_content = content.replace(full_text, "", 1)
         while "\n\n\n" in new_content:
             new_content = new_content.replace("\n\n\n", "\n\n")
-        filepath.write_text(new_content, encoding='utf-8')
+        filepath.write_text(new_content, encoding="utf-8")
         return True
 
     return False
@@ -144,7 +163,7 @@ def remove_section_from_file(filepath: Path, full_text: str) -> bool:
 
 def add_section_to_file(filepath: Path, full_text: str, item_id: str) -> bool:
     """Add a section to a file in appropriate location."""
-    content = filepath.read_text(encoding='utf-8')
+    content = filepath.read_text(encoding="utf-8")
 
     # Find a good insertion point - after similar items or at end
     # For now, append before the last line or at end
@@ -153,20 +172,34 @@ def add_section_to_file(filepath: Path, full_text: str, item_id: str) -> bool:
     else:
         new_content = full_text + "\n"
 
-    filepath.write_text(new_content, encoding='utf-8')
+    filepath.write_text(new_content, encoding="utf-8")
     return True
 
 
-def main():
-    import sys
-    dry_run = '--dry-run' in sys.argv
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Move library sections to their primary library per libs.md.",
+    )
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write changes to library files (default: dry-run).",
+    )
+    mode_group.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would change without writing (default).",
+    )
+    args = parser.parse_args()
+    apply_changes = args.apply
 
     base = Path(__file__).resolve().parents[2]
     libs_dir = base / "libraries"
     libs_md = base / "libs.md"
 
     print("=" * 70)
-    print(f"MOVE ITEMS TO CORRECT LIBRARIES {'(DRY RUN)' if dry_run else ''}")
+    print(f"MOVE ITEMS TO CORRECT LIBRARIES {'(DRY RUN)' if not apply_changes else ''}")
     print("=" * 70)
 
     # Parse libs.md for assignments
@@ -174,35 +207,59 @@ def main():
     print(f"\nLoaded {len(assignments)} assignments from libs.md")
 
     # Scan all library files
-    lib_contents = {}
+    lib_contents: dict[str, dict[str, object]] = {}
+    occurrences: dict[str, list[str]] = defaultdict(list)
     for lib_file in sorted(libs_dir.glob("*.md")):
         lib_name = lib_file.stem
+        items = scan_library_file(lib_file)
         lib_contents[lib_name] = {
-            'path': lib_file,
-            'items': scan_library_file(lib_file),
+            "path": lib_file,
+            "items": items,
         }
+        for item_id in items:
+            occurrences[item_id].append(lib_name)
 
     # Find items in wrong files
-    to_move = []
+    to_move: list[dict[str, str]] = []
     for lib_name, lib_data in lib_contents.items():
-        for item_id, item_data in lib_data['items'].items():
+        for item_id, item_data in lib_data["items"].items():
             if item_id in assignments:
                 expected = assignments[item_id]
                 if lib_name != expected:
                     to_move.append({
-                        'item_id': item_id,
-                        'current_file': lib_name,
-                        'expected_file': expected,
-                        'full_text': item_data['full_text'],
-                        'header': item_data['header'],
+                        "item_id": item_id,
+                        "current_file": lib_name,
+                        "expected_file": expected,
+                        "full_text": item_data["full_text"],
+                        "header": item_data["header"],
                     })
+
+    conflicts: list[tuple[str, str, list[str]]] = []
+    for item_id, libs in sorted(occurrences.items()):
+        if item_id in assignments and len(libs) > 1:
+            conflicts.append((item_id, "found in multiple libraries", sorted(libs)))
+
+    for item in to_move:
+        dest = item["expected_file"]
+        if dest not in lib_contents:
+            conflicts.append((item["item_id"], f"missing destination {dest}.md", [item["current_file"]]))
+            continue
+        if item["item_id"] in lib_contents[dest]["items"]:
+            conflicts.append((item["item_id"], "already in destination", [item["current_file"], dest]))
+
+    if conflicts:
+        print("ERROR: Conflicts detected; resolve before moving items.")
+        for item_id, reason, libs in conflicts:
+            libs_text = ", ".join(libs) if libs else "none"
+            print(f"  - {item_id}: {reason} (found in {libs_text})")
+        raise SystemExit(2)
 
     print(f"Found {len(to_move)} items in wrong files\n")
 
     # Group by destination
-    by_dest = {}
+    by_dest: dict[str, list[dict[str, str]]] = {}
     for item in to_move:
-        dest = item['expected_file']
+        dest = item["expected_file"]
         if dest not in by_dest:
             by_dest[dest] = []
         by_dest[dest].append(item)
@@ -222,7 +279,7 @@ def main():
             src_path = libs_dir / f"{item['current_file']}.md"
             print(f"  - {item['item_id']} from {item['current_file']}")
 
-            if not dry_run:
+            if apply_changes:
                 # Add to destination first
                 if add_section_to_file(dest_path, item['full_text'], item['item_id']):
                     # Then remove from source
@@ -238,10 +295,10 @@ def main():
                 moved += 1
 
     print("\n" + "=" * 70)
-    if dry_run:
-        print(f"DRY RUN: Would move {moved} items")
-    else:
+    if apply_changes:
         print(f"Moved {moved} items, {failed} failed")
+    else:
+        print(f"DRY RUN: Would move {moved} items")
     print("=" * 70)
 
 

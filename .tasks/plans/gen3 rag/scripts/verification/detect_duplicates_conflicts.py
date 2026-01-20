@@ -26,8 +26,10 @@ ID_PATTERNS = [
     r'P\d+I\d+',
     r'P\d+C\d+',
     r'P\d+\.\d+',
+    r'P\d+',
     r'Lean\d+',
     r'NFG\d+',
+    r'Gap G\d+\.\d+',
 ]
 
 

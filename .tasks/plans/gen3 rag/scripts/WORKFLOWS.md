@@ -31,6 +31,8 @@ Goal: apply only the prepared batches.
 - Use extraction/move/dedupe/sort tools to place content correctly.
 - Avoid bulk sync operations during patch integration.
 - `sync_body_from_plan.py` is only for initial seeding, not ongoing patch merges.
+- Merging scripts default to dry-run; pass `--apply` after reviewing output.
+- `extract_to_libs.py` fails if any ID is already outside its primary library to avoid silent auto-moves.
 
 ## 4. Verification (post-merge checks)
 

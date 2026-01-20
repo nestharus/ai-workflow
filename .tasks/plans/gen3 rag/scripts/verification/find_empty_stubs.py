@@ -30,8 +30,10 @@ ID_PATTERNS_LEGAL = [
     r"P\d+I\d+",
     r"P\d+C\d+",
     r"P\d+\.\d+",
+    r"P\d+",
     r"Lean\d+",
     r"NFG\d+",
+    r"Gap G\d+\.\d+",
 ]
 
 ANNOTATION_PATTERN = re.compile(r"\(\[=([^\]]+)\]\)")

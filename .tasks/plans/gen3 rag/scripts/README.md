@@ -5,6 +5,7 @@ annotation formats defined in `pattern_spec.md`. They are organized by workflow
 phase to keep patch prep and merging safe.
 
 See `WORKFLOWS.md` for the high-level staging → planning → merging → verification flow.
+Scripts that write to disk default to dry-run; pass `--apply` to persist changes.
 
 ## staging/
 
@@ -24,11 +25,11 @@ See `WORKFLOWS.md` for the high-level staging → planning → merging → verif
 
 ## merging/
 
-- `extract_to_libs.py`: inserts missing `plan.md` sections into their primary library files from `libs.md`.
+- `extract_to_libs.py`: inserts missing `plan.md` sections into their primary library files from `libs.md` (fails if IDs already appear outside the primary library).
 - `move_to_correct_library.py`: relocates library sections to their primary library per `libs.md`.
 - `fix_duplicates.py`: removes duplicate library sections, keeping the primary library entry from `libs.md`.
 - `sort_libraries_by_id.py`: sorts library sections by ID.
-- `sync_body_from_plan.py`: syncs library section bodies to match `plan.md` (use only for initial seeding; avoid during patch integration).
+- `sync_body_from_plan.py`: syncs library section bodies to match `plan.md` (use only for initial seeding; avoid during patch integration; supports `--min-similarity`).
 
 ## verification/
 

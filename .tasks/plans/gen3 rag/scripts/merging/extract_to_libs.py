@@ -5,6 +5,7 @@ Extract missing content from plan.md to library files based on libs.md assignmen
 
 from __future__ import annotations
 
+import argparse
 import re
 from pathlib import Path
 
@@ -23,6 +24,7 @@ ID_PATTERNS_LEGAL = [
     r"Lean\d+",
     r"NFG\d+",
     r"P\d+",
+    r"Gap G\d+\.\d+",
 ]
 
 DECLARATION_PATTERN = re.compile(r"\(\[=([^\]]+)\]\)")
@@ -91,7 +93,35 @@ def extract_declared_ids(lines: list[str]) -> set[str]:
     return ids
 
 
+def collect_library_occurrences(libs_dir: Path) -> dict[str, set[str]]:
+    """Collect ID occurrences across all library files."""
+    occurrences: dict[str, set[str]] = {}
+    for lib_file in sorted(libs_dir.glob("*.md")):
+        lib_name = lib_file.stem
+        ids = extract_declared_ids(lib_file.read_text(encoding="utf-8").split("\n"))
+        for id_name in ids:
+            occurrences.setdefault(id_name, set()).add(lib_name)
+    return occurrences
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Extract missing plan.md sections into library files based on libs.md."
+    )
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write changes to library files (default: dry-run).",
+    )
+    mode_group.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would change without writing (default).",
+    )
+    args = parser.parse_args()
+    apply_changes = args.apply
+
     base = Path(__file__).resolve().parents[2]
     plan_path = base / "plan.md"
     libs_dir = base / "libraries"
@@ -111,6 +141,21 @@ def main() -> None:
             lib_file.read_text(encoding="utf-8").split("\n")
         )
 
+    occurrences = collect_library_occurrences(libs_dir)
+    conflicts: list[tuple[str, str, list[str]]] = []
+    for id_name, primary in sorted(assignments.items()):
+        libs_found = sorted(occurrences.get(id_name, set()))
+        if not libs_found:
+            continue
+        if libs_found != [primary]:
+            conflicts.append((id_name, primary, libs_found))
+
+    if conflicts:
+        print("ERROR: IDs found outside their primary library. Resolve before extracting.")
+        for id_name, primary, libs_found in conflicts:
+            print(f"  - {id_name}: primary={primary}, found={', '.join(libs_found)}")
+        raise SystemExit(2)
+
     to_add: dict[str, list[str]] = {}
     missing_in_plan: list[str] = []
 
@@ -125,6 +170,8 @@ def main() -> None:
 
     print("Extracting missing content to libraries...")
     print("=" * 60)
+    if not apply_changes:
+        print("DRY RUN: pass --apply to write changes.")
 
     total_added = 0
     for lib_name, sections in sorted(to_add.items()):
@@ -140,8 +187,11 @@ def main() -> None:
         else:
             new_content = addition + "\n"
 
-        lib_file.write_text(new_content, encoding="utf-8")
-        print(f"{lib_name}: Added {len(sections)} section(s)")
+        if apply_changes:
+            lib_file.write_text(new_content, encoding="utf-8")
+            print(f"{lib_name}: Added {len(sections)} section(s)")
+        else:
+            print(f"{lib_name}: Would add {len(sections)} section(s)")
         total_added += len(sections)
 
     if missing_in_plan:
@@ -152,7 +202,10 @@ def main() -> None:
             print(f"  ... and {len(missing_in_plan) - 50} more")
 
     print("\n" + "=" * 60)
-    print(f"Total sections added: {total_added}")
+    if apply_changes:
+        print(f"Total sections added: {total_added}")
+    else:
+        print(f"Total sections to add: {total_added}")
 
 
 if __name__ == "__main__":

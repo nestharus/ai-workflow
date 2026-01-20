@@ -11,8 +11,20 @@ LIBS_DIR = Path(__file__).resolve().parents[2] / "libraries"
 PLAN_MD = Path(__file__).resolve().parents[2] / "plan.md"
 
 ID_PATTERNS = [
-    r'Algorithm \d+', r'Comp\d+', r'D\d+', r'G\d+', r'C\d+', r'S\d+', r'T\d+',
-    r'P\d+I\d+', r'P\d+C\d+', r'P\d+\.\d+', r'Lean\d+', r'NFG\d+',
+    r'Algorithm \d+',
+    r'Comp\d+',
+    r'D\d+',
+    r'G\d+',
+    r'C\d+',
+    r'S\d+',
+    r'T\d+',
+    r'P\d+I\d+',
+    r'P\d+C\d+',
+    r'P\d+\.\d+',
+    r'P\d+',
+    r'Lean\d+',
+    r'NFG\d+',
+    r'Gap G\d+\.\d+',
 ]
 
 
