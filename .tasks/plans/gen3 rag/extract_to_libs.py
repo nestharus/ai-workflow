@@ -1,131 +1,155 @@
 #!/usr/bin/env python3
 """
-Extract missing content from plan.md to library files based on library_map.json.
+Extract missing content from plan.md to library files based on libs.md assignments.
 """
 
+from __future__ import annotations
+
 import re
-import json
 from pathlib import Path
 
 
-def get_section_content(lines: list[str], start_idx: int) -> str:
-    """Extract section content from start until next header of same/higher level."""
-    if start_idx >= len(lines):
-        return ""
+ID_PATTERNS_LEGAL = [
+    r"Algorithm \d+",
+    r"Comp\d+",
+    r"D\d+",
+    r"G\d+",
+    r"C\d+",
+    r"S\d+",
+    r"T\d+",
+    r"P\d+I\d+",
+    r"P\d+C\d+",
+    r"P\d+\.\d+",
+    r"Lean\d+",
+    r"NFG\d+",
+    r"P\d+",
+]
 
-    first_line = lines[start_idx]
-    match = re.match(r'^(#+)', first_line)
-    if not match:
-        return first_line
-
-    level = len(match.group(1))
-    content_lines = [first_line]
-
-    for i in range(start_idx + 1, len(lines)):
-        line = lines[i]
-        m = re.match(r'^(#+)\s', line)
-        if m and len(m.group(1)) <= level:
-            break
-        content_lines.append(line)
-
-    return '\n'.join(line.rstrip() for line in content_lines)
+DECLARATION_PATTERN = re.compile(r"\(\[=([^\]]+)\]\)")
 
 
-def find_header_line(lines: list[str], element: str) -> int:
-    """Find the line number of an element header in plan.md."""
-    for i, line in enumerate(lines):
-        # Match headers
-        if re.match(r'^#{2,3}\s', line):
-            header_text = re.sub(r'^#+\s+', '', line).strip()
-            if header_text == element or element in header_text:
-                return i
-        # Match bold items like **G22 ...**
-        if line.strip().startswith('**') and element in line:
-            return i
-    return -1
+def is_legal_id(text: str) -> bool:
+    return any(re.fullmatch(pattern, text) for pattern in ID_PATTERNS_LEGAL)
 
 
-def get_existing_sections(lib_content: str) -> set[str]:
-    """Get headers already in a library file."""
-    sections = set()
-    for line in lib_content.split('\n'):
-        if re.match(r'^#{2,3}\s', line):
-            header_text = re.sub(r'^#+\s+', '', line).strip()
-            sections.add(header_text)
-        elif line.strip().startswith('**'):
-            match = re.match(r'^\*\*(.+?)\*\*', line.strip())
-            if match:
-                sections.add(match.group(1))
+def parse_libs_md(path: Path) -> dict[str, str]:
+    """Parse libs.md to get ID -> primary library mapping."""
+    assignments: dict[str, str] = {}
+    current_id = None
+    current_primary = None
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        id_match = re.match(r"^-\s+\(\[=([^\]]+)\]\)", line)
+        if id_match:
+            if current_id and current_primary:
+                assignments[current_id] = current_primary
+            current_id = id_match.group(1).strip()
+            current_primary = None
+            continue
+
+        primary_match = re.match(r"^\s+- primary:\s*(\w+)", line)
+        if primary_match:
+            current_primary = primary_match.group(1).strip()
+
+    if current_id and current_primary:
+        assignments[current_id] = current_primary
+
+    return assignments
+
+
+def extract_sections_by_annotation(lines: list[str]) -> dict[str, str]:
+    """Extract sections based on ([=ID]) declarations."""
+    sections: dict[str, str] = {}
+    idx = 0
+    while idx < len(lines):
+        match = DECLARATION_PATTERN.search(lines[idx])
+        if match and is_legal_id(match.group(1)):
+            id_name = match.group(1)
+            header_line = lines[idx]
+            idx += 1
+            body_lines: list[str] = []
+            while idx < len(lines):
+                next_match = DECLARATION_PATTERN.search(lines[idx])
+                if next_match and is_legal_id(next_match.group(1)):
+                    break
+                body_lines.append(lines[idx])
+                idx += 1
+            section_text = "\n".join([header_line, *body_lines]).strip()
+            sections[id_name] = section_text
+            continue
+        idx += 1
     return sections
 
 
-def main():
+def extract_declared_ids(lines: list[str]) -> set[str]:
+    """Extract declared IDs in a library file."""
+    ids: set[str] = set()
+    for line in lines:
+        match = DECLARATION_PATTERN.search(line)
+        if match and is_legal_id(match.group(1)):
+            ids.add(match.group(1))
+    return ids
+
+
+def main() -> None:
     base = Path(__file__).parent
     plan_path = base / "plan.md"
     libs_dir = base / "libraries"
-    map_path = base / "library_map.json"
+    libs_md = base / "libs.md"
 
-    # Load plan.md
-    plan_content = plan_path.read_text(encoding='utf-8')
-    plan_lines = plan_content.split('\n')
+    plan_lines = plan_path.read_text(encoding="utf-8").split("\n")
+    plan_sections = extract_sections_by_annotation(plan_lines)
 
-    # Load library map
-    with open(map_path) as f:
-        lib_map = json.load(f)
+    assignments = parse_libs_md(libs_md)
+    if not assignments:
+        print("No assignments found in libs.md.")
+        return
 
-    by_library = lib_map["by_library"]
+    library_ids: dict[str, set[str]] = {}
+    for lib_file in sorted(libs_dir.glob("*.md")):
+        library_ids[lib_file.stem] = extract_declared_ids(
+            lib_file.read_text(encoding="utf-8").split("\n")
+        )
+
+    to_add: dict[str, list[str]] = {}
+    missing_in_plan: list[str] = []
+
+    for id_name, lib_name in sorted(assignments.items()):
+        section = plan_sections.get(id_name)
+        if not section:
+            missing_in_plan.append(id_name)
+            continue
+        if id_name in library_ids.get(lib_name, set()):
+            continue
+        to_add.setdefault(lib_name, []).append(section)
 
     print("Extracting missing content to libraries...")
     print("=" * 60)
 
     total_added = 0
-
-    for lib_name, elements in sorted(by_library.items()):
+    for lib_name, sections in sorted(to_add.items()):
         lib_file = libs_dir / f"{lib_name}.md"
+        existing = lib_file.read_text(encoding="utf-8") if lib_file.exists() else ""
 
-        if not lib_file.exists():
-            print(f"\n{lib_name}: Creating new library file")
-            lib_content = f"# {lib_name.title()} Library\n\n---\n\n"
+        addition = "\n\n---\n\n".join(s.strip("\n") for s in sections if s.strip())
+        if not addition:
+            continue
+
+        if existing.strip():
+            new_content = existing.rstrip() + "\n\n---\n\n" + addition + "\n"
         else:
-            lib_content = lib_file.read_text(encoding='utf-8')
+            new_content = addition + "\n"
 
-        existing = get_existing_sections(lib_content)
-        added = 0
+        lib_file.write_text(new_content, encoding="utf-8")
+        print(f"{lib_name}: Added {len(sections)} section(s)")
+        total_added += len(sections)
 
-        for elem_info in elements:
-            element = elem_info["element"]
-            line_num = elem_info["line_num"]
-
-            # Check if already in library
-            found = element in existing
-            if not found:
-                for ex in existing:
-                    if element in ex or ex in element:
-                        found = True
-                        break
-
-            if found:
-                continue
-
-            # Find in plan.md and extract content
-            plan_idx = line_num - 1  # Convert to 0-indexed
-            if plan_idx >= len(plan_lines):
-                continue
-
-            section = get_section_content(plan_lines, plan_idx)
-            if not section or len(section) < 10:
-                continue
-
-            # Append to library
-            lib_content = lib_content.rstrip() + "\n\n---\n\n" + section + "\n"
-            added += 1
-
-        if added > 0:
-            lib_file.write_text(lib_content, encoding='utf-8')
-            print(f"{lib_name}: Added {added} sections")
-            total_added += added
-        else:
-            print(f"{lib_name}: No new sections")
+    if missing_in_plan:
+        print("\nIDs in libs.md missing from plan.md:")
+        for id_name in sorted(missing_in_plan)[:50]:
+            print(f"  - {id_name}")
+        if len(missing_in_plan) > 50:
+            print(f"  ... and {len(missing_in_plan) - 50} more")
 
     print("\n" + "=" * 60)
     print(f"Total sections added: {total_added}")

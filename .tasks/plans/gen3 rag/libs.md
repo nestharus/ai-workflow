@@ -1,1211 +1,1211 @@
-- [(=Algorithm 1)]
+- ([=Algorithm 1])
   - primary: ingestion
   - related: foundation, storage, graph, field, embedding
-- [(=Algorithm 2)]
+- ([=Algorithm 2])
   - primary: field
   - related: foundation, storage, graph, exploration, patterns, embedding, uncertainty
-- [(=Algorithm 3)]
+- ([=Algorithm 3])
   - primary: field
   - related: foundation, storage, graph, uncertainty
-- [(=Algorithm 4)]
+- ([=Algorithm 4])
   - primary: uncertainty
   - related: foundation, storage, graph, field
-- [(=Algorithm 5)]
+- ([=Algorithm 5])
   - primary: patterns
   - related: foundation, storage, graph, field
-- [(=Algorithm 6)]
+- ([=Algorithm 6])
   - primary: workspace
   - related: foundation, ingestion, storage
-- [(=Algorithm 7)]
+- ([=Algorithm 7])
   - primary: field
   - related: graph, uncertainty
-- [(=Algorithm 8)]
+- ([=Algorithm 8])
   - primary: storage
   - related: field, graph
-- [(=Algorithm 9)]
+- ([=Algorithm 9])
   - primary: storage
   - related: 
-- [(=Algorithm 10)]
+- ([=Algorithm 10])
   - primary: patterns
   - related: graph, storage
-- [(=Algorithm 11)]
+- ([=Algorithm 11])
   - primary: patterns
   - related: graph, embedding
-- [(=Algorithm 12)]
+- ([=Algorithm 12])
   - primary: patterns
   - related: foundation, uncertainty
-- [(=Algorithm 13)]
+- ([=Algorithm 13])
   - primary: patterns
   - related: uncertainty, storage
-- [(=Algorithm 14)]
+- ([=Algorithm 14])
   - primary: patterns
   - related: foundation, storage, uncertainty
-- [(=Algorithm 15)]
+- ([=Algorithm 15])
   - primary: uncertainty
   - related: foundation, storage
-- [(=Algorithm 16)]
+- ([=Algorithm 16])
   - primary: uncertainty
   - related: foundation, storage
-- [(=Algorithm 17)]
+- ([=Algorithm 17])
   - primary: ingestion
   - related: foundation, embedding
-- [(=Algorithm 18)]
+- ([=Algorithm 18])
   - primary: ingestion
   - related: graph, patterns, uncertainty
-- [(=Algorithm 19)]
+- ([=Algorithm 19])
   - primary: ingestion
   - related: foundation, graph, storage
-- [(=Algorithm 20)]
+- ([=Algorithm 20])
   - primary: patterns
   - related: ingestion, embedding
-- [(=Algorithm 21)]
+- ([=Algorithm 21])
   - primary: embedding
   - related: ingestion, field, storage
-- [(=Algorithm 22)]
+- ([=Algorithm 22])
   - primary: embedding
   - related: field, deployment, graph
-- [(=Algorithm 23)]
+- ([=Algorithm 23])
   - primary: ingestion
   - related: workspace, field, embedding
-- [(=Algorithm 24)]
+- ([=Algorithm 24])
   - primary: field
   - related: foundation, storage, graph, exploration, patterns, embedding, uncertainty
-- [(=Algorithm 25)]
+- ([=Algorithm 25])
   - primary: workspace
   - related: storage, foundation, uncertainty, field
-- [(=Algorithm 26)]
+- ([=Algorithm 26])
   - primary: ingestion
   - related: uncertainty, storage
-- [(=Algorithm 27)]
+- ([=Algorithm 27])
   - primary: field
   - related: graph, storage
-- [(=Algorithm 28)]
+- ([=Algorithm 28])
   - primary: uncertainty
   - related: field, foundation
-- [(=Algorithm 29)]
+- ([=Algorithm 29])
   - primary: graph
   - related: field, exploration
-- [(=Algorithm 30)]
+- ([=Algorithm 30])
   - primary: field
   - related: foundation, storage, graph, uncertainty
-- [(=Algorithm 31)]
+- ([=Algorithm 31])
   - primary: field
   - related: foundation, storage, graph, uncertainty
-- [(=Algorithm 32)]
+- ([=Algorithm 32])
   - primary: exploration
   - related: uncertainty, field
-- [(=Algorithm 33)]
+- ([=Algorithm 33])
   - primary: exploration
   - related: field, uncertainty, embedding
-- [(=Algorithm 34)]
+- ([=Algorithm 34])
   - primary: exploration
   - related: field, uncertainty, embedding
-- [(=Algorithm 35)]
+- ([=Algorithm 35])
   - primary: exploration
   - related: patterns, uncertainty, verification
-- [(=Algorithm 36)]
+- ([=Algorithm 36])
   - primary: exploration
   - related: patterns, uncertainty, verification
-- [(=Algorithm 37)]
+- ([=Algorithm 37])
   - primary: exploration
   - related: uncertainty, verification
-- [(=Algorithm 38)]
+- ([=Algorithm 38])
   - primary: exploration
   - related: uncertainty, verification
-- [(=Algorithm 39)]
+- ([=Algorithm 39])
   - primary: embedding
   - related: field, patterns
-- [(=Algorithm 40)]
+- ([=Algorithm 40])
   - primary: patterns
   - related: graph, workspace
-- [(=Algorithm 41)]
+- ([=Algorithm 41])
   - primary: patterns
   - related: embedding, field
-- [(=Algorithm 42)]
+- ([=Algorithm 42])
   - primary: exploration
   - related: patterns, field, workspace
-- [(=Algorithm 43)]
+- ([=Algorithm 43])
   - primary: exploration
   - related: workspace, uncertainty, field
-- [(=Algorithm 44)]
+- ([=Algorithm 44])
   - primary: field
   - related: graph, storage
-- [(=Algorithm 45)]
+- ([=Algorithm 45])
   - primary: field
   - related: graph, embedding
-- [(=Algorithm 46)]
+- ([=Algorithm 46])
   - primary: field
   - related: graph
-- [(=Algorithm 47)]
+- ([=Algorithm 47])
   - primary: field
   - related: graph, embedding
-- [(=Algorithm 48)]
+- ([=Algorithm 48])
   - primary: field
   - related: uncertainty
-- [(=Algorithm 49)]
+- ([=Algorithm 49])
   - primary: field
   - related: foundation, graph, uncertainty
-- [(=Algorithm 50)]
+- ([=Algorithm 50])
   - primary: patterns
   - related: foundation, storage, graph, field
-- [(=Algorithm 51)]
+- ([=Algorithm 51])
   - primary: storage
   - related: deployment, field
-- [(=Algorithm 52)]
+- ([=Algorithm 52])
   - primary: deployment
   - related: storage, uncertainty
-- [(=Algorithm 53)]
+- ([=Algorithm 53])
   - primary: workspace
   - related: storage
-- [(=Algorithm 54)]
+- ([=Algorithm 54])
   - primary: workspace
   - related: storage
-- [(=Algorithm 55)]
+- ([=Algorithm 55])
   - primary: workspace
   - related: storage, foundation
-- [(=Algorithm 56)]
+- ([=Algorithm 56])
   - primary: workspace
   - related: foundation, graph, storage
-- [(=Algorithm 57)]
+- ([=Algorithm 57])
   - primary: workspace
   - related: foundation, graph, storage
-- [(=Algorithm 58)]
+- ([=Algorithm 58])
   - primary: workspace
   - related: storage
-- [(=Algorithm 59)]
+- ([=Algorithm 59])
   - primary: workspace
   - related: storage, uncertainty
-- [(=Algorithm 60)]
+- ([=Algorithm 60])
   - primary: workspace
   - related: foundation, ingestion, storage
-- [(=Algorithm 61)]
+- ([=Algorithm 61])
   - primary: workspace
   - related: graph, embedding
-- [(=Algorithm 62)]
+- ([=Algorithm 62])
   - primary: workspace
   - related: uncertainty
-- [(=Algorithm 63)]
+- ([=Algorithm 63])
   - primary: workspace
   - related: uncertainty, field
-- [(=Algorithm 64)]
+- ([=Algorithm 64])
   - primary: workspace
   - related: storage
-- [(=Algorithm 65)]
+- ([=Algorithm 65])
   - primary: field
   - related: graph, uncertainty
-- [(=Algorithm 66)]
+- ([=Algorithm 66])
   - primary: storage
   - related: field, graph
-- [(=Algorithm 67)]
+- ([=Algorithm 67])
   - primary: storage
   - related: foundation
-- [(=C1)]
+- ([=C1])
   - primary: field
   - related: foundation, verification
-- [(=C2)]
+- ([=C2])
   - primary: field
   - related: graph, verification
-- [(=C3)]
+- ([=C3])
   - primary: field
   - related: uncertainty, verification
-- [(=C4)]
+- ([=C4])
   - primary: storage
   - related: foundation, verification
-- [(=C5)]
+- ([=C5])
   - primary: ingestion
   - related: graph, foundation, verification
-- [(=Comp1)]
+- ([=Comp1])
   - primary: ingestion
   - related: storage, foundation
-- [(=Comp2)]
+- ([=Comp2])
   - primary: graph
   - related: storage
-- [(=Comp3)]
+- ([=Comp3])
   - primary: field
   - related: graph, uncertainty
-- [(=Comp4)]
+- ([=Comp4])
   - primary: storage
   - related: foundation
-- [(=Comp5)]
+- ([=Comp5])
   - primary: exploration
   - related: field, patterns
-- [(=Comp6)]
+- ([=Comp6])
   - primary: graph
   - related: uncertainty, foundation
-- [(=Comp7)]
+- ([=Comp7])
   - primary: exploration
   - related: patterns, graph
-- [(=Comp8)]
+- ([=Comp8])
   - primary: field
   - related: graph, patterns
-- [(=Comp9)]
+- ([=Comp9])
   - primary: storage
   - related: embedding
-- [(=Comp10)]
+- ([=Comp10])
   - primary: storage
   - related: foundation
-- [(=Comp11)]
+- ([=Comp11])
   - primary: ingestion
   - related: foundation
-- [(=Comp12)]
+- ([=Comp12])
   - primary: ingestion
   - related: graph
-- [(=Comp13)]
+- ([=Comp13])
   - primary: ingestion
   - related: graph, patterns
-- [(=Comp14)]
+- ([=Comp14])
   - primary: ingestion
   - related: storage, uncertainty
-- [(=Comp15)]
+- ([=Comp15])
   - primary: ingestion
   - related: patterns, storage
-- [(=Comp16)]
+- ([=Comp16])
   - primary: ingestion
   - related: patterns, uncertainty
-- [(=Comp17)]
+- ([=Comp17])
   - primary: ingestion
   - related: foundation
-- [(=Comp18)]
+- ([=Comp18])
   - primary: embedding
   - related: storage
-- [(=Comp19)]
+- ([=Comp19])
   - primary: embedding
   - related: field, deployment
-- [(=Comp20)]
+- ([=Comp20])
   - primary: graph
   - related: field, exploration
-- [(=Comp21)]
+- ([=Comp21])
   - primary: ingestion
   - related: workspace, field
-- [(=Comp22)]
+- ([=Comp22])
   - primary: workspace
   - related: storage, graph
-- [(=Comp23)]
+- ([=Comp23])
   - primary: workspace
   - related: uncertainty, foundation
-- [(=Comp24)]
+- ([=Comp24])
   - primary: ingestion
   - related: workspace, storage
-- [(=Comp25)]
+- ([=Comp25])
   - primary: workspace
   - related: foundation, storage
-- [(=Comp26)]
+- ([=Comp26])
   - primary: ingestion
   - related: uncertainty, workspace
-- [(=Comp27)]
+- ([=Comp27])
   - primary: field
   - related: graph, storage
-- [(=Comp28)]
+- ([=Comp28])
   - primary: uncertainty
   - related: field, foundation
-- [(=Comp29)]
+- ([=Comp29])
   - primary: graph
   - related: field, exploration
-- [(=Comp30)]
+- ([=Comp30])
   - primary: ingestion
   - related: uncertainty, deployment
-- [(=Comp31)]
+- ([=Comp31])
   - primary: embedding
   - related: uncertainty, deployment
-- [(=Comp32)]
+- ([=Comp32])
   - primary: exploration
   - related: uncertainty, field
-- [(=D1)]
+- ([=D1])
   - primary: graph
   - related: field, embedding, storage
-- [(=D2)]
+- ([=D2])
   - primary: graph
   - related: field, uncertainty
-- [(=D3)]
+- ([=D3])
   - primary: graph
   - related: storage
-- [(=D4)]
+- ([=D4])
   - primary: storage
   - related: embedding, field
-- [(=D5)]
+- ([=D5])
   - primary: storage
   - related: foundation
-- [(=D6)]
+- ([=D6])
   - primary: foundation
   - related: storage, embedding
-- [(=D7)]
+- ([=D7])
   - primary: field
   - related: foundation, graph, storage
-- [(=D8)]
+- ([=D8])
   - primary: graph
   - related: foundation, storage, field, uncertainty
-- [(=D9)]
+- ([=D9])
   - primary: uncertainty
   - related: foundation, graph, storage
-- [(=D10)]
+- ([=D10])
   - primary: foundation
   - related: storage, graph
-- [(=D11)]
+- ([=D11])
   - primary: storage
   - related: graph, field
-- [(=D12)]
+- ([=D12])
   - primary: storage
   - related: graph, field
-- [(=D13)]
+- ([=D13])
   - primary: graph
   - related: uncertainty, field
-- [(=D14)]
+- ([=D14])
   - primary: storage
   - related: embedding
-- [(=D15)]
+- ([=D15])
   - primary: storage
   - related: workspace, field
-- [(=D16)]
+- ([=D16])
   - primary: patterns
   - related: graph, storage
-- [(=D17)]
+- ([=D17])
   - primary: patterns
   - related: foundation, graph, storage
-- [(=D18)]
+- ([=D18])
   - primary: patterns
   - related: uncertainty, storage
-- [(=D19)]
+- ([=D19])
   - primary: patterns
   - related: foundation, storage, uncertainty
-- [(=D20)]
+- ([=D20])
   - primary: uncertainty
   - related: foundation, storage
-- [(=D21)]
+- ([=D21])
   - primary: uncertainty
   - related: foundation
-- [(=D22)]
+- ([=D22])
   - primary: uncertainty
   - related: foundation, graph, storage
-- [(=D23)]
+- ([=D23])
   - primary: patterns
   - related: storage, graph
-- [(=D24)]
+- ([=D24])
   - primary: embedding
   - related: storage, field
-- [(=D25)]
+- ([=D25])
   - primary: patterns
   - related: graph, storage
-- [(=D26)]
+- ([=D26])
   - primary: patterns
   - related: field, storage, uncertainty
-- [(=D27)]
+- ([=D27])
   - primary: patterns
   - related: exploration, graph, storage
-- [(=D28)]
+- ([=D28])
   - primary: ingestion
   - related: graph, embedding
-- [(=D29)]
+- ([=D29])
   - primary: ingestion
   - related: graph, patterns
-- [(=D30)]
+- ([=D30])
   - primary: ingestion
   - related: uncertainty, graph
-- [(=D31)]
+- ([=D31])
   - primary: ingestion
   - related: graph, patterns
-- [(=D32)]
+- ([=D32])
   - primary: embedding
   - related: ingestion
-- [(=D33)]
+- ([=D33])
   - primary: embedding
   - related: field
-- [(=D34)]
+- ([=D34])
   - primary: exploration
   - related: foundation, uncertainty, storage, graph
-- [(=D35)]
+- ([=D35])
   - primary: exploration
   - related: foundation, storage, uncertainty
-- [(=D36)]
+- ([=D36])
   - primary: exploration
   - related: foundation, graph, patterns
-- [(=D37)]
+- ([=D37])
   - primary: exploration
   - related: uncertainty
-- [(=D38)]
+- ([=D38])
   - primary: exploration
   - related: patterns, graph, storage
-- [(=D39)]
+- ([=D39])
   - primary: workspace
   - related: storage, graph
-- [(=D40)]
+- ([=D40])
   - primary: workspace
   - related: foundation, storage
-- [(=D41)]
+- ([=D41])
   - primary: workspace
   - related: foundation, graph, storage
-- [(=D42)]
+- ([=D42])
   - primary: workspace
   - related: foundation, graph, storage
-- [(=D43)]
+- ([=D43])
   - primary: workspace
   - related: storage
-- [(=D44)]
+- ([=D44])
   - primary: workspace
   - related: storage, uncertainty
-- [(=D45)]
+- ([=D45])
   - primary: workspace
   - related: foundation, storage, uncertainty
-- [(=D46)]
+- ([=D46])
   - primary: field
   - related: storage
-- [(=D47)]
+- ([=D47])
   - primary: field
   - related: graph, storage, embedding
-- [(=D48)]
+- ([=D48])
   - primary: field
   - related: graph, embedding
-- [(=D49)]
+- ([=D49])
   - primary: field
   - related: graph
-- [(=D50)]
+- ([=D50])
   - primary: field
   - related: graph
-- [(=D51)]
+- ([=D51])
   - primary: field
   - related: storage
-- [(=D52)]
+- ([=D52])
   - primary: field
   - related: uncertainty
-- [(=D53)]
+- ([=D53])
   - primary: field
   - related: deployment, foundation, uncertainty
-- [(=D54)]
+- ([=D54])
   - primary: deployment
   - related: storage, uncertainty
-- [(=D55)]
+- ([=D55])
   - primary: workspace
   - related: storage, graph, ingestion
-- [(=D56)]
+- ([=D56])
   - primary: workspace
   - related: foundation, storage, uncertainty
-- [(=D57)]
+- ([=D57])
   - primary: workspace
   - related: foundation, storage, uncertainty
-- [(=D58)]
+- ([=D58])
   - primary: ingestion
   - related: uncertainty, storage
-- [(=D59)]
+- ([=D59])
   - primary: uncertainty
   - related: field
-- [(=D60)]
+- ([=D60])
   - primary: graph
   - related: storage, field
-- [(=D61)]
+- ([=D61])
   - primary: ingestion
   - related: uncertainty, storage, deployment
-- [(=D62)]
+- ([=D62])
   - primary: embedding
   - related: uncertainty, storage, deployment
-- [(=D63)]
+- ([=D63])
   - primary: exploration
   - related: uncertainty, storage
-- [(=G1)]
+- ([=G1])
   - primary: field
   - related: embedding, graph
-- [(=G2)]
+- ([=G2])
   - primary: patterns
   - related: ingestion, field
-- [(=G3)]
+- ([=G3])
   - primary: field
   - related: foundation, storage
-- [(=G4)]
+- ([=G4])
   - primary: storage
   - related: field
-- [(=G5)]
+- ([=G5])
   - primary: field
   - related: patterns, storage
-- [(=G6)]
+- ([=G6])
   - primary: foundation
   - related: storage
-- [(=G7)]
+- ([=G7])
   - primary: uncertainty
   - related: foundation
-- [(=G8)]
+- ([=G8])
   - primary: uncertainty
   - related: foundation
-- [(=G9)]
+- ([=G9])
   - primary: field
   - related: storage, workspace
-- [(=G10)]
+- ([=G10])
   - primary: uncertainty
   - related: field, foundation
-- [(=G11)]
+- ([=G11])
   - primary: field
   - related: uncertainty
-- [(=G12)]
+- ([=G12])
   - primary: patterns
   - related: foundation
-- [(=G13)]
+- ([=G13])
   - primary: uncertainty
   - related: patterns, storage
-- [(=G14)]
+- ([=G14])
   - primary: uncertainty
   - related: foundation, storage
-- [(=G15)]
+- ([=G15])
   - primary: uncertainty
   - related: foundation
-- [(=G16)]
+- ([=G16])
   - primary: uncertainty
   - related: foundation
-- [(=G17)]
+- ([=G17])
   - primary: ingestion
   - related: graph
-- [(=G18)]
+- ([=G18])
   - primary: ingestion
   - related: graph, embedding
-- [(=G19)]
+- ([=G19])
   - primary: patterns
   - related: ingestion, graph
-- [(=G20)]
+- ([=G20])
   - primary: ingestion
   - related: uncertainty
-- [(=G21)]
+- ([=G21])
   - primary: embedding
   - related: field
-- [(=G22)]
+- ([=G22])
   - primary: workspace
   - related: storage, graph
-- [(=G23)]
+- ([=G23])
   - primary: workspace
   - related: foundation, storage
-- [(=G24)]
+- ([=G24])
   - primary: ingestion
   - related: field, workspace
-- [(=G25)]
+- ([=G25])
   - primary: uncertainty
   - related: foundation, workspace
-- [(=G26)]
+- ([=G26])
   - primary: graph
   - related: field
-- [(=G27)]
+- ([=G27])
   - primary: ingestion
   - related: uncertainty, deployment
-- [(=G28)]
+- ([=G28])
   - primary: embedding
   - related: deployment, uncertainty
-- [(=G29)]
+- ([=G29])
   - primary: exploration
   - related: workspace, uncertainty
-- [(=G30)]
+- ([=G30])
   - primary: exploration
   - related: uncertainty, foundation
-- [(=G31)]
+- ([=G31])
   - primary: exploration
   - related: storage
-- [(=G32)]
+- ([=G32])
   - primary: exploration
   - related: workspace, foundation
-- [(=G33)]
+- ([=G33])
   - primary: exploration
   - related: uncertainty, field
-- [(=G34)]
+- ([=G34])
   - primary: exploration
   - related: patterns
-- [(=G35)]
+- ([=G35])
   - primary: patterns
   - related: exploration, ingestion
-- [(=G36)]
+- ([=G36])
   - primary: field
   - related: storage
-- [(=G37)]
+- ([=G37])
   - primary: field
   - related: embedding, graph
-- [(=G38)]
+- ([=G38])
   - primary: field
   - related: deployment, uncertainty
-- [(=G39)]
+- ([=G39])
   - primary: verification
   - related: foundation
-- [(=G40)]
+- ([=G40])
   - primary: storage
   - related: deployment, workspace
-- [(=G41)]
+- ([=G41])
   - primary: deployment
   - related: storage, uncertainty
-- [(=G42)]
+- ([=G42])
   - primary: workspace
   - related: storage, graph
-- [(=G43)]
+- ([=G43])
   - primary: workspace
   - related: foundation
-- [(=G44)]
+- ([=G44])
   - primary: workspace
   - related: storage, foundation
-- [(=G45)]
+- ([=G45])
   - primary: workspace
   - related: foundation, graph, storage
-- [(=G46)]
+- ([=G46])
   - primary: workspace
   - related: ingestion, foundation, storage
-- [(=G47)]
+- ([=G47])
   - primary: workspace
   - related: graph, embedding, uncertainty
-- [(=G48)]
+- ([=G48])
   - primary: workspace
   - related: foundation, storage
-- [(=G49)]
+- ([=G49])
   - primary: workspace
   - related: patterns, field
-- [(=G50)]
+- ([=G50])
   - primary: workspace
   - related: uncertainty, storage
-- [(=Lean1)]
+- ([=Lean1])
   - primary: field
   - related: field, foundation
-- [(=Lean2)]
+- ([=Lean2])
   - primary: field
   - related: field, graph
-- [(=Lean3)]
+- ([=Lean3])
   - primary: field
   - related: field, uncertainty
-- [(=Lean4)]
+- ([=Lean4])
   - primary: storage
   - related: storage, foundation
-- [(=Lean5)]
+- ([=Lean5])
   - primary: field
   - related: field, foundation
-- [(=Lean6)]
+- ([=Lean6])
   - primary: patterns
   - related: patterns
-- [(=Lean7)]
+- ([=Lean7])
   - primary: uncertainty
   - related: uncertainty, patterns
-- [(=Lean8)]
+- ([=Lean8])
   - primary: field
   - related: field, foundation
-- [(=Lean9)]
+- ([=Lean9])
   - primary: foundation
   - related: foundation, storage
-- [(=Lean10)]
+- ([=Lean10])
   - primary: field
   - related: field
-- [(=Lean11)]
+- ([=Lean11])
   - primary: storage
   - related: storage, foundation
-- [(=Lean12)]
+- ([=Lean12])
   - primary: embedding
   - related: embedding, field
-- [(=Lean13)]
+- ([=Lean13])
   - primary: field
   - related: embedding, field
-- [(=Lean14)]
+- ([=Lean14])
   - primary: workspace
   - related: workspace, storage
-- [(=Lean15)]
+- ([=Lean15])
   - primary: storage
   - related: storage
-- [(=NFG1)]
+- ([=NFG1])
   - primary: deployment
   - related: ingestion, storage
-- [(=NFG3)]
+- ([=NFG3])
   - primary: deployment
   - related: field, storage
-- [(=P1I1)]
+- ([=P1I1])
   - primary: foundation
   - related: storage
-- [(=P1C1)]
+- ([=P1C1])
   - primary: foundation
   - related: storage, verification
-- [(=P1I2)]
+- ([=P1I2])
   - primary: foundation
   - related: storage
-- [(=P1C2)]
+- ([=P1C2])
   - primary: field
   - related: graph, verification
-- [(=P1I3)]
+- ([=P1I3])
   - primary: foundation
   - related: storage, field
-- [(=P1C3)]
+- ([=P1C3])
   - primary: field
   - related: graph, verification
-- [(=P1I4)]
+- ([=P1I4])
   - primary: foundation
   - related: uncertainty
-- [(=P1C4)]
+- ([=P1C4])
   - primary: uncertainty
   - related: foundation, verification
-- [(=P1I5)]
+- ([=P1I5])
   - primary: storage
   - related: foundation, patterns
-- [(=P1C5)]
+- ([=P1C5])
   - primary: field
   - related: verification
-- [(=P1I6)]
+- ([=P1I6])
   - primary: storage
   - related: foundation
-- [(=P1I7)]
+- ([=P1I7])
   - primary: storage
   - related: foundation
-- [(=P1I8)]
+- ([=P1I8])
   - primary: storage
   - related: foundation, embedding
-- [(=P1I9)]
+- ([=P1I9])
   - primary: storage
   - related: embedding
-- [(=P1I10)]
+- ([=P1I10])
   - primary: storage
   - related: foundation
-- [(=P1I11)]
+- ([=P1I11])
   - primary: storage
   - related: graph
-- [(=P1I12)]
+- ([=P1I12])
   - primary: ingestion
   - related: storage, field
-- [(=P1I13)]
+- ([=P1I13])
   - primary: storage
   - related: field
-- [(=P1I14)]
+- ([=P1I14])
   - primary: storage
   - related: embedding
-- [(=P1I15)]
+- ([=P1I15])
   - primary: storage
   - related: embedding
-- [(=P1I16)]
+- ([=P1I16])
   - primary: storage
   - related: graph
-- [(=P2.2)]
+- ([=P2.2])
   - primary: field
   - related: uncertainty
-- [(=P2.3)]
+- ([=P2.3])
   - primary: field
   - related: graph
-- [(=P2I1)]
+- ([=P2I1])
   - primary: field
   - related: graph
-- [(=P2C1)]
+- ([=P2C1])
   - primary: storage
   - related: verification
-- [(=P2I2)]
+- ([=P2I2])
   - primary: field
   - related: graph, uncertainty
-- [(=P2C2)]
+- ([=P2C2])
   - primary: storage
   - related: verification
-- [(=P2I3)]
+- ([=P2I3])
   - primary: field
   - related: graph, storage
-- [(=P2C3)]
+- ([=P2C3])
   - primary: field
   - related: verification
-- [(=P2I4)]
+- ([=P2I4])
   - primary: field
   - related: uncertainty
-- [(=P2C4)]
+- ([=P2C4])
   - primary: field
   - related: verification
-- [(=P2I5)]
+- ([=P2I5])
   - primary: field
   - related: uncertainty
-- [(=P2C5)]
+- ([=P2C5])
   - primary: foundation
   - related: storage, verification
-- [(=P2I6)]
+- ([=P2I6])
   - primary: field
   - related: uncertainty
-- [(=P4.1)]
+- ([=P4.1])
   - primary: patterns
   - related: graph
-- [(=P4.2)]
+- ([=P4.2])
   - primary: patterns
   - related: uncertainty
-- [(=P4.3)]
+- ([=P4.3])
   - primary: uncertainty
   - related: patterns
-- [(=P4.4)]
+- ([=P4.4])
   - primary: uncertainty
-- [(=P4.5)]
+- ([=P4.5])
   - primary: uncertainty
-- [(=P4I1)]
+- ([=P4I1])
   - primary: patterns
   - related: foundation
-- [(=P4C1)]
+- ([=P4C1])
   - primary: patterns
   - related: foundation, verification
-- [(=P4I2)]
+- ([=P4I2])
   - primary: patterns
   - related: foundation
-- [(=P4C2)]
+- ([=P4C2])
   - primary: patterns
   - related: verification
-- [(=P4I3)]
+- ([=P4I3])
   - primary: foundation
   - related: uncertainty, storage
-- [(=P4C3)]
+- ([=P4C3])
   - primary: patterns
   - related: uncertainty, verification
-- [(=P4I4)]
+- ([=P4I4])
   - primary: uncertainty
   - related: foundation
-- [(=P4C4)]
+- ([=P4C4])
   - primary: uncertainty
   - related: patterns, verification
-- [(=P4I5)]
+- ([=P4I5])
   - primary: patterns
   - related: storage
-- [(=P4C5)]
+- ([=P4C5])
   - primary: uncertainty
   - related: verification
-- [(=P4I6)]
+- ([=P4I6])
   - primary: patterns
   - related: foundation
-- [(=P4I7)]
+- ([=P4I7])
   - primary: patterns
   - related: storage, workspace
-- [(=P4I8)]
+- ([=P4I8])
   - primary: patterns
   - related: field
-- [(=P4I9)]
+- ([=P4I9])
   - primary: patterns
   - related: uncertainty, storage
-- [(=P4I10)]
+- ([=P4I10])
   - primary: patterns
   - related: uncertainty, deployment
-- [(=P4I11)]
+- ([=P4I11])
   - primary: patterns
   - related: uncertainty, foundation
-- [(=P5.1)]
+- ([=P5.1])
   - primary: ingestion
   - related: graph
-- [(=P5.2)]
+- ([=P5.2])
   - primary: ingestion
   - related: graph, uncertainty
-- [(=P5.3)]
+- ([=P5.3])
   - primary: embedding
   - related: field
-- [(=P5.4)]
+- ([=P5.4])
   - primary: embedding
   - related: field
-- [(=P5I1)]
+- ([=P5I1])
   - primary: embedding
   - related: ingestion, storage
-- [(=P5C1)]
+- ([=P5C1])
   - primary: field
   - related: embedding, verification
-- [(=P5I2)]
+- ([=P5I2])
   - primary: embedding
   - related: ingestion, uncertainty
-- [(=P5C2)]
+- ([=P5C2])
   - primary: foundation
   - related: ingestion, verification
-- [(=P5I3)]
+- ([=P5I3])
   - primary: embedding
   - related: ingestion, field
-- [(=P5C3)]
+- ([=P5C3])
   - primary: ingestion
   - related: patterns, verification
-- [(=P5I4)]
+- ([=P5I4])
   - primary: embedding
   - related: ingestion, graph
-- [(=P5C4)]
+- ([=P5C4])
   - primary: embedding
   - related: verification
-- [(=P5I5)]
+- ([=P5I5])
   - primary: embedding
   - related: field, storage
-- [(=P5I6)]
+- ([=P5I6])
   - primary: embedding
   - related: foundation
-- [(=P6.1)]
+- ([=P6.1])
   - primary: workspace
   - related: storage
-- [(=P6.2)]
+- ([=P6.2])
   - primary: workspace
   - related: uncertainty, field
-- [(=P6.3)]
+- ([=P6.3])
   - primary: uncertainty
   - related: field, foundation
-- [(=P6.4)]
+- ([=P6.4])
   - primary: graph
   - related: field
-- [(=P6.5)]
+- ([=P6.5])
   - primary: embedding
   - related: uncertainty
-- [(=P6I1)]
+- ([=P6I1])
   - primary: workspace
   - related: foundation, storage
-- [(=P6C1)]
+- ([=P6C1])
   - primary: workspace
   - related: storage, verification
-- [(=P6I2)]
+- ([=P6I2])
   - primary: workspace
   - related: foundation, storage
-- [(=P6C2)]
+- ([=P6C2])
   - primary: workspace
   - related: storage, verification
-- [(=P6I3)]
+- ([=P6I3])
   - primary: workspace
   - related: storage
-- [(=P6C3)]
+- ([=P6C3])
   - primary: storage
   - related: verification
-- [(=P6I4)]
+- ([=P6I4])
   - primary: workspace
   - related: storage
-- [(=P6C4)]
+- ([=P6C4])
   - primary: uncertainty
   - related: field, workspace, verification
-- [(=P6I5)]
+- ([=P6I5])
   - primary: workspace
   - related: uncertainty, foundation
-- [(=P6C5)]
+- ([=P6C5])
   - primary: ingestion
   - related: uncertainty, verification
-- [(=P6C6)]
+- ([=P6C6])
   - primary: deployment
   - related: embedding, verification
-- [(=P7.1)]
+- ([=P7.1])
   - primary: exploration
   - related: uncertainty, field
-- [(=P7.2)]
+- ([=P7.2])
   - primary: exploration
   - related: uncertainty, field
-- [(=P7.3)]
+- ([=P7.3])
   - primary: exploration
   - related: uncertainty, field
-- [(=P7.4)]
+- ([=P7.4])
   - primary: exploration
   - related: embedding
-- [(=P7.5)]
+- ([=P7.5])
   - primary: exploration
   - related: uncertainty
-- [(=P7.6)]
+- ([=P7.6])
   - primary: exploration
   - related: uncertainty
-- [(=P7I1)]
+- ([=P7I1])
   - primary: exploration
   - related: foundation, storage
-- [(=P7C1)]
+- ([=P7C1])
   - primary: foundation
   - related: exploration, verification
-- [(=P7I2)]
+- ([=P7I2])
   - primary: exploration
   - related: workspace, foundation
-- [(=P7C2)]
+- ([=P7C2])
   - primary: exploration
   - related: verification
-- [(=P7I3)]
+- ([=P7I3])
   - primary: exploration
   - related: foundation, storage
-- [(=P7C3)]
+- ([=P7C3])
   - primary: exploration
   - related: uncertainty, verification
-- [(=P7I4)]
+- ([=P7I4])
   - primary: exploration
   - related: uncertainty, foundation
-- [(=P7C4)]
+- ([=P7C4])
   - primary: exploration
   - related: verification
-- [(=P7I5)]
+- ([=P7I5])
   - primary: exploration
   - related: storage
-- [(=P7C5)]
+- ([=P7C5])
   - primary: exploration
   - related: uncertainty, verification
-- [(=P7I6)]
+- ([=P7I6])
   - primary: exploration
   - related: uncertainty, patterns
-- [(=P7I7)]
+- ([=P7I7])
   - primary: exploration
   - related: uncertainty
-- [(=P7I8)]
+- ([=P7I8])
   - primary: exploration
   - related: uncertainty
-- [(=P7I9)]
+- ([=P7I9])
   - primary: exploration
   - related: uncertainty, foundation
-- [(=P7I10)]
+- ([=P7I10])
   - primary: exploration
   - related: uncertainty, foundation
-- [(=P7I11)]
+- ([=P7I11])
   - primary: exploration
   - related: uncertainty
-- [(=P7I12)]
+- ([=P7I12])
   - primary: exploration
   - related: workspace, ingestion
-- [(=P7I13)]
+- ([=P7I13])
   - primary: exploration
   - related: workspace
-- [(=P7I14)]
+- ([=P7I14])
   - primary: exploration
   - related: storage
-- [(=P7I15)]
+- ([=P7I15])
   - primary: exploration
   - related: storage
-- [(=P8.1)]
+- ([=P8.1])
   - primary: patterns
   - related: embedding, field
-- [(=P8.10)]
+- ([=P8.10])
   - primary: patterns
   - related: exploration
-- [(=P8.2)]
+- ([=P8.2])
   - primary: patterns
   - related: embedding, field
-- [(=P8.3)]
+- ([=P8.3])
   - primary: embedding
   - related: field, patterns
-- [(=P8.4)]
+- ([=P8.4])
   - primary: patterns
   - related: graph
-- [(=P8.5)]
+- ([=P8.5])
   - primary: patterns
   - related: field, embedding
-- [(=P8.6)]
+- ([=P8.6])
   - primary: patterns
   - related: uncertainty, field
-- [(=P8.7)]
+- ([=P8.7])
   - primary: patterns
   - related: graph
-- [(=P8.8)]
+- ([=P8.8])
   - primary: exploration
   - related: patterns, field
-- [(=P9.1)]
+- ([=P9.1])
   - primary: field
   - related: graph
-- [(=P9.2)]
+- ([=P9.2])
   - primary: field
   - related: graph, embedding
-- [(=P9.3)]
+- ([=P9.3])
   - primary: field
   - related: graph, embedding
-- [(=P9.4)]
+- ([=P9.4])
   - primary: field
   - related: graph, embedding
-- [(=P9.5)]
+- ([=P9.5])
   - primary: field
   - related: uncertainty
-- [(=P9I1)]
+- ([=P9I1])
   - primary: storage
   - related: workspace
-- [(=P9I2)]
+- ([=P9I2])
   - primary: storage
   - related: workspace
-- [(=P9I3)]
+- ([=P9I3])
   - primary: field
   - related: foundation
-- [(=P9I4)]
+- ([=P9I4])
   - primary: field
   - related: foundation, uncertainty
-- [(=P9I5)]
+- ([=P9I5])
   - primary: foundation
   - related: field
-- [(=P9I6)]
+- ([=P9I6])
   - primary: deployment
   - related: storage
-- [(=P10.1)]
+- ([=P10.1])
   - primary: workspace
   - related: foundation, storage
-- [(=P10.2)]
+- ([=P10.2])
   - primary: workspace
   - related: graph, storage
-- [(=P10.3)]
+- ([=P10.3])
   - primary: workspace
   - related: storage
-- [(=P10.4)]
+- ([=P10.4])
   - primary: workspace
   - related: graph, embedding
-- [(=P10I1)]
+- ([=P10I1])
   - primary: workspace
   - related: foundation, storage
-- [(=P10I2)]
+- ([=P10I2])
   - primary: workspace
   - related: storage
-- [(=P10I3)]
+- ([=P10I3])
   - primary: workspace
   - related: foundation
-- [(=P10I4)]
+- ([=P10I4])
   - primary: workspace
   - related: foundation
-- [(=P10I5)]
+- ([=P10I5])
   - primary: workspace
   - related: foundation
-- [(=P10I6)]
+- ([=P10I6])
   - primary: workspace
   - related: foundation, storage
-- [(=P10I7)]
+- ([=P10I7])
   - primary: workspace
   - related: storage
-- [(=P10I8)]
+- ([=P10I8])
   - primary: workspace
   - related: foundation, storage
-- [(=P10I9)]
+- ([=P10I9])
   - primary: workspace
   - related: foundation, uncertainty
-- [(=P10I10)]
+- ([=P10I10])
   - primary: workspace
   - related: embedding, storage
-- [(=P10I11)]
+- ([=P10I11])
   - primary: workspace
   - related: ingestion, foundation
-- [(=P10I12)]
+- ([=P10I12])
   - primary: workspace
   - related: exploration
-- [(=P10I13)]
+- ([=P10I13])
   - primary: workspace
   - related: field
-- [(=P10I14)]
+- ([=P10I14])
   - primary: workspace
   - related: foundation
-- [(=P10I15)]
+- ([=P10I15])
   - primary: workspace
   - related: uncertainty, foundation
-- [(=P10I16)]
+- ([=P10I16])
   - primary: workspace
   - related: foundation
-- [(=S1)]
+- ([=S1])
   - primary: foundation
   - related: field, embedding
-- [(=S2)]
+- ([=S2])
   - primary: foundation
   - related: field, graph, embedding
-- [(=T1)]
+- ([=T1])
   - primary: patterns
   - related: graph, embedding
-- [(=T2)]
+- ([=T2])
   - primary: patterns
   - related: embedding, field
-- [(=T3)]
+- ([=T3])
   - primary: patterns
   - related: graph, storage
-- [(=T4)]
+- ([=T4])
   - primary: patterns
   - related: uncertainty, storage
-- [(=T5)]
+- ([=T5])
   - primary: embedding
   - related: field
-- [(=T6)]
+- ([=T6])
   - primary: embedding
   - related: field
-- [(=T7)]
+- ([=T7])
   - primary: ingestion
   - related: foundation, embedding
-- [(=T8)]
+- ([=T8])
   - primary: patterns
   - related: ingestion, graph, uncertainty
-- [(=T9)]
+- ([=T9])
   - primary: patterns
   - related: ingestion, graph, foundation
-- [(=T10)]
+- ([=T10])
   - primary: patterns
   - related: ingestion, embedding
-- [(=T11)]
+- ([=T11])
   - primary: embedding
   - related: ingestion, field, storage
-- [(=T12)]
+- ([=T12])
   - primary: embedding
   - related: field, graph
-- [(=T13)]
+- ([=T13])
   - primary: ingestion
   - related: workspace, field, embedding
-- [(=T14)]
+- ([=T14])
   - primary: storage
   - related: embedding, field
 
-- [(=P1C6)]
+- ([=P1C6])
   - primary: verification
   - related: foundation
-- [(=P1C7)]
+- ([=P1C7])
   - primary: verification
   - related: foundation, field
-- [(=P1C8)]
+- ([=P1C8])
   - primary: verification
   - related: foundation, uncertainty

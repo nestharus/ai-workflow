@@ -24,7 +24,7 @@ ID_PATTERNS_LEGAL = [
     r"NFG\d+",
 ]
 
-ANNOTATION_PATTERN = re.compile(r"\[\(=([^\]]+)\)\]")
+ANNOTATION_PATTERN = re.compile(r"\(\[=([^\]]+)\]\)")
 
 
 def is_legal_id(text: str) -> bool:

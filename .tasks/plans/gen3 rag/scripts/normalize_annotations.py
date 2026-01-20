@@ -52,7 +52,7 @@ class Finding:
 
 
 def default_targets(base_dir: Path) -> list[Path]:
-    targets = [base_dir / "plan.md"]
+    targets = [base_dir / "plan.md", base_dir / "libs.md"]
     targets.extend(sorted((base_dir / "libraries").glob("*.md")))
     return [p for p in targets if p.exists()]
 
@@ -165,4 +165,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

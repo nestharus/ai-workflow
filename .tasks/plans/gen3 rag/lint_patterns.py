@@ -177,12 +177,12 @@ def check_algorithms(line_num: int, line: str, stripped: str, current_section: s
     match = re.match(r'^#+\s*(Algorithm\s+(\d+))', stripped)
     if match:
         alg_num = int(match.group(2))
-        if alg_num < 1 or alg_num > 64:
+        if alg_num < 1 or alg_num > 67:
             violations.append(Violation(
                 line_num=line_num,
                 line_text=line[:80],
                 category="algorithm",
-                message=f"Algorithm {alg_num} out of expected range (1-64)",
+                message=f"Algorithm {alg_num} out of expected range (1-67)",
                 severity=Severity.WARNING
             ))
 

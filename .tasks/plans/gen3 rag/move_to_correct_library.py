@@ -14,21 +14,24 @@ def parse_libs_md(libs_path: Path) -> dict[str, str]:
     content = libs_path.read_text(encoding='utf-8')
     assignments = {}
 
-    lines = content.split('\n')
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        m = re.match(r'^- \*\*([^*]+)\*\*:', line)
-        if m:
-            item_id = m.group(1).strip()
-            for j in range(i+1, min(i+5, len(lines))):
-                pm = re.match(r'^\s+- primary:\s*(\w+)', lines[j])
-                if pm:
-                    assignments[item_id] = pm.group(1)
-                    break
-                if re.match(r'^- \*\*', lines[j]):
-                    break
-        i += 1
+    current_id = None
+    current_primary = None
+
+    for line in content.split('\n'):
+        id_match = re.match(r'^- \(\[=([^\]]+)\]\)', line)
+        if id_match:
+            if current_id and current_primary:
+                assignments[current_id] = current_primary
+            current_id = id_match.group(1).strip()
+            current_primary = None
+            continue
+
+        primary_match = re.match(r'^\s+- primary:\s*(\w+)', line)
+        if primary_match:
+            current_primary = primary_match.group(1).strip()
+
+    if current_id and current_primary:
+        assignments[current_id] = current_primary
 
     return assignments
 

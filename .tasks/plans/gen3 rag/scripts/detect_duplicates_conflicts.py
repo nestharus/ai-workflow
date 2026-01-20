@@ -43,7 +43,7 @@ def parse_libs_md():
 
     for line in lines:
         # Match ID declaration
-        id_match = re.match(r'^- \[\(=([^\]]+)\)\]', line)
+        id_match = re.match(r'^- \(\[=([^\]]+)\]\)', line)
         if id_match:
             # Save previous entry
             if current_id and current_primary:
@@ -72,7 +72,7 @@ def extract_ids_with_locations(file_path):
     lines = content.splitlines()
 
     ids_with_lines = []
-    annotation_pattern = re.compile(r'\[\(=([^\]]+)\)\]')
+    annotation_pattern = re.compile(r"\(\[=([^\]]+)\]\)")
 
     for line_num, line in enumerate(lines, 1):
         for match in annotation_pattern.finditer(line):

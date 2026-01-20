@@ -14,7 +14,7 @@ def get_plan_headers(content: str) -> list[tuple[int, str, str]]:
         match = re.match(r'^(#{2,3})\s+(.+)$', line)
         if match:
             level = match.group(1)
-            text = match.group(2).strip()
+            text = re.sub(r'\([=+@]\[[^\]]+\]\)', '', match.group(2)).strip()
             headers.append((i + 1, level, text))
     return headers
 
@@ -23,10 +23,9 @@ def get_libs_elements(content: str) -> set[str]:
     """Get all element labels from libs.md."""
     elements = set()
     for line in content.split('\n'):
-        # Match: - **Label**: or - **Label**
-        match = re.match(r'^- \*\*(.+?)\*\*', line)
+        match = re.match(r'^- \(\[=([^\]]+)\]\)', line)
         if match:
-            elements.add(match.group(1))
+            elements.add(match.group(1).strip())
     return elements
 
 

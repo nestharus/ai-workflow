@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Find empty stub sections in libraries/ based on [(=ID)] annotation boundaries.
+Find empty stub sections in libraries/ based on ([=ID]) annotation boundaries.
 
 Definition:
-- A section starts on a line containing [(=ID)] where ID matches a legal pattern.
-- The section body continues until the next [(=ID)] line (or EOF).
+- A section starts on a line containing ([=ID]) where ID matches a legal pattern.
+- The section body continues until the next ([=ID]) line (or EOF).
 - A section is an "empty stub" if its body contains no non-whitespace characters.
 
 This script optionally cross-references plan.md to highlight stubs that now have
@@ -34,7 +34,7 @@ ID_PATTERNS_LEGAL = [
     r"NFG\d+",
 ]
 
-ANNOTATION_PATTERN = re.compile(r"\[\(=([^\]]+)\)\]")
+ANNOTATION_PATTERN = re.compile(r"\(\[=([^\]]+)\]\)")
 
 
 def is_legal_id(text: str) -> bool:
@@ -172,4 +172,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

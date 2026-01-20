@@ -6,8 +6,8 @@ This script identifies references to IDs in prose text (excluding headers and co
 and reports whether they already have annotation markers.
 
 Annotation formats:
-- (=[id]) - labeled reference (belongs to)
-- (+[id]) - context reference (references)
+- (@[=id]) - labeled reference (belongs to)
+- (@[+id]) - context reference (references)
 
 ID patterns searched:
 - Algorithm \d+
@@ -21,8 +21,8 @@ Usage:
 
 Example output:
     L123: "see the P4 pattern library" -> P4 (no annotation)
-    L456: "Algorithm 10(=[Algorithm 10])" -> Algorithm 10 (labeled reference)
-    L789: "using P5(+[P5])" -> P5 (context reference)
+    L456: "Algorithm 10 (@[=Algorithm 10])" -> Algorithm 10 (labeled reference)
+    L789: "using P5 (@[+P5])" -> P5 (context reference)
 """
 
 import re
@@ -100,20 +100,20 @@ def get_annotation_type(line: str, match_end: int) -> str:
     Check if the ID has an annotation marker and return its type.
 
     Returns:
-        'labeled' - for (=[id]) format (belongs to)
-        'context' - for (+[id]) format (references)
+        'labeled' - for (@[=id]) format (belongs to)
+        'context' - for (@[+id]) format (references)
         'none' - no annotation marker found
     """
     # Look ahead from the match end for annotation pattern
     remaining = line[match_end:].lstrip()
 
-    # Pattern: (=[something]) - labeled reference
-    labeled_pattern = r'^\(=\[([^\]]+)\]\)'
+    # Pattern: (@[=something]) - labeled reference
+    labeled_pattern = r'^\(@\[=([^\]]+)\]\)'
     if re.match(labeled_pattern, remaining):
         return 'labeled'
 
-    # Pattern: (+[something]) - context reference
-    context_pattern = r'^\(\+\[([^\]]+)\]\)'
+    # Pattern: (@[+something]) - context reference
+    context_pattern = r'^\(@\[\+([^\]]+)\]\)'
     if re.match(context_pattern, remaining):
         return 'context'
 
@@ -186,9 +186,9 @@ def find_all_references(file_path: Path) -> List[Reference]:
 def format_reference(ref: Reference) -> str:
     """Format a reference for display."""
     if ref.annotation_type == 'labeled':
-        status = "labeled reference (=[id])"
+        status = "labeled reference (@[=id])"
     elif ref.annotation_type == 'context':
-        status = "context reference (+[id])"
+        status = "context reference (@[+id])"
     else:
         status = "no annotation"
     return f'L{ref.line_num}: "{ref.context}" -> {ref.id_text} ({status})'
@@ -205,8 +205,8 @@ def print_summary(references: List[Reference]):
     print("SUMMARY")
     print("=" * 80)
     print(f"Total references found: {total}")
-    print(f"Labeled references (=[id]): {labeled}")
-    print(f"Context references (+[id]): {context}")
+    print(f"Labeled references (@[=id]): {labeled}")
+    print(f"Context references (@[+id]): {context}")
     print(f"Without annotation: {without_annotation}")
 
     if without_annotation > 0:
@@ -257,7 +257,7 @@ def main():
 
     # Print labeled references
     if labeled_refs:
-        header = "\n\nLABELED REFERENCES (=[id]):"
+        header = "\n\nLABELED REFERENCES (@[=id]):"
         separator = "-" * 80
         print(header)
         print(separator)
@@ -271,7 +271,7 @@ def main():
 
     # Print context references
     if context_refs:
-        header = "\n\nCONTEXT REFERENCES (+[id]):"
+        header = "\n\nCONTEXT REFERENCES (@[+id]):"
         separator = "-" * 80
         print(header)
         print(separator)
@@ -296,8 +296,8 @@ def main():
         output_lines.append("SUMMARY")
         output_lines.append("=" * 80)
         output_lines.append(f"Total references found: {len(references)}")
-        output_lines.append(f"Labeled references (=[id]): {labeled}")
-        output_lines.append(f"Context references (+[id]): {context}")
+        output_lines.append(f"Labeled references (@[=id]): {labeled}")
+        output_lines.append(f"Context references (@[+id]): {context}")
         output_lines.append(f"Without annotation: {without}")
         if without > 0:
             output_lines.append(f"\nNeeds attention: {without} references missing annotations")

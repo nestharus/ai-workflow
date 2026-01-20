@@ -13,7 +13,7 @@ def parse_libs_md(libs_path: Path) -> set[str]:
     content = libs_path.read_text(encoding='utf-8')
 
     assigned = set()
-    for m in re.finditer(r'^- \*\*([^*]+)\*\*:', content, re.MULTILINE):
+    for m in re.finditer(r'^- \(\[=([^\]]+)\]\)', content, re.MULTILINE):
         assigned.add(m.group(1).strip())
 
     return assigned

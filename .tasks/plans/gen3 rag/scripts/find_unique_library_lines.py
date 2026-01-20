@@ -44,7 +44,7 @@ def find_unique_regions_with_ids(file_path, plan_lines):
     content = file_path.read_text()
     lines = content.splitlines()
 
-    annotation_pattern = re.compile(r'\[\(=([^\]]+)\)\]')
+    annotation_pattern = re.compile(r"\(\[=([^\]]+)\]\)")
 
     # First pass: find current ID for each line
     line_ids = [None] * len(lines)

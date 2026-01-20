@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Compare IDs between libs.md and plan.md:
-1. Parse libs.md by category sections (## Category (count))
-2. Extract ID and label from list items: - **ID**: Label (L###)
-3. Compare with plan.md headers
-4. Report missing entries and label mismatches
+Compare IDs between libs.md and plan.md.
+
+libs.md format:
+- ([=ID])
+  - primary: <library>
+  - related: <libraries...>
 """
 
 import re
@@ -20,46 +21,53 @@ class Entry:
     line: int
 
 
+def categorize_id(item_id: str) -> str:
+    """Assign a simple category based on ID prefix."""
+    if item_id.startswith("Algorithm"):
+        return "algorithm"
+    if item_id.startswith("Comp"):
+        return "component"
+    if item_id.startswith("D"):
+        return "data_structure"
+    if item_id.startswith("G"):
+        return "goal"
+    if re.match(r"^P\\d+I", item_id):
+        return "invariant"
+    if re.match(r"^P\\d+C", item_id):
+        return "claim"
+    if re.match(r"^P\\d+\\.", item_id):
+        return "patch_section"
+    if item_id.startswith("Lean"):
+        return "lean"
+    if item_id.startswith("NFG"):
+        return "nfg"
+    if item_id.startswith("S"):
+        return "statement"
+    if item_id.startswith("T"):
+        return "topic"
+    if item_id.startswith("C"):
+        return "claim"
+    return "other"
+
+
 def parse_libs_md(filepath: Path) -> list[Entry]:
-    """Parse libs.md by category sections and extract entries."""
+    """Parse libs.md ID entries."""
     entries = []
     content = filepath.read_text(encoding='utf-8')
     lines = content.split('\n')
 
-    current_category = None
-
     for line_num, line in enumerate(lines, 1):
-        # Check for category header: ## Category (count)
-        cat_match = re.match(r'^##\s+(.+?)\s*\(\d+\)\s*$', line)
-        if cat_match:
-            current_category = cat_match.group(1).strip()
-            continue
-
-        # Check for top-level list item: - **ID**: Label (L###)
-        # Must start with "- " (not "  - " which is nested)
-        if not line.startswith('- '):
-            continue
-
-        if current_category is None:
-            continue
-
-        # Extract: - **ID**: Label (L###) or - **ID** (L###)
-        # Pattern: - **ID**: Label (L###)  or  - **ID** Label (L###)
-        item_match = re.match(r'^-\s+\*\*(.+?)\*\*:?\s*(.+?)?\s*(?:\(L\d+\))?\s*$', line)
+        item_match = re.match(r'^-\s+\(\[=([^\]]+)\]\)', line)
         if item_match:
             id_part = item_match.group(1).strip()
-            label_part = item_match.group(2)
-            label = label_part.strip() if label_part else ''
-
-            # Clean up label - remove trailing (L###) if still present
-            label = re.sub(r'\s*\(L\d+\)\s*$', '', label)
-
-            entries.append(Entry(
-                id=id_part,
-                label=label,
-                category=current_category,
-                line=line_num
-            ))
+            entries.append(
+                Entry(
+                    id=id_part,
+                    label="",
+                    category=categorize_id(id_part),
+                    line=line_num,
+                )
+            )
 
     return entries
 
@@ -74,7 +82,7 @@ def parse_plan_headers(filepath: Path) -> list[Entry]:
         if not line.strip().startswith('#'):
             continue
 
-        # Remove # prefix and any annotations like (=[P1])
+        # Remove # prefix and any annotations like ([=P1]) or (@[=P1])
         clean = re.sub(r'^#+\s*', '', line)
         clean = re.sub(r'\s*\([=+@]\[[^\]]+\]\)\s*', ' ', clean).strip()
 
@@ -134,18 +142,6 @@ def main():
     print(f"In libs.md only: {len(in_libs_not_plan)}")
     print(f"In plan.md only: {len(in_plan_not_libs)}")
 
-    # Check for label mismatches
-    label_mismatches = []
-    for id_str in in_both:
-        libs_entry = libs_by_id[id_str]
-        plan_entry = plan_by_id[id_str]
-        if libs_entry.label and plan_entry.label:
-            # Normalize for comparison
-            libs_label = libs_entry.label.lower().strip()
-            plan_label = plan_entry.label.lower().strip()
-            if libs_label != plan_label:
-                label_mismatches.append((id_str, libs_entry.label, plan_entry.label))
-
     if in_libs_not_plan:
         print(f"\n{'='*70}")
         print(f"IN LIBS.MD BUT NOT IN PLAN.MD ({len(in_libs_not_plan)})")
@@ -163,17 +159,6 @@ def main():
             print(f"  L{e.line}: {e.id}: {e.label[:50]}")
         if len(in_plan_not_libs) > 50:
             print(f"  ... and {len(in_plan_not_libs) - 50} more")
-
-    if label_mismatches:
-        print(f"\n{'='*70}")
-        print(f"LABEL MISMATCHES ({len(label_mismatches)})")
-        print("=" * 70)
-        for id_str, libs_label, plan_label in label_mismatches[:30]:
-            print(f"  {id_str}:")
-            print(f"    libs: {libs_label[:50]}")
-            print(f"    plan: {plan_label[:50]}")
-        if len(label_mismatches) > 30:
-            print(f"  ... and {len(label_mismatches) - 30} more")
 
     # Summary by category
     print(f"\n{'='*70}")

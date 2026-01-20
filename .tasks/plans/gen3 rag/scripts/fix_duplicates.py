@@ -46,7 +46,7 @@ def parse_libs_md():
     current_primary = None
 
     for line in lines:
-        id_match = re.match(r'^- \[\(=([^\]]+)\)\]', line)
+        id_match = re.match(r'^- \(\[=([^\]]+)\]\)', line)
         if id_match:
             if current_id and current_primary:
                 id_assignments[current_id] = current_primary
@@ -143,7 +143,7 @@ def main():
         content = lib_file.read_text()
         lines = content.splitlines()
 
-        annotation_pattern = re.compile(r'\[\(=([^\]]+)\)\]')
+        annotation_pattern = re.compile(r"\(\[=([^\]]+)\]\)")
 
         for line_num, line in enumerate(lines, 1):
             for match in annotation_pattern.finditer(line):
