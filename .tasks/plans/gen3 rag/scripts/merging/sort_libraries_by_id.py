@@ -87,7 +87,7 @@ def sort_library_file(path: Path) -> bool:
 
 
 def main() -> None:
-    base = Path(__file__).resolve().parents[1]
+    base = Path(__file__).resolve().parents[2]
     libs_dir = base / "libraries"
 
     updated = 0

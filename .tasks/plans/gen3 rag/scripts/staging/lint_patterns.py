@@ -318,7 +318,7 @@ def print_report(violations: list[Violation]):
 
 
 def main():
-    plan_path = Path(__file__).resolve().parents[1] / "plan.md"
+    plan_path = Path(__file__).resolve().parents[2] / "plan.md"
 
     if not plan_path.exists():
         print(f"Error: {plan_path} not found")

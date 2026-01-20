@@ -112,7 +112,7 @@ def parse_plan_headers(filepath: Path) -> list[Entry]:
 
 
 def main():
-    base = Path(__file__).resolve().parents[1]
+    base = Path(__file__).resolve().parents[2]
     plan_path = base / "plan.md"
     libs_path = base / "libs.md"
 

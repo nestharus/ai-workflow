@@ -107,7 +107,7 @@ def scan_file(filepath: Path) -> tuple[dict, dict, str]:
 
 
 def main():
-    base = Path(__file__).resolve().parents[1]
+    base = Path(__file__).resolve().parents[2]
     plan_file = base / "plan.md"
     libs_dir = base / "libraries"
 

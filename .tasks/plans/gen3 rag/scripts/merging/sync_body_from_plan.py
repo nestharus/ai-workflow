@@ -79,7 +79,7 @@ def normalize_body(body):
 
 
 def main():
-    base = Path(__file__).resolve().parents[1]
+    base = Path(__file__).resolve().parents[2]
     plan_path = base / "plan.md"
     libs_dir = base / "libraries"
 

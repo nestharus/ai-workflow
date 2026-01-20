@@ -22,7 +22,7 @@ def main() -> int:
     parser.add_argument("--fail", action="store_true", help="Exit non-zero if any are found.")
     args = parser.parse_args()
 
-    base_dir = Path(__file__).resolve().parents[1]
+    base_dir = Path(__file__).resolve().parents[2]
     plan_path = base_dir / "plan.md"
     lines = plan_path.read_text(encoding="utf-8").splitlines()
 

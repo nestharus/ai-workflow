@@ -15,8 +15,8 @@ from pathlib import Path
 from collections import defaultdict
 
 # Library directory
-LIBS_DIR = Path(__file__).parent.parent / "libraries"
-LIBS_MD = Path(__file__).parent.parent / "libs.md"
+LIBS_DIR = Path(__file__).resolve().parents[2] / "libraries"
+LIBS_MD = Path(__file__).resolve().parents[2] / "libs.md"
 
 # Legal ID patterns
 ID_PATTERNS = [

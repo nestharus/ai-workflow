@@ -237,7 +237,7 @@ def analyze_sequence(name: str, items: list[tuple[int, int, str, str]]) -> dict:
 
 
 def main():
-    base = Path(__file__).resolve().parents[1]
+    base = Path(__file__).resolve().parents[2]
     plan_path = base / "plan.md"
 
     content = plan_path.read_text(encoding='utf-8')

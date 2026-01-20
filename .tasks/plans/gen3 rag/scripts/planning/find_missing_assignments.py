@@ -127,7 +127,7 @@ def categorize_id(item_id: str) -> str:
 
 
 def main():
-    base = Path(__file__).resolve().parents[1]
+    base = Path(__file__).resolve().parents[2]
     libs_dir = base / "libraries"
     libs_md = base / "libs.md"
 

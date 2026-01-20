@@ -7,8 +7,8 @@ Group consecutive unique lines into regions and associate with IDs.
 import re
 from pathlib import Path
 
-LIBS_DIR = Path(__file__).parent.parent / "libraries"
-PLAN_MD = Path(__file__).parent.parent / "plan.md"
+LIBS_DIR = Path(__file__).resolve().parents[2] / "libraries"
+PLAN_MD = Path(__file__).resolve().parents[2] / "plan.md"
 
 ID_PATTERNS = [
     r'Algorithm \d+', r'Comp\d+', r'D\d+', r'G\d+', r'C\d+', r'S\d+', r'T\d+',
