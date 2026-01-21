@@ -38,7 +38,7 @@ The scripts are in `/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/gen
 | `find_missing_assignments.py` | missing_assignment | Medium |
 | `check_sequences.py` | sequence_violation (duplicate, hole, conflict) | High |
 
-### REVIEW phase (legacy: verification) - Content Evidence
+### FINALIZATION phase (legacy: verification) - Content Evidence
 
 | Script | Evidence Category | Priority |
 |--------|-------------------|----------|
