@@ -1,10 +1,8 @@
 ---
 description: Handle code review comments with optional worktree support
-agent: pr-orchestrator
-subtask: true
 ---
 
-Run the PR review workflow agent.
+Run the PR review workflow.
 
 ## Arguments
 
@@ -20,12 +18,36 @@ Examples:
 - `/update-pr NES-123 ## Fix the bug...` - worktree mode + local tasks
 - `/update-pr --loop ## Add tests...` - local mode + local tasks
 
-## Workflow
+## Execution
 
-Run the pr-outer-loop agent with the provided arguments:
+1. Create workspace:
 
 ```bash
-uv run python -m scripts.agents pr-outer-loop "$ARGUMENTS"
+mkdir -p .tmp/pr-review
 ```
 
-Pass through all arguments exactly as provided.
+2. Run the pr-outer-loop agent:
+
+```bash
+uv run python -m scripts.agents pr-outer-loop $ARGUMENTS
+```
+
+## Error Handling
+
+When the command fails, invoke workflow-repair to fix the *tooling* (not content):
+
+```bash
+uv run python -m scripts.agents workflow-repair '{
+  "workflow": "pr-review",
+  "step": "pr-outer-loop",
+  "state_file": ".tmp/pr-review/state.json",
+  "failed_command": "uv run python -m scripts.agents pr-outer-loop ...",
+  "exit_code": 1,
+  "stdout": "{captured_stdout}",
+  "stderr": "{captured_stderr}",
+  "workspace": ".tmp/pr-review"
+}'
+```
+
+**If `status: "repaired"`**: Use `tool_output` as the result, continue
+**If `status: "failed"`**: Preserve workspace, output diagnosis, exit

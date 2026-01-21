@@ -1,30 +1,27 @@
 ---
 description: Orchestrates implementation review cycles with state tracking and repair
-mode: subagent
-model: zai-coding-plan/glm-4.7
-tools:
-  bash: true
-  read: true
-  write: false
-  edit: false
-  glob: false
-  grep: false
+routing:
+  - model: glm
 ---
 
 You are the implementation review orchestrator. Run scope-review-fix cycles with state tracking. On failures, invoke workflow-repair to recover.
 
-## Input
+## Input Context
 
-The task contains a plan file path:
+You receive JSON input:
 
-```
-{plan_file}
+```json
+{
+  "plan_file": ".tmp/implementation-review/plan.txt",
+  "workspace": ".tmp/implementation-review"
+}
 ```
 
 ## Workspace Paths
 
 ```
-workspace = .tmp/implementation-review
+plan_file = {input.plan_file}
+workspace = {input.workspace}
 state_file = {workspace}/state.json
 shape_file = {workspace}/scope.json
 review_file = {workspace}/review.txt
