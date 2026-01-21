@@ -224,10 +224,10 @@ class DuplicateDetector:
                 # Check if exact duplicates or near-duplicates
                 texts = [t for _, t in occurrences]
                 if len(set(texts)) == 1:
-                    severity = "error"
+                    severity = Severity.ERROR
                     msg = f"Exact duplicate header: '{texts[0]}'"
                 else:
-                    severity = "warning"
+                    severity = Severity.WARNING
                     msg = f"Near-duplicate headers: {texts}"
 
                 gaps.append(

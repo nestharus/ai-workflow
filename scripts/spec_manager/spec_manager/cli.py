@@ -200,7 +200,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     # Get combined content from plan.md + patches (in order)
     combined_content = manager.get_combined_content()
     if not combined_content.strip():
-        manager.fail_phase(Phase.PLANNING, "No input content found (no plan.md or patches)")
+        manager.fail_phase(Phase.DISCOVERY, "No input content found (no plan.md or patches)")
         return 1
 
     # Show what's being processed
