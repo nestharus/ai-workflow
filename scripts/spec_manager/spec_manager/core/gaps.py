@@ -761,7 +761,7 @@ class ProofChainDetector:
         lean_blocks: list[str],
         full_content: str,
         file_path: str,
-    ) -> list[GapEvidence]:
+    ) -> list[DetectorFinding]:
         """Check proof chain for a single algorithm."""
         evidence = []
 
@@ -972,7 +972,7 @@ class ProseFragmentInferenceDetector:
     This is NOT an afterthought - it's a primary detection method for messy inputs
     where meaning is scattered across prose fragments rather than structured elements.
 
-    Outputs GapEvidence with confidence scores, linking back to source text.
+    Outputs DetectorFinding with confidence scores, linking back to source text.
     """
 
     def __init__(self, llm_client=None) -> None:
@@ -1165,7 +1165,7 @@ class InferredClaimPromotionStrategy:
     This pairs with ProseFragmentInferenceDetector - detects -> evidence -> promotes.
     """
 
-    def should_apply(self, evidence: list[GapEvidence]) -> bool:
+    def should_apply(self, evidence: list[DetectorFinding]) -> bool:
         """Check if there are promotable inferences."""
         return any(
             e.detector == "prose_fragment_inference"
@@ -1174,7 +1174,7 @@ class InferredClaimPromotionStrategy:
             for e in evidence
         )
 
-    def apply(self, evidence: list[GapEvidence], units: list) -> list:
+    def apply(self, evidence: list[DetectorFinding], units: list) -> list:
         """Promote high-confidence inferences to structured elements.
 
         Returns new TrackedUnits for promoted elements.

@@ -20,7 +20,6 @@ Type Naming (collision avoidance):
     - DetectorFinding (gaps.py): Raw detector output (simpler structure)
 
     - Gap (this module): v2.0 first-class gap with evidence-based ID
-    - LegacyGap (gaps.py): Deprecated wrapper with gap_type field
     - GapElement (gaps.py): Synthesized gap for gaps.md output
 
     - WorkflowEvidence (orchestrator.py): Evidence collected during workflow
@@ -30,7 +29,7 @@ Type Naming (collision avoidance):
         from spec_manager.core.gaps import DetectorFinding, GapElement  # synthesis
 
 Related Modules:
-    - gaps.py: Contains Severity enum, DetectorFinding, LegacyGap, GapElement
+    - gaps.py: Contains Severity enum, DetectorFinding, GapElement
     - state.py: State management using these data structures
     - provenance.py: Unit tracking and provenance chains
 
