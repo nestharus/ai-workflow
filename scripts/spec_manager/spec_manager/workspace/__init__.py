@@ -1,7 +1,7 @@
 """Workspace management for spec processing."""
 
-from spec_manager.workspace.manager import WorkspaceManager
-from spec_manager.workspace.state import WorkspaceState, PhaseStatus
+from .manager import WorkspaceManager
+from .state import PhaseStatus, WorkspaceState
 
 __all__ = [
     "WorkspaceManager",

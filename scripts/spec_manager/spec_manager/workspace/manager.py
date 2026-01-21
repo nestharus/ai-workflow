@@ -5,6 +5,11 @@ Manages the .workspace/ directory within a spec folder, providing:
 - State persistence
 - Agent input/output file management
 - Report generation
+
+The reports/ subdirectory contains:
+- summary.md: Overall processing summary
+- {phase}_report.md: Per-phase detailed reports
+- migration.log: JSON Lines log of schema migration events
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from spec_manager.workspace.state import Phase, PhaseStatus, WorkspaceState
+from .state import Phase, PhaseStatus, WorkspaceState
 
 
 @dataclass
@@ -85,11 +90,17 @@ class WorkspaceManager:
     - state.json: Persistent state across phases
     - agent_input.yaml: Input for current agent
     - agent_output.yaml: Output from current agent
-    - reports/: Generated reports
+    - reports/: Generated reports including migration.log
     - cleaning/: Cleaning phase intermediate files
     - discovery/: Discovery phase intermediate files
     - review/: Review phase intermediate files
     - finalization/: Finalization phase intermediate files
+
+    Migration Log:
+        When loading state.json, schema version is detected and migration events
+        are logged to reports/migration.log in JSON Lines format. Use
+        `get_migration_log_path()` to get the log file path and
+        `read_migration_log()` to parse and retrieve migration events.
     """
 
     spec_folder: Path
@@ -559,3 +570,44 @@ class WorkspaceManager:
     def is_complete(self) -> bool:
         """Check if all phases are complete."""
         return self.state.is_complete()
+
+    # --- Migration Log Access ---
+
+    def get_migration_log_path(self) -> Path:
+        """Get the path to the migration log file.
+
+        Returns:
+            Path to `.workspace/reports/migration.log`.
+        """
+        return self._workspace / "reports" / "migration.log"
+
+    def read_migration_log(self) -> list[dict[str, Any]]:
+        """Read and parse the migration log file.
+
+        Reads the migration.log file line by line, parsing each line as JSON.
+        Malformed lines are skipped with a warning logged.
+
+        Returns:
+            List of migration event dictionaries. Returns empty list if
+            the log file doesn't exist.
+        """
+        import logging
+
+        migration_log = self.get_migration_log_path()
+        if not migration_log.exists():
+            return []
+
+        entries = []
+        with migration_log.open("r", encoding="utf-8") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    logging.warning(
+                        "Malformed JSON at line %d in migration.log, skipping",
+                        line_num,
+                    )
+        return entries

@@ -11,8 +11,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from spec_manager.core.annotations import AnnotationParser
-from spec_manager.core.ids import IdValidator
+from .annotations import AnnotationParser
+from .ids import IdValidator
 
 
 @dataclass

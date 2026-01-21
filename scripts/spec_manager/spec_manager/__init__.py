@@ -83,67 +83,67 @@ __all__ = [
 def __getattr__(name: str):
     """Lazy imports to avoid circular dependencies."""
     if name in ("AnnotationParser", "SectionExtractor", "IdValidator", "LibsRegistry"):
-        from spec_manager.core import (
+        from .core import (
             AnnotationParser,
-            SectionExtractor,
             IdValidator,
             LibsRegistry,
+            SectionExtractor,
         )
         return locals()[name]
 
     if name in ("TrackedUnit", "SourceLocation", "UnitType", "UnitStatus", "ProvenanceTracker"):
-        from spec_manager.core import (
-            TrackedUnit,
-            SourceLocation,
-            UnitType,
-            UnitStatus,
+        from .core import (
             ProvenanceTracker,
+            SourceLocation,
+            TrackedUnit,
+            UnitStatus,
+            UnitType,
         )
         return locals()[name]
 
     if name in ("StrategyRegistry", "Strategy", "StrategyPhase", "ProcessingContext", "StrategyResult"):
-        from spec_manager.strategies import (
-            StrategyRegistry,
+        from .strategies import (
+            ProcessingContext,
             Strategy,
             StrategyPhase,
-            ProcessingContext,
+            StrategyRegistry,
             StrategyResult,
         )
         return locals()[name]
 
     if name == "WorkspaceManager":
-        from spec_manager.workspace import WorkspaceManager
+        from .workspace import WorkspaceManager
         return WorkspaceManager
 
     if name == "run_staging":
-        from spec_manager.staging import run_staging
+        from .staging import run_staging
         return run_staging
 
     if name == "run_planning":
-        from spec_manager.planning import run_planning
+        from .planning import run_planning
         return run_planning
 
     if name == "run_merging":
-        from spec_manager.merging import run_merging
+        from .merging import run_merging
         return run_merging
 
     if name == "run_verification":
-        from spec_manager.verification import run_verification
+        from .verification import run_verification
         return run_verification
 
     if name == "run_analysis":
-        from spec_manager.analysis import run_analysis
+        from .analysis import run_analysis
         return run_analysis
 
     if name in ("WorkflowOrchestrator", "WorkflowConfig", "WorkflowState", "WorkflowPhase",
                 "PatchDependencyGraph", "ContextIndex", "ingest"):
-        from spec_manager.workflow import (
-            WorkflowOrchestrator,
-            WorkflowConfig,
-            WorkflowState,
-            WorkflowPhase,
-            PatchDependencyGraph,
+        from .workflow import (
             ContextIndex,
+            PatchDependencyGraph,
+            WorkflowConfig,
+            WorkflowOrchestrator,
+            WorkflowPhase,
+            WorkflowState,
             ingest,
         )
         return locals()[name]
@@ -151,14 +151,14 @@ def __getattr__(name: str):
     if name in ("CandidateLibrary", "CandidateIdentifier", "ElementLabels", "MultiLabeler",
                 "LibraryShape", "ShapeAggregator", "LibraryRefiner",
                 "discover_libraries", "discover_libraries_sync"):
-        from spec_manager.discovery import (
-            CandidateLibrary,
+        from .discovery import (
             CandidateIdentifier,
+            CandidateLibrary,
             ElementLabels,
-            MultiLabeler,
-            LibraryShape,
-            ShapeAggregator,
             LibraryRefiner,
+            LibraryShape,
+            MultiLabeler,
+            ShapeAggregator,
             discover_libraries,
             discover_libraries_sync,
         )

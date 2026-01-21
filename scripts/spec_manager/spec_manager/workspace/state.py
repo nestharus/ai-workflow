@@ -5,18 +5,26 @@ The workspace maintains state across the 4 phases:
 2. DISCOVERY: Decompose into batches
 3. REVIEW: Apply batches
 4. FINALIZATION: Confirm correctness
+
+Schema Versioning:
+    The workspace state uses schema versioning to track format changes.
+    Current version is 2.0. When loading state files with older or missing
+    schema versions, automatic migration is performed and logged to
+    `.workspace/reports/migration.log`.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from spec_manager.core.data_structures import (
+from ..core.data_structures import (
     ComplianceMetrics,
     ConflictBundle,
     StrategyRecord,
@@ -111,6 +119,18 @@ class WorkspaceState:
     - Phase results and issues
     - Input/output files
     - Processing history
+
+    Schema Versioning:
+        The state uses schema_version field to track format changes.
+        Version 2.0 is the current format. When loading legacy state files
+        (pre-v2.0 or missing schema_version), automatic migration is performed
+        which resets the phase to CLEANING and preserves data fields like
+        inputs, processed, and history.
+
+    Migration Behavior:
+        When a legacy schema is detected during load(), the state is migrated
+        to v2.0 format and a migration event is logged to
+        `.workspace/reports/migration.log` with structured JSON entries.
     """
 
     spec_folder: str
@@ -132,6 +152,57 @@ class WorkspaceState:
     outputs: dict[str, Any] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+
+    @staticmethod
+    def detect_schema_version(state_path: Path) -> str | None:
+        """Detect the schema version of a state file without fully loading it.
+
+        Args:
+            state_path: Path to the state.json file.
+
+        Returns:
+            The schema_version string (e.g., "2.0", "1.0") if found,
+            or None if the file doesn't exist, is invalid JSON, or
+            the schema_version field is missing.
+        """
+        if not state_path.exists():
+            return None
+        try:
+            data = json.loads(state_path.read_text(encoding="utf-8"))
+            return data.get("schema_version")
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    @staticmethod
+    def _log_migration_event(
+        workspace_dir: Path,
+        event_type: str,
+        details: dict[str, Any],
+    ) -> None:
+        """Log a migration event to the migration log file.
+
+        Args:
+            workspace_dir: Path to the .workspace directory.
+            event_type: Type of event (schema_detected, migration_started,
+                migration_completed, migration_skipped).
+            details: Additional details about the event including
+                schema_version_from and schema_version_to fields.
+        """
+        try:
+            reports_dir = workspace_dir / "reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            migration_log = reports_dir / "migration.log"
+
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "event_type": event_type,
+                "details": details,
+            }
+
+            with migration_log.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(log_entry) + "\n")
+        except OSError as e:
+            print(f"Warning: Failed to write migration log: {e}", file=sys.stderr)
 
     def __post_init__(self) -> None:
         # Initialize phase results
@@ -238,13 +309,23 @@ class WorkspaceState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> WorkspaceState:
-        """Create state from dictionary.
+    def from_dict(
+        cls, data: dict[str, Any], workspace_dir: Path | None = None
+    ) -> WorkspaceState:
+        """Create state from dictionary with optional migration logging.
+
+        Handles migration from legacy schema versions (pre-v2.0) to v2.0.
+        When migrating, legacy phase names are discarded and the current_phase
+        is reset to CLEANING. Data fields like inputs, processed, and history
+        are preserved.
 
         Args:
             data: Dictionary with state data. Must contain 'spec_folder' key.
                 Phase values must be valid v2.0 Phase enum values, unless
                 loading from a legacy schema version.
+            workspace_dir: Optional path to the .workspace directory for
+                migration logging. If provided and migration occurs, a warning
+                is logged via Python logger.
 
         Returns:
             WorkspaceState instance.
@@ -258,6 +339,13 @@ class WorkspaceState:
         # For legacy state files (pre-v2.0), use safe reinitialization path
         # that skips strict phase validation
         if schema_version != "2.0":
+            # Log warning about legacy schema migration
+            logging.warning(
+                "Migrating workspace state from schema version %s to 2.0. "
+                "Phase data will be reset to initial state.",
+                schema_version,
+            )
+
             # Reinitialize from scratch - legacy phase names will be discarded
             state = cls(
                 spec_folder=data["spec_folder"],
@@ -357,6 +445,70 @@ class WorkspaceState:
 
     @classmethod
     def load(cls, path: Path) -> WorkspaceState:
-        """Load state from file."""
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return cls.from_dict(data)
+        """Load state from file with automatic migration and logging.
+
+        Detects the schema version of the state file before loading. If the
+        schema is not v2.0, automatic migration is performed. All migration
+        events are logged to `.workspace/reports/migration.log`.
+
+        Args:
+            path: Path to the state.json file.
+
+        Returns:
+            WorkspaceState instance, migrated to v2.0 if necessary.
+        """
+        # Derive workspace directory from state file path
+        workspace_dir = path.parent
+
+        try:
+            # Detect schema version before loading
+            detected_version = cls.detect_schema_version(path)
+            cls._log_migration_event(
+                workspace_dir,
+                "schema_detected",
+                {
+                    "schema_version_detected": detected_version,
+                    "state_file": str(path),
+                },
+            )
+
+            # Load the data
+            data = json.loads(path.read_text(encoding="utf-8"))
+
+            # Check if migration is needed
+            if detected_version != "2.0":
+                cls._log_migration_event(
+                    workspace_dir,
+                    "migration_started",
+                    {
+                        "schema_version_from": detected_version,
+                        "schema_version_to": "2.0",
+                    },
+                )
+
+                state = cls.from_dict(data, workspace_dir=workspace_dir)
+
+                cls._log_migration_event(
+                    workspace_dir,
+                    "migration_completed",
+                    {
+                        "schema_version_from": detected_version,
+                        "schema_version_to": "2.0",
+                    },
+                )
+            else:
+                cls._log_migration_event(
+                    workspace_dir,
+                    "migration_skipped",
+                    {
+                        "schema_version": detected_version,
+                        "reason": "Already at v2.0",
+                    },
+                )
+                state = cls.from_dict(data, workspace_dir=workspace_dir)
+
+            return state
+        except (json.JSONDecodeError, OSError):
+            # If logging fails, still try to load the state
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return cls.from_dict(data)

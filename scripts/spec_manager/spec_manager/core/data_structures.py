@@ -44,7 +44,7 @@ Usage:
         StrategyRecord,
         compute_evidence_signature,
     )
-    from spec_manager.core.gaps import Severity
+    from .gaps import Severity
 
     # Create compliance metrics and check quality gate
     metrics = ComplianceMetrics(
@@ -82,7 +82,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from spec_manager.core.gaps import Severity
+from .gaps import Severity
 
 # =============================================================================
 # Status Constants

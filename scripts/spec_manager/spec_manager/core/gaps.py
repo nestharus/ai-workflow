@@ -34,9 +34,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar
 
-from spec_manager.core.annotations import AnnotationParser
-from spec_manager.core.ids import IdValidator
-from spec_manager.core.sections import SectionExtractor
+from .annotations import AnnotationParser
+from .ids import IdValidator
+from .sections import SectionExtractor
 
 # =============================================================================
 # Evidence Data Structures (Detector Output)

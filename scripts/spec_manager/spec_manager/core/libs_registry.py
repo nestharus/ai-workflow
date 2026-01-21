@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
-from spec_manager.core.sections import SectionExtractor
-from spec_manager.core.annotations import AnnotationParser
+from .annotations import AnnotationParser
+from .sections import SectionExtractor
 
 
 @dataclass

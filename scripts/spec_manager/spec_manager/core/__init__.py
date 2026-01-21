@@ -1,7 +1,7 @@
 """Core utilities for spec management."""
 
-from spec_manager.core.annotations import AnnotationParser
-from spec_manager.core.gaps import (
+from .annotations import AnnotationParser
+from .gaps import (
     ContentVerifier,
     DetectorFinding,
     DuplicateDetector,
@@ -21,14 +21,14 @@ from spec_manager.core.gaps import (
     detect_gaps,
     format_gaps_md,
 )
-from spec_manager.core.ids import IdValidator
-from spec_manager.core.intermediate import (
+from .ids import IdValidator
+from .intermediate import (
     FileSnapshot,
     IntermediateManager,
     IntermediateState,
 )
-from spec_manager.core.libs_registry import LibsRegistry
-from spec_manager.core.provenance import (
+from .libs_registry import LibsRegistry
+from .provenance import (
     GranularityLevel,
     LineageEdge,
     LineageTable,
@@ -42,7 +42,7 @@ from spec_manager.core.provenance import (
     generate_stamp,
     parse_stamp,
 )
-from spec_manager.core.sections import SectionExtractor
+from .sections import SectionExtractor
 
 __all__ = [
     "AnnotationParser",
