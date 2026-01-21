@@ -2,9 +2,16 @@
 Enhanced gap detection using evidence extraction + gap synthesis.
 
 CRITICAL: Gap is a FIRST-CLASS spec element.
-- Detectors produce GapEvidence objects (findings)
+- Detectors produce DetectorFinding objects (raw findings)
 - Gaps are synthesized by clustering related evidence
 - GapElement has unit_type=GAP, ID like GAP-0001
+
+Type naming conventions (to avoid collisions with data_structures.py):
+- DetectorFinding: Raw output from detectors (this module)
+- LegacyGap: Deprecated compatibility wrapper (this module)
+- GapElement: Synthesized first-class gap element (this module)
+- GapEvidence: v2.0 evidence with invariant families (data_structures.py)
+- Gap: v2.0 first-class gap with evidence-based ID (data_structures.py)
 
 Evidence categories (invariant-driven):
 - Coverage: unaccounted atoms, membership failures
@@ -43,12 +50,13 @@ class Severity(Enum):
 
 
 @dataclass
-class GapEvidence:
+class DetectorFinding:
     """
-    Evidence produced by a detector - NOT a gap itself.
-    Gaps are synthesized by clustering evidence.
+    Raw finding produced by a detector - NOT a gap itself.
+    Gaps are synthesized by clustering findings.
 
-    This replaces the old "Gap" class with gap_type.
+    Named DetectorFinding (not GapEvidence) to avoid collision with
+    the v2.0 GapEvidence in data_structures.py which has different fields.
     """
     severity: Severity          # error, warning, info
     message: str                # Human-readable description
@@ -58,18 +66,26 @@ class GapEvidence:
     details: dict[str, Any] = field(default_factory=dict)
 
 
+# Backward compatibility alias - code importing GapEvidence from gaps.py
+# will get DetectorFinding (same structure, different name)
+GapEvidence = DetectorFinding
+
+
 # =============================================================================
 # BACKWARD COMPATIBILITY (Internal consistency fix)
 # =============================================================================
 # Old code used Gap(gap_type=..., severity=...) - provide compatibility wrapper
 
 @dataclass
-class Gap:
+class LegacyGap:
     """
-    DEPRECATED: Use GapEvidence instead.
+    DEPRECATED: Use DetectorFinding instead.
 
     This wrapper exists for backward compatibility with old code patterns.
     Maps gap_type to detector, normalizes severity to Severity enum.
+
+    Named LegacyGap (not Gap) to avoid collision with the v2.0 Gap
+    in data_structures.py which is a first-class element with evidence.
     """
     gap_type: str               # Maps to detector field
     severity: str               # "error", "warning", "info"
@@ -79,13 +95,13 @@ class Gap:
     suggestion: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
 
-    def to_evidence(self) -> GapEvidence:
-        """Convert to GapEvidence."""
+    def to_finding(self) -> DetectorFinding:
+        """Convert to DetectorFinding."""
         sev_map = {'error': Severity.ERROR, 'warning': Severity.WARNING, 'info': Severity.INFO}
         details = dict(self.details)
         if self.suggestion:
             details['suggestion'] = self.suggestion
-        return GapEvidence(
+        return DetectorFinding(
             severity=sev_map.get(self.severity.lower(), Severity.INFO),
             message=self.message,
             location=self.location,
@@ -94,16 +110,31 @@ class Gap:
             details=details
         )
 
+    # Backward compatibility alias
+    def to_evidence(self) -> DetectorFinding:
+        """Alias for to_finding() for backward compatibility."""
+        return self.to_finding()
 
-def normalize_to_evidence(gaps: list[Gap | GapEvidence]) -> list[GapEvidence]:
-    """Convert mixed Gap/GapEvidence lists to uniform GapEvidence list."""
+
+# Backward compatibility alias
+Gap = LegacyGap
+
+
+def normalize_to_findings(gaps: list[LegacyGap | DetectorFinding]) -> list[DetectorFinding]:
+    """Convert mixed LegacyGap/DetectorFinding lists to uniform DetectorFinding list."""
     result = []
     for g in gaps:
-        if isinstance(g, Gap):
-            result.append(g.to_evidence())
+        if isinstance(g, LegacyGap):
+            result.append(g.to_finding())
         else:
             result.append(g)
     return result
+
+
+# Backward compatibility alias
+def normalize_to_evidence(gaps: list[LegacyGap | DetectorFinding]) -> list[DetectorFinding]:
+    """Alias for normalize_to_findings() for backward compatibility."""
+    return normalize_to_findings(gaps)
 
 
 # =============================================================================
@@ -114,15 +145,18 @@ def normalize_to_evidence(gaps: list[Gap | GapEvidence]) -> list[GapEvidence]:
 class GapElement:
     """
     A synthesized gap - first-class spec element.
-    Multiple evidence objects cluster into a single gap.
+    Multiple DetectorFinding objects cluster into a single gap.
 
     This is a UnitType.GAP element, written to gaps.md with ID like GAP-0001.
+
+    Note: Uses DetectorFinding (not GapEvidence from data_structures.py)
+    because the evidence here is raw detector output, not v2.0 evidence.
     """
     id: str                     # e.g., GAP-0001
     severity: Severity          # Highest severity from evidence
     summary: str                # What's wrong (synthesized from evidence)
     affects: list[str]          # Element IDs and/or source refs
-    evidence: list[GapEvidence] # All evidence supporting this gap
+    evidence: list[DetectorFinding]  # All findings supporting this gap
     patch_origin: str | None = None  # Which patch introduced this (if known)
     bypassed: bool = False      # Whether this gap was intentionally bypassed
     drop_reason: str | None = None  # Reason for bypass/drop

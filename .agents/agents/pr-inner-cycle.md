@@ -1,7 +1,7 @@
 ---
 description: Executes one review-fix-test cycle within the PR Review workflow
 routing:
-  - model: gpt-5.2-medium
+  - model: glm
 ---
 
 # PR Inner Cycle Agent

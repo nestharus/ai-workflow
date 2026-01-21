@@ -48,14 +48,24 @@ class Severity:
 
 
 @dataclass
-class GapEvidence:
-    """Evidence for a gap detection."""
+class WorkflowEvidence:
+    """
+    Evidence collected during workflow execution.
+
+    Named WorkflowEvidence (not GapEvidence) to avoid collision with:
+    - DetectorFinding in gaps.py (raw detector output)
+    - GapEvidence in data_structures.py (v2.0 evidence with invariant families)
+    """
 
     severity: str
     message: str
     location: str
     detector: str = ""
     details: dict[str, Any] = field(default_factory=dict)
+
+
+# Backward compatibility alias
+GapEvidence = WorkflowEvidence
 
 
 class IntermediateManager:
@@ -535,7 +545,7 @@ class WorkflowOrchestrator:
         # Store projection path in state for finalize phase
         self.state.current_projection_path = current_projection_path
 
-    def _collect_evidence(self, projection_path: Path | None) -> list[GapEvidence]:
+    def _collect_evidence(self, projection_path: Path | None) -> list[WorkflowEvidence]:
         """Collect gap evidence from a path."""
         if projection_path and projection_path.exists():
             target_path = projection_path
@@ -560,10 +570,10 @@ class WorkflowOrchestrator:
         # Detect gaps
         gaps = detect_gaps(content, registry, libraries_dir)
 
-        # Convert to GapEvidence
+        # Convert to WorkflowEvidence
         evidence = []
         for gap in gaps:
-            evidence.append(GapEvidence(
+            evidence.append(WorkflowEvidence(
                 severity=gap.get('severity', 'info'),
                 message=gap.get('description', ''),
                 location=gap.get('source_id', gap.get('id', 'unknown')),
@@ -573,7 +583,7 @@ class WorkflowOrchestrator:
 
         return evidence
 
-    def _compute_compliance_score(self, evidence: list[GapEvidence]) -> float:
+    def _compute_compliance_score(self, evidence: list[WorkflowEvidence]) -> float:
         """Compute compliance score from evidence (0-1)."""
         if not evidence:
             return 1.0

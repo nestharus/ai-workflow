@@ -1,7 +1,7 @@
 ---
 description: Orchestrates PR review workflow with argument parsing, mode detection, cycle management, and finalization
 routing:
-  - model: gpt-5.2-none
+  - model: glm
 ---
 
 # PR Outer Loop Agent

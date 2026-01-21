@@ -27,7 +27,10 @@ from spec_manager.workflow.context import (
     PatchDependencyGraph,
 )
 from spec_manager.workflow.orchestrator import (
-    GapEvidence,
+    # Primary type (new name)
+    WorkflowEvidence,
+    # Backward compatibility alias
+    GapEvidence,  # Alias for WorkflowEvidence
     IntermediateManager,
     ProvenanceTracker,
     Severity,
@@ -104,7 +107,8 @@ __all__ = [
     "PatchDependency",
     "PatchDependencyGraph",
     # Orchestration
-    "GapEvidence",
+    "WorkflowEvidence",  # Primary type
+    "GapEvidence",       # Backward compatibility alias
     "IntermediateManager",
     "ProvenanceTracker",
     "Severity",

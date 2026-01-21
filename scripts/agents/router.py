@@ -277,15 +277,21 @@ def route_prompt(
     if not eligible_rules:
         return None
 
+    # Sort by max_chars ascending (None treated as infinity)
+    eligible_rules.sort(key=lambda r: r.max_chars if r.max_chars is not None else float("inf"))
+
+    # If only one eligible rule, use it directly (no routing decision needed)
+    if len(eligible_rules) == 1:
+        return eligible_rules[0]
+
     # Check if all eligible rules allow ambiguity
     all_allow_ambiguity = all(r.ambiguity for r in eligible_rules)
 
     if all_allow_ambiguity:
         # No classification needed - return smallest eligible rule
-        eligible_rules.sort(key=lambda r: r.max_chars if r.max_chars is not None else float("inf"))
         return eligible_rules[0]
 
-    # Need to classify ambiguity
+    # Need to classify ambiguity (multiple rules with different ambiguity settings)
     is_ambiguous = classify_ambiguity(router_agent, models, prompt, cwd)
 
     if is_ambiguous:

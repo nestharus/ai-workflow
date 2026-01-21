@@ -30,6 +30,30 @@ You receive a JSON context with:
 
 ## Workflow
 
+### Step 0: Check Test Coverage
+
+Before running tests, verify the source file is actually tested. Search for imports of the module in test files:
+
+```bash
+# Extract module name from file path (e.g., "src/utils/parser.py" -> "parser" or "utils.parser")
+# Search for imports in tests directory
+grep -r "from.*{module}.*import\|import.*{module}" tests/ 2>/dev/null | head -5
+```
+
+**If no imports found**: The file has no test coverage. Return early with success:
+
+```json
+{
+  "file_path": "path/to/source.py",
+  "status": "success",
+  "tests_passed": true,
+  "fixes_applied": [],
+  "note": "No test coverage - file not imported in any tests"
+}
+```
+
+**If imports found**: Continue to Step 1.
+
 ### Step 1: Run Tests
 
 Run pytest for the specific test file:

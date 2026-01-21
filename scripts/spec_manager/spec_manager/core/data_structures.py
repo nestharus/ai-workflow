@@ -1,5 +1,4 @@
-"""
-Core data structures for spec_manager v2.0 state schema.
+"""Core data structures for spec_manager v2.0 state schema.
 
 This module provides the foundational data structures for evidence-based gap tracking,
 conflict resolution, compliance metrics, and strategy execution records.
@@ -14,13 +13,30 @@ Key Concepts:
     - Strategy records: Execution history tracking for strategy applications with
       validation status and metrics.
 
+Type Naming (collision avoidance):
+    This module defines v2.0 canonical types. To avoid import collisions:
+
+    - GapEvidence (this module): v2.0 evidence with invariant_family, confidence
+    - DetectorFinding (gaps.py): Raw detector output (simpler structure)
+
+    - Gap (this module): v2.0 first-class gap with evidence-based ID
+    - LegacyGap (gaps.py): Deprecated wrapper with gap_type field
+    - GapElement (gaps.py): Synthesized gap for gaps.md output
+
+    - WorkflowEvidence (orchestrator.py): Evidence collected during workflow
+
+    When importing, be explicit about which module you need:
+        from spec_manager.core.data_structures import Gap, GapEvidence  # v2.0
+        from spec_manager.core.gaps import DetectorFinding, GapElement  # synthesis
+
 Related Modules:
-    - gaps.py: Contains Severity enum and legacy Gap/GapEvidence structures
+    - gaps.py: Contains Severity enum, DetectorFinding, LegacyGap, GapElement
     - state.py: State management using these data structures
     - provenance.py: Unit tracking and provenance chains
 
 Usage:
     from spec_manager.core.data_structures import (
+        STATUS_OPEN,
         ComplianceMetrics,
         ConflictBundle,
         Gap,
@@ -29,6 +45,7 @@ Usage:
         StrategyRecord,
         compute_evidence_signature,
     )
+    from spec_manager.core.gaps import Severity
 
     # Create compliance metrics and check quality gate
     metrics = ComplianceMetrics(
@@ -67,7 +84,6 @@ from typing import Any
 
 from spec_manager.core.gaps import Severity
 
-
 # =============================================================================
 # Status Constants
 # =============================================================================
@@ -99,23 +115,42 @@ ResolutionStatus = str
 
 @dataclass
 class ComplianceMetrics:
-    """
-    Quality metrics for specification compliance.
+    """Quality metrics for specification compliance.
 
     Tracks format compliance, annotation coverage, and ID normalization
     percentages. Provides a quality gate check against a configurable threshold.
+
+    All metric values must be in the range [0.0, 1.0]. Values outside this range
+    will raise a ValueError during instantiation.
 
     Attributes:
         format_compliance: Percentage of IDs matching canonical patterns (0.0-1.0).
         annotation_coverage: Percentage of elements with proper annotations (0.0-1.0).
         id_normalization: Percentage of IDs properly normalized (0.0-1.0).
         gate_threshold: Minimum threshold for passing quality gate (default 0.95).
+
+    Raises:
+        ValueError: If any metric value is outside the [0.0, 1.0] range.
     """
 
     format_compliance: float
     annotation_coverage: float
     id_normalization: float
     gate_threshold: float = 0.95
+
+    def __post_init__(self) -> None:
+        """Validate that all metric values are within [0.0, 1.0]."""
+        metrics = {
+            "format_compliance": self.format_compliance,
+            "annotation_coverage": self.annotation_coverage,
+            "id_normalization": self.id_normalization,
+            "gate_threshold": self.gate_threshold,
+        }
+        for name, value in metrics.items():
+            if not (0.0 <= value <= 1.0):
+                raise ValueError(
+                    f"{name} must be in range [0.0, 1.0], got {value}"
+                )
 
     def gate_passed(self) -> bool:
         """Check if all metrics meet or exceed the gate threshold."""
@@ -152,15 +187,17 @@ class ComplianceMetrics:
 
 @dataclass
 class ConflictVariant:
-    """
-    A single variant of a conflicting element.
+    """A single variant of a conflicting element.
 
     When multiple elements share the same ID, each occurrence is tracked
     as a variant with its content, location, and heuristic scoring.
 
     Attributes:
-        variant_id: Unique identifier for this variant (distinguishes among duplicates).
-        id: The conflicting ID (shared by all variants in a bundle).
+        variant_id: Unique identifier for this specific variant instance
+            (e.g., "REQ-001-v1", "REQ-001-v2"). Used to distinguish among
+            duplicates that share the same conflicting_id.
+        conflicting_id: The original element ID that has duplicates
+            (e.g., "REQ-001"). All variants in a ConflictBundle share this ID.
         content: Content of this variant.
         source_location: Where this variant appears (file:line).
         heuristic_score: Ranking score based on heuristics (0.0-1.0).
@@ -168,7 +205,7 @@ class ConflictVariant:
     """
 
     variant_id: str
-    id: str
+    conflicting_id: str
     content: str
     source_location: str
     heuristic_score: float
@@ -178,7 +215,7 @@ class ConflictVariant:
         """Serialize to dictionary."""
         return {
             "variant_id": self.variant_id,
-            "id": self.id,
+            "conflicting_id": self.conflicting_id,
             "content": self.content,
             "source_location": self.source_location,
             "heuristic_score": self.heuristic_score,
@@ -190,7 +227,8 @@ class ConflictVariant:
         """Deserialize from dictionary."""
         return cls(
             variant_id=data["variant_id"],
-            id=data["id"],
+            # Support both old "id" key and new "conflicting_id" key for backwards compatibility
+            conflicting_id=data.get("conflicting_id", data.get("id", "")),
             content=data["content"],
             source_location=data["source_location"],
             heuristic_score=data["heuristic_score"],
@@ -200,39 +238,41 @@ class ConflictVariant:
 
 @dataclass
 class ConflictBundle:
-    """
-    Bundle of conflicting variants for a single ID.
+    """Bundle of conflicting variants for a single ID.
 
     Groups all variants of a duplicate ID together with resolution status
     and recommended variant selection.
 
     Attributes:
-        conflicting_id: The ID that has duplicates.
-        variants: All variants found.
-        recommended_variant: Unique variant_id of recommended variant (highest score).
+        conflicting_id: The original element ID that has duplicates (e.g., "REQ-001").
+            This matches the conflicting_id field in each ConflictVariant.
+        variants: All variants found for this conflicting_id.
+        recommended_variant_id: The variant_id of the recommended variant
+            (the one with the highest heuristic_score). This references the
+            variant_id field of a ConflictVariant, not the conflicting_id.
         resolution_status: One of "pending", "auto_resolved", "manual_required".
     """
 
     conflicting_id: str
     variants: list[ConflictVariant] = field(default_factory=list)
-    recommended_variant: str | None = None
+    recommended_variant_id: str | None = None
     resolution_status: str = STATUS_PENDING
 
     def rank_variants(self) -> None:
-        """Sort variants by heuristic_score descending and set recommended_variant."""
+        """Sort variants by heuristic_score descending and set recommended_variant_id."""
         if not self.variants:
-            self.recommended_variant = None
+            self.recommended_variant_id = None
             return
 
         self.variants.sort(key=lambda v: v.heuristic_score, reverse=True)
-        self.recommended_variant = self.variants[0].variant_id
+        self.recommended_variant_id = self.variants[0].variant_id
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
         return {
             "conflicting_id": self.conflicting_id,
             "variants": [v.to_dict() for v in self.variants],
-            "recommended_variant": self.recommended_variant,
+            "recommended_variant_id": self.recommended_variant_id,
             "resolution_status": self.resolution_status,
         }
 
@@ -242,23 +282,28 @@ class ConflictBundle:
         return cls(
             conflicting_id=data["conflicting_id"],
             variants=[ConflictVariant.from_dict(v) for v in data.get("variants", [])],
-            recommended_variant=data.get("recommended_variant"),
+            # Support both old "recommended_variant" key and new "recommended_variant_id" key
+            recommended_variant_id=data.get(
+                "recommended_variant_id", data.get("recommended_variant")
+            ),
             resolution_status=data.get("resolution_status", STATUS_PENDING),
         )
 
 
 # =============================================================================
-# Gap Evidence and Gap Structures
+# Gap Evidence and Gap Structures (v2.0 Canonical Types)
 # =============================================================================
 
 
 @dataclass
 class GapEvidence:
-    """
-    Evidence supporting a gap identification.
+    """v2.0 evidence supporting a gap identification.
 
-    Extends the concept from gaps.py with invariant family classification
+    This is the canonical v2.0 evidence type with invariant family classification
     and confidence scoring for evidence-based gap synthesis.
+
+    Note: This is distinct from DetectorFinding in gaps.py which is simpler
+    raw detector output. Use this type for v2.0 state schema operations.
 
     Attributes:
         invariant_family: Which invariant family this evidence relates to
@@ -303,16 +348,22 @@ class GapEvidence:
 
 @dataclass
 class Gap:
-    """
-    First-class gap element with evidence-based identification.
+    """v2.0 first-class gap element with evidence-based identification.
 
-    Gaps are synthesized from clustered evidence and tracked as first-class
-    elements with stable IDs computed from evidence signatures.
+    This is the canonical v2.0 gap type. Gaps are synthesized from clustered
+    GapEvidence and tracked as first-class elements with stable IDs computed
+    from evidence signatures.
+
+    Note: This is distinct from:
+    - LegacyGap in gaps.py (deprecated wrapper with gap_type field)
+    - GapElement in gaps.py (synthesized gap for gaps.md markdown output)
+
+    Use this type for v2.0 state schema operations and persistent storage.
 
     Attributes:
         id: Stable evidence-based ID (e.g., "GAP-abc12345").
         severity: Severity level from gaps.py.
-        evidence: All evidence supporting this gap.
+        evidence: All GapEvidence supporting this gap.
         status: One of "open", "resolved", "bypassed", "deferred".
         affected_elements: Element IDs affected by this gap.
         created_at: ISO timestamp of gap creation.
@@ -364,37 +415,55 @@ class Gap:
 
 @dataclass
 class RemainderQueue:
-    """
-    Queue of remainder units with stagnation detection.
+    """Queue of remainder units with stagnation detection.
 
     Tracks units that haven't been processed yet and detects when
     processing has stalled (no progress across iterations).
+
+    Stagnation is detected by comparing the content hash of items (as a sorted
+    frozenset), not just the length. This ensures that changes in queue
+    composition are detected even when the length stays the same.
 
     Attributes:
         items: List of remainder unit IDs.
         stagnation_count: Number of iterations without progress.
         stagnation_threshold: Max iterations before flagging as stagnant.
-        last_size: Size from previous iteration.
+        last_content_hash: Hash of previous iteration's items (for content comparison).
         is_stagnant: Whether queue is stagnant.
     """
 
     items: list[str] = field(default_factory=list)
     stagnation_count: int = 0
     stagnation_threshold: int = 3
-    last_size: int = 0
+    last_content_hash: str = ""
     is_stagnant: bool = False
 
-    def update(self, current_items: list[str]) -> None:
-        """Update queue with current items and check for stagnation."""
-        current_size = len(current_items)
+    @staticmethod
+    def _compute_content_hash(items: list[str]) -> str:
+        """Compute a deterministic hash of the items set."""
+        if not items:
+            return ""
+        # Use sorted frozenset for order-independent comparison
+        canonical = "|".join(sorted(set(items)))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
-        if current_size >= self.last_size and self.last_size > 0:
+    def update(self, current_items: list[str]) -> None:
+        """Update queue with current items and check for stagnation.
+
+        Stagnation is detected when the content hash (sorted set of items)
+        remains unchanged across iterations, indicating no progress was made
+        even if the list order changed.
+        """
+        current_hash = self._compute_content_hash(current_items)
+
+        # Stagnation occurs when content is unchanged AND we had items before
+        if current_hash == self.last_content_hash and self.last_content_hash:
             self.stagnation_count += 1
         else:
             self.stagnation_count = 0
 
         self.items = current_items
-        self.last_size = current_size
+        self.last_content_hash = current_hash
         self.is_stagnant = self.stagnation_count >= self.stagnation_threshold
 
     def mark_progress(self) -> None:
@@ -408,18 +477,21 @@ class RemainderQueue:
             "items": self.items,
             "stagnation_count": self.stagnation_count,
             "stagnation_threshold": self.stagnation_threshold,
-            "last_size": self.last_size,
+            "last_content_hash": self.last_content_hash,
             "is_stagnant": self.is_stagnant,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RemainderQueue:
         """Deserialize from dictionary."""
+        # Support both old "last_size" key (deprecated) and new "last_content_hash" key
+        last_content_hash = data.get("last_content_hash", "")
+        # If migrating from old schema with last_size but no hash, start fresh
         return cls(
             items=data.get("items", []),
             stagnation_count=data.get("stagnation_count", 0),
             stagnation_threshold=data.get("stagnation_threshold", 3),
-            last_size=data.get("last_size", 0),
+            last_content_hash=last_content_hash,
             is_stagnant=data.get("is_stagnant", False),
         )
 
@@ -431,8 +503,7 @@ class RemainderQueue:
 
 @dataclass
 class StrategyRecord:
-    """
-    Record of a strategy execution.
+    """Record of a strategy execution.
 
     Tracks strategy application history including input/output units,
     validation status, and strategy-specific metrics.
@@ -500,19 +571,65 @@ class StrategyRecord:
 # =============================================================================
 
 
-def compute_evidence_signature(evidence_list: list[GapEvidence]) -> str:
+def _safe_serialize_details(details: dict[str, Any]) -> str:
+    """Safely serialize details dict to a deterministic JSON string.
+
+    Handles non-JSON-serializable types by falling back to repr() for
+    individual values that cannot be serialized.
+
+    Args:
+        details: Dictionary of evidence details.
+
+    Returns:
+        Deterministic JSON string representation.
     """
-    Compute a stable signature from a list of gap evidence.
+    if not details:
+        return "{}"
+
+    def make_serializable(obj: object) -> object:
+        """Convert non-serializable objects to serializable form."""
+        if obj is None or isinstance(obj, (bool, int, float, str)):
+            return obj
+        if isinstance(obj, (list, tuple)):
+            return [make_serializable(item) for item in obj]
+        if isinstance(obj, dict):
+            return {str(k): make_serializable(v) for k, v in sorted(obj.items())}
+        # Fallback for non-serializable types (datetime, custom objects, etc.)
+        return repr(obj)
+
+    serializable_details = make_serializable(details)
+    return json.dumps(serializable_details, sort_keys=True)
+
+
+def compute_evidence_signature(evidence_list: list[GapEvidence]) -> str:
+    """Compute a stable signature from a list of gap evidence.
 
     The signature is deterministic - the same evidence will always produce
     the same signature, enabling stable gap IDs across runs. All evidence
     fields are included to prevent collisions.
 
+    Signature Contract:
+        - Evidence is sorted by ALL fields (invariant_family, description,
+          details_canonical, location, detector, confidence) to ensure full
+          determinism even when primary fields match.
+        - Confidence values are rounded to 2 decimal places. This means
+          0.951 and 0.954 will both round to 0.95 and produce the same
+          signature contribution. This is intentional to handle floating
+          point precision variations across runs.
+        - Empty evidence lists are not allowed since gaps must have supporting
+          evidence. Use the evidence to identify the gap.
+        - Non-JSON-serializable values in details are converted via repr()
+          to ensure deterministic serialization.
+
     Args:
         evidence_list: List of GapEvidence objects to compute signature from.
+            Must not be empty.
 
     Returns:
         First 8 characters of the SHA-256 hex digest (e.g., "abc12345").
+
+    Raises:
+        ValueError: If evidence_list is empty. Gaps must have evidence.
 
     Example:
         >>> evidence = [GapEvidence(invariant_family="format", description="test", details={})]
@@ -520,13 +637,29 @@ def compute_evidence_signature(evidence_list: list[GapEvidence]) -> str:
         >>> gap_id = f"GAP-{sig}"  # e.g., "GAP-abc12345"
     """
     if not evidence_list:
-        return "00000000"
+        raise ValueError(
+            "Cannot compute signature for empty evidence list. "
+            "Gaps must have at least one piece of supporting evidence."
+        )
 
-    # Sort evidence for deterministic ordering
-    sorted_evidence = sorted(
-        evidence_list,
-        key=lambda e: (e.invariant_family, e.description),
-    )
+    def _make_sort_key(e: GapEvidence) -> tuple[str, str, str, str, str, float]:
+        """Create a complete sort key including all fields for full determinism."""
+        location = e.location if e.location is not None else ""
+        detector = e.detector if e.detector is not None else ""
+        # Round confidence to 2 decimals for stability across floating point variations
+        confidence = round(e.confidence, 2)
+        details_canonical = _safe_serialize_details(e.details)
+        return (
+            e.invariant_family,
+            e.description,
+            details_canonical,
+            location,
+            detector,
+            confidence,
+        )
+
+    # Sort evidence by all fields for fully deterministic ordering
+    sorted_evidence = sorted(evidence_list, key=_make_sort_key)
 
     # Create canonical representation including all fields
     canonical_parts = []
@@ -534,12 +667,14 @@ def compute_evidence_signature(evidence_list: list[GapEvidence]) -> str:
         # Normalize None values to empty string for consistency
         location = e.location if e.location is not None else ""
         detector = e.detector if e.detector is not None else ""
-        # Round confidence to 2 decimal places for stability
+        # Round confidence to 2 decimal places (documented in signature contract)
         confidence = round(e.confidence, 2)
+        # Use safe serialization for details to handle non-JSON types
+        details_str = _safe_serialize_details(e.details)
 
         # Include all fields in canonical representation
         canonical_parts.append(
-            f"{e.invariant_family}:{e.description}:{json.dumps(e.details, sort_keys=True)}"
+            f"{e.invariant_family}:{e.description}:{details_str}"
             f":{location}:{detector}:{confidence}"
         )
 

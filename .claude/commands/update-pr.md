@@ -68,6 +68,7 @@ Both modes use these variables:
 - `cycle_summaries`: List of brief summaries per cycle
 - `loop_start_time`: Timestamp when the loop begins
 - `initial_commit`: SHA of HEAD when loop started (for squashing)
+- `prior_commit`: SHA of HEAD before current cycle (for CodeRabbit base-commit; updated only when a commit is made)
 - `commits_made`: Count of commits made during session
 - `working_dir`: Directory where work happens (repo root or worktree)
 - `tmp_folder`: `{{working_dir}}/.tmp/pr-review`
@@ -97,20 +98,38 @@ Set:
 - `review_dir`: `{{working_dir}}/.review`
 - `pr_number`: None (no PR in local mode)
 
-Record `loop_start_time`. Initialize: `cycle = 1`, `commits_made = 0`.
+Record `loop_start_time`. Initialize: `cycle = 1`, `commits_made = 0`, `prior_commit = initial_commit`.
 
 ### Import Local Tasks (if local_tasks_text exists)
 
-Spawn a `local-task-importer` agent:
+Spawn a `general-purpose` agent to parse the local tasks text and create JSON files:
 
 ```python
-Task(subagent_type="local-task-importer", model="haiku", prompt=f"""
-local_tasks_text: {local_tasks_text}
+Task(subagent_type="general-purpose", model="haiku", prompt=f"""
+Parse the following local tasks text and create individual JSON files in the tmp_folder.
+
+Each task should be saved as `local_N.json` (where N starts at 0) with this structure:
+{{
+  "type": "LOCAL",
+  "file_path": "<extracted file path or '__global__' if spans multiple files>",
+  "line_number": <line number if mentioned, otherwise null>,
+  "content": "<the task description>"
+}}
+
+Extract file paths from patterns like `(path/to/file.py:123)` or `path/to/file.py line 123`.
+If a task mentions multiple files, use "__global__" as the file_path.
+
+local_tasks_text:
+{local_tasks_text}
+
 tmp_folder: {tmp_folder}
+
+Create the tmp_folder if it doesn't exist: mkdir -p {tmp_folder}
 """)
 ```
 
 Creates `local_0.json`, `local_1.json`, etc. in `{{tmp_folder}}`.
+
 
 ### Loop Iteration
 
@@ -123,47 +142,64 @@ If `cycle > max_cycles`:
 
 Record `cycle_start_time`.
 
-#### Step 2: Determine CodeRabbit Target
+#### Step 2: Determine Task Source
 
 **First cycle:**
 
-Check for uncommitted changes:
+Check if local tasks exist:
 ```bash
-cd {{working_dir}} && git status --porcelain
+ls {{tmp_folder}}/local_*.json 2>/dev/null | wc -l
 ```
 
-- If uncommitted changes exist: Use `--type uncommitted`
-- If no uncommitted changes: Use `--base-commit HEAD~1` (review most recent commit)
+- If local tasks exist: **Use local tasks** (skip CodeRabbit this cycle)
+- If no local tasks: Run CodeRabbit to find issues
 
 **Subsequent cycles (cycle > 1):**
 
-Always use `--base-commit HEAD~1` (review the commit we just made).
+Local tasks were already processed in cycle 1. Now run CodeRabbit with `--base-commit {{prior_commit}}`
+to verify our changes and find any new issues introduced.
 
-#### Step 3: Run CodeRabbit
+**Note:** If no commit was made in the previous cycle (no changes), `prior_commit` remains unchanged
+from the last cycle where a commit was made, so CodeRabbit will review all changes since then.
 
-Run CodeRabbit synchronously and extract `review_file` from stdout:
+#### Step 3: Run CodeRabbit (if needed)
+
+**Skip this step on first cycle if local tasks exist.** Local tasks take priority.
+
+If running CodeRabbit:
 
 ```bash
 cd {{working_dir}}
-if [ "{{coderabbit_target}}" = "uncommitted" ]; then
+# First cycle without local tasks: check uncommitted or prior_commit
+git status --porcelain
+if [ -n "$(git status --porcelain)" ]; then
   uv run review.coderabbit --output-dir {{review_dir}} -- --type uncommitted | uv run pr extract-review-path
 else
-  uv run review.coderabbit --output-dir {{review_dir}} -- --base-commit HEAD~1 | uv run pr extract-review-path
+  uv run review.coderabbit --output-dir {{review_dir}} -- --base-commit {{prior_commit}} | uv run pr extract-review-path
 fi
 ```
 
-If no review file or error, exit loop.
-
-#### Step 4: Parse and Aggregate
-
+If CodeRabbit produces a review file, parse it:
 ```bash
 cd {{working_dir}}
 uv run pr parse-coderabbit --review-file {{review_file}} --output-dir {{tmp_folder}}
+```
+
+If no review file was generated, exit loop (nothing to do).
+
+#### Step 4: Aggregate Tasks
+
+Aggregate task files from the current cycle's source:
+- **Cycle 1 with local tasks:** `local_*.json` only (CodeRabbit skipped)
+- **Cycle 1 without local tasks:** `coderabbit_*.json` only (from CodeRabbit review)
+- **Cycle 2+:** `coderabbit_*.json` only (local tasks already processed in cycle 1)
+
+```bash
 aggregated_json="{{tmp_folder}}/aggregated.json"
 uv run pr aggregate-tasks --input-dir {{tmp_folder}} > "$aggregated_json"
 ```
 
-If no tasks, remove review file and exit loop (clean state).
+If no tasks in aggregated output, exit loop (clean state).
 
 #### Step 5: Process Files in Parallel
 
@@ -196,7 +232,7 @@ If changes exist:
 cd {{working_dir}} && git add -A && git commit -m "Address review feedback (cycle {{cycle}})"
 ```
 
-Increment `commits_made`.
+Increment `commits_made`. Update `prior_commit` to current HEAD (the commit we just made).
 
 #### Step 8: Cleanup and Continue
 
@@ -250,11 +286,12 @@ cd {{working_dir}}
 git rev-parse HEAD
 ```
 
-Set `initial_commit`. Record `loop_start_time`. Initialize: `cycle = 1`, `commits_made = 0`.
+Set `initial_commit`. Record `loop_start_time`. Initialize: `cycle = 1`, `commits_made = 0`, `prior_commit = initial_commit`.
 
 ### Import Local Tasks (if local_tasks_text exists)
 
-Spawn a `local-task-importer` agent (same as Local Mode).
+Spawn a `general-purpose` agent (same as Local Mode).
+
 
 ### Loop Iteration
 
@@ -262,54 +299,69 @@ Spawn a `local-task-importer` agent (same as Local Mode).
 
 Same as local mode.
 
-#### Step 2: Determine Review Source (First Cycle Only)
+#### Step 2: Determine Task Source
 
-**First cycle only:**
+**First cycle:**
 
 Fetch PR comments:
 ```bash
 uv run pr fetch-threads --pr {{pr_number}} --output-dir {{tmp_folder}}
 ```
 
-Check if any thread files were created:
+Check for tasks (PR threads + local tasks):
 ```bash
-ls {{tmp_folder}}/thread_*.json 2>/dev/null | wc -l
+ls {{tmp_folder}}/thread_*.json {{tmp_folder}}/local_*.json 2>/dev/null | wc -l
 ```
 
-- If threads exist: Skip CodeRabbit, use PR threads as tasks
-- If no threads: Run CodeRabbit with `--base {{base_branch}}`
+- If PR threads OR local tasks exist: **Use those tasks** (skip CodeRabbit this cycle)
+- If no threads AND no local tasks: Run CodeRabbit with `--base {{base_branch}}`
 
-**Subsequent cycles:**
+**Subsequent cycles (cycle > 1):**
 
-Always run CodeRabbit with `--base-commit HEAD~1`.
+PR threads and local tasks were processed in cycle 1. Now run CodeRabbit with `--base-commit {{prior_commit}}`
+to verify our changes and find any new issues introduced.
+
+**Note:** If no commit was made in the previous cycle (no changes), `prior_commit` remains unchanged
+from the last cycle where a commit was made, so CodeRabbit will review all changes since then.
 
 #### Step 3: Run CodeRabbit (if needed)
 
-If not using PR threads, run CodeRabbit synchronously and extract `review_file` from stdout:
+**Skip this step on first cycle if PR threads or local tasks exist.** Those take priority.
+
+If running CodeRabbit:
 
 ```bash
 cd {{working_dir}}
-if [ "{{cycle}}" -eq 1 ] && [ "{{no_pr_threads}}" = "true" ]; then
+if [ "{{cycle}}" -eq 1 ]; then
+  # First cycle without threads/local tasks: compare against base branch
   uv run review.coderabbit --output-dir {{review_dir}} -- --base {{base_branch}} | uv run pr extract-review-path
 else
-  uv run review.coderabbit --output-dir {{review_dir}} -- --base-commit HEAD~1 | uv run pr extract-review-path
+  # Subsequent cycles: review the commit we just made
+  uv run review.coderabbit --output-dir {{review_dir}} -- --base-commit {{prior_commit}} | uv run pr extract-review-path
 fi
 ```
 
-Parse coderabbit output:
+If CodeRabbit produces a review file, parse it:
 ```bash
 cd {{working_dir}}
 uv run pr parse-coderabbit --review-file {{review_file}} --output-dir {{tmp_folder}}
 ```
 
+If no review file AND no threads AND no local tasks exist, exit loop (nothing to do).
+
 #### Step 4: Aggregate Tasks
+
+Aggregate task files from the current cycle's source:
+- **Cycle 1 with PR threads or local tasks:** `thread_*.json` and/or `local_*.json` (CodeRabbit skipped)
+- **Cycle 1 without threads or local tasks:** `coderabbit_*.json` only (from CodeRabbit review)
+- **Cycle 2+:** `coderabbit_*.json` only (PR threads and local tasks already processed in cycle 1)
 
 ```bash
 aggregated_json="{{tmp_folder}}/aggregated.json"
 uv run pr aggregate-tasks --input-dir {{tmp_folder}} > "$aggregated_json"
 ```
 
-If no tasks, exit loop (clean state).
+If no tasks in aggregated output, exit loop (clean state).
 
 #### Step 5: Process Files in Parallel
 
