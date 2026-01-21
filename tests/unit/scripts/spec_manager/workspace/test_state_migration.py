@@ -24,7 +24,6 @@ from scripts.spec_manager.spec_manager.workspace.state import (
     WorkspaceState,
 )
 
-
 # =============================================================================
 # FIXTURES
 # =============================================================================
@@ -408,6 +407,7 @@ class TestMigrationLogStructure:
                 "migration_started",
                 "migration_completed",
                 "migration_skipped",
+                "migration_details",
             ]
 
     def test_log_entry_has_details(
@@ -613,9 +613,7 @@ class TestWorkspaceManagerMigrationIntegration:
         assert "migration_started" in event_types
         assert "migration_completed" in event_types
 
-    def test_manager_read_migration_log_empty_when_no_log(
-        self, temp_spec_folder: Path
-    ) -> None:
+    def test_manager_read_migration_log_empty_when_no_log(self, temp_spec_folder: Path) -> None:
         """WorkspaceManager.read_migration_log() returns empty list when no log exists."""
         manager = WorkspaceManager(spec_folder=temp_spec_folder)
 

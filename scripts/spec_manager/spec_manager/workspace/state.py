@@ -205,6 +205,7 @@ class WorkspaceState:
             print(f"Warning: Failed to write migration log: {e}", file=sys.stderr)
 
     def __post_init__(self) -> None:
+        """Initialize phase results for all phases not explicitly set."""
         # Initialize phase results
         for phase in Phase:
             if phase.value not in self.phases:
@@ -309,9 +310,7 @@ class WorkspaceState:
         }
 
     @classmethod
-    def from_dict(
-        cls, data: dict[str, Any], workspace_dir: Path | None = None
-    ) -> WorkspaceState:
+    def from_dict(cls, data: dict[str, Any], workspace_dir: Path | None = None) -> WorkspaceState:
         """Create state from dictionary with optional migration logging.
 
         Handles migration from legacy schema versions (pre-v2.0) to v2.0.
@@ -339,12 +338,29 @@ class WorkspaceState:
         # For legacy state files (pre-v2.0), use safe reinitialization path
         # that skips strict phase validation
         if schema_version != "2.0":
-            # Log warning about legacy schema migration
+            # Log warning about legacy schema migration with full details
+            migration_timestamp = datetime.now().isoformat()
             logging.warning(
                 "Migrating workspace state from schema version %s to 2.0. "
-                "Phase data will be reset to initial state.",
+                "Phase data will be reset to initial state. "
+                "Migration timestamp: %s.",
                 schema_version,
+                migration_timestamp,
             )
+
+            # If workspace_dir provided, log migration event details
+            if workspace_dir is not None:
+                cls._log_migration_event(
+                    workspace_dir,
+                    "migration_details",
+                    {
+                        "schema_version_from": schema_version,
+                        "schema_version_to": "2.0",
+                        "migration_timestamp": migration_timestamp,
+                        "phase_reset": True,
+                        "data_preserved": ["inputs", "processed", "ambiguous_inputs", "history"],
+                    },
+                )
 
             # Reinitialize from scratch - legacy phase names will be discarded
             state = cls(
