@@ -243,16 +243,48 @@ class WorkspaceState:
 
         Args:
             data: Dictionary with state data. Must contain 'spec_folder' key.
-                Phase values must be valid v2.0 Phase enum values.
+                Phase values must be valid v2.0 Phase enum values, unless
+                loading from a legacy schema version.
 
         Returns:
             WorkspaceState instance.
 
         Raises:
             KeyError: If required keys are missing.
-            ValueError: If phase values are invalid.
+            ValueError: If phase values are invalid in v2.0 data.
         """
-        # Validate and parse current_phase
+        schema_version = data.get("schema_version", "1.0")
+
+        # For legacy state files (pre-v2.0), use safe reinitialization path
+        # that skips strict phase validation
+        if schema_version != "2.0":
+            # Reinitialize from scratch - legacy phase names will be discarded
+            state = cls(
+                spec_folder=data["spec_folder"],
+                schema_version="2.0",  # Upgrade to v2.0
+                created_at=data.get("created_at", datetime.now().isoformat()),
+                current_phase=Phase.CLEANING,  # Reset to initial phase
+                inputs=data.get("inputs", []),
+                processed=data.get("processed", []),
+                ambiguous_inputs=data.get("ambiguous_inputs", []),
+                history=data.get("history", []),
+                # v2.0 simple fields - initialize fresh
+                run_id=data.get("run_id"),
+                input_hashes=data.get("input_hashes", {}),
+                outputs=data.get("outputs", {}),
+                errors=data.get("errors", []),
+                warnings=data.get("warnings", []),
+            )
+            # Restore v2.0 complex fields if present (may exist in partial upgrades)
+            if data.get("metrics"):
+                state.metrics = ComplianceMetrics.from_dict(data["metrics"])
+            state.strategies = [StrategyRecord.from_dict(s) for s in data.get("strategies", [])]
+            state.conflicts = [ConflictBundle.from_dict(c) for c in data.get("conflicts", [])]
+            if data.get("coverage"):
+                state.coverage = CoverageSnapshot.from_dict(data["coverage"])
+            return state
+
+        # For v2.0 data, validate and parse current_phase
         raw_phase = data.get("current_phase", "cleaning")
         try:
             current_phase = Phase(raw_phase)
@@ -263,7 +295,7 @@ class WorkspaceState:
 
         state = cls(
             spec_folder=data["spec_folder"],
-            schema_version=data.get("schema_version", "2.0"),
+            schema_version=schema_version,
             created_at=data.get("created_at", datetime.now().isoformat()),
             current_phase=current_phase,
             inputs=data.get("inputs", []),
@@ -278,7 +310,7 @@ class WorkspaceState:
             warnings=data.get("warnings", []),
         )
 
-        # Restore phase results with strict validation
+        # Restore phase results with strict validation (v2.0 only)
         for name, phase_data in data.get("phases", {}).items():
             raw_result_phase = phase_data["phase"]
             try:
