@@ -10,7 +10,8 @@ Schema Versioning:
     The workspace state uses schema versioning to track format changes.
     Current version is 2.0. When loading state files with older or missing
     schema versions, automatic migration is performed and logged to
-    `.workspace/reports/migration.log`.
+    `.workspace/reports/migration.log`. Prior state data (inputs, processed,
+    ambiguous_inputs, history) is discarded during legacy migration.
 """
 
 from __future__ import annotations
@@ -124,13 +125,14 @@ class WorkspaceState:
         The state uses schema_version field to track format changes.
         Version 2.0 is the current format. When loading legacy state files
         (pre-v2.0 or missing schema_version), automatic migration is performed
-        which resets the phase to CLEANING and preserves data fields like
-        inputs, processed, and history.
+        which resets the phase to CLEANING and discards data fields like
+        inputs, processed, ambiguous_inputs, and history.
 
     Migration Behavior:
         When a legacy schema is detected during load(), the state is migrated
         to v2.0 format and a migration event is logged to
         `.workspace/reports/migration.log` with structured JSON entries.
+        Prior state data is discarded during legacy migration.
     """
 
     spec_folder: str
@@ -315,8 +317,8 @@ class WorkspaceState:
 
         Handles migration from legacy schema versions (pre-v2.0) to v2.0.
         When migrating, legacy phase names are discarded and the current_phase
-        is reset to CLEANING. Data fields like inputs, processed, and history
-        are preserved.
+        is reset to CLEANING. Data fields like inputs, processed, ambiguous_inputs,
+        and history are discarded (not preserved).
 
         Args:
             data: Dictionary with state data. Must contain 'spec_folder' key.
@@ -342,6 +344,7 @@ class WorkspaceState:
             migration_timestamp = datetime.now().isoformat()
             logging.warning(
                 "Migrating workspace state from schema version %s to 2.0. "
+                "Prior state data (inputs, processed, ambiguous_inputs, history) will be discarded. "
                 "Phase data will be reset to initial state. "
                 "Migration timestamp: %s.",
                 schema_version,
@@ -358,34 +361,34 @@ class WorkspaceState:
                         "schema_version_to": "2.0",
                         "migration_timestamp": migration_timestamp,
                         "phase_reset": True,
-                        "data_preserved": ["inputs", "processed", "ambiguous_inputs", "history"],
+                        "data_discarded": ["inputs", "processed", "ambiguous_inputs", "history"],
+                        "reason": "Prior state discarded during legacy migration",
                     },
                 )
 
-            # Reinitialize from scratch - legacy phase names will be discarded
+            # Reinitialize from scratch - legacy phase names and prior state are discarded
             state = cls(
                 spec_folder=data["spec_folder"],
                 schema_version="2.0",  # Upgrade to v2.0
-                created_at=data.get("created_at", datetime.now().isoformat()),
+                created_at=datetime.now().isoformat(),  # Fresh timestamp
                 current_phase=Phase.CLEANING,  # Reset to initial phase
-                inputs=data.get("inputs", []),
-                processed=data.get("processed", []),
-                ambiguous_inputs=data.get("ambiguous_inputs", []),
-                history=data.get("history", []),
+                # Discard prior state - start with empty lists
+                inputs=[],
+                processed=[],
+                ambiguous_inputs=[],
+                history=[],
                 # v2.0 simple fields - initialize fresh
-                run_id=data.get("run_id"),
-                input_hashes=data.get("input_hashes", {}),
-                outputs=data.get("outputs", {}),
-                errors=data.get("errors", []),
-                warnings=data.get("warnings", []),
+                run_id=None,
+                input_hashes={},
+                outputs={},
+                errors=[],
+                warnings=[],
             )
-            # Restore v2.0 complex fields if present (may exist in partial upgrades)
-            if data.get("metrics"):
-                state.metrics = ComplianceMetrics.from_dict(data["metrics"])
-            state.strategies = [StrategyRecord.from_dict(s) for s in data.get("strategies", [])]
-            state.conflicts = [ConflictBundle.from_dict(c) for c in data.get("conflicts", [])]
-            if data.get("coverage"):
-                state.coverage = CoverageSnapshot.from_dict(data["coverage"])
+            # v2.0 complex fields - initialize to defaults (discarded)
+            state.metrics = None
+            state.strategies = []
+            state.conflicts = []
+            state.coverage = None
             return state
 
         # For v2.0 data, validate and parse current_phase
@@ -467,6 +470,10 @@ class WorkspaceState:
         schema is not v2.0, automatic migration is performed. All migration
         events are logged to `.workspace/reports/migration.log`.
 
+        If the state file cannot be parsed due to JSONDecodeError or OSError,
+        returns a fresh WorkspaceState initialized to schema v2.0, deriving
+        spec_folder from the state file location.
+
         Args:
             path: Path to the state.json file.
 
@@ -524,7 +531,18 @@ class WorkspaceState:
                 state = cls.from_dict(data, workspace_dir=workspace_dir)
 
             return state
-        except (json.JSONDecodeError, OSError):
-            # If logging fails, still try to load the state
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return cls.from_dict(data)
+        except (json.JSONDecodeError, OSError) as e:
+            # If the file cannot be parsed, return a fresh v2.0 state
+            # Derive spec_folder from the state file location (e.g., path.parent.parent)
+            spec_folder = str(path.parent.parent)
+            cls._log_migration_event(
+                workspace_dir,
+                "parse_error_ignored",
+                {
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "state_file": str(path),
+                    "action": "Reinitialized to fresh v2.0 state",
+                },
+            )
+            return cls(spec_folder=spec_folder, schema_version="2.0")

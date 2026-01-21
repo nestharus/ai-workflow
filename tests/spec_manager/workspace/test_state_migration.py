@@ -4,7 +4,8 @@ Tests cover:
 - Schema version detection from state files
 - Migration from legacy schemas (pre-v2.0) to v2.0
 - Migration logging to .workspace/reports/migration.log
-- Data preservation during migration
+- Data discarding during legacy migration
+- Parse error handling returning fresh v2.0 state
 - WorkspaceManager integration with migration logging
 """
 
@@ -486,45 +487,56 @@ class TestNoMigrationForV2State:
 
 
 # =============================================================================
-# DATA PRESERVATION DURING MIGRATION TESTS
+# DATA DISCARDING DURING MIGRATION TESTS
 # =============================================================================
 
 
-class TestFromDictPreservesDataDuringMigration:
-    """Tests for data preservation during migration via from_dict."""
+class TestFromDictDiscardsDataDuringMigration:
+    """Tests for data discarding during migration via from_dict."""
 
-    def test_preserves_inputs(self, legacy_state_v1: dict[str, Any]) -> None:
-        """Migration preserves inputs list."""
+    def test_discards_inputs(self, legacy_state_v1: dict[str, Any]) -> None:
+        """Migration discards inputs list."""
         state = WorkspaceState.from_dict(legacy_state_v1)
 
-        assert state.inputs == legacy_state_v1["inputs"]
+        assert state.inputs == []
+        assert state.inputs != legacy_state_v1["inputs"]
 
-    def test_preserves_processed(self, legacy_state_v1: dict[str, Any]) -> None:
-        """Migration preserves processed list."""
+    def test_discards_processed(self, legacy_state_v1: dict[str, Any]) -> None:
+        """Migration discards processed list."""
         state = WorkspaceState.from_dict(legacy_state_v1)
 
-        assert state.processed == legacy_state_v1["processed"]
+        assert state.processed == []
+        assert state.processed != legacy_state_v1["processed"]
 
-    def test_preserves_history(self, legacy_state_v1: dict[str, Any]) -> None:
-        """Migration preserves history list."""
+    def test_discards_ambiguous_inputs(self, legacy_state_v1: dict[str, Any]) -> None:
+        """Migration discards ambiguous_inputs list."""
         state = WorkspaceState.from_dict(legacy_state_v1)
 
-        assert state.history == legacy_state_v1["history"]
+        assert state.ambiguous_inputs == []
+
+    def test_discards_history(self, legacy_state_v1: dict[str, Any]) -> None:
+        """Migration discards history list."""
+        state = WorkspaceState.from_dict(legacy_state_v1)
+
+        assert state.history == []
+        assert state.history != legacy_state_v1["history"]
 
     def test_preserves_spec_folder(self, legacy_state_v1: dict[str, Any]) -> None:
-        """Migration preserves spec_folder."""
+        """Migration preserves spec_folder (only required field)."""
         state = WorkspaceState.from_dict(legacy_state_v1)
 
         assert state.spec_folder == legacy_state_v1["spec_folder"]
 
-    def test_preserves_created_at(self, legacy_state_v1: dict[str, Any]) -> None:
-        """Migration preserves created_at timestamp."""
+    def test_creates_new_created_at(self, legacy_state_v1: dict[str, Any]) -> None:
+        """Migration creates a new created_at timestamp."""
         state = WorkspaceState.from_dict(legacy_state_v1)
 
-        assert state.created_at == legacy_state_v1["created_at"]
+        assert state.created_at != legacy_state_v1["created_at"]
+        # Verify it's a valid ISO timestamp
+        datetime.fromisoformat(state.created_at)
 
     def test_initializes_v2_fields(self, legacy_state_v1: dict[str, Any]) -> None:
-        """Migration initializes new v2.0 fields with defaults."""
+        """Migration initializes all v2.0 fields with defaults."""
         state = WorkspaceState.from_dict(legacy_state_v1)
 
         assert state.run_id is None
@@ -664,7 +676,7 @@ class TestMigrationEdgeCases:
         assert state.history == []
 
     def test_migration_with_partial_v2_fields(self, temp_workspace: Path) -> None:
-        """Migration handles legacy state with some v2.0 fields present."""
+        """Migration discards legacy state even with some v2.0 fields present."""
         legacy_state = {
             "spec_folder": "/test",
             # No schema_version - treated as legacy
@@ -684,8 +696,9 @@ class TestMigrationEdgeCases:
         state = WorkspaceState.load(state_file)
 
         assert state.schema_version == "2.0"
-        assert state.run_id == "test-run-123"
-        assert state.input_hashes == {"file.md": "abc123"}
+        # Partial v2.0 fields should also be discarded during legacy migration
+        assert state.run_id is None
+        assert state.input_hashes == {}
 
     def test_migration_log_malformed_line_handling(self, temp_spec_folder: Path) -> None:
         """WorkspaceManager.read_migration_log() handles malformed JSON lines gracefully."""
@@ -711,3 +724,47 @@ class TestMigrationEdgeCases:
         assert len(entries) == 2
         assert entries[0]["event_type"] == "test"
         assert entries[1]["event_type"] == "test2"
+
+    def test_load_invalid_json_returns_fresh_v2_state(self, temp_workspace: Path) -> None:
+        """Loading invalid JSON returns a fresh v2.0 state."""
+        state_file = temp_workspace / "state.json"
+        state_file.write_text("{ invalid json }", encoding="utf-8")
+
+        state = WorkspaceState.load(state_file)
+
+        assert state.schema_version == "2.0"
+        assert state.current_phase == Phase.CLEANING
+        assert state.inputs == []
+        assert state.processed == []
+        assert state.history == []
+
+    def test_load_invalid_json_creates_parse_error_log(self, temp_workspace: Path) -> None:
+        """Loading invalid JSON creates a parse_error_ignored migration event."""
+        state_file = temp_workspace / "state.json"
+        state_file.write_text("{ invalid json }", encoding="utf-8")
+
+        WorkspaceState.load(state_file)
+
+        migration_log = temp_workspace / "reports" / "migration.log"
+        entries = [json.loads(line) for line in migration_log.read_text().splitlines()]
+
+        event_types = [e["event_type"] for e in entries]
+        assert "parse_error_ignored" in event_types
+
+        parse_error_entry = next(e for e in entries if e["event_type"] == "parse_error_ignored")
+        assert "error" in parse_error_entry["details"]
+        assert "state_file" in parse_error_entry["details"]
+        assert "action" in parse_error_entry["details"]
+
+    def test_load_os_error_returns_fresh_v2_state(self, temp_workspace: Path) -> None:
+        """Loading with OS error returns a fresh v2.0 state."""
+        state_file = temp_workspace / "state.json"
+        # Create a directory with the same name to cause read issues
+        state_dir = temp_workspace / "state.json"
+        state_dir.mkdir()
+
+        # This will cause an OSError when trying to read as file
+        state = WorkspaceState.load(state_file)
+
+        assert state.schema_version == "2.0"
+        assert state.current_phase == Phase.CLEANING
