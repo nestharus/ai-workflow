@@ -1,5 +1,4 @@
-"""
-Workspace manager for spec processing.
+"""Workspace manager for spec processing.
 
 Manages the .workspace/ directory within a spec folder, providing:
 - Workspace initialization and cleanup
@@ -17,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from spec_manager.workspace.state import WorkspaceState, Phase, PhaseStatus
+from spec_manager.workspace.state import Phase, PhaseStatus, WorkspaceState
 
 
 @dataclass
@@ -28,30 +27,37 @@ class SpecFolderStructure:
 
     @property
     def libraries_dir(self) -> Path:
+        """Path to the libraries directory."""
         return self.root / "libraries"
 
     @property
     def patches_dir(self) -> Path:
+        """Path to the patches directory."""
         return self.root / "patches"
 
     @property
     def inputs_dir(self) -> Path:
+        """Path to the inputs directory."""
         return self.root / "inputs"
 
     @property
     def gaps_md(self) -> Path:
+        """Path to the gaps.md file."""
         return self.root / "gaps.md"
 
     @property
     def plan_md(self) -> Path:
+        """Path to the plan.md file."""
         return self.root / "plan.md"
 
     @property
     def pattern_spec_md(self) -> Path:
+        """Path to the pattern_spec.md file."""
         return self.root / "pattern_spec.md"
 
     @property
     def workspace_dir(self) -> Path:
+        """Path to the .workspace directory."""
         return self.root / ".workspace"
 
     def validate(self) -> list[str]:
@@ -64,11 +70,7 @@ class SpecFolderStructure:
 
         # libraries/ is optional - will be created by discovery phase
         # Just need at least one input source (patches/, plan.md, or inputs/)
-        has_input = (
-            self.patches_dir.exists() or
-            self.plan_md.exists() or
-            self.inputs_dir.exists()
-        )
+        has_input = self.patches_dir.exists() or self.plan_md.exists() or self.inputs_dir.exists()
         if not has_input:
             issues.append("No input found: need patches/, plan.md, or inputs/")
 
@@ -77,18 +79,17 @@ class SpecFolderStructure:
 
 @dataclass
 class WorkspaceManager:
-    """
-    Manages the workspace for spec processing.
+    """Manages the workspace for spec processing.
 
     The workspace is a .workspace/ directory within the spec folder that contains:
     - state.json: Persistent state across phases
     - agent_input.yaml: Input for current agent
     - agent_output.yaml: Output from current agent
     - reports/: Generated reports
-    - staging/: Staging phase intermediate files
-    - planning/: Planning phase intermediate files
-    - merging/: Merging phase intermediate files
-    - verification/: Verification phase intermediate files
+    - cleaning/: Cleaning phase intermediate files
+    - discovery/: Discovery phase intermediate files
+    - review/: Review phase intermediate files
+    - finalization/: Finalization phase intermediate files
     """
 
     spec_folder: Path
@@ -96,6 +97,7 @@ class WorkspaceManager:
     structure: SpecFolderStructure = field(init=False)
 
     def __post_init__(self) -> None:
+        """Initialize the workspace structure and state after dataclass construction."""
         self.structure = SpecFolderStructure(self.spec_folder)
         self._workspace = self.structure.workspace_dir
 
@@ -109,8 +111,7 @@ class WorkspaceManager:
     # --- Workspace Lifecycle ---
 
     def initialize(self, force: bool = False) -> list[str]:
-        """
-        Initialize the workspace.
+        """Initialize the workspace.
 
         Args:
             force: If True, clear existing workspace
@@ -130,7 +131,7 @@ class WorkspaceManager:
         self._workspace.mkdir(exist_ok=True)
 
         # Create subdirectories
-        for subdir in ["reports", "staging", "planning", "merging", "verification"]:
+        for subdir in ["reports", "cleaning", "discovery", "review", "finalization"]:
             (self._workspace / subdir).mkdir(exist_ok=True)
 
         # Find input files (patches, plan.md, inputs/)
@@ -142,8 +143,7 @@ class WorkspaceManager:
         return []
 
     def cleanup(self, keep_reports: bool = True) -> None:
-        """
-        Clean up the workspace.
+        """Clean up the workspace.
 
         Args:
             keep_reports: If True, preserve the reports/ directory
@@ -164,8 +164,7 @@ class WorkspaceManager:
         self._save_state()
 
     def finalize(self) -> None:
-        """
-        Finalize the workspace after successful processing.
+        """Finalize the workspace after successful processing.
 
         - Moves processed inputs to archive
         - Generates final report
@@ -188,7 +187,7 @@ class WorkspaceManager:
                 shutil.move(str(src), str(dst))
 
         # Clean up intermediate files
-        for subdir in ["staging", "planning", "merging", "verification"]:
+        for subdir in ["cleaning", "discovery", "review", "finalization"]:
             subdir_path = self._workspace / subdir
             if subdir_path.exists():
                 shutil.rmtree(subdir_path)
@@ -227,8 +226,7 @@ class WorkspaceManager:
         return inputs
 
     def _sort_patches_with_ambiguity(self, patches: list[Path]) -> tuple[list[Path], list[Path]]:
-        """
-        Sort patch files by sequence number, detecting ambiguous ordering.
+        """Sort patch files by sequence number, detecting ambiguous ordering.
 
         Returns:
             (sorted_sequential, ambiguous) - sequential files sorted, ambiguous files separate
@@ -241,7 +239,7 @@ class WorkspaceManager:
         for path in patches:
             name = path.stem.lower()
             # Try patterns: p1, p2, patch1, patch-1, patch_1, 001, etc.
-            match = re.search(r'(\d+)', name)
+            match = re.search(r"(\d+)", name)
             if match:
                 sequential.append((int(match.group(1)), name, path))
             else:
@@ -268,8 +266,7 @@ class WorkspaceManager:
         return self.state.ambiguous_inputs
 
     def set_input_order(self, ordered_inputs: list[str]) -> None:
-        """
-        Set the order of inputs after user clarification.
+        """Set the order of inputs after user clarification.
 
         Args:
             ordered_inputs: Full list of inputs in desired order
@@ -279,8 +276,7 @@ class WorkspaceManager:
         self._save_state()
 
     def get_ordered_patches(self) -> list[Path]:
-        """
-        Get patch files in correct application order.
+        """Get patch files in correct application order.
 
         Returns:
             List of patch file paths sorted by sequence number
@@ -292,8 +288,7 @@ class WorkspaceManager:
         return self._sort_patches(patches)
 
     def get_combined_content(self) -> str:
-        """
-        Get combined content from all inputs in order.
+        """Get combined content from all inputs in order.
 
         This is the "canonical spec" that represents the current state
         after applying all inputs sequentially.
@@ -313,8 +308,7 @@ class WorkspaceManager:
         return "\n\n".join(parts)
 
     def get_all_input_content(self) -> dict[str, str]:
-        """
-        Get content from all input files keyed by filename.
+        """Get content from all input files keyed by filename.
 
         Returns:
             Dict mapping filename to content
@@ -329,8 +323,7 @@ class WorkspaceManager:
         return result
 
     def get_library_content(self) -> str:
-        """
-        Get combined content from all library files.
+        """Get combined content from all library files.
 
         This is the content that should be scanned for gaps - the actual
         spec content that has been organized into libraries.
@@ -355,8 +348,7 @@ class WorkspaceManager:
     # --- Agent Interface ---
 
     def write_agent_input(self, phase: Phase, data: dict[str, Any]) -> Path:
-        """
-        Write input data for an agent.
+        """Write input data for an agent.
 
         Args:
             phase: The phase this agent is executing
@@ -376,8 +368,7 @@ class WorkspaceManager:
         return input_file
 
     def read_agent_output(self, phase: Phase) -> dict[str, Any] | None:
-        """
-        Read output data from an agent.
+        """Read output data from an agent.
 
         Args:
             phase: The phase the agent executed
@@ -394,8 +385,7 @@ class WorkspaceManager:
         return yaml.safe_load(output_file.read_text(encoding="utf-8"))
 
     def write_agent_output(self, phase: Phase, data: dict[str, Any]) -> Path:
-        """
-        Write output data from an agent (for agents to call).
+        """Write output data from an agent (for agents to call).
 
         Args:
             phase: The phase this agent executed
@@ -436,21 +426,20 @@ class WorkspaceManager:
         return self.state.get_next_phase()
 
     def can_proceed(self) -> tuple[bool, str | None]:
-        """
-        Check if processing can proceed.
+        """Check if processing can proceed.
 
         Returns:
             (can_proceed, blocking_reason)
         """
-        # Check for validation issues from staging
-        staging_issues = self.state.get_phase_issues(Phase.STAGING)
-        blocking = [i for i in staging_issues if i.get("severity") == "error"]
+        # Check for validation issues from cleaning
+        cleaning_issues = self.state.get_phase_issues(Phase.CLEANING)
+        blocking = [i for i in cleaning_issues if i.get("severity") == "error"]
         if blocking:
-            return False, f"Blocking staging issues: {len(blocking)}"
+            return False, f"Blocking cleaning issues: {len(blocking)}"
 
-        # Check for conflicts from planning
-        planning_issues = self.state.get_phase_issues(Phase.PLANNING)
-        conflicts = [i for i in planning_issues if i.get("type") == "conflict"]
+        # Check for conflicts from discovery
+        discovery_issues = self.state.get_phase_issues(Phase.DISCOVERY)
+        conflicts = [i for i in discovery_issues if i.get("type") == "conflict"]
         if conflicts:
             return False, f"Unresolved conflicts: {len(conflicts)}"
 
@@ -547,7 +536,7 @@ class WorkspaceManager:
             lines.append("")
             for issue in result.issues:
                 severity = issue.get("severity", "info")
-                icon = {"error": "❌", "warning": "⚠️", "info": "ℹ️"}.get(severity, "•")
+                icon = {"error": "X", "warning": "! ", "info": "i "}.get(severity, "*")
                 lines.append(f"- {icon} {issue.get('message', str(issue))}")
             lines.append("")
 

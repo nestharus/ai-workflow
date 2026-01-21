@@ -1,5 +1,4 @@
-"""
-Command-line interface for spec manager.
+"""Command-line interface for spec manager.
 
 Usage:
     uv run python -m scripts.spec_manager <command> <spec_folder> [options]
@@ -7,10 +6,10 @@ Usage:
 Commands:
     init        Initialize workspace in a spec folder
     status      Show workspace and phase status
-    stage       Run staging phase (validate inputs)
-    plan        Run planning phase (decompose changes)
-    merge       Run merging phase (apply changes)
-    verify      Run verification phase (confirm correctness)
+    stage       Run cleaning phase (validate inputs)
+    plan        Run discovery phase (decompose changes)
+    merge       Run review phase (apply changes)
+    verify      Run finalization phase (confirm correctness)
     analyze     Run analysis (divergence/convergence detection)
     run         Run all phases
     cleanup     Clean up workspace
@@ -23,17 +22,16 @@ import json
 import sys
 from pathlib import Path
 
-from spec_manager.workspace import WorkspaceManager, PhaseStatus
-from spec_manager.workspace.state import Phase
+from spec_manager.analysis import run_analysis
 from spec_manager.core.libs_registry import LibsRegistry
 from spec_manager.core.provenance import ProvenanceTracker
-from spec_manager.staging import run_staging
-from spec_manager.staging.pipeline import StagingPipeline
-from spec_manager.planning import run_planning
-from spec_manager.merging import run_merging
-from spec_manager.verification import run_verification
-from spec_manager.analysis import run_analysis
 from spec_manager.discovery import discover_libraries_sync
+from spec_manager.merging import run_merging
+from spec_manager.planning import run_planning
+from spec_manager.staging.pipeline import StagingPipeline
+from spec_manager.verification import run_verification
+from spec_manager.workspace import PhaseStatus, WorkspaceManager
+from spec_manager.workspace.state import Phase
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -114,14 +112,14 @@ def cmd_stage(args: argparse.Namespace) -> int:
         print("Workspace not initialized. Run 'init' first.")
         return 1
 
-    manager.start_phase(Phase.STAGING)
+    manager.start_phase(Phase.CLEANING)
 
     # Get patch paths (IMMUTABLE - never modified)
     patch_paths = [Path(p) for p in manager.state.inputs if Path(p).exists()]
 
     if not patch_paths:
-        manager.fail_phase(Phase.STAGING, "No input files found")
-        print("Staging failed: No input files found")
+        manager.fail_phase(Phase.CLEANING, "No input files found")
+        print("Cleaning failed: No input files found")
         return 1
 
     print(f"Processing {len(patch_paths)} input file(s):")
@@ -131,33 +129,35 @@ def cmd_stage(args: argparse.Namespace) -> int:
     # Run strategy-based pipeline
     pipeline = StagingPipeline(
         workspace_path=manager.workspace_path,
-        max_passes=args.max_passes if hasattr(args, 'max_passes') else 10,
+        max_passes=args.max_passes if hasattr(args, "max_passes") else 10,
     )
 
     result = pipeline.run(patch_paths)
 
     # Record issues from gaps
     for gap in result.gaps_detected:
-        manager.state.add_issue(Phase.STAGING, {
-            'category': 'strategy_gap',
-            'message': f"Strategy gap: {gap['failure_mode']} ({gap['stuck_units']} units)",
-            'severity': 'warning',
-        })
+        manager.state.add_issue(
+            Phase.CLEANING,
+            {
+                "category": "strategy_gap",
+                "message": f"Strategy gap: {gap['failure_mode']} ({gap['stuck_units']} units)",
+                "severity": "warning",
+            },
+        )
 
     # Check for convergence
     if not result.converged and result.gaps_detected:
         manager.fail_phase(
-            Phase.STAGING,
-            f"Pipeline did not converge: {len(result.gaps_detected)} strategy gaps"
+            Phase.CLEANING, f"Pipeline did not converge: {len(result.gaps_detected)} strategy gaps"
         )
-        print(f"\nStaging incomplete: {len(result.gaps_detected)} strategy gaps detected")
+        print(f"\nCleaning incomplete: {len(result.gaps_detected)} strategy gaps detected")
         for gap in result.gaps_detected:
             print(f"  - {gap['failure_mode']}: {gap['stuck_units']} stuck units")
         return 1
 
     # Complete phase with metrics
     manager.complete_phase(
-        Phase.STAGING,
+        Phase.CLEANING,
         {
             "total_passes": len(result.passes),
             "input_units": result.total_input_units,
@@ -168,10 +168,12 @@ def cmd_stage(args: argparse.Namespace) -> int:
         },
     )
 
-    print(f"\nStaging complete:")
+    print("\nCleaning complete:")
     print(f"  Passes: {len(result.passes)}")
     print(f"  Units: {result.total_input_units} -> {result.total_output_units}")
-    print(f"  Strategies: {', '.join(result.strategies_used) if result.strategies_used else 'none'}")
+    print(
+        f"  Strategies: {', '.join(result.strategies_used) if result.strategies_used else 'none'}"
+    )
     print(f"  Converged: {result.converged}")
 
     if result.evolution_triggers:
@@ -189,7 +191,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         print("Workspace not initialized. Run 'init' first.")
         return 1
 
-    manager.start_phase(Phase.PLANNING)
+    manager.start_phase(Phase.DISCOVERY)
 
     # Load registry
     # Build registry by scanning library files
@@ -211,8 +213,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
     result = run_planning(combined_content, registry, manager.structure.libraries_dir)
 
     if result.has_blocking_issues:
-        manager.fail_phase(Phase.PLANNING, f"{len(result.conflicts)} conflicts found")
-        print("Planning failed due to conflicts:")
+        manager.fail_phase(Phase.DISCOVERY, f"{len(result.conflicts)} conflicts found")
+        print("Discovery failed due to conflicts:")
         for conflict in result.conflicts[:5]:
             print(f"  - {conflict}")
         return 1
@@ -225,8 +227,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
         if len(result.missing_in_registry) > 10:
             print(f"  ... and {len(result.missing_in_registry) - 10} more")
 
-    manager.complete_phase(Phase.PLANNING, result.to_dict())
-    print(f"\nPlanning complete:")
+    manager.complete_phase(Phase.DISCOVERY, result.to_dict())
+    print("\nDiscovery complete:")
     print(f"  Batches: {len(result.batches)}")
     print(f"  Missing in registry: {len(result.missing_in_registry)}")
     print(f"  Missing in libraries: {len(result.missing_in_libraries)}")
@@ -244,7 +246,7 @@ def cmd_merge(args: argparse.Namespace) -> int:
         print("Workspace not initialized. Run 'init' first.")
         return 1
 
-    manager.start_phase(Phase.MERGING)
+    manager.start_phase(Phase.REVIEW)
 
     # Build registry by scanning library files
     registry = LibsRegistry.from_libraries(manager.structure.libraries_dir)
@@ -259,13 +261,13 @@ def cmd_merge(args: argparse.Namespace) -> int:
     )
 
     if result.errors:
-        manager.fail_phase(Phase.MERGING, "; ".join(result.errors))
+        manager.fail_phase(Phase.REVIEW, "; ".join(result.errors))
         return 1
 
-    manager.complete_phase(Phase.MERGING, result.to_dict())
+    manager.complete_phase(Phase.REVIEW, result.to_dict())
 
     mode = "Applied" if args.apply else "Planned (dry-run)"
-    print(f"Merging {mode}:")
+    print(f"Review {mode}:")
     print(f"  Actions: {len(result.actions_planned)}")
 
     if not args.apply:
@@ -283,7 +285,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print("Workspace not initialized. Run 'init' first.")
         return 1
 
-    manager.start_phase(Phase.VERIFICATION)
+    manager.start_phase(Phase.FINALIZATION)
 
     # Build registry by scanning library files
     registry = LibsRegistry.from_libraries(manager.structure.libraries_dir)
@@ -297,14 +299,14 @@ def cmd_verify(args: argparse.Namespace) -> int:
     )
 
     if not result.is_valid:
-        manager.fail_phase(Phase.VERIFICATION, f"{result.total_issues} issues found")
-        print("Verification failed:")
+        manager.fail_phase(Phase.FINALIZATION, f"{result.total_issues} issues found")
+        print("Finalization failed:")
         print(f"  Duplicates: {len(result.duplicates)}")
         print(f"  Assignment issues: {len(result.assignment_issues)}")
         return 1
 
-    manager.complete_phase(Phase.VERIFICATION, result.to_dict())
-    print(f"Verification passed:")
+    manager.complete_phase(Phase.FINALIZATION, result.to_dict())
+    print("Finalization passed:")
     print(f"  Content mismatches: {len(result.content_mismatches)}")
     print(f"  Empty stubs: {len(result.empty_stubs)}")
 
@@ -391,7 +393,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         )
         # No need to save - registry is derived from library files
 
-    print(f"\nResolution complete:")
+    print("\nResolution complete:")
     print(f"  Applied: {result.total_applied}")
     print(f"  Failed: {result.total_failed}")
 
@@ -428,18 +430,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     ]
 
     for name, cmd in phases:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Phase: {name.upper()}")
-        print("="*60)
+        print("=" * 60)
 
         result = cmd()
         if result != 0:
             print(f"\nFailed at phase: {name}")
             return result
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("All phases completed successfully!")
-    print("="*60)
+    print("=" * 60)
 
     # Generate report
     report_path = manager.generate_summary_report()
@@ -502,7 +504,7 @@ def cmd_set_order(args: argparse.Namespace) -> int:
     full_order = current_inputs + ordered_ambiguous
     manager.set_input_order(full_order)
 
-    print(f"Input order set:")
+    print("Input order set:")
     for i, inp in enumerate(full_order, 1):
         print(f"  {i}. {Path(inp).name}")
 
@@ -541,9 +543,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
         # Determine patch_id from filename (e.g., p1.md -> "p1")
         patch_id = None
         name = path.stem
-        if name.startswith("p") and name[1:].isdigit():
-            patch_id = name
-        elif path.parent.name == "patches":
+        if (name.startswith("p") and name[1:].isdigit()) or path.parent.name == "patches":
             patch_id = name
 
         units = tracker.extract_units_from_file(content, str(path), patch_id)
@@ -584,7 +584,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
     plan_path.write_text(plan_content, encoding="utf-8")
     print(f"Generated: {plan_path}")
 
-    print(f"\nDiscovery complete:")
+    print("\nDiscovery complete:")
     print(f"  Libraries: {len(library_contents)}")
     print(f"  Units assigned: {len(labels)}")
 
@@ -703,6 +703,11 @@ def cmd_gaps(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    """Main entry point for the spec manager CLI.
+
+    Returns:
+        Exit code (0 for success, non-zero for error).
+    """
     parser = argparse.ArgumentParser(
         description="Spec Manager - Manage specification libraries",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -721,21 +726,23 @@ def main() -> int:
     p_status.add_argument("--json", action="store_true", help="Output JSON")
 
     # stage
-    p_stage = subparsers.add_parser("stage", help="Run staging phase")
+    p_stage = subparsers.add_parser("stage", help="Run cleaning phase")
     p_stage.add_argument("spec_folder", help="Path to spec folder")
-    p_stage.add_argument("--max-passes", type=int, default=10, help="Maximum strategy passes (default: 10)")
+    p_stage.add_argument(
+        "--max-passes", type=int, default=10, help="Maximum strategy passes (default: 10)"
+    )
 
     # plan
-    p_plan = subparsers.add_parser("plan", help="Run planning phase")
+    p_plan = subparsers.add_parser("plan", help="Run discovery phase")
     p_plan.add_argument("spec_folder", help="Path to spec folder")
 
     # merge
-    p_merge = subparsers.add_parser("merge", help="Run merging phase")
+    p_merge = subparsers.add_parser("merge", help="Run review phase")
     p_merge.add_argument("spec_folder", help="Path to spec folder")
     p_merge.add_argument("--apply", action="store_true", help="Apply changes (not dry-run)")
 
     # verify
-    p_verify = subparsers.add_parser("verify", help="Run verification phase")
+    p_verify = subparsers.add_parser("verify", help="Run finalization phase")
     p_verify.add_argument("spec_folder", help="Path to spec folder")
 
     # analyze
@@ -758,7 +765,9 @@ def main() -> int:
     p_run = subparsers.add_parser("run", help="Run all phases")
     p_run.add_argument("spec_folder", help="Path to spec folder")
     p_run.add_argument("--apply", action="store_true", help="Apply changes (not dry-run)")
-    p_run.add_argument("--max-passes", type=int, default=10, help="Maximum strategy passes (default: 10)")
+    p_run.add_argument(
+        "--max-passes", type=int, default=10, help="Maximum strategy passes (default: 10)"
+    )
 
     # cleanup
     p_cleanup = subparsers.add_parser("cleanup", help="Clean up workspace")
