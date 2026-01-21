@@ -34,34 +34,42 @@ def main() -> int:
 
     tools_dir = os.path.dirname(os.path.abspath(__file__))
 
-    run([
-        sys.executable,
-        os.path.join(tools_dir, "lint_ai_tells.py"),
-        args.path,
-        "--output",
-        os.path.join(args.outdir, "lint.md"),
-    ])
-    run([
-        sys.executable,
-        os.path.join(tools_dir, "tempo_report.py"),
-        args.path,
-        "--output",
-        os.path.join(args.outdir, "tempo.md"),
-    ])
-    run([
-        sys.executable,
-        os.path.join(tools_dir, "readability_report.py"),
-        args.path,
-        "--output",
-        os.path.join(args.outdir, "readability.md"),
-    ])
-    run([
-        sys.executable,
-        os.path.join(tools_dir, "extract_skeleton.py"),
-        args.path,
-        "--outdir",
-        args.outdir,
-    ])
+    run(
+        [
+            sys.executable,
+            os.path.join(tools_dir, "lint_ai_tells.py"),
+            args.path,
+            "--output",
+            os.path.join(args.outdir, "lint.md"),
+        ]
+    )
+    run(
+        [
+            sys.executable,
+            os.path.join(tools_dir, "tempo_report.py"),
+            args.path,
+            "--output",
+            os.path.join(args.outdir, "tempo.md"),
+        ]
+    )
+    run(
+        [
+            sys.executable,
+            os.path.join(tools_dir, "readability_report.py"),
+            args.path,
+            "--output",
+            os.path.join(args.outdir, "readability.md"),
+        ]
+    )
+    run(
+        [
+            sys.executable,
+            os.path.join(tools_dir, "extract_skeleton.py"),
+            args.path,
+            "--outdir",
+            args.outdir,
+        ]
+    )
 
     return 0
 

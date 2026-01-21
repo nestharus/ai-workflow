@@ -21,10 +21,13 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
 
-from md_utils import Span, extract_sentences, iter_paragraph_spans, split_sentences, strip_code_blocks
-
+from md_utils import (
+    extract_sentences,
+    iter_paragraph_spans,
+    split_sentences,
+    strip_code_blocks,
+)
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 
@@ -37,12 +40,12 @@ class Section:
     end_offset: int
 
 
-def find_sections(md: str) -> List[Section]:
+def find_sections(md: str) -> list[Section]:
     """Return top-down sections based on Markdown headings.
 
     End offset is set later once next heading is known.
     """
-    sections: List[Section] = []
+    sections: list[Section] = []
 
     # Work on code-stripped text so headings inside code fences are ignored.
     text = strip_code_blocks(md)
@@ -53,7 +56,9 @@ def find_sections(md: str) -> List[Section]:
         if m:
             hashes, title = m.group(1), m.group(2).strip()
             level = len(hashes)
-            sections.append(Section(level=level, title=title, start_offset=offset, end_offset=len(text)))
+            sections.append(
+                Section(level=level, title=title, start_offset=offset, end_offset=len(text))
+            )
         offset += len(line)
 
     # Set end offsets.
@@ -66,14 +71,14 @@ def find_sections(md: str) -> List[Section]:
     return sections
 
 
-def _first_sentence_of_paragraph(paragraph: str, base_offset: int) -> Optional[str]:
+def _first_sentence_of_paragraph(paragraph: str, base_offset: int) -> str | None:
     sents = split_sentences(paragraph, base_offset=base_offset, paragraph_index=0)
     if not sents:
         return None
     return sents[0].text
 
 
-def build_skeleton(md: str) -> Tuple[str, str, Dict]:
+def build_skeleton(md: str) -> tuple[str, str, dict]:
     text = strip_code_blocks(md)
     sections = find_sections(md)
 
@@ -81,19 +86,24 @@ def build_skeleton(md: str) -> Tuple[str, str, Dict]:
     if not sections:
         sections = [Section(level=1, title="(no headings)", start_offset=0, end_offset=len(text))]
 
-    skeleton_lines: List[str] = ["# Skeleton", ""]
-    borders_lines: List[str] = ["# Borders", "", "Each block shows the last sentence of one section and the first sentence of the next.", ""]
+    skeleton_lines: list[str] = ["# Skeleton", ""]
+    borders_lines: list[str] = [
+        "# Borders",
+        "",
+        "Each block shows the last sentence of one section and the first sentence of the next.",
+        "",
+    ]
 
     outline = {"sections": []}
 
     # Build per-section paragraph first sentences.
-    section_firsts: List[Dict] = []
+    section_firsts: list[dict] = []
 
     for s_idx, sec in enumerate(sections):
         sec_text = text[sec.start_offset : sec.end_offset]
 
         # Gather paragraphs inside section.
-        first_sentences: List[str] = []
+        first_sentences: list[str] = []
         for p_span in iter_paragraph_spans(sec_text):
             p_text = sec_text[p_span.start : p_span.end].strip()
             if not p_text:
@@ -101,7 +111,9 @@ def build_skeleton(md: str) -> Tuple[str, str, Dict]:
             # Skip headings-as-paragraphs.
             if _HEADING_RE.match(p_text.splitlines()[0]):
                 continue
-            first = _first_sentence_of_paragraph(p_text, base_offset=sec.start_offset + p_span.start)
+            first = _first_sentence_of_paragraph(
+                p_text, base_offset=sec.start_offset + p_span.start
+            )
             if first:
                 first_sentences.append(first)
 
@@ -134,7 +146,11 @@ def build_skeleton(md: str) -> Tuple[str, str, Dict]:
         last_a = a_sents[-1].text if a_sents else ""
 
         # First sentence of next section: prefer first paragraph first sentence.
-        first_b = b["first_sentences"][0] if b["first_sentences"] else (extract_sentences(b_text)[0].text if extract_sentences(b_text) else "")
+        first_b = (
+            b["first_sentences"][0]
+            if b["first_sentences"]
+            else (extract_sentences(b_text)[0].text if extract_sentences(b_text) else "")
+        )
 
         borders_lines.append(f"## {a['title']} -> {b['title']}")
         borders_lines.append("")
@@ -160,7 +176,7 @@ def main() -> int:
     ap.add_argument("--outdir", default=".", help="Directory for outputs")
     args = ap.parse_args()
 
-    with open(args.path, "r", encoding="utf-8") as f:
+    with open(args.path, encoding="utf-8") as f:
         md = f.read()
 
     skeleton_md, borders_md, outline = build_skeleton(md)

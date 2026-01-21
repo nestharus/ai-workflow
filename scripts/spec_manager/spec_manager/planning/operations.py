@@ -1,5 +1,4 @@
-"""
-Planning operations for the DISCOVERY phase.
+"""Planning operations for the DISCOVERY phase.
 
 This module provides decomposition and batch creation operations.
 Legacy module name 'planning' maps to the DISCOVERY workflow phase.
@@ -7,12 +6,11 @@ Legacy module name 'planning' maps to the DISCOVERY workflow phase.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from spec_manager.core.ids import IdValidator, IdCategory
+from spec_manager.core.ids import IdCategory, IdValidator
 from spec_manager.core.libs_registry import LibsRegistry
 from spec_manager.core.sections import SectionExtractor
 
@@ -102,11 +100,8 @@ class PlanningResult:
         }
 
 
-def compare_ids(
-    source_ids: set[str], target_ids: set[str]
-) -> IdComparison:
-    """
-    Compare two sets of IDs.
+def compare_ids(source_ids: set[str], target_ids: set[str]) -> IdComparison:
+    """Compare two sets of IDs.
 
     Args:
         source_ids: IDs from source (e.g., plan.md)
@@ -122,11 +117,8 @@ def compare_ids(
     )
 
 
-def find_missing_in_registry(
-    plan_content: str, registry: LibsRegistry
-) -> list[str]:
-    """
-    Find IDs declared in plan but not in libs.md registry.
+def find_missing_in_registry(plan_content: str, registry: LibsRegistry) -> list[str]:
+    """Find IDs declared in plan but not in libs.md registry.
 
     Args:
         plan_content: Content of plan.md
@@ -144,11 +136,8 @@ def find_missing_in_registry(
     return sorted(plan_ids - registry_ids)
 
 
-def find_missing_in_libraries(
-    registry: LibsRegistry, libraries_dir: Path
-) -> list[str]:
-    """
-    Find IDs in libs.md that don't exist in any library file.
+def find_missing_in_libraries(registry: LibsRegistry, libraries_dir: Path) -> list[str]:
+    """Find IDs in libs.md that don't exist in any library file.
 
     Args:
         registry: The libs.md registry
@@ -171,8 +160,7 @@ def find_missing_in_libraries(
 
 
 def check_sequences(content: str) -> list[SequenceIssue]:
-    """
-    Check for sequence issues (gaps, duplicates) in numbered IDs.
+    """Check for sequence issues (gaps, duplicates) in numbered IDs.
 
     Checks:
     - Algorithm numbers (1, 2, 3, ...)
@@ -221,15 +209,11 @@ def check_sequences(content: str) -> list[SequenceIssue]:
 
     # Check patch invariants per patch
     for patch_num, invariants in patch_invariants.items():
-        issues.extend(
-            _check_number_sequence(f"P{patch_num} invariant", invariants)
-        )
+        issues.extend(_check_number_sequence(f"P{patch_num} invariant", invariants))
 
     # Check patch claims per patch
     for patch_num, claims in patch_claims.items():
-        issues.extend(
-            _check_number_sequence(f"P{patch_num} claim", claims)
-        )
+        issues.extend(_check_number_sequence(f"P{patch_num} claim", claims))
 
     return issues
 
@@ -245,6 +229,7 @@ def _check_number_sequence(category: str, numbers: list[int]) -> list[SequenceIs
 
     # Check for duplicates
     from collections import Counter
+
     counts = Counter(numbers)
     duplicates = [n for n, c in counts.items() if c > 1]
     if duplicates:
@@ -282,8 +267,7 @@ def create_batches(
     libraries_dir: Path,
     batch_size: int = 10,
 ) -> list[Batch]:
-    """
-    Create batches of changes to apply.
+    """Create batches of changes to apply.
 
     Args:
         plan_content: Content of plan.md
@@ -365,8 +349,7 @@ def run_planning(
     registry: LibsRegistry,
     libraries_dir: Path,
 ) -> PlanningResult:
-    """
-    Run all planning operations.
+    """Run all planning operations.
 
     Args:
         plan_content: Content of plan.md
@@ -401,12 +384,14 @@ def run_planning(
     for id_value, locations in id_locations.items():
         if len(locations) > 1:
             expected = registry.get_primary(id_value)
-            result.conflicts.append({
-                "type": "duplicate",
-                "id": id_value,
-                "expected_library": expected,
-                "found_in": [f"{lib}:{line}" for lib, line in locations],
-            })
+            result.conflicts.append(
+                {
+                    "type": "duplicate",
+                    "id": id_value,
+                    "expected_library": expected,
+                    "found_in": [f"{lib}:{line}" for lib, line in locations],
+                }
+            )
 
     # Create batches (only if no blocking conflicts)
     if not result.has_blocking_issues:

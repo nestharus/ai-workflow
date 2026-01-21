@@ -1,5 +1,4 @@
-"""
-Iterative library refinement.
+"""Iterative library refinement.
 
 This module handles the iterative process of refining libraries
 until each element has a single primary assignment.
@@ -18,9 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.core.provenance import TrackedUnit
-from .candidate import CandidateLibrary, CandidateIdentifier
-from .labeling import MultiLabeler, ElementLabels
-from .aggregation import ShapeAggregator, LibraryShape
+
+from .aggregation import LibraryShape, ShapeAggregator
+from .candidate import CandidateIdentifier, CandidateLibrary
+from .labeling import ElementLabels, MultiLabeler
 
 
 @dataclass
@@ -36,7 +36,9 @@ class RefinementResult:
     libraries_added: list[str] = field(default_factory=list)
     libraries_removed: list[str] = field(default_factory=list)
     libraries_merged: list[tuple[str, str]] = field(default_factory=list)  # (source, target)
-    libraries_split: list[tuple[str, list[str]]] = field(default_factory=list)  # (source, new_names)
+    libraries_split: list[tuple[str, list[str]]] = field(
+        default_factory=list
+    )  # (source, new_names)
 
     # Metrics
     convergence_score: float = 0.0  # Overall convergence
@@ -45,20 +47,19 @@ class RefinementResult:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
-            'iteration': self.iteration,
-            'libraries': [c.name for c in self.libraries],
-            'convergence_score': round(self.convergence_score, 2),
-            'unassigned_count': self.unassigned_count,
-            'libraries_added': self.libraries_added,
-            'libraries_removed': self.libraries_removed,
-            'libraries_merged': self.libraries_merged,
-            'libraries_split': self.libraries_split
+            "iteration": self.iteration,
+            "libraries": [c.name for c in self.libraries],
+            "convergence_score": round(self.convergence_score, 2),
+            "unassigned_count": self.unassigned_count,
+            "libraries_added": self.libraries_added,
+            "libraries_removed": self.libraries_removed,
+            "libraries_merged": self.libraries_merged,
+            "libraries_split": self.libraries_split,
         }
 
 
 class LibraryRefiner:
-    """
-    Iteratively refines libraries until stable.
+    """Iteratively refines libraries until stable.
 
     The refinement loop:
     1. Label elements with current libraries
@@ -73,12 +74,9 @@ class LibraryRefiner:
         self.history: list[RefinementResult] = []
 
     def refine(
-        self,
-        initial_candidates: list[CandidateLibrary],
-        max_iterations: int = 10
+        self, initial_candidates: list[CandidateLibrary], max_iterations: int = 10
     ) -> RefinementResult:
-        """
-        Run refinement until stable or max iterations.
+        """Run refinement until stable or max iterations.
 
         Returns the final refinement result.
         """
@@ -96,9 +94,7 @@ class LibraryRefiner:
             shapes = aggregator.aggregate()
 
             # Check for suggested changes
-            added, removed, merged, split = self._apply_suggestions(
-                candidates, shapes, aggregator
-            )
+            added, removed, merged, split = self._apply_suggestions(candidates, shapes, aggregator)
 
             # Compute metrics
             convergence = self._compute_overall_convergence(shapes)
@@ -114,7 +110,7 @@ class LibraryRefiner:
                 libraries_merged=merged,
                 libraries_split=split,
                 convergence_score=convergence,
-                unassigned_count=unassigned
+                unassigned_count=unassigned,
             )
             self.history.append(result)
 
@@ -131,7 +127,7 @@ class LibraryRefiner:
         self,
         candidates: list[CandidateLibrary],
         shapes: dict[str, LibraryShape],
-        aggregator: ShapeAggregator
+        aggregator: ShapeAggregator,
     ) -> tuple[list[str], list[str], list[tuple[str, str]], list[tuple[str, list[str]]]]:
         """Apply shape-based suggestions to candidates."""
         added: list[str] = []
@@ -150,10 +146,7 @@ class LibraryRefiner:
         # Handle splits - name using TF-IDF based on split content
         for name, shape in shapes.items():
             if shape.should_split and name not in removed:
-                old_candidate = next(
-                    (c for c in candidates if c.name == name),
-                    None
-                )
+                old_candidate = next((c for c in candidates if c.name == name), None)
 
                 if old_candidate is None:
                     continue
@@ -174,7 +167,7 @@ class LibraryRefiner:
                     keywords=list(old_candidate.keywords),
                     exemplar_elements=elements_a,
                     confidence=0.5,
-                    how_identified=f"Split from {name}"
+                    how_identified=f"Split from {name}",
                 )
 
                 new_b = CandidateLibrary(
@@ -184,7 +177,7 @@ class LibraryRefiner:
                     keywords=list(old_candidate.keywords),
                     exemplar_elements=elements_b,
                     confidence=0.5,
-                    how_identified=f"Split from {name}"
+                    how_identified=f"Split from {name}",
                 )
 
                 candidates[:] = [c for c in candidates if c.name != name]
@@ -203,29 +196,24 @@ class LibraryRefiner:
             new_lib = CandidateLibrary(
                 internal_id=f"LIB_EMERGING_{self.iteration}",
                 name=new_name,
-                description=f"Emerged from weak-match cluster",
+                description="Emerged from weak-match cluster",
                 keywords=[],
                 exemplar_elements=cluster[:5],
                 confidence=0.3,
-                how_identified="Emerged from weak-match cluster"
+                how_identified="Emerged from weak-match cluster",
             )
             candidates.append(new_lib)
             added.append(new_name)
 
         return added, removed, merged, split
 
-    def _name_split_by_tfidf(
-        self,
-        element_ids: list[str],
-        used_names: set[str]
-    ) -> str:
-        """
-        Name a split/emerging cluster using TF-IDF.
+    def _name_split_by_tfidf(self, element_ids: list[str], used_names: set[str]) -> str:
+        """Name a split/emerging cluster using TF-IDF.
 
         Picks the most distinctive term from the cluster's content.
         """
-        import re
         import math
+        import re
         from collections import defaultdict
 
         # Get units for these element IDs
@@ -239,22 +227,50 @@ class LibraryRefiner:
         total_units = len(self.units)
         global_doc_freq: dict[str, int] = defaultdict(int)
         for unit in self.units:
-            words = set(re.findall(r'\b[a-z]{4,}\b', unit.content.lower()))
+            words = set(re.findall(r"\b[a-z]{4,}\b", unit.content.lower()))
             for word in words:
                 global_doc_freq[word] += 1
 
         english_stopwords = {
-            'that', 'this', 'with', 'from', 'have', 'will', 'been',
-            'each', 'which', 'their', 'when', 'where', 'they', 'them',
-            'then', 'than', 'also', 'only', 'more', 'some', 'such',
-            'other', 'into', 'over', 'after', 'before', 'through',
-            'what', 'about', 'would', 'could', 'should', 'there',
+            "that",
+            "this",
+            "with",
+            "from",
+            "have",
+            "will",
+            "been",
+            "each",
+            "which",
+            "their",
+            "when",
+            "where",
+            "they",
+            "them",
+            "then",
+            "than",
+            "also",
+            "only",
+            "more",
+            "some",
+            "such",
+            "other",
+            "into",
+            "over",
+            "after",
+            "before",
+            "through",
+            "what",
+            "about",
+            "would",
+            "could",
+            "should",
+            "there",
         }
 
         # Compute TF-IDF for cluster
         cluster_tf: dict[str, int] = defaultdict(int)
         for unit in cluster_units:
-            words = set(re.findall(r'\b[a-z]{4,}\b', unit.content.lower()))
+            words = set(re.findall(r"\b[a-z]{4,}\b", unit.content.lower()))
             words = words - english_stopwords
             for word in words:
                 cluster_tf[word] += 1
@@ -278,10 +294,7 @@ class LibraryRefiner:
             counter += 1
         return f"{base}_{counter}"
 
-    def _compute_overall_convergence(
-        self,
-        shapes: dict[str, LibraryShape]
-    ) -> float:
+    def _compute_overall_convergence(self, shapes: dict[str, LibraryShape]) -> float:
         """Compute overall convergence across all libraries."""
         if not shapes:
             return 0.0
@@ -290,8 +303,7 @@ class LibraryRefiner:
         return total_convergence / len(shapes)
 
     def finalize(self) -> dict[str, ElementLabels]:
-        """
-        Finalize labels by assigning primary and relations.
+        """Finalize labels by assigning primary and relations.
 
         After refinement, each element should have exactly one
         primary library and zero or more relation libraries.
@@ -316,10 +328,7 @@ class LibraryRefiner:
                 for r in relations:
                     new_labels[r] = labels.labels[r]
 
-            final_labels[element_id] = ElementLabels(
-                element_id=element_id,
-                labels=new_labels
-            )
+            final_labels[element_id] = ElementLabels(element_id=element_id, labels=new_labels)
 
         return final_labels
 
@@ -333,19 +342,13 @@ class LibraryRefiner:
             return {}
 
         final_labels = self.finalize()
-        return {
-            eid: labels.primary or "unassigned"
-            for eid, labels in final_labels.items()
-        }
+        return {eid: labels.primary or "unassigned" for eid, labels in final_labels.items()}
 
 
 async def discover_libraries(
-    units: list[TrackedUnit],
-    llm_client: Any = None,
-    config_path: Path | None = None
+    units: list[TrackedUnit], llm_client: Any = None, config_path: Path | None = None
 ) -> dict[str, ElementLabels]:
-    """
-    Run the full library discovery workflow.
+    """Run the full library discovery workflow.
 
     IMPORTANT: Uses discover_with_all_signals() for multi-signal discovery.
     This combines:
@@ -363,7 +366,6 @@ async def discover_libraries(
     Returns:
         Dictionary mapping element IDs to their labels
     """
-
     # Step 1: Identify candidates using ALL signals (not just keywords)
     identifier = CandidateIdentifier(config_path=config_path, llm_client=llm_client)
     candidates = identifier.discover_with_all_signals(units)  # Multi-signal discovery
@@ -387,12 +389,9 @@ async def discover_libraries(
 
 
 def discover_libraries_sync(
-    units: list[TrackedUnit],
-    llm_client: Any = None,
-    config_path: Path | None = None
+    units: list[TrackedUnit], llm_client: Any = None, config_path: Path | None = None
 ) -> dict[str, ElementLabels]:
-    """
-    Synchronous version of discover_libraries.
+    """Synchronous version of discover_libraries.
 
     For use in non-async contexts.
     """
@@ -404,36 +403,32 @@ def discover_libraries_sync(
         if loop.is_running():
             # We're in an async context, need to use different approach
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(
-                    asyncio.run,
-                    discover_libraries(units, llm_client, config_path)
+                    asyncio.run, discover_libraries(units, llm_client, config_path)
                 )
                 return future.result()
-        return loop.run_until_complete(
-            discover_libraries(units, llm_client, config_path)
-        )
+        return loop.run_until_complete(discover_libraries(units, llm_client, config_path))
     except RuntimeError:
         # No event loop, create one
         return asyncio.run(discover_libraries(units, llm_client, config_path))
 
 
 # Legacy wrapper (deprecated - use discover_libraries with discover_with_all_signals)
-async def discover_libraries_keyword_only(
-    units: list[TrackedUnit]
-) -> dict[str, ElementLabels]:
-    """
-    DEPRECATED: Keyword-based discovery only.
+async def discover_libraries_keyword_only(units: list[TrackedUnit]) -> dict[str, ElementLabels]:
+    """DEPRECATED: Keyword-based discovery only.
 
     Use discover_libraries() instead, which uses discover_with_all_signals().
     This is kept for backward compatibility but should not be used in new code.
     """
     import warnings
+
     warnings.warn(
         "discover_libraries_keyword_only is deprecated. "
         "Use discover_libraries() which uses discover_with_all_signals().",
         DeprecationWarning,
-        stacklevel=2
+        stacklevel=2,
     )
 
     identifier = CandidateIdentifier()

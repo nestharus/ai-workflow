@@ -1,5 +1,4 @@
-"""
-Candidate library identification.
+"""Candidate library identification.
 
 This module identifies potential libraries by analyzing the content
 of all elements. It looks for BIG systems, not small components.
@@ -46,9 +45,9 @@ class LLMClient(Protocol):
 class LibraryEvent:
     """Event tracking rename/merge/split of libraries during discovery."""
 
-    event_type: str              # "rename", "merge", "split"
+    event_type: str  # "rename", "merge", "split"
     timestamp: datetime
-    details: dict[str, Any]      # Event-specific data
+    details: dict[str, Any]  # Event-specific data
 
 
 @dataclass
@@ -56,19 +55,19 @@ class CandidateLibrary:
     """A candidate library identified during discovery."""
 
     # Stable internal ID (never changes during discovery)
-    internal_id: str             # e.g., "LIB_TMP_013" - stable for tracking
+    internal_id: str  # e.g., "LIB_TMP_013" - stable for tracking
 
     # Display name (can change freely during discovery)
-    name: str                    # Current display name (can churn)
+    name: str  # Current display name (can churn)
     description: str
 
     # Evidence for this library
     keywords: list[str] = field(default_factory=list)  # Keywords that suggest this library
     exemplar_elements: list[str] = field(default_factory=list)  # Element IDs that clearly belong
-    confidence: float = 0.5                # How confident we are this is real
+    confidence: float = 0.5  # How confident we are this is real
 
     # Discovery metadata
-    how_identified: str = ""               # What triggered this identification
+    how_identified: str = ""  # What triggered this identification
 
     # Name history (track churning)
     name_history: list[str] = field(default_factory=list)  # Previous names
@@ -79,17 +78,18 @@ class CandidateLibrary:
     def rename(self, new_name: str, reason: str = "") -> None:
         """Rename library - stable ID unchanged, display name updated."""
         self.name_history.append(self.name)
-        self.events.append(LibraryEvent(
-            event_type="rename",
-            timestamp=datetime.now(),
-            details={"from": self.name, "to": new_name, "reason": reason}
-        ))
+        self.events.append(
+            LibraryEvent(
+                event_type="rename",
+                timestamp=datetime.now(),
+                details={"from": self.name, "to": new_name, "reason": reason},
+            )
+        )
         self.name = new_name
 
 
 class CandidateIdentifier:
-    """
-    Identifies candidate libraries from elements.
+    """Identifies candidate libraries from elements.
 
     The key insight is to look for SYSTEMS, not components.
     A system is a cohesive set of elements that work together
@@ -107,11 +107,7 @@ class CandidateIdentifier:
     The main convergence mechanism is multi-labeling + shape aggregation.
     """
 
-    def __init__(
-        self,
-        config_path: Path | None = None,
-        llm_client: LLMClient | None = None
-    ):
+    def __init__(self, config_path: Path | None = None, llm_client: LLMClient | None = None):
         self.candidates: dict[str, CandidateLibrary] = {}  # keyed by internal_id
         self.keyword_config: dict[str, list[str]] = {}
         self._next_lib_id = 1  # Counter for stable internal IDs
@@ -128,24 +124,20 @@ class CandidateIdentifier:
         return lib_id
 
     def _load_keyword_config(self, path: Path) -> None:
-        """
-        Load keyword configuration from YAML file.
+        """Load keyword configuration from YAML file.
 
         This is OPTIONAL and only used as a bootstrap hint.
         Keywords are NOT hardcoded - they come from config.
         """
         import yaml
-        with open(path, 'r', encoding='utf-8') as f:
+
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
-        self.keyword_config = data.get('candidate_keywords', {})
+        self.keyword_config = data.get("candidate_keywords", {})
 
-    def identify_candidates(
-        self,
-        units: list[TrackedUnit]
-    ) -> list[CandidateLibrary]:
-        """
-        Identify candidate libraries from a set of units.
+    def identify_candidates(self, units: list[TrackedUnit]) -> list[CandidateLibrary]:
+        """Identify candidate libraries from a set of units.
 
         Returns initial guesses for libraries based on:
         1. DATA-DRIVEN CLUSTERING (primary approach)
@@ -162,19 +154,19 @@ class CandidateIdentifier:
                 internal_id = self._generate_internal_id()
                 candidate = CandidateLibrary(
                     internal_id=internal_id,  # Stable ID for tracking
-                    name=cluster_name,        # Display name (can churn)
+                    name=cluster_name,  # Display name (can churn)
                     description="Emerged from content clustering",
                     keywords=self._extract_keywords(cluster_units),
                     exemplar_elements=[u.id for u in cluster_units[:5]],
                     confidence=0.6,  # Medium confidence for data-driven
-                    how_identified="Content clustering"
+                    how_identified="Content clustering",
                 )
                 candidates.append(candidate)
                 self.candidates[internal_id] = candidate  # Key by internal_id
 
         # SECONDARY: Use keyword config hints (if provided, NOT hardcoded)
         if self.keyword_config:
-            all_content = ' '.join(u.content.lower() for u in units)
+            all_content = " ".join(u.content.lower() for u in units)
 
             for system_name, keywords in self.keyword_config.items():
                 # Skip if already found via clustering
@@ -182,10 +174,7 @@ class CandidateIdentifier:
                     continue
 
                 # Count keyword occurrences
-                keyword_counts = {
-                    kw: all_content.count(kw)
-                    for kw in keywords
-                }
+                keyword_counts = {kw: all_content.count(kw) for kw in keywords}
                 total_matches = sum(keyword_counts.values())
 
                 if total_matches > 5:  # Threshold for significance
@@ -199,7 +188,7 @@ class CandidateIdentifier:
                         keywords=keywords,
                         exemplar_elements=exemplars[:5],
                         confidence=min(total_matches / 50, 1.0),
-                        how_identified=f"Config-assisted: {total_matches} matches"
+                        how_identified=f"Config-assisted: {total_matches} matches",
                     )
                     candidates.append(candidate)
                     self.candidates[internal_id] = candidate
@@ -212,21 +201,15 @@ class CandidateIdentifier:
         orphans = [u.id for u in units if u.id not in assigned]
         if orphans:
             # Analyze orphans for potential new library
-            orphan_candidate = self._analyze_orphans(
-                [u for u in units if u.id in orphans]
-            )
+            orphan_candidate = self._analyze_orphans([u for u in units if u.id in orphans])
             if orphan_candidate:
                 candidates.append(orphan_candidate)
                 self.candidates[orphan_candidate.internal_id] = orphan_candidate
 
         return candidates
 
-    def _cluster_by_content(
-        self,
-        units: list[TrackedUnit]
-    ) -> dict[str, list[TrackedUnit]]:
-        """
-        Cluster units by content similarity using TF-IDF naming.
+    def _cluster_by_content(self, units: list[TrackedUnit]) -> dict[str, list[TrackedUnit]]:
+        """Cluster units by content similarity using TF-IDF naming.
 
         Strategy:
         1. First cluster by reference graph (units that cite each other)
@@ -283,17 +266,45 @@ class CandidateIdentifier:
         global_doc_freq: dict[str, int] = defaultdict(int)
 
         for unit in units:
-            words = set(re.findall(r'\b[a-z]{4,}\b', unit.content.lower()))
+            words = set(re.findall(r"\b[a-z]{4,}\b", unit.content.lower()))
             for word in words:
                 global_doc_freq[word] += 1
 
         # Minimal English stopwords (no hardcoded structural terms - TF-IDF handles that)
         english_stopwords = {
-            'that', 'this', 'with', 'from', 'have', 'will', 'been',
-            'each', 'which', 'their', 'when', 'where', 'they', 'them',
-            'then', 'than', 'also', 'only', 'more', 'some', 'such',
-            'other', 'into', 'over', 'after', 'before', 'through',
-            'what', 'about', 'would', 'could', 'should', 'there',
+            "that",
+            "this",
+            "with",
+            "from",
+            "have",
+            "will",
+            "been",
+            "each",
+            "which",
+            "their",
+            "when",
+            "where",
+            "they",
+            "them",
+            "then",
+            "than",
+            "also",
+            "only",
+            "more",
+            "some",
+            "such",
+            "other",
+            "into",
+            "over",
+            "after",
+            "before",
+            "through",
+            "what",
+            "about",
+            "would",
+            "could",
+            "should",
+            "there",
         }
 
         clusters: dict[str, list[TrackedUnit]] = {}
@@ -302,7 +313,7 @@ class CandidateIdentifier:
             # Compute TF within cluster
             cluster_tf: dict[str, int] = defaultdict(int)
             for unit in cluster_units:
-                words = set(re.findall(r'\b[a-z]{4,}\b', unit.content.lower()))
+                words = set(re.findall(r"\b[a-z]{4,}\b", unit.content.lower()))
                 words = words - english_stopwords
                 for word in words:
                     cluster_tf[word] += 1
@@ -330,15 +341,12 @@ class CandidateIdentifier:
 
         return clusters
 
-    def _extract_keywords(
-        self,
-        units: list[TrackedUnit]
-    ) -> list[str]:
+    def _extract_keywords(self, units: list[TrackedUnit]) -> list[str]:
         """Extract the most common keywords from a set of units."""
         word_freq: dict[str, int] = defaultdict(int)
 
         for unit in units:
-            words = set(re.findall(r'\b[a-z]{4,}\b', unit.content.lower()))
+            words = set(re.findall(r"\b[a-z]{4,}\b", unit.content.lower()))
             for word in words:
                 word_freq[word] += 1
 
@@ -346,19 +354,13 @@ class CandidateIdentifier:
         sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
         return [w for w, _ in sorted_words[:10]]
 
-    def _find_exemplars(
-        self,
-        units: list[TrackedUnit],
-        keywords: list[str]
-    ) -> list[str]:
+    def _find_exemplars(self, units: list[TrackedUnit], keywords: list[str]) -> list[str]:
         """Find elements that best exemplify a keyword set."""
         scores: list[tuple[str, int]] = []
 
         for unit in units:
             content_lower = unit.content.lower()
-            score = sum(
-                content_lower.count(kw) for kw in keywords
-            )
+            score = sum(content_lower.count(kw) for kw in keywords)
             if score > 0:
                 scores.append((unit.id, score))
 
@@ -367,12 +369,9 @@ class CandidateIdentifier:
         return [s[0] for s in scores]
 
     def _analyze_orphans(
-        self,
-        orphan_units: list[TrackedUnit],
-        all_units: list[TrackedUnit] | None = None
+        self, orphan_units: list[TrackedUnit], all_units: list[TrackedUnit] | None = None
     ) -> CandidateLibrary | None:
-        """
-        Analyze orphan elements for potential new library.
+        """Analyze orphan elements for potential new library.
 
         Uses TF-IDF to pick the most distinctive term as the name
         (not generic emerging_{word}).
@@ -387,22 +386,50 @@ class CandidateIdentifier:
         total_units = len(reference_units)
         global_doc_freq: dict[str, int] = defaultdict(int)
         for unit in reference_units:
-            words = set(re.findall(r'\b[a-z]{4,}\b', unit.content.lower()))
+            words = set(re.findall(r"\b[a-z]{4,}\b", unit.content.lower()))
             for word in words:
                 global_doc_freq[word] += 1
 
         english_stopwords = {
-            'that', 'this', 'with', 'from', 'have', 'will', 'been',
-            'each', 'which', 'their', 'when', 'where', 'they', 'them',
-            'then', 'than', 'also', 'only', 'more', 'some', 'such',
-            'other', 'into', 'over', 'after', 'before', 'through',
-            'what', 'about', 'would', 'could', 'should', 'there',
+            "that",
+            "this",
+            "with",
+            "from",
+            "have",
+            "will",
+            "been",
+            "each",
+            "which",
+            "their",
+            "when",
+            "where",
+            "they",
+            "them",
+            "then",
+            "than",
+            "also",
+            "only",
+            "more",
+            "some",
+            "such",
+            "other",
+            "into",
+            "over",
+            "after",
+            "before",
+            "through",
+            "what",
+            "about",
+            "would",
+            "could",
+            "should",
+            "there",
         }
 
         # Compute TF-IDF for orphan cluster
         cluster_tf: dict[str, int] = defaultdict(int)
         for unit in orphan_units:
-            words = set(re.findall(r'\b[a-z]{4,}\b', unit.content.lower()))
+            words = set(re.findall(r"\b[a-z]{4,}\b", unit.content.lower()))
             words = words - english_stopwords
             for word in words:
                 cluster_tf[word] += 1
@@ -423,19 +450,15 @@ class CandidateIdentifier:
         return CandidateLibrary(
             internal_id=self._generate_internal_id(),
             name=best_word,  # Just the domain term, no prefix
-            description=f"Emerged from unassigned elements",
+            description="Emerged from unassigned elements",
             keywords=top_keywords,
             exemplar_elements=[u.id for u in orphan_units[:5]],
             confidence=0.3,  # Low confidence for emerging
-            how_identified="Orphan cluster analysis"
+            how_identified="Orphan cluster analysis",
         )
 
-    def suggest_from_references(
-        self,
-        units: list[TrackedUnit]
-    ) -> list[CandidateLibrary]:
-        """
-        Identify candidates based on reference patterns.
+    def suggest_from_references(self, units: list[TrackedUnit]) -> list[CandidateLibrary]:
+        """Identify candidates based on reference patterns.
 
         Elements that reference each other heavily might form a system.
         Names clusters using TF-IDF (not generic ref_cluster_0).
@@ -454,7 +477,7 @@ class CandidateIdentifier:
         total_units = len(units)
         global_doc_freq: dict[str, int] = defaultdict(int)
         for unit in units:
-            words = set(re.findall(r'\b[a-z]{4,}\b', unit.content.lower()))
+            words = set(re.findall(r"\b[a-z]{4,}\b", unit.content.lower()))
             for word in words:
                 global_doc_freq[word] += 1
 
@@ -476,16 +499,13 @@ class CandidateIdentifier:
                         keywords=[],
                         exemplar_elements=list(cluster_ids)[:5],
                         confidence=0.4,
-                        how_identified="Reference pattern analysis"
+                        how_identified="Reference pattern analysis",
                     )
                     candidates.append(candidate)
 
         return candidates
 
-    def _find_reference_clusters(
-        self,
-        ref_graph: dict[str, set[str]]
-    ) -> list[set[str]]:
+    def _find_reference_clusters(self, ref_graph: dict[str, set[str]]) -> list[set[str]]:
         """Find clusters of mutually-referencing elements."""
         clusters: list[set[str]] = []
         visited: set[str] = set()
@@ -520,12 +540,8 @@ class CandidateIdentifier:
     # MULTI-SIGNAL DISCOVERY (Gap 9)
     # =========================================================================
 
-    def discover_with_all_signals(
-        self,
-        units: list[TrackedUnit]
-    ) -> list[CandidateLibrary]:
-        """
-        Combine ALL signals for library discovery.
+    def discover_with_all_signals(self, units: list[TrackedUnit]) -> list[CandidateLibrary]:
+        """Combine ALL signals for library discovery.
 
         Signals (in order of weight):
         1. Reference graph structure (highest - who cites who)
@@ -543,83 +559,68 @@ class CandidateIdentifier:
         ref_candidates = self.suggest_from_references(units)
         for c in ref_candidates:
             all_candidates[c.internal_id] = c
-            candidate_evidence[c.internal_id].append({
-                'signal': 'reference_graph',
-                'weight': 0.4,
-                'elements': c.exemplar_elements
-            })
+            candidate_evidence[c.internal_id].append(
+                {"signal": "reference_graph", "weight": 0.4, "elements": c.exemplar_elements}
+            )
 
         # Signal 2: Unit type clustering
         type_candidates = self._cluster_by_unit_type(units)
         for c in type_candidates:
             all_candidates[c.internal_id] = c
-            candidate_evidence[c.internal_id].append({
-                'signal': 'unit_type',
-                'weight': 0.3,
-                'elements': c.exemplar_elements
-            })
+            candidate_evidence[c.internal_id].append(
+                {"signal": "unit_type", "weight": 0.3, "elements": c.exemplar_elements}
+            )
 
         # Signal 3: Relation annotations from prior iterations
         relation_candidates = self._extract_from_relations(units)
         for c in relation_candidates:
             all_candidates[c.internal_id] = c
-            candidate_evidence[c.internal_id].append({
-                'signal': 'relations',
-                'weight': 0.15,
-                'elements': c.exemplar_elements
-            })
+            candidate_evidence[c.internal_id].append(
+                {"signal": "relations", "weight": 0.15, "elements": c.exemplar_elements}
+            )
 
         # Signal 4: Content clustering (word-based seed)
         content_candidates = self.identify_candidates(units)  # Existing method
         for c in content_candidates:
             if c.internal_id not in all_candidates:
                 all_candidates[c.internal_id] = c
-            candidate_evidence[c.internal_id].append({
-                'signal': 'content_clustering',
-                'weight': 0.1,
-                'elements': c.exemplar_elements
-            })
+            candidate_evidence[c.internal_id].append(
+                {"signal": "content_clustering", "weight": 0.1, "elements": c.exemplar_elements}
+            )
 
         # Signal 5: LLM system summaries (optional)
         if self._llm:
             llm_candidates = self._llm_summarize_systems(units)
             for c in llm_candidates:
                 all_candidates[c.internal_id] = c
-                candidate_evidence[c.internal_id].append({
-                    'signal': 'llm_summary',
-                    'weight': 0.05,
-                    'elements': c.exemplar_elements
-                })
+                candidate_evidence[c.internal_id].append(
+                    {"signal": "llm_summary", "weight": 0.05, "elements": c.exemplar_elements}
+                )
 
         # Combine confidence scores using weighted evidence
         for internal_id, evidence_list in candidate_evidence.items():
             if internal_id in all_candidates:
-                total_weight = sum(e['weight'] for e in evidence_list)
+                total_weight = sum(e["weight"] for e in evidence_list)
                 all_candidates[internal_id].confidence = min(total_weight, 1.0)
-                all_candidates[internal_id].how_identified = ', '.join(
+                all_candidates[internal_id].how_identified = ", ".join(
                     f"{e['signal']}({e['weight']:.2f})" for e in evidence_list
                 )
 
         return list(all_candidates.values())
 
-    def _cluster_by_unit_type(
-        self,
-        units: list[TrackedUnit]
-    ) -> list[CandidateLibrary]:
-        """
-        Cluster by unit type - algorithms cluster differently than data structures.
+    def _cluster_by_unit_type(self, units: list[TrackedUnit]) -> list[CandidateLibrary]:
+        """Cluster by unit type - algorithms cluster differently than data structures.
 
         Insight: A system often has a characteristic "shape" of unit types.
         Names clusters using TF-IDF (not generic names like algorithm_system_0).
         """
-        import math
         candidates = []
 
         # Compute global doc frequency for TF-IDF naming
         total_units = len(units)
         global_doc_freq: dict[str, int] = defaultdict(int)
         for unit in units:
-            words = set(re.findall(r'\b[a-z]{4,}\b', unit.content.lower()))
+            words = set(re.findall(r"\b[a-z]{4,}\b", unit.content.lower()))
             for word in words:
                 global_doc_freq[word] += 1
 
@@ -640,48 +641,49 @@ class CandidateIdentifier:
                         cluster, global_doc_freq, total_units, used_names
                     )
                     used_names.add(name)
-                    candidates.append(CandidateLibrary(
-                        internal_id=self._generate_internal_id(),
-                        name=name,
-                        description="Algorithms with related claims",
-                        keywords=[],
-                        exemplar_elements=[u.id for u in cluster[:5]],
-                        confidence=0.5,
-                        how_identified="Unit type + claim clustering"
-                    ))
+                    candidates.append(
+                        CandidateLibrary(
+                            internal_id=self._generate_internal_id(),
+                            name=name,
+                            description="Algorithms with related claims",
+                            keywords=[],
+                            exemplar_elements=[u.id for u in cluster[:5]],
+                            confidence=0.5,
+                            how_identified="Unit type + claim clustering",
+                        )
+                    )
 
         # Data structures often form cohesive systems
         if UnitType.DATA_STRUCTURE in by_type and len(by_type[UnitType.DATA_STRUCTURE]) >= 3:
             name = self._name_cluster_by_tfidf(
                 by_type[UnitType.DATA_STRUCTURE], global_doc_freq, total_units, set()
             )
-            candidates.append(CandidateLibrary(
-                internal_id=self._generate_internal_id(),
-                name=name,
-                description="Data structure definitions",
-                keywords=[],
-                exemplar_elements=[u.id for u in by_type[UnitType.DATA_STRUCTURE][:5]],
-                confidence=0.4,
-                how_identified="Unit type clustering (data structures)"
-            ))
+            candidates.append(
+                CandidateLibrary(
+                    internal_id=self._generate_internal_id(),
+                    name=name,
+                    description="Data structure definitions",
+                    keywords=[],
+                    exemplar_elements=[u.id for u in by_type[UnitType.DATA_STRUCTURE][:5]],
+                    confidence=0.4,
+                    how_identified="Unit type clustering (data structures)",
+                )
+            )
 
         return candidates
 
-    def _subcluster_by_claims(
-        self,
-        algorithms: list[TrackedUnit]
-    ) -> list[list[TrackedUnit]]:
+    def _subcluster_by_claims(self, algorithms: list[TrackedUnit]) -> list[list[TrackedUnit]]:
         """Subcluster algorithms by the claims they reference."""
         # Group by claim references
         claim_to_algs: dict[str, list[TrackedUnit]] = defaultdict(list)
 
         for alg in algorithms:
-            claims_found = re.findall(r'\b(P?\d*C\d+)\b', alg.content)
+            claims_found = re.findall(r"\b(P?\d*C\d+)\b", alg.content)
             if claims_found:
                 for claim in claims_found:
                     claim_to_algs[claim].append(alg)
             else:
-                claim_to_algs['_no_claims'].append(alg)
+                claim_to_algs["_no_claims"].append(alg)
 
         # Convert to clusters
         clusters = [algs for algs in claim_to_algs.values() if len(algs) >= 2]
@@ -692,10 +694,9 @@ class CandidateIdentifier:
         cluster_units: list[TrackedUnit],
         global_doc_freq: dict[str, int],
         total_units: int,
-        used_names: set[str]
+        used_names: set[str],
     ) -> str:
-        """
-        Name a cluster using TF-IDF - pick the most distinctive term.
+        """Name a cluster using TF-IDF - pick the most distinctive term.
 
         TF-IDF naturally filters structural terms: words like 'function' appear
         everywhere (low IDF) while domain terms like 'field' cluster together
@@ -704,17 +705,45 @@ class CandidateIdentifier:
         import math
 
         english_stopwords = {
-            'that', 'this', 'with', 'from', 'have', 'will', 'been',
-            'each', 'which', 'their', 'when', 'where', 'they', 'them',
-            'then', 'than', 'also', 'only', 'more', 'some', 'such',
-            'other', 'into', 'over', 'after', 'before', 'through',
-            'what', 'about', 'would', 'could', 'should', 'there',
+            "that",
+            "this",
+            "with",
+            "from",
+            "have",
+            "will",
+            "been",
+            "each",
+            "which",
+            "their",
+            "when",
+            "where",
+            "they",
+            "them",
+            "then",
+            "than",
+            "also",
+            "only",
+            "more",
+            "some",
+            "such",
+            "other",
+            "into",
+            "over",
+            "after",
+            "before",
+            "through",
+            "what",
+            "about",
+            "would",
+            "could",
+            "should",
+            "there",
         }
 
         # Compute TF within cluster
         cluster_tf: dict[str, int] = defaultdict(int)
         for unit in cluster_units:
-            words = set(re.findall(r'\b[a-z]{4,}\b', unit.content.lower()))
+            words = set(re.findall(r"\b[a-z]{4,}\b", unit.content.lower()))
             words = words - english_stopwords
             for word in words:
                 cluster_tf[word] += 1
@@ -739,10 +768,7 @@ class CandidateIdentifier:
             counter += 1
         return f"{base_name}_{counter}"
 
-    def _extract_from_relations(
-        self,
-        units: list[TrackedUnit]
-    ) -> list[CandidateLibrary]:
+    def _extract_from_relations(self, units: list[TrackedUnit]) -> list[CandidateLibrary]:
         """Extract library candidates from existing relation annotations."""
         candidates = []
 
@@ -755,22 +781,21 @@ class CandidateIdentifier:
         # Create candidates from common relations
         for lib_name, element_ids in relation_counts.items():
             if len(element_ids) >= 2:
-                candidates.append(CandidateLibrary(
-                    internal_id=self._generate_internal_id(),
-                    name=lib_name,
-                    description="From relation annotations",
-                    keywords=[],
-                    exemplar_elements=element_ids[:5],
-                    confidence=0.35,
-                    how_identified="Relation annotation extraction"
-                ))
+                candidates.append(
+                    CandidateLibrary(
+                        internal_id=self._generate_internal_id(),
+                        name=lib_name,
+                        description="From relation annotations",
+                        keywords=[],
+                        exemplar_elements=element_ids[:5],
+                        confidence=0.35,
+                        how_identified="Relation annotation extraction",
+                    )
+                )
 
         return candidates
 
-    def _llm_summarize_systems(
-        self,
-        units: list[TrackedUnit]
-    ) -> list[CandidateLibrary]:
+    def _llm_summarize_systems(self, units: list[TrackedUnit]) -> list[CandidateLibrary]:
         """Use LLM to identify systems from unit content."""
         if not self._llm:
             return []
@@ -796,19 +821,22 @@ Output as JSON array: [{{"name": "...", "elements": ["id1", "id2"], "description
         try:
             response = self._llm.complete(prompt)
             import json
+
             systems = json.loads(response)
 
             candidates = []
             for sys in systems:
-                candidates.append(CandidateLibrary(
-                    internal_id=self._generate_internal_id(),
-                    name=sys['name'],
-                    description=sys.get('description', 'LLM-identified system'),
-                    keywords=[],
-                    exemplar_elements=sys.get('elements', [])[:5],
-                    confidence=0.3,  # Lower confidence for LLM
-                    how_identified="LLM system summary"
-                ))
+                candidates.append(
+                    CandidateLibrary(
+                        internal_id=self._generate_internal_id(),
+                        name=sys["name"],
+                        description=sys.get("description", "LLM-identified system"),
+                        keywords=[],
+                        exemplar_elements=sys.get("elements", [])[:5],
+                        confidence=0.3,  # Lower confidence for LLM
+                        how_identified="LLM system summary",
+                    )
+                )
             return candidates
         except Exception:
             return []

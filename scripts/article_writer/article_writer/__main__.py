@@ -25,11 +25,10 @@ sys.path.insert(0, str(PACKAGE_ROOT))
 # Import from sibling tools directory
 from tools.workflow.database import Database
 from tools.workflow.state_machine import (
-    StateMachine,
-    create_workflow,
-    load_workflow,
     Phase,
     Status,
+    create_workflow,
+    load_workflow,
 )
 
 
@@ -69,12 +68,17 @@ def cmd_init(args: argparse.Namespace) -> int:
     # Create workflow
     sm = create_workflow(db, "article-writer", config)
 
-    print(json.dumps({
-        "workflow_id": sm.workflow_id,
-        "status": "created",
-        "phase": sm.current_phase.value,
-        "config": config,
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "workflow_id": sm.workflow_id,
+                "status": "created",
+                "phase": sm.current_phase.value,
+                "config": config,
+            },
+            indent=2,
+        )
+    )
 
     return 0
 
@@ -92,20 +96,30 @@ def cmd_resume(args: argparse.Namespace) -> int:
     status = sm.current_status
 
     if status == Status.COMPLETED:
-        print(json.dumps({
-            "workflow_id": args.workflow_id,
-            "status": "completed",
-            "message": "Workflow already completed",
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "workflow_id": args.workflow_id,
+                    "status": "completed",
+                    "message": "Workflow already completed",
+                },
+                indent=2,
+            )
+        )
         return 0
 
     if status == Status.ERROR:
         config = sm.workflow.config or {}
-        print(json.dumps({
-            "workflow_id": args.workflow_id,
-            "status": "error",
-            "error": config.get("error", "Unknown error"),
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "workflow_id": args.workflow_id,
+                    "status": "error",
+                    "error": config.get("error", "Unknown error"),
+                },
+                indent=2,
+            )
+        )
         return 1
 
     # Handle pending input request
@@ -115,6 +129,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
             if args.response:
                 # Provide the response
                 from tools.run_workflow import _parse_cut_selection
+
                 selected_cuts = _parse_cut_selection(args.response)
                 sm.provide_input(pending.id, args.response)
 
@@ -123,44 +138,64 @@ def cmd_resume(args: argparse.Namespace) -> int:
                 config["selected_cuts"] = selected_cuts
                 sm._update_workflow(config=config)
 
-                print(json.dumps({
-                    "workflow_id": args.workflow_id,
-                    "status": "running",
-                    "phase": sm.current_phase.value,
-                    "action": "input_provided",
-                    "selected_cuts": selected_cuts,
-                }, indent=2))
+                print(
+                    json.dumps(
+                        {
+                            "workflow_id": args.workflow_id,
+                            "status": "running",
+                            "phase": sm.current_phase.value,
+                            "action": "input_provided",
+                            "selected_cuts": selected_cuts,
+                        },
+                        indent=2,
+                    )
+                )
             else:
                 # Return the pending request
-                print(json.dumps({
-                    "workflow_id": args.workflow_id,
-                    "status": "waiting_input",
-                    "phase": sm.current_phase.value,
-                    "request": {
-                        "id": pending.id,
-                        "prompt": pending.prompt,
-                        "options": pending.options,
-                    },
-                }, indent=2))
+                print(
+                    json.dumps(
+                        {
+                            "workflow_id": args.workflow_id,
+                            "status": "waiting_input",
+                            "phase": sm.current_phase.value,
+                            "request": {
+                                "id": pending.id,
+                                "prompt": pending.prompt,
+                                "options": pending.options,
+                            },
+                        },
+                        indent=2,
+                    )
+                )
             return 0
 
     # Resume from paused
     if status == Status.PAUSED:
         resume_context = sm.resume()
-        print(json.dumps({
-            "workflow_id": args.workflow_id,
-            "status": "running",
-            "phase": sm.current_phase.value,
-            "has_resume_context": bool(resume_context),
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "workflow_id": args.workflow_id,
+                    "status": "running",
+                    "phase": sm.current_phase.value,
+                    "has_resume_context": bool(resume_context),
+                },
+                indent=2,
+            )
+        )
         return 0
 
     # Already running
-    print(json.dumps({
-        "workflow_id": args.workflow_id,
-        "status": status.value,
-        "phase": sm.current_phase.value,
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "workflow_id": args.workflow_id,
+                "status": status.value,
+                "phase": sm.current_phase.value,
+            },
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -177,10 +212,12 @@ def cmd_feedback(args: argparse.Namespace) -> int:
     # Store feedback in workflow config
     config = sm.workflow.config or {}
     feedback_list = config.get("user_feedback", [])
-    feedback_list.append({
-        "feedback": args.feedback,
-        "timestamp": __import__("datetime").datetime.now().isoformat(),
-    })
+    feedback_list.append(
+        {
+            "feedback": args.feedback,
+            "timestamp": __import__("datetime").datetime.now().isoformat(),
+        }
+    )
     config["user_feedback"] = feedback_list
 
     # Set flag to trigger feedback revision
@@ -193,25 +230,35 @@ def cmd_feedback(args: argparse.Namespace) -> int:
             status=Status.RUNNING.value,
             config=config,
         )
-        print(json.dumps({
-            "workflow_id": args.workflow_id,
-            "status": "running",
-            "phase": "revise",
-            "action": "feedback_queued",
-            "feedback": args.feedback,
-            "message": "Workflow will incorporate feedback in revision",
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "workflow_id": args.workflow_id,
+                    "status": "running",
+                    "phase": "revise",
+                    "action": "feedback_queued",
+                    "feedback": args.feedback,
+                    "message": "Workflow will incorporate feedback in revision",
+                },
+                indent=2,
+            )
+        )
     else:
         # Workflow is running - just queue feedback
         sm._update_workflow(config=config)
-        print(json.dumps({
-            "workflow_id": args.workflow_id,
-            "status": sm.current_status.value,
-            "phase": sm.current_phase.value,
-            "action": "feedback_queued",
-            "feedback": args.feedback,
-            "message": "Feedback queued for next revision cycle",
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "workflow_id": args.workflow_id,
+                    "status": sm.current_status.value,
+                    "phase": sm.current_phase.value,
+                    "action": "feedback_queued",
+                    "feedback": args.feedback,
+                    "message": "Feedback queued for next revision cycle",
+                },
+                indent=2,
+            )
+        )
 
     return 0
 
@@ -271,13 +318,15 @@ def cmd_list(args: argparse.Namespace) -> int:
         workflows = session.query(Workflow).order_by(Workflow.created_at.desc()).all()
         results = []
         for w in workflows:
-            results.append({
-                "workflow_id": w.id,
-                "type": w.type,
-                "status": w.status,
-                "phase": w.phase,
-                "created_at": w.created_at.isoformat() if w.created_at else None,
-            })
+            results.append(
+                {
+                    "workflow_id": w.id,
+                    "type": w.type,
+                    "status": w.status,
+                    "phase": w.phase,
+                    "created_at": w.created_at.isoformat() if w.created_at else None,
+                }
+            )
 
     print(json.dumps({"workflows": results}, indent=2))
     return 0
@@ -385,7 +434,9 @@ def main() -> int:
     # continue (execute workflow after feedback)
     continue_p = subparsers.add_parser("continue", help="Execute workflow (use after feedback)")
     continue_p.add_argument("workflow_id", help="Workflow ID to continue")
-    continue_p.add_argument("--response", "-r", help="Response to pending input (e.g., cut selection)")
+    continue_p.add_argument(
+        "--response", "-r", help="Response to pending input (e.g., cut selection)"
+    )
 
     # run (full workflow, for CLI use)
     run_p = subparsers.add_parser("run", help="Run full workflow (CLI mode)")

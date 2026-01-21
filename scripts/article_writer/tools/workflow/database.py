@@ -8,9 +8,10 @@ Provides a Database class that manages SQLite connections with:
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator
+from typing import TYPE_CHECKING
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -18,7 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from .models import Base
 
 if TYPE_CHECKING:
-    from sqlalchemy.engine import Connection, Engine
+    from sqlalchemy.engine import Engine
 
 
 def _set_sqlite_pragma(dbapi_connection: object, connection_record: object) -> None:
@@ -85,7 +86,7 @@ class Database:
         Base.metadata.create_all(self.engine)
 
     @contextmanager
-    def session(self) -> Generator[Session, None, None]:
+    def session(self) -> Generator[Session]:
         """Context manager for database sessions.
 
         Automatically commits on success, rolls back on exception.

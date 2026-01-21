@@ -1,5 +1,4 @@
-"""
-Staging operations for the CLEANING phase.
+"""Staging operations for the CLEANING phase.
 
 This module provides validation and legalization operations for incoming content.
 Legacy module name 'staging' maps to the CLEANING workflow phase.
@@ -14,8 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.core.annotations import AnnotationParser
-from spec_manager.core.ids import IdValidator, IdCategory
-from spec_manager.core.sections import SectionExtractor
+from spec_manager.core.ids import IdValidator
 
 
 class Severity(Enum):
@@ -84,15 +82,13 @@ class StagingResult:
                 {"line": m[0], "header": m[1]} for m in self.missing_declarations
             ],
             "unannotated_references": [
-                {"line": r[0], "id": r[1], "context": r[2]}
-                for r in self.unannotated_references
+                {"line": r[0], "id": r[1], "context": r[2]} for r in self.unannotated_references
             ],
         }
 
 
 def lint_patterns(content: str, id_validator: IdValidator | None = None) -> list[Issue]:
-    """
-    Lint content for pattern violations.
+    """Lint content for pattern violations.
 
     Checks:
     - Goal format and ranges
@@ -197,8 +193,7 @@ def lint_patterns(content: str, id_validator: IdValidator | None = None) -> list
 
 
 def check_duplicate_declarations(content: str) -> list[tuple[str, int, int]]:
-    """
-    Find duplicate ([=ID]) declarations.
+    """Find duplicate ([=ID]) declarations.
 
     Returns:
         List of (id, first_line, second_line) tuples
@@ -224,8 +219,7 @@ def check_duplicate_declarations(content: str) -> list[tuple[str, int, int]]:
 
 
 def find_missing_declarations(content: str) -> list[tuple[int, str]]:
-    """
-    Find markdown headers that might need ([=ID]) declarations.
+    """Find markdown headers that might need ([=ID]) declarations.
 
     Returns:
         List of (line_number, header_text) tuples
@@ -265,8 +259,7 @@ def find_missing_declarations(content: str) -> list[tuple[int, str]]:
 
 
 def find_unannotated_references(content: str) -> list[tuple[int, str, str]]:
-    """
-    Find ID references in prose that lack proper annotation.
+    """Find ID references in prose that lack proper annotation.
 
     Returns:
         List of (line_number, id_found, context) tuples
@@ -329,8 +322,7 @@ def find_unannotated_references(content: str) -> list[tuple[int, str, str]]:
 
 
 def normalize_annotations(content: str) -> str:
-    """
-    Normalize legacy annotation formats to canonical.
+    """Normalize legacy annotation formats to canonical.
 
     Transforms:
     - [(=ID)] -> ([=ID])
@@ -342,8 +334,7 @@ def normalize_annotations(content: str) -> str:
 
 
 def run_staging(content: str, source_path: Path | None = None) -> StagingResult:
-    """
-    Run all staging validations on content.
+    """Run all staging validations on content.
 
     Args:
         content: The content to validate

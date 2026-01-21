@@ -1,5 +1,4 @@
-"""
-Verification operations for the FINALIZATION phase.
+"""Verification operations for the FINALIZATION phase.
 
 This module provides consistency checking and validation operations.
 Legacy module name 'verification' maps to the FINALIZATION workflow phase.
@@ -99,10 +98,7 @@ class VerificationResult:
 
     @property
     def is_valid(self) -> bool:
-        return (
-            len(self.duplicates) == 0
-            and len(self.assignment_issues) == 0
-        )
+        return len(self.duplicates) == 0 and len(self.assignment_issues) == 0
 
     @property
     def total_issues(self) -> int:
@@ -129,8 +125,7 @@ def verify_content(
     libraries_dir: Path,
     min_similarity: float = 0.8,
 ) -> list[ContentMismatch]:
-    """
-    Compare library content against plan.md.
+    """Compare library content against plan.md.
 
     Args:
         plan_content: Content of plan.md
@@ -186,8 +181,7 @@ def detect_duplicates(
     libraries_dir: Path,
     registry: LibsRegistry | None = None,
 ) -> list[DuplicateEntry]:
-    """
-    Find IDs that appear in multiple library files.
+    """Find IDs that appear in multiple library files.
 
     Args:
         libraries_dir: Path to libraries directory
@@ -220,8 +214,7 @@ def find_empty_stubs(
     plan_content: str,
     libraries_dir: Path,
 ) -> list[EmptyStub]:
-    """
-    Find library sections with empty bodies.
+    """Find library sections with empty bodies.
 
     Args:
         plan_content: Content of plan.md
@@ -243,8 +236,7 @@ def find_empty_stubs(
         for id_value, section in lib_result.sections.items():
             if section.is_empty:
                 has_plan_content = (
-                    id_value in plan_result.sections
-                    and not plan_result.sections[id_value].is_empty
+                    id_value in plan_result.sections and not plan_result.sections[id_value].is_empty
                 )
                 stubs.append(
                     EmptyStub(
@@ -261,8 +253,7 @@ def verify_assignments(
     registry: LibsRegistry,
     libraries_dir: Path,
 ) -> list[AssignmentIssue]:
-    """
-    Verify all IDs are in their correct libraries per registry.
+    """Verify all IDs are in their correct libraries per registry.
 
     Checks:
     - IDs in registry are in their primary library
@@ -343,8 +334,7 @@ def run_verification(
     libraries_dir: Path,
     min_similarity: float = 0.8,
 ) -> VerificationResult:
-    """
-    Run all verification operations.
+    """Run all verification operations.
 
     Args:
         plan_content: Content of plan.md

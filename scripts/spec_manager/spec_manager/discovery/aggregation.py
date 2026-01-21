@@ -1,5 +1,4 @@
-"""
-Library shape aggregation.
+"""Library shape aggregation.
 
 This module aggregates labels to see the "shape" of each library -
 what elements point to it, how strongly, and whether there's
@@ -22,8 +21,7 @@ from .labeling import ElementLabels
 
 @dataclass
 class LibraryShape:
-    """
-    Aggregated view of a library's shape.
+    """Aggregated view of a library's shape.
 
     The shape tells us:
     - What elements strongly belong here
@@ -35,14 +33,14 @@ class LibraryShape:
     name: str
 
     # Elements by confidence tier
-    strong_matches: list[str] = field(default_factory=list)    # > 0.7
-    medium_matches: list[str] = field(default_factory=list)    # 0.4 - 0.7
-    weak_matches: list[str] = field(default_factory=list)      # 0.2 - 0.4
+    strong_matches: list[str] = field(default_factory=list)  # > 0.7
+    medium_matches: list[str] = field(default_factory=list)  # 0.4 - 0.7
+    weak_matches: list[str] = field(default_factory=list)  # 0.2 - 0.4
 
     # Metrics
-    total_weight: float = 0.0           # Sum of all confidences
-    element_count: int = 0              # Total elements
-    convergence: float = 0.0            # How well-defined (0-1)
+    total_weight: float = 0.0  # Sum of all confidences
+    element_count: int = 0  # Total elements
+    convergence: float = 0.0  # How well-defined (0-1)
 
     # Overlap with other libraries
     overlaps: dict[str, float] = field(default_factory=dict)
@@ -55,23 +53,22 @@ class LibraryShape:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
-            'name': self.name,
-            'strong_matches': len(self.strong_matches),
-            'medium_matches': len(self.medium_matches),
-            'weak_matches': len(self.weak_matches),
-            'total_weight': round(self.total_weight, 2),
-            'element_count': self.element_count,
-            'convergence': round(self.convergence, 2),
-            'overlaps': {k: round(v, 2) for k, v in self.overlaps.items()},
-            'should_split': self.should_split,
-            'should_merge_with': self.should_merge_with,
-            'split_reason': self.split_reason
+            "name": self.name,
+            "strong_matches": len(self.strong_matches),
+            "medium_matches": len(self.medium_matches),
+            "weak_matches": len(self.weak_matches),
+            "total_weight": round(self.total_weight, 2),
+            "element_count": self.element_count,
+            "convergence": round(self.convergence, 2),
+            "overlaps": {k: round(v, 2) for k, v in self.overlaps.items()},
+            "should_split": self.should_split,
+            "should_merge_with": self.should_merge_with,
+            "split_reason": self.split_reason,
         }
 
 
 class ShapeAggregator:
-    """
-    Aggregates labels to reveal library shapes.
+    """Aggregates labels to reveal library shapes.
 
     The aggregation process:
     1. Group elements by their labels
@@ -108,11 +105,7 @@ class ShapeAggregator:
 
         return self.shapes
 
-    def _compute_shape(
-        self,
-        name: str,
-        elements: list[tuple[str, float]]
-    ) -> LibraryShape:
+    def _compute_shape(self, name: str, elements: list[tuple[str, float]]) -> LibraryShape:
         """Compute shape metrics for a library."""
         shape = LibraryShape(name=name)
 
@@ -150,7 +143,7 @@ class ShapeAggregator:
             shape1 = self.shapes[lib1]
             elements1 = set(shape1.strong_matches + shape1.medium_matches)
 
-            for lib2 in library_names[i+1:]:
+            for lib2 in library_names[i + 1 :]:
                 shape2 = self.shapes[lib2]
                 elements2 = set(shape2.strong_matches + shape2.medium_matches)
 
@@ -169,8 +162,10 @@ class ShapeAggregator:
         for name, shape in self.shapes.items():
             # Should split? (bimodal distribution)
             # Heuristic: many medium matches but few strong
-            if (len(shape.medium_matches) > len(shape.strong_matches) * 2
-                and shape.convergence < 0.5):
+            if (
+                len(shape.medium_matches) > len(shape.strong_matches) * 2
+                and shape.convergence < 0.5
+            ):
                 shape.should_split = True
                 shape.split_reason = "Bimodal distribution suggests two distinct concepts"
 
@@ -183,8 +178,7 @@ class ShapeAggregator:
                         shape.should_merge_with = other_name
 
     def get_new_library_candidates(self) -> list[list[str]]:
-        """
-        Find clusters that might be new libraries.
+        """Find clusters that might be new libraries.
 
         These are elements that:
         - Have no strong match to any library
@@ -207,23 +201,20 @@ class ShapeAggregator:
         """Generate a summary of all library shapes."""
         return {
             name: {
-                'strong': len(shape.strong_matches),
-                'medium': len(shape.medium_matches),
-                'weak': len(shape.weak_matches),
-                'convergence': round(shape.convergence, 2),
-                'overlaps': {k: round(v, 2) for k, v in shape.overlaps.items()},
-                'should_split': shape.should_split,
-                'should_merge_with': shape.should_merge_with
+                "strong": len(shape.strong_matches),
+                "medium": len(shape.medium_matches),
+                "weak": len(shape.weak_matches),
+                "convergence": round(shape.convergence, 2),
+                "overlaps": {k: round(v, 2) for k, v in shape.overlaps.items()},
+                "should_split": shape.should_split,
+                "should_merge_with": shape.should_merge_with,
             }
             for name, shape in self.shapes.items()
         }
 
     def get_well_defined_libraries(self, min_convergence: float = 0.7) -> list[str]:
         """Get libraries with high convergence (well-defined)."""
-        return [
-            name for name, shape in self.shapes.items()
-            if shape.convergence >= min_convergence
-        ]
+        return [name for name, shape in self.shapes.items() if shape.convergence >= min_convergence]
 
     def get_problematic_libraries(self) -> list[tuple[str, str]]:
         """Get libraries with issues and their problems."""

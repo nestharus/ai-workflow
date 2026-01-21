@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from .database import Database
@@ -52,7 +52,7 @@ class ContextLogger:
         with self.db.session() as session:
             log = ContextLog(
                 session_id=self.session_id,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 event_type=event_type,
                 data=data,
             )

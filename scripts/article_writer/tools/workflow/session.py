@@ -6,13 +6,12 @@ within workflows.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 from .context_logger import ContextLogger
 from .context_summarizer import ContextSummarizer, PartialState
 from .database import Database
-from .models import Checkpoint, Session, Workflow
+from .models import Checkpoint, Session
 
 
 class SessionManager:
@@ -154,7 +153,7 @@ class SessionManager:
             if session:
                 session.status = "paused"
                 session.resume_context = summary_text
-                session.updated_at = datetime.now(timezone.utc)
+                session.updated_at = datetime.now(UTC)
 
             # Also create a checkpoint
             checkpoint = Checkpoint(
@@ -205,7 +204,7 @@ class SessionManager:
 
             # Update session status
             session.status = "active"
-            session.updated_at = datetime.now(timezone.utc)
+            session.updated_at = datetime.now(UTC)
 
             db_session.expunge(session)
             return session, resume_context
@@ -220,7 +219,7 @@ class SessionManager:
             session = db_session.query(Session).filter(Session.id == session_id).first()
             if session:
                 session.status = "completed"
-                session.updated_at = datetime.now(timezone.utc)
+                session.updated_at = datetime.now(UTC)
 
     def get_resume_context(self, session_id: str) -> str:
         """Get formatted resume context for a session.

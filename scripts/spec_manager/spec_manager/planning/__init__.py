@@ -1,5 +1,4 @@
-"""
-Planning phase operations for spec management.
+"""Planning phase operations for spec management.
 
 Goal: Decompose a large change into small, safe batches.
 
@@ -11,19 +10,19 @@ Operations:
 """
 
 from spec_manager.planning.operations import (
-    compare_ids,
-    find_missing_in_registry,
-    find_missing_in_libraries,
     check_sequences,
+    compare_ids,
     create_batches,
+    find_missing_in_libraries,
+    find_missing_in_registry,
     run_planning,
 )
 
 __all__ = [
-    "compare_ids",
-    "find_missing_in_registry",
-    "find_missing_in_libraries",
     "check_sequences",
+    "compare_ids",
     "create_batches",
+    "find_missing_in_libraries",
+    "find_missing_in_registry",
     "run_planning",
 ]

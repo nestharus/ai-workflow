@@ -23,15 +23,13 @@ import argparse
 import json
 import re
 import statistics
-from typing import Dict, List
 
 from md_utils import extract_sentences, iter_paragraph_spans, strip_markdown_noise
-
 
 _WORD_RE = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 
 
-def _words(text: str) -> List[str]:
+def _words(text: str) -> list[str]:
     return _WORD_RE.findall(text)
 
 
@@ -64,13 +62,13 @@ def _count_syllables_word(word: str) -> int:
     return max(1, count)
 
 
-def analyze_readability(markdown: str) -> Dict:
+def analyze_readability(markdown: str) -> dict:
     cleaned = strip_markdown_noise(markdown)
 
     sentences = extract_sentences(cleaned)
     sent_texts = [s.text.strip() for s in sentences if s.text.strip()]
 
-    paragraph_texts: List[str] = []
+    paragraph_texts: list[str] = []
     for p in iter_paragraph_spans(cleaned):
         t = cleaned[p.start : p.end].strip()
         if t:
@@ -126,14 +124,14 @@ def analyze_readability(markdown: str) -> Dict:
     }
 
 
-def render_markdown(report: Dict) -> str:
+def render_markdown(report: dict) -> str:
     c = report["counts"]
     a = report["averages"]
     r = report["readability"]
     t = report["reading_time"]
     sl = report["sentence_length"]
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append("# Readability report")
     lines.append("")
 
@@ -180,7 +178,7 @@ def main() -> int:
     ap.add_argument("--output", default="")
     args = ap.parse_args()
 
-    with open(args.path, "r", encoding="utf-8") as f:
+    with open(args.path, encoding="utf-8") as f:
         md = f.read()
 
     report = analyze_readability(md)

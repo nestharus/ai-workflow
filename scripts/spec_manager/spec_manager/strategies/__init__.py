@@ -1,5 +1,4 @@
-"""
-Strategy framework for spec_manager.
+"""Strategy framework for spec_manager.
 
 Strategies are the reasoning layer above tools. A strategy knows:
 - What problem it solves (purpose)
@@ -24,22 +23,22 @@ Usage:
 """
 
 from spec_manager.strategies.base import (
-    StrategyPhase,
     ProcessingContext,
-    StrategyResult,
     Strategy,
-    Tool,
     StrategyDefinition,
-)
-from spec_manager.strategies.registry import (
-    StrategyRegistry,
-    StrategyGapEvidence,
+    StrategyPhase,
+    StrategyResult,
+    Tool,
 )
 from spec_manager.strategies.entity_resolution import (
+    EntityResolver,
+    ReferenceStore,
     ResolutionContext,
     ResolutionResult,
-    ReferenceStore,
-    EntityResolver,
+)
+from spec_manager.strategies.registry import (
+    StrategyGapEvidence,
+    StrategyRegistry,
 )
 
 __all__ = [

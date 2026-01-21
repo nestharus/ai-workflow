@@ -1,5 +1,4 @@
-"""
-Staging phase operations for spec management.
+"""Staging phase operations for spec management.
 
 Goal: Ensure incoming plan/patch content is legal, annotated, and consistent.
 
@@ -12,19 +11,19 @@ Operations:
 """
 
 from spec_manager.staging.operations import (
-    lint_patterns,
     check_duplicate_declarations,
     find_missing_declarations,
     find_unannotated_references,
+    lint_patterns,
     normalize_annotations,
     run_staging,
 )
 
 __all__ = [
-    "lint_patterns",
     "check_duplicate_declarations",
     "find_missing_declarations",
     "find_unannotated_references",
+    "lint_patterns",
     "normalize_annotations",
     "run_staging",
 ]

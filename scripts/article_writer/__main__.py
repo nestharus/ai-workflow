@@ -32,19 +32,19 @@ except ImportError:
     try:
         from tools.workflow.database import Database
         from tools.workflow.state_machine import (
-            create_workflow,
-            load_workflow,
             Phase,
             Status,
+            create_workflow,
+            load_workflow,
         )
     except ImportError:
         sys.path.insert(0, str(PACKAGE_ROOT.parent.parent))
         from scripts.article_writer.tools.workflow.database import Database
         from scripts.article_writer.tools.workflow.state_machine import (
-            create_workflow,
-            load_workflow,
             Phase,
             Status,
+            create_workflow,
+            load_workflow,
         )
 
     def cmd_init(args: argparse.Namespace) -> int:
@@ -72,7 +72,16 @@ except ImportError:
         if args.workspace:
             config["workspace"] = str(Path(args.workspace).expanduser().resolve())
         sm = create_workflow(db, "article-writer", config)
-        print(json.dumps({"workflow_id": sm.workflow_id, "status": "created", "phase": sm.current_phase.value}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "workflow_id": sm.workflow_id,
+                    "status": "created",
+                    "phase": sm.current_phase.value,
+                },
+                indent=2,
+            )
+        )
         return 0
 
     def cmd_resume(args: argparse.Namespace) -> int:
@@ -82,7 +91,16 @@ except ImportError:
         except ValueError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
-        print(json.dumps({"workflow_id": args.workflow_id, "status": sm.current_status.value, "phase": sm.current_phase.value}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "workflow_id": args.workflow_id,
+                    "status": sm.current_status.value,
+                    "phase": sm.current_phase.value,
+                },
+                indent=2,
+            )
+        )
         return 0
 
     def cmd_feedback(args: argparse.Namespace) -> int:
@@ -94,11 +112,18 @@ except ImportError:
             return 1
         config = sm.workflow.config or {}
         feedback_list = config.get("user_feedback", [])
-        feedback_list.append({"feedback": args.feedback, "timestamp": __import__("datetime").datetime.now().isoformat()})
+        feedback_list.append(
+            {
+                "feedback": args.feedback,
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            }
+        )
         config["user_feedback"] = feedback_list
         config["has_pending_feedback"] = True
         if sm.current_status in (Status.COMPLETED, Status.PAUSED):
-            sm._update_workflow(phase=Phase.REVISE.value, status=Status.RUNNING.value, config=config)
+            sm._update_workflow(
+                phase=Phase.REVISE.value, status=Status.RUNNING.value, config=config
+            )
         else:
             sm._update_workflow(config=config)
         print(json.dumps({"workflow_id": args.workflow_id, "action": "feedback_queued"}, indent=2))
@@ -113,7 +138,16 @@ except ImportError:
             except ValueError as e:
                 print(f"Error: {e}", file=sys.stderr)
                 return 1
-            print(json.dumps({"workflow_id": args.workflow_id, "status": sm.current_status.value, "phase": sm.current_phase.value}, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "workflow_id": args.workflow_id,
+                        "status": sm.current_status.value,
+                        "phase": sm.current_phase.value,
+                    },
+                    indent=2,
+                )
+            )
         else:
             return cmd_list(args)
         return 0
@@ -127,7 +161,10 @@ except ImportError:
             from scripts.article_writer.tools.workflow.models import Workflow
         with db.session() as session:
             workflows = session.query(Workflow).order_by(Workflow.created_at.desc()).all()
-            results = [{"workflow_id": w.id, "type": w.type, "status": w.status, "phase": w.phase} for w in workflows]
+            results = [
+                {"workflow_id": w.id, "type": w.type, "status": w.status, "phase": w.phase}
+                for w in workflows
+            ]
         print(json.dumps({"workflows": results}, indent=2))
         return 0
 
@@ -177,10 +214,12 @@ except ImportError:
         return run_main()
 
     def main() -> int:
-        parser = argparse.ArgumentParser(prog="article-writer", description="Multi-agent article writing workflow")
+        parser = argparse.ArgumentParser(
+            prog="article-writer", description="Multi-agent article writing workflow"
+        )
         parser.add_argument("--db", default="workflow.db", help="SQLite database path")
         subparsers = parser.add_subparsers(dest="command", required=True)
-        
+
         init_p = subparsers.add_parser("init", help="Start a new article workflow")
         init_p.add_argument("--input", "-i", required=True)
         init_p.add_argument("--output", "-o", required=True)
@@ -189,20 +228,20 @@ except ImportError:
         init_p.add_argument("--workspace", "-w")
         init_p.add_argument("--no-research", action="store_true")
         init_p.add_argument("--max-loops", type=int, default=2)
-        
+
         resume_p = subparsers.add_parser("resume")
         resume_p.add_argument("workflow_id")
         resume_p.add_argument("--response", "-r")
-        
+
         feedback_p = subparsers.add_parser("feedback")
         feedback_p.add_argument("workflow_id")
         feedback_p.add_argument("feedback")
-        
+
         status_p = subparsers.add_parser("status")
         status_p.add_argument("workflow_id", nargs="?")
-        
+
         subparsers.add_parser("list")
-        
+
         next_p = subparsers.add_parser("next")
         next_p.add_argument("workflow_id")
 
@@ -216,10 +255,20 @@ except ImportError:
         run_p.add_argument("--brief", "-b")
         run_p.add_argument("--llm-cmd")
         run_p.add_argument("--workspace", "-w")
-        
+
         args = parser.parse_args()
-        commands = {"init": cmd_init, "resume": cmd_resume, "feedback": cmd_feedback, "status": cmd_status, "list": cmd_list, "next": cmd_next, "continue": cmd_continue, "run": cmd_run}
+        commands = {
+            "init": cmd_init,
+            "resume": cmd_resume,
+            "feedback": cmd_feedback,
+            "status": cmd_status,
+            "list": cmd_list,
+            "next": cmd_next,
+            "continue": cmd_continue,
+            "run": cmd_run,
+        }
         return commands[args.command](args)
+
 
 if __name__ == "__main__":
     sys.exit(main())

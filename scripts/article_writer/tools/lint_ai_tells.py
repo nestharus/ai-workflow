@@ -19,7 +19,6 @@ import argparse
 import json
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
 
 from md_utils import extract_sentences, offset_to_linecol, strip_markdown_noise
 
@@ -60,7 +59,9 @@ _STATUS_PHRASES = [
 _CONTRAST_PAIR_RE = re.compile(r"\b(not\s+[^.?!]+\s+but\s+[^.?!]+)\b", re.IGNORECASE)
 _LESS_MORE_RE = re.compile(r"\bless\s+about\b.*?\bmore\s+about\b", re.IGNORECASE)
 _RHET_Q_ANSWER_RE = re.compile(r"\?\s+(it\s+means|that\s+means|this\s+means)\b", re.IGNORECASE)
-_IMPERATIVE_CHAIN_RE = re.compile(r"\b(do|pull|push|try|take|make)\b[^.?!]{0,80}\bthen\b[^.?!]{0,80}\bthen\b", re.IGNORECASE)
+_IMPERATIVE_CHAIN_RE = re.compile(
+    r"\b(do|pull|push|try|take|make)\b[^.?!]{0,80}\bthen\b[^.?!]{0,80}\bthen\b", re.IGNORECASE
+)
 
 # Parallel clause triggers used in the original guide examples.
 _PARALLEL_TRIGGER_WORDS = ["how", "where", "that", "every"]
@@ -73,17 +74,21 @@ def _clean_excerpt(text: str, max_len: int = 160) -> str:
     return s[: max_len - 1] + "…"
 
 
-def lint_markdown(markdown: str) -> Tuple[List[Finding], Dict[str, int]]:
-    findings: List[Finding] = []
+def lint_markdown(markdown: str) -> tuple[list[Finding], dict[str, int]]:
+    findings: list[Finding] = []
 
     cleaned = strip_markdown_noise(markdown)
     sentences = extract_sentences(cleaned)
 
-    counts: Dict[str, int] = {}
+    counts: dict[str, int] = {}
 
     def add(rule: str, severity: str, offset: int, excerpt: str) -> None:
         line, col = offset_to_linecol(cleaned, offset)
-        findings.append(Finding(rule=rule, severity=severity, line=line, col=col, excerpt=_clean_excerpt(excerpt)))
+        findings.append(
+            Finding(
+                rule=rule, severity=severity, line=line, col=col, excerpt=_clean_excerpt(excerpt)
+            )
+        )
         counts[rule] = counts.get(rule, 0) + 1
 
     # Rule: em dash characters
@@ -162,7 +167,7 @@ def lint_markdown(markdown: str) -> Tuple[List[Finding], Dict[str, int]]:
 
     # Repeated sentence starts: 3 in a row within a paragraph
     # Use the extracted sentences and paragraph_index to group.
-    by_para: Dict[int, List[Tuple[int, str, int]]] = {}
+    by_para: dict[int, list[tuple[int, str, int]]] = {}
     for s in sentences:
         stripped = re.sub(r"^[\s\"'\(\[]+", "", s.text.strip())
         m = re.match(r"([A-Za-z]+)", stripped)
@@ -181,8 +186,8 @@ def lint_markdown(markdown: str) -> Tuple[List[Finding], Dict[str, int]]:
     return findings, counts
 
 
-def render_markdown(findings: List[Finding], counts: Dict[str, int]) -> str:
-    lines: List[str] = []
+def render_markdown(findings: list[Finding], counts: dict[str, int]) -> str:
+    lines: list[str] = []
     fails = [f for f in findings if f.severity == "fail"]
     warns = [f for f in findings if f.severity == "warn"]
 
@@ -199,7 +204,7 @@ def render_markdown(findings: List[Finding], counts: Dict[str, int]) -> str:
             lines.append(f"- {k}: {counts[k]}")
         lines.append("")
 
-    def section(title: str, group: List[Finding]) -> None:
+    def section(title: str, group: list[Finding]) -> None:
         if not group:
             return
         lines.append(f"## {title}")
@@ -223,7 +228,7 @@ def main() -> int:
 
     args = ap.parse_args()
 
-    with open(args.path, "r", encoding="utf-8") as f:
+    with open(args.path, encoding="utf-8") as f:
         md = f.read()
 
     findings, counts = lint_markdown(md)

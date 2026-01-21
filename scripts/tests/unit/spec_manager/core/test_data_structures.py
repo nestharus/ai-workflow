@@ -956,9 +956,7 @@ class TestStrategyRecord:
         data_without = record_without.to_dict()
         assert data_without["notes"] is None
 
-        record_with = StrategyRecord(
-            strategy_name="with_notes", notes="Important observation"
-        )
+        record_with = StrategyRecord(strategy_name="with_notes", notes="Important observation")
         data_with = record_with.to_dict()
         assert data_with["notes"] == "Important observation"
 
@@ -1076,9 +1074,7 @@ class TestDataStructuresIntegration:
 
         # Run multiple times to verify determinism
         for _ in range(10):
-            bundle_copy = ConflictBundle(
-                conflicting_id="REQ-001", variants=variants.copy()
-            )
+            bundle_copy = ConflictBundle(conflicting_id="REQ-001", variants=variants.copy())
             bundle_copy.rank_variants()
             assert bundle_copy.recommended_variant == "REQ-001-v3"
 
@@ -1182,14 +1178,10 @@ class TestDataStructuresIntegration:
         rather than exact boundary values like 0.945 or 0.955.
         """
         # Create evidence with specific confidence
-        ev = GapEvidence(
-            invariant_family="format", description="Test", confidence=confidence
-        )
+        ev = GapEvidence(invariant_family="format", description="Test", confidence=confidence)
 
         # Create equivalent evidence with pre-rounded confidence
-        ev_rounded = GapEvidence(
-            invariant_family="format", description="Test", confidence=rounded
-        )
+        ev_rounded = GapEvidence(invariant_family="format", description="Test", confidence=rounded)
 
         sig1 = compute_evidence_signature([ev])
         sig2 = compute_evidence_signature([ev_rounded])

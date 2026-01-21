@@ -53,24 +53,38 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 # Required imports for state machine
 try:
-    from scripts.article_writer.tools.workflow.database import Database
-    from scripts.article_writer.tools.workflow.state_machine import StateMachine, create_workflow, load_workflow, Phase, Status
-    from scripts.article_writer.tools.workflow.context_logger import ContextLogger
-    from scripts.article_writer.tools.workflow.session import SessionManager
     from scripts.article_writer.tools.agents import AgentRunner
+    from scripts.article_writer.tools.workflow.context_logger import ContextLogger
+    from scripts.article_writer.tools.workflow.database import Database
+    from scripts.article_writer.tools.workflow.session import SessionManager
+    from scripts.article_writer.tools.workflow.state_machine import (
+        Phase,
+        StateMachine,
+        Status,
+        create_workflow,
+        load_workflow,
+    )
+
     STATE_MACHINE_AVAILABLE = True
 except ImportError:
     try:
         # Fallback for running from within the package
-        from tools.workflow.database import Database
-        from tools.workflow.state_machine import StateMachine, create_workflow, load_workflow, Phase, Status
-        from tools.workflow.context_logger import ContextLogger
-        from tools.workflow.session import SessionManager
         from tools.agents import AgentRunner
+        from tools.workflow.context_logger import ContextLogger
+        from tools.workflow.database import Database
+        from tools.workflow.session import SessionManager
+        from tools.workflow.state_machine import (
+            Phase,
+            StateMachine,
+            Status,
+            create_workflow,
+            load_workflow,
+        )
+
         STATE_MACHINE_AVAILABLE = True
     except ImportError:
         STATE_MACHINE_AVAILABLE = False
@@ -79,21 +93,23 @@ except ImportError:
 try:
     from scripts.article_writer.tools.invariants import (
         DynamicInvariantSystem,
-        extract_invariants_from_brief,
-        check_all_invariants,
-        apply_fixes,
         InvariantSet,
+        apply_fixes,
+        check_all_invariants,
+        extract_invariants_from_brief,
     )
+
     INVARIANTS_AVAILABLE = True
 except ImportError:
     try:
         from tools.invariants import (
             DynamicInvariantSystem,
-            extract_invariants_from_brief,
-            check_all_invariants,
-            apply_fixes,
             InvariantSet,
+            apply_fixes,
+            check_all_invariants,
+            extract_invariants_from_brief,
         )
+
         INVARIANTS_AVAILABLE = True
     except ImportError:
         INVARIANTS_AVAILABLE = False
@@ -202,7 +218,7 @@ def _clean_article_output(text: str) -> str:
     return result
 
 
-def _extract_first_codeblock(text: str, lang: str) -> Optional[str]:
+def _extract_first_codeblock(text: str, lang: str) -> str | None:
     for m in _CODEBLOCK_RE.finditer(text):
         l = (m.group(1) or "").strip().lower()
         if l == lang.lower():
@@ -210,7 +226,7 @@ def _extract_first_codeblock(text: str, lang: str) -> Optional[str]:
     return None
 
 
-def _extract_nth_codeblock(text: str, n: int) -> Optional[Tuple[str, str]]:
+def _extract_nth_codeblock(text: str, n: int) -> tuple[str, str] | None:
     blocks = list(_CODEBLOCK_RE.finditer(text))
     if len(blocks) <= n:
         return None
@@ -220,7 +236,7 @@ def _extract_nth_codeblock(text: str, n: int) -> Optional[Tuple[str, str]]:
     return lang, body
 
 
-def _format_cmd(llm_cmd: str, prompt: str, prompt_file: Path) -> Tuple[list[str], bool]:
+def _format_cmd(llm_cmd: str, prompt: str, prompt_file: Path) -> tuple[list[str], bool]:
     """Return (argv, use_stdin)."""
     parts = shlex.split(llm_cmd)
     formatted: list[str] = []
@@ -290,10 +306,16 @@ def run_agent(
 
     # Run via scripts.agents module
     argv = [
-        "uv", "run", "python", "-m", "scripts.agents",
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "scripts.agents",
         agent_id,
-        "--file", str(prompt_file),
-        "--project", str(project_root),
+        "--file",
+        str(prompt_file),
+        "--project",
+        str(project_root),
     ]
 
     logs_dir = workspace / "logs"
@@ -316,7 +338,7 @@ def run_agent(
             last_error = RuntimeError(
                 f"Agent failed (agent={agent_id}, exit={proc.returncode}). See logs/{agent_name}.stderr.txt"
             )
-            time.sleep(2 ** attempt)  # Exponential backoff
+            time.sleep(2**attempt)  # Exponential backoff
             continue
 
         out = (proc.stdout or "").strip()
@@ -325,9 +347,11 @@ def run_agent(
 
         # Empty output - retry
         last_error = RuntimeError(f"Agent returned empty output (agent={agent_id}).")
-        time.sleep(2 ** attempt)  # Exponential backoff
+        time.sleep(2**attempt)  # Exponential backoff
 
-    raise last_error or RuntimeError(f"Agent failed after {max_retries} retries (agent={agent_id}).")
+    raise last_error or RuntimeError(
+        f"Agent failed after {max_retries} retries (agent={agent_id})."
+    )
 
 
 def run_llm(*, llm_cmd: str, prompt: str, workspace: Path, label: str) -> str:
@@ -378,7 +402,7 @@ def load_global_constraints(package_root: Path) -> str:
     return m.group(0).strip() if m else master
 
 
-def ensure_brief(*, brief_path: Optional[Path], notes: str, workspace: Path) -> Dict[str, Any]:
+def ensure_brief(*, brief_path: Path | None, notes: str, workspace: Path) -> dict[str, Any]:
     if brief_path:
         brief = json.loads(_read_text(brief_path))
     else:
@@ -408,9 +432,9 @@ def ensure_brief(*, brief_path: Optional[Path], notes: str, workspace: Path) -> 
 
 def enforce_invariants(
     text: str,
-    brief: Dict[str, Any],
+    brief: dict[str, Any],
     workspace: Path,
-) -> Tuple[str, list[Dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]]]:
     """Enforce invariants on final text.
 
     Returns:
@@ -437,13 +461,15 @@ def enforce_invariants(
     # Log violations
     violation_dicts = []
     for v in remaining_violations:
-        violation_dicts.append({
-            "invariant": v.invariant.name,
-            "description": v.invariant.description,
-            "message": v.message,
-            "location": v.location,
-            "fixable": v.fixable,
-        })
+        violation_dicts.append(
+            {
+                "invariant": v.invariant.name,
+                "description": v.invariant.description,
+                "message": v.message,
+                "location": v.location,
+                "fixable": v.fixable,
+            }
+        )
 
     # Save invariant report
     report = {
@@ -473,7 +499,7 @@ def enforce_invariants(
     return fixed_text, violation_dicts
 
 
-def run_local_tools(*, package_root: Path, draft_path: Path, analysis_dir: Path) -> Dict[str, Any]:
+def run_local_tools(*, package_root: Path, draft_path: Path, analysis_dir: Path) -> dict[str, Any]:
     tools_dir = package_root / "tools"
     analysis_dir.mkdir(parents=True, exist_ok=True)
 
@@ -540,7 +566,7 @@ def run_local_tools(*, package_root: Path, draft_path: Path, analysis_dir: Path)
         check=False,
     )
 
-    lint_obj: Dict[str, Any] = {}
+    lint_obj: dict[str, Any] = {}
     if lint_json.exists():
         try:
             lint_obj = _load_json(lint_json)
@@ -550,12 +576,12 @@ def run_local_tools(*, package_root: Path, draft_path: Path, analysis_dir: Path)
     return {"lint": lint_obj}
 
 
-def lint_fail_count(lint_obj: Dict[str, Any]) -> int:
+def lint_fail_count(lint_obj: dict[str, Any]) -> int:
     findings = lint_obj.get("findings", []) if isinstance(lint_obj, dict) else []
     return sum(1 for f in findings if f.get("severity") == "fail")
 
 
-def build_prompt(template_path: Path, sections: Dict[str, str]) -> str:
+def build_prompt(template_path: Path, sections: dict[str, str]) -> str:
     base = _read_text(template_path).rstrip()
     parts = [base]
     for title, content in sections.items():
@@ -567,6 +593,7 @@ def build_prompt(template_path: Path, sections: Dict[str, str]) -> str:
 # ============================================================================
 # State Machine Mode Functions
 # ============================================================================
+
 
 def run_state_machine_workflow(args: argparse.Namespace) -> int:
     """Run workflow with state machine tracking.
@@ -690,7 +717,7 @@ def _parse_cut_selection(response: str) -> list[str]:
     response = response.replace("[RECOMMENDED]", "").replace("[recommended]", "")
 
     # Split by comma, semicolon, or space
-    parts = re.split(r'[,;\s]+', response)
+    parts = re.split(r"[,;\s]+", response)
 
     # Extract single-letter IDs (A, B, C, etc.)
     cuts = []
@@ -706,7 +733,7 @@ def _parse_cut_selection(response: str) -> list[str]:
 
 
 def _run_workflow_loop(
-    sm: "StateMachine",
+    sm: StateMachine,
     args: argparse.Namespace,
     resume_context: str = "",
 ) -> int:
@@ -732,7 +759,7 @@ def _run_workflow_loop(
     context_logger = ContextLogger(sm.db, current_session.id)
 
     # Track state for the workflow
-    workflow_state: Dict[str, Any] = {
+    workflow_state: dict[str, Any] = {
         "notes": "",
         "brief": {},
         "plan": {},
@@ -765,7 +792,13 @@ def _run_workflow_loop(
             sm._update_workflow(config=config)
 
     # Load existing draft from workspace (for resume)
-    draft_files = ["draft_invariant_fixed.md", "draft_cut.md", "final.md", "draft_01.md", "draft_00.md"]
+    draft_files = [
+        "draft_invariant_fixed.md",
+        "draft_cut.md",
+        "final.md",
+        "draft_01.md",
+        "draft_00.md",
+    ]
     for draft_file in draft_files:
         draft_path = workspace / "drafts" / draft_file
         if draft_path.exists():
@@ -818,7 +851,9 @@ def _run_workflow_loop(
     if reviews_dir.exists():
         for review_file in reviews_dir.glob("*.md"):
             try:
-                workflow_state.setdefault("reviews", {})[review_file.stem + ".md"] = _read_text(review_file)
+                workflow_state.setdefault("reviews", {})[review_file.stem + ".md"] = _read_text(
+                    review_file
+                )
             except Exception:
                 pass
 
@@ -854,7 +889,7 @@ def _run_workflow_loop(
     # Load constraints
     constraints = load_global_constraints(package_root)
 
-    print(f"Running workflow in state machine mode...")
+    print("Running workflow in state machine mode...")
     print(f"Workflow ID: {sm.workflow_id}")
     print(f"Database: {args.db}")
 
@@ -908,7 +943,7 @@ def _run_workflow_loop(
                         print("Options:")
                         for opt in result.get("user_options", []):
                             print(f"  - {opt}")
-                    print(f"\nWorkflow paused. Provide response to continue.")
+                    print("\nWorkflow paused. Provide response to continue.")
                     print(f"Resume with: --resume {sm.workflow_id}")
 
                     # Store condenser result for cutter - persist in workflow config
@@ -966,7 +1001,9 @@ def _run_workflow_loop(
             # Check if we should pause after this phase
             if pause_after and sm.current_phase.value == pause_after:
                 sm.pause(f"Paused after {pause_after} phase (--pause-after)")
-                print(f"Workflow paused after {pause_after}. Resume with: --resume {sm.workflow_id}")
+                print(
+                    f"Workflow paused after {pause_after}. Resume with: --resume {sm.workflow_id}"
+                )
                 return 0
 
     except KeyboardInterrupt:
@@ -990,7 +1027,7 @@ def _run_workflow_loop(
     return 0
 
 
-def _setup_workspace(config: Dict[str, Any]) -> Path:
+def _setup_workspace(config: dict[str, Any]) -> Path:
     """Setup workspace directory."""
     workspace_path = config.get("workspace")
     if workspace_path:
@@ -1007,16 +1044,16 @@ def _setup_workspace(config: Dict[str, Any]) -> Path:
 
 
 def _execute_agent_action(
-    action: "NextAction",
-    sm: "StateMachine",
-    state: Dict[str, Any],
+    action: NextAction,
+    sm: StateMachine,
+    state: dict[str, Any],
     workspace: Path,
     package_root: Path,
     llm_cmd: str,
     constraints: str,
-    context_logger: "ContextLogger",
+    context_logger: ContextLogger,
     use_agent_system: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Execute an agent action.
 
     Args:
@@ -1065,13 +1102,13 @@ def _execute_agent_action(
 
 
 def _execute_tool_action(
-    action: "NextAction",
-    sm: "StateMachine",
-    state: Dict[str, Any],
+    action: NextAction,
+    sm: StateMachine,
+    state: dict[str, Any],
     workspace: Path,
     package_root: Path,
-    context_logger: "ContextLogger",
-) -> Dict[str, Any]:
+    context_logger: ContextLogger,
+) -> dict[str, Any]:
     """Execute a local tool action."""
     tools = action.inputs.get("all_tools", [action.tool])
     print(f"Running tools: {tools}")
@@ -1107,15 +1144,15 @@ def _execute_tool_action(
 
 def _run_drift_detection(
     *,
-    sm: "StateMachine",
-    state: Dict[str, Any],
+    sm: StateMachine,
+    state: dict[str, Any],
     workspace: Path,
     package_root: Path,
     llm_cmd: str,
     constraints: str,
-    context_logger: "ContextLogger",
+    context_logger: ContextLogger,
     use_agent_system: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run drift detection after REVISE phase completes.
 
     This is an optional check that compares the revised draft against
@@ -1191,7 +1228,7 @@ def _agent_filename(agent_name: str) -> str:
     return mapping.get(agent_name, agent_name)
 
 
-def _compute_text_counts(text: str) -> Dict[str, Any]:
+def _compute_text_counts(text: str) -> dict[str, Any]:
     """Compute character and word counts for text.
 
     This is done by CODE, not LLM - LLMs cannot count accurately.
@@ -1210,32 +1247,44 @@ def _compute_text_counts(text: str) -> Dict[str, Any]:
 def _build_agent_prompt(
     agent_name: str,
     template_path: Path,
-    state: Dict[str, Any],
+    state: dict[str, Any],
     constraints: str,
 ) -> str:
     """Build prompt for a specific agent."""
-    sections: Dict[str, str] = {}
+    sections: dict[str, str] = {}
 
     if agent_name == "planner":
         sections = {
             "GLOBAL CONSTRAINTS": constraints,
-            "BRIEF": "```json\n" + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False) + "\n```",
+            "BRIEF": "```json\n"
+            + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False)
+            + "\n```",
             "NOTES": "```markdown\n" + state.get("notes", "") + "\n```",
             "STYLE OVERRIDE": "(none)",
         }
     elif agent_name == "researcher":
         sections = {
-            "BRIEF": "```json\n" + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False) + "\n```",
-            "PLAN": "```json\n" + json.dumps(state.get("plan", {}), indent=2, ensure_ascii=False) + "\n```",
+            "BRIEF": "```json\n"
+            + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False)
+            + "\n```",
+            "PLAN": "```json\n"
+            + json.dumps(state.get("plan", {}), indent=2, ensure_ascii=False)
+            + "\n```",
             "OUTLINE": "```markdown\n" + state.get("outline", "") + "\n```",
         }
     elif agent_name == "writer":
         sections = {
             "GLOBAL CONSTRAINTS": constraints,
-            "BRIEF": "```json\n" + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False) + "\n```",
-            "PLAN": "```json\n" + json.dumps(state.get("plan", {}), indent=2, ensure_ascii=False) + "\n```",
+            "BRIEF": "```json\n"
+            + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False)
+            + "\n```",
+            "PLAN": "```json\n"
+            + json.dumps(state.get("plan", {}), indent=2, ensure_ascii=False)
+            + "\n```",
             "OUTLINE": "```markdown\n" + state.get("outline", "") + "\n```",
-            "SOURCES": "```json\n" + json.dumps(state.get("sources", {}), indent=2, ensure_ascii=False) + "\n```",
+            "SOURCES": "```json\n"
+            + json.dumps(state.get("sources", {}), indent=2, ensure_ascii=False)
+            + "\n```",
             "NOTES": "```markdown\n" + state.get("notes", "") + "\n```",
             "STYLE OVERRIDE": "(none)",
         }
@@ -1243,12 +1292,18 @@ def _build_agent_prompt(
         sections = {
             "INPUT_NOTES": "```markdown\n" + state.get("notes", "") + "\n```",
             "DRAFT": "```markdown\n" + state.get("draft", "") + "\n```",
-            "BRIEF": "```json\n" + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False) + "\n```",
+            "BRIEF": "```json\n"
+            + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False)
+            + "\n```",
         }
     elif agent_name in ("value_reviewer", "robustness_reviewer"):
         sections = {
-            "BRIEF": "```json\n" + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False) + "\n```",
-            "PLAN": "```json\n" + json.dumps(state.get("plan", {}), indent=2, ensure_ascii=False) + "\n```",
+            "BRIEF": "```json\n"
+            + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False)
+            + "\n```",
+            "PLAN": "```json\n"
+            + json.dumps(state.get("plan", {}), indent=2, ensure_ascii=False)
+            + "\n```",
             "DRAFT": "```markdown\n" + state.get("draft", "") + "\n```",
         }
     elif agent_name == "flow_reviewer":
@@ -1265,8 +1320,12 @@ def _build_agent_prompt(
     elif agent_name == "editor":
         sections = {
             "GLOBAL CONSTRAINTS": constraints,
-            "STYLE": "```json\n" + json.dumps(state.get("style", {}), indent=2, ensure_ascii=False) + "\n```",
-            "SOURCES": "```json\n" + json.dumps(state.get("sources", {}), indent=2, ensure_ascii=False) + "\n```",
+            "STYLE": "```json\n"
+            + json.dumps(state.get("style", {}), indent=2, ensure_ascii=False)
+            + "\n```",
+            "SOURCES": "```json\n"
+            + json.dumps(state.get("sources", {}), indent=2, ensure_ascii=False)
+            + "\n```",
             "DRAFT": "```markdown\n" + state.get("draft", "") + "\n```",
         }
         # Add user feedback (HIGHEST PRIORITY)
@@ -1278,7 +1337,12 @@ def _build_agent_prompt(
         # Add invariant feedback if any
         invariant_feedback = state.get("invariant_feedback", [])
         if invariant_feedback:
-            inv_text = "\n".join([f"- {v.get('invariant', 'unknown')}: {v.get('reason', '')}" for v in invariant_feedback])
+            inv_text = "\n".join(
+                [
+                    f"- {v.get('invariant', 'unknown')}: {v.get('reason', '')}"
+                    for v in invariant_feedback
+                ]
+            )
             sections["INVARIANT_FEEDBACK"] = f"```\n{inv_text}\n```"
 
         for name, content in state.get("reviews", {}).items():
@@ -1287,13 +1351,17 @@ def _build_agent_prompt(
     elif agent_name == "alignment_fixer":
         sections = {
             "DRAFT": "```markdown\n" + state.get("draft", "") + "\n```",
-            "ALIGNMENT_REVIEW": "```markdown\n" + state.get("reviews", {}).get("alignment.md", "") + "\n```",
+            "ALIGNMENT_REVIEW": "```markdown\n"
+            + state.get("reviews", {}).get("alignment.md", "")
+            + "\n```",
             "INPUT_NOTES": "```markdown\n" + state.get("notes", "") + "\n```",
         }
     elif agent_name == "ai_tells_fixer":
         sections = {
             "DRAFT": "```markdown\n" + state.get("draft", "") + "\n```",
-            "AI_TELLS_REVIEW": "```markdown\n" + state.get("reviews", {}).get("ai_tells.md", "") + "\n```",
+            "AI_TELLS_REVIEW": "```markdown\n"
+            + state.get("reviews", {}).get("ai_tells.md", "")
+            + "\n```",
             "LINT": "```markdown\n" + state.get("lint_md", "") + "\n```",
         }
     elif agent_name == "flow_fixer":
@@ -1304,14 +1372,22 @@ def _build_agent_prompt(
     elif agent_name == "value_fixer":
         sections = {
             "DRAFT": "```markdown\n" + state.get("draft", "") + "\n```",
-            "VALUE_REVIEW": "```markdown\n" + state.get("reviews", {}).get("value.md", "") + "\n```",
-            "BRIEF": "```json\n" + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False) + "\n```",
+            "VALUE_REVIEW": "```markdown\n"
+            + state.get("reviews", {}).get("value.md", "")
+            + "\n```",
+            "BRIEF": "```json\n"
+            + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False)
+            + "\n```",
         }
     elif agent_name == "robustness_fixer":
         sections = {
             "DRAFT": "```markdown\n" + state.get("draft", "") + "\n```",
-            "ROBUSTNESS_REVIEW": "```markdown\n" + state.get("reviews", {}).get("robustness.md", "") + "\n```",
-            "BRIEF": "```json\n" + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False) + "\n```",
+            "ROBUSTNESS_REVIEW": "```markdown\n"
+            + state.get("reviews", {}).get("robustness.md", "")
+            + "\n```",
+            "BRIEF": "```json\n"
+            + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False)
+            + "\n```",
         }
     elif agent_name == "finalizer":
         sections = {
@@ -1321,15 +1397,21 @@ def _build_agent_prompt(
         }
     elif agent_name == "invariant_extractor":
         sections = {
-            "BRIEF": "```json\n" + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False) + "\n```",
+            "BRIEF": "```json\n"
+            + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False)
+            + "\n```",
             "PLATFORM": state.get("brief", {}).get("venue", "unknown"),
             "DISCOVERED_REQUIREMENTS": "(none)",  # Could be populated from workflow
         }
     elif agent_name == "invariant_reviewer":
         sections = {
             "DRAFT": state.get("draft", ""),
-            "INVARIANTS": "```json\n" + json.dumps(state.get("extracted_invariants", []), indent=2) + "\n```",
-            "BRIEF": "```json\n" + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False) + "\n```",
+            "INVARIANTS": "```json\n"
+            + json.dumps(state.get("extracted_invariants", []), indent=2)
+            + "\n```",
+            "BRIEF": "```json\n"
+            + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False)
+            + "\n```",
         }
     elif agent_name == "condenser":
         # Compute counts using CODE (LLMs cannot count accurately)
@@ -1349,7 +1431,8 @@ def _build_agent_prompt(
             reason = first_violation.get("reason", "")
             # Parse numbers from reason like "3320 characters exceeds 3000 limit"
             import re
-            numbers = re.findall(r'\d+', reason)
+
+            numbers = re.findall(r"\d+", reason)
             if len(numbers) >= 2:
                 limit = int(numbers[1])  # Second number is usually the limit
             elif "max_characters" in constraint.lower():
@@ -1365,18 +1448,28 @@ def _build_agent_prompt(
             "COUNTS": f"```json\n{json.dumps(counts, indent=2)}\n```",
             "CONSTRAINT": f"{constraint} (limit: {limit} {unit})",
             "EXCESS": f"{excess} {unit} over the limit (current: {current}, limit: {limit})",
-            "BRIEF": "```json\n" + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False) + "\n```",
+            "BRIEF": "```json\n"
+            + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False)
+            + "\n```",
         }
     elif agent_name == "cutter":
         sections = {
             "DRAFT": state.get("draft", ""),
-            "SELECTED_CUTS": "```json\n" + json.dumps(state.get("selected_cuts", []), indent=2) + "\n```",
-            "CONDENSER_ANALYSIS": "```json\n" + json.dumps(state.get("condenser_analysis", {}), indent=2) + "\n```",
-            "BRIEF": "```json\n" + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False) + "\n```",
+            "SELECTED_CUTS": "```json\n"
+            + json.dumps(state.get("selected_cuts", []), indent=2)
+            + "\n```",
+            "CONDENSER_ANALYSIS": "```json\n"
+            + json.dumps(state.get("condenser_analysis", {}), indent=2)
+            + "\n```",
+            "BRIEF": "```json\n"
+            + json.dumps(state.get("brief", {}), indent=2, ensure_ascii=False)
+            + "\n```",
         }
     elif agent_name == "drift_detector":
         sections = {
-            "PLAN": "```json\n" + json.dumps(state.get("plan", {}), indent=2, ensure_ascii=False) + "\n```",
+            "PLAN": "```json\n"
+            + json.dumps(state.get("plan", {}), indent=2, ensure_ascii=False)
+            + "\n```",
             "OUTLINE": "```markdown\n" + state.get("outline", "") + "\n```",
             "DRAFT": "```markdown\n" + state.get("draft", "") + "\n```",
         }
@@ -1387,11 +1480,11 @@ def _build_agent_prompt(
 def _parse_agent_output(
     agent_name: str,
     output: str,
-    state: Dict[str, Any],
+    state: dict[str, Any],
     workspace: Path,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Parse agent output and update state."""
-    result: Dict[str, Any] = {"type": agent_name}
+    result: dict[str, Any] = {"type": agent_name}
 
     if agent_name == "planner":
         plan_json_str = _extract_first_codeblock(output, "json")
@@ -1498,8 +1591,14 @@ def _parse_agent_output(
                 # Format options for user
                 options = []
                 for c in candidates:
-                    rec_marker = " [RECOMMENDED]" if c["id"] in recommendation.get("suggested_cuts", []) else ""
-                    options.append(f"{c['id']}: {c['description']} (saves ~{c.get('savings', '?')} chars){rec_marker}")
+                    rec_marker = (
+                        " [RECOMMENDED]"
+                        if c["id"] in recommendation.get("suggested_cuts", [])
+                        else ""
+                    )
+                    options.append(
+                        f"{c['id']}: {c['description']} (saves ~{c.get('savings', '?')} chars){rec_marker}"
+                    )
 
                 result["content"] = cond_json_str
                 result["user_input_required"] = True
@@ -1532,7 +1631,9 @@ def _parse_agent_output(
                 drift_level = drift_result.get("drift_level", "none")
                 recommendation = drift_result.get("recommendation", "continue")
                 if drift_level in ("minor", "significant"):
-                    print(f"[Drift Detection] Level: {drift_level}, Recommendation: {recommendation}")
+                    print(
+                        f"[Drift Detection] Level: {drift_level}, Recommendation: {recommendation}"
+                    )
             except json.JSONDecodeError:
                 result["content"] = output
                 result["drift_result"] = {"drift_level": "none", "recommendation": "continue"}
@@ -1550,16 +1651,32 @@ def main() -> int:
     ap.add_argument("--input", help="Path to raw notes or a rough draft (markdown).")
     ap.add_argument("--output", help="Path to write the final markdown.")
     ap.add_argument("--brief", default="", help="Optional JSON brief file.")
-    ap.add_argument("--style", default="", help="Optional style JSON file (overrides planner style).")
-    ap.add_argument("--llm-cmd", help="Optional external LLM command (overrides agent system when provided).")
+    ap.add_argument(
+        "--style", default="", help="Optional style JSON file (overrides planner style)."
+    )
+    ap.add_argument(
+        "--llm-cmd", help="Optional external LLM command (overrides agent system when provided)."
+    )
     ap.add_argument("--no-research", action="store_true", help="Skip the research phase.")
     ap.add_argument("--workspace", default="", help="Workspace directory (for reuse/resume).")
-    ap.add_argument("--max-loops", type=int, default=2, help="Max finalizer loops to clear lint failures.")
+    ap.add_argument(
+        "--max-loops", type=int, default=2, help="Max finalizer loops to clear lint failures."
+    )
     ap.add_argument("--resume", metavar="WORKFLOW_ID", help="Resume a paused workflow by ID.")
     ap.add_argument("--db", default="workflow.db", help="SQLite database path.")
-    ap.add_argument("--pause-after", metavar="PHASE", help="Pause after specified phase (for testing).")
-    ap.add_argument("--response", metavar="TEXT", help="Provide response to pending input request (e.g., 'A,B' for cut selection).")
-    ap.add_argument("--enable-drift-detection", action="store_true", help="Enable drift detection after REVISE phase (optional, lightweight check).")
+    ap.add_argument(
+        "--pause-after", metavar="PHASE", help="Pause after specified phase (for testing)."
+    )
+    ap.add_argument(
+        "--response",
+        metavar="TEXT",
+        help="Provide response to pending input request (e.g., 'A,B' for cut selection).",
+    )
+    ap.add_argument(
+        "--enable-drift-detection",
+        action="store_true",
+        help="Enable drift detection after REVISE phase (optional, lightweight check).",
+    )
     args = ap.parse_args()
 
     # Check state machine availability

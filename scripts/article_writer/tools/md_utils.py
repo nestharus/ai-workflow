@@ -12,9 +12,8 @@ They are not a replacement for a full syntactic parser.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator, List, Tuple
-
 
 # Fenced code blocks: ```...``` or ~~~...~~~
 _CODE_FENCE_BLOCK_RE = re.compile(r"(^```[\s\S]*?^```\s*$)|(^~~~[\s\S]*?^~~~\s*$)", re.MULTILINE)
@@ -108,7 +107,7 @@ def _is_probable_abbreviation(token: str) -> bool:
     }
 
 
-def split_sentences(paragraph_text: str, base_offset: int, paragraph_index: int) -> List[Sentence]:
+def split_sentences(paragraph_text: str, base_offset: int, paragraph_index: int) -> list[Sentence]:
     """Naively split a paragraph into sentences.
 
     Heuristics:
@@ -117,9 +116,8 @@ def split_sentences(paragraph_text: str, base_offset: int, paragraph_index: int)
 
     Returns Sentence objects with spans relative to the full document.
     """
-
     # Work with normalized whitespace but keep offsets by operating on original.
-    sentences: List[Sentence] = []
+    sentences: list[Sentence] = []
 
     # Candidate boundaries are punctuation followed by whitespace.
     boundary_re = re.compile(r"([.!?])\s+")
@@ -149,21 +147,25 @@ def split_sentences(paragraph_text: str, base_offset: int, paragraph_index: int)
     remainder = paragraph_text[start:].strip()
     if remainder:
         span = Span(start=base_offset + start, end=base_offset + len(paragraph_text))
-        sentences.append(Sentence(text=remainder, span=span, paragraph_index=paragraph_index, sentence_index=idx))
+        sentences.append(
+            Sentence(text=remainder, span=span, paragraph_index=paragraph_index, sentence_index=idx)
+        )
 
     return sentences
 
 
-def extract_sentences(text: str) -> List[Sentence]:
+def extract_sentences(text: str) -> list[Sentence]:
     """Extract sentences from text by splitting each paragraph."""
-    sentences: List[Sentence] = []
+    sentences: list[Sentence] = []
     for p_idx, p_span in enumerate(iter_paragraph_spans(text)):
         paragraph = text[p_span.start : p_span.end]
-        sentences.extend(split_sentences(paragraph, base_offset=p_span.start, paragraph_index=p_idx))
+        sentences.extend(
+            split_sentences(paragraph, base_offset=p_span.start, paragraph_index=p_idx)
+        )
     return sentences
 
 
-def offset_to_linecol(text: str, offset: int) -> Tuple[int, int]:
+def offset_to_linecol(text: str, offset: int) -> tuple[int, int]:
     """Convert a character offset into 1-based (line, col)."""
     # Normalize.
     text = text.replace("\r\n", "\n")

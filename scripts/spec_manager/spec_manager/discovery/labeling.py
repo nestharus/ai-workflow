@@ -1,5 +1,4 @@
-"""
-Multi-label assignment for library discovery.
+"""Multi-label assignment for library discovery.
 
 This module assigns elements to candidate libraries with confidence
 scores. Elements can have multiple labels - this captures the
@@ -16,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from spec_manager.core.provenance import TrackedUnit
+
 from .candidate import CandidateLibrary
 
 
@@ -38,14 +38,14 @@ class ElementLabels:
         """Get non-primary labels as relations."""
         primary = self.primary
         return [
-            lib for lib, conf in self.labels.items()
+            lib
+            for lib, conf in self.labels.items()
             if lib != primary and conf > 0.2  # Threshold for relation
         ]
 
 
 class MultiLabeler:
-    """
-    Assigns multiple labels to elements with confidence scores.
+    """Assigns multiple labels to elements with confidence scores.
 
     The labeling process:
     1. For each element, check against each candidate library
@@ -80,10 +80,7 @@ class MultiLabeler:
             if score > 0.1:  # Minimum threshold
                 scores[lib_name] = score
 
-        labels = ElementLabels(
-            element_id=unit.id,
-            labels=scores
-        )
+        labels = ElementLabels(element_id=unit.id, labels=scores)
         self.labels[unit.id] = labels
         return labels
 
@@ -93,13 +90,8 @@ class MultiLabeler:
             self.label_element(unit)
         return self.labels
 
-    def _compute_confidence(
-        self,
-        unit: TrackedUnit,
-        candidate: CandidateLibrary
-    ) -> float:
-        """
-        Compute confidence that element belongs to library.
+    def _compute_confidence(self, unit: TrackedUnit, candidate: CandidateLibrary) -> float:
+        """Compute confidence that element belongs to library.
 
         Factors:
         - Keyword matches in content (40% weight)
@@ -112,18 +104,13 @@ class MultiLabeler:
 
         # Keyword matches (40% weight)
         if candidate.keywords:
-            keyword_matches = sum(
-                content_lower.count(kw) for kw in candidate.keywords
-            )
+            keyword_matches = sum(content_lower.count(kw) for kw in candidate.keywords)
             keyword_score = min(keyword_matches / 10, 1.0)  # Normalize
             score += keyword_score * 0.4
 
         # Reference to exemplars (30% weight)
         if candidate.exemplar_elements:
-            ref_matches = sum(
-                1 for ref in unit.references
-                if ref in candidate.exemplar_elements
-            )
+            ref_matches = sum(1 for ref in unit.references if ref in candidate.exemplar_elements)
             ref_score = min(ref_matches / 3, 1.0)
             score += ref_score * 0.3
 
@@ -142,10 +129,7 @@ class MultiLabeler:
 
     def get_unlabeled(self) -> list[str]:
         """Get elements with no labels above threshold."""
-        return [
-            eid for eid, labels in self.labels.items()
-            if not labels.labels
-        ]
+        return [eid for eid, labels in self.labels.items() if not labels.labels]
 
     def get_by_library(self, library_name: str) -> list[tuple[str, float]]:
         """Get all elements labeled with a library, sorted by confidence."""
@@ -159,9 +143,7 @@ class MultiLabeler:
     def get_multi_labeled(self) -> list[tuple[str, dict[str, float]]]:
         """Get elements with multiple labels (cross-cutting concerns)."""
         return [
-            (eid, labels.labels)
-            for eid, labels in self.labels.items()
-            if len(labels.labels) > 1
+            (eid, labels.labels) for eid, labels in self.labels.items() if len(labels.labels) > 1
         ]
 
     def summary(self) -> dict[str, int]:
@@ -172,9 +154,9 @@ class MultiLabeler:
         single_labeled = total - unlabeled - multi_labeled
 
         return {
-            'total_elements': total,
-            'unlabeled': unlabeled,
-            'single_labeled': single_labeled,
-            'multi_labeled': multi_labeled,
-            'libraries_used': len(self.candidates)
+            "total_elements": total,
+            "unlabeled": unlabeled,
+            "single_labeled": single_labeled,
+            "multi_labeled": multi_labeled,
+            "libraries_used": len(self.candidates),
         }

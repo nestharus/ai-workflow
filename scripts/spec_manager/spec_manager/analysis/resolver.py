@@ -1,5 +1,4 @@
-"""
-Restructuring resolution operations.
+"""Restructuring resolution operations.
 
 Actually applies restructuring suggestions to make libraries consistent:
 - Merge: Combine two libraries into one
@@ -11,15 +10,14 @@ Updates both library files and libs.md registry.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import re
-
-from spec_manager.core.libs_registry import LibsRegistry
-from spec_manager.core.sections import SectionExtractor, Section
 from spec_manager.analysis.operations import RestructuringSuggestion
+from spec_manager.core.libs_registry import LibsRegistry
+from spec_manager.core.sections import Section, SectionExtractor
 
 
 def _cleanup_stale_references(content: str, deleted_lib: str) -> str:
@@ -41,13 +39,16 @@ def _cleanup_stale_references(content: str, deleted_lib: str) -> str:
                 # Skip lines like "Additional algorithms that heavily reference algorithms.md"
                 # or "Merged from algorithms"
                 lower_line = line.lower()
-                if any(phrase in lower_line for phrase in [
-                    "merged from",
-                    "reference " + deleted_lib.lower(),
-                    "references " + deleted_lib.lower(),
-                    "heavily reference",
-                    "additional " + deleted_lib.lower(),
-                ]):
+                if any(
+                    phrase in lower_line
+                    for phrase in [
+                        "merged from",
+                        "reference " + deleted_lib.lower(),
+                        "references " + deleted_lib.lower(),
+                        "heavily reference",
+                        "additional " + deleted_lib.lower(),
+                    ]
+                ):
                     continue
         cleaned_lines.append(line)
 
@@ -102,8 +103,7 @@ def resolve_merge(
     libraries_dir: Path,
     registry: LibsRegistry,
 ) -> ResolutionAction:
-    """
-    Merge two libraries into one.
+    """Merge two libraries into one.
 
     The smaller library is merged into the larger one.
     All sections from the smaller are appended to the larger.
@@ -210,8 +210,7 @@ def resolve_split(
     libraries_dir: Path,
     registry: LibsRegistry,
 ) -> ResolutionAction:
-    """
-    Split a library by extracting IDs into a new library.
+    """Split a library by extracting IDs into a new library.
 
     Args:
         library: Source library name (without .md)
@@ -326,8 +325,7 @@ def resolve_move_ids(
     libraries_dir: Path,
     registry: LibsRegistry,
 ) -> ResolutionAction:
-    """
-    Move specific IDs from one library to another.
+    """Move specific IDs from one library to another.
 
     Args:
         source_lib: Source library name (without .md)
@@ -431,8 +429,7 @@ def resolve_suggestions(
     min_confidence: float = 0.7,
     dry_run: bool = False,
 ) -> ResolutionResult:
-    """
-    Apply restructuring suggestions to achieve consistent state.
+    """Apply restructuring suggestions to achieve consistent state.
 
     Only applies suggestions above the confidence threshold.
 

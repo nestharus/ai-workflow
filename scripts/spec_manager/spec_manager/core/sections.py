@@ -1,5 +1,4 @@
-"""
-Section extraction utilities for spec management.
+"""Section extraction utilities for spec management.
 
 Sections are delimited by ([=ID]) declarations in markdown headers.
 Each section includes the header line and all content until the next declaration.
@@ -7,7 +6,6 @@ Each section includes the header line and all content until the next declaration
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -58,8 +56,7 @@ class SectionExtractor:
     def extract(
         self, content: str, source_file: Path | None = None, validate_ids: bool = True
     ) -> ExtractionResult:
-        """
-        Extract sections from content based on ([=ID]) declarations.
+        """Extract sections from content based on ([=ID]) declarations.
 
         Args:
             content: The markdown content to extract from
@@ -133,8 +130,7 @@ class SectionExtractor:
         return result
 
     def extract_from_file(self, path: Path, validate_ids: bool = True) -> ExtractionResult:
-        """
-        Extract sections from a file.
+        """Extract sections from a file.
 
         Args:
             path: Path to the markdown file
@@ -149,8 +145,7 @@ class SectionExtractor:
     def extract_from_directory(
         self, directory: Path, pattern: str = "*.md", validate_ids: bool = True
     ) -> dict[str, ExtractionResult]:
-        """
-        Extract sections from all matching files in a directory.
+        """Extract sections from all matching files in a directory.
 
         Args:
             directory: Directory to search
@@ -170,8 +165,7 @@ class SectionExtractor:
     def collect_all_ids(
         self, directory: Path, pattern: str = "*.md"
     ) -> dict[str, list[tuple[str, int]]]:
-        """
-        Collect all declared IDs and their locations from files in a directory.
+        """Collect all declared IDs and their locations from files in a directory.
 
         Args:
             directory: Directory to search
@@ -188,17 +182,12 @@ class SectionExtractor:
                 if self.validator.is_valid(annotation.id_value):
                     if annotation.id_value not in id_locations:
                         id_locations[annotation.id_value] = []
-                    id_locations[annotation.id_value].append(
-                        (path.stem, annotation.line_number)
-                    )
+                    id_locations[annotation.id_value].append((path.stem, annotation.line_number))
 
         return id_locations
 
-    def rebuild_content(
-        self, sections: dict[str, Section], sort_by_id: bool = True
-    ) -> str:
-        """
-        Rebuild markdown content from sections.
+    def rebuild_content(self, sections: dict[str, Section], sort_by_id: bool = True) -> str:
+        """Rebuild markdown content from sections.
 
         Args:
             sections: Dict mapping ID to Section

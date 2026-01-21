@@ -1,5 +1,4 @@
-"""
-Merging phase operations for spec management.
+"""Merging phase operations for spec management.
 
 Goal: Apply prepared batches to library files.
 
@@ -12,16 +11,16 @@ Operations:
 
 from spec_manager.merging.operations import (
     extract_to_libraries,
-    move_to_correct_library,
     fix_duplicates,
-    sort_by_id,
+    move_to_correct_library,
     run_merging,
+    sort_by_id,
 )
 
 __all__ = [
     "extract_to_libraries",
-    "move_to_correct_library",
     "fix_duplicates",
-    "sort_by_id",
+    "move_to_correct_library",
     "run_merging",
+    "sort_by_id",
 ]

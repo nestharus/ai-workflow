@@ -1,5 +1,4 @@
-"""
-Provenance tracking for spec content.
+"""Provenance tracking for spec content.
 
 This module provides data structures and utilities for tracking where
 content comes from and where it goes during spec processing.
@@ -22,46 +21,46 @@ from typing import Any
 class UnitType(Enum):
     """Types of content units in specs - including GAP as first-class."""
 
-    ALGORITHM = "algorithm"           # Algorithm #
-    CLAIM = "claim"                   # C#, P#C#
+    ALGORITHM = "algorithm"  # Algorithm #
+    CLAIM = "claim"  # C#, P#C#
     DATA_STRUCTURE = "data_structure"  # D#
-    INVARIANT = "invariant"           # I#, P#I#
-    GOAL = "goal"                     # G# (legacy, maps to invariant)
-    PROOF = "proof"                   # Proof sketch
-    LEAN = "lean"                     # Lean skeleton
-    PROSE = "prose"                   # Explanatory text
-    MATH = "math"                     # Mathematical content (P#.#)
-    PSEUDOCODE = "pseudocode"         # ```pseudo blocks
-    GAP = "gap"                       # FIRST-CLASS GAP ELEMENT
-    PATCH = "patch"                   # Patch content (P#C# or P#I#)
+    INVARIANT = "invariant"  # I#, P#I#
+    GOAL = "goal"  # G# (legacy, maps to invariant)
+    PROOF = "proof"  # Proof sketch
+    LEAN = "lean"  # Lean skeleton
+    PROSE = "prose"  # Explanatory text
+    MATH = "math"  # Mathematical content (P#.#)
+    PSEUDOCODE = "pseudocode"  # ```pseudo blocks
+    GAP = "gap"  # FIRST-CLASS GAP ELEMENT
+    PATCH = "patch"  # Patch content (P#C# or P#I#)
     UNKNOWN = "unknown"
 
 
 class GranularityLevel(Enum):
-    """
-    Membership granularity levels - finer = more tracking, lower loss risk.
+    """Membership granularity levels - finer = more tracking, lower loss risk.
 
     The cleaning/decomposition phase explicitly chooses granularity
     based on input messiness.
     """
-    LINE = 1        # Dirty prose, maximum tracking
-    SENTENCE = 2    # Semi-structured content
-    CLAUSE = 3      # Complex compound statements
-    SECTION = 4     # Clean, annotated content
-    PARAGRAPH = 5   # Paragraph-level
-    FILE = 6        # Entire file
+
+    LINE = 1  # Dirty prose, maximum tracking
+    SENTENCE = 2  # Semi-structured content
+    CLAUSE = 3  # Complex compound statements
+    SECTION = 4  # Clean, annotated content
+    PARAGRAPH = 5  # Paragraph-level
+    FILE = 6  # Entire file
 
 
 class UnitStatus(Enum):
     """Status of a tracked unit during processing."""
 
-    PENDING = "pending"      # Not yet processed
-    MAPPED = "mapped"        # Successfully mapped to target
-    DROPPED = "dropped"      # Intentionally dropped (explanatory)
-    MERGED = "merged"        # Merged with another unit
-    CONFLICT = "conflict"    # Conflicts with another unit
+    PENDING = "pending"  # Not yet processed
+    MAPPED = "mapped"  # Successfully mapped to target
+    DROPPED = "dropped"  # Intentionally dropped (explanatory)
+    MERGED = "merged"  # Merged with another unit
+    CONFLICT = "conflict"  # Conflicts with another unit
     PROCESSED = "processed"  # Successfully processed
-    REJECTED = "rejected"    # Rejected (conflict, invalid, etc.)
+    REJECTED = "rejected"  # Rejected (conflict, invalid, etc.)
     REMAINDER = "remainder"  # Leftover after extraction
 
 
@@ -96,7 +95,7 @@ class SourceLocation:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SourceLocation":
+    def from_dict(cls, data: dict[str, Any]) -> SourceLocation:
         """Deserialize from dictionary."""
         return cls(
             file=data["file"],
@@ -128,7 +127,7 @@ class TargetLocation:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TargetLocation":
+    def from_dict(cls, data: dict[str, Any]) -> TargetLocation:
         """Deserialize from dictionary."""
         return cls(
             file=data["file"],
@@ -140,9 +139,10 @@ class TargetLocation:
 @dataclass
 class MembershipEvidence:
     """Evidence for a membership mapping (many-to-many)."""
-    rationale: str                   # Why this mapping was made
-    confidence: float                # 0.0-1.0 confidence
-    method: str                      # "exact", "llm_inference", "similarity", etc.
+
+    rationale: str  # Why this mapping was made
+    confidence: float  # 0.0-1.0 confidence
+    method: str  # "exact", "llm_inference", "similarity", etc.
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
@@ -153,7 +153,7 @@ class MembershipEvidence:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MembershipEvidence":
+    def from_dict(cls, data: dict[str, Any]) -> MembershipEvidence:
         """Deserialize from dictionary."""
         return cls(
             rationale=data["rationale"],
@@ -164,8 +164,7 @@ class MembershipEvidence:
 
 @dataclass
 class TrackedUnit:
-    """
-    An atomic unit of content with full provenance.
+    """An atomic unit of content with full provenance.
 
     This is the core data structure for tracking content through
     transformations. Every piece of meaningful content becomes a
@@ -186,24 +185,26 @@ class TrackedUnit:
     """
 
     # Identity
-    id: str                          # Unique identifier (may be annotation ID)
-    content: str                     # The actual text content
-    unit_type: UnitType              # What kind of content this is
+    id: str  # Unique identifier (may be annotation ID)
+    content: str  # The actual text content
+    unit_type: UnitType  # What kind of content this is
 
     # Provenance - where it came from
-    source: SourceLocation           # Original location
-    introduced_by: str               # Patch that introduced this (e.g., "p1")
+    source: SourceLocation  # Original location
+    introduced_by: str  # Patch that introduced this (e.g., "p1")
     modified_by: list[str] = field(default_factory=list)  # Patches that modified
 
     # Annotations found in this unit
     declarations: list[str] = field(default_factory=list)  # ([=ID])
-    references: list[str] = field(default_factory=list)    # (@[+ID]), (@[=ID])
-    annotations: list[str] = field(default_factory=list)   # All annotations as strings
+    references: list[str] = field(default_factory=list)  # (@[+ID]), (@[=ID])
+    annotations: list[str] = field(default_factory=list)  # All annotations as strings
 
     # Many-to-many membership tracking
     source_atom_ids: list[str] = field(default_factory=list)  # Source atoms -> this
     target_element_ids: list[str] = field(default_factory=list)  # This -> target elements
-    membership_evidence: dict[str, MembershipEvidence] = field(default_factory=dict)  # target_id -> evidence
+    membership_evidence: dict[str, MembershipEvidence] = field(
+        default_factory=dict
+    )  # target_id -> evidence
 
     # Adaptive granularity and hierarchical decomposition
     granularity: GranularityLevel = GranularityLevel.SECTION  # Tracking granularity level
@@ -214,13 +215,13 @@ class TrackedUnit:
     # Explicit lineage edges (Gap 12)
     # With heavy rewriting, decomposition, and recomposition, we need explicit lineage
     # edges to reconstruct "what became what" - beyond just a string in drop_reason.
-    parents: list[str] = field(default_factory=list)    # Unit IDs this was created from
-    children: list[str] = field(default_factory=list)   # Unit IDs created from this
+    parents: list[str] = field(default_factory=list)  # Unit IDs this was created from
+    children: list[str] = field(default_factory=list)  # Unit IDs created from this
 
     # Processing state
     status: UnitStatus = UnitStatus.PENDING
     target: TargetLocation | None = None  # Where it ended up (single target, backward compat)
-    drop_reason: str | None = None        # If dropped, why
+    drop_reason: str | None = None  # If dropped, why
 
     # Library discovery (Phase C will populate these)
     candidate_libraries: dict[str, float] = field(default_factory=dict)
@@ -233,10 +234,7 @@ class TrackedUnit:
     updated_at: datetime = field(default_factory=datetime.now)
 
     def derive(
-        self,
-        new_content: str,
-        new_id: str | None = None,
-        modifier: str | None = None
+        self, new_content: str, new_id: str | None = None, modifier: str | None = None
     ) -> TrackedUnit:
         """Create a derived unit preserving provenance."""
         modified_by = self.modified_by.copy()
@@ -261,32 +259,23 @@ class TrackedUnit:
             child_unit_ids=[],
             content_hash=new_content_hash,
             status=self.status,
-            metadata=self.metadata.copy()
+            metadata=self.metadata.copy(),
         )
 
     def add_membership(
-        self,
-        target_id: str,
-        rationale: str,
-        confidence: float = 1.0,
-        method: str = "exact"
+        self, target_id: str, rationale: str, confidence: float = 1.0, method: str = "exact"
     ) -> None:
         """Add a membership mapping with evidence."""
         if target_id not in self.target_element_ids:
             self.target_element_ids.append(target_id)
         self.membership_evidence[target_id] = MembershipEvidence(
-            rationale=rationale,
-            confidence=confidence,
-            method=method
+            rationale=rationale, confidence=confidence, method=method
         )
         self.updated_at = datetime.now()
 
     def get_handled_by(self) -> list[tuple[str, MembershipEvidence | None]]:
         """Get all targets this unit contributed to, with evidence."""
-        return [
-            (tid, self.membership_evidence.get(tid))
-            for tid in self.target_element_ids
-        ]
+        return [(tid, self.membership_evidence.get(tid)) for tid in self.target_element_ids]
 
     def mark_mapped(self, target: TargetLocation) -> None:
         """Mark this unit as successfully mapped to a target."""
@@ -345,12 +334,9 @@ class TrackedUnit:
         return chain
 
     def set_lineage_from(
-        self,
-        parent_units: list["TrackedUnit"],
-        transformation: str = "transform"
+        self, parent_units: list[TrackedUnit], transformation: str = "transform"
     ) -> None:
-        """
-        Set lineage from multiple parent units (e.g., after LLM inference).
+        """Set lineage from multiple parent units (e.g., after LLM inference).
 
         Args:
             parent_units: Units this was created from
@@ -379,9 +365,7 @@ class TrackedUnit:
             "annotations": self.annotations,
             "source_atom_ids": self.source_atom_ids,
             "target_element_ids": self.target_element_ids,
-            "membership_evidence": {
-                k: v.to_dict() for k, v in self.membership_evidence.items()
-            },
+            "membership_evidence": {k: v.to_dict() for k, v in self.membership_evidence.items()},
             "granularity": self.granularity.value,
             "parent_unit_id": self.parent_unit_id,
             "child_unit_ids": self.child_unit_ids,
@@ -400,7 +384,7 @@ class TrackedUnit:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TrackedUnit":
+    def from_dict(cls, data: dict[str, Any]) -> TrackedUnit:
         """Deserialize from dictionary."""
         return cls(
             id=data["id"],
@@ -431,17 +415,22 @@ class TrackedUnit:
             primary_library=data.get("primary_library"),
             relation_libraries=data.get("relation_libraries", []),
             metadata=data.get("metadata", {}),
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else datetime.now(),
+            created_at=datetime.fromisoformat(data["created_at"])
+            if data.get("created_at")
+            else datetime.now(),
+            updated_at=datetime.fromisoformat(data["updated_at"])
+            if data.get("updated_at")
+            else datetime.now(),
         )
 
 
 @dataclass
 class LineageEdge:
     """An edge in the lineage graph."""
+
     from_unit: str
     to_unit: str
-    transformation: str        # "split", "merge", "infer", "transform"
+    transformation: str  # "split", "merge", "infer", "transform"
     timestamp: datetime
     details: dict[str, Any] = field(default_factory=dict)
 
@@ -456,7 +445,7 @@ class LineageEdge:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "LineageEdge":
+    def from_dict(cls, data: dict[str, Any]) -> LineageEdge:
         """Deserialize from dictionary."""
         return cls(
             from_unit=data["from_unit"],
@@ -468,8 +457,7 @@ class LineageEdge:
 
 
 class LineageTable:
-    """
-    Separate lineage table for workspace state (Gap 12).
+    """Separate lineage table for workspace state (Gap 12).
 
     This provides a global view of all lineage edges, making it easy to:
     - Trace what became what
@@ -487,7 +475,7 @@ class LineageTable:
         from_unit: str,
         to_unit: str,
         transformation: str,
-        details: dict[str, Any] | None = None
+        details: dict[str, Any] | None = None,
     ) -> None:
         """Record a lineage edge."""
         edge = LineageEdge(
@@ -495,7 +483,7 @@ class LineageTable:
             to_unit=to_unit,
             transformation=transformation,
             timestamp=datetime.now(),
-            details=details or {}
+            details=details or {},
         )
         self.edges.append(edge)
         self._by_from[from_unit].append(edge)
@@ -533,11 +521,7 @@ class LineageTable:
 
         return descendants
 
-    def trace_transformation(
-        self,
-        from_unit: str,
-        to_unit: str
-    ) -> list[LineageEdge] | None:
+    def trace_transformation(self, from_unit: str, to_unit: str) -> list[LineageEdge] | None:
         """Find the path of transformations from one unit to another."""
         # BFS to find path
         visited: set[str] = set()
@@ -560,32 +544,31 @@ class LineageTable:
         """Serialize for storage."""
         return [
             {
-                'from': e.from_unit,
-                'to': e.to_unit,
-                'transformation': e.transformation,
-                'timestamp': e.timestamp.isoformat(),
-                'details': e.details
+                "from": e.from_unit,
+                "to": e.to_unit,
+                "transformation": e.transformation,
+                "timestamp": e.timestamp.isoformat(),
+                "details": e.details,
             }
             for e in self.edges
         ]
 
     @classmethod
-    def from_dict(cls, data: list[dict[str, Any]]) -> "LineageTable":
+    def from_dict(cls, data: list[dict[str, Any]]) -> LineageTable:
         """Deserialize from storage."""
         table = cls()
         for item in data:
             table.add_edge(
-                from_unit=item['from'],
-                to_unit=item['to'],
-                transformation=item['transformation'],
-                details=item.get('details', {})
+                from_unit=item["from"],
+                to_unit=item["to"],
+                transformation=item["transformation"],
+                details=item.get("details", {}),
             )
         return table
 
 
 class ProvenanceTracker:
-    """
-    Tracks provenance of all content units during processing.
+    """Tracks provenance of all content units during processing.
 
     This class is the main interface for provenance tracking. It:
     - Extracts units from source files
@@ -600,13 +583,9 @@ class ProvenanceTracker:
         self._next_id = 1
 
     def extract_units_from_file(
-        self,
-        content: str,
-        file_path: str,
-        patch_id: str | None = None
+        self, content: str, file_path: str, patch_id: str | None = None
     ) -> list[TrackedUnit]:
-        """
-        Extract trackable units from a file.
+        """Extract trackable units from a file.
 
         This identifies:
         - Sections with ([=ID]) declarations (annotated format)
@@ -620,18 +599,18 @@ class ProvenanceTracker:
         lines = content.splitlines()
 
         # Pattern for explicit annotation declarations
-        declaration_pattern = re.compile(r'\(\[=([^\]]+)\]\)')
+        declaration_pattern = re.compile(r"\(\[=([^\]]+)\]\)")
 
         # Patterns for markdown headers that indicate new units
         # Matches: ## Algorithm 1, ### Algorithm 10: Title, ## Data Structure D1, etc.
         header_patterns = [
-            re.compile(r'^#{1,4}\s*Algorithm\s+(\d+)(?:\s*[:\-—]\s*.*)?$', re.IGNORECASE),
-            re.compile(r'^#{1,4}\s*Data\s+Structure\s+(D?\d+)(?:\s*[:\-—]\s*.*)?$', re.IGNORECASE),
-            re.compile(r'^#{1,4}\s*Claim\s+(C?\d+)(?:\s*[:\-—]\s*.*)?$', re.IGNORECASE),
-            re.compile(r'^#{1,4}\s*Invariant\s+(I?\d+)(?:\s*[:\-—]\s*.*)?$', re.IGNORECASE),
-            re.compile(r'^#{1,4}\s*Goal\s+(G?\d+)(?:\s*[:\-—]\s*.*)?$', re.IGNORECASE),
-            re.compile(r'^#{1,4}\s*Proof\s+(P?\d+)?(?:\s*[:\-—]\s*.*)?$', re.IGNORECASE),
-            re.compile(r'^#{1,4}\s*Lean\s+(L?\d+)?(?:\s*[:\-—]\s*.*)?$', re.IGNORECASE),
+            re.compile(r"^#{1,4}\s*Algorithm\s+(\d+)(?:\s*[:\-—]\s*.*)?$", re.IGNORECASE),
+            re.compile(r"^#{1,4}\s*Data\s+Structure\s+(D?\d+)(?:\s*[:\-—]\s*.*)?$", re.IGNORECASE),
+            re.compile(r"^#{1,4}\s*Claim\s+(C?\d+)(?:\s*[:\-—]\s*.*)?$", re.IGNORECASE),
+            re.compile(r"^#{1,4}\s*Invariant\s+(I?\d+)(?:\s*[:\-—]\s*.*)?$", re.IGNORECASE),
+            re.compile(r"^#{1,4}\s*Goal\s+(G?\d+)(?:\s*[:\-—]\s*.*)?$", re.IGNORECASE),
+            re.compile(r"^#{1,4}\s*Proof\s+(P?\d+)?(?:\s*[:\-—]\s*.*)?$", re.IGNORECASE),
+            re.compile(r"^#{1,4}\s*Lean\s+(L?\d+)?(?:\s*[:\-—]\s*.*)?$", re.IGNORECASE),
         ]
 
         current_unit_lines: list[str] = []
@@ -644,24 +623,24 @@ class ProvenanceTracker:
                 match = pattern.match(line.strip())
                 if match:
                     # Extract the ID type from the pattern
-                    if 'Algorithm' in pattern.pattern:
+                    if "Algorithm" in pattern.pattern:
                         return f"Algorithm {match.group(1)}"
-                    elif 'Data' in pattern.pattern:
+                    elif "Data" in pattern.pattern:
                         num = match.group(1)
-                        return f"D{num}" if not num.startswith('D') else num
-                    elif 'Claim' in pattern.pattern:
+                        return f"D{num}" if not num.startswith("D") else num
+                    elif "Claim" in pattern.pattern:
                         num = match.group(1)
-                        return f"C{num}" if not num.startswith('C') else num
-                    elif 'Invariant' in pattern.pattern:
+                        return f"C{num}" if not num.startswith("C") else num
+                    elif "Invariant" in pattern.pattern:
                         num = match.group(1)
-                        return f"I{num}" if not num.startswith('I') else num
-                    elif 'Goal' in pattern.pattern:
+                        return f"I{num}" if not num.startswith("I") else num
+                    elif "Goal" in pattern.pattern:
                         num = match.group(1)
-                        return f"G{num}" if not num.startswith('G') else num
-                    elif 'Proof' in pattern.pattern:
+                        return f"G{num}" if not num.startswith("G") else num
+                    elif "Proof" in pattern.pattern:
                         num = match.group(1) or ""
                         return f"Proof {num}".strip()
-                    elif 'Lean' in pattern.pattern:
+                    elif "Lean" in pattern.pattern:
                         num = match.group(1) or ""
                         return f"Lean {num}".strip()
             return None
@@ -688,7 +667,7 @@ class ProvenanceTracker:
                     line_start=current_unit_start,
                     line_end=line_num - 1,
                     patch_id=patch_id,
-                    declarations=current_declarations
+                    declarations=current_declarations,
                 )
                 units.append(unit)
                 self.units[unit.id] = unit
@@ -713,7 +692,7 @@ class ProvenanceTracker:
                 line_start=current_unit_start,
                 line_end=len(lines),
                 patch_id=patch_id,
-                declarations=current_declarations
+                declarations=current_declarations,
             )
             units.append(unit)
             self.units[unit.id] = unit
@@ -727,10 +706,10 @@ class ProvenanceTracker:
         line_start: int,
         line_end: int,
         patch_id: str | None,
-        declarations: list[str]
+        declarations: list[str],
     ) -> TrackedUnit:
         """Create a TrackedUnit from extracted lines."""
-        content = '\n'.join(lines)
+        content = "\n".join(lines)
 
         # Determine unit type from content
         unit_type = self._infer_unit_type(content, declarations)
@@ -743,7 +722,7 @@ class ProvenanceTracker:
             self._next_id += 1
 
         # Extract references
-        ref_pattern = re.compile(r'\(@\[([+=])([^\]]+)\]\)')
+        ref_pattern = re.compile(r"\(@\[([+=])([^\]]+)\]\)")
         references = [m.group(2) for m in ref_pattern.finditer(content)]
 
         # Compute content hash for content-addressed storage
@@ -754,10 +733,7 @@ class ProvenanceTracker:
             content=content,
             unit_type=unit_type,
             source=SourceLocation(
-                file=file_path,
-                line_start=line_start,
-                line_end=line_end,
-                patch_id=patch_id
+                file=file_path, line_start=line_start, line_end=line_end, patch_id=patch_id
             ),
             introduced_by=patch_id or "unknown",
             declarations=declarations,
@@ -774,13 +750,13 @@ class ProvenanceTracker:
         for decl in declarations:
             if decl.startswith("Algorithm "):
                 return UnitType.ALGORITHM
-            if re.match(r'^P?\d*C\d+$', decl):
+            if re.match(r"^P?\d*C\d+$", decl):
                 return UnitType.CLAIM
-            if re.match(r'^D\d+$', decl):
+            if re.match(r"^D\d+$", decl):
                 return UnitType.DATA_STRUCTURE
-            if re.match(r'^P?\d*I\d+$', decl) or re.match(r'^I\d+$', decl):
+            if re.match(r"^P?\d*I\d+$", decl) or re.match(r"^I\d+$", decl):
                 return UnitType.INVARIANT
-            if re.match(r'^G\d+$', decl):
+            if re.match(r"^G\d+$", decl):
                 return UnitType.GOAL
             if decl.startswith("Lean"):
                 return UnitType.LEAN
@@ -788,11 +764,11 @@ class ProvenanceTracker:
                 return UnitType.PROOF
 
         # Check content patterns
-        if '```pseudo' in content:
+        if "```pseudo" in content:
             return UnitType.PSEUDOCODE
-        if '```lean' in content:
+        if "```lean" in content:
             return UnitType.LEAN
-        if re.search(r'\\[.*?\\]', content) or '$$' in content:
+        if re.search(r"\\[.*?\\]", content) or "$$" in content:
             return UnitType.MATH
 
         return UnitType.PROSE
@@ -808,26 +784,21 @@ class ProvenanceTracker:
             self.units[unit_id].mark_dropped(reason)
 
     def record_transformation(
-        self,
-        source_ids: list[str],
-        target_ids: list[str],
-        strategy: str,
-        description: str
+        self, source_ids: list[str], target_ids: list[str], strategy: str, description: str
     ) -> None:
         """Record a transformation for audit trail."""
-        self.transformations.append({
-            "source_ids": source_ids,
-            "target_ids": target_ids,
-            "strategy": strategy,
-            "description": description
-        })
+        self.transformations.append(
+            {
+                "source_ids": source_ids,
+                "target_ids": target_ids,
+                "strategy": strategy,
+                "description": description,
+            }
+        )
 
     def get_unaccounted(self) -> list[TrackedUnit]:
         """Get all units that haven't been mapped or dropped."""
-        return [
-            u for u in self.units.values()
-            if u.status == UnitStatus.PENDING
-        ]
+        return [u for u in self.units.values() if u.status == UnitStatus.PENDING]
 
     def get_lineage(self, unit_id: str) -> list[str]:
         """Get the modification history for a unit."""
@@ -851,17 +822,12 @@ class ProvenanceTracker:
             "dropped": dropped,
             "merged": merged,
             "unaccounted": pending,
-            "coverage_percent": (mapped + dropped + merged) / total * 100 if total > 0 else 100
+            "coverage_percent": (mapped + dropped + merged) / total * 100 if total > 0 else 100,
         }
 
     def generate_report(self) -> str:
         """Generate a provenance report."""
-        lines = [
-            "# Provenance Report",
-            "",
-            f"## Units Tracked: {len(self.units)}",
-            ""
-        ]
+        lines = ["# Provenance Report", "", f"## Units Tracked: {len(self.units)}", ""]
 
         # Group by type
         by_type: dict[UnitType, list[TrackedUnit]] = {}
@@ -894,7 +860,7 @@ class ProvenanceTracker:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ProvenanceTracker":
+    def from_dict(cls, data: dict[str, Any]) -> ProvenanceTracker:
         """Deserialize tracker state from dictionary."""
         tracker = cls()
         tracker.units = {
@@ -907,19 +873,18 @@ class ProvenanceTracker:
 
 
 def parse_stamp(text: str) -> dict[str, str | list[str]] | None:
-    """
-    Parse a provenance stamp from text.
+    """Parse a provenance stamp from text.
 
     Stamps look like: <!-- @from:p1 @modified:p5,p7 @line:234 -->
 
     Returns dict with parsed values or None if no stamp found.
     """
     stamp_pattern = re.compile(
-        r'<!--\s*'
-        r'(?:@from:(\w+)\s*)?'
-        r'(?:@modified:([\w,]+)\s*)?'
-        r'(?:@line:(\d+)\s*)?'
-        r'-->'
+        r"<!--\s*"
+        r"(?:@from:(\w+)\s*)?"
+        r"(?:@modified:([\w,]+)\s*)?"
+        r"(?:@line:(\d+)\s*)?"
+        r"-->"
     )
 
     match = stamp_pattern.search(text)
@@ -928,22 +893,19 @@ def parse_stamp(text: str) -> dict[str, str | list[str]] | None:
 
     result: dict[str, str | list[str]] = {}
     if match.group(1):
-        result['from'] = match.group(1)
+        result["from"] = match.group(1)
     if match.group(2):
-        result['modified'] = match.group(2).split(',')
+        result["modified"] = match.group(2).split(",")
     if match.group(3):
-        result['line'] = match.group(3)
+        result["line"] = match.group(3)
 
     return result if result else None
 
 
 def generate_stamp(
-    introduced_by: str,
-    modified_by: list[str] | None = None,
-    source_line: int | None = None
+    introduced_by: str, modified_by: list[str] | None = None, source_line: int | None = None
 ) -> str:
-    """
-    Generate a provenance stamp.
+    """Generate a provenance stamp.
 
     Returns: <!-- @from:p1 @modified:p5,p7 @line:234 -->
     """

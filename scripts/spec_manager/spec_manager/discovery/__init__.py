@@ -1,5 +1,4 @@
-"""
-Multi-label library discovery module.
+"""Multi-label library discovery module.
 
 This module implements the library discovery workflow where libraries
 EMERGE from the data rather than being predefined.
@@ -40,25 +39,25 @@ Usage:
     final_labels = refiner.finalize()
 """
 
+from spec_manager.discovery.aggregation import (
+    LibraryShape,
+    ShapeAggregator,
+)
 from spec_manager.discovery.candidate import (
-    CandidateLibrary,
     CandidateIdentifier,
+    CandidateLibrary,
     LibraryEvent,
 )
 from spec_manager.discovery.labeling import (
     ElementLabels,
     MultiLabeler,
 )
-from spec_manager.discovery.aggregation import (
-    LibraryShape,
-    ShapeAggregator,
-)
 from spec_manager.discovery.refinement import (
-    RefinementResult,
     LibraryRefiner,
+    RefinementResult,
     discover_libraries,
-    discover_libraries_sync,
     discover_libraries_keyword_only,
+    discover_libraries_sync,
 )
 
 __all__ = [

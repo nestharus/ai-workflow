@@ -1,5 +1,4 @@
-"""
-Segment coverage tracking.
+"""Segment coverage tracking.
 
 Ensures every byte of the original content is accounted for during
 surgical decomposition. Fragments can be moved, split, duplicated,
@@ -19,43 +18,43 @@ from typing import Any
 class FragmentStatus(Enum):
     """Status of a fragment in the coverage map."""
 
-    PROSE = "prose"                    # Still prose, not yet projected
-    STUCK = "stuck"                    # Depends on context, cannot move yet
-    MOBILE = "mobile"                  # Self-contained, ready to project
-    PROJECTED = "projected"            # Successfully projected to structured form
+    PROSE = "prose"  # Still prose, not yet projected
+    STUCK = "stuck"  # Depends on context, cannot move yet
+    MOBILE = "mobile"  # Self-contained, ready to project
+    PROJECTED = "projected"  # Successfully projected to structured form
     UNDERSPECIFIED = "underspecified"  # Contains ambiguity, cannot project
-    SPLIT = "split"                    # Split into children (this fragment is parent)
-    MERGED = "merged"                  # Merged into another fragment
-    COMPOSED = "composed"              # Composed into a multi-fragment projection
-    DECISION = "decision"              # Rationale/tradeoff - moves to decision doc
-    NOISE = "noise"                    # Self-justifying content, adds nothing
+    SPLIT = "split"  # Split into children (this fragment is parent)
+    MERGED = "merged"  # Merged into another fragment
+    COMPOSED = "composed"  # Composed into a multi-fragment projection
+    DECISION = "decision"  # Rationale/tradeoff - moves to decision doc
+    NOISE = "noise"  # Self-justifying content, adds nothing
 
 
 class FragmentDestination(Enum):
     """Where a fragment should be routed after classification."""
 
     # Libraries folder - concrete specifications
-    LIBRARY = "library"          # Algorithm, UX, data structure, invariant - the actual spec
+    LIBRARY = "library"  # Algorithm, UX, data structure, invariant - the actual spec
 
     # Evidence folder - supports why the spec is correct
-    EVIDENCE = "evidence"        # Math, proofs - evidence that spec is right
+    EVIDENCE = "evidence"  # Math, proofs - evidence that spec is right
 
     # Gaps folder - things that need resolution
-    GAP = "gap"                  # Underspecification, needs resolution
+    GAP = "gap"  # Underspecification, needs resolution
 
     # Decisions folder - rationale for choices
-    DECISION = "decision"        # Tradeoff rationale (why X over Y)
+    DECISION = "decision"  # Tradeoff rationale (why X over Y)
 
     # Discard - adds nothing
-    DISCARD = "discard"          # Noise - circular justification, adds nothing
+    DISCARD = "discard"  # Noise - circular justification, adds nothing
 
 
 class DependencyType(Enum):
     """Types of context dependencies that make fragments stuck."""
 
-    REFERENCE = "reference"      # Pronoun/reference (it, this, that)
-    ORDER = "order"              # Sequence dependency (then, next, after)
-    DEFINITION = "definition"    # Uses undefined term
+    REFERENCE = "reference"  # Pronoun/reference (it, this, that)
+    ORDER = "order"  # Sequence dependency (then, next, after)
+    DEFINITION = "definition"  # Uses undefined term
 
 
 @dataclass
@@ -63,15 +62,15 @@ class Span:
     """A span in the original content."""
 
     start: int  # Inclusive
-    end: int    # Exclusive
+    end: int  # Exclusive
 
     def __len__(self) -> int:
         return self.end - self.start
 
-    def overlaps(self, other: "Span") -> bool:
+    def overlaps(self, other: Span) -> bool:
         return self.start < other.end and other.start < self.end
 
-    def contains(self, other: "Span") -> bool:
+    def contains(self, other: Span) -> bool:
         return self.start <= other.start and other.end <= self.end
 
     def __repr__(self) -> str:
@@ -80,8 +79,7 @@ class Span:
 
 @dataclass
 class Fragment:
-    """
-    A fragment of content with traceability to original.
+    """A fragment of content with traceability to original.
 
     Fragments form a tree: when split, the parent points to children.
     The leaves of the tree cover the original content exactly.
@@ -104,7 +102,7 @@ class Fragment:
 
     # Annotations - enable mobility
     declarations: list[str] = field(default_factory=list)  # ([=ID]) - this fragment defines
-    references: list[str] = field(default_factory=list)    # (@[+ID]) - this fragment references
+    references: list[str] = field(default_factory=list)  # (@[+ID]) - this fragment references
 
     # Mobility tracking
     stuck_on: list[str] = field(default_factory=list)  # What this fragment depends on
@@ -122,9 +120,9 @@ class Fragment:
 
     # Relationships - every spec element is connected
     # Invariant → Spec → Evidence → Decision
-    relates_to_invariant: str | None = None    # ID of invariant this satisfies
-    evidence_for: str | None = None            # ID of spec item this proves
-    decision_for: str | None = None            # ID of spec item this justifies
+    relates_to_invariant: str | None = None  # ID of invariant this satisfies
+    evidence_for: str | None = None  # ID of spec item this proves
+    decision_for: str | None = None  # ID of spec item this justifies
 
     # For projected fragments
     projected_form: str | None = None  # "algorithm", "math", "invariant", etc.
@@ -148,15 +146,16 @@ class Fragment:
 
     def record_edit(self, edit_type: str, details: dict[str, Any]) -> None:
         """Record an edit for traceability."""
-        self.edits.append({
-            "type": edit_type,
-            "details": details,
-        })
+        self.edits.append(
+            {
+                "type": edit_type,
+                "details": details,
+            }
+        )
 
 
 class CoverageTracker:
-    """
-    Tracks coverage of original content through transformations.
+    """Tracks coverage of original content through transformations.
 
     Invariant: The leaf fragments must cover 100% of the original.
 
@@ -180,7 +179,7 @@ class CoverageTracker:
     def __init__(self) -> None:
         self.fragments: dict[str, Fragment] = {}
         self.original_content: dict[str, str] = {}  # file -> content
-        self.original_length: dict[str, int] = {}   # file -> length
+        self.original_length: dict[str, int] = {}  # file -> length
         self._next_id = 1
 
     def _gen_id(self) -> str:
@@ -190,8 +189,7 @@ class CoverageTracker:
         return fid
 
     def initialize(self, file_path: str, content: str) -> Fragment:
-        """
-        Initialize coverage for a file.
+        """Initialize coverage for a file.
 
         Creates a single root fragment covering the entire file.
         """
@@ -214,8 +212,7 @@ class CoverageTracker:
         fragment_id: str,
         split_points: list[int],
     ) -> list[Fragment]:
-        """
-        Split a fragment at the given points.
+        """Split a fragment at the given points.
 
         Args:
             fragment_id: Fragment to split
@@ -254,16 +251,13 @@ class CoverageTracker:
             parent.children_ids.append(child.id)
 
         parent.status = FragmentStatus.SPLIT
-        parent.record_edit("split", {"split_points": split_points, "children": [c.id for c in children]})
+        parent.record_edit(
+            "split", {"split_points": split_points, "children": [c.id for c in children]}
+        )
 
         return children
 
-    def _map_spans(
-        self,
-        parent_spans: list[Span],
-        start: int,
-        end: int
-    ) -> list[Span]:
+    def _map_spans(self, parent_spans: list[Span], start: int, end: int) -> list[Span]:
         """Map a range within fragment content back to original spans."""
         result = []
         offset = 0
@@ -279,10 +273,7 @@ class CoverageTracker:
                 overlap_start = max(start - span_start_in_content, 0)
                 overlap_end = min(end - span_start_in_content, span_len)
 
-                result.append(Span(
-                    span.start + overlap_start,
-                    span.start + overlap_end
-                ))
+                result.append(Span(span.start + overlap_start, span.start + overlap_end))
 
             offset += span_len
 
@@ -295,8 +286,7 @@ class CoverageTracker:
         projected_content: str,
         traces: list[dict[str, Any]] | None = None,
     ) -> None:
-        """
-        Mark a fragment as projected to a structured form.
+        """Mark a fragment as projected to a structured form.
 
         Projection is a TRANSLATION from prose to structured form.
         The traces map each part of the projected content back to
@@ -346,8 +336,7 @@ class CoverageTracker:
         fragment_id: str,
         ambiguities: list[str],
     ) -> None:
-        """
-        Mark a fragment as underspecified (contains unresolvable ambiguity).
+        """Mark a fragment as underspecified (contains unresolvable ambiguity).
 
         Args:
             fragment_id: Fragment to mark
@@ -369,8 +358,7 @@ class CoverageTracker:
         new_text: str,
         reference_target: str,
     ) -> None:
-        """
-        Apply a reference resolution edit (translation).
+        """Apply a reference resolution edit (translation).
 
         This is a TRANSLATION - the meaning is preserved, just made explicit.
         The trace maps the new text back to the original position.
@@ -392,7 +380,7 @@ class CoverageTracker:
             raise ValueError(f"'{old_text}' not found in fragment {fragment_id}")
 
         # Apply the edit
-        new_content = fragment.content[:pos] + new_text + fragment.content[pos + len(old_text):]
+        new_content = fragment.content[:pos] + new_text + fragment.content[pos + len(old_text) :]
 
         # Record the translation trace
         # The new text at position `pos` traces back to old text at same position
@@ -406,16 +394,18 @@ class CoverageTracker:
         }
 
         fragment.content = new_content
-        fragment.record_edit("resolve_reference", {
-            "old": old_text,
-            "new": new_text,
-            "target": reference_target,
-            "trace": translation_trace,
-        })
+        fragment.record_edit(
+            "resolve_reference",
+            {
+                "old": old_text,
+                "new": new_text,
+                "target": reference_target,
+                "trace": translation_trace,
+            },
+        )
 
     def duplicate(self, fragment_id: str) -> Fragment:
-        """
-        Duplicate a fragment (for traceability when content appears in multiple places).
+        """Duplicate a fragment (for traceability when content appears in multiple places).
 
         Returns:
             New fragment with same content and traces
@@ -443,8 +433,7 @@ class CoverageTracker:
         projected_content: str,
         traces: list[dict[str, Any]] | None = None,
     ) -> Fragment:
-        """
-        Compose multiple fragments into a single projection.
+        """Compose multiple fragments into a single projection.
 
         The projection inherits annotations from all source fragments,
         with deduplication of duplicate annotations.
@@ -512,18 +501,24 @@ class CoverageTracker:
         for frag in source_fragments:
             frag.status = FragmentStatus.COMPOSED
             frag.composed_into = composite.id
-            frag.record_edit("composed", {
-                "composite_id": composite.id,
-                "other_sources": [f.id for f in source_fragments if f.id != frag.id],
-            })
+            frag.record_edit(
+                "composed",
+                {
+                    "composite_id": composite.id,
+                    "other_sources": [f.id for f in source_fragments if f.id != frag.id],
+                },
+            )
 
-        composite.record_edit("compose_projection", {
-            "source_ids": fragment_ids,
-            "form": form,
-            "traces": traces or [],
-            "deduplicated_declarations": list(all_declarations),
-            "deduplicated_references": list(all_references),
-        })
+        composite.record_edit(
+            "compose_projection",
+            {
+                "source_ids": fragment_ids,
+                "form": form,
+                "traces": traces or [],
+                "deduplicated_declarations": list(all_declarations),
+                "deduplicated_references": list(all_references),
+            },
+        )
 
         return composite
 
@@ -533,8 +528,7 @@ class CoverageTracker:
         comes_after_id: str | None = None,
         comes_before_id: str | None = None,
     ) -> None:
-        """
-        Add an order dependency to make a fragment mobile.
+        """Add an order dependency to make a fragment mobile.
 
         Order dependencies resolve implicit sequence references like
         "then do X" or "after that, compute Y".
@@ -549,18 +543,24 @@ class CoverageTracker:
         if comes_after_id:
             if comes_after_id not in fragment.comes_after:
                 fragment.comes_after.append(comes_after_id)
-            fragment.record_edit("add_order_dependency", {
-                "type": "comes_after",
-                "target_id": comes_after_id,
-            })
+            fragment.record_edit(
+                "add_order_dependency",
+                {
+                    "type": "comes_after",
+                    "target_id": comes_after_id,
+                },
+            )
 
         if comes_before_id:
             if comes_before_id not in fragment.comes_before:
                 fragment.comes_before.append(comes_before_id)
-            fragment.record_edit("add_order_dependency", {
-                "type": "comes_before",
-                "target_id": comes_before_id,
-            })
+            fragment.record_edit(
+                "add_order_dependency",
+                {
+                    "type": "comes_before",
+                    "target_id": comes_before_id,
+                },
+            )
 
     def mark_mobile(self, fragment_id: str) -> None:
         """Mark a fragment as mobile (all dependencies resolved/annotated)."""
@@ -570,11 +570,14 @@ class CoverageTracker:
             raise ValueError(f"Cannot mark non-leaf fragment {fragment_id} as mobile")
 
         fragment.status = FragmentStatus.MOBILE
-        fragment.record_edit("mark_mobile", {
-            "resolved_dependencies": fragment.dependencies_resolved,
-            "order_after": fragment.comes_after,
-            "order_before": fragment.comes_before,
-        })
+        fragment.record_edit(
+            "mark_mobile",
+            {
+                "resolved_dependencies": fragment.dependencies_resolved,
+                "order_after": fragment.comes_after,
+                "order_before": fragment.comes_before,
+            },
+        )
 
     def mark_stuck(
         self,
@@ -582,8 +585,7 @@ class CoverageTracker:
         stuck_on: list[str],
         dependency_types: list[str] | None = None,
     ) -> None:
-        """
-        Mark a fragment as stuck on specific dependencies.
+        """Mark a fragment as stuck on specific dependencies.
 
         Args:
             fragment_id: Fragment to mark
@@ -597,10 +599,13 @@ class CoverageTracker:
 
         fragment.status = FragmentStatus.STUCK
         fragment.stuck_on = stuck_on
-        fragment.record_edit("mark_stuck", {
-            "stuck_on": stuck_on,
-            "dependency_types": dependency_types or [],
-        })
+        fragment.record_edit(
+            "mark_stuck",
+            {
+                "stuck_on": stuck_on,
+                "dependency_types": dependency_types or [],
+            },
+        )
 
     def classify_fragment(
         self,
@@ -610,8 +615,7 @@ class CoverageTracker:
         is_tradeoff: bool = False,
         alternatives: list[str] | None = None,
     ) -> None:
-        """
-        Classify a fragment for routing to appropriate destination.
+        """Classify a fragment for routing to appropriate destination.
 
         Classification types:
         - SPEC: Projects to invariant, algorithm, data structure, etc.
@@ -644,20 +648,22 @@ class CoverageTracker:
             # These will be projected before routing
             pass  # Status determined by project operation
 
-        fragment.record_edit("classify", {
-            "destination": destination.value,
-            "reason": reason,
-            "is_tradeoff": is_tradeoff,
-            "alternatives": alternatives or [],
-        })
+        fragment.record_edit(
+            "classify",
+            {
+                "destination": destination.value,
+                "reason": reason,
+                "is_tradeoff": is_tradeoff,
+                "alternatives": alternatives or [],
+            },
+        )
 
     def mark_as_noise(
         self,
         fragment_id: str,
         reason: str,
     ) -> None:
-        """
-        Mark a fragment as noise (adds nothing to the spec).
+        """Mark a fragment as noise (adds nothing to the spec).
 
         Noise patterns:
         - "It provides X" without comparing to alternatives
@@ -683,8 +689,7 @@ class CoverageTracker:
         tradeoff: str,
         decision_for: str | None = None,
     ) -> None:
-        """
-        Mark a fragment as decision rationale (moves to decision doc).
+        """Mark a fragment as decision rationale (moves to decision doc).
 
         Decision content:
         - "We chose X over Y because of tradeoff Z"
@@ -700,12 +705,15 @@ class CoverageTracker:
         """
         fragment = self.fragments[fragment_id]
         fragment.decision_for = decision_for
-        fragment.record_edit("decision_details", {
-            "decision": decision,
-            "alternatives": alternatives,
-            "tradeoff": tradeoff,
-            "decision_for": decision_for,
-        })
+        fragment.record_edit(
+            "decision_details",
+            {
+                "decision": decision,
+                "alternatives": alternatives,
+                "tradeoff": tradeoff,
+                "decision_for": decision_for,
+            },
+        )
         self.classify_fragment(
             fragment_id,
             FragmentDestination.DECISION,
@@ -719,8 +727,7 @@ class CoverageTracker:
         evidence_id: str,
         spec_id: str,
     ) -> None:
-        """
-        Link an evidence fragment to the spec item it proves.
+        """Link an evidence fragment to the spec item it proves.
 
         Args:
             evidence_id: Fragment containing evidence (math, proof)
@@ -735,8 +742,7 @@ class CoverageTracker:
         fragment_id: str,
         invariant_id: str,
     ) -> None:
-        """
-        Link a fragment to the invariant it satisfies.
+        """Link a fragment to the invariant it satisfies.
 
         Every spec element should be traceable to an invariant.
 
@@ -756,8 +762,7 @@ class CoverageTracker:
         return leaves
 
     def verify_coverage(self, file_path: str) -> tuple[bool, list[Span]]:
-        """
-        Verify that leaf fragments cover 100% of the original file.
+        """Verify that leaf fragments cover 100% of the original file.
 
         Returns:
             (is_complete, gaps) - True if complete, list of uncovered spans if not
@@ -858,7 +863,7 @@ class CoverageTracker:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "CoverageTracker":
+    def from_dict(cls, data: dict[str, Any]) -> CoverageTracker:
         """Deserialize from storage."""
         tracker = cls()
         tracker.original_length = data["original_length"]
@@ -887,7 +892,9 @@ class CoverageTracker:
                 # Composition tracking
                 composed_into=fdata.get("composed_into"),
                 # Classification
-                destination=FragmentDestination(fdata["destination"]) if fdata.get("destination") else None,
+                destination=FragmentDestination(fdata["destination"])
+                if fdata.get("destination")
+                else None,
                 # Relationships
                 relates_to_invariant=fdata.get("relates_to_invariant"),
                 evidence_for=fdata.get("evidence_for"),

@@ -1,5 +1,4 @@
-"""
-Context management for the workflow.
+"""Context management for the workflow.
 
 PatchDependencyGraph: Tracks patch dependencies (e.g., "p5 patches p3 which patched p1").
 ContextIndex: Index over all context strata for entity resolution.
@@ -17,15 +16,14 @@ from typing import Any
 class PatchDependency:
     """Represents a patch dependency: source_patch patches target_patch."""
 
-    source_patch: str           # e.g., "p5"
-    target_patch: str           # e.g., "p3"
-    dependency_type: str        # "patches", "extends", "replaces"
-    evidence: str               # Where this dependency was detected
+    source_patch: str  # e.g., "p5"
+    target_patch: str  # e.g., "p3"
+    dependency_type: str  # "patches", "extends", "replaces"
+    evidence: str  # Where this dependency was detected
 
 
 class PatchDependencyGraph:
-    """
-    Tracks patch dependencies: "p5 patches p3 which patched p1".
+    """Tracks patch dependencies: "p5 patches p3 which patched p1".
 
     Used for entity resolution when vague references need patch context.
     """
@@ -35,11 +33,7 @@ class PatchDependencyGraph:
         self._graph: dict[str, list[str]] = {}  # patch_id -> [patched_by]
 
     def add_dependency(
-        self,
-        source: str,
-        target: str,
-        dep_type: str = "patches",
-        evidence: str = ""
+        self, source: str, target: str, dep_type: str = "patches", evidence: str = ""
     ) -> None:
         """Add a patch dependency."""
         self.dependencies.append(PatchDependency(source, target, dep_type, evidence))
@@ -72,8 +66,7 @@ class PatchDependencyGraph:
         return list(reversed(chain))  # Oldest first
 
     def infer_from_content(self, patch_content: str, patch_id: str) -> None:
-        """
-        Infer dependencies from patch content.
+        """Infer dependencies from patch content.
 
         PRIMARY inference is from:
         1. Chronological order (p1 < p2 < p3)
@@ -84,7 +77,7 @@ class PatchDependencyGraph:
         Do NOT rely on hardcoded domain phrases like "relaxation algorithm".
         """
         # PRIMARY: Extract numeric patch ID and assume sequential dependency
-        match = re.match(r'p(\d+)', patch_id)
+        match = re.match(r"p(\d+)", patch_id)
         if match:
             patch_num = int(match.group(1))
             # Assume patches p1...p(n-1) as potential dependencies
@@ -96,17 +89,17 @@ class PatchDependencyGraph:
                     self.add_dependency(
                         source=patch_id,
                         target=prev_id,
-                        dep_type='patches',
-                        evidence=f"Shared IDs: {', '.join(shared_ids[:3])}"
+                        dep_type="patches",
+                        evidence=f"Shared IDs: {', '.join(shared_ids[:3])}",
                     )
 
         # SECONDARY (low-confidence hint): explicit patch references
         # These are treated as HINTS, not the backbone of dependency inference
         hint_patterns = [
-            (r'patches?\s+(p\d+)', 'patches', 0.6),
-            (r'from\s+(p\d+)', 'extends', 0.5),
-            (r'(p\d+)\'s', 'extends', 0.4),
-            (r'updates?\s+(p\d+)', 'patches', 0.6),
+            (r"patches?\s+(p\d+)", "patches", 0.6),
+            (r"from\s+(p\d+)", "extends", 0.5),
+            (r"(p\d+)\'s", "extends", 0.4),
+            (r"updates?\s+(p\d+)", "patches", 0.6),
         ]
 
         for pattern, dep_type, confidence in hint_patterns:
@@ -118,17 +111,17 @@ class PatchDependencyGraph:
                         source=patch_id,
                         target=target,
                         dep_type=dep_type,
-                        evidence=f"[hint:{confidence:.1f}] {m.group(0)}"
+                        evidence=f"[hint:{confidence:.1f}] {m.group(0)}",
                     )
 
     def _find_shared_ids(self, content: str, other_patch_id: str) -> list[str]:
         """Find element IDs that appear in both this content and originate from other_patch_id."""
         # Extract all declared/referenced IDs
         id_patterns = [
-            r'\(\[=([^\]]+)\]\)',     # Declarations
-            r'\(@\[\+?([^\]]+)\]\)',  # References
-            r'\bAlgorithm\s+(\d+)\b', # Algorithm references
-            r'\b(P\d+C\d+|P\d+I\d+|D\d+|G\d+)\b',  # Standard IDs
+            r"\(\[=([^\]]+)\]\)",  # Declarations
+            r"\(@\[\+?([^\]]+)\]\)",  # References
+            r"\bAlgorithm\s+(\d+)\b",  # Algorithm references
+            r"\b(P\d+C\d+|P\d+I\d+|D\d+|G\d+)\b",  # Standard IDs
         ]
         found_ids = []
         for pattern in id_patterns:
@@ -140,8 +133,7 @@ class PatchDependencyGraph:
 
 
 class ContextIndex:
-    """
-    Index over all context strata for entity resolution.
+    """Index over all context strata for entity resolution.
 
     Strata (in priority order):
     1. Originals (patches/*.md)
@@ -157,25 +149,15 @@ class ContextIndex:
         self._index: dict[str, list[dict[str, Any]]] = {}  # term -> locations
         self._strata: list[dict[str, Any]] = []  # [{path, content, priority}, ...]
 
-    def add_stratum(
-        self,
-        path: Path,
-        content: str,
-        priority: int,
-        stratum_type: str
-    ) -> None:
+    def add_stratum(self, path: Path, content: str, priority: int, stratum_type: str) -> None:
         """Add a context stratum to the index."""
-        self._strata.append({
-            'path': str(path),
-            'content': content,
-            'priority': priority,
-            'type': stratum_type
-        })
+        self._strata.append(
+            {"path": str(path), "content": content, "priority": priority, "type": stratum_type}
+        )
         self._index_content(content, str(path), priority)
 
     def _index_content(self, content: str, path: str, priority: int) -> None:
-        """
-        Index terms from content.
+        """Index terms from content.
 
         Index primarily from DECLARED IDS + HEADINGS + EXTRACTED KEYPHRASES,
         NOT a fixed phrase list like "relaxation algorithm" or "convergence proof".
@@ -187,28 +169,27 @@ class ContextIndex:
         4. Standard ID patterns: P#C#, P#I#, G#, D#, Lean#
         """
         # PRIMARY: Declared IDs - these are authoritative
-        decl_pattern = re.compile(r'\(\[=([^\]]+)\]\)')
+        decl_pattern = re.compile(r"\(\[=([^\]]+)\]\)")
         for match in decl_pattern.finditer(content):
             term = match.group(1).lower()
-            self._add_to_index(term, path, match.start(), content, priority, 'declared_id')
+            self._add_to_index(term, path, match.start(), content, priority, "declared_id")
 
         # SECONDARY: Headings with element IDs
         heading_pattern = re.compile(
-            r'^(#{1,6})\s+(Algorithm\s+\d+|D\d+|G\d+|P\d+C\d+|P\d+I\d+|Lean\d+)(.*)$',
-            re.MULTILINE
+            r"^(#{1,6})\s+(Algorithm\s+\d+|D\d+|G\d+|P\d+C\d+|P\d+I\d+|Lean\d+)(.*)$", re.MULTILINE
         )
         for match in heading_pattern.finditer(content):
             term = match.group(2).lower()
-            self._add_to_index(term, path, match.start(), content, priority, 'heading')
+            self._add_to_index(term, path, match.start(), content, priority, "heading")
 
         # TERTIARY: Standard ID patterns in body (not declarations/headings)
         standard_patterns = [
-            (r'\bAlgorithm\s+(\d+)\b', 'algorithm'),
-            (r'\b(D\d+)\b', 'data_structure'),
-            (r'\b(G\d+)\b', 'goal'),
-            (r'\b(P\d+C\d+)\b', 'claim'),
-            (r'\b(P\d+I\d+)\b', 'invariant'),
-            (r'\b(Lean\d+)\b', 'lean'),
+            (r"\bAlgorithm\s+(\d+)\b", "algorithm"),
+            (r"\b(D\d+)\b", "data_structure"),
+            (r"\b(G\d+)\b", "goal"),
+            (r"\b(P\d+C\d+)\b", "claim"),
+            (r"\b(P\d+I\d+)\b", "invariant"),
+            (r"\b(Lean\d+)\b", "lean"),
         ]
         for pattern, entity_type in standard_patterns:
             for match in re.finditer(pattern, content, re.IGNORECASE):
@@ -219,33 +200,29 @@ class ContextIndex:
         self._index_keyphrases(content, path, priority)
 
     def _add_to_index(
-        self,
-        term: str,
-        path: str,
-        position: int,
-        content: str,
-        priority: int,
-        entity_type: str
+        self, term: str, path: str, position: int, content: str, priority: int, entity_type: str
     ) -> None:
         """Add a term to the index with context."""
         if term not in self._index:
             self._index[term] = []
-        self._index[term].append({
-            'path': path,
-            'position': position,
-            'context': content[max(0, position-50):position+100],
-            'priority': priority,
-            'type': entity_type
-        })
+        self._index[term].append(
+            {
+                "path": path,
+                "position": position,
+                "context": content[max(0, position - 50) : position + 100],
+                "priority": priority,
+                "type": entity_type,
+            }
+        )
 
     def _index_keyphrases(self, content: str, path: str, priority: int) -> None:
-        """
-        Extract keyphrases using NLP (spaCy noun chunks or fallback).
+        """Extract keyphrases using NLP (spaCy noun chunks or fallback).
 
         This replaces hardcoded domain phrases with data-driven extraction.
         """
         try:
             import spacy
+
             nlp = spacy.load("en_core_web_sm")
             doc = nlp(content[:5000])  # Limit for performance
 
@@ -256,36 +233,37 @@ class ContextIndex:
                     term = chunk.text.lower()
                     if term not in self._index:
                         self._index[term] = []
-                    self._index[term].append({
-                        'path': path,
-                        'position': chunk.start_char,
-                        'context': content[max(0, chunk.start_char-30):chunk.end_char+30],
-                        'priority': priority - 1,  # Lower priority than explicit IDs
-                        'type': 'keyphrase'
-                    })
+                    self._index[term].append(
+                        {
+                            "path": path,
+                            "position": chunk.start_char,
+                            "context": content[max(0, chunk.start_char - 30) : chunk.end_char + 30],
+                            "priority": priority - 1,  # Lower priority than explicit IDs
+                            "type": "keyphrase",
+                        }
+                    )
         except (ImportError, OSError):
             # Fallback: simple bigram extraction
-            words = re.findall(r'\b[A-Za-z][a-z]+\b', content)
+            words = re.findall(r"\b[A-Za-z][a-z]+\b", content)
             for i in range(len(words) - 1):
-                bigram = f"{words[i]} {words[i+1]}".lower()
+                bigram = f"{words[i]} {words[i + 1]}".lower()
                 if bigram not in self._index:
                     self._index[bigram] = []
                 # Very low priority for fallback keyphrases
-                self._index[bigram].append({
-                    'path': path,
-                    'position': 0,
-                    'context': bigram,
-                    'priority': priority - 2,
-                    'type': 'bigram'
-                })
+                self._index[bigram].append(
+                    {
+                        "path": path,
+                        "position": 0,
+                        "context": bigram,
+                        "priority": priority - 2,
+                        "type": "bigram",
+                    }
+                )
 
     def resolve(
-        self,
-        vague_reference: str,
-        patch_context: str | None = None
+        self, vague_reference: str, patch_context: str | None = None
     ) -> list[dict[str, Any]]:
-        """
-        Resolve a vague reference to candidate entities.
+        """Resolve a vague reference to candidate entities.
 
         Returns candidates sorted by priority (higher = more recent/relevant).
         """
@@ -304,11 +282,11 @@ class ContextIndex:
                 candidates.extend(locations)
 
         # Sort by priority (descending) and dedupe
-        candidates.sort(key=lambda x: x['priority'], reverse=True)
+        candidates.sort(key=lambda x: x["priority"], reverse=True)
         seen: set[tuple[str, int]] = set()
         unique = []
         for c in candidates:
-            key = (c['path'], c['position'])
+            key = (c["path"], c["position"])
             if key not in seen:
                 seen.add(key)
                 unique.append(c)
@@ -327,5 +305,5 @@ class ContextIndex:
                 composite_path = pass_dir / "composite.md"
                 if composite_path.exists():
                     content = composite_path.read_text(encoding="utf-8")
-                    self.add_stratum(composite_path, content, priority, 'intermediate')
+                    self.add_stratum(composite_path, content, priority, "intermediate")
                     priority += 1  # Later intermediates have higher priority

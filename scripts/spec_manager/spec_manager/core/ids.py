@@ -1,5 +1,4 @@
-"""
-ID validation utilities for spec management.
+"""ID validation utilities for spec management.
 
 Canonical ID formats:
 - Patch: P# (e.g., P1, P10)
@@ -167,8 +166,7 @@ class IdValidator:
         return None
 
     def extract_numbers(self, id_value: str) -> dict[str, int]:
-        """
-        Extract numeric components from an ID.
+        """Extract numeric components from an ID.
 
         Examples:
             "Algorithm 1" -> {"number": 1}
@@ -211,8 +209,7 @@ class IdValidator:
         return result
 
     def sort_key(self, id_value: str) -> tuple[int, str, int, int]:
-        """
-        Generate a sort key for ordering IDs.
+        """Generate a sort key for ordering IDs.
 
         Returns tuple of (category_order, prefix, primary_num, secondary_num)
         """

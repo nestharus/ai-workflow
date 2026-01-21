@@ -7,7 +7,7 @@ for the article writing workflow.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -117,10 +117,22 @@ PHASE_AGENTS: dict[Phase, str | list[str] | None] = {
     Phase.RESEARCH: "researcher",
     Phase.DRAFT: "writer",
     Phase.ANALYZE: None,  # Local tools only
-    Phase.REVIEW: ["alignment_reviewer", "value_reviewer", "flow_reviewer", "ai_tells_reviewer", "robustness_reviewer"],
+    Phase.REVIEW: [
+        "alignment_reviewer",
+        "value_reviewer",
+        "flow_reviewer",
+        "ai_tells_reviewer",
+        "robustness_reviewer",
+    ],
     # Multi-pass fixers: run serially, each builds on previous output
     # Order: alignment (reputation) -> ai_tells (hard bans) -> flow -> value -> robustness
-    Phase.REVISE: ["alignment_fixer", "ai_tells_fixer", "flow_fixer", "value_fixer", "robustness_fixer"],
+    Phase.REVISE: [
+        "alignment_fixer",
+        "ai_tells_fixer",
+        "flow_fixer",
+        "value_fixer",
+        "robustness_fixer",
+    ],
     Phase.FINALIZE: "finalizer",
     Phase.INVARIANT_EXTRACT: "invariant_extractor",
     Phase.INVARIANT_CHECK: "invariant_reviewer",
@@ -215,7 +227,7 @@ class StateMachine:
             if workflow:
                 for key, value in kwargs.items():
                     setattr(workflow, key, value)
-                workflow.updated_at = datetime.now(timezone.utc)
+                workflow.updated_at = datetime.now(UTC)
         self._reload_workflow()
 
     def get_next_action(self) -> NextAction:
@@ -243,7 +255,9 @@ class StateMachine:
         if self.current_status == Status.ERROR:
             return NextAction(
                 action=ActionType.ERROR,
-                error=self.workflow.config.get("error") if self.workflow.config else "Unknown error",
+                error=self.workflow.config.get("error")
+                if self.workflow.config
+                else "Unknown error",
             )
 
         if self.current_status == Status.PAUSED:
@@ -560,8 +574,10 @@ class StateMachine:
 
             # Check for length-related violations (require user choice to condense)
             length_violations = [
-                v for v in unfixable
-                if v.get("invariant", "").lower() in ("max_characters", "max_words", "target_word_count")
+                v
+                for v in unfixable
+                if v.get("invariant", "").lower()
+                in ("max_characters", "max_words", "target_word_count")
                 or "length" in v.get("reason", "").lower()
                 or "character" in v.get("reason", "").lower()
             ]
@@ -678,6 +694,7 @@ class StateMachine:
                 recommendation = drift_result.get("recommendation", "review")
                 reason = drift_result.get("recommendation_reason", "")
                 import logging
+
                 logging.warning(
                     f"DRIFT DETECTED: Significant drift from original plan. "
                     f"Recommendation: {recommendation}. {reason}"
@@ -810,12 +827,10 @@ class StateMachine:
             response: User's response
         """
         with self.db.session() as session:
-            request = (
-                session.query(InputRequest).filter(InputRequest.id == request_id).first()
-            )
+            request = session.query(InputRequest).filter(InputRequest.id == request_id).first()
             if request:
                 request.response = response
-                request.responded_at = datetime.now(timezone.utc)
+                request.responded_at = datetime.now(UTC)
 
         # Continue workflow
         self._update_workflow(status=Status.RUNNING.value)

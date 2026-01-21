@@ -1,5 +1,4 @@
-"""
-Intermediate state management for spec processing.
+"""Intermediate state management for spec processing.
 
 This module handles saving and loading processing state between passes.
 The key principle is that we keep ALL intermediate states so we can:
@@ -22,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .provenance import ProvenanceTracker
 
-from .provenance import TrackedUnit, UnitStatus, UnitType, SourceLocation
+from .provenance import TrackedUnit
 
 
 @dataclass
@@ -37,8 +36,7 @@ class FileSnapshot:
 
 @dataclass
 class IntermediateState:
-    """
-    Snapshot of processing state at a point in time.
+    """Snapshot of processing state at a point in time.
 
     This captures everything needed to:
     - Understand what processing has been done
@@ -83,8 +81,7 @@ class IntermediateState:
 
 
 class IntermediateManager:
-    """
-    Manages intermediate states during processing.
+    """Manages intermediate states during processing.
 
     Usage:
         manager = IntermediateManager(workspace_path)
@@ -120,8 +117,7 @@ class IntermediateManager:
         intermediate_files: dict[str, str] | None = None,
         atom_mapping: dict[str, str] | None = None,
     ) -> IntermediateState:
-        """
-        Create a snapshot of current processing state.
+        """Create a snapshot of current processing state.
 
         Gap 4 fix: Snapshots now ACTUALLY PERSIST:
         1. file_snapshots - state of processed files
@@ -158,9 +154,7 @@ class IntermediateManager:
                     content_hash=hashlib.md5(unit.content.encode()).hexdigest(),
                     line_count=unit.source.line_end - unit.source.line_start + 1,
                     unit_count=sum(
-                        1
-                        for u in tracker.units.values()
-                        if u.source.file == unit.source.file
+                        1 for u in tracker.units.values() if u.source.file == unit.source.file
                     ),
                 )
 
@@ -172,7 +166,7 @@ class IntermediateManager:
                     # Map source atoms to target locations
                     for i, line in enumerate(unit.content.split("\n")):
                         if line.strip():
-                            atom_id = f"{uid}_L{i+1}_{hash(line) % 10000:04d}"
+                            atom_id = f"{uid}_L{i + 1}_{hash(line) % 10000:04d}"
                             target_loc = f"{unit.target.file}:{unit.target.line_start + i}"
                             computed_atom_mapping[atom_id] = target_loc
 
@@ -212,8 +206,7 @@ class IntermediateManager:
         )
 
     def _serialize_unit(self, unit: TrackedUnit) -> dict[str, Any]:
-        """
-        Serialize a TrackedUnit to dict.
+        """Serialize a TrackedUnit to dict.
 
         CRITICAL: Store FULL content (not just preview/hash) so that
         line-by-line membership checks can be performed between states.
@@ -249,8 +242,7 @@ class IntermediateManager:
         }
 
     def save(self, state: IntermediateState) -> Path:
-        """
-        Save intermediate state to file.
+        """Save intermediate state to file.
 
         Gap 4 fix: Now serializes file_snapshots, intermediate_files, and atom_mapping
         so that the "trace" workflow can replay mapping using stored states.
@@ -297,8 +289,7 @@ class IntermediateManager:
         return filepath
 
     def load(self, version: int) -> IntermediateState | None:
-        """
-        Load intermediate state by version number.
+        """Load intermediate state by version number.
 
         Gap 4 fix: Now deserializes file_snapshots, intermediate_files, and atom_mapping.
         """
@@ -308,7 +299,7 @@ class IntermediateManager:
         if not matches:
             return None
 
-        with open(matches[0], "r", encoding="utf-8") as f:
+        with open(matches[0], encoding="utf-8") as f:
             data = json.load(f)
 
         # Gap 4 fix: Deserialize FileSnapshot objects
@@ -338,8 +329,7 @@ class IntermediateManager:
         )
 
     def load_latest(self) -> IntermediateState | None:
-        """
-        Load the most recent intermediate state.
+        """Load the most recent intermediate state.
 
         Gap 4 fix: Now deserializes file_snapshots, intermediate_files, and atom_mapping.
         """
@@ -347,7 +337,7 @@ class IntermediateManager:
         if not existing:
             return None
 
-        with open(existing[-1], "r", encoding="utf-8") as f:
+        with open(existing[-1], encoding="utf-8") as f:
             data = json.load(f)
 
         # Gap 4 fix: Deserialize FileSnapshot objects
@@ -381,8 +371,7 @@ class IntermediateManager:
         state1: IntermediateState,
         state2: IntermediateState,
     ) -> dict[str, Any]:
-        """
-        Compare two intermediate states.
+        """Compare two intermediate states.
 
         Returns details about what changed between states:
         - Units added
@@ -425,7 +414,7 @@ class IntermediateManager:
         """List all intermediate states with summary info."""
         states = []
         for filepath in sorted(self.intermediates_dir.glob("state_*.json")):
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 data = json.load(f)
             states.append(
                 {
@@ -433,9 +422,7 @@ class IntermediateManager:
                     "phase": data["phase"],
                     "timestamp": data["timestamp"],
                     "description": data["description"],
-                    "coverage_percent": data.get("metrics", {}).get(
-                        "coverage_percent", 0
-                    ),
+                    "coverage_percent": data.get("metrics", {}).get("coverage_percent", 0),
                 }
             )
         return states

@@ -1,5 +1,4 @@
-"""
-Annotation parsing utilities for spec management.
+"""Annotation parsing utilities for spec management.
 
 Canonical annotation syntax:
 - Declaration: ([=ID]) - declares that a section belongs to this ID
@@ -12,9 +11,9 @@ Canonical annotation syntax:
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterator
 
 
 class AnnotationType(Enum):
@@ -118,8 +117,7 @@ class AnnotationParser:
                 )
 
     def parse_pins(self, content: str) -> Iterator[PinAnnotation]:
-        """
-        Extract all pin annotations (@pin path:symbol) from content.
+        """Extract all pin annotations (@pin path:symbol) from content.
 
         Pins link spec elements to artifact locations, enabling drift detection.
         """
@@ -140,8 +138,7 @@ class AnnotationParser:
         yield from self.parse_invariant_refs(content)
 
     def find_legacy_patterns(self, content: str) -> list[tuple[int, str, str]]:
-        """
-        Find legacy annotation patterns that need normalization.
+        """Find legacy annotation patterns that need normalization.
 
         Returns: List of (line_number, matched_text, legacy_format_name)
         """
@@ -153,8 +150,7 @@ class AnnotationParser:
         return findings
 
     def normalize_legacy(self, content: str) -> str:
-        """
-        Normalize legacy annotation patterns to canonical format.
+        """Normalize legacy annotation patterns to canonical format.
 
         Transforms:
         - [(=ID)] -> ([=ID])
@@ -175,8 +171,7 @@ class AnnotationParser:
         return result
 
     def extract_id_from_header(self, header_line: str) -> str | None:
-        """
-        Extract the declared ID from a header line.
+        """Extract the declared ID from a header line.
 
         Args:
             header_line: A markdown header line (e.g., "## Algorithm 1 ([=Algorithm 1])")

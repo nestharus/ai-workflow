@@ -1,5 +1,4 @@
-"""
-Workflow configuration and state classes.
+"""Workflow configuration and state classes.
 
 WorkflowConfig: Configuration for the workflow with compliance gate settings.
 WorkflowState: Current state of the workflow including phase tracking.
@@ -17,12 +16,12 @@ class WorkflowPhase(Enum):
     """Phases in the ingest workflow."""
 
     INIT = "init"
-    CLEANING = "cleaning"       # With compliance gate
-    COMPOSITING = "compositing" # Merge + remainder partition
-    DISCOVERY = "discovery"     # Only after compliance gate passes
-    REVIEW = "review"           # Concrete resolution actions
-    SYNC = "sync"               # plan.md ↔ libraries synchronization
-    FINALIZE = "finalize"       # Stamps removed, relations written
+    CLEANING = "cleaning"  # With compliance gate
+    COMPOSITING = "compositing"  # Merge + remainder partition
+    DISCOVERY = "discovery"  # Only after compliance gate passes
+    REVIEW = "review"  # Concrete resolution actions
+    SYNC = "sync"  # plan.md ↔ libraries synchronization
+    FINALIZE = "finalize"  # Stamps removed, relations written
     COMPLETE = "complete"
 
 
@@ -52,8 +51,7 @@ class UnitStatus(Enum):
 
 @dataclass
 class TrackedUnit:
-    """
-    A unit of content tracked through the workflow.
+    """A unit of content tracked through the workflow.
 
     Units are the atomic elements being processed - algorithms, claims,
     data structures, etc. Each unit has provenance tracking.
@@ -92,7 +90,7 @@ class WorkflowConfig:
     # Compliance gate configuration
     compliance_threshold: float = 0.90  # 90% format compliance required
     compliance_gate_mode: str = "block"  # "block" (default) or "warn"
-    max_remainder_ratio: float = 0.05   # Max 5% atoms in remainder queue
+    max_remainder_ratio: float = 0.05  # Max 5% atoms in remainder queue
     require_no_critical_errors: bool = True  # Block on any critical error
 
 

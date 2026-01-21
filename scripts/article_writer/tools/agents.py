@@ -13,7 +13,7 @@ import shlex
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any
 
 try:
     from scripts.article_writer.tools.workflow.context_logger import ContextLogger
@@ -21,7 +21,7 @@ except ImportError:
     from tools.workflow.context_logger import ContextLogger
 
 
-def _format_cmd(llm_cmd: str, prompt: str, prompt_file: Path) -> Tuple[list[str], bool]:
+def _format_cmd(llm_cmd: str, prompt: str, prompt_file: Path) -> tuple[list[str], bool]:
     """Return (argv, use_stdin)."""
     parts = shlex.split(llm_cmd)
     formatted: list[str] = []
@@ -37,7 +37,7 @@ def _format_cmd(llm_cmd: str, prompt: str, prompt_file: Path) -> Tuple[list[str]
 CODEBLOCK_RE = re.compile(r"```(\w+)?\n(.*?)\n```", re.DOTALL)
 
 
-def extract_first_codeblock(text: str, lang: str) -> Optional[str]:
+def extract_first_codeblock(text: str, lang: str) -> str | None:
     """Extract first code block of given language."""
     for m in CODEBLOCK_RE.finditer(text):
         l = (m.group(1) or "").strip().lower()
@@ -194,9 +194,7 @@ class AgentRunner:
             )
 
         if check and proc.returncode != 0:
-            raise RuntimeError(
-                f"Tool {tool_name} failed (exit={proc.returncode}): {proc.stderr}"
-            )
+            raise RuntimeError(f"Tool {tool_name} failed (exit={proc.returncode}): {proc.stderr}")
 
         return proc.returncode, proc.stdout or "", proc.stderr or ""
 

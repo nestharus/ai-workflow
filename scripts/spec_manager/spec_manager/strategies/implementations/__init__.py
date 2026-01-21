@@ -1,13 +1,7 @@
 """Strategy implementations for the spec_manager strategy framework."""
 
-from spec_manager.strategies.implementations.unitizers import (
-    Unitizer,
-    LineUnitizer,
-    SentenceUnitizer,
-    ClauseUnitizer,
-    LLMUnitizer,
-    SectionUnitizer,
-    UnitizationSelector,
+from spec_manager.strategies.implementations.coverage_verification import (
+    CoverageVerificationStrategy,
 )
 from spec_manager.strategies.implementations.llm_inference import (
     InferenceResult,
@@ -19,8 +13,14 @@ from spec_manager.strategies.implementations.llm_inference import (
 from spec_manager.strategies.implementations.sentence_decomposition import (
     SentenceDecompositionStrategy,
 )
-from spec_manager.strategies.implementations.coverage_verification import (
-    CoverageVerificationStrategy,
+from spec_manager.strategies.implementations.unitizers import (
+    ClauseUnitizer,
+    LineUnitizer,
+    LLMUnitizer,
+    SectionUnitizer,
+    SentenceUnitizer,
+    UnitizationSelector,
+    Unitizer,
 )
 
 __all__ = [

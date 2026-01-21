@@ -1,5 +1,4 @@
-"""
-Spec Manager - General-purpose specification management library.
+"""Spec Manager - General-purpose specification management library.
 
 This library provides tools for managing specification folders containing:
 - Libraries (domain-specific markdown files)
@@ -72,9 +71,9 @@ __all__ = [
     "ContextIndex",
     "ingest",
     # Phase runners (legacy names, mapped to new phases)
-    "run_staging",      # CLEANING phase
-    "run_planning",     # DISCOVERY phase
-    "run_merging",      # REVIEW phase
+    "run_staging",  # CLEANING phase
+    "run_planning",  # DISCOVERY phase
+    "run_merging",  # REVIEW phase
     "run_verification",  # FINALIZATION phase
     "run_analysis",
 ]
@@ -89,6 +88,7 @@ def __getattr__(name: str):
             LibsRegistry,
             SectionExtractor,
         )
+
         return locals()[name]
 
     if name in ("TrackedUnit", "SourceLocation", "UnitType", "UnitStatus", "ProvenanceTracker"):
@@ -99,9 +99,16 @@ def __getattr__(name: str):
             UnitStatus,
             UnitType,
         )
+
         return locals()[name]
 
-    if name in ("StrategyRegistry", "Strategy", "StrategyPhase", "ProcessingContext", "StrategyResult"):
+    if name in (
+        "StrategyRegistry",
+        "Strategy",
+        "StrategyPhase",
+        "ProcessingContext",
+        "StrategyResult",
+    ):
         from .strategies import (
             ProcessingContext,
             Strategy,
@@ -109,34 +116,48 @@ def __getattr__(name: str):
             StrategyRegistry,
             StrategyResult,
         )
+
         return locals()[name]
 
     if name == "WorkspaceManager":
         from .workspace import WorkspaceManager
+
         return WorkspaceManager
 
     if name == "run_staging":
         from .staging import run_staging
+
         return run_staging
 
     if name == "run_planning":
         from .planning import run_planning
+
         return run_planning
 
     if name == "run_merging":
         from .merging import run_merging
+
         return run_merging
 
     if name == "run_verification":
         from .verification import run_verification
+
         return run_verification
 
     if name == "run_analysis":
         from .analysis import run_analysis
+
         return run_analysis
 
-    if name in ("WorkflowOrchestrator", "WorkflowConfig", "WorkflowState", "WorkflowPhase",
-                "PatchDependencyGraph", "ContextIndex", "ingest"):
+    if name in (
+        "WorkflowOrchestrator",
+        "WorkflowConfig",
+        "WorkflowState",
+        "WorkflowPhase",
+        "PatchDependencyGraph",
+        "ContextIndex",
+        "ingest",
+    ):
         from .workflow import (
             ContextIndex,
             PatchDependencyGraph,
@@ -146,11 +167,20 @@ def __getattr__(name: str):
             WorkflowState,
             ingest,
         )
+
         return locals()[name]
 
-    if name in ("CandidateLibrary", "CandidateIdentifier", "ElementLabels", "MultiLabeler",
-                "LibraryShape", "ShapeAggregator", "LibraryRefiner",
-                "discover_libraries", "discover_libraries_sync"):
+    if name in (
+        "CandidateLibrary",
+        "CandidateIdentifier",
+        "ElementLabels",
+        "MultiLabeler",
+        "LibraryShape",
+        "ShapeAggregator",
+        "LibraryRefiner",
+        "discover_libraries",
+        "discover_libraries_sync",
+    ):
         from .discovery import (
             CandidateIdentifier,
             CandidateLibrary,
@@ -162,6 +192,7 @@ def __getattr__(name: str):
             discover_libraries,
             discover_libraries_sync,
         )
+
         return locals()[name]
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

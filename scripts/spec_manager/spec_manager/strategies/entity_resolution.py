@@ -1,5 +1,4 @@
-"""
-Entity resolution engine - FIRST-CLASS requirement.
+"""Entity resolution engine - FIRST-CLASS requirement.
 
 When patch prose has vague references like "the algorithm" or "it",
 we need to resolve them using:
@@ -29,10 +28,10 @@ class ResolutionContext:
     patch_chain: list[str]  # e.g., ["p1", "p3", "p5"] - p5 patches p3 patches p1
 
     # Available contexts in priority order
-    current_file_ids: set[str] = field(default_factory=set)          # IDs declared in current file
+    current_file_ids: set[str] = field(default_factory=set)  # IDs declared in current file
     prior_patch_ids: dict[str, set[str]] = field(default_factory=dict)  # patch_id -> IDs it defined
     intermediate_ids: dict[str, set[str]] = field(default_factory=dict)  # intermediate_file -> IDs
-    original_ids: dict[str, set[str]] = field(default_factory=dict)    # original_file -> IDs
+    original_ids: dict[str, set[str]] = field(default_factory=dict)  # original_file -> IDs
 
 
 @dataclass
@@ -43,12 +42,11 @@ class ResolutionResult:
     resolved_to: str | None
     confidence: float
     evidence: list[str]  # Why we resolved to this
-    context_used: str    # "current", "prior_patch", "intermediate", "original"
+    context_used: str  # "current", "prior_patch", "intermediate", "original"
 
 
 class ReferenceStore:
-    """
-    Interface for retrieving context to resolve references.
+    """Interface for retrieving context to resolve references.
 
     Given a vague mention, retrieve top-k candidate contexts.
 
@@ -63,12 +61,11 @@ class ReferenceStore:
 
         # Load optional domain phrase config (data-driven, not hardcoded)
         if config_path and config_path.exists():
-            with open(config_path, encoding='utf-8') as f:
-                self.phrase_config = yaml.safe_load(f).get('domain_phrases', {})
+            with open(config_path, encoding="utf-8") as f:
+                self.phrase_config = yaml.safe_load(f).get("domain_phrases", {})
 
     def index_file(self, path: Path, content: str, file_type: str) -> None:
-        """
-        Index a file's content for later retrieval.
+        """Index a file's content for later retrieval.
 
         Indexing hierarchy:
         1. Declared IDs (authoritative)
@@ -89,8 +86,7 @@ class ReferenceStore:
 
         # SECONDARY: Heading-based IDs
         heading_pattern = re.compile(
-            r'^(#{1,6})\s+(Algorithm\s+\d+|D\d+|G\d+|P\d+C\d+|P\d+I\d+|Lean\d+)',
-            re.MULTILINE
+            r"^(#{1,6})\s+(Algorithm\s+\d+|D\d+|G\d+|P\d+C\d+|P\d+I\d+|Lean\d+)", re.MULTILINE
         )
         for match in heading_pattern.finditer(content):
             term = match.group(2).lower()
@@ -113,6 +109,7 @@ class ReferenceStore:
         """Extract and index keyphrases using NLP."""
         try:
             import spacy
+
             nlp = spacy.load("en_core_web_sm")
             doc = nlp(content[:5000])
 
@@ -126,13 +123,9 @@ class ReferenceStore:
             pass  # NLP not available, skip keyphrase indexing
 
     def retrieve(
-        self,
-        mention: str,
-        context: ResolutionContext,
-        top_k: int = 5
+        self, mention: str, context: ResolutionContext, top_k: int = 5
     ) -> list[tuple[str, float]]:
-        """
-        Retrieve candidate resolutions for a mention.
+        """Retrieve candidate resolutions for a mention.
 
         Returns list of (candidate_id, confidence) pairs.
         """
@@ -159,8 +152,7 @@ class ReferenceStore:
 
 
 class EntityResolver:
-    """
-    Resolves vague references in patch content.
+    """Resolves vague references in patch content.
 
     This is a FIRST-CLASS component, not just a strategy stub.
     """
@@ -169,13 +161,8 @@ class EntityResolver:
         self.store = reference_store
         self.failures: list[tuple[str, str]] = []  # (text, file)
 
-    def resolve(
-        self,
-        text: str,
-        context: ResolutionContext
-    ) -> ResolutionResult:
+    def resolve(self, text: str, context: ResolutionContext) -> ResolutionResult:
         """Attempt to resolve a vague reference."""
-
         # Find candidates
         candidates = self.store.retrieve(text, context)
 
@@ -187,7 +174,7 @@ class EntityResolver:
                 resolved_to=None,
                 confidence=0.0,
                 evidence=["No candidates found in any context"],
-                context_used="none"
+                context_used="none",
             )
 
         # Take best candidate
@@ -209,7 +196,7 @@ class EntityResolver:
             resolved_to=best_id.split(":")[-1],  # Extract actual ID
             confidence=confidence,
             evidence=[f"Found in {best_id}"],
-            context_used=context_used
+            context_used=context_used,
         )
 
     def get_failures_as_gaps(self) -> list[dict[str, Any]]:
@@ -219,7 +206,7 @@ class EntityResolver:
                 "type": "entity_resolution_failure",
                 "original_text": text,
                 "location": location,
-                "severity": "warning"
+                "severity": "warning",
             }
             for text, location in self.failures
         ]

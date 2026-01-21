@@ -52,8 +52,7 @@ class ProseFragmentInferenceDetector:
         self._llm = llm_client
 
     def detect(self, units: list[TrackedUnit]) -> list[ProseFragmentEvidence]:
-        """Analyze prose units to infer hidden requirements/claims.
-        """
+        """Analyze prose units to infer hidden requirements/claims."""
         evidence_list = []
 
         for unit in units:

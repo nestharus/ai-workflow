@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from spec_manager.workspace.manager import WorkspaceManager
 from spec_manager.workspace.state import (
     Phase,

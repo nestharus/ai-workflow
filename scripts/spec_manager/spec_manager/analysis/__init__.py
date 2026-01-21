@@ -1,5 +1,4 @@
-"""
-Analysis operations for spec management.
+"""Analysis operations for spec management.
 
 Goal: Detect patterns that suggest library restructuring.
 
@@ -11,17 +10,17 @@ Operations:
 """
 
 from spec_manager.analysis.operations import (
-    detect_divergence,
-    detect_convergence,
     analyze_references,
-    suggest_restructuring,
+    detect_convergence,
+    detect_divergence,
     run_analysis,
+    suggest_restructuring,
 )
 
 __all__ = [
-    "detect_divergence",
-    "detect_convergence",
     "analyze_references",
-    "suggest_restructuring",
+    "detect_convergence",
+    "detect_divergence",
     "run_analysis",
+    "suggest_restructuring",
 ]

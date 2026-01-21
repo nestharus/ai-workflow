@@ -1,5 +1,4 @@
-"""
-Analysis operations for library restructuring.
+"""Analysis operations for library restructuring.
 
 These operations detect patterns that suggest libraries should be split or merged.
 """
@@ -11,8 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from spec_manager.core.annotations import AnnotationParser, AnnotationType
-from spec_manager.core.ids import IdValidator, IdCategory
+from spec_manager.core.annotations import AnnotationParser
+from spec_manager.core.ids import IdCategory, IdValidator
 from spec_manager.core.libs_registry import LibsRegistry
 from spec_manager.core.sections import SectionExtractor
 
@@ -120,8 +119,7 @@ def detect_divergence(
     libraries_dir: Path,
     min_cluster_size: int = 3,
 ) -> list[DivergenceCandidate]:
-    """
-    Detect libraries that should be split based on related patterns.
+    """Detect libraries that should be split based on related patterns.
 
     A library is a divergence candidate when:
     - Many of its IDs share a common subset of related libraries
@@ -196,8 +194,7 @@ def detect_convergence(
     libraries_dir: Path,
     min_cross_reference: int = 3,
 ) -> list[ConvergenceCandidate]:
-    """
-    Detect libraries that should be merged based on cross-references.
+    """Detect libraries that should be merged based on cross-references.
 
     Two libraries are convergence candidates when:
     - Many IDs from one reference the other in related
@@ -256,8 +253,7 @@ def analyze_references(
     libraries_dir: Path,
     registry: LibsRegistry,
 ) -> list[ReferencePattern]:
-    """
-    Analyze cross-library reference patterns.
+    """Analyze cross-library reference patterns.
 
     Examines (@[+ID]) and (@[=ID]) references to find patterns
     of inter-library dependencies.
@@ -314,8 +310,7 @@ def suggest_restructuring(
     convergence: list[ConvergenceCandidate],
     reference_patterns: list[ReferencePattern],
 ) -> list[RestructuringSuggestion]:
-    """
-    Generate prioritized restructuring suggestions.
+    """Generate prioritized restructuring suggestions.
 
     Combines divergence, convergence, and reference analysis
     to produce actionable recommendations.
@@ -382,8 +377,7 @@ def run_analysis(
     registry: LibsRegistry,
     libraries_dir: Path,
 ) -> AnalysisResult:
-    """
-    Run full library structure analysis.
+    """Run full library structure analysis.
 
     Args:
         registry: The libs.md registry

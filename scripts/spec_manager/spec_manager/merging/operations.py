@@ -1,5 +1,4 @@
-"""
-Merging operations for the REVIEW phase.
+"""Merging operations for the REVIEW phase.
 
 This module provides operations for applying changes to library files.
 Legacy module name 'merging' maps to the REVIEW workflow phase.
@@ -13,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.core.libs_registry import LibsRegistry
-from spec_manager.core.sections import SectionExtractor, Section
+from spec_manager.core.sections import Section, SectionExtractor
 
 
 @dataclass
@@ -65,8 +64,7 @@ def extract_to_libraries(
     libraries_dir: Path,
     apply: bool = False,
 ) -> MergingResult:
-    """
-    Extract sections from plan.md to library files.
+    """Extract sections from plan.md to library files.
 
     Only extracts IDs that:
     - Are in the registry (have primary assignment)
@@ -147,8 +145,7 @@ def move_to_correct_library(
     libraries_dir: Path,
     apply: bool = False,
 ) -> MergingResult:
-    """
-    Move sections to their correct primary library.
+    """Move sections to their correct primary library.
 
     Args:
         registry: The libs.md registry
@@ -232,8 +229,7 @@ def fix_duplicates(
     libraries_dir: Path,
     apply: bool = False,
 ) -> MergingResult:
-    """
-    Remove duplicate sections, keeping only the primary library entry.
+    """Remove duplicate sections, keeping only the primary library entry.
 
     Args:
         registry: The libs.md registry
@@ -299,8 +295,7 @@ def sort_by_id(
     libraries_dir: Path,
     apply: bool = False,
 ) -> MergingResult:
-    """
-    Sort sections within each library file by ID.
+    """Sort sections within each library file by ID.
 
     Args:
         libraries_dir: Path to libraries directory
@@ -351,8 +346,7 @@ def run_merging(
     libraries_dir: Path,
     apply: bool = False,
 ) -> MergingResult:
-    """
-    Run all merging operations in correct order.
+    """Run all merging operations in correct order.
 
     Order:
     1. Extract new sections from plan

@@ -1,5 +1,4 @@
-"""
-Library registry derived from scanning library files.
+"""Library registry derived from scanning library files.
 
 Replaces the manual libs.md file by scanning library files for:
 - ([=ID]) declarations - where an ID lives
@@ -10,9 +9,9 @@ Maintains backwards-compatible API for existing code.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
 
 from .annotations import AnnotationParser
 from .sections import SectionExtractor
@@ -30,8 +29,7 @@ class LibsEntry:
 
 @dataclass
 class LibsRegistry:
-    """
-    Registry of ID locations derived from scanning library files.
+    """Registry of ID locations derived from scanning library files.
 
     Instead of parsing a libs.md file, this scans library .md files
     to find ([=ID]) declarations and (@[+ID]) references.
@@ -54,8 +52,7 @@ class LibsRegistry:
 
     @classmethod
     def from_file(cls, path: Path) -> LibsRegistry:
-        """
-        Build registry from a path.
+        """Build registry from a path.
 
         If path is libs.md, looks for sibling libraries/ directory.
         If path is a directory, scans it directly.
@@ -133,11 +130,7 @@ class LibsRegistry:
 
     def get_ids_related_to_library(self, library: str) -> list[str]:
         """Get all IDs that reference a library."""
-        return [
-            entry.id_value
-            for entry in self.entries.values()
-            if library in entry.related
-        ]
+        return [entry.id_value for entry in self.entries.values() if library in entry.related]
 
     def iter_entries(self) -> Iterator[LibsEntry]:
         """Iterate over all entries."""
@@ -148,8 +141,7 @@ class LibsRegistry:
     def detect_divergence_candidates(
         self, min_related_count: int = 3
     ) -> list[tuple[str, str, list[str]]]:
-        """
-        Detect potential library split candidates.
+        """Detect potential library split candidates.
 
         A library is a divergence candidate if many of its IDs reference
         a different library, suggesting those IDs should move.
@@ -181,8 +173,7 @@ class LibsRegistry:
     def detect_convergence_candidates(
         self, min_cross_reference: int = 3
     ) -> list[tuple[str, str, list[str]]]:
-        """
-        Detect potential library merge candidates.
+        """Detect potential library merge candidates.
 
         Two libraries are convergence candidates if many IDs reference
         each other across the library boundary.
@@ -207,9 +198,7 @@ class LibsRegistry:
 
     # --- Modification Methods (for resolver compatibility) ---
 
-    def add_entry(
-        self, id_value: str, primary: str, related: list[str] | None = None
-    ) -> None:
+    def add_entry(self, id_value: str, primary: str, related: list[str] | None = None) -> None:
         """Add or update an entry in the registry."""
         self.entries[id_value] = LibsEntry(
             id_value=id_value,

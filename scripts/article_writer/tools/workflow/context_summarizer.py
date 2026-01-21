@@ -6,7 +6,6 @@ Uses the glm-flash wrapper script to call GLM-4.7-Flash for compression.
 
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 from dataclasses import dataclass
@@ -140,6 +139,7 @@ Session Log:
         Returns:
             PartialState with extracted components
         """
+
         # Extract sections using regex
         def extract_section(header: str) -> list[str]:
             """Extract bullet points from a section."""

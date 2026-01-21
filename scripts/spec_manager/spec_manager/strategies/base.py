@@ -1,5 +1,4 @@
-"""
-Base classes for the strategy framework.
+"""Base classes for the strategy framework.
 
 Strategies are the reasoning layer above tools. A tool does one thing
 (e.g., split sentences). A strategy knows WHEN and WHY to use that tool,
@@ -11,7 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from spec_manager.core.provenance import TrackedUnit
 
@@ -23,18 +22,17 @@ class StrategyPhase(Enum):
     (CLEANING, DISCOVERY, REVIEW, FINALIZATION) defined in workspace.state.Phase.
     """
 
-    CLEANING = "cleaning"            # Input normalization
+    CLEANING = "cleaning"  # Input normalization
     DECOMPOSITION = "decomposition"  # Breaking content into atoms
-    EXTRACTION = "extraction"        # Pulling structured content
-    RESOLUTION = "resolution"        # Resolving ambiguities
-    LABELING = "labeling"            # Assigning to libraries
-    VERIFICATION = "verification"    # Strategy verification, not workflow phase
+    EXTRACTION = "extraction"  # Pulling structured content
+    RESOLUTION = "resolution"  # Resolving ambiguities
+    LABELING = "labeling"  # Assigning to libraries
+    VERIFICATION = "verification"  # Strategy verification, not workflow phase
 
 
 @dataclass
 class ProcessingContext:
-    """
-    Context passed to strategies.
+    """Context passed to strategies.
 
     Contains everything a strategy needs to decide if it applies
     and to execute.
@@ -84,8 +82,7 @@ class StrategyResult:
 
 
 class Strategy(ABC):
-    """
-    Base class for all strategies.
+    """Base class for all strategies.
 
     A strategy encapsulates:
     - Knowledge of WHEN to apply (applies_to)
@@ -119,8 +116,7 @@ class Strategy(ABC):
 
     @abstractmethod
     def applies_to(self, context: ProcessingContext) -> bool:
-        """
-        Check if this strategy should be applied to the given context.
+        """Check if this strategy should be applied to the given context.
 
         Returns True if the strategy is relevant for this content/phase.
         """
@@ -128,8 +124,7 @@ class Strategy(ABC):
 
     @abstractmethod
     def execute(self, context: ProcessingContext) -> StrategyResult:
-        """
-        Execute the strategy.
+        """Execute the strategy.
 
         Takes TrackedUnits, returns transformed TrackedUnits with
         provenance tracking intact.
@@ -147,8 +142,7 @@ class Tool(Protocol):
 
 @dataclass
 class StrategyDefinition:
-    """
-    Definition of a strategy loaded from YAML.
+    """Definition of a strategy loaded from YAML.
 
     This allows strategies to be defined declaratively and
     bound to implementations at runtime.
@@ -176,8 +170,7 @@ class StrategyDefinition:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_strategy(self, tools: dict[str, Tool]) -> Strategy:
-        """
-        Convert definition to executable Strategy.
+        """Convert definition to executable Strategy.
 
         The implementation_class is dynamically loaded and
         instantiated with the required tools.
@@ -186,15 +179,13 @@ class StrategyDefinition:
             raise ValueError(f"Strategy {self.name} has no implementation_class")
 
         # Dynamic import
-        module_path, class_name = self.implementation_class.rsplit('.', 1)
+        module_path, class_name = self.implementation_class.rsplit(".", 1)
         import importlib
+
         module = importlib.import_module(module_path)
         strategy_class = getattr(module, class_name)
 
         # Get required tools
-        strategy_tools = {
-            name: tools[name] for name in self.tools_used
-            if name in tools
-        }
+        strategy_tools = {name: tools[name] for name in self.tools_used if name in tools}
 
         return strategy_class(definition=self, tools=strategy_tools)

@@ -1,5 +1,4 @@
-"""
-Strategy registry - manages available strategies.
+"""Strategy registry - manages available strategies.
 
 The registry:
 - Loads strategy definitions from YAML
@@ -9,7 +8,7 @@ The registry:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,24 +16,22 @@ import yaml
 
 from spec_manager.core.provenance import TrackedUnit
 from spec_manager.strategies.base import (
+    ProcessingContext,
     Strategy,
     StrategyDefinition,
-    ProcessingContext,
-    StrategyPhase,
     Tool,
 )
 
 
 @dataclass
 class StrategyGapEvidence:
-    """
-    Evidence for a strategy gap - no strategy could handle this failure mode.
+    """Evidence for a strategy gap - no strategy could handle this failure mode.
 
     This is a FIRST-CLASS evidence type that triggers strategy evolution.
     """
 
-    failure_mode: str                                # What failed (e.g., "vague_reference_resolution")
-    fixture: dict[str, Any]                          # Minimal failing fixture
+    failure_mode: str  # What failed (e.g., "vague_reference_resolution")
+    fixture: dict[str, Any]  # Minimal failing fixture
     proposed_strategy: StrategyDefinition | None = None  # LLM-proposed solution
 
     @property
@@ -47,12 +44,11 @@ class StrategyGapEvidence:
 
     @property
     def location(self) -> str:
-        return self.fixture.get('context', {}).get('patch_id', 'unknown')
+        return self.fixture.get("context", {}).get("patch_id", "unknown")
 
 
 class StrategyRegistry:
-    """
-    Registry of available strategies.
+    """Registry of available strategies.
 
     Usage:
         registry = StrategyRegistry()
@@ -78,20 +74,24 @@ class StrategyRegistry:
 
     def load_definition(self, path: Path) -> StrategyDefinition:
         """Load a strategy definition from YAML file."""
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
         definition = StrategyDefinition(
-            name=data['name'],
-            version=data.get('version', '1.0'),
-            purpose=data['purpose'],
-            risk_addressed=data['risk_addressed'],
-            phases=data.get('phases', []),
-            when_conditions=data.get('when_conditions', []),
-            tools_used=data.get('tools_used', []),
-            implementation_class=data.get('implementation_class'),
-            example_input=data.get('example', {}).get('input') if isinstance(data.get('example'), dict) else None,
-            example_output=data.get('example', {}).get('output') if isinstance(data.get('example'), dict) else None
+            name=data["name"],
+            version=data.get("version", "1.0"),
+            purpose=data["purpose"],
+            risk_addressed=data["risk_addressed"],
+            phases=data.get("phases", []),
+            when_conditions=data.get("when_conditions", []),
+            tools_used=data.get("tools_used", []),
+            implementation_class=data.get("implementation_class"),
+            example_input=data.get("example", {}).get("input")
+            if isinstance(data.get("example"), dict)
+            else None,
+            example_output=data.get("example", {}).get("output")
+            if isinstance(data.get("example"), dict)
+            else None,
         )
 
         self.definitions[definition.name] = definition
@@ -130,10 +130,7 @@ class StrategyRegistry:
 
         for name, definition in self.definitions.items():
             # Check phase match
-            phase_match = (
-                not definition.phases or
-                context.phase.value in definition.phases
-            )
+            phase_match = not definition.phases or context.phase.value in definition.phases
 
             if not phase_match:
                 continue
@@ -159,34 +156,34 @@ class StrategyRegistry:
 
         definition = self.definitions[name]
         data: dict[str, Any] = {
-            'name': definition.name,
-            'version': definition.version,
-            'purpose': definition.purpose,
-            'risk_addressed': definition.risk_addressed,
-            'phases': definition.phases,
-            'when_conditions': definition.when_conditions,
-            'tools_used': definition.tools_used,
-            'implementation_class': definition.implementation_class
+            "name": definition.name,
+            "version": definition.version,
+            "purpose": definition.purpose,
+            "risk_addressed": definition.risk_addressed,
+            "phases": definition.phases,
+            "when_conditions": definition.when_conditions,
+            "tools_used": definition.tools_used,
+            "implementation_class": definition.implementation_class,
         }
 
         if definition.example_input:
-            data['example'] = {
-                'input': definition.example_input,
-                'output': definition.example_output
+            data["example"] = {
+                "input": definition.example_input,
+                "output": definition.example_output,
             }
 
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(path, "w", encoding="utf-8") as f:
             yaml.dump(data, f, default_flow_style=False)
 
     def list_strategies(self) -> list[dict[str, Any]]:
         """List all available strategies with summary info."""
         return [
             {
-                'name': d.name,
-                'purpose': d.purpose,
-                'phases': d.phases,
-                'tools': d.tools_used,
-                'status': d.metadata.get('status', 'stable')  # stable/experimental
+                "name": d.name,
+                "purpose": d.purpose,
+                "phases": d.phases,
+                "tools": d.tools_used,
+                "status": d.metadata.get("status", "stable"),  # stable/experimental
             }
             for d in self.definitions.values()
         ]
@@ -196,12 +193,9 @@ class StrategyRegistry:
     # =========================================================================
 
     def check_evolution_triggers(
-        self,
-        context: ProcessingContext,
-        previous_context: ProcessingContext | None = None
+        self, context: ProcessingContext, previous_context: ProcessingContext | None = None
     ) -> list[str]:
-        """
-        Check if conditions warrant strategy evolution.
+        """Check if conditions warrant strategy evolution.
 
         Trigger conditions:
         - Remainder not shrinking between passes
@@ -214,59 +208,54 @@ class StrategyRegistry:
 
         if previous_context:
             # Remainder not shrinking
-            prev_remainder = len(previous_context.results.get('remainders', []))
-            curr_remainder = len(context.results.get('remainders', []))
+            prev_remainder = len(previous_context.results.get("remainders", []))
+            curr_remainder = len(context.results.get("remainders", []))
             if curr_remainder >= prev_remainder and prev_remainder > 0:
                 triggers.append(f"remainder_stuck: {prev_remainder} -> {curr_remainder}")
 
             # Entity resolution failures
-            resolution_failures = context.results.get('resolution_failures', 0)
-            total_refs = context.results.get('total_references', 1)
+            resolution_failures = context.results.get("resolution_failures", 0)
+            total_refs = context.results.get("total_references", 1)
             failure_rate = resolution_failures / total_refs if total_refs > 0 else 0
             if failure_rate > 0.1:  # 10% threshold
                 triggers.append(f"resolution_failures: {failure_rate:.1%}")
 
             # Prose ratio not decreasing
-            prev_prose = previous_context.results.get('prose_ratio', 1.0)
-            curr_prose = context.results.get('prose_ratio', 1.0)
+            prev_prose = previous_context.results.get("prose_ratio", 1.0)
+            curr_prose = context.results.get("prose_ratio", 1.0)
             if curr_prose >= prev_prose and curr_prose > 0.3:  # Still >30% prose
                 triggers.append(f"prose_stuck: {prev_prose:.1%} -> {curr_prose:.1%}")
 
         return triggers
 
     def request_new_strategy(
-        self,
-        trigger: str,
-        example_inputs: list[str],
-        desired_transformation: str
+        self, trigger: str, example_inputs: list[str], desired_transformation: str
     ) -> dict[str, Any]:
-        """
-        Generate a strategy request for a new strategy.
+        """Generate a strategy request for a new strategy.
 
         Returns a structured request that could be used to develop
         a new strategy (potentially by AI or human).
         """
         return {
-            'trigger': trigger,
-            'examples': example_inputs,
-            'desired_outcome': desired_transformation,
-            'existing_strategies': [d.name for d in self.definitions.values()],
-            'status': 'requested'
+            "trigger": trigger,
+            "examples": example_inputs,
+            "desired_outcome": desired_transformation,
+            "existing_strategies": [d.name for d in self.definitions.values()],
+            "status": "requested",
         }
 
     def add_experimental_strategy(
         self,
         definition: StrategyDefinition,
-        test_fixtures: list[tuple[str, str]]  # (input, expected_output)
+        test_fixtures: list[tuple[str, str]],  # (input, expected_output)
     ) -> bool:
-        """
-        Add a new strategy in experimental status.
+        """Add a new strategy in experimental status.
 
         Requires test fixtures that must pass before strategy is promoted to stable.
         """
         definition.metadata = definition.metadata or {}
-        definition.metadata['status'] = 'experimental'
-        definition.metadata['test_fixtures'] = test_fixtures
+        definition.metadata["status"] = "experimental"
+        definition.metadata["test_fixtures"] = test_fixtures
 
         self.definitions[definition.name] = definition
         return True
@@ -277,12 +266,12 @@ class StrategyRegistry:
             return False
 
         definition = self.definitions[name]
-        if definition.metadata.get('status') != 'experimental':
+        if definition.metadata.get("status") != "experimental":
             return False
 
         # Validate against test fixtures
         # (Simplified - real implementation would be more thorough)
-        definition.metadata['status'] = 'stable'
+        definition.metadata["status"] = "stable"
         return True
 
     # =========================================================================
@@ -290,13 +279,9 @@ class StrategyRegistry:
     # =========================================================================
 
     def capture_strategy_gap(
-        self,
-        context: ProcessingContext,
-        failure_mode: str,
-        failing_inputs: list[TrackedUnit]
+        self, context: ProcessingContext, failure_mode: str, failing_inputs: list[TrackedUnit]
     ) -> StrategyGapEvidence:
-        """
-        Capture a strategy gap when no strategy can handle a failure mode.
+        """Capture a strategy gap when no strategy can handle a failure mode.
 
         This is the trigger for strategy evolution:
         1. Capture minimal failing fixture (inputs + intermediates)
@@ -307,37 +292,31 @@ class StrategyRegistry:
         """
         # Capture minimal fixture
         fixture = {
-            'failure_mode': failure_mode,
-            'inputs': [
-                {'id': u.id, 'content': u.content[:500], 'type': u.unit_type.value}
+            "failure_mode": failure_mode,
+            "inputs": [
+                {"id": u.id, "content": u.content[:500], "type": u.unit_type.value}
                 for u in failing_inputs[:5]
             ],
-            'context': {
-                'phase': context.phase.value,
-                'patch_id': context.patch_id,
-                'previous_results': context.previous_results
+            "context": {
+                "phase": context.phase.value,
+                "patch_id": context.patch_id,
+                "previous_results": context.previous_results,
             },
-            'existing_strategies_tried': [
-                d.name for d in self.definitions.values()
-                if context.phase.value in d.phases
-            ]
+            "existing_strategies_tried": [
+                d.name for d in self.definitions.values() if context.phase.value in d.phases
+            ],
         }
 
         evidence = StrategyGapEvidence(
-            failure_mode=failure_mode,
-            fixture=fixture,
-            proposed_strategy=None
+            failure_mode=failure_mode, fixture=fixture, proposed_strategy=None
         )
 
         return evidence
 
     def propose_strategy_via_llm(
-        self,
-        gap_evidence: StrategyGapEvidence,
-        llm_client: Any = None
+        self, gap_evidence: StrategyGapEvidence, llm_client: Any = None
     ) -> StrategyDefinition | None:
-        """
-        Use LLM to propose a new strategy for a captured gap.
+        """Use LLM to propose a new strategy for a captured gap.
 
         The LLM receives:
         - Failure mode description
@@ -354,10 +333,10 @@ class StrategyRegistry:
 FAILURE MODE: {gap_evidence.failure_mode}
 
 FAILING INPUTS (samples):
-{gap_evidence.fixture['inputs'][:3]}
+{gap_evidence.fixture["inputs"][:3]}
 
 EXISTING STRATEGIES (don't duplicate):
-{gap_evidence.fixture['existing_strategies_tried']}
+{gap_evidence.fixture["existing_strategies_tried"]}
 
 Design a new strategy to handle this failure. Provide:
 1. Strategy name (lowercase, underscore-separated)
@@ -372,16 +351,17 @@ Output as JSON:
         try:
             response = llm_client.complete(prompt)
             import json
+
             data = json.loads(response)
 
             proposed = StrategyDefinition(
-                name=data['name'],
-                purpose=data['purpose'],
-                when_conditions=data.get('when_conditions', {}),
-                tools_used=data.get('tools_used', []),
-                phases=[gap_evidence.fixture['context']['phase']],
-                risk_addressed=data.get('risk_addressed', ''),
-                metadata={'status': 'proposed', 'from_gap': gap_evidence.failure_mode}
+                name=data["name"],
+                purpose=data["purpose"],
+                when_conditions=data.get("when_conditions", {}),
+                tools_used=data.get("tools_used", []),
+                phases=[gap_evidence.fixture["context"]["phase"]],
+                risk_addressed=data.get("risk_addressed", ""),
+                metadata={"status": "proposed", "from_gap": gap_evidence.failure_mode},
             )
 
             gap_evidence.proposed_strategy = proposed
@@ -390,12 +370,8 @@ Output as JSON:
         except Exception:
             return None
 
-    def register_experimental_from_gap(
-        self,
-        gap_evidence: StrategyGapEvidence
-    ) -> bool:
-        """
-        Register a proposed strategy as experimental for current ingest.
+    def register_experimental_from_gap(self, gap_evidence: StrategyGapEvidence) -> bool:
+        """Register a proposed strategy as experimental for current ingest.
 
         The strategy is:
         - Marked as 'experimental'
@@ -407,11 +383,10 @@ Output as JSON:
 
         definition = gap_evidence.proposed_strategy
         definition.metadata = definition.metadata or {}
-        definition.metadata['status'] = 'experimental'
-        definition.metadata['source_gap'] = gap_evidence.failure_mode
-        definition.metadata['test_fixtures'] = [
-            (inp['content'], 'TBD')
-            for inp in gap_evidence.fixture['inputs'][:3]
+        definition.metadata["status"] = "experimental"
+        definition.metadata["source_gap"] = gap_evidence.failure_mode
+        definition.metadata["test_fixtures"] = [
+            (inp["content"], "TBD") for inp in gap_evidence.fixture["inputs"][:3]
         ]
 
         self.definitions[definition.name] = definition

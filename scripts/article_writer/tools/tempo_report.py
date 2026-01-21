@@ -18,8 +18,6 @@ import argparse
 import json
 import re
 import statistics
-from dataclasses import dataclass
-from typing import Dict, List, Tuple
 
 from md_utils import extract_sentences, iter_paragraph_spans, strip_markdown_noise
 
@@ -28,7 +26,7 @@ def _word_count(text: str) -> int:
     return len(re.findall(r"[A-Za-z0-9']+", text))
 
 
-def _summary_stats(values: List[int]) -> Dict[str, float]:
+def _summary_stats(values: list[int]) -> dict[str, float]:
     if not values:
         return {"count": 0}
     mean = statistics.mean(values)
@@ -46,14 +44,14 @@ def _summary_stats(values: List[int]) -> Dict[str, float]:
     }
 
 
-def analyze_tempo(markdown: str) -> Dict:
+def analyze_tempo(markdown: str) -> dict:
     cleaned = strip_markdown_noise(markdown)
 
     sentences = extract_sentences(cleaned)
     sent_lens = [_word_count(s.text) for s in sentences]
 
     # Paragraph lengths
-    para_lens: List[int] = []
+    para_lens: list[int] = []
     for p_span in iter_paragraph_spans(cleaned):
         p_text = cleaned[p_span.start : p_span.end].strip()
         if not p_text:
@@ -63,8 +61,8 @@ def analyze_tempo(markdown: str) -> Dict:
     # Runs of similarly-sized sentences can feel metronomic.
     run_threshold = 2  # words
     min_run = 4
-    runs: List[Dict] = []
-    current: List[int] = []
+    runs: list[dict] = []
+    current: list[int] = []
     for l in sent_lens:
         if not current:
             current = [l]
@@ -91,18 +89,22 @@ def analyze_tempo(markdown: str) -> Dict:
         "paragraphs": {"stats": _summary_stats(para_lens)},
         "runs": runs,
         "heuristics": {
-            "metronomic_sentence_cv_lt_0.35": (_summary_stats(sent_lens).get("cv", 0.0) < 0.35 if sent_lens else False),
-            "metronomic_paragraph_cv_lt_0.45": (_summary_stats(para_lens).get("cv", 0.0) < 0.45 if para_lens else False),
+            "metronomic_sentence_cv_lt_0.35": (
+                _summary_stats(sent_lens).get("cv", 0.0) < 0.35 if sent_lens else False
+            ),
+            "metronomic_paragraph_cv_lt_0.45": (
+                _summary_stats(para_lens).get("cv", 0.0) < 0.45 if para_lens else False
+            ),
         },
     }
 
 
-def render_markdown(report: Dict) -> str:
+def render_markdown(report: dict) -> str:
     s_stats = report["sentences"]["stats"]
     p_stats = report["paragraphs"]["stats"]
     buckets = report["sentences"]["buckets"]
 
-    lines: List[str] = ["# Tempo report", ""]
+    lines: list[str] = ["# Tempo report", ""]
 
     lines.append("## Sentence length")
     lines.append("")
@@ -144,7 +146,9 @@ def render_markdown(report: Dict) -> str:
         lines.append("")
         lines.append("## Similar-length sentence runs")
         lines.append("")
-        lines.append("Runs of 4+ sentences where each sentence length is within 2 words of the prior one.")
+        lines.append(
+            "Runs of 4+ sentences where each sentence length is within 2 words of the prior one."
+        )
         lines.append("These can create metronomic cadence.")
         lines.append("")
         for r in runs[:10]:
@@ -161,7 +165,7 @@ def main() -> int:
     ap.add_argument("--output", default="")
     args = ap.parse_args()
 
-    with open(args.path, "r", encoding="utf-8") as f:
+    with open(args.path, encoding="utf-8") as f:
         md = f.read()
 
     report = analyze_tempo(md)
