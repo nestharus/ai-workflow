@@ -1,2 +1,2 @@
 #!/bin/bash
-aicommit2 --auto-select --confirm
+aicommit2 --all --auto-select --confirm && git push
