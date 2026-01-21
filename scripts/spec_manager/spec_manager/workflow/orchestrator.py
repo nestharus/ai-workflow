@@ -1,5 +1,4 @@
-"""
-Workflow orchestrator - coordinates the full ingest workflow.
+"""Workflow orchestrator - coordinates the full ingest workflow.
 
 The orchestrator:
 - Manages phase transitions
@@ -19,11 +18,9 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
-from spec_manager.core.annotations import AnnotationParser
 from spec_manager.core.gaps import detect_gaps, format_gaps_md
 from spec_manager.core.libs_registry import LibsRegistry
 from spec_manager.core.sections import SectionExtractor
-
 from spec_manager.workflow.config import (
     TrackedUnit,
     UnitLabels,
@@ -34,7 +31,6 @@ from spec_manager.workflow.config import (
     WorkflowState,
 )
 from spec_manager.workflow.context import ContextIndex, PatchDependencyGraph
-
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +45,7 @@ class Severity:
 
 @dataclass
 class WorkflowEvidence:
-    """
-    Evidence collected during workflow execution.
+    """Evidence collected during workflow execution.
 
     Named WorkflowEvidence (not GapEvidence) to avoid collision with:
     - DetectorFinding in gaps.py (raw detector output)
@@ -74,27 +69,23 @@ class IntermediateManager:
         self._version = 0
 
     def create_snapshot(
-        self,
-        phase: str,
-        description: str,
-        tracker: Any = None,
-        **extra: Any
+        self, phase: str, description: str, tracker: Any = None, **extra: Any
     ) -> dict[str, Any]:
         """Create a snapshot of the current state."""
         self._version += 1
         return {
-            'version': self._version,
-            'phase': phase,
-            'description': description,
-            'timestamp': datetime.now().isoformat(),
-            'coverage_percent': 100.0,  # Placeholder
-            **extra
+            "version": self._version,
+            "phase": phase,
+            "description": description,
+            "timestamp": datetime.now().isoformat(),
+            "coverage_percent": 100.0,  # Placeholder
+            **extra,
         }
 
     def save(self, state: dict[str, Any]) -> Path:
         """Save a state snapshot."""
-        version = state.get('version', self._version)
-        phase = state.get('phase', 'unknown')
+        version = state.get("version", self._version)
+        phase = state.get("phase", "unknown")
         filename = f"v{version:03d}_{phase}.json"
         path = self.intermediates_dir / filename
         path.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
@@ -117,20 +108,16 @@ class IntermediateManager:
                 continue
         return states
 
-    def compare(
-        self,
-        state1: dict[str, Any],
-        state2: dict[str, Any]
-    ) -> dict[str, Any]:
+    def compare(self, state1: dict[str, Any], state2: dict[str, Any]) -> dict[str, Any]:
         """Compare two states."""
         return {
-            'units_added': [],
-            'units_removed': [],
-            'status_changes': [],
-            'coverage_change': {
-                'from': state1.get('coverage_percent', 0),
-                'to': state2.get('coverage_percent', 0)
-            }
+            "units_added": [],
+            "units_removed": [],
+            "status_changes": [],
+            "coverage_change": {
+                "from": state1.get("coverage_percent", 0),
+                "to": state2.get("coverage_percent", 0),
+            },
         }
 
 
@@ -142,10 +129,7 @@ class ProvenanceTracker:
         self._id_counter = 0
 
     def extract_units_from_file(
-        self,
-        content: str,
-        file_path: str,
-        patch_id: str
+        self, content: str, file_path: str, patch_id: str
     ) -> list[TrackedUnit]:
         """Extract tracked units from a file."""
         units = []
@@ -183,19 +167,19 @@ class ProvenanceTracker:
     def _infer_unit_type(self, id_value: str, body: str) -> UnitType:
         """Infer unit type from ID and content."""
         id_lower = id_value.lower()
-        if id_lower.startswith('algorithm'):
+        if id_lower.startswith("algorithm"):
             return UnitType.ALGORITHM
-        elif re.match(r'^p?\d*c\d+$', id_lower):
+        elif re.match(r"^p?\d*c\d+$", id_lower):
             return UnitType.CLAIM
-        elif re.match(r'^p?\d*i\d+$', id_lower):
+        elif re.match(r"^p?\d*i\d+$", id_lower):
             return UnitType.INVARIANT
-        elif re.match(r'^g\d+$', id_lower):
+        elif re.match(r"^g\d+$", id_lower):
             return UnitType.GOAL
-        elif re.match(r'^d\d+$', id_lower):
+        elif re.match(r"^d\d+$", id_lower):
             return UnitType.DATA_STRUCTURE
-        elif id_lower.startswith('lean'):
+        elif id_lower.startswith("lean"):
             return UnitType.LEAN
-        elif 'proof' in id_lower:
+        elif "proof" in id_lower:
             return UnitType.PROOF
         else:
             return UnitType.PROSE
@@ -208,28 +192,23 @@ class ProvenanceTracker:
         unaccounted = total - mapped - dropped
 
         return {
-            'total': total,
-            'mapped': mapped,
-            'dropped': dropped,
-            'unaccounted': unaccounted,
-            'coverage_percent': (mapped / total * 100) if total > 0 else 100.0
+            "total": total,
+            "mapped": mapped,
+            "dropped": dropped,
+            "unaccounted": unaccounted,
+            "coverage_percent": (mapped / total * 100) if total > 0 else 100.0,
         }
 
 
 class WorkflowOrchestrator:
-    """
-    Orchestrates the full ingest workflow.
+    """Orchestrates the full ingest workflow.
 
     Usage:
         orchestrator = WorkflowOrchestrator(spec_folder)
         result = orchestrator.run()
     """
 
-    def __init__(
-        self,
-        spec_folder: Path,
-        config: WorkflowConfig | None = None
-    ) -> None:
+    def __init__(self, spec_folder: Path, config: WorkflowConfig | None = None) -> None:
         self.spec_folder = Path(spec_folder)
         self.config = config or WorkflowConfig()
 
@@ -248,8 +227,7 @@ class WorkflowOrchestrator:
         self.state = WorkflowState()
 
     def run(self) -> WorkflowState:
-        """
-        Run the full workflow:
+        """Run the full workflow:
 
         1. INIT       - Load inputs, extract units
         2. CLEANING   - Iterative clean with compliance gate
@@ -279,8 +257,7 @@ class WorkflowOrchestrator:
         return self.state
 
     def _phase_init(self) -> None:
-        """
-        Initialize: Load inputs, extract units.
+        """Initialize: Load inputs, extract units.
 
         Support both patch layouts:
         1. patches/*.md - patch files in a patches subdirectory
@@ -302,7 +279,7 @@ class WorkflowOrchestrator:
         # Layout 2: p*.md directly in spec_folder
         direct_patches = sorted(self.spec_folder.glob("p*.md"))
         # Filter to actual patch files (p1.md, p2.md, etc.) not plan.md or other files
-        direct_patches = [p for p in direct_patches if re.match(r'^p\d+\.md$', p.name)]
+        direct_patches = [p for p in direct_patches if re.match(r"^p\d+\.md$", p.name)]
         if direct_patches:
             patch_files.extend(direct_patches)
             logger.info(f"  Found {len(direct_patches)} direct patch files (p*.md)")
@@ -317,7 +294,7 @@ class WorkflowOrchestrator:
                 existing_plan,
                 existing_plan.read_text(encoding="utf-8"),
                 priority=100,  # High priority - authoritative starting state
-                stratum_type="original"
+                stratum_type="original",
             )
 
         if existing_libraries.exists():
@@ -327,7 +304,7 @@ class WorkflowOrchestrator:
                     lib_file,
                     lib_file.read_text(encoding="utf-8"),
                     priority=100,
-                    stratum_type="original"
+                    stratum_type="original",
                 )
 
         # Validate we have at least some input
@@ -345,9 +322,7 @@ class WorkflowOrchestrator:
             content = patch_file.read_text(encoding="utf-8")
 
             units = self.tracker.extract_units_from_file(
-                content=content,
-                file_path=str(patch_file),
-                patch_id=patch_id
+                content=content, file_path=str(patch_file), patch_id=patch_id
             )
 
             self.state.units.extend(units)
@@ -358,7 +333,7 @@ class WorkflowOrchestrator:
                 patch_file,
                 content,
                 priority=50,  # Lower than originals, higher than intermediates
-                stratum_type="patch"
+                stratum_type="patch",
             )
 
             # Infer patch dependencies
@@ -369,15 +344,12 @@ class WorkflowOrchestrator:
         # Save initial state
         if self.config.save_intermediates:
             state = self.intermediate_mgr.create_snapshot(
-                phase="init",
-                description="Initial extraction from patches",
-                tracker=self.tracker
+                phase="init", description="Initial extraction from patches", tracker=self.tracker
             )
             self.intermediate_mgr.save(state)
 
     def _phase_cleaning(self) -> None:
-        """
-        Clean inputs iteratively using Clean->Validate->Fix->Snapshot loop.
+        """Clean inputs iteratively using Clean->Validate->Fix->Snapshot loop.
 
         Each pass reads from PREVIOUS INTERMEDIATE PROJECTION, not from the
         original source folder. This closes the loop so detectors operate
@@ -437,36 +409,34 @@ class WorkflowOrchestrator:
 
                 # Save evidence.json
                 evidence_data = [
-                    {'severity': e.severity, 'message': e.message, 'location': e.location}
+                    {"severity": e.severity, "message": e.message, "location": e.location}
                     for e in evidence
                 ]
                 (pass_dir / "evidence.json").write_text(
-                    json.dumps(evidence_data, indent=2),
-                    encoding="utf-8"
+                    json.dumps(evidence_data, indent=2), encoding="utf-8"
                 )
 
                 # Save metrics.json
                 metrics_data = {
-                    'pass': pass_num,
-                    'compliance_score': compliance_score,
-                    'prose_ratio': prose_ratio,
-                    'unit_count': len(self.state.units),
-                    'prose_units': sum(
-                        1 for u in self.state.units
-                        if str(getattr(u, 'unit_type', '')).lower() == 'prose'
+                    "pass": pass_num,
+                    "compliance_score": compliance_score,
+                    "prose_ratio": prose_ratio,
+                    "unit_count": len(self.state.units),
+                    "prose_units": sum(
+                        1
+                        for u in self.state.units
+                        if str(getattr(u, "unit_type", "")).lower() == "prose"
                         or u.unit_type == UnitType.PROSE
                     ),
-                    'structured_units': sum(
-                        1 for u in self.state.units
-                        if u.unit_type in (
-                            UnitType.ALGORITHM, UnitType.CLAIM,
-                            UnitType.INVARIANT, UnitType.GOAL
-                        )
-                    )
+                    "structured_units": sum(
+                        1
+                        for u in self.state.units
+                        if u.unit_type
+                        in (UnitType.ALGORITHM, UnitType.CLAIM, UnitType.INVARIANT, UnitType.GOAL)
+                    ),
                 }
                 (pass_dir / "metrics.json").write_text(
-                    json.dumps(metrics_data, indent=2),
-                    encoding="utf-8"
+                    json.dumps(metrics_data, indent=2), encoding="utf-8"
                 )
 
                 # Save state snapshot
@@ -476,7 +446,7 @@ class WorkflowOrchestrator:
                         f"After cleaning pass {pass_num} "
                         f"(compliance: {compliance_score:.1%}, prose: {prose_ratio:.1%})"
                     ),
-                    tracker=self.tracker
+                    tracker=self.tracker,
                 )
                 self.intermediate_mgr.save(state)
 
@@ -488,17 +458,15 @@ class WorkflowOrchestrator:
         final_evidence = self._collect_evidence(current_projection_path)
         final_score = self._compute_compliance_score(final_evidence)
         has_critical = any(e.severity == Severity.ERROR for e in final_evidence)
-        remainder_ratio = (
-            len(self.state.remainders) / max(len(self.state.units), 1)
-        )
+        remainder_ratio = len(self.state.remainders) / max(len(self.state.units), 1)
 
         self.state.compliance_passed = False
         self.state.compliance_score = final_score
         self.state.compliance_details = {
-            'score': final_score,
-            'threshold': self.config.compliance_threshold,
-            'has_critical_errors': has_critical,
-            'remainder_ratio': remainder_ratio
+            "score": final_score,
+            "threshold": self.config.compliance_threshold,
+            "has_critical_errors": has_critical,
+            "remainder_ratio": remainder_ratio,
         }
 
         if final_score < self.config.compliance_threshold:
@@ -510,16 +478,13 @@ class WorkflowOrchestrator:
                 logger.error("     Discovery phase will be SKIPPED. Fix compliance issues first.")
             else:
                 logger.warning(
-                    f"  Compliance gate WARNING: "
-                    f"{final_score:.1%} (mode=warn, continuing)"
+                    f"  Compliance gate WARNING: {final_score:.1%} (mode=warn, continuing)"
                 )
                 self.state.compliance_passed = True
         elif has_critical and self.config.require_no_critical_errors:
             if self.config.compliance_gate_mode == "block":
                 error_count = sum(1 for e in final_evidence if e.severity == Severity.ERROR)
-                logger.error(
-                    f"  Compliance gate BLOCKED: {error_count} critical errors"
-                )
+                logger.error(f"  Compliance gate BLOCKED: {error_count} critical errors")
                 logger.error("     Discovery phase will be SKIPPED. Fix critical errors first.")
             else:
                 logger.warning("  Critical errors present but mode=warn, continuing")
@@ -569,13 +534,15 @@ class WorkflowOrchestrator:
         # Convert to WorkflowEvidence
         evidence = []
         for gap in gaps:
-            evidence.append(WorkflowEvidence(
-                severity=gap.get('severity', 'info'),
-                message=gap.get('description', ''),
-                location=gap.get('source_id', gap.get('id', 'unknown')),
-                detector=gap.get('type', 'unknown'),
-                details=gap
-            ))
+            evidence.append(
+                WorkflowEvidence(
+                    severity=gap.get("severity", "info"),
+                    message=gap.get("description", ""),
+                    location=gap.get("source_id", gap.get("id", "unknown")),
+                    detector=gap.get("type", "unknown"),
+                    details=gap,
+                )
+            )
 
         return evidence
 
@@ -593,8 +560,7 @@ class WorkflowOrchestrator:
         return max(0.0, 1.0 - penalty)
 
     def _phase_compositing(self) -> None:
-        """
-        Composite units using MERGE + REMAINDER PARTITION.
+        """Composite units using MERGE + REMAINDER PARTITION.
 
         NOT just "latest wins" - instead:
         - Keep unchanged atoms + updated atoms
@@ -648,13 +614,12 @@ class WorkflowOrchestrator:
                     f"After compositing: {len(composited_units)} units, "
                     f"{len(remainder_units)} remainders"
                 ),
-                tracker=self.tracker
+                tracker=self.tracker,
             )
             self.intermediate_mgr.save(state)
 
     def _select_compositing_granularity(self) -> str:
-        """
-        Select the appropriate granularity level for compositing.
+        """Select the appropriate granularity level for compositing.
 
         When annotations are sparse, emit fine atoms (line/sentence).
         When well-annotated, use coarser section-level atomization.
@@ -666,48 +631,46 @@ class WorkflowOrchestrator:
         total_lines = 0
 
         for unit in self.state.units:
-            content = getattr(unit, 'content', '')
+            content = getattr(unit, "content", "")
             decl_count = content.count("([=")
             line_count = len(content.splitlines())
             total_decls += decl_count
             total_lines += line_count
 
         if total_lines == 0:
-            return 'line'  # Default to finest granularity
+            return "line"  # Default to finest granularity
 
         density = total_decls / total_lines
 
         # Granularity ladder
         if density > 0.1:
             # Well-annotated: use section-level
-            return 'section'
+            return "section"
         elif density > 0.05:
             # Moderately annotated: use sentence-level
-            return 'sentence'
+            return "sentence"
         elif density > 0.02:
             # Sparse annotations: use clause-level
-            return 'clause'
+            return "clause"
         else:
             # Very sparse: use line-level for maximum tracking
-            return 'line'
+            return "line"
 
     def _merge_with_remainder(
-        self,
-        units: list[TrackedUnit],
-        granularity: str = 'line'
+        self, units: list[TrackedUnit], granularity: str = "line"
     ) -> tuple[TrackedUnit, list[TrackedUnit]]:
-        """
-        Merge multiple units with same ID using ATOM-BASED MEMBERSHIP.
+        """Merge multiple units with same ID using ATOM-BASED MEMBERSHIP.
 
         Does NOT use set-of-lines (destroys order/duplicates).
         Instead, uses diff hunks with stable atom IDs.
 
         Returns: (merged_unit, remainder_units)
         """
+
         # Sort by patch order (p1 < p5 < p10)
         def patch_order(u: TrackedUnit) -> int:
             patch_id = u.introduced_by
-            if patch_id.startswith('p'):
+            if patch_id.startswith("p"):
                 try:
                     return int(patch_id[1:])
                 except ValueError:
@@ -734,79 +697,83 @@ class WorkflowOrchestrator:
 
             # Use SequenceMatcher for diff hunks (preserves order)
             matcher = SequenceMatcher(
-                None,
-                [a['content'] for a in all_atoms],
-                [a['content'] for a in later_atoms]
+                None, [a["content"] for a in all_atoms], [a["content"] for a in later_atoms]
             )
 
             new_atoms: list[dict[str, Any]] = []
             for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-                if tag == 'equal':
+                if tag == "equal":
                     # Unchanged atoms - carry forward with lineage
                     for idx in range(i1, i2):
                         atom = all_atoms[idx].copy()
-                        atom['status'] = 'unchanged'
+                        atom["status"] = "unchanged"
                         new_atoms.append(atom)
                         # Record membership evidence
-                        membership_evidence[atom['id']] = {
-                            'rationale': 'Unchanged through patch',
-                            'confidence': 1.0,
-                            'method': 'exact_match'
+                        membership_evidence[atom["id"]] = {
+                            "rationale": "Unchanged through patch",
+                            "confidence": 1.0,
+                            "method": "exact_match",
                         }
 
-                elif tag == 'replace':
+                elif tag == "replace":
                     # Modified atoms - later patch wins, old goes to remainder
                     for idx in range(i1, i2):
                         old_atom = all_atoms[idx]
-                        remainder_atoms.append({
-                            **old_atom,
-                            'status': 'replaced',
-                            'replaced_by': later_unit.introduced_by
-                        })
+                        remainder_atoms.append(
+                            {
+                                **old_atom,
+                                "status": "replaced",
+                                "replaced_by": later_unit.introduced_by,
+                            }
+                        )
 
                     for idx in range(j1, j2):
                         new_atom = later_atoms[idx].copy()
-                        new_atom['status'] = 'added'
+                        new_atom["status"] = "added"
                         new_atoms.append(new_atom)
                         # Record lineage edge (many-to-many possible)
                         for old_idx in range(i1, i2):
-                            lineage_edges.append({
-                                'from': all_atoms[old_idx]['id'],
-                                'to': new_atom['id'],
-                                'transformation': 'replace',
-                                'patch': later_unit.introduced_by
-                            })
-                        membership_evidence[new_atom['id']] = {
-                            'rationale': f'Replaced by {later_unit.introduced_by}',
-                            'confidence': 0.9,
-                            'method': 'diff_replace'
+                            lineage_edges.append(
+                                {
+                                    "from": all_atoms[old_idx]["id"],
+                                    "to": new_atom["id"],
+                                    "transformation": "replace",
+                                    "patch": later_unit.introduced_by,
+                                }
+                            )
+                        membership_evidence[new_atom["id"]] = {
+                            "rationale": f"Replaced by {later_unit.introduced_by}",
+                            "confidence": 0.9,
+                            "method": "diff_replace",
                         }
 
-                elif tag == 'delete':
+                elif tag == "delete":
                     # Deleted atoms - go to remainder
                     for idx in range(i1, i2):
-                        remainder_atoms.append({
-                            **all_atoms[idx],
-                            'status': 'deleted',
-                            'deleted_by': later_unit.introduced_by
-                        })
+                        remainder_atoms.append(
+                            {
+                                **all_atoms[idx],
+                                "status": "deleted",
+                                "deleted_by": later_unit.introduced_by,
+                            }
+                        )
 
-                elif tag == 'insert':
+                elif tag == "insert":
                     # New atoms from later patch
                     for idx in range(j1, j2):
                         new_atom = later_atoms[idx].copy()
-                        new_atom['status'] = 'added'
+                        new_atom["status"] = "added"
                         new_atoms.append(new_atom)
-                        membership_evidence[new_atom['id']] = {
-                            'rationale': f'Added by {later_unit.introduced_by}',
-                            'confidence': 1.0,
-                            'method': 'diff_insert'
+                        membership_evidence[new_atom["id"]] = {
+                            "rationale": f"Added by {later_unit.introduced_by}",
+                            "confidence": 1.0,
+                            "method": "diff_insert",
                         }
 
             all_atoms = new_atoms
 
         # Convert atoms back to content (preserves order)
-        merged_content = '\n'.join(a['content'] for a in all_atoms)
+        merged_content = "\n".join(a["content"] for a in all_atoms)
 
         # Create merged unit with membership tracking
         merged = TrackedUnit(
@@ -818,15 +785,15 @@ class WorkflowOrchestrator:
             modified_by=[u.introduced_by for u in sorted_units[1:]],
             declarations=sorted_units[-1].declarations,
             references=sorted_units[-1].references,
-            source_atom_ids=[a['id'] for a in all_atoms],
+            source_atom_ids=[a["id"] for a in all_atoms],
             membership_evidence=membership_evidence,
-            lineage_edges=lineage_edges
+            lineage_edges=lineage_edges,
         )
 
         # Create remainder units for unresolved content
         remainders: list[TrackedUnit] = []
         if remainder_atoms:
-            remainder_content = '\n'.join(
+            remainder_content = "\n".join(
                 f"[{a.get('deleted_by', a.get('replaced_by', 'unknown'))}] {a['content']}"
                 for a in remainder_atoms
             )
@@ -837,20 +804,16 @@ class WorkflowOrchestrator:
                 source=base.source,
                 introduced_by="composite",
                 status=UnitStatus.PENDING,
-                source_atom_ids=[a['id'] for a in remainder_atoms]
+                source_atom_ids=[a["id"] for a in remainder_atoms],
             )
             remainders.append(remainder_unit)
 
         return merged, remainders
 
     def _content_to_atoms(
-        self,
-        content: str,
-        source_id: str,
-        granularity: str = 'line'
+        self, content: str, source_id: str, granularity: str = "line"
     ) -> list[dict[str, Any]]:
-        """
-        Convert content to atoms with stable IDs.
+        """Convert content to atoms with stable IDs.
 
         Granularity ladder drives atom size:
         - 'line': One atom per line (maximum tracking fidelity)
@@ -863,57 +826,63 @@ class WorkflowOrchestrator:
         """
         atoms: list[dict[str, Any]] = []
 
-        if granularity == 'line':
+        if granularity == "line":
             # Line-level atomization (default, maximum tracking)
-            for i, line in enumerate(content.split('\n')):
-                atom_id = f"{source_id}_L{i+1}_{hash(line) % 10000:04d}"
-                atoms.append({
-                    'id': atom_id,
-                    'content': line,
-                    'source': source_id,
-                    'line_number': i + 1,
-                    'granularity': 'line'
-                })
+            for i, line in enumerate(content.split("\n")):
+                atom_id = f"{source_id}_L{i + 1}_{hash(line) % 10000:04d}"
+                atoms.append(
+                    {
+                        "id": atom_id,
+                        "content": line,
+                        "source": source_id,
+                        "line_number": i + 1,
+                        "granularity": "line",
+                    }
+                )
 
-        elif granularity == 'sentence':
+        elif granularity == "sentence":
             # Sentence-level atomization
-            sentences = re.split(r'(?<=[.!?])\s+', content)
+            sentences = re.split(r"(?<=[.!?])\s+", content)
             line_num = 1
             for i, sent in enumerate(sentences):
                 sent = sent.strip()
                 if not sent:
                     continue
-                atom_id = f"{source_id}_S{i+1}_{hash(sent) % 10000:04d}"
-                atoms.append({
-                    'id': atom_id,
-                    'content': sent,
-                    'source': source_id,
-                    'line_number': line_num,
-                    'granularity': 'sentence'
-                })
-                line_num += sent.count('\n') + 1
+                atom_id = f"{source_id}_S{i + 1}_{hash(sent) % 10000:04d}"
+                atoms.append(
+                    {
+                        "id": atom_id,
+                        "content": sent,
+                        "source": source_id,
+                        "line_number": line_num,
+                        "granularity": "sentence",
+                    }
+                )
+                line_num += sent.count("\n") + 1
 
-        elif granularity == 'clause':
+        elif granularity == "clause":
             # Clause-level atomization (using conjunctions and semicolons)
-            clauses = re.split(r';\s*|\s+and\s+|\s+or\s+', content)
+            clauses = re.split(r";\s*|\s+and\s+|\s+or\s+", content)
             line_num = 1
             for i, clause in enumerate(clauses):
                 clause = clause.strip()
                 if not clause:
                     continue
-                atom_id = f"{source_id}_CL{i+1}_{hash(clause) % 10000:04d}"
-                atoms.append({
-                    'id': atom_id,
-                    'content': clause,
-                    'source': source_id,
-                    'line_number': line_num,
-                    'granularity': 'clause'
-                })
-                line_num += clause.count('\n') + 1
+                atom_id = f"{source_id}_CL{i + 1}_{hash(clause) % 10000:04d}"
+                atoms.append(
+                    {
+                        "id": atom_id,
+                        "content": clause,
+                        "source": source_id,
+                        "line_number": line_num,
+                        "granularity": "clause",
+                    }
+                )
+                line_num += clause.count("\n") + 1
 
-        elif granularity == 'section':
+        elif granularity == "section":
             # Section-level atomization (using annotations and headers)
-            section_pattern = re.compile(r'(?=\(\[=|\n##+ )')
+            section_pattern = re.compile(r"(?=\(\[=|\n##+ )")
             sections = section_pattern.split(content)
             line_num = 1
             for i, section in enumerate(sections):
@@ -921,20 +890,22 @@ class WorkflowOrchestrator:
                 if not section:
                     continue
                 # Extract section ID if available
-                decl_match = re.search(r'\(\[=([^\]]+)\]\)', section)
+                decl_match = re.search(r"\(\[=([^\]]+)\]\)", section)
                 if decl_match:
                     section_name = decl_match.group(1)
                     atom_id = f"{source_id}_{section_name}_{hash(section) % 10000:04d}"
                 else:
-                    atom_id = f"{source_id}_SEC{i+1}_{hash(section) % 10000:04d}"
-                atoms.append({
-                    'id': atom_id,
-                    'content': section,
-                    'source': source_id,
-                    'line_number': line_num,
-                    'granularity': 'section'
-                })
-                line_num += section.count('\n') + 1
+                    atom_id = f"{source_id}_SEC{i + 1}_{hash(section) % 10000:04d}"
+                atoms.append(
+                    {
+                        "id": atom_id,
+                        "content": section,
+                        "source": source_id,
+                        "line_number": line_num,
+                        "granularity": "section",
+                    }
+                )
+                line_num += section.count("\n") + 1
 
         return atoms
 
@@ -946,18 +917,19 @@ class WorkflowOrchestrator:
 
         for unit in sorted(units, key=lambda u: u.id):
             lines.append(f"## {unit.id}\n")
-            unit_type = unit.unit_type.value if hasattr(unit.unit_type, 'value') else str(unit.unit_type)
+            unit_type = (
+                unit.unit_type.value if hasattr(unit.unit_type, "value") else str(unit.unit_type)
+            )
             lines.append(f"Type: {unit_type}\n")
             lines.append(f"Introduced: {unit.introduced_by}\n")
             if unit.modified_by:
                 lines.append(f"Modified: {', '.join(unit.modified_by)}\n")
             lines.append(f"\n```\n{unit.content}\n```\n\n")
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     def _generate_plan_projection(self, units: list[TrackedUnit]) -> str:
-        """
-        Generate plan.md projection from current units.
+        """Generate plan.md projection from current units.
 
         This creates a unified view that can be compared against library state.
         """
@@ -969,9 +941,7 @@ class WorkflowOrchestrator:
         by_type: dict[str, list[TrackedUnit]] = {}
         for unit in units:
             type_name = (
-                unit.unit_type.value
-                if hasattr(unit.unit_type, 'value')
-                else str(unit.unit_type)
+                unit.unit_type.value if hasattr(unit.unit_type, "value") else str(unit.unit_type)
             )
             if type_name not in by_type:
                 by_type[type_name] = []
@@ -979,8 +949,14 @@ class WorkflowOrchestrator:
 
         # Output each type section
         type_order = [
-            'algorithm', 'claim', 'invariant', 'goal',
-            'data_structure', 'proof', 'lean', 'prose'
+            "algorithm",
+            "claim",
+            "invariant",
+            "goal",
+            "data_structure",
+            "proof",
+            "lean",
+            "prose",
         ]
         for type_name in type_order:
             if type_name in by_type:
@@ -1000,11 +976,10 @@ class WorkflowOrchestrator:
                     lines.append(f"{unit.content}\n")
                     lines.append("---\n")
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     def _phase_discovery(self) -> None:
-        """
-        Discover libraries through multi-labeling.
+        """Discover libraries through multi-labeling.
 
         This phase is BLOCKED if compliance gate did not pass.
         """
@@ -1012,7 +987,7 @@ class WorkflowOrchestrator:
         self.state.phase = WorkflowPhase.DISCOVERY
 
         # COMPLIANCE GATE CHECK
-        if not getattr(self.state, 'compliance_passed', False):
+        if not getattr(self.state, "compliance_passed", False):
             logger.warning("  SKIPPING discovery - compliance gate not passed")
             logger.warning(f"     Compliance: {getattr(self.state, 'compliance_score', 0):.1%}")
             logger.warning(f"     Details: {getattr(self.state, 'compliance_details', {})}")
@@ -1051,20 +1026,14 @@ class WorkflowOrchestrator:
         # Update state
         self.state.candidate_libraries = list(library_assignments.keys())
         self.state.library_shapes = {
-            name: {
-                'strong': len(units),
-                'medium': 0,
-                'convergence': 1.0
-            }
+            name: {"strong": len(units), "medium": 0, "convergence": 1.0}
             for name, units in library_assignments.items()
         }
 
         # Create final labels
         for unit in self.state.units:
             self.state.final_labels[unit.id] = UnitLabels(
-                primary=unit.primary_library,
-                relations=[],
-                confidence=1.0
+                primary=unit.primary_library, relations=[], confidence=1.0
             )
 
         logger.info(f"  Identified {len(library_assignments)} candidate libraries")
@@ -1078,13 +1047,12 @@ class WorkflowOrchestrator:
                 description="After library discovery",
                 tracker=self.tracker,
                 candidate_libraries=self.state.candidate_libraries,
-                library_shapes=self.state.library_shapes
+                library_shapes=self.state.library_shapes,
             )
             self.intermediate_mgr.save(state)
 
     def _phase_review(self) -> None:
-        """
-        Review libraries for overlap and resolve conflicts.
+        """Review libraries for overlap and resolve conflicts.
 
         - Enforce proof-chain non-authoritative state in projections
         - Produce concrete actions (merge/split/drop/legacy) with provenance
@@ -1098,13 +1066,13 @@ class WorkflowOrchestrator:
 
         for unit in self.state.units:
             # Check if this unit type requires proof chain
-            unit_type = getattr(unit, 'unit_type', None)
+            unit_type = getattr(unit, "unit_type", None)
             if unit_type and unit_type == UnitType.ALGORITHM:
-                content = getattr(unit, 'content', '')
+                content = getattr(unit, "content", "")
 
                 # Check for claim references in algorithms
-                has_claim_ref = bool(re.search(r'\(@\[\+?P?\d*C\d+\]\)', content))
-                has_claim_mention = bool(re.search(r'\bP?\d*C\d+\b', content))
+                has_claim_ref = bool(re.search(r"\(@\[\+?P?\d*C\d+\]\)", content))
+                has_claim_mention = bool(re.search(r"\bP?\d*C\d+\b", content))
 
                 if not has_claim_ref and not has_claim_mention:
                     non_authoritative_units.add(unit.id)
@@ -1129,8 +1097,8 @@ class WorkflowOrchestrator:
         # Use RELATIVE, PER-INGEST PROVENANCE ordering instead of hardcoded thresholds
         all_patch_nums = []
         for unit in self.state.units:
-            p = getattr(unit, 'introduced_by', '')
-            if p.startswith('p'):
+            p = getattr(unit, "introduced_by", "")
+            if p.startswith("p"):
                 try:
                     all_patch_nums.append(int(p[1:]))
                 except ValueError:
@@ -1147,47 +1115,50 @@ class WorkflowOrchestrator:
         )
 
         # Analyze overlap between libraries
-        if hasattr(self.state, 'library_shapes') and self.state.library_shapes:
+        if hasattr(self.state, "library_shapes") and self.state.library_shapes:
             logger.info("  Analyzing library overlap for concrete actions...")
 
             for lib_name, shape_info in self.state.library_shapes.items():
                 lib_units = [
-                    u for u in self.state.units
-                    if getattr(u, 'primary_library', None) == lib_name
+                    u for u in self.state.units if getattr(u, "primary_library", None) == lib_name
                 ]
 
                 # Check for merge candidates (high overlap)
-                convergence = shape_info.get('convergence', 0)
+                convergence = shape_info.get("convergence", 0)
                 if convergence < 0.5:  # Low convergence suggests split
-                    review_actions.append({
-                        'action': 'SPLIT',
-                        'target': lib_name,
-                        'provenance': (
-                            f"Low convergence ({convergence:.2f}) suggests internal divergence"
-                        ),
-                        'confidence': 1 - convergence,
-                        'auto_applicable': False,
-                        'proposed_implementation': (
-                            f"Split {lib_name} into sub-libraries based on clustering"
-                        )
-                    })
+                    review_actions.append(
+                        {
+                            "action": "SPLIT",
+                            "target": lib_name,
+                            "provenance": (
+                                f"Low convergence ({convergence:.2f}) suggests internal divergence"
+                            ),
+                            "confidence": 1 - convergence,
+                            "auto_applicable": False,
+                            "proposed_implementation": (
+                                f"Split {lib_name} into sub-libraries based on clustering"
+                            ),
+                        }
+                    )
 
                 # Check for empty/deprecated libraries
                 if len(lib_units) == 0:
-                    review_actions.append({
-                        'action': 'DROP',
-                        'target': lib_name,
-                        'provenance': "No elements assigned to library",
-                        'confidence': 1.0,
-                        'auto_applicable': True
-                    })
+                    review_actions.append(
+                        {
+                            "action": "DROP",
+                            "target": lib_name,
+                            "provenance": "No elements assigned to library",
+                            "confidence": 1.0,
+                            "auto_applicable": True,
+                        }
+                    )
 
                 # Check for legacy artifacts - Use RELATIVE thresholds
                 if lib_units:
-                    patches = [getattr(u, 'introduced_by', '') for u in lib_units]
+                    patches = [getattr(u, "introduced_by", "") for u in lib_units]
                     patch_nums = []
                     for p in patches:
-                        if p.startswith('p'):
+                        if p.startswith("p"):
                             try:
                                 patch_nums.append(int(p[1:]))
                             except ValueError:
@@ -1197,31 +1168,33 @@ class WorkflowOrchestrator:
                     if patch_nums and max(patch_nums) < early_threshold:
                         # Check if this library is referenced elsewhere
                         is_referenced = any(
-                            lib_name in getattr(u, 'relation_libraries', [])
+                            lib_name in getattr(u, "relation_libraries", [])
                             for u in self.state.units
-                            if getattr(u, 'primary_library', None) != lib_name
+                            if getattr(u, "primary_library", None) != lib_name
                         )
 
-                        review_actions.append({
-                            'action': 'LEGACY',
-                            'target': lib_name,
-                            'provenance': (
-                                f"All elements from early patches "
-                                f"(p{min(patch_nums)}-p{max(patch_nums)}), "
-                                f"before threshold p{early_threshold}"
-                            ),
-                            'confidence': 0.7 if not is_referenced else 0.4,
-                            'auto_applicable': (
-                                not is_referenced and
-                                self._is_fully_superseded(lib_name, lib_units)
-                            ),
-                            'is_referenced': is_referenced,
-                            'proposed_implementation': (
-                                f"Archive {lib_name} to legacy/ folder"
-                                if not is_referenced
-                                else f"Review references before archiving {lib_name}"
-                            )
-                        })
+                        review_actions.append(
+                            {
+                                "action": "LEGACY",
+                                "target": lib_name,
+                                "provenance": (
+                                    f"All elements from early patches "
+                                    f"(p{min(patch_nums)}-p{max(patch_nums)}), "
+                                    f"before threshold p{early_threshold}"
+                                ),
+                                "confidence": 0.7 if not is_referenced else 0.4,
+                                "auto_applicable": (
+                                    not is_referenced
+                                    and self._is_fully_superseded(lib_name, lib_units)
+                                ),
+                                "is_referenced": is_referenced,
+                                "proposed_implementation": (
+                                    f"Archive {lib_name} to legacy/ folder"
+                                    if not is_referenced
+                                    else f"Review references before archiving {lib_name}"
+                                ),
+                            }
+                        )
 
         # Store review actions
         self.state.review_actions = review_actions
@@ -1230,8 +1203,7 @@ class WorkflowOrchestrator:
             logger.info(f"  Review produced {len(review_actions)} concrete actions:")
             for action in review_actions[:5]:
                 logger.info(
-                    f"    {action['action']}: {action['target']} "
-                    f"({action['provenance'][:50]}...)"
+                    f"    {action['action']}: {action['target']} ({action['provenance'][:50]}...)"
                 )
 
         # Save intermediate
@@ -1243,13 +1215,12 @@ class WorkflowOrchestrator:
                 candidate_libraries=self.state.candidate_libraries,
                 library_shapes=self.state.library_shapes,
                 review_actions=self.state.review_actions,
-                non_authoritative_units=self.state.non_authoritative_units
+                non_authoritative_units=self.state.non_authoritative_units,
             )
             self.intermediate_mgr.save(state)
 
     def _phase_sync(self) -> None:
-        """
-        Synchronize plan.md <-> libraries.
+        """Synchronize plan.md <-> libraries.
 
         AUTHORITY IS NOT CONFIGURABLE.
         - LIBRARIES are authoritative (always, at finalization)
@@ -1272,28 +1243,26 @@ class WorkflowOrchestrator:
             plan_content = plan_path.read_text(encoding="utf-8")
 
             # Convert plan to atoms with stable IDs
-            plan_atoms = self._content_to_atoms(plan_content, 'plan', 'line')
+            plan_atoms = self._content_to_atoms(plan_content, "plan", "line")
 
             # Collect all library atoms (multiset - preserves duplicates)
             library_atoms: list[dict[str, Any]] = []
             for lib_file in libraries_dir.glob("*.md"):
                 lib_content = lib_file.read_text(encoding="utf-8")
-                lib_atoms = self._content_to_atoms(lib_content, lib_file.stem, 'line')
+                lib_atoms = self._content_to_atoms(lib_content, lib_file.stem, "line")
                 library_atoms.extend(lib_atoms)
 
             # Use SequenceMatcher for sequence-aware comparison
-            plan_lines = [a['content'] for a in plan_atoms if a['content'].strip()]
-            lib_lines = [a['content'] for a in library_atoms if a['content'].strip()]
+            plan_lines = [a["content"] for a in plan_atoms if a["content"].strip()]
+            lib_lines = [a["content"] for a in library_atoms if a["content"].strip()]
 
             # Create a set of library content for quick lookup
             lib_content_set = set(lib_lines)
 
             # Find plan-only content -> this is DRIFT, not authority
             for atom in plan_atoms:
-                line_stripped = atom['content'].strip()
-                if (line_stripped and
-                    not line_stripped.startswith('#') and
-                    line_stripped != '---'):
+                line_stripped = atom["content"].strip()
+                if line_stripped and not line_stripped.startswith("#") and line_stripped != "---":
                     if line_stripped not in lib_content_set:
                         # Also check for fuzzy matches
                         best_match_ratio = 0.0
@@ -1304,32 +1273,34 @@ class WorkflowOrchestrator:
 
                         # Only mark as drift if no good fuzzy match
                         if best_match_ratio < 0.85:
-                            plan_only_remainder.append({
-                                'line': atom['line_number'],
-                                'content': line_stripped[:100],
-                                'type': 'plan_only_drift',
-                                'best_fuzzy_match': best_match_ratio,
-                                'atom_id': atom['id']
-                            })
+                            plan_only_remainder.append(
+                                {
+                                    "line": atom["line_number"],
+                                    "content": line_stripped[:100],
+                                    "type": "plan_only_drift",
+                                    "best_fuzzy_match": best_match_ratio,
+                                    "atom_id": atom["id"],
+                                }
+                            )
 
             if plan_only_remainder:
-                drift_evidence.append({
-                    'type': 'plan_only_content',
-                    'description': (
-                        'Content in plan.md not found in any library '
-                        '(will be lost on regeneration)'
-                    ),
-                    'lines_count': len(plan_only_remainder),
-                    'samples': plan_only_remainder[:5],
-                    'severity': 'warning',
-                    'action': 'Either add to a library or accept as intentional removal'
-                })
+                drift_evidence.append(
+                    {
+                        "type": "plan_only_content",
+                        "description": (
+                            "Content in plan.md not found in any library "
+                            "(will be lost on regeneration)"
+                        ),
+                        "lines_count": len(plan_only_remainder),
+                        "samples": plan_only_remainder[:5],
+                        "severity": "warning",
+                        "action": "Either add to a library or accept as intentional removal",
+                    }
+                )
                 logger.warning(
                     f"  {len(plan_only_remainder)} lines in plan.md not in libraries (drift)"
                 )
-                logger.warning(
-                    "     These will be LOST when plan.md is regenerated from libraries"
-                )
+                logger.warning("     These will be LOST when plan.md is regenerated from libraries")
 
         if drift_evidence:
             logger.info(f"  Detected {len(drift_evidence)} drift issues -> gaps.md")
@@ -1338,8 +1309,7 @@ class WorkflowOrchestrator:
         self.state.plan_only_remainder = plan_only_remainder
 
     def _phase_finalize(self) -> None:
-        """
-        Finalize: Remove stamps, generate output, write relations.
+        """Finalize: Remove stamps, generate output, write relations.
 
         - Stamps are REMOVED from output files (explicit step with test)
         - plan.md is generated from authoritative library state
@@ -1351,7 +1321,7 @@ class WorkflowOrchestrator:
         self.state.phase = WorkflowPhase.FINALIZE
 
         # Run gap detection on PROJECTION OUTPUT, not original spec_folder
-        projection_path = getattr(self.state, 'current_projection_path', None)
+        projection_path = getattr(self.state, "current_projection_path", None)
 
         libraries_dir = self.spec_folder / "libraries"
         if libraries_dir.exists():
@@ -1374,13 +1344,15 @@ class WorkflowOrchestrator:
             gaps = detect_gaps(content, registry, libraries_dir)
 
         # Add sync drift as gap evidence
-        for drift in getattr(self.state, 'sync_drift', []):
-            gaps.append({
-                'type': 'library_drift',
-                'severity': 'warning',
-                'description': f"Library drift: {drift.get('type', 'unknown')}",
-                'details': drift
-            })
+        for drift in getattr(self.state, "sync_drift", []):
+            gaps.append(
+                {
+                    "type": "library_drift",
+                    "severity": "warning",
+                    "description": f"Library drift: {drift.get('type', 'unknown')}",
+                    "details": drift,
+                }
+            )
 
         gaps_md = format_gaps_md(gaps)
 
@@ -1398,7 +1370,7 @@ class WorkflowOrchestrator:
 
         for unit in self.state.units:
             # Quarantine non-authoritative units
-            if unit.id in getattr(self.state, 'non_authoritative_units', []):
+            if unit.id in getattr(self.state, "non_authoritative_units", []):
                 quarantined.append(unit)
                 continue
 
@@ -1437,7 +1409,7 @@ class WorkflowOrchestrator:
 
         # STAMP STRIPPING VERIFICATION
         stamp_check_failed = False
-        stamp_pattern = re.compile(r'@(from|modified|line):[^\s]+')
+        stamp_pattern = re.compile(r"@(from|modified|line):[^\s]+")
 
         for lib_path in libraries_dir.glob("*.md"):
             lib_content = lib_path.read_text(encoding="utf-8")
@@ -1468,33 +1440,27 @@ class WorkflowOrchestrator:
         )
 
     def _strip_provenance_stamps(self, content: str) -> str:
-        """
-        Strip provenance stamps from content.
+        """Strip provenance stamps from content.
 
         Removes @from:p#, @modified:p#, @line:# from output.
         Stamps are preserved in .workspace/ for debugging.
         """
         # Pattern: <!-- @from:p1 @modified:p5,p7 @line:234 -->
-        content = re.sub(r'\s*<!--\s*@(from|modified|line):[^>]+-->', '', content)
+        content = re.sub(r"\s*<!--\s*@(from|modified|line):[^>]+-->", "", content)
 
         # Pattern: @from:p1 (inline)
-        content = re.sub(r'\s*@(from|modified|line):[^\s]+', '', content)
+        content = re.sub(r"\s*@(from|modified|line):[^\s]+", "", content)
 
         return content
 
-    def _generate_plan_from_libraries(
-        self,
-        by_library: dict[str, list[TrackedUnit]]
-    ) -> str:
-        """
-        Generate plan.md as a deterministic projection from authoritative library state.
+    def _generate_plan_from_libraries(self, by_library: dict[str, list[TrackedUnit]]) -> str:
+        """Generate plan.md as a deterministic projection from authoritative library state.
 
         This is NOT a separate source of truth - it's computed from libraries.
         """
         lines = ["# Plan\n"]
         lines.append(
-            f"<!-- Generated from authoritative library state: "
-            f"{datetime.now().isoformat()} -->\n"
+            f"<!-- Generated from authoritative library state: {datetime.now().isoformat()} -->\n"
         )
         lines.append("<!-- DO NOT EDIT DIRECTLY - Edit libraries/*.md instead -->\n\n")
 
@@ -1516,12 +1482,15 @@ class WorkflowOrchestrator:
             # Sort units by type then by ID
             def unit_sort_key(u: TrackedUnit) -> tuple[int, str]:
                 type_order = {
-                    'algorithm': 0, 'claim': 1, 'invariant': 2,
-                    'goal': 3, 'data_structure': 4
+                    "algorithm": 0,
+                    "claim": 1,
+                    "invariant": 2,
+                    "goal": 3,
+                    "data_structure": 4,
                 }
                 unit_type = (
-                    str(getattr(u, 'unit_type', 'unknown')).lower()
-                    if not hasattr(u.unit_type, 'value')
+                    str(getattr(u, "unit_type", "unknown")).lower()
+                    if not hasattr(u.unit_type, "value")
                     else u.unit_type.value.lower()
                 )
                 return (type_order.get(unit_type, 99), u.id)
@@ -1529,25 +1498,23 @@ class WorkflowOrchestrator:
             for unit in sorted(units, key=unit_sort_key):
                 # Header with declaration and pinning back to library
                 lines.append(
-                    f"### {unit.id} ([={unit.id}]) "
-                    f"<!-- @pin:libraries/{lib_name}.md -->\n\n"
+                    f"### {unit.id} ([={unit.id}]) <!-- @pin:libraries/{lib_name}.md -->\n\n"
                 )
 
                 # Content
                 lines.append(f"{unit.content}\n\n")
 
                 # Relations (if any)
-                if hasattr(unit, 'relation_libraries') and unit.relation_libraries:
-                    rels = ', '.join(f"(@[+rel:{r}])" for r in unit.relation_libraries)
+                if hasattr(unit, "relation_libraries") and unit.relation_libraries:
+                    rels = ", ".join(f"(@[+rel:{r}])" for r in unit.relation_libraries)
                     lines.append(f"Relations: {rels}\n\n")
 
                 lines.append("---\n\n")
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     def _compute_prose_ratio(self, units: list[TrackedUnit]) -> float:
-        """
-        Compute the prose ratio for the current unit set.
+        """Compute the prose ratio for the current unit set.
 
         prose_ratio = (prose bytes/lines/units) / (total bytes/lines/units)
 
@@ -1570,15 +1537,15 @@ class WorkflowOrchestrator:
         for unit in units:
             unit_type = (
                 unit.unit_type.value.lower()
-                if hasattr(unit.unit_type, 'value')
+                if hasattr(unit.unit_type, "value")
                 else str(unit.unit_type).lower()
             )
-            content = getattr(unit, 'content', '')
-            content_len = len(content.encode('utf-8'))
+            content = getattr(unit, "content", "")
+            content_len = len(content.encode("utf-8"))
 
             total_bytes += content_len
 
-            if unit_type in ('prose', 'unknown', 'paragraph', 'text'):
+            if unit_type in ("prose", "unknown", "paragraph", "text"):
                 prose_count += 1
                 prose_bytes += content_len
 
@@ -1591,8 +1558,7 @@ class WorkflowOrchestrator:
             return 0.0
 
     def _is_fully_superseded(self, lib_name: str, lib_units: list[TrackedUnit]) -> bool:
-        """
-        Check if a library has been fully superseded by later patches.
+        """Check if a library has been fully superseded by later patches.
 
         A library is fully superseded if:
         - All its element IDs appear in later patches with the same or updated content
@@ -1600,20 +1566,20 @@ class WorkflowOrchestrator:
 
         Returns True if safe to auto-archive, False if manual review needed.
         """
-        lib_ids = {getattr(u, 'id', '') for u in lib_units}
+        lib_ids = {getattr(u, "id", "") for u in lib_units}
 
         # Find all units from later patches
         later_units = []
         for unit in self.state.units:
-            if getattr(unit, 'primary_library', None) != lib_name:
-                p = getattr(unit, 'introduced_by', '')
-                if p.startswith('p'):
+            if getattr(unit, "primary_library", None) != lib_name:
+                p = getattr(unit, "introduced_by", "")
+                if p.startswith("p"):
                     try:
                         patch_num = int(p[1:])
                         max_lib_patch = 0
                         for u in lib_units:
-                            p2 = getattr(u, 'introduced_by', 'p0')
-                            if p2.startswith('p'):
+                            p2 = getattr(u, "introduced_by", "p0")
+                            if p2.startswith("p"):
                                 try:
                                     max_lib_patch = max(max_lib_patch, int(p2[1:]))
                                 except ValueError:
@@ -1624,7 +1590,7 @@ class WorkflowOrchestrator:
                         pass
 
         # Check if all library IDs appear in later units
-        later_ids = {getattr(u, 'id', '') for u in later_units}
+        later_ids = {getattr(u, "id", "") for u in later_units}
         superseded_ids = lib_ids & later_ids
 
         # Only fully superseded if all IDs are covered
@@ -1643,18 +1609,13 @@ class WorkflowOrchestrator:
             lines.append("- **Issue**: Broken proof chain (no claim reference)\n")
             lines.append(f"- **Source**: {getattr(unit, 'source', 'unknown')}\n")
             lines.append(f"- **Introduced by**: {getattr(unit, 'introduced_by', 'unknown')}\n\n")
-            content = getattr(unit, 'content', '')
+            content = getattr(unit, "content", "")
             lines.append(f"```\n{content[:500]}...\n```\n\n")
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
-    def _format_library_with_relations(
-        self,
-        name: str,
-        units: list[TrackedUnit]
-    ) -> str:
-        """
-        Format units as a library file WITH relation annotations preserved.
+    def _format_library_with_relations(self, name: str, units: list[TrackedUnit]) -> str:
+        """Format units as a library file WITH relation annotations preserved.
 
         Per-element: (@[+rel:library_name])
         Library-level: cross-links index at end
@@ -1670,7 +1631,7 @@ class WorkflowOrchestrator:
 
             # Add relation annotation if present
             if relation_libs:
-                rel_annotations = ' '.join(f"(@[+rel:{r}])" for r in relation_libs)
+                rel_annotations = " ".join(f"(@[+rel:{r}])" for r in relation_libs)
                 lines.append(f"{unit.content}\n{rel_annotations}")
                 cross_links.update(relation_libs)
             else:
@@ -1686,4 +1647,4 @@ class WorkflowOrchestrator:
                 lines.append(f"- [{lib}](libraries/{lib}.md)")
             lines.append("")
 
-        return '\n'.join(lines)
+        return "\n".join(lines)

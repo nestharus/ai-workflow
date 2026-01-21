@@ -1,5 +1,4 @@
-"""
-Workspace state management for spec processing.
+"""Workspace state management for spec processing.
 
 The workspace maintains state across the 4 phases:
 1. CLEANING: Validate and legalize
@@ -58,8 +57,7 @@ class PhaseResult:
 
 @dataclass
 class CoverageSnapshot:
-    """
-    Snapshot of coverage tracking metrics.
+    """Snapshot of coverage tracking metrics.
 
     Tracks the number of units processed and their status breakdown
     at a point in time.
@@ -106,8 +104,7 @@ class CoverageSnapshot:
 
 @dataclass
 class WorkspaceState:
-    """
-    Persistent state for spec workspace processing.
+    """Persistent state for spec workspace processing.
 
     Tracks:
     - Current phase and status
@@ -140,9 +137,7 @@ class WorkspaceState:
         # Initialize phase results
         for phase in Phase:
             if phase.value not in self.phases:
-                self.phases[phase.value] = PhaseResult(
-                    phase=phase, status=PhaseStatus.NOT_STARTED
-                )
+                self.phases[phase.value] = PhaseResult(phase=phase, status=PhaseStatus.NOT_STARTED)
 
     def start_phase(self, phase: Phase) -> None:
         """Mark a phase as started."""
@@ -151,9 +146,7 @@ class WorkspaceState:
         self.phases[phase.value].started_at = datetime.now().isoformat()
         self._log_event("phase_started", {"phase": phase.value})
 
-    def complete_phase(
-        self, phase: Phase, outputs: dict[str, Any] | None = None
-    ) -> None:
+    def complete_phase(self, phase: Phase, outputs: dict[str, Any] | None = None) -> None:
         """Mark a phase as completed."""
         self.phases[phase.value].status = PhaseStatus.COMPLETED
         self.phases[phase.value].completed_at = datetime.now().isoformat()
@@ -197,9 +190,7 @@ class WorkspaceState:
 
     def is_complete(self) -> bool:
         """Check if all phases are completed."""
-        return all(
-            self.phases[phase.value].status == PhaseStatus.COMPLETED for phase in Phase
-        )
+        return all(self.phases[phase.value].status == PhaseStatus.COMPLETED for phase in Phase)
 
     def _log_event(self, event_type: str, data: dict[str, Any]) -> None:
         """Log an event to history."""
@@ -267,8 +258,7 @@ class WorkspaceState:
             current_phase = Phase(raw_phase)
         except ValueError as e:
             raise ValueError(
-                f"Invalid phase value '{raw_phase}'. "
-                f"Valid values are: {[p.value for p in Phase]}"
+                f"Invalid phase value '{raw_phase}'. Valid values are: {[p.value for p in Phase]}"
             ) from e
 
         state = cls(
@@ -322,12 +312,8 @@ class WorkspaceState:
         # Restore v2.0 complex fields
         if data.get("metrics"):
             state.metrics = ComplianceMetrics.from_dict(data["metrics"])
-        state.strategies = [
-            StrategyRecord.from_dict(s) for s in data.get("strategies", [])
-        ]
-        state.conflicts = [
-            ConflictBundle.from_dict(c) for c in data.get("conflicts", [])
-        ]
+        state.strategies = [StrategyRecord.from_dict(s) for s in data.get("strategies", [])]
+        state.conflicts = [ConflictBundle.from_dict(c) for c in data.get("conflicts", [])]
         if data.get("coverage"):
             state.coverage = CoverageSnapshot.from_dict(data["coverage"])
 

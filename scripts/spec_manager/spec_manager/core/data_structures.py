@@ -149,9 +149,7 @@ class ComplianceMetrics:
         }
         for name, value in metrics.items():
             if not (0.0 <= value <= 1.0):
-                raise ValueError(
-                    f"{name} must be in range [0.0, 1.0], got {value}"
-                )
+                raise ValueError(f"{name} must be in range [0.0, 1.0], got {value}")
 
     def gate_passed(self) -> bool:
         """Check if all metrics meet or exceed the gate threshold."""
@@ -629,7 +627,7 @@ def _safe_serialize_details(details: dict[str, Any]) -> str:
         raise ValueError(
             f"Unsupported type in evidence details: {type(obj).__name__}. "
             f"Details must contain only JSON-serializable types, Path, or datetime. "
-            f"Got: {repr(obj)}"
+            f"Got: {obj!r}"
         )
 
     serializable_details = make_serializable(details)
@@ -709,8 +707,7 @@ def compute_evidence_signature(evidence_list: list[GapEvidence]) -> str:
 
         # Include all fields in canonical representation
         canonical_parts.append(
-            f"{e.invariant_family}:{e.description}:{details_str}"
-            f":{location}:{detector}:{confidence}"
+            f"{e.invariant_family}:{e.description}:{details_str}:{location}:{detector}:{confidence}"
         )
 
     canonical_str = "|".join(canonical_parts)

@@ -1,5 +1,4 @@
-"""
-Workflow module - orchestrates the full ingest workflow.
+"""Workflow module - orchestrates the full ingest workflow.
 
 This module provides:
 - WorkflowOrchestrator: Main coordinator with phase methods
@@ -44,8 +43,7 @@ def ingest(
     compliance_threshold: float = 0.90,
     compliance_gate_mode: str = "block",
 ) -> dict:
-    """
-    Run the full ingest workflow on a spec folder.
+    """Run the full ingest workflow on a spec folder.
 
     Args:
         spec_folder: Path to spec folder containing patches/
@@ -70,22 +68,19 @@ def ingest(
         compliance_gate_mode=compliance_gate_mode,
     )
 
-    orchestrator = WorkflowOrchestrator(
-        spec_folder=Path(spec_folder),
-        config=config
-    )
+    orchestrator = WorkflowOrchestrator(spec_folder=Path(spec_folder), config=config)
 
     state = orchestrator.run()
 
     return {
-        'phase': state.phase.value,
-        'cleaning_passes': state.cleaning_pass,
-        'discovery_iterations': state.discovery_iteration,
-        'total_units': len(state.units),
-        'libraries': list(state.library_shapes.keys()),
-        'compliance_score': state.compliance_score,
-        'compliance_passed': state.compliance_passed,
-        'errors': state.errors
+        "phase": state.phase.value,
+        "cleaning_passes": state.cleaning_pass,
+        "discovery_iterations": state.discovery_iteration,
+        "total_units": len(state.units),
+        "libraries": list(state.library_shapes.keys()),
+        "compliance_score": state.compliance_score,
+        "compliance_passed": state.compliance_passed,
+        "errors": state.errors,
     }
 
 

@@ -450,6 +450,7 @@ class TestSafeSerializeDetails:
 
     def test_unsupported_type_raises_error(self):
         """Test that unsupported types raise ValueError."""
+
         class CustomObject:
             pass
 
