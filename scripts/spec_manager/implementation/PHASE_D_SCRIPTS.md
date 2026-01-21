@@ -18,7 +18,7 @@ The scripts are in `/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/gen
 
 ## Scripts → Evidence Mapping
 
-### Staging Phase (Format Compliance Evidence)
+### CLEANING phase (legacy: staging) - Format Compliance Evidence
 
 | Script | Evidence Category | Priority |
 |--------|-------------------|----------|
@@ -29,7 +29,7 @@ The scripts are in `/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/gen
 | `find_references.py` | unannotated_reference | Medium |
 | `find_undefined_functions.py` | undefined_function | High |
 
-### Planning Phase (Coverage Evidence)
+### DISCOVERY phase (legacy: planning) - Coverage Evidence
 
 | Script | Evidence Category | Priority |
 |--------|-------------------|----------|
@@ -38,7 +38,7 @@ The scripts are in `/mnt/c/Users/xteam/IdeaProjects/ai-workflow/.tasks/plans/gen
 | `find_missing_assignments.py` | missing_assignment | Medium |
 | `check_sequences.py` | sequence_violation (duplicate, hole, conflict) | High |
 
-### Verification Phase (Content Evidence)
+### REVIEW phase (legacy: verification) - Content Evidence
 
 | Script | Evidence Category | Priority |
 |--------|-------------------|----------|
