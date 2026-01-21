@@ -1,5 +1,4 @@
-"""
-Surgical decomposition strategy.
+"""Surgical decomposition strategy.
 
 This strategy performs surgical, traceable edits on content:
 - Resolve unambiguous references
@@ -20,14 +19,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from spec_manager.core.coverage import CoverageTracker, Fragment, FragmentStatus, FragmentDestination
-from spec_manager.core.provenance import TrackedUnit, UnitType, SourceLocation, GranularityLevel
+from spec_manager.core.coverage import (
+    CoverageTracker,
+    Fragment,
+    FragmentDestination,
+    FragmentStatus,
+)
+from spec_manager.core.provenance import GranularityLevel, SourceLocation, TrackedUnit, UnitType
 from spec_manager.strategies.base import (
+    ProcessingContext,
     Strategy,
     StrategyDefinition,
-    ProcessingContext,
-    StrategyResult,
     StrategyPhase,
+    StrategyResult,
     Tool,
 )
 
@@ -43,8 +47,7 @@ class SurgeonResponse:
 
 
 class SurgicalDecompositionStrategy(Strategy):
-    """
-    Performs surgical decomposition using the surgeon agent.
+    """Performs surgical decomposition using the surgeon agent.
 
     This strategy:
     1. Initializes coverage tracking for each input
@@ -83,10 +86,7 @@ class SurgicalDecompositionStrategy(Strategy):
 
     def applies_to(self, context: ProcessingContext) -> bool:
         """Apply to any context with prose units."""
-        return any(
-            u.unit_type in (UnitType.PROSE, UnitType.UNKNOWN)
-            for u in context.units
-        )
+        return any(u.unit_type in (UnitType.PROSE, UnitType.UNKNOWN) for u in context.units)
 
     def execute(self, context: ProcessingContext) -> StrategyResult:
         """Execute surgical decomposition."""
@@ -136,7 +136,7 @@ class SurgicalDecompositionStrategy(Strategy):
 
         # Verify coverage
         output_units: list[TrackedUnit] = []
-        for file_path in by_file.keys():
+        for file_path in by_file:
             complete, gaps = tracker.verify_coverage(file_path)
             if not complete:
                 issues.append(f"Coverage gap in {file_path}: {gaps}")
@@ -149,10 +149,7 @@ class SurgicalDecompositionStrategy(Strategy):
         # Build metrics
         metrics = {
             "iterations": iteration,
-            "coverage_reports": {
-                fp: tracker.get_coverage_report(fp)
-                for fp in by_file.keys()
-            }
+            "coverage_reports": {fp: tracker.get_coverage_report(fp) for fp in by_file},
         }
 
         return StrategyResult(
@@ -175,8 +172,7 @@ class SurgicalDecompositionStrategy(Strategy):
         fragment: Fragment,
         tracker: CoverageTracker,
     ) -> SurgeonResponse:
-        """
-        Spawn the surgeon agent to decide what to do with a fragment.
+        """Spawn the surgeon agent to decide what to do with a fragment.
 
         The agent is called via subprocess to maintain isolation.
         """
@@ -208,7 +204,11 @@ Output your decision as JSON:
             # Call the surgeon agent
             result = subprocess.run(
                 [
-                    "uv", "run", "python", "-m", "scripts.agents",
+                    "uv",
+                    "run",
+                    "python",
+                    "-m",
+                    "scripts.agents",
                     "spec-manager-surgeon",
                     prompt,
                 ],
@@ -284,7 +284,6 @@ Output your decision as JSON:
         response: SurgeonResponse,
     ) -> str | None:
         """Apply the surgeon's decision to the fragment."""
-
         op = response.operation
         details = response.result
 
@@ -320,10 +319,12 @@ Output your decision as JSON:
                     traces.append(t)
                 elif isinstance(t, (list, tuple)) and len(t) >= 2:
                     # Convert (original, projected) tuple to dict
-                    traces.append({
-                        "original": t[0],
-                        "projected": t[1],
-                    })
+                    traces.append(
+                        {
+                            "original": t[0],
+                            "projected": t[1],
+                        }
+                    )
 
             tracker.project(fragment.id, form, projected, traces if traces else None)
             return f"Projected {fragment.id} to {form}"
@@ -481,8 +482,9 @@ Output your decision as JSON:
     def _find_sentence_boundaries(self, text: str) -> list[int]:
         """Find sentence boundaries for splitting."""
         import re
+
         boundaries = []
-        for m in re.finditer(r'[.!?]\s+', text):
+        for m in re.finditer(r"[.!?]\s+", text):
             boundaries.append(m.end())
         return boundaries
 
@@ -530,5 +532,5 @@ Output your decision as JSON:
                 "fragment_status": fragment.status.value,
                 "ambiguities": fragment.ambiguities,
                 "edits": fragment.edits,
-            }
+            },
         )

@@ -1,5 +1,4 @@
-"""
-Strategy-based staging pipeline.
+"""Strategy-based staging pipeline.
 
 This module integrates the strategy framework with the staging phase,
 providing multi-pass iteration until convergence.
@@ -14,19 +13,18 @@ Key principles:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from spec_manager.core.provenance import (
-    ProvenanceTracker,
-    TrackedUnit,
-    UnitType,
-    UnitStatus,
-    SourceLocation,
-    LineageTable,
     GranularityLevel,
+    LineageTable,
+    ProvenanceTracker,
+    SourceLocation,
+    TrackedUnit,
+    UnitStatus,
+    UnitType,
 )
 from spec_manager.strategies.base import (
     ProcessingContext,
@@ -58,8 +56,8 @@ class PassResult:
         """Check if this pass shows convergence."""
         # Convergence if no change in units and prose ratio
         return (
-            self.units_before == self.units_after and
-            abs(self.prose_ratio_before - self.prose_ratio_after) < 0.01
+            self.units_before == self.units_after
+            and abs(self.prose_ratio_before - self.prose_ratio_after) < 0.01
         )
 
 
@@ -86,34 +84,33 @@ class PipelineResult:
     def to_dict(self) -> dict[str, Any]:
         """Serialize for storage."""
         return {
-            'passes': [
+            "passes": [
                 {
-                    'pass_number': p.pass_number,
-                    'strategies_applied': p.strategies_applied,
-                    'actions_taken': p.actions_taken,
-                    'issues': p.issues,
-                    'metrics': p.metrics,
-                    'units_before': p.units_before,
-                    'units_after': p.units_after,
-                    'prose_ratio_before': p.prose_ratio_before,
-                    'prose_ratio_after': p.prose_ratio_after,
-                    'converged': p.converged,
+                    "pass_number": p.pass_number,
+                    "strategies_applied": p.strategies_applied,
+                    "actions_taken": p.actions_taken,
+                    "issues": p.issues,
+                    "metrics": p.metrics,
+                    "units_before": p.units_before,
+                    "units_after": p.units_after,
+                    "prose_ratio_before": p.prose_ratio_before,
+                    "prose_ratio_after": p.prose_ratio_after,
+                    "converged": p.converged,
                 }
                 for p in self.passes
             ],
-            'total_input_units': self.total_input_units,
-            'total_output_units': self.total_output_units,
-            'strategies_used': self.strategies_used,
-            'evolution_triggers': self.evolution_triggers,
-            'gaps_detected': self.gaps_detected,
-            'converged': self.converged,
-            'lineage': self.lineage.to_dict(),
+            "total_input_units": self.total_input_units,
+            "total_output_units": self.total_output_units,
+            "strategies_used": self.strategies_used,
+            "evolution_triggers": self.evolution_triggers,
+            "gaps_detected": self.gaps_detected,
+            "converged": self.converged,
+            "lineage": self.lineage.to_dict(),
         }
 
 
 class StagingPipeline:
-    """
-    Multi-pass staging pipeline using the strategy framework.
+    """Multi-pass staging pipeline using the strategy framework.
 
     Usage:
         pipeline = StagingPipeline(workspace_path)
@@ -145,9 +142,7 @@ class StagingPipeline:
         # Load strategy definitions
         if strategy_definitions_path is None:
             # Default to strategies/definitions relative to this package
-            strategy_definitions_path = (
-                Path(__file__).parent.parent / "strategies" / "definitions"
-            )
+            strategy_definitions_path = Path(__file__).parent.parent / "strategies" / "definitions"
 
         if strategy_definitions_path.exists():
             count = self.registry.load_from_directory(strategy_definitions_path)
@@ -163,26 +158,28 @@ class StagingPipeline:
     def _register_tools(self) -> None:
         """Register tools that strategies can use."""
         # Basic tools - strategies will use these
-        self.registry.register_tool('split_sentences', self._tool_split_sentences)
-        self.registry.register_tool('extract_ids', self._tool_extract_ids)
-        self.registry.register_tool('normalize_whitespace', self._tool_normalize_whitespace)
+        self.registry.register_tool("split_sentences", self._tool_split_sentences)
+        self.registry.register_tool("extract_ids", self._tool_extract_ids)
+        self.registry.register_tool("normalize_whitespace", self._tool_normalize_whitespace)
 
     def _tool_split_sentences(self, text: str) -> list[str]:
         """Split text into sentences."""
         import re
+
         # Simple sentence splitting
-        sentences = re.split(r'(?<=[.!?])\s+', text)
+        sentences = re.split(r"(?<=[.!?])\s+", text)
         return [s.strip() for s in sentences if s.strip()]
 
     def _tool_extract_ids(self, text: str) -> list[str]:
         """Extract ID patterns from text."""
         import re
+
         patterns = [
-            r'\(\[=([^\]]+)\]\)',           # Declarations
-            r'\(@\[([+=])([^\]]+)\]\)',     # References
-            r'\bAlgorithm\s+(\d+)\b',       # Algorithm N
-            r'\b(P\d+I\d+|P\d+C\d+)\b',     # P#I#, P#C#
-            r'\b(D\d+|G\d+)\b',             # D#, G#
+            r"\(\[=([^\]]+)\]\)",  # Declarations
+            r"\(@\[([+=])([^\]]+)\]\)",  # References
+            r"\bAlgorithm\s+(\d+)\b",  # Algorithm N
+            r"\b(P\d+I\d+|P\d+C\d+)\b",  # P#I#, P#C#
+            r"\b(D\d+|G\d+)\b",  # D#, G#
         ]
         ids = []
         for pattern in patterns:
@@ -192,13 +189,13 @@ class StagingPipeline:
     def _tool_normalize_whitespace(self, text: str) -> str:
         """Normalize whitespace in text."""
         import re
-        text = re.sub(r'\n{3,}', '\n\n', text)  # Max 2 newlines
-        text = re.sub(r'[ \t]+', ' ', text)     # Single spaces
+
+        text = re.sub(r"\n{3,}", "\n\n", text)  # Max 2 newlines
+        text = re.sub(r"[ \t]+", " ", text)  # Single spaces
         return text.strip()
 
     def run(self, patch_paths: list[Path]) -> PipelineResult:
-        """
-        Run the staging pipeline on patches.
+        """Run the staging pipeline on patches.
 
         Args:
             patch_paths: List of paths to patch files (IMMUTABLE - never modified)
@@ -233,7 +230,7 @@ class StagingPipeline:
             context = ProcessingContext(
                 units=units,
                 phase=StrategyPhase.CLEANING,
-                config={'pass_number': pass_num},
+                config={"pass_number": pass_num},
             )
 
             # Get applicable strategies
@@ -344,8 +341,7 @@ class StagingPipeline:
         )
 
     def _load_patches(self, patch_paths: list[Path]) -> list[TrackedUnit]:
-        """
-        Load patches into TrackedUnits.
+        """Load patches into TrackedUnits.
 
         IMPORTANT: This only READS patches, never modifies them.
         """
@@ -361,9 +357,7 @@ class StagingPipeline:
 
             # Use ProvenanceTracker to extract units
             units = self.tracker.extract_units_from_file(
-                content=content,
-                file_path=str(path),
-                patch_id=patch_id
+                content=content, file_path=str(path), patch_id=patch_id
             )
 
             all_units.extend(units)
@@ -375,10 +369,7 @@ class StagingPipeline:
         """Calculate the ratio of prose units."""
         if not units:
             return 0.0
-        prose_count = sum(
-            1 for u in units
-            if u.unit_type in (UnitType.PROSE, UnitType.UNKNOWN)
-        )
+        prose_count = sum(1 for u in units if u.unit_type in (UnitType.PROSE, UnitType.UNKNOWN))
         return prose_count / len(units)
 
     def _record_strategy_lineage(self, strategy_name: str, result: StrategyResult) -> None:
@@ -392,21 +383,18 @@ class StagingPipeline:
                     from_unit="source",  # Would need actual IDs
                     to_unit="target",
                     transformation=strategy_name,
-                    details={'action': action}
+                    details={"action": action},
                 )
 
     def _handle_evolution_trigger(
-        self,
-        context: ProcessingContext,
-        triggers: list[str]
+        self, context: ProcessingContext, triggers: list[str]
     ) -> dict[str, Any] | None:
         """Handle an evolution trigger by proposing a new strategy."""
-
         # Get stuck units (prose that isn't being processed)
         stuck_units = [
-            u for u in context.units
-            if u.unit_type in (UnitType.PROSE, UnitType.UNKNOWN)
-            and u.status == UnitStatus.PENDING
+            u
+            for u in context.units
+            if u.unit_type in (UnitType.PROSE, UnitType.UNKNOWN) and u.status == UnitStatus.PENDING
         ]
 
         if not stuck_units:
@@ -414,16 +402,13 @@ class StagingPipeline:
 
         # Capture the gap
         gap_evidence = self.registry.capture_strategy_gap(
-            context=context,
-            failure_mode=triggers[0],
-            failing_inputs=stuck_units[:5]
+            context=context, failure_mode=triggers[0], failing_inputs=stuck_units[:5]
         )
 
         # Try to propose a new strategy via LLM
         if self.llm_client:
             proposed = self.registry.propose_strategy_via_llm(
-                gap_evidence=gap_evidence,
-                llm_client=self.llm_client
+                gap_evidence=gap_evidence, llm_client=self.llm_client
             )
 
             if proposed:
@@ -432,19 +417,15 @@ class StagingPipeline:
                 print(f"Proposed new strategy: {proposed.name}")
 
         return {
-            'failure_mode': gap_evidence.failure_mode,
-            'stuck_units': len(stuck_units),
-            'proposed_strategy': gap_evidence.proposed_strategy.name if gap_evidence.proposed_strategy else None,
+            "failure_mode": gap_evidence.failure_mode,
+            "stuck_units": len(stuck_units),
+            "proposed_strategy": gap_evidence.proposed_strategy.name
+            if gap_evidence.proposed_strategy
+            else None,
         }
 
-    def _save_pass_state(
-        self,
-        pass_num: int,
-        units: list[TrackedUnit],
-        state_type: str
-    ) -> Path:
-        """
-        Save intermediate state to workspace.
+    def _save_pass_state(self, pass_num: int, units: list[TrackedUnit], state_type: str) -> Path:
+        """Save intermediate state to workspace.
 
         Creates: .workspace/staging/pass_{N}/units.json
         Or: .workspace/staging/final/units.json
@@ -461,31 +442,33 @@ class StagingPipeline:
         # Serialize units
         units_data = []
         for unit in units:
-            units_data.append({
-                'id': unit.id,
-                'content': unit.content,
-                'unit_type': unit.unit_type.value,
-                'source': {
-                    'file': unit.source.file,
-                    'line_start': unit.source.line_start,
-                    'line_end': unit.source.line_end,
-                    'patch_id': unit.source.patch_id,
-                },
-                'introduced_by': unit.introduced_by,
-                'modified_by': unit.modified_by,
-                'declarations': unit.declarations,
-                'references': unit.references,
-                'status': unit.status.value,
-                'parents': unit.parents,
-                'children': unit.children,
-                'granularity': unit.granularity.value,
-                'parent_unit_id': unit.parent_unit_id,
-                'child_unit_ids': unit.child_unit_ids,
-                'content_hash': unit.content_hash,
-            })
+            units_data.append(
+                {
+                    "id": unit.id,
+                    "content": unit.content,
+                    "unit_type": unit.unit_type.value,
+                    "source": {
+                        "file": unit.source.file,
+                        "line_start": unit.source.line_start,
+                        "line_end": unit.source.line_end,
+                        "patch_id": unit.source.patch_id,
+                    },
+                    "introduced_by": unit.introduced_by,
+                    "modified_by": unit.modified_by,
+                    "declarations": unit.declarations,
+                    "references": unit.references,
+                    "status": unit.status.value,
+                    "parents": unit.parents,
+                    "children": unit.children,
+                    "granularity": unit.granularity.value,
+                    "parent_unit_id": unit.parent_unit_id,
+                    "child_unit_ids": unit.child_unit_ids,
+                    "content_hash": unit.content_hash,
+                }
+            )
 
         units_path = pass_dir / "units.json"
-        with open(units_path, 'w', encoding='utf-8') as f:
+        with open(units_path, "w", encoding="utf-8") as f:
             json.dump(units_data, f, indent=2)
 
         print(f"Saved {len(units)} units to {units_path}")
@@ -498,32 +481,34 @@ class StagingPipeline:
         if not final_path.exists():
             return []
 
-        with open(final_path, 'r', encoding='utf-8') as f:
+        with open(final_path, encoding="utf-8") as f:
             units_data = json.load(f)
 
         units = []
         for data in units_data:
             unit = TrackedUnit(
-                id=data['id'],
-                content=data['content'],
-                unit_type=UnitType(data['unit_type']),
+                id=data["id"],
+                content=data["content"],
+                unit_type=UnitType(data["unit_type"]),
                 source=SourceLocation(
-                    file=data['source']['file'],
-                    line_start=data['source']['line_start'],
-                    line_end=data['source']['line_end'],
-                    patch_id=data['source'].get('patch_id'),
+                    file=data["source"]["file"],
+                    line_start=data["source"]["line_start"],
+                    line_end=data["source"]["line_end"],
+                    patch_id=data["source"].get("patch_id"),
                 ),
-                introduced_by=data['introduced_by'],
-                modified_by=data.get('modified_by', []),
-                declarations=data.get('declarations', []),
-                references=data.get('references', []),
-                status=UnitStatus(data.get('status', 'pending')),
-                parents=data.get('parents', []),
-                children=data.get('children', []),
-                granularity=GranularityLevel(data.get('granularity', GranularityLevel.SECTION.value)),
-                parent_unit_id=data.get('parent_unit_id'),
-                child_unit_ids=data.get('child_unit_ids', []),
-                content_hash=data.get('content_hash'),
+                introduced_by=data["introduced_by"],
+                modified_by=data.get("modified_by", []),
+                declarations=data.get("declarations", []),
+                references=data.get("references", []),
+                status=UnitStatus(data.get("status", "pending")),
+                parents=data.get("parents", []),
+                children=data.get("children", []),
+                granularity=GranularityLevel(
+                    data.get("granularity", GranularityLevel.SECTION.value)
+                ),
+                parent_unit_id=data.get("parent_unit_id"),
+                child_unit_ids=data.get("child_unit_ids", []),
+                content_hash=data.get("content_hash"),
             )
             units.append(unit)
 

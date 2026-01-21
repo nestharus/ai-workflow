@@ -1,5 +1,4 @@
-"""
-LLM-based inference strategies for prose fragment processing.
+"""LLM-based inference strategies for prose fragment processing.
 
 CRITICAL: LLM outputs are EVIDENCE, not truth.
 - Each inference has confidence score and provenance spans
@@ -10,15 +9,15 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from spec_manager.core.provenance import (
-    TrackedUnit,
-    SourceLocation,
-    UnitType,
-    UnitStatus,
     GranularityLevel,
+    SourceLocation,
+    TrackedUnit,
+    UnitStatus,
+    UnitType,
 )
 
 
@@ -26,26 +25,25 @@ from spec_manager.core.provenance import (
 class InferenceResult:
     """Result of an LLM inference operation."""
 
-    inferred_content: str              # What was inferred
-    confidence: float                  # 0.0-1.0 confidence score
+    inferred_content: str  # What was inferred
+    confidence: float  # 0.0-1.0 confidence score
     source_spans: list[SourceLocation]  # Where the inference came from
-    inference_type: str                # "requirement", "claim", "patch_target", etc.
-    rationale: str                     # LLM's explanation
+    inference_type: str  # "requirement", "claim", "patch_target", etc.
+    rationale: str  # LLM's explanation
 
 
 @dataclass
 class ProseFragmentEvidence:
     """Evidence from LLM inference over prose fragments."""
 
-    fragment: str                      # The prose fragment analyzed
+    fragment: str  # The prose fragment analyzed
     location: SourceLocation
     inferences: list[InferenceResult]  # What the LLM inferred
-    remaining_prose: str | None        # Content not captured by inferences
+    remaining_prose: str | None  # Content not captured by inferences
 
 
 class ProseFragmentInferenceDetector:
-    """
-    Infer requirements/claims from scattered prose fragments using LLM.
+    """Infer requirements/claims from scattered prose fragments using LLM.
 
     CRITICAL: Outputs are EVIDENCE with confidence, not authoritative truth.
     """
@@ -53,12 +51,8 @@ class ProseFragmentInferenceDetector:
     def __init__(self, llm_client: Any = None) -> None:
         self._llm = llm_client
 
-    def detect(
-        self,
-        units: list[TrackedUnit]
-    ) -> list[ProseFragmentEvidence]:
-        """
-        Analyze prose units to infer hidden requirements/claims.
+    def detect(self, units: list[TrackedUnit]) -> list[ProseFragmentEvidence]:
+        """Analyze prose units to infer hidden requirements/claims.
         """
         evidence_list = []
 
@@ -90,7 +84,7 @@ class ProseFragmentInferenceDetector:
             fragment=unit.content,
             location=unit.source,
             inferences=inferences,
-            remaining_prose=self._compute_remaining(unit.content, inferences)
+            remaining_prose=self._compute_remaining(unit.content, inferences),
         )
 
     def _heuristic_inference(self, unit: TrackedUnit) -> list[InferenceResult]:
@@ -100,10 +94,10 @@ class ProseFragmentInferenceDetector:
 
         # Pattern: "must", "should", "always", "never"
         requirement_patterns = [
-            (r'\b(must|shall)\s+(\w+)', 0.8),
-            (r'\b(should)\s+(\w+)', 0.6),
-            (r'\b(always|never)\s+(\w+)', 0.7),
-            (r'\brequire[ds]?\b', 0.7),
+            (r"\b(must|shall)\s+(\w+)", 0.8),
+            (r"\b(should)\s+(\w+)", 0.6),
+            (r"\b(always|never)\s+(\w+)", 0.7),
+            (r"\brequire[ds]?\b", 0.7),
         ]
 
         for pattern, base_confidence in requirement_patterns:
@@ -114,13 +108,15 @@ class ProseFragmentInferenceDetector:
                 end = min(len(content), match.end() + 50)
                 context = content[start:end].strip()
 
-                inferences.append(InferenceResult(
-                    inferred_content=context,
-                    confidence=base_confidence,
-                    source_spans=[unit.source],
-                    inference_type="requirement",
-                    rationale=f"Contains requirement keyword: '{match.group()}'"
-                ))
+                inferences.append(
+                    InferenceResult(
+                        inferred_content=context,
+                        confidence=base_confidence,
+                        source_spans=[unit.source],
+                        inference_type="requirement",
+                        rationale=f"Contains requirement keyword: '{match.group()}'",
+                    )
+                )
 
         return inferences
 
@@ -142,6 +138,7 @@ Output as JSON array:
         try:
             response = self._llm.complete(prompt)
             import json
+
             results = json.loads(response)
 
             return [
@@ -150,18 +147,14 @@ Output as JSON array:
                     confidence=r["confidence"],
                     source_spans=[unit.source],
                     inference_type=r["type"],
-                    rationale=r["rationale"]
+                    rationale=r["rationale"],
                 )
                 for r in results
             ]
         except Exception:
             return self._heuristic_inference(unit)
 
-    def _compute_remaining(
-        self,
-        content: str,
-        inferences: list[InferenceResult]
-    ) -> str | None:
+    def _compute_remaining(self, content: str, inferences: list[InferenceResult]) -> str | None:
         """Compute what prose remains after inferences are extracted."""
         remaining = content
         for inf in inferences:
@@ -173,8 +166,7 @@ Output as JSON array:
 
 
 class ProseFragmentReductionStrategy:
-    """
-    Strategy to reduce prose fragments by promoting inferences to structured elements.
+    """Strategy to reduce prose fragments by promoting inferences to structured elements.
 
     Iteratively transforms inferred requirements into Claims/Invariants,
     shrinking the prose remainder over passes.
@@ -184,12 +176,8 @@ class ProseFragmentReductionStrategy:
         self.confidence_threshold = confidence_threshold
         self.detector = ProseFragmentInferenceDetector()
 
-    def execute(
-        self,
-        units: list[TrackedUnit]
-    ) -> tuple[list[TrackedUnit], list[TrackedUnit]]:
-        """
-        Execute prose reduction.
+    def execute(self, units: list[TrackedUnit]) -> tuple[list[TrackedUnit], list[TrackedUnit]]:
+        """Execute prose reduction.
 
         Returns:
             (promoted_units, updated_prose_units)
@@ -212,9 +200,7 @@ class ProseFragmentReductionStrategy:
         return promoted, updated_prose
 
     def _create_structured_unit(
-        self,
-        inference: InferenceResult,
-        evidence: ProseFragmentEvidence
+        self, inference: InferenceResult, evidence: ProseFragmentEvidence
     ) -> TrackedUnit:
         """Create a structured unit from an inference."""
         # Determine unit type from inference type
@@ -237,10 +223,7 @@ class ProseFragmentReductionStrategy:
             content_hash=content_hash,
         )
 
-    def _create_remainder_unit(
-        self,
-        evidence: ProseFragmentEvidence
-    ) -> TrackedUnit:
+    def _create_remainder_unit(self, evidence: ProseFragmentEvidence) -> TrackedUnit:
         """Create a prose unit for remaining content."""
         content = evidence.remaining_prose or ""
         content_hash = hashlib.sha256(content.encode()).hexdigest()
@@ -257,8 +240,7 @@ class ProseFragmentReductionStrategy:
 
 
 class VagueReferenceResolver:
-    """
-    Resolve vague entity references using LLM + context retrieval.
+    """Resolve vague entity references using LLM + context retrieval.
 
     When a patch says "update the algorithm" without specifying which one,
     this resolver uses context to infer the target.
@@ -268,13 +250,8 @@ class VagueReferenceResolver:
         self._store = reference_store
         self._llm = llm_client
 
-    def resolve(
-        self,
-        reference_text: str,
-        context: dict[str, Any]
-    ) -> list[InferenceResult]:
-        """
-        Resolve a vague reference to candidate targets.
+    def resolve(self, reference_text: str, context: dict[str, Any]) -> list[InferenceResult]:
+        """Resolve a vague reference to candidate targets.
 
         Args:
             reference_text: The vague reference (e.g., "the algorithm")
@@ -289,13 +266,15 @@ class VagueReferenceResolver:
             # Get candidate targets from reference store
             store_candidates = self._store.retrieve(reference_text, context, top_k=10)
             for cand_id, score in store_candidates:
-                candidates.append(InferenceResult(
-                    inferred_content=cand_id,
-                    confidence=score,
-                    source_spans=[],
-                    inference_type="patch_target",
-                    rationale=f"Retrieved from reference store (score: {score:.2f})"
-                ))
+                candidates.append(
+                    InferenceResult(
+                        inferred_content=cand_id,
+                        confidence=score,
+                        source_spans=[],
+                        inference_type="patch_target",
+                        rationale=f"Retrieved from reference store (score: {score:.2f})",
+                    )
+                )
 
         if self._llm and context:
             # Use LLM to rank/refine candidates
@@ -304,10 +283,7 @@ class VagueReferenceResolver:
         return sorted(candidates, key=lambda x: -x.confidence)
 
     def _llm_rerank(
-        self,
-        reference_text: str,
-        candidates: list[InferenceResult],
-        context: dict[str, Any]
+        self, reference_text: str, candidates: list[InferenceResult], context: dict[str, Any]
     ) -> list[InferenceResult]:
         """Use LLM to rerank candidates based on context."""
         if not candidates:
@@ -315,8 +291,8 @@ class VagueReferenceResolver:
 
         prompt = f"""Given the vague reference "{reference_text}" and this context:
 
-Patch chain: {context.get('patch_chain', 'unknown')}
-Nearby elements: {context.get('nearby_elements', [])}
+Patch chain: {context.get("patch_chain", "unknown")}
+Nearby elements: {context.get("nearby_elements", [])}
 
 Rank these candidates by likelihood of being the target:
 {[c.inferred_content for c in candidates]}
@@ -326,6 +302,7 @@ Output as JSON: [{{"id": "...", "confidence": 0.X, "reason": "..."}}]"""
         try:
             response = self._llm.complete(prompt)
             import json
+
             rankings = json.loads(response)
 
             # Update confidence scores

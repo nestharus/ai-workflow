@@ -1,5 +1,4 @@
-"""
-Sentence decomposition strategy.
+"""Sentence decomposition strategy.
 
 This strategy splits compound sentences into atomic units so each
 can be tracked independently. This reduces risk of losing part of
@@ -16,15 +15,14 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any
 
-from spec_manager.core.provenance import TrackedUnit, UnitType, GranularityLevel
+from spec_manager.core.provenance import GranularityLevel, TrackedUnit, UnitType
 from spec_manager.strategies.base import (
+    ProcessingContext,
     Strategy,
     StrategyDefinition,
-    ProcessingContext,
-    StrategyResult,
     StrategyPhase,
+    StrategyResult,
     Tool,
 )
 
@@ -33,13 +31,11 @@ class SentenceDecompositionStrategy(Strategy):
     """Decomposes compound sentences into atomic units."""
 
     def __init__(
-        self,
-        definition: StrategyDefinition | None = None,
-        tools: dict[str, Tool] | None = None
+        self, definition: StrategyDefinition | None = None, tools: dict[str, Tool] | None = None
     ) -> None:
         self.definition = definition
         self.tools = tools or {}
-        self._splitter = self.tools.get('spacy_splitter') or self._simple_split
+        self._splitter = self.tools.get("spacy_splitter") or self._simple_split
 
     @property
     def name(self) -> str:
@@ -59,7 +55,7 @@ class SentenceDecompositionStrategy(Strategy):
 
     def applies_to(self, context: ProcessingContext) -> bool:
         """Check if any units have compound sentences."""
-        compound_indicators = [' and ', ' or ', '; ', ', and ', ', or ']
+        compound_indicators = [" and ", " or ", "; ", ", and ", ", or "]
 
         for unit in context.units:
             # Only decompose prose, not structured content
@@ -98,7 +94,7 @@ class SentenceDecompositionStrategy(Strategy):
             for i, sentence in enumerate(sentences):
                 sentence = sentence.strip()
                 content_hash = hashlib.sha256(sentence.encode()).hexdigest()
-                child_id = f"{unit.id}_atom_{i+1}"
+                child_id = f"{unit.id}_atom_{i + 1}"
                 child_unit_ids.append(child_id)
 
                 new_unit = TrackedUnit(
@@ -133,8 +129,8 @@ class SentenceDecompositionStrategy(Strategy):
             metrics={
                 "input_units": len(context.units),
                 "output_units": len(output_units),
-                "splits_performed": len(actions)
-            }
+                "splits_performed": len(actions),
+            },
         )
 
     def _simple_split(self, text: str) -> list[str]:
@@ -144,18 +140,18 @@ class SentenceDecompositionStrategy(Strategy):
 
         # First, protect certain patterns
         protected = text
-        protected = re.sub(r'e\.g\.', 'EG_PROTECTED', protected)
-        protected = re.sub(r'i\.e\.', 'IE_PROTECTED', protected)
+        protected = re.sub(r"e\.g\.", "EG_PROTECTED", protected)
+        protected = re.sub(r"i\.e\.", "IE_PROTECTED", protected)
 
         # Split on sentence boundaries
-        sentences = re.split(r'(?<=[.!?])\s+', protected)
+        sentences = re.split(r"(?<=[.!?])\s+", protected)
 
         # For each sentence, also split on ' and ' if it creates valid parts
         result: list[str] = []
         for sent in sentences:
             # Check for compound structure with 'and'
-            if ' and ' in sent.lower() and sent.lower().count(' and ') == 1:
-                parts = re.split(r'\s+and\s+', sent, flags=re.IGNORECASE)
+            if " and " in sent.lower() and sent.lower().count(" and ") == 1:
+                parts = re.split(r"\s+and\s+", sent, flags=re.IGNORECASE)
                 # Both parts should have some substance (at least 2 words each)
                 if all(len(p.split()) >= 2 for p in parts):
                     # Try to extract subject to carry forward
@@ -165,15 +161,13 @@ class SentenceDecompositionStrategy(Strategy):
                     # Simple heuristic: if first part has "must/should/shall" pattern,
                     # extract subject and modal for second part
                     modal_match = re.match(
-                        r'^(.+?)\s+(must|should|shall|will|can|may)\s+',
-                        first_part,
-                        re.IGNORECASE
+                        r"^(.+?)\s+(must|should|shall|will|can|may)\s+", first_part, re.IGNORECASE
                     )
                     if modal_match:
                         subject = modal_match.group(1)
                         modal = modal_match.group(2)
                         # Add subject + modal to second part if it looks like a verb phrase
-                        if not re.match(r'^[A-Z]', second_part):  # Doesn't start with capital
+                        if not re.match(r"^[A-Z]", second_part):  # Doesn't start with capital
                             second_part = f"{subject} {modal} {second_part}"
 
                     result.append(first_part)
@@ -181,8 +175,8 @@ class SentenceDecompositionStrategy(Strategy):
                     continue
 
             # Check for semicolon-separated clauses
-            if '; ' in sent:
-                clauses = sent.split('; ')
+            if "; " in sent:
+                clauses = sent.split("; ")
                 if all(len(c.split()) >= 2 for c in clauses):
                     result.extend(clauses)
                     continue
@@ -190,15 +184,11 @@ class SentenceDecompositionStrategy(Strategy):
             result.append(sent)
 
         # Restore protected patterns
-        result = [
-            s.replace('EG_PROTECTED', 'e.g.')
-             .replace('IE_PROTECTED', 'i.e.')
-            for s in result
-        ]
+        result = [s.replace("EG_PROTECTED", "e.g.").replace("IE_PROTECTED", "i.e.") for s in result]
 
         return [s for s in result if s.strip()]
 
     def _extract_refs(self, text: str) -> list[str]:
         """Extract references from text."""
-        ref_pattern = re.compile(r'\(@\[([+=])([^\]]+)\]\)')
+        ref_pattern = re.compile(r"\(@\[([+=])([^\]]+)\]\)")
         return [m.group(2) for m in ref_pattern.finditer(text)]
