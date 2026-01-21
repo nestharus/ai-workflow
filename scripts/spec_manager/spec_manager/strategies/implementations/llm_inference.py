@@ -8,6 +8,7 @@ CRITICAL: LLM outputs are EVIDENCE, not truth.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -17,6 +18,7 @@ from spec_manager.core.provenance import (
     SourceLocation,
     UnitType,
     UnitStatus,
+    GranularityLevel,
 )
 
 
@@ -223,13 +225,16 @@ class ProseFragmentReductionStrategy:
         }
         unit_type = type_map.get(inference.inference_type, UnitType.CLAIM)
 
+        content_hash = hashlib.sha256(inference.inferred_content.encode()).hexdigest()
         return TrackedUnit(
             id=f"_inferred_{hash(inference.inferred_content) % 10000}",
             content=inference.inferred_content,
             unit_type=unit_type,
             source=evidence.location,
             introduced_by="llm_inference",
-            annotations=[f"(@[confidence:{inference.confidence:.2f}])"]
+            annotations=[f"(@[confidence:{inference.confidence:.2f}])"],
+            granularity=GranularityLevel.SENTENCE,
+            content_hash=content_hash,
         )
 
     def _create_remainder_unit(
@@ -237,13 +242,17 @@ class ProseFragmentReductionStrategy:
         evidence: ProseFragmentEvidence
     ) -> TrackedUnit:
         """Create a prose unit for remaining content."""
+        content = evidence.remaining_prose or ""
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
         return TrackedUnit(
             id=f"_remainder_{hash(evidence.remaining_prose) % 10000}",
-            content=evidence.remaining_prose or "",
+            content=content,
             unit_type=UnitType.PROSE,
             source=evidence.location,
             introduced_by="llm_inference",
-            status=UnitStatus.PENDING
+            status=UnitStatus.PENDING,
+            granularity=GranularityLevel.SENTENCE,
+            content_hash=content_hash,
         )
 
 

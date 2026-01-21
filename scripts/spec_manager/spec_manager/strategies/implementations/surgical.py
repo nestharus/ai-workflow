@@ -13,6 +13,7 @@ Coverage is maintained throughout - every byte of original is accounted for.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from dataclasses import dataclass
@@ -20,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.core.coverage import CoverageTracker, Fragment, FragmentStatus, FragmentDestination
-from spec_manager.core.provenance import TrackedUnit, UnitType, SourceLocation
+from spec_manager.core.provenance import TrackedUnit, UnitType, SourceLocation, GranularityLevel
 from spec_manager.strategies.base import (
     Strategy,
     StrategyDefinition,
@@ -512,6 +513,7 @@ Output your decision as JSON:
         line_start = spans[0].start if spans else 0
         line_end = spans[-1].end if spans else 0
 
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
         return TrackedUnit(
             id=fragment.id,
             content=content,
@@ -522,6 +524,8 @@ Output your decision as JSON:
                 line_end=line_end,
             ),
             introduced_by="surgical",
+            granularity=GranularityLevel.CLAUSE,
+            content_hash=content_hash,
             metadata={
                 "fragment_status": fragment.status.value,
                 "ambiguities": fragment.ambiguities,

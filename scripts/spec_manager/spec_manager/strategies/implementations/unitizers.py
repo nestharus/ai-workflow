@@ -7,6 +7,7 @@ with zero declarations. Don't rely solely on ([=...]) boundaries.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from abc import ABC, abstractmethod
 from typing import Any
@@ -59,6 +60,7 @@ class LineUnitizer(Unitizer):
 
         for line_num, line in enumerate(content.splitlines(), start=1):
             if line.strip():  # Skip empty lines
+                content_hash = hashlib.sha256(line.encode()).hexdigest()
                 units.append(TrackedUnit(
                     id=f"_line_{file_path}_{line_num}",
                     content=line,
@@ -69,7 +71,9 @@ class LineUnitizer(Unitizer):
                         line_end=line_num,
                         patch_id=patch_id
                     ),
-                    introduced_by=patch_id or "unknown"
+                    introduced_by=patch_id or "unknown",
+                    granularity=self.granularity,
+                    content_hash=content_hash,
                 ))
 
         return units
@@ -129,6 +133,7 @@ class SentenceUnitizer(Unitizer):
                 line_num = content[:pos].count('\n') + 1
                 current_pos = pos + len(sent)
 
+            content_hash = hashlib.sha256(sent.encode()).hexdigest()
             units.append(TrackedUnit(
                 id=f"_sent_{file_path}_{i+1}",
                 content=sent,
@@ -139,7 +144,9 @@ class SentenceUnitizer(Unitizer):
                     line_end=line_num,
                     patch_id=patch_id
                 ),
-                introduced_by=patch_id or "unknown"
+                introduced_by=patch_id or "unknown",
+                granularity=self.granularity,
+                content_hash=content_hash,
             ))
 
         return units
@@ -199,6 +206,7 @@ class ClauseUnitizer(Unitizer):
             if not clause:
                 continue
 
+            content_hash = hashlib.sha256(clause.encode()).hexdigest()
             units.append(TrackedUnit(
                 id=f"_clause_{file_path}_{i+1}",
                 content=clause,
@@ -209,7 +217,9 @@ class ClauseUnitizer(Unitizer):
                     line_end=line_num,
                     patch_id=patch_id
                 ),
-                introduced_by=patch_id or "unknown"
+                introduced_by=patch_id or "unknown",
+                granularity=self.granularity,
+                content_hash=content_hash,
             ))
 
         return units
@@ -271,6 +281,7 @@ Output format: ["unit 1", "unit 2", ...]"""
             if not clause:
                 continue
 
+            content_hash = hashlib.sha256(clause.encode()).hexdigest()
             units.append(TrackedUnit(
                 id=f"_llm_unit_{file_path}_{i+1}",
                 content=clause,
@@ -281,7 +292,9 @@ Output format: ["unit 1", "unit 2", ...]"""
                     line_end=1,
                     patch_id=patch_id
                 ),
-                introduced_by=patch_id or "unknown"
+                introduced_by=patch_id or "unknown",
+                granularity=self.granularity,
+                content_hash=content_hash,
             ))
 
         return units

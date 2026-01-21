@@ -14,10 +14,11 @@ Example:
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
-from spec_manager.core.provenance import TrackedUnit, UnitType
+from spec_manager.core.provenance import TrackedUnit, UnitType, GranularityLevel
 from spec_manager.strategies.base import (
     Strategy,
     StrategyDefinition,
@@ -92,19 +93,38 @@ class SentenceDecompositionStrategy(Strategy):
 
             # Create new units for each sentence
             actions.append(f"Split {unit.id} into {len(sentences)} atoms")
+            child_unit_ids = []
 
             for i, sentence in enumerate(sentences):
+                sentence = sentence.strip()
+                content_hash = hashlib.sha256(sentence.encode()).hexdigest()
+                child_id = f"{unit.id}_atom_{i+1}"
+                child_unit_ids.append(child_id)
+
                 new_unit = TrackedUnit(
-                    id=f"{unit.id}_atom_{i+1}",
-                    content=sentence.strip(),
+                    id=child_id,
+                    content=sentence,
                     unit_type=unit.unit_type,
                     source=unit.source,  # Same source
                     introduced_by=unit.introduced_by,
                     modified_by=unit.modified_by.copy(),
                     declarations=unit.declarations if i == 0 else [],
-                    references=self._extract_refs(sentence)
+                    references=self._extract_refs(sentence),
+                    granularity=GranularityLevel.SENTENCE,
+                    parent_unit_id=unit.id,
+                    child_unit_ids=[],
+                    content_hash=content_hash,
                 )
+                # Add parent to lineage edges
+                new_unit.add_parent(unit.id)
                 output_units.append(new_unit)
+
+            # Update parent unit to track children
+            unit.child_unit_ids.extend(child_unit_ids)
+            # Add children to parent's lineage edges
+            for child_id in child_unit_ids:
+                unit.add_child(child_id)
+            output_units.append(unit)
 
         return StrategyResult(
             units=output_units,

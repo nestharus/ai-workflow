@@ -26,6 +26,7 @@ from spec_manager.core.provenance import (
     UnitStatus,
     SourceLocation,
     LineageTable,
+    GranularityLevel,
 )
 from spec_manager.strategies.base import (
     ProcessingContext,
@@ -477,6 +478,10 @@ class StagingPipeline:
                 'status': unit.status.value,
                 'parents': unit.parents,
                 'children': unit.children,
+                'granularity': unit.granularity.value,
+                'parent_unit_id': unit.parent_unit_id,
+                'child_unit_ids': unit.child_unit_ids,
+                'content_hash': unit.content_hash,
             })
 
         units_path = pass_dir / "units.json"
@@ -515,6 +520,10 @@ class StagingPipeline:
                 status=UnitStatus(data.get('status', 'pending')),
                 parents=data.get('parents', []),
                 children=data.get('children', []),
+                granularity=GranularityLevel(data.get('granularity', GranularityLevel.SECTION.value)),
+                parent_unit_id=data.get('parent_unit_id'),
+                child_unit_ids=data.get('child_unit_ids', []),
+                content_hash=data.get('content_hash'),
             )
             units.append(unit)
 
