@@ -80,6 +80,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from spec_manager.core.gaps import Severity
@@ -224,10 +225,30 @@ class ConflictVariant:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ConflictVariant:
-        """Deserialize from dictionary."""
+        """Deserialize from dictionary.
+
+        Accepts both 'variant_id' and 'id' for the variant identifier, and
+        maps 'conflicting_id' consistently. If 'variant_id' is missing, 'id'
+        is used as the variant identifier, falling back to 'conflicting_id'
+        only when explicitly provided.
+
+        Args:
+            data: Dictionary with variant data. May contain 'variant_id' or 'id'
+                for the variant identifier, and 'conflicting_id' for the
+                conflicting element ID.
+
+        Returns:
+            ConflictVariant instance.
+        """
+        # Accept both 'variant_id' (new) and 'id' (old) for variant identifier
+        variant_id = data.get("variant_id") or data.get("id")
+        if variant_id is None:
+            # Last resort: use conflicting_id if available
+            variant_id = data.get("conflicting_id", "")
+
         return cls(
-            variant_id=data["variant_id"],
-            # Support both old "id" key and new "conflicting_id" key for backwards compatibility
+            variant_id=variant_id,
+            # Support both old "id" key and new "conflicting_id" key
             conflicting_id=data.get("conflicting_id", data.get("id", "")),
             content=data["content"],
             source_location=data["source_location"],
@@ -429,6 +450,7 @@ class RemainderQueue:
         stagnation_count: Number of iterations without progress.
         stagnation_threshold: Max iterations before flagging as stagnant.
         last_content_hash: Hash of previous iteration's items (for content comparison).
+        last_size: Length of previous iteration's items (for metrics).
         is_stagnant: Whether queue is stagnant.
     """
 
@@ -436,6 +458,7 @@ class RemainderQueue:
     stagnation_count: int = 0
     stagnation_threshold: int = 3
     last_content_hash: str = ""
+    last_size: int = 0
     is_stagnant: bool = False
 
     @staticmethod
@@ -464,6 +487,7 @@ class RemainderQueue:
 
         self.items = current_items
         self.last_content_hash = current_hash
+        self.last_size = len(current_items)
         self.is_stagnant = self.stagnation_count >= self.stagnation_threshold
 
     def mark_progress(self) -> None:
@@ -478,20 +502,19 @@ class RemainderQueue:
             "stagnation_count": self.stagnation_count,
             "stagnation_threshold": self.stagnation_threshold,
             "last_content_hash": self.last_content_hash,
+            "last_size": self.last_size,
             "is_stagnant": self.is_stagnant,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RemainderQueue:
         """Deserialize from dictionary."""
-        # Support both old "last_size" key (deprecated) and new "last_content_hash" key
-        last_content_hash = data.get("last_content_hash", "")
-        # If migrating from old schema with last_size but no hash, start fresh
         return cls(
             items=data.get("items", []),
             stagnation_count=data.get("stagnation_count", 0),
             stagnation_threshold=data.get("stagnation_threshold", 3),
-            last_content_hash=last_content_hash,
+            last_content_hash=data.get("last_content_hash", ""),
+            last_size=data.get("last_size", 0),
             is_stagnant=data.get("is_stagnant", False),
         )
 
@@ -574,14 +597,19 @@ class StrategyRecord:
 def _safe_serialize_details(details: dict[str, Any]) -> str:
     """Safely serialize details dict to a deterministic JSON string.
 
-    Handles non-JSON-serializable types by falling back to repr() for
-    individual values that cannot be serialized.
+    Handles common non-JSON-serializable types with deterministic conversions
+    (Path, datetime) and raises ValueError for unsupported types so callers
+    can sanitize details before hashing.
 
     Args:
         details: Dictionary of evidence details.
 
     Returns:
         Deterministic JSON string representation.
+
+    Raises:
+        ValueError: If details contains unsupported types that cannot be
+            deterministically serialized.
     """
     if not details:
         return "{}"
@@ -594,8 +622,17 @@ def _safe_serialize_details(details: dict[str, Any]) -> str:
             return [make_serializable(item) for item in obj]
         if isinstance(obj, dict):
             return {str(k): make_serializable(v) for k, v in sorted(obj.items())}
-        # Fallback for non-serializable types (datetime, custom objects, etc.)
-        return repr(obj)
+        # Handle common types with deterministic conversions
+        if isinstance(obj, Path):
+            return str(obj)
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        # Reject unsupported types to prevent non-deterministic signatures
+        raise ValueError(
+            f"Unsupported type in evidence details: {type(obj).__name__}. "
+            f"Details must contain only JSON-serializable types, Path, or datetime. "
+            f"Got: {repr(obj)}"
+        )
 
     serializable_details = make_serializable(details)
     return json.dumps(serializable_details, sort_keys=True)

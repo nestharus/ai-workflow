@@ -283,17 +283,40 @@ class TestRemainderQueue:
 
     def test_from_dict_backward_compatibility(self):
         """Test that from_dict handles migration from old last_size field."""
-        # Old format with last_size
+        # Old format with last_size (now preserved in schema)
         old_data = {
             "items": ["item1", "item2"],
             "stagnation_count": 1,
             "stagnation_threshold": 3,
-            "last_size": 2,  # Old field
+            "last_size": 2,  # Old field, now preserved
             "is_stagnant": False,
         }
         queue = RemainderQueue.from_dict(old_data)
         assert queue.items == ["item1", "item2"]
         assert queue.last_content_hash == ""  # No hash in old format
+        assert queue.last_size == 2  # last_size is preserved
+
+    def test_last_size_set_on_update(self):
+        """Test that last_size is set to the length of items on each update."""
+        queue = RemainderQueue()
+        assert queue.last_size == 0  # Initial state
+
+        queue.update(["item1", "item2", "item3"])
+        assert queue.last_size == 3
+
+        queue.update(["item1", "item2"])
+        assert queue.last_size == 2
+
+        queue.update([])
+        assert queue.last_size == 0
+
+    def test_to_dict_includes_last_size(self):
+        """Test that serialization includes last_size."""
+        queue = RemainderQueue()
+        queue.update(["item1", "item2"])
+        data = queue.to_dict()
+        assert "last_size" in data
+        assert data["last_size"] == 2
 
     def test_mark_progress_resets_stagnation(self):
         """Test that mark_progress resets stagnation count."""
@@ -405,12 +428,31 @@ class TestSafeSerializeDetails:
         assert '"number": 42' in result
 
     def test_non_serializable_datetime(self):
-        """Test that datetime objects are converted via repr."""
+        """Test that datetime objects are converted via isoformat()."""
         dt = datetime(2024, 1, 15, 10, 30, 0)
         details = {"timestamp": dt}
         result = _safe_serialize_details(details)
-        # Should not raise, and should contain repr of datetime
-        assert "datetime.datetime" in result or "2024" in result
+        # Should use isoformat() for deterministic serialization
+        assert '"2024-01-15T10:30:00' in result
+
+    def test_non_serializable_path(self):
+        """Test that Path objects are converted via str()."""
+        from pathlib import Path
+
+        path = Path("/some/absolute/path")
+        details = {"location": path}
+        result = _safe_serialize_details(details)
+        # Should use str() for deterministic serialization
+        assert '"/some/absolute/path"' in result
+
+    def test_unsupported_type_raises_error(self):
+        """Test that unsupported types raise ValueError."""
+        class CustomObject:
+            pass
+
+        details = {"custom": CustomObject()}
+        with pytest.raises(ValueError, match="Unsupported type.*CustomObject"):
+            _safe_serialize_details(details)
 
     def test_nested_non_serializable(self):
         """Test nested structures with non-serializable values."""
@@ -420,7 +462,8 @@ class TestSafeSerializeDetails:
             }
         }
         result = _safe_serialize_details(details)
-        assert result  # Should not raise
+        # Should serialize datetime in nested structure
+        assert '"2024-01-01T00:00:00' in result
 
     def test_deterministic_key_order(self):
         """Test that keys are always sorted for determinism."""
