@@ -70,54 +70,6 @@ class DetectorFinding:
 
 
 # =============================================================================
-# LegacyGap for backward compatibility (deprecated, to be removed)
-# =============================================================================
-
-
-@dataclass
-class LegacyGap:
-    """DEPRECATED: Use DetectorFinding instead.
-
-    This wrapper exists for backward compatibility with old code patterns.
-    Maps gap_type to detector, normalizes severity to Severity enum.
-    """
-
-    gap_type: str  # Maps to detector field
-    severity: str  # "error", "warning", "info"
-    message: str
-    location: str
-    element_id: str | None = None
-    suggestion: str | None = None
-    details: dict[str, Any] = field(default_factory=dict)
-
-    def to_finding(self) -> DetectorFinding:
-        """Convert to DetectorFinding."""
-        sev_map = {"error": Severity.ERROR, "warning": Severity.WARNING, "info": Severity.INFO}
-        details = dict(self.details)
-        if self.suggestion:
-            details["suggestion"] = self.suggestion
-        return DetectorFinding(
-            severity=sev_map.get(self.severity.lower(), Severity.INFO),
-            message=self.message,
-            location=self.location,
-            element_id=self.element_id,
-            detector=self.gap_type,
-            details=details,
-        )
-
-
-def normalize_to_findings(gaps: list[LegacyGap | DetectorFinding]) -> list[DetectorFinding]:
-    """Convert mixed LegacyGap/DetectorFinding lists to uniform DetectorFinding list."""
-    result = []
-    for g in gaps:
-        if isinstance(g, LegacyGap):
-            result.append(g.to_finding())
-        else:
-            result.append(g)
-    return result
-
-
-# =============================================================================
 # Gap Element (First-Class, Synthesized)
 # =============================================================================
 
@@ -175,7 +127,7 @@ class FormatComplianceDetector:
         (re.compile(r"^Lean [AB]"), "Legacy lean format - use Lean#"),
     ]
 
-    def detect(self, content: str, file_path: str) -> list[LegacyGap]:
+    def detect(self, content: str, file_path: str) -> list[DetectorFinding]:
         """Detect format violations in content."""
         gaps = []
 
@@ -184,9 +136,9 @@ class FormatComplianceDetector:
             for pattern, message in self.LEGACY_PATTERNS:
                 if pattern.search(line):
                     gaps.append(
-                        LegacyGap(
-                            gap_type="format_violation",
-                            severity="warning",
+                        DetectorFinding(
+                            detector="format_violation",
+                            severity=Severity.WARNING,
                             message=message,
                             location=f"{file_path}:{line_num}",
                             details={"line": line.strip(), "pattern": pattern.pattern},
@@ -198,9 +150,9 @@ class FormatComplianceDetector:
                 # Could be intentional, so just info
                 if "\\" not in line:
                     gaps.append(
-                        LegacyGap(
-                            gap_type="format_violation",
-                            severity="info",
+                        DetectorFinding(
+                            detector="format_violation",
+                            severity=Severity.INFO,
                             message="Possible unescaped LaTeX",
                             location=f"{file_path}:{line_num}",
                             details={"line": line.strip()},
@@ -221,7 +173,7 @@ class DuplicateDetector:
     Based on check_duplicate_declarations.py and find_duplicate_headers.py.
     """
 
-    def detect_duplicate_declarations(self, content: str, file_path: str) -> list[LegacyGap]:
+    def detect_duplicate_declarations(self, content: str, file_path: str) -> list[DetectorFinding]:
         """Find ([=ID]) declarations that appear more than once."""
         gaps = []
         parser = AnnotationParser()
@@ -236,20 +188,19 @@ class DuplicateDetector:
         for id_value, lines in declarations.items():
             if len(lines) > 1:
                 gaps.append(
-                    Gap(
-                        gap_type="duplicate_declaration",
-                        severity="error",
+                    DetectorFinding(
+                        severity=Severity.ERROR,
                         message=f"ID '{id_value}' declared {len(lines)} times",
                         location=file_path,
                         element_id=id_value,
-                        suggestion="Remove duplicate declarations",
-                        details={"lines": lines},
+                        detector="duplicate_declaration",
+                        details={"lines": lines, "suggestion": "Remove duplicate declarations"},
                     )
                 )
 
         return gaps
 
-    def detect_duplicate_headers(self, content: str, file_path: str) -> list[LegacyGap]:
+    def detect_duplicate_headers(self, content: str, file_path: str) -> list[DetectorFinding]:
         """Find exact and near-duplicate headers."""
         gaps = []
 
@@ -280,8 +231,8 @@ class DuplicateDetector:
                     msg = f"Near-duplicate headers: {texts}"
 
                 gaps.append(
-                    Gap(
-                        gap_type="duplicate_header",
+                    DetectorFinding(
+                        detector="duplicate_header",
                         severity=severity,
                         message=msg,
                         location=file_path,
@@ -360,7 +311,7 @@ class UndefinedFunctionDetector:
         "STATE_": "STATE",
     }
 
-    def __init__(self, config_path: Path | None = None):
+    def __init__(self, config_path: Path | None = None) -> None:
         """Initialize detector with optional config.
 
         Gap 12 fix: Word lists loaded from YAML config if provided.
@@ -398,7 +349,7 @@ class UndefinedFunctionDetector:
             # Config load failure is non-fatal - use defaults
             pass
 
-    def detect(self, content: str, file_path: str) -> list[GapEvidence]:
+    def detect(self, content: str, file_path: str) -> list[DetectorFinding]:
         """Detect undefined function calls in pseudocode.
 
         Gap 12 fix: Detections are WEAK EVIDENCE (confidence-weighted),
@@ -454,7 +405,7 @@ class UndefinedFunctionDetector:
             confidence = 0.8 if category != "OTHER" else 0.5
 
             evidence.append(
-                GapEvidence(
+                DetectorFinding(
                     severity=Severity.WARNING,
                     message=f"Undefined function: {func_name}",
                     location=file_path,
@@ -486,7 +437,7 @@ class SequenceAnalyzer:
     Based on check_sequences.py.
     """
 
-    def detect(self, content: str, file_path: str) -> list[LegacyGap]:
+    def detect(self, content: str, file_path: str) -> list[DetectorFinding]:
         """Detect sequence issues."""
         gaps = []
 
@@ -497,7 +448,7 @@ class SequenceAnalyzer:
 
         return gaps
 
-    def _analyze_algorithms(self, content: str, file_path: str) -> list[LegacyGap]:
+    def _analyze_algorithms(self, content: str, file_path: str) -> list[DetectorFinding]:
         """Analyze Algorithm # sequence."""
         gaps = []
         pattern = re.compile(r"^##\s+Algorithm\s+(\d+)", re.MULTILINE)
@@ -523,8 +474,8 @@ class SequenceAnalyzer:
                     msg = f"Conflicting Algorithm {num} (different content)"
 
                 gaps.append(
-                    Gap(
-                        gap_type="duplicate_id" if len(set(previews)) == 1 else "conflict",
+                    DetectorFinding(
+                        detector="duplicate_id" if len(set(previews)) == 1 else "conflict",
                         severity=severity,
                         message=msg,
                         location=file_path,
@@ -541,9 +492,9 @@ class SequenceAnalyzer:
 
             if holes and len(holes) < len(all_nums):  # Some holes, not mostly holes
                 gaps.append(
-                    Gap(
-                        gap_type="sequence_hole",
-                        severity="info",
+                    DetectorFinding(
+                        detector="sequence_hole",
+                        severity=Severity.INFO,
                         message=f"Algorithm sequence has holes: {sorted(holes)}",
                         location=file_path,
                         details={"missing": sorted(holes)},
@@ -552,7 +503,7 @@ class SequenceAnalyzer:
 
         return gaps
 
-    def _analyze_goals(self, content: str, file_path: str) -> list[LegacyGap]:
+    def _analyze_goals(self, content: str, file_path: str) -> list[DetectorFinding]:
         """Analyze G# sequence."""
         # Similar to algorithms
         gaps = []
@@ -566,9 +517,9 @@ class SequenceAnalyzer:
         out_of_range = [n for n in numbers if n < 1 or n > 50]
         if out_of_range:
             gaps.append(
-                Gap(
-                    gap_type="format_violation",
-                    severity="warning",
+                DetectorFinding(
+                    detector="format_violation",
+                    severity=Severity.WARNING,
                     message=f"Goals out of range (should be G1-G50): {out_of_range}",
                     location=file_path,
                     details={"out_of_range": out_of_range},
@@ -577,7 +528,7 @@ class SequenceAnalyzer:
 
         return gaps
 
-    def _analyze_data_structures(self, content: str, file_path: str) -> list[LegacyGap]:
+    def _analyze_data_structures(self, content: str, file_path: str) -> list[DetectorFinding]:
         """Analyze D# sequence."""
         gaps = []
         pattern = re.compile(r"^##\s+(D\d+)", re.MULTILINE)
@@ -591,9 +542,9 @@ class SequenceAnalyzer:
         for id_value, lines in ids.items():
             if len(lines) > 1:
                 gaps.append(
-                    Gap(
-                        gap_type="duplicate_id",
-                        severity="warning",
+                    DetectorFinding(
+                        detector="duplicate_id",
+                        severity=Severity.WARNING,
                         message=f"Duplicate data structure: {id_value}",
                         location=file_path,
                         element_id=id_value,
@@ -615,10 +566,12 @@ class ContentVerifier:
     Based on verify_content.py.
     """
 
-    def verify(self, plan_content: str, library_content: str, library_name: str) -> list[LegacyGap]:
+    def verify(
+        self, plan_content: str, library_content: str, library_name: str
+    ) -> list[DetectorFinding]:
         """Compare content between plan and library."""
         gaps = []
-        parser = AnnotationParser()
+        AnnotationParser()
 
         # Extract sections from both
         plan_sections = self._extract_sections(plan_content)
@@ -630,22 +583,22 @@ class ContentVerifier:
         # Missing in library
         for id_value in plan_ids - library_ids:
             gaps.append(
-                Gap(
-                    gap_type="missing_in_library",
-                    severity="warning",
+                DetectorFinding(
+                    severity=Severity.WARNING,
                     message=f"'{id_value}' in plan but not in library",
                     location=library_name,
                     element_id=id_value,
-                    suggestion=f"Add {id_value} to {library_name}",
+                    detector="missing_in_library",
+                    details={"suggestion": f"Add {id_value} to {library_name}"},
                 )
             )
 
         # Missing in plan
         for id_value in library_ids - plan_ids:
             gaps.append(
-                Gap(
-                    gap_type="missing_in_plan",
-                    severity="info",
+                DetectorFinding(
+                    detector="missing_in_plan",
+                    severity=Severity.INFO,
                     message=f"'{id_value}' in library but not in plan",
                     location=library_name,
                     element_id=id_value,
@@ -670,8 +623,8 @@ class ContentVerifier:
                     severity = "info"
 
                 gaps.append(
-                    Gap(
-                        gap_type="content_mismatch",
+                    DetectorFinding(
+                        detector="content_mismatch",
                         severity=severity,
                         message=f"'{id_value}' content differs ({similarity:.0%} similar)",
                         location=library_name,
@@ -731,10 +684,10 @@ class ProofChainDetector:
     Output is grouped by patch (which patch introduced broken chains).
     """
 
-    def __init__(self, llm_client=None):
+    def __init__(self, llm_client=None) -> None:
         self._llm = llm_client
 
-    def detect(self, content: str, file_path: str) -> list[GapEvidence]:
+    def detect(self, content: str, file_path: str) -> list[DetectorFinding]:
         """Detect broken proof chains.
 
         Chain requirements:
@@ -822,7 +775,7 @@ class ProofChainDetector:
                 inferred_claims = self._infer_claims_from_prose(alg_content)
                 if inferred_claims:
                     evidence.append(
-                        GapEvidence(
+                        DetectorFinding(
                             severity=Severity.WARNING,
                             message=f"{alg_id} has no explicit claim references, but LLM infers possible claims",
                             location=file_path,
@@ -833,7 +786,7 @@ class ProofChainDetector:
                     )
                 else:
                     evidence.append(
-                        GapEvidence(
+                        DetectorFinding(
                             severity=Severity.WARNING,
                             message=f"{alg_id} has no claims (explicit or inferred)",
                             location=file_path,
@@ -843,7 +796,7 @@ class ProofChainDetector:
                     )
             else:
                 evidence.append(
-                    GapEvidence(
+                    DetectorFinding(
                         severity=Severity.WARNING,
                         message=f"{alg_id} has no claim references",
                         location=file_path,
@@ -861,7 +814,7 @@ class ProofChainDetector:
                     prose_claim = self._find_prose_claim(claim_id, full_content)
                     if prose_claim:
                         evidence.append(
-                            GapEvidence(
+                            DetectorFinding(
                                 severity=Severity.INFO,
                                 message=f"{claim_id} may exist as prose (LLM inferred)",
                                 location=file_path,
@@ -872,7 +825,7 @@ class ProofChainDetector:
                         )
                     else:
                         evidence.append(
-                            GapEvidence(
+                            DetectorFinding(
                                 severity=Severity.WARNING,
                                 message=f"{alg_id} references undefined claim {claim_id}",
                                 location=file_path,
@@ -882,7 +835,7 @@ class ProofChainDetector:
                         )
                 else:
                     evidence.append(
-                        GapEvidence(
+                        DetectorFinding(
                             severity=Severity.WARNING,
                             message=f"{alg_id} references undefined claim {claim_id}",
                             location=file_path,
@@ -903,7 +856,7 @@ class ProofChainDetector:
                     prose_proof = self._find_prose_proof(claim_id, full_content)
                     if prose_proof:
                         evidence.append(
-                            GapEvidence(
+                            DetectorFinding(
                                 severity=Severity.INFO,
                                 message=f"{claim_id} may have prose proof sketch (LLM inferred)",
                                 location=file_path,
@@ -914,7 +867,7 @@ class ProofChainDetector:
                         )
                     else:
                         evidence.append(
-                            GapEvidence(
+                            DetectorFinding(
                                 severity=Severity.WARNING,
                                 message=f"{claim_id} has no proof sketch or math section",
                                 location=file_path,
@@ -924,7 +877,7 @@ class ProofChainDetector:
                         )
                 else:
                     evidence.append(
-                        GapEvidence(
+                        DetectorFinding(
                             severity=Severity.WARNING,
                             message=f"{claim_id} has no proof sketch or math section",
                             location=file_path,
@@ -937,7 +890,7 @@ class ProofChainDetector:
         if not lean_blocks:
             # All algorithms flagged non-authoritative
             evidence.append(
-                GapEvidence(
+                DetectorFinding(
                     severity=Severity.INFO,
                     message=f"{alg_id} has no Lean skeleton (flagged non-authoritative)",
                     location=file_path,
@@ -1022,10 +975,10 @@ class ProseFragmentInferenceDetector:
     Outputs GapEvidence with confidence scores, linking back to source text.
     """
 
-    def __init__(self, llm_client=None):
+    def __init__(self, llm_client=None) -> None:
         self._llm = llm_client
 
-    def detect(self, content: str, file_path: str) -> list[GapEvidence]:
+    def detect(self, content: str, file_path: str) -> list[DetectorFinding]:
         """Detect candidate requirements/claims in prose fragments.
 
         Returns evidence with confidence scores that can be:
@@ -1061,7 +1014,7 @@ class ProseFragmentInferenceDetector:
         # Split by code blocks
         parts = re.split(r"```[\s\S]*?```", content)
 
-        for i, part in enumerate(parts):
+        for _i, part in enumerate(parts):
             # Skip if it's mostly headers/structured content
             lines = part.strip().split("\n")
             prose_lines = [line for line in lines if not line.startswith("#") and line.strip()]
@@ -1078,7 +1031,7 @@ class ProseFragmentInferenceDetector:
 
         return sections
 
-    def _detect_requirement_patterns(self, section: dict, file_path: str) -> list[GapEvidence]:
+    def _detect_requirement_patterns(self, section: dict, file_path: str) -> list[DetectorFinding]:
         """Detect requirement-like patterns in prose."""
         evidence = []
 
@@ -1098,7 +1051,7 @@ class ProseFragmentInferenceDetector:
                 context = section["content"][start:end]
 
                 evidence.append(
-                    GapEvidence(
+                    DetectorFinding(
                         severity=Severity.INFO,
                         message=f"Candidate requirement in prose: '{match.group(0)}...'",
                         location=f"{file_path}:{section['start_line']}",
@@ -1117,7 +1070,7 @@ class ProseFragmentInferenceDetector:
 
         return evidence
 
-    def _detect_claim_patterns(self, section: dict, file_path: str) -> list[GapEvidence]:
+    def _detect_claim_patterns(self, section: dict, file_path: str) -> list[DetectorFinding]:
         """Detect claim-like patterns in prose."""
         evidence = []
 
@@ -1136,7 +1089,7 @@ class ProseFragmentInferenceDetector:
                 context = section["content"][start:end]
 
                 evidence.append(
-                    GapEvidence(
+                    DetectorFinding(
                         severity=Severity.INFO,
                         message=f"Candidate claim in prose: '{match.group(0)}...'",
                         location=f"{file_path}:{section['start_line']}",
@@ -1155,7 +1108,7 @@ class ProseFragmentInferenceDetector:
 
         return evidence
 
-    def _infer_via_llm(self, section: dict, file_path: str) -> list[GapEvidence]:
+    def _infer_via_llm(self, section: dict, file_path: str) -> list[DetectorFinding]:
         """Use LLM to infer requirements/claims from complex prose."""
         if not self._llm:
             return []
@@ -1184,7 +1137,7 @@ Output as JSON list: [{{"type": "...", "confidence": 0.X, "text": "...", "struct
 
             for finding in findings:
                 evidence.append(
-                    GapEvidence(
+                    DetectorFinding(
                         severity=Severity.INFO,
                         message=f"LLM-inferred {finding['type']}: {finding['text'][:50]}...",
                         location=f"{file_path}:{section['start_line']}",
@@ -1304,7 +1257,7 @@ class UncertaintyDetector:
         (re.compile(r"\bunclear\b", re.IGNORECASE), "unclear"),
     ]
 
-    def detect(self, content: str, file_path: str) -> list[LegacyGap]:
+    def detect(self, content: str, file_path: str) -> list[DetectorFinding]:
         """Detect uncertainty markers."""
         gaps = []
 
@@ -1321,8 +1274,8 @@ class UncertaintyDetector:
                 severity = "warning" if marker_type in ("todo", "lean_sorry") else "info"
 
                 gaps.append(
-                    Gap(
-                        gap_type="unresolved_uncertainty",
+                    DetectorFinding(
+                        detector="unresolved_uncertainty",
                         severity=severity,
                         message=f"Unresolved {marker_type}: {line.strip()[:50]}...",
                         location=f"{file_path}:{line_num}",
@@ -1355,7 +1308,7 @@ class StructuralHealthDetector:
 
     def detect(
         self, units: list, libraries: dict[str, list[str]] | None = None
-    ) -> list[GapEvidence]:
+    ) -> list[DetectorFinding]:
         """Run all structural health checks.
 
         Args:
@@ -1375,7 +1328,7 @@ class StructuralHealthDetector:
 
     def _detect_coupling_issues(
         self, units: list, libraries: dict[str, list[str]] | None = None
-    ) -> list[GapEvidence]:
+    ) -> list[DetectorFinding]:
         """Detect excessive coupling between elements/libraries."""
         evidence = []
 
@@ -1402,7 +1355,7 @@ class StructuralHealthDetector:
         for (lib1, lib2), count in cross_refs.items():
             if count > 10:  # Threshold
                 evidence.append(
-                    GapEvidence(
+                    DetectorFinding(
                         severity=Severity.WARNING,
                         message=f"High coupling between {lib1} and {lib2}: {count} cross-references",
                         location=f"libraries/{lib1}.md <-> libraries/{lib2}.md",
@@ -1420,7 +1373,7 @@ class StructuralHealthDetector:
 
     def _detect_cohesion_issues(
         self, units: list, libraries: dict[str, list[str]] | None = None
-    ) -> list[GapEvidence]:
+    ) -> list[DetectorFinding]:
         """Detect low cohesion within libraries."""
         evidence = []
 
@@ -1445,7 +1398,7 @@ class StructuralHealthDetector:
 
             if total_refs > 5 and internal_refs / total_refs < 0.3:  # Low cohesion
                 evidence.append(
-                    GapEvidence(
+                    DetectorFinding(
                         severity=Severity.INFO,
                         message=f"Low cohesion in {lib_name}: {internal_refs}/{total_refs} internal references ({internal_refs / total_refs:.0%})",
                         location=f"libraries/{lib_name}.md",
@@ -1463,7 +1416,7 @@ class StructuralHealthDetector:
 
         return evidence
 
-    def _detect_missing_relations(self, units: list) -> list[GapEvidence]:
+    def _detect_missing_relations(self, units: list) -> list[DetectorFinding]:
         """Detect elements that should have relations but don't."""
         evidence = []
 
@@ -1488,7 +1441,7 @@ class StructuralHealthDetector:
                 if matches >= 2 and not has_relations:
                     unit_id = getattr(unit, "id", "unknown")
                     evidence.append(
-                        GapEvidence(
+                        DetectorFinding(
                             severity=Severity.INFO,
                             message=f"{unit_id} appears cross-cutting but has no relation annotations",
                             location=getattr(unit, "source", "unknown"),
@@ -1504,7 +1457,7 @@ class StructuralHealthDetector:
 
         return evidence
 
-    def _detect_underspecified_elements(self, units: list) -> list[GapEvidence]:
+    def _detect_underspecified_elements(self, units: list) -> list[DetectorFinding]:
         """Detect elements that lack sufficient specification."""
         evidence = []
 
@@ -1516,7 +1469,7 @@ class StructuralHealthDetector:
             # Check for stub-like content
             if len(content.strip()) < 50:
                 evidence.append(
-                    GapEvidence(
+                    DetectorFinding(
                         severity=Severity.WARNING,
                         message=f"{unit_id} appears underspecified ({len(content)} chars)",
                         location=getattr(unit, "source", "unknown"),
@@ -1533,7 +1486,7 @@ class StructuralHealthDetector:
             # Check for TODO/TBD in body
             if "TODO" in content or "TBD" in content or "???" in content:
                 evidence.append(
-                    GapEvidence(
+                    DetectorFinding(
                         severity=Severity.WARNING,
                         message=f"{unit_id} contains TODO/TBD markers",
                         location=getattr(unit, "source", "unknown"),
@@ -1545,7 +1498,7 @@ class StructuralHealthDetector:
 
         return evidence
 
-    def _detect_unpinned_elements(self, units: list) -> list[GapEvidence]:
+    def _detect_unpinned_elements(self, units: list) -> list[DetectorFinding]:
         """Detect elements not pinned to a library."""
         evidence = []
 
@@ -1554,7 +1507,7 @@ class StructuralHealthDetector:
             unit_id = getattr(unit, "id", "unknown")
             if not primary_lib:
                 evidence.append(
-                    GapEvidence(
+                    DetectorFinding(
                         severity=Severity.WARNING,
                         message=f"{unit_id} has no primary library assignment",
                         location=getattr(unit, "source", "unknown"),
@@ -1571,7 +1524,7 @@ class StructuralHealthDetector:
 
         return evidence
 
-    def _detect_unsatisfied_invariants(self, units: list) -> list[GapEvidence]:
+    def _detect_unsatisfied_invariants(self, units: list) -> list[DetectorFinding]:
         """Detect invariants that aren't referenced by any algorithm."""
         evidence = []
 
@@ -1593,7 +1546,7 @@ class StructuralHealthDetector:
         unreferenced = invariants - referenced
         for inv_id in unreferenced:
             evidence.append(
-                GapEvidence(
+                DetectorFinding(
                     severity=Severity.INFO,
                     message=f"Invariant {inv_id} is not referenced by any algorithm",
                     location="plan.md",
@@ -1632,7 +1585,7 @@ class EvidenceExtractor:
     - Cross-file comparisons
     """
 
-    def __init__(self, llm_client=None, config_path: Path | None = None):
+    def __init__(self, llm_client=None, config_path: Path | None = None) -> None:
         self.format_detector = FormatComplianceDetector()
         self.duplicate_detector = DuplicateDetector()
         self.function_detector = UndefinedFunctionDetector(config_path)
@@ -1645,7 +1598,7 @@ class EvidenceExtractor:
 
     def extract_from_content(
         self, content: str, file_path: str, detectors: list[str] | None = None
-    ) -> list[GapEvidence]:
+    ) -> list[DetectorFinding]:
         """Extract evidence from a single content string.
 
         Args:
@@ -1657,32 +1610,22 @@ class EvidenceExtractor:
         all_detectors = detectors is None
 
         if all_detectors or "format" in (detectors or []):
-            evidence.extend(normalize_to_findings(self.format_detector.detect(content, file_path)))
+            evidence.extend(self.format_detector.detect(content, file_path))
 
         if all_detectors or "duplicate" in (detectors or []):
             evidence.extend(
-                normalize_to_findings(
-                    self.duplicate_detector.detect_duplicate_declarations(content, file_path)
-                )
+                self.duplicate_detector.detect_duplicate_declarations(content, file_path)
             )
-            evidence.extend(
-                normalize_to_findings(
-                    self.duplicate_detector.detect_duplicate_headers(content, file_path)
-                )
-            )
+            evidence.extend(self.duplicate_detector.detect_duplicate_headers(content, file_path))
 
         if all_detectors or "function" in (detectors or []):
             evidence.extend(self.function_detector.detect(content, file_path))
 
         if all_detectors or "sequence" in (detectors or []):
-            evidence.extend(
-                normalize_to_findings(self.sequence_analyzer.detect(content, file_path))
-            )
+            evidence.extend(self.sequence_analyzer.detect(content, file_path))
 
         if all_detectors or "uncertainty" in (detectors or []):
-            evidence.extend(
-                normalize_to_findings(self.uncertainty_detector.detect(content, file_path))
-            )
+            evidence.extend(self.uncertainty_detector.detect(content, file_path))
 
         if all_detectors or "proof_chain" in (detectors or []):
             evidence.extend(self.proof_chain_detector.detect(content, file_path))
@@ -1694,15 +1637,13 @@ class EvidenceExtractor:
 
     def extract_from_comparison(
         self, plan_content: str, library_content: str, library_name: str
-    ) -> list[GapEvidence]:
+    ) -> list[DetectorFinding]:
         """Extract evidence from plan/library comparison."""
-        return normalize_to_findings(
-            self.content_verifier.verify(plan_content, library_content, library_name)
-        )
+        return self.content_verifier.verify(plan_content, library_content, library_name)
 
     def extract_from_units(
         self, units: list, libraries: dict[str, list[str]] | None = None
-    ) -> list[GapEvidence]:
+    ) -> list[DetectorFinding]:
         """Extract structural health evidence from TrackedUnits."""
         return self.structural_health_detector.detect(units, libraries)
 
@@ -1713,7 +1654,7 @@ class EvidenceExtractor:
 
 
 class GapSynthesizer:
-    """Synthesizes GapElement objects from GapEvidence by clustering.
+    """Synthesizes GapElement objects from DetectorFinding by clustering.
 
     Clustering criteria:
     - Same element_id
@@ -1721,22 +1662,21 @@ class GapSynthesizer:
     - Same patch origin
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._gap_counter = 0
 
-    def reset_counter(self):
+    def reset_counter(self) -> None:
         """Reset the gap ID counter."""
         self._gap_counter = 0
 
-    def synthesize(self, evidence: list[GapEvidence]) -> list[GapElement]:
-        """Synthesize gaps by clustering related evidence.
-        """
+    def synthesize(self, evidence: list[DetectorFinding]) -> list[GapElement]:
+        """Synthesize gaps by clustering related evidence."""
         if not evidence:
             return []
 
         # Group by element_id first
-        by_element: dict[str, list[GapEvidence]] = defaultdict(list)
-        orphan_evidence: list[GapEvidence] = []
+        by_element: dict[str, list[DetectorFinding]] = defaultdict(list)
+        orphan_evidence: list[DetectorFinding] = []
 
         for e in evidence:
             if e.element_id:
@@ -1752,13 +1692,13 @@ class GapSynthesizer:
             gaps.append(gap)
 
         # Create gaps for orphan evidence (grouped by detector)
-        by_detector: dict[str, list[GapEvidence]] = defaultdict(list)
+        by_detector: dict[str, list[DetectorFinding]] = defaultdict(list)
         for e in orphan_evidence:
             by_detector[e.detector].append(e)
 
-        for detector, detector_evidence in by_detector.items():
+        for _detector, detector_evidence in by_detector.items():
             # Sub-group by location file
-            by_file: dict[str, list[GapEvidence]] = defaultdict(list)
+            by_file: dict[str, list[DetectorFinding]] = defaultdict(list)
             for e in detector_evidence:
                 file_part = e.location.split(":")[0] if ":" in e.location else e.location
                 by_file[file_part].append(e)
@@ -1769,7 +1709,7 @@ class GapSynthesizer:
 
         return gaps
 
-    def _create_gap(self, evidence: list[GapEvidence], element_id: str | None) -> GapElement:
+    def _create_gap(self, evidence: list[DetectorFinding], element_id: str | None) -> GapElement:
         """Create a GapElement from evidence."""
         self._gap_counter += 1
 
@@ -1807,7 +1747,7 @@ class GapSynthesizer:
             patch_origin=self._infer_patch_origin(evidence),
         )
 
-    def _infer_patch_origin(self, evidence: list[GapEvidence]) -> str | None:
+    def _infer_patch_origin(self, evidence: list[DetectorFinding]) -> str | None:
         """Infer which patch introduced this gap."""
         for e in evidence:
             if "patches/" in e.location:
@@ -1833,11 +1773,11 @@ class UnifiedGapDetector:
     3. Formats output as multi-section gaps.md
     """
 
-    def __init__(self, llm_client=None, config_path: Path | None = None):
+    def __init__(self, llm_client=None, config_path: Path | None = None) -> None:
         self.evidence_extractor = EvidenceExtractor(llm_client, config_path)
         self.gap_synthesizer = GapSynthesizer()
 
-    def collect_evidence(self, spec_folder: Path) -> list[GapEvidence]:
+    def collect_evidence(self, spec_folder: Path) -> list[DetectorFinding]:
         """Collect all evidence from all detectors.
 
         This is the first phase - pure evidence collection.
@@ -1889,9 +1829,8 @@ class UnifiedGapDetector:
 
         return evidence
 
-    def synthesize_gaps(self, evidence: list[GapEvidence]) -> list[GapElement]:
-        """Synthesize gaps by clustering related evidence.
-        """
+    def synthesize_gaps(self, evidence: list[DetectorFinding]) -> list[GapElement]:
+        """Synthesize gaps by clustering related evidence."""
         return self.gap_synthesizer.synthesize(evidence)
 
     def detect_all(self, spec_folder: Path, include_info: bool = True) -> list[GapElement]:
@@ -2222,7 +2161,7 @@ def _detect_undefined_references(content: str, registry) -> list[dict[str, Any]]
     """Find references to IDs that aren't declared."""
     gaps = []
     parser = AnnotationParser()
-    validator = IdValidator()
+    IdValidator()
 
     # Get all declared IDs
     extractor = SectionExtractor()
@@ -2425,8 +2364,7 @@ def _detect_missing_integrations(content: str, registry) -> list[dict[str, Any]]
 
 
 def _detect_unsatisfied_invariants(content: str, registry) -> list[dict[str, Any]]:
-    """Find invariants/goals that have no elements referencing them.
-    """
+    """Find invariants/goals that have no elements referencing them."""
     gaps = []
     extractor = SectionExtractor()
     parser = AnnotationParser()
@@ -2434,7 +2372,7 @@ def _detect_unsatisfied_invariants(content: str, registry) -> list[dict[str, Any
 
     # Find all invariant IDs (I1, I2, etc.) and legacy goal IDs (G1, G2, etc.)
     invariant_ids = set()
-    for id_value in result.sections.keys():
+    for id_value in result.sections:
         if re.match(r"^[GI]\d+$", id_value):
             invariant_ids.add(id_value)
 
@@ -2478,8 +2416,7 @@ def _detect_unsatisfied_invariants(content: str, registry) -> list[dict[str, Any
 
 
 def _detect_todos(content: str) -> list[dict[str, Any]]:
-    """Find TODO/TBD/FIXME markers in specs.
-    """
+    """Find TODO/TBD/FIXME markers in specs."""
     gaps = []
     extractor = SectionExtractor()
     result = extractor.extract(content)
@@ -2512,8 +2449,7 @@ def _detect_todos(content: str) -> list[dict[str, Any]]:
 
 
 def _detect_invalid_libraries(libraries_dir: Path) -> list[dict[str, Any]]:
-    """Detect libraries organized by type rather than subsystem/domain.
-    """
+    """Detect libraries organized by type rather than subsystem/domain."""
     gaps = []
 
     if not libraries_dir.exists():
@@ -2620,7 +2556,7 @@ def _detect_invalid_libraries(libraries_dir: Path) -> list[dict[str, Any]]:
         extractor = SectionExtractor()
         result = extractor.extract(content)
         invariant_ids = [
-            id_val for id_val in result.sections.keys() if re.match(r"^[GI]\d+", id_val)
+            id_val for id_val in result.sections if re.match(r"^[GI]\d+", id_val)
         ]
         if invariant_ids:
             gaps.append(
@@ -2638,8 +2574,7 @@ def _detect_invalid_libraries(libraries_dir: Path) -> list[dict[str, Any]]:
 
 
 def _detect_vague_invariants(content: str) -> list[dict[str, Any]]:
-    """Detect invariants that are too vague to verify.
-    """
+    """Detect invariants that are too vague to verify."""
     gaps = []
     extractor = SectionExtractor()
     result = extractor.extract(content)
@@ -2681,8 +2616,7 @@ def _detect_vague_invariants(content: str) -> list[dict[str, Any]]:
 
 
 def _detect_cohesion_issues(content: str, registry, libraries_dir: Path) -> list[dict[str, Any]]:
-    """Detect subsystem cohesion issues.
-    """
+    """Detect subsystem cohesion issues."""
     gaps = []
     parser = AnnotationParser()
     extractor = SectionExtractor()
@@ -2832,7 +2766,7 @@ def _detect_cohesion_issues(content: str, registry, libraries_dir: Path) -> list
 def _detect_pin_gaps(content: str, artifact_root: Path | None) -> list[dict[str, Any]]:
     """Detect pin-related gaps:
     - broken_pin: Pin points to non-existent file
-    - unpinned_spec: Spec element (Algorithm, D#) has no pins
+    - unpinned_spec: Spec element (Algorithm, D#) has no pins.
     """
     gaps = []
     extractor = SectionExtractor()

@@ -192,19 +192,16 @@ class ConflictVariant:
     as a variant with its content, location, and heuristic scoring.
 
     Attributes:
-        variant_id: Unique identifier for this specific variant instance
+        id: Unique identifier for this specific variant instance
             (e.g., "REQ-001-v1", "REQ-001-v2"). Used to distinguish among
-            duplicates that share the same conflicting_id.
-        conflicting_id: The original element ID that has duplicates
-            (e.g., "REQ-001"). All variants in a ConflictBundle share this ID.
+            duplicates that share the same conflicting ID.
         content: Content of this variant.
         source_location: Where this variant appears (file:line).
         heuristic_score: Ranking score based on heuristics (0.0-1.0).
         reasons: List of reasons for the score (e.g., "has_annotation", "longer_content").
     """
 
-    variant_id: str
-    conflicting_id: str
+    id: str
     content: str
     source_location: str
     heuristic_score: float
@@ -213,8 +210,7 @@ class ConflictVariant:
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
         return {
-            "variant_id": self.variant_id,
-            "conflicting_id": self.conflicting_id,
+            "id": self.id,
             "content": self.content,
             "source_location": self.source_location,
             "heuristic_score": self.heuristic_score,
@@ -226,8 +222,7 @@ class ConflictVariant:
         """Deserialize from dictionary.
 
         Args:
-            data: Dictionary with variant data. Must contain 'variant_id' and
-                'conflicting_id' keys.
+            data: Dictionary with variant data. Must contain 'id' key.
 
         Returns:
             ConflictVariant instance.
@@ -236,8 +231,7 @@ class ConflictVariant:
             KeyError: If required keys are missing.
         """
         return cls(
-            variant_id=data["variant_id"],
-            conflicting_id=data["conflicting_id"],
+            id=data["id"],
             content=data["content"],
             source_location=data["source_location"],
             heuristic_score=data["heuristic_score"],
@@ -254,34 +248,33 @@ class ConflictBundle:
 
     Attributes:
         conflicting_id: The original element ID that has duplicates (e.g., "REQ-001").
-            This matches the conflicting_id field in each ConflictVariant.
         variants: All variants found for this conflicting_id.
-        recommended_variant_id: The variant_id of the recommended variant
+        recommended_variant: The id of the recommended variant
             (the one with the highest heuristic_score). This references the
-            variant_id field of a ConflictVariant, not the conflicting_id.
+            id field of a ConflictVariant.
         resolution_status: One of "pending", "auto_resolved", "manual_required".
     """
 
     conflicting_id: str
     variants: list[ConflictVariant] = field(default_factory=list)
-    recommended_variant_id: str | None = None
+    recommended_variant: str | None = None
     resolution_status: str = STATUS_PENDING
 
     def rank_variants(self) -> None:
-        """Sort variants by heuristic_score descending and set recommended_variant_id."""
+        """Sort variants by heuristic_score descending and set recommended_variant."""
         if not self.variants:
-            self.recommended_variant_id = None
+            self.recommended_variant = None
             return
 
         self.variants.sort(key=lambda v: v.heuristic_score, reverse=True)
-        self.recommended_variant_id = self.variants[0].variant_id
+        self.recommended_variant = self.variants[0].id
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
         return {
             "conflicting_id": self.conflicting_id,
             "variants": [v.to_dict() for v in self.variants],
-            "recommended_variant_id": self.recommended_variant_id,
+            "recommended_variant": self.recommended_variant,
             "resolution_status": self.resolution_status,
         }
 
@@ -291,7 +284,7 @@ class ConflictBundle:
 
         Args:
             data: Dictionary with bundle data. Must contain 'conflicting_id' key.
-                May contain 'recommended_variant_id' for the recommended variant.
+                May contain 'recommended_variant' for the recommended variant.
 
         Returns:
             ConflictBundle instance.
@@ -302,7 +295,7 @@ class ConflictBundle:
         return cls(
             conflicting_id=data["conflicting_id"],
             variants=[ConflictVariant.from_dict(v) for v in data.get("variants", [])],
-            recommended_variant_id=data.get("recommended_variant_id"),
+            recommended_variant=data.get("recommended_variant"),
             resolution_status=data.get("resolution_status", STATUS_PENDING),
         )
 

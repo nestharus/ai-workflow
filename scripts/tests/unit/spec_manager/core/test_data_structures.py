@@ -109,50 +109,43 @@ class TestConflictVariant:
     """Tests for ConflictVariant class."""
 
     def test_field_naming_clarity(self):
-        """Test that variant_id and conflicting_id are distinct and clear."""
+        """Test that id field is used for variant identification."""
         variant = ConflictVariant(
-            variant_id="REQ-001-v1",  # Unique variant instance ID
-            conflicting_id="REQ-001",  # The shared ID causing conflict
+            id="REQ-001-v1",  # Unique variant instance ID
             content="Requirement content",
             source_location="spec.md:10",
             heuristic_score=0.8,
             reasons=["has_annotation"],
         )
-        assert variant.variant_id == "REQ-001-v1"
-        assert variant.conflicting_id == "REQ-001"
+        assert variant.id == "REQ-001-v1"
 
-    def test_to_dict_serializes_conflicting_id(self):
-        """Test that to_dict uses the new 'conflicting_id' key."""
+    def test_to_dict_serializes_id(self):
+        """Test that to_dict uses the 'id' key."""
         variant = ConflictVariant(
-            variant_id="REQ-001-v1",
-            conflicting_id="REQ-001",
+            id="REQ-001-v1",
             content="Content",
             source_location="file:1",
             heuristic_score=0.9,
         )
         data = variant.to_dict()
-        assert "conflicting_id" in data
-        assert data["conflicting_id"] == "REQ-001"
-        # Old 'id' key should not be present
-        assert "id" not in data or data.get("id") != "REQ-001"
+        assert "id" in data
+        assert data["id"] == "REQ-001-v1"
 
     def test_from_dict_requires_canonical_keys(self):
         """Test that from_dict requires canonical v2.0 key names."""
-        # Test with new canonical key
+        # Test with canonical key
         canonical_data = {
-            "variant_id": "REQ-001-v1",
-            "conflicting_id": "REQ-001",
+            "id": "REQ-001-v1",
             "content": "Content",
             "source_location": "file:1",
             "heuristic_score": 0.9,
         }
         variant = ConflictVariant.from_dict(canonical_data)
-        assert variant.conflicting_id == "REQ-001"
+        assert variant.id == "REQ-001-v1"
 
         # Test that old key names are not accepted (no backward compatibility)
         old_data = {
-            "variant_id": "REQ-001-v1",
-            "id": "REQ-001",  # Old key name - not accepted
+            "variant_id": "REQ-001-v1",  # Old key name - not accepted
             "content": "Content",
             "source_location": "file:1",
             "heuristic_score": 0.9,
@@ -164,26 +157,24 @@ class TestConflictVariant:
 class TestConflictBundle:
     """Tests for ConflictBundle class."""
 
-    def test_recommended_variant_id_field(self):
-        """Test that recommended_variant_id clearly references a variant_id."""
+    def test_recommended_variant_field(self):
+        """Test that recommended_variant clearly references a variant id."""
         bundle = ConflictBundle(
             conflicting_id="REQ-001",
-            recommended_variant_id="REQ-001-v2",
+            recommended_variant="REQ-001-v2",
         )
-        assert bundle.recommended_variant_id == "REQ-001-v2"
+        assert bundle.recommended_variant == "REQ-001-v2"
 
-    def test_rank_variants_sets_recommended_variant_id(self):
-        """Test that rank_variants sets recommended_variant_id to highest scored variant."""
+    def test_rank_variants_sets_recommended_variant(self):
+        """Test that rank_variants sets recommended_variant to highest scored variant."""
         variant1 = ConflictVariant(
-            variant_id="REQ-001-v1",
-            conflicting_id="REQ-001",
+            id="REQ-001-v1",
             content="Short",
             source_location="file:1",
             heuristic_score=0.5,
         )
         variant2 = ConflictVariant(
-            variant_id="REQ-001-v2",
-            conflicting_id="REQ-001",
+            id="REQ-001-v2",
             content="Longer content with more detail",
             source_location="file:10",
             heuristic_score=0.9,
@@ -193,38 +184,36 @@ class TestConflictBundle:
             variants=[variant1, variant2],
         )
         bundle.rank_variants()
-        assert bundle.recommended_variant_id == "REQ-001-v2"
+        assert bundle.recommended_variant == "REQ-001-v2"
 
-    def test_to_dict_serializes_recommended_variant_id(self):
-        """Test that to_dict uses the new 'recommended_variant_id' key."""
+    def test_to_dict_serializes_recommended_variant(self):
+        """Test that to_dict uses the 'recommended_variant' key."""
         bundle = ConflictBundle(
             conflicting_id="REQ-001",
-            recommended_variant_id="REQ-001-v1",
+            recommended_variant="REQ-001-v1",
         )
         data = bundle.to_dict()
-        assert "recommended_variant_id" in data
-        assert data["recommended_variant_id"] == "REQ-001-v1"
-        # Old 'recommended_variant' key should not be present
-        assert "recommended_variant" not in data
+        assert "recommended_variant" in data
+        assert data["recommended_variant"] == "REQ-001-v1"
 
     def test_from_dict_requires_canonical_keys(self):
         """Test that from_dict requires canonical v2.0 key names."""
         # Test with canonical key
         canonical_data = {
             "conflicting_id": "REQ-001",
-            "recommended_variant_id": "REQ-001-v1",
+            "recommended_variant": "REQ-001-v1",
         }
         bundle = ConflictBundle.from_dict(canonical_data)
-        assert bundle.recommended_variant_id == "REQ-001-v1"
+        assert bundle.recommended_variant == "REQ-001-v1"
 
         # Test that old key names are not accepted (no backward compatibility)
         old_data = {
             "conflicting_id": "REQ-001",
-            "recommended_variant": "REQ-001-v1",  # Old key name - not accepted
+            "recommended_variant_id": "REQ-001-v1",  # Old key name - not accepted
         }
         bundle_old = ConflictBundle.from_dict(old_data)
         # Old key is ignored, should be None
-        assert bundle_old.recommended_variant_id is None
+        assert bundle_old.recommended_variant is None
 
 
 class TestRemainderQueue:

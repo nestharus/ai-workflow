@@ -10,7 +10,6 @@ from spec_manager.core.gaps import (
     GapElement,
     GapSynthesizer,
     InferredClaimPromotionStrategy,
-    LegacyGap,
     ProofChainDetector,
     ProseFragmentInferenceDetector,
     SequenceAnalyzer,
@@ -21,7 +20,6 @@ from spec_manager.core.gaps import (
     UnifiedGapDetector,
     detect_gaps,
     format_gaps_md,
-    normalize_to_findings,
 )
 from spec_manager.core.ids import IdValidator
 from spec_manager.core.intermediate import (
@@ -61,7 +59,6 @@ __all__ = [
     "InferredClaimPromotionStrategy",
     "IntermediateManager",
     "IntermediateState",
-    "LegacyGap",
     "LibsRegistry",
     "LineageEdge",
     "LineageTable",
@@ -84,6 +81,5 @@ __all__ = [
     "detect_gaps",
     "format_gaps_md",
     "generate_stamp",
-    "normalize_to_findings",
     "parse_stamp",
 ]
