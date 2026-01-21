@@ -82,7 +82,13 @@ uv run python -m scripts.agents pr-outer-loop '--loop --tasks-file .tmp/implemen
 
 **WAIT**: If this goes to background, call TaskOutput and wait until status is completed/failed.
 
+**Check pr-outer-loop result:**
+- If output contains "no tasks found" or "0 tasks": All issues were evaluated and deemed non-actionable. **Go to Step 7 (cleanup)** - workflow is complete.
+- If tasks were fixed: Continue to Step 6 to verify fixes.
+
 ### Step 6: Re-run Review Cycle
+
+Only if pr-outer-loop actually fixed tasks (not "no tasks found").
 
 Repeat Steps 2-5 up to 3 times until clean.
 
@@ -90,6 +96,7 @@ Track iteration count. On each iteration:
 1. Run scope agent (incremental update) - WAIT for completion via TaskOutput
 2. Run reviewer with `previous_review_file` set to verify fixes - WAIT for completion via TaskOutput
 3. If still `[OPEN]` issues and iterations < 3, run pr-outer-loop again - WAIT for completion via TaskOutput
+4. **If pr-outer-loop reports "no tasks found"**: All remaining issues are non-actionable. **Go to Step 7** - workflow is complete.
 
 ### Step 7: Finalization
 

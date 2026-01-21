@@ -2555,9 +2555,7 @@ def _detect_invalid_libraries(libraries_dir: Path) -> list[dict[str, Any]]:
         # Check if library contains invariants/goals (should be at root level)
         extractor = SectionExtractor()
         result = extractor.extract(content)
-        invariant_ids = [
-            id_val for id_val in result.sections if re.match(r"^[GI]\d+", id_val)
-        ]
+        invariant_ids = [id_val for id_val in result.sections if re.match(r"^[GI]\d+", id_val)]
         if invariant_ids:
             gaps.append(
                 {

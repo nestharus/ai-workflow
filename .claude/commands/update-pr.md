@@ -57,6 +57,18 @@ Pass through all arguments exactly as provided (quoted as a single string).
 
 **WAIT**: If this goes to background, call TaskOutput and wait until status is completed/failed.
 
+### Step 3: Check Completion
+
+**Check pr-outer-loop result:**
+- If output contains "no tasks found" or "0 tasks": All tasks were evaluated and deemed non-actionable. Workflow is complete.
+- If tasks were handled: Workflow is complete.
+- If error occurred: Go to Error Handling.
+
+Output summary and clean up:
+```bash
+rm -rf .tmp/pr-review
+```
+
 ## Error Handling
 
 When the command fails, invoke workflow-repair to fix the *tooling* (not content):
