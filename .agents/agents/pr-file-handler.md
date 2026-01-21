@@ -1,13 +1,7 @@
 ---
 description: Handles review tasks for a single file with complexity-based model routing
 routing:
-  # Simple tasks (low ambiguity, short text) - use Minimax
-  - max_chars: 500
-    ambiguity: false
-    model: minimax
-  # Complex tasks - use Codex Medium for ambiguity handling
-  - ambiguity: true
-    model: codex-medium
+  - model: minimax
 ---
 
 # PR File Handler Agent

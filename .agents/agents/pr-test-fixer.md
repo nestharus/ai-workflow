@@ -1,16 +1,7 @@
 ---
 description: Fixes failing tests for changed Python files using severity-based model routing
 routing:
-  # Severity-based routing - model determined by failure classification
-  # LOW: Simple assertion failures, typos, clear import errors
-  - severity: LOW
-    model: gpt-5.2-codex-medium
-  # MEDIUM: Multiple assertions, type/attribute errors
-  - severity: MEDIUM
-    model: gpt-5.2-codex-high
-  # HIGH: Complex failures, multiple test functions, fixture issues
-  - severity: HIGH
-    model: gpt-5.2-codex-xhigh
+  - model: claude-opus
 ---
 
 # Test Fixer Agent
