@@ -14,7 +14,7 @@ directory, run cycles, finalize with lint/squash/push, and post deferred replies
 You receive arguments as a raw string after the command invocation:
 
 ```
-/update-pr [--loop] [TICKET-ID] [local_tasks_text...]
+/update-pr [--loop] [--tasks-file <path>] [TICKET-ID] [local_tasks_text...]
 ```
 
 Examples:
@@ -24,6 +24,7 @@ Examples:
 - `/update-pr --loop NES-123` - Worktree mode, up to 10 cycles
 - `/update-pr NES-123 fix the typo in header` - Worktree mode, single cycle, with local task
 - `/update-pr --loop NES-123 fix typo --- add docstring` - Worktree mode, cycles, multiple local tasks
+- `/update-pr --loop --tasks-file .tmp/review.txt` - Local mode with tasks from file
 
 ---
 
@@ -38,7 +39,7 @@ Input: args_raw (string after /update-pr command)
 
 1. args = trim(args_raw)
 2. IF args == '':
-     RETURN has_loop=false, ticket_id=null, local_tasks_text=''
+     RETURN has_loop=false, tasks_file=null, ticket_id=null, local_tasks_text=''
 
 3. Split args into first_token + remainder (preserve remainder as substring)
 
@@ -50,25 +51,40 @@ Input: args_raw (string after /update-pr command)
      args1 = args
 
 5. IF args1 == '':
-     RETURN has_loop, ticket_id=null, local_tasks_text=''
+     RETURN has_loop, tasks_file=null, ticket_id=null, local_tasks_text=''
 
 6. Split args1 into token2 + remainder2
 
-7. IF token2 matches /^[A-Z]+-\d+$/:
-     ticket_id = token2
-     local_tasks_text = trim(remainder2)
+7. IF token2 == '--tasks-file':
+     Split remainder2 into file_path + remainder3
+     tasks_file = file_path
+     args2 = trim(remainder3)
    ELSE:
-     ticket_id = null
-     local_tasks_text = trim(args1)
+     tasks_file = null
+     args2 = args1
 
-8. RETURN has_loop, ticket_id, local_tasks_text
+8. IF args2 == '':
+     RETURN has_loop, tasks_file, ticket_id=null, local_tasks_text=''
+
+9. Split args2 into token3 + remainder4
+
+10. IF token3 matches /^[A-Z]+-\d+$/:
+      ticket_id = token3
+      local_tasks_text = trim(remainder4)
+    ELSE:
+      ticket_id = null
+      local_tasks_text = trim(args2)
+
+11. RETURN has_loop, tasks_file, ticket_id, local_tasks_text
 ```
 
 ### Validation
 
 - `--loop` must be the first argument if present
+- `--tasks-file` must come before ticket ID if present
 - Ticket ID pattern: uppercase letters, dash, digits (e.g., `NES-123`, `PROJ-45`)
 - Local tasks text preserves spaces and can contain `---` separators
+- If `--tasks-file` is provided, `local_tasks_text` from args is ignored
 
 ---
 
@@ -160,7 +176,21 @@ Initialize the working environment and session state.
 
 ## Step 3a: Import Local Tasks
 
-Convert local tasks text into `local_*.json` task files.
+Convert local tasks into `local_*.json` task files.
+
+**If `tasks_file` is provided:**
+
+```bash
+# Read tasks from file and split by --- separators into body files
+# The file contains plain text with --- separators
+
+# Import into structured JSON
+uv run pr import-local-tasks --output-dir {tmp_folder} --from-file {tasks_file}
+
+# Do NOT delete the tasks_file - it may be managed by another agent
+```
+
+**If `local_tasks_text` is provided (no tasks_file):**
 
 ```bash
 # Write raw local tasks text to file

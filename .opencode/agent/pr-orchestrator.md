@@ -1,7 +1,7 @@
 ---
 description: Tool caller that executes PR review agents via scripts.agents
 mode: subagent
-model: z-ai/glm-4.7
+model: zai-coding-plan/glm-4.7
 tools:
   bash: true
   read: false

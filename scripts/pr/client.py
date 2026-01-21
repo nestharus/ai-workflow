@@ -6,7 +6,7 @@ Usage:
     uv run pr post-reply --pr <number> --thread-file <file> --body <text>
     uv run pr resolve-thread --thread-file <file>
     uv run pr deferred-comment --thread-file <file> --body <text>
-    uv run pr import-local-tasks --output-dir <path> <body_file1> <body_file2> ...
+    uv run pr import-local-tasks --output-dir <path> [--from-file <file>] [body_files...]
     uv run pr post-deferred-replies --pr <number> --threads-dir <path>
     uv run pr request-review --pr <number>
     uv run pr get-pr [<ticket-id-or-branch>]
@@ -159,8 +159,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Directory to write the local task JSON files to",
     )
     import_tasks_parser.add_argument(
+        "--from-file",
+        type=Path,
+        default=None,
+        help="Single file with tasks separated by ---",
+    )
+    import_tasks_parser.add_argument(
         "body_files",
-        nargs="+",
+        nargs="*",
         type=Path,
         help="Paths to body files (plain text with task content)",
     )
@@ -626,7 +632,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "deferred-comment":
         return commands.deferred_comment_command(args.thread_file, args.body)
     if args.command == "import-local-tasks":
-        return commands.import_local_tasks_command(args.output_dir, args.body_files)
+        return commands.import_local_tasks_command(
+            args.output_dir, args.body_files or None, args.from_file
+        )
     if args.command == "post-deferred-replies":
         return commands.post_deferred_replies_command(args.pr, args.threads_dir)
     if args.command == "request-review":
