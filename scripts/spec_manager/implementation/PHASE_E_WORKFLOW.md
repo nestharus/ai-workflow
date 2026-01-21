@@ -1727,7 +1727,7 @@ class WorkflowOrchestrator:
         logger.info(f"  Wrote plan.md (projection of {len(by_library)} libraries)")
 
         # =========================================================================
-        # STAMP STRIPPING VERIFICATION (Gap 10 test)
+        # STAMP STRIPPING FINALIZATION CHECK (Gap 10 test)
         # =========================================================================
         # Verify no stamps remain in output artifacts
 

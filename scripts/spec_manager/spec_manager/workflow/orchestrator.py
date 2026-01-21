@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -250,7 +251,7 @@ class WorkflowOrchestrator:
             logger.info("Workflow completed successfully")
 
         except Exception as e:
-            logger.error(f"Workflow failed: {e}")
+            logger.exception(f"Workflow failed: {e}")
             self.state.errors.append(str(e))
             raise
 
@@ -1099,10 +1100,8 @@ class WorkflowOrchestrator:
         for unit in self.state.units:
             p = getattr(unit, "introduced_by", "")
             if p.startswith("p"):
-                try:
+                with suppress(ValueError):
                     all_patch_nums.append(int(p[1:]))
-                except ValueError:
-                    pass
 
         max_patch_in_ingest = max(all_patch_nums) if all_patch_nums else 1
         min_patch_in_ingest = min(all_patch_nums) if all_patch_nums else 1
@@ -1159,10 +1158,8 @@ class WorkflowOrchestrator:
                     patch_nums = []
                     for p in patches:
                         if p.startswith("p"):
-                            try:
+                            with suppress(ValueError):
                                 patch_nums.append(int(p[1:]))
-                            except ValueError:
-                                pass
 
                     # Use relative threshold instead of hardcoded < 3
                     if patch_nums and max(patch_nums) < early_threshold:
@@ -1253,7 +1250,6 @@ class WorkflowOrchestrator:
                 library_atoms.extend(lib_atoms)
 
             # Use SequenceMatcher for sequence-aware comparison
-            plan_lines = [a["content"] for a in plan_atoms if a["content"].strip()]
             lib_lines = [a["content"] for a in library_atoms if a["content"].strip()]
 
             # Create a set of library content for quick lookup
@@ -1407,7 +1403,7 @@ class WorkflowOrchestrator:
         plan_path.write_text(plan_content, encoding="utf-8")
         logger.info(f"  Wrote plan.md (projection of {len(by_library)} libraries)")
 
-        # STAMP STRIPPING VERIFICATION
+        # STAMP STRIPPING FINALIZATION CHECK
         stamp_check_failed = False
         stamp_pattern = re.compile(r"@(from|modified|line):[^\s]+")
 
@@ -1580,10 +1576,8 @@ class WorkflowOrchestrator:
                         for u in lib_units:
                             p2 = getattr(u, "introduced_by", "p0")
                             if p2.startswith("p"):
-                                try:
+                                with suppress(ValueError):
                                     max_lib_patch = max(max_lib_patch, int(p2[1:]))
-                                except ValueError:
-                                    pass
                         if patch_num > max_lib_patch:
                             later_units.append(unit)
                     except ValueError:

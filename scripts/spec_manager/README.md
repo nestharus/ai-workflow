@@ -112,8 +112,8 @@ uv run python -m spec_manager cleanup <spec_folder>
 # Run via Claude command
 /spec-manager .tasks/plans/my-spec
 
-# Run specific phase (legacy flag names still supported)
-/spec-manager .tasks/plans/my-spec --phase staging  # CLEANING phase (legacy: staging)
+# Run specific phase
+/spec-manager .tasks/plans/my-spec --phase cleaning  # CLEANING phase
 ```
 
 ### Agent System
@@ -232,10 +232,10 @@ The spec-manager uses multiple specialized agents with model routing:
 | Agent | Models | Purpose |
 |-------|--------|---------|
 | spec-manager-orchestrator | glm-flash | Coordinates phases, handles routing |
-| spec-manager-staging | smollm2-360/glm-flash | Fast validation |
-| spec-manager-planning | glm-flash/glm | Batch decomposition |
-| spec-manager-merging | smollm2-360/glm-flash | Section extraction |
-| spec-manager-verification | smollm2-360/glm-flash | Consistency checks |
+| spec-manager-cleaning | smollm2-360/glm-flash | Fast validation |
+| spec-manager-discovery | glm-flash/glm | Batch decomposition |
+| spec-manager-review | smollm2-360/glm-flash | Section extraction |
+| spec-manager-finalization | smollm2-360/glm-flash | Consistency checks |
 | spec-manager-analysis | glm/claude-opus | Complex pattern detection |
 | spec-manager-qa | claude-opus | Troubleshooting |
 
