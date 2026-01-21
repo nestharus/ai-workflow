@@ -572,13 +572,14 @@ class TestGapEvidence:
 
     def test_serialization_with_path_objects(self):
         """Test that Path objects in details are converted to strings."""
+        test_path = Path("/some/file/path.md")
         evidence = GapEvidence(
             invariant_family="format",
             description="File path issue",
-            details={"path": Path("/some/file/path.md")},
+            details={"path": test_path},
         )
         data = evidence.to_dict()
-        assert data["details"]["path"] == "/some/file/path.md"
+        assert data["details"]["path"] == str(test_path)
         assert isinstance(data["details"]["path"], str)
 
     def test_serialization_with_datetime_objects(self):
@@ -594,21 +595,23 @@ class TestGapEvidence:
 
     def test_serialization_with_nested_structures(self):
         """Test nested dicts/lists with Path/datetime are properly serialized."""
+        inner_path = Path("/nested/path")
+        list_path = Path("/list/path")
         evidence = GapEvidence(
             invariant_family="format",
             description="Complex details",
             details={
                 "outer": {
-                    "inner_path": Path("/nested/path"),
+                    "inner_path": inner_path,
                     "inner_time": datetime(2024, 1, 1),
-                    "list_data": [Path("/list/path"), "string"],
+                    "list_data": [list_path, "string"],
                 }
             },
         )
         data = evidence.to_dict()
-        assert data["details"]["outer"]["inner_path"] == "/nested/path"
+        assert data["details"]["outer"]["inner_path"] == str(inner_path)
         assert data["details"]["outer"]["inner_time"] == "2024-01-01T00:00:00"
-        assert data["details"]["outer"]["list_data"][0] == "/list/path"
+        assert data["details"]["outer"]["list_data"][0] == str(list_path)
 
     def test_serialization_with_unsupported_types_raises_error(self):
         """Test that custom objects in details raise ValueError."""
@@ -1195,6 +1198,7 @@ class TestDataStructuresIntegration:
         assert sig1 == sig2
 
 
+@pytest.mark.slow
 class TestDataStructuresPerformance:
     """Performance and stress tests for data structures."""
 
