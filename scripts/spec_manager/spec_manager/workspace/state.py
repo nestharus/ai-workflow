@@ -344,8 +344,8 @@ class WorkspaceState:
             migration_timestamp = datetime.now().isoformat()
             logging.warning(
                 "Migrating workspace state from schema version %s to 2.0. "
-                "Prior state data (inputs, processed, ambiguous_inputs, history) will be discarded. "
-                "Phase data will be reset to initial state. "
+                "Prior state data (inputs, processed, ambiguous_inputs, history) "
+                "will be discarded. Phase data will be reset to initial state. "
                 "Migration timestamp: %s.",
                 schema_version,
                 migration_timestamp,
