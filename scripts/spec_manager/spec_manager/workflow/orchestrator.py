@@ -64,10 +64,6 @@ class WorkflowEvidence:
     details: dict[str, Any] = field(default_factory=dict)
 
 
-# Backward compatibility alias
-GapEvidence = WorkflowEvidence
-
-
 class IntermediateManager:
     """Manages intermediate state snapshots."""
 

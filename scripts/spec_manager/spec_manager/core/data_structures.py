@@ -227,29 +227,19 @@ class ConflictVariant:
     def from_dict(cls, data: dict[str, Any]) -> ConflictVariant:
         """Deserialize from dictionary.
 
-        Accepts both 'variant_id' and 'id' for the variant identifier, and
-        maps 'conflicting_id' consistently. If 'variant_id' is missing, 'id'
-        is used as the variant identifier, falling back to 'conflicting_id'
-        only when explicitly provided.
-
         Args:
-            data: Dictionary with variant data. May contain 'variant_id' or 'id'
-                for the variant identifier, and 'conflicting_id' for the
-                conflicting element ID.
+            data: Dictionary with variant data. Must contain 'variant_id' and
+                'conflicting_id' keys.
 
         Returns:
             ConflictVariant instance.
-        """
-        # Accept both 'variant_id' (new) and 'id' (old) for variant identifier
-        variant_id = data.get("variant_id") or data.get("id")
-        if variant_id is None:
-            # Last resort: use conflicting_id if available
-            variant_id = data.get("conflicting_id", "")
 
+        Raises:
+            KeyError: If required keys are missing.
+        """
         return cls(
-            variant_id=variant_id,
-            # Support both old "id" key and new "conflicting_id" key
-            conflicting_id=data.get("conflicting_id", data.get("id", "")),
+            variant_id=data["variant_id"],
+            conflicting_id=data["conflicting_id"],
             content=data["content"],
             source_location=data["source_location"],
             heuristic_score=data["heuristic_score"],
@@ -299,14 +289,22 @@ class ConflictBundle:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ConflictBundle:
-        """Deserialize from dictionary."""
+        """Deserialize from dictionary.
+
+        Args:
+            data: Dictionary with bundle data. Must contain 'conflicting_id' key.
+                May contain 'recommended_variant_id' for the recommended variant.
+
+        Returns:
+            ConflictBundle instance.
+
+        Raises:
+            KeyError: If required keys are missing.
+        """
         return cls(
             conflicting_id=data["conflicting_id"],
             variants=[ConflictVariant.from_dict(v) for v in data.get("variants", [])],
-            # Support both old "recommended_variant" key and new "recommended_variant_id" key
-            recommended_variant_id=data.get(
-                "recommended_variant_id", data.get("recommended_variant")
-            ),
+            recommended_variant_id=data.get("recommended_variant_id"),
             resolution_status=data.get("resolution_status", STATUS_PENDING),
         )
 
@@ -655,8 +653,8 @@ def compute_evidence_signature(evidence_list: list[GapEvidence]) -> str:
           point precision variations across runs.
         - Empty evidence lists are not allowed since gaps must have supporting
           evidence. Use the evidence to identify the gap.
-        - Non-JSON-serializable values in details are converted via repr()
-          to ensure deterministic serialization.
+        - Non-JSON-serializable values in details (except Path and datetime)
+          will raise ValueError to prevent non-deterministic signatures.
 
     Args:
         evidence_list: List of GapEvidence objects to compute signature from.

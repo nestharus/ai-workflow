@@ -23,14 +23,6 @@ from spec_manager.core.data_structures import (
     StrategyRecord,
 )
 
-# Mapping from legacy phase values to new phase values
-_LEGACY_PHASE_MAP: dict[str, str] = {
-    "staging": "cleaning",
-    "planning": "discovery",
-    "merging": "review",
-    "verification": "finalization",
-}
-
 
 class PhaseStatus(Enum):
     """Status of a workflow phase."""
@@ -256,14 +248,28 @@ class WorkspaceState:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> WorkspaceState:
-        """Create state from dictionary."""
-        # Map legacy phase values to new values
+        """Create state from dictionary.
+
+        Args:
+            data: Dictionary with state data. Must contain 'spec_folder' key.
+                Phase values must be valid v2.0 Phase enum values.
+
+        Returns:
+            WorkspaceState instance.
+
+        Raises:
+            KeyError: If required keys are missing.
+            ValueError: If phase values are invalid.
+        """
+        # Validate and parse current_phase
         raw_phase = data.get("current_phase", "cleaning")
-        mapped_phase = _LEGACY_PHASE_MAP.get(raw_phase, raw_phase)
         try:
-            current_phase = Phase(mapped_phase)
-        except ValueError:
-            current_phase = Phase.CLEANING
+            current_phase = Phase(raw_phase)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid phase value '{raw_phase}'. "
+                f"Valid values are: {[p.value for p in Phase]}"
+            ) from e
 
         state = cls(
             spec_folder=data["spec_folder"],
@@ -282,21 +288,30 @@ class WorkspaceState:
             warnings=data.get("warnings", []),
         )
 
-        # Restore phase results
+        # Restore phase results with strict validation
         for name, phase_data in data.get("phases", {}).items():
-            # Map legacy phase values in phase results
             raw_result_phase = phase_data["phase"]
-            mapped_result_phase = _LEGACY_PHASE_MAP.get(
-                raw_result_phase, raw_result_phase
-            )
             try:
-                result_phase = Phase(mapped_result_phase)
-            except ValueError:
-                result_phase = Phase.CLEANING
+                result_phase = Phase(raw_result_phase)
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid phase value '{raw_result_phase}' in phase '{name}'. "
+                    f"Valid values are: {[p.value for p in Phase]}"
+                ) from e
+
+            # Validate status
+            raw_status = phase_data["status"]
+            try:
+                status = PhaseStatus(raw_status)
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid status value '{raw_status}' in phase '{name}'. "
+                    f"Valid values are: {[s.value for s in PhaseStatus]}"
+                ) from e
 
             state.phases[name] = PhaseResult(
                 phase=result_phase,
-                status=PhaseStatus(phase_data["status"]),
+                status=status,
                 started_at=phase_data.get("started_at"),
                 completed_at=phase_data.get("completed_at"),
                 error=phase_data.get("error"),

@@ -136,29 +136,29 @@ class TestConflictVariant:
         # Old 'id' key should not be present
         assert "id" not in data or data.get("id") != "REQ-001"
 
-    def test_from_dict_backward_compatibility(self):
-        """Test that from_dict handles both old 'id' and new 'conflicting_id' keys."""
-        # Test with new key
-        new_data = {
+    def test_from_dict_requires_canonical_keys(self):
+        """Test that from_dict requires canonical v2.0 key names."""
+        # Test with new canonical key
+        canonical_data = {
             "variant_id": "REQ-001-v1",
             "conflicting_id": "REQ-001",
             "content": "Content",
             "source_location": "file:1",
             "heuristic_score": 0.9,
         }
-        variant_new = ConflictVariant.from_dict(new_data)
-        assert variant_new.conflicting_id == "REQ-001"
+        variant = ConflictVariant.from_dict(canonical_data)
+        assert variant.conflicting_id == "REQ-001"
 
-        # Test with old key for backward compatibility
+        # Test that old key names are not accepted (no backward compatibility)
         old_data = {
             "variant_id": "REQ-001-v1",
-            "id": "REQ-001",  # Old key name
+            "id": "REQ-001",  # Old key name - not accepted
             "content": "Content",
             "source_location": "file:1",
             "heuristic_score": 0.9,
         }
-        variant_old = ConflictVariant.from_dict(old_data)
-        assert variant_old.conflicting_id == "REQ-001"
+        with pytest.raises(KeyError):
+            ConflictVariant.from_dict(old_data)
 
 
 class TestConflictBundle:
@@ -207,23 +207,24 @@ class TestConflictBundle:
         # Old 'recommended_variant' key should not be present
         assert "recommended_variant" not in data
 
-    def test_from_dict_backward_compatibility(self):
-        """Test that from_dict handles both old and new key names."""
-        # Test with new key
-        new_data = {
+    def test_from_dict_requires_canonical_keys(self):
+        """Test that from_dict requires canonical v2.0 key names."""
+        # Test with canonical key
+        canonical_data = {
             "conflicting_id": "REQ-001",
             "recommended_variant_id": "REQ-001-v1",
         }
-        bundle_new = ConflictBundle.from_dict(new_data)
-        assert bundle_new.recommended_variant_id == "REQ-001-v1"
+        bundle = ConflictBundle.from_dict(canonical_data)
+        assert bundle.recommended_variant_id == "REQ-001-v1"
 
-        # Test with old key for backward compatibility
+        # Test that old key names are not accepted (no backward compatibility)
         old_data = {
             "conflicting_id": "REQ-001",
-            "recommended_variant": "REQ-001-v1",  # Old key name
+            "recommended_variant": "REQ-001-v1",  # Old key name - not accepted
         }
         bundle_old = ConflictBundle.from_dict(old_data)
-        assert bundle_old.recommended_variant_id == "REQ-001-v1"
+        # Old key is ignored, should be None
+        assert bundle_old.recommended_variant_id is None
 
 
 class TestRemainderQueue:
@@ -281,20 +282,22 @@ class TestRemainderQueue:
         assert "last_content_hash" in data
         assert data["last_content_hash"] != ""
 
-    def test_from_dict_backward_compatibility(self):
-        """Test that from_dict handles migration from old last_size field."""
-        # Old format with last_size (now preserved in schema)
-        old_data = {
+    def test_from_dict_deserializes_correctly(self):
+        """Test that from_dict deserializes all fields correctly."""
+        data = {
             "items": ["item1", "item2"],
             "stagnation_count": 1,
             "stagnation_threshold": 3,
-            "last_size": 2,  # Old field, now preserved
+            "last_content_hash": "abc123",
+            "last_size": 2,
             "is_stagnant": False,
         }
-        queue = RemainderQueue.from_dict(old_data)
+        queue = RemainderQueue.from_dict(data)
         assert queue.items == ["item1", "item2"]
-        assert queue.last_content_hash == ""  # No hash in old format
-        assert queue.last_size == 2  # last_size is preserved
+        assert queue.last_content_hash == "abc123"
+        assert queue.last_size == 2
+        assert queue.stagnation_count == 1
+        assert not queue.is_stagnant
 
     def test_last_size_set_on_update(self):
         """Test that last_size is set to the length of items on each update."""

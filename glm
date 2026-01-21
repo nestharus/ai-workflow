@@ -1,18 +1,2 @@
 #!/usr/bin/env bash
-# Shortcut script for running GLM 4.7 with permissions skipped
-#
-# This script wraps the 'glm' alias (defined in ~/.bashrc) and adds
-# --dangerously-skip-permissions for unattended operation.
-#
-# Prerequisites (required - script will not use GLM 4.7 without these):
-#   - 'glm' alias configured in ~/.bashrc with Z_AI_API_KEY and Z_AI_BASE_URL
-#   - Z_AI_API_KEY environment variable set with GLM API key
-#
-# The environment variables are NOT opt-in. Without them, the glm alias
-# falls back to Anthropic models, defeating the purpose of this script.
-#
-# Usage:
-#   ./glm [args...]    - Runs: glm --dangerously-skip-permissions [args...]
-#   glm [args...]      - Standard glm alias (use this if you want prompts)
-
-glm --dangerously-skip-permissions "$@"
+claude-glm --dangerously-skip-permissions "$@"
