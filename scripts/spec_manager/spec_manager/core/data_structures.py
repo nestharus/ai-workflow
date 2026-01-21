@@ -260,12 +260,18 @@ class ConflictBundle:
     resolution_status: str = STATUS_PENDING
 
     def rank_variants(self) -> None:
-        """Sort variants by heuristic_score descending and set recommended_variant."""
+        """Sort variants by heuristic_score descending and set recommended_variant.
+
+        Sorting is deterministic: variants are sorted by heuristic_score descending,
+        then by id ascending as a tie-breaker. This ensures the recommended variant
+        is stable across runs even when heuristic scores tie.
+        """
         if not self.variants:
             self.recommended_variant = None
             return
 
-        self.variants.sort(key=lambda v: v.heuristic_score, reverse=True)
+        # Sort by heuristic_score descending, then by id ascending for deterministic tie-breaking
+        self.variants.sort(key=lambda v: (-v.heuristic_score, v.id))
         self.recommended_variant = self.variants[0].id
 
     def to_dict(self) -> dict[str, Any]:
@@ -331,12 +337,51 @@ class GapEvidence:
     location: str | None = None
     detector: str | None = None
 
+    @staticmethod
+    def _serialize_details(details: dict[str, Any]) -> dict[str, Any]:
+        """Convert details dict to JSON-serializable form.
+
+        Handles common non-JSON types (Path, datetime) by converting them to
+        strings. Other non-JSON types raise ValueError to prevent silent data loss.
+
+        Args:
+            details: Dictionary of evidence details.
+
+        Returns:
+            JSON-serializable dictionary.
+
+        Raises:
+            ValueError: If details contains unsupported non-JSON types.
+        """
+
+        def make_serializable(obj: object) -> object:
+            if obj is None or isinstance(obj, (bool, int, float, str)):
+                return obj
+            if isinstance(obj, (list, tuple)):
+                return [make_serializable(item) for item in obj]
+            if isinstance(obj, dict):
+                return {str(k): make_serializable(v) for k, v in obj.items()}
+            if isinstance(obj, Path):
+                return str(obj)
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            raise ValueError(
+                f"Unsupported type in details: {type(obj).__name__}. "
+                f"Details must contain only JSON-serializable types, Path, or datetime. "
+                f"Got: {obj!r}"
+            )
+
+        return {str(k): make_serializable(v) for k, v in details.items()}
+
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to dictionary."""
+        """Serialize to dictionary.
+
+        Details are converted to JSON-serializable form (Path -> str, datetime -> ISO str).
+        """
         return {
             "invariant_family": self.invariant_family,
             "description": self.description,
-            "details": self.details,
+            "details": self._serialize_details(self.details),
             "confidence": self.confidence,
             "location": self.location,
             "detector": self.detector,
