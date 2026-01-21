@@ -25,26 +25,26 @@ uv sync
 
 The system uses a 4-phase workflow:
 
-1. **STAGING**: Validate and legalize incoming content
+1. **CLEANING**: Validate and legalize incoming content
    - Lint annotation formats
    - Check for duplicate declarations
    - Find missing declarations on headers
    - Identify unannotated references
    - Normalize legacy formats
 
-2. **PLANNING**: Decompose changes into safe batches
+2. **DISCOVERY**: Decompose changes into safe batches
    - Compare IDs across plan.md, libs.md, and libraries
    - Detect sequence gaps and duplicates
    - Identify conflicts (IDs in multiple libraries)
    - Create prioritized batches for merging
 
-3. **MERGING**: Apply batches to library files
+3. **REVIEW**: Apply batches to library files
    - Extract new sections from plan.md
    - Move misplaced sections to correct library
    - Remove duplicate sections
    - Sort library sections by ID
 
-4. **VERIFICATION**: Confirm no drift or duplication
+4. **FINALIZATION**: Confirm no drift or duplication
    - Compare content between plan.md and libraries
    - Detect duplicate IDs across libraries
    - Verify all IDs are in correct primary library
@@ -91,10 +91,10 @@ uv run python -m spec_manager init <spec_folder>
 uv run python -m spec_manager status <spec_folder>
 
 # Run individual phases
-uv run python -m spec_manager stage <spec_folder> --normalize
-uv run python -m spec_manager plan <spec_folder>
-uv run python -m spec_manager merge <spec_folder> --apply
-uv run python -m spec_manager verify <spec_folder>
+uv run python -m spec_manager stage <spec_folder> --normalize   # CLEANING phase
+uv run python -m spec_manager plan <spec_folder>                # DISCOVERY phase
+uv run python -m spec_manager merge <spec_folder> --apply       # REVIEW phase
+uv run python -m spec_manager verify <spec_folder>              # FINALIZATION phase
 
 # Run analysis
 uv run python -m spec_manager analyze <spec_folder> --json
@@ -112,8 +112,8 @@ uv run python -m spec_manager cleanup <spec_folder>
 # Run via Claude command
 /spec-manager .tasks/plans/my-spec
 
-# Run specific phase
-/spec-manager .tasks/plans/my-spec --phase staging
+# Run specific phase (legacy flag names still supported)
+/spec-manager .tasks/plans/my-spec --phase staging  # CLEANING phase (legacy: staging)
 ```
 
 ### Agent System
@@ -131,10 +131,10 @@ uv run python -m scripts.agents spec-manager-orchestrator "Manage spec folder: .
 from pathlib import Path
 from spec_manager.workspace import WorkspaceManager
 from spec_manager.core.libs_registry import LibsRegistry
-from spec_manager.staging import run_staging
-from spec_manager.planning import run_planning
-from spec_manager.merging import run_merging
-from spec_manager.verification import run_verification
+from spec_manager.staging import run_staging  # CLEANING phase
+from spec_manager.planning import run_planning  # DISCOVERY phase
+from spec_manager.merging import run_merging  # REVIEW phase
+from spec_manager.verification import run_verification  # FINALIZATION phase
 from spec_manager.analysis import run_analysis
 
 # Initialize
@@ -142,25 +142,25 @@ spec_folder = Path(".tasks/plans/my-spec")
 manager = WorkspaceManager(spec_folder)
 manager.initialize()
 
-# Run staging
+# Run CLEANING phase (staging)
 content = (spec_folder / "plan.md").read_text()
 staging_result = run_staging(content)
-print(f"Staging: {staging_result.error_count} errors")
+print(f"Cleaning: {staging_result.error_count} errors")
 
 # Load registry
 registry = LibsRegistry.from_file(spec_folder / "libs.md")
 
-# Run planning
+# Run DISCOVERY phase (planning)
 planning_result = run_planning(content, registry, spec_folder / "libraries")
-print(f"Planning: {len(planning_result.batches)} batches")
+print(f"Discovery: {len(planning_result.batches)} batches")
 
-# Run merging (dry-run)
+# Run REVIEW phase (merging, dry-run)
 merge_result = run_merging(content, registry, spec_folder / "libraries", apply=False)
-print(f"Merging: {len(merge_result.actions_planned)} actions planned")
+print(f"Review: {len(merge_result.actions_planned)} actions planned")
 
-# Run verification
+# Run FINALIZATION phase (verification)
 verify_result = run_verification(content, registry, spec_folder / "libraries")
-print(f"Verification: {'passed' if verify_result.is_valid else 'failed'}")
+print(f"Finalization: {'passed' if verify_result.is_valid else 'failed'}")
 
 # Run analysis
 analysis_result = run_analysis(registry, spec_folder / "libraries")
@@ -189,10 +189,10 @@ my-spec/
 └── .workspace/          # Processing workspace (auto-generated)
     ├── state.json       # Persistent state
     ├── reports/         # Generated reports
-    ├── staging/         # Staging phase files
-    ├── planning/        # Planning phase files
-    ├── merging/         # Merging phase files
-    └── verification/    # Verification phase files
+    ├── staging/         # CLEANING phase files
+    ├── planning/        # DISCOVERY phase files
+    ├── merging/         # REVIEW phase files
+    └── verification/    # FINALIZATION phase files
 ```
 
 ## libs.md Format
@@ -257,13 +257,13 @@ scripts/spec_manager/
     ├── workspace/       # Workspace management
     │   ├── manager.py       # WorkspaceManager
     │   └── state.py         # State persistence
-    ├── staging/         # Staging phase
+    ├── staging/         # CLEANING phase (legacy: staging)
     │   └── operations.py    # Validation operations
-    ├── planning/        # Planning phase
+    ├── planning/        # DISCOVERY phase (legacy: planning)
     │   └── operations.py    # Decomposition operations
-    ├── merging/         # Merging phase
+    ├── merging/         # REVIEW phase (legacy: merging)
     │   └── operations.py    # Application operations
-    ├── verification/    # Verification phase
+    ├── verification/    # FINALIZATION phase (legacy: verification)
     │   └── operations.py    # Confirmation operations
     └── analysis/        # Analysis operations
         └── operations.py    # Divergence/convergence

@@ -9,10 +9,10 @@ This library provides tools for managing specification folders containing:
 - Input files (incoming plans/patches to be decomposed)
 
 The system uses a 4-phase workflow:
-1. STAGING: Validate and legalize incoming content
-2. PLANNING: Decompose changes into safe batches
-3. MERGING: Apply batches to library files
-4. VERIFICATION: Confirm no drift or duplication
+1. CLEANING: Validate and legalize incoming content
+2. DISCOVERY: Decompose changes into safe batches
+3. REVIEW: Apply batches to library files
+4. FINALIZATION: Confirm no drift or duplication
 
 Key concepts:
 - Annotations: ([=ID]) declarations and (@[+ID]), (@[=ID]) references
@@ -26,10 +26,10 @@ Usage:
 
     # Python API
     from spec_manager import WorkspaceManager
-    from spec_manager.staging import run_staging
-    from spec_manager.planning import run_planning
-    from spec_manager.merging import run_merging
-    from spec_manager.verification import run_verification
+    from spec_manager.staging import run_staging  # CLEANING phase
+    from spec_manager.planning import run_planning  # DISCOVERY phase
+    from spec_manager.merging import run_merging  # REVIEW phase
+    from spec_manager.verification import run_verification  # FINALIZATION phase
     from spec_manager.analysis import run_analysis
 """
 
@@ -71,11 +71,11 @@ __all__ = [
     "PatchDependencyGraph",
     "ContextIndex",
     "ingest",
-    # Phase runners
-    "run_staging",
-    "run_planning",
-    "run_merging",
-    "run_verification",
+    # Phase runners (legacy names, mapped to new phases)
+    "run_staging",      # CLEANING phase
+    "run_planning",     # DISCOVERY phase
+    "run_merging",      # REVIEW phase
+    "run_verification",  # FINALIZATION phase
     "run_analysis",
 ]
 

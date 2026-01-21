@@ -6,10 +6,10 @@ Usage:
 Commands:
     init        Initialize workspace in a spec folder
     status      Show workspace and phase status
-    stage       Run cleaning phase (validate inputs)
-    plan        Run discovery phase (decompose changes)
-    merge       Run review phase (apply changes)
-    verify      Run finalization phase (confirm correctness)
+    stage       Run CLEANING phase (validate inputs)
+    plan        Run DISCOVERY phase (decompose changes)
+    merge       Run REVIEW phase (apply changes)
+    verify      Run FINALIZATION phase (confirm correctness)
     analyze     Run analysis (divergence/convergence detection)
     run         Run all phases
     cleanup     Clean up workspace
@@ -104,7 +104,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_stage(args: argparse.Namespace) -> int:
-    """Run staging phase using strategy pipeline."""
+    """Run CLEANING phase (staging) using strategy pipeline."""
     spec_folder = Path(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
@@ -183,7 +183,7 @@ def cmd_stage(args: argparse.Namespace) -> int:
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
-    """Run planning phase."""
+    """Run DISCOVERY phase (planning)."""
     spec_folder = Path(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
@@ -238,7 +238,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
 
 def cmd_merge(args: argparse.Namespace) -> int:
-    """Run merging phase."""
+    """Run REVIEW phase (merging)."""
     spec_folder = Path(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
@@ -277,7 +277,7 @@ def cmd_merge(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    """Run verification phase."""
+    """Run FINALIZATION phase (verification)."""
     spec_folder = Path(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
@@ -726,23 +726,23 @@ def main() -> int:
     p_status.add_argument("--json", action="store_true", help="Output JSON")
 
     # stage
-    p_stage = subparsers.add_parser("stage", help="Run cleaning phase")
+    p_stage = subparsers.add_parser("stage", help="Run CLEANING phase")
     p_stage.add_argument("spec_folder", help="Path to spec folder")
     p_stage.add_argument(
         "--max-passes", type=int, default=10, help="Maximum strategy passes (default: 10)"
     )
 
     # plan
-    p_plan = subparsers.add_parser("plan", help="Run discovery phase")
+    p_plan = subparsers.add_parser("plan", help="Run DISCOVERY phase")
     p_plan.add_argument("spec_folder", help="Path to spec folder")
 
     # merge
-    p_merge = subparsers.add_parser("merge", help="Run review phase")
+    p_merge = subparsers.add_parser("merge", help="Run REVIEW phase")
     p_merge.add_argument("spec_folder", help="Path to spec folder")
     p_merge.add_argument("--apply", action="store_true", help="Apply changes (not dry-run)")
 
     # verify
-    p_verify = subparsers.add_parser("verify", help="Run finalization phase")
+    p_verify = subparsers.add_parser("verify", help="Run FINALIZATION phase")
     p_verify.add_argument("spec_folder", help="Path to spec folder")
 
     # analyze

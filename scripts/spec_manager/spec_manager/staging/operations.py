@@ -1,7 +1,8 @@
 """
-Staging phase operations.
+Staging operations for the CLEANING phase.
 
-These operations validate and legalize incoming content before any merge.
+This module provides validation and legalization operations for incoming content.
+Legacy module name 'staging' maps to the CLEANING workflow phase.
 """
 
 from __future__ import annotations

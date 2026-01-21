@@ -1,7 +1,8 @@
 """
-Planning phase operations.
+Planning operations for the DISCOVERY phase.
 
-These operations decompose changes into safe batches for merging.
+This module provides decomposition and batch creation operations.
+Legacy module name 'planning' maps to the DISCOVERY workflow phase.
 """
 
 from __future__ import annotations

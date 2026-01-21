@@ -17,14 +17,18 @@ from spec_manager.core.provenance import TrackedUnit
 
 
 class StrategyPhase(Enum):
-    """Phases where strategies can be applied."""
+    """Phases where strategies can be applied.
+
+    Note: These are strategy execution phases, distinct from workflow phases
+    (CLEANING, DISCOVERY, REVIEW, FINALIZATION) defined in workspace.state.Phase.
+    """
 
     CLEANING = "cleaning"            # Input normalization
     DECOMPOSITION = "decomposition"  # Breaking content into atoms
     EXTRACTION = "extraction"        # Pulling structured content
     RESOLUTION = "resolution"        # Resolving ambiguities
     LABELING = "labeling"            # Assigning to libraries
-    VERIFICATION = "verification"    # Post-transform checks
+    VERIFICATION = "verification"    # Strategy verification, not workflow phase
 
 
 @dataclass

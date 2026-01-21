@@ -1,7 +1,8 @@
 """
-Verification phase operations.
+Verification operations for the FINALIZATION phase.
 
-These operations confirm correctness after merging.
+This module provides consistency checking and validation operations.
+Legacy module name 'verification' maps to the FINALIZATION workflow phase.
 """
 
 from __future__ import annotations

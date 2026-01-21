@@ -1,7 +1,8 @@
 """
-Merging phase operations.
+Merging operations for the REVIEW phase.
 
-These operations apply changes to library files.
+This module provides operations for applying changes to library files.
+Legacy module name 'merging' maps to the REVIEW workflow phase.
 All operations support dry-run mode by default.
 """
 
