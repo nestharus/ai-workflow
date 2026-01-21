@@ -10,6 +10,7 @@ transformations, but we CAN track that every line is accounted for.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -83,6 +84,29 @@ class SourceLocation:
             loc = f"[{self.patch_id}] {loc}"
         return loc
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "file": self.file,
+            "line_start": self.line_start,
+            "line_end": self.line_end,
+            "column_start": self.column_start,
+            "column_end": self.column_end,
+            "patch_id": self.patch_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SourceLocation":
+        """Deserialize from dictionary."""
+        return cls(
+            file=data["file"],
+            line_start=data["line_start"],
+            line_end=data["line_end"],
+            column_start=data.get("column_start"),
+            column_end=data.get("column_end"),
+            patch_id=data.get("patch_id"),
+        )
+
 
 @dataclass
 class TargetLocation:
@@ -95,6 +119,23 @@ class TargetLocation:
     def __str__(self) -> str:
         return f"{self.file}:{self.line_start}-{self.line_end}"
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "file": self.file,
+            "line_start": self.line_start,
+            "line_end": self.line_end,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "TargetLocation":
+        """Deserialize from dictionary."""
+        return cls(
+            file=data["file"],
+            line_start=data["line_start"],
+            line_end=data["line_end"],
+        )
+
 
 @dataclass
 class MembershipEvidence:
@@ -102,6 +143,23 @@ class MembershipEvidence:
     rationale: str                   # Why this mapping was made
     confidence: float                # 0.0-1.0 confidence
     method: str                      # "exact", "llm_inference", "similarity", etc.
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "rationale": self.rationale,
+            "confidence": self.confidence,
+            "method": self.method,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MembershipEvidence":
+        """Deserialize from dictionary."""
+        return cls(
+            rationale=data["rationale"],
+            confidence=data["confidence"],
+            method=data["method"],
+        )
 
 
 @dataclass
@@ -147,6 +205,12 @@ class TrackedUnit:
     target_element_ids: list[str] = field(default_factory=list)  # This -> target elements
     membership_evidence: dict[str, MembershipEvidence] = field(default_factory=dict)  # target_id -> evidence
 
+    # Adaptive granularity and hierarchical decomposition
+    granularity: GranularityLevel = GranularityLevel.SECTION  # Tracking granularity level
+    parent_unit_id: str | None = None  # Parent unit in hierarchical decomposition
+    child_unit_ids: list[str] = field(default_factory=list)  # Child units from decomposition
+    content_hash: str | None = None  # Content hash for deduplication and change detection
+
     # Explicit lineage edges (Gap 12)
     # With heavy rewriting, decomposition, and recomposition, we need explicit lineage
     # edges to reconstruct "what became what" - beyond just a string in drop_reason.
@@ -179,6 +243,9 @@ class TrackedUnit:
         if modifier:
             modified_by.append(modifier)
 
+        # Compute content hash for the new content
+        new_content_hash = hashlib.sha256(new_content.encode()).hexdigest()
+
         return TrackedUnit(
             id=new_id or self.id,
             content=new_content,
@@ -189,6 +256,10 @@ class TrackedUnit:
             declarations=self.declarations.copy(),
             references=self.references.copy(),
             annotations=self.annotations.copy(),
+            granularity=self.granularity,
+            parent_unit_id=self.id,
+            child_unit_ids=[],
+            content_hash=new_content_hash,
             status=self.status,
             metadata=self.metadata.copy()
         )
@@ -290,6 +361,80 @@ class TrackedUnit:
             parent.add_child(self.id)
         self.updated_at = datetime.now()
 
+    # =========================================================================
+    # Serialization Methods
+    # =========================================================================
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "id": self.id,
+            "content": self.content,
+            "unit_type": self.unit_type.value,
+            "source": self.source.to_dict(),
+            "introduced_by": self.introduced_by,
+            "modified_by": self.modified_by,
+            "declarations": self.declarations,
+            "references": self.references,
+            "annotations": self.annotations,
+            "source_atom_ids": self.source_atom_ids,
+            "target_element_ids": self.target_element_ids,
+            "membership_evidence": {
+                k: v.to_dict() for k, v in self.membership_evidence.items()
+            },
+            "granularity": self.granularity.value,
+            "parent_unit_id": self.parent_unit_id,
+            "child_unit_ids": self.child_unit_ids,
+            "content_hash": self.content_hash,
+            "parents": self.parents,
+            "children": self.children,
+            "status": self.status.value,
+            "target": self.target.to_dict() if self.target else None,
+            "drop_reason": self.drop_reason,
+            "candidate_libraries": self.candidate_libraries,
+            "primary_library": self.primary_library,
+            "relation_libraries": self.relation_libraries,
+            "metadata": self.metadata,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "TrackedUnit":
+        """Deserialize from dictionary."""
+        return cls(
+            id=data["id"],
+            content=data["content"],
+            unit_type=UnitType(data["unit_type"]),
+            source=SourceLocation.from_dict(data["source"]),
+            introduced_by=data["introduced_by"],
+            modified_by=data.get("modified_by", []),
+            declarations=data.get("declarations", []),
+            references=data.get("references", []),
+            annotations=data.get("annotations", []),
+            source_atom_ids=data.get("source_atom_ids", []),
+            target_element_ids=data.get("target_element_ids", []),
+            membership_evidence={
+                k: MembershipEvidence.from_dict(v)
+                for k, v in data.get("membership_evidence", {}).items()
+            },
+            granularity=GranularityLevel(data.get("granularity", GranularityLevel.SECTION.value)),
+            parent_unit_id=data.get("parent_unit_id"),
+            child_unit_ids=data.get("child_unit_ids", []),
+            content_hash=data.get("content_hash"),
+            parents=data.get("parents", []),
+            children=data.get("children", []),
+            status=UnitStatus(data.get("status", UnitStatus.PENDING.value)),
+            target=TargetLocation.from_dict(data["target"]) if data.get("target") else None,
+            drop_reason=data.get("drop_reason"),
+            candidate_libraries=data.get("candidate_libraries", {}),
+            primary_library=data.get("primary_library"),
+            relation_libraries=data.get("relation_libraries", []),
+            metadata=data.get("metadata", {}),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else datetime.now(),
+        )
+
 
 @dataclass
 class LineageEdge:
@@ -299,6 +444,27 @@ class LineageEdge:
     transformation: str        # "split", "merge", "infer", "transform"
     timestamp: datetime
     details: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "from_unit": self.from_unit,
+            "to_unit": self.to_unit,
+            "transformation": self.transformation,
+            "timestamp": self.timestamp.isoformat(),
+            "details": self.details,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "LineageEdge":
+        """Deserialize from dictionary."""
+        return cls(
+            from_unit=data["from_unit"],
+            to_unit=data["to_unit"],
+            transformation=data["transformation"],
+            timestamp=datetime.fromisoformat(data["timestamp"]),
+            details=data.get("details", {}),
+        )
 
 
 class LineageTable:
@@ -580,6 +746,9 @@ class ProvenanceTracker:
         ref_pattern = re.compile(r'\(@\[([+=])([^\]]+)\]\)')
         references = [m.group(2) for m in ref_pattern.finditer(content)]
 
+        # Compute content hash for content-addressed storage
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
+
         return TrackedUnit(
             id=unit_id,
             content=content,
@@ -592,7 +761,11 @@ class ProvenanceTracker:
             ),
             introduced_by=patch_id or "unknown",
             declarations=declarations,
-            references=references
+            references=references,
+            granularity=GranularityLevel.SECTION,
+            parent_unit_id=None,
+            child_unit_ids=[],
+            content_hash=content_hash,
         )
 
     def _infer_unit_type(self, content: str, declarations: list[str]) -> UnitType:
@@ -711,6 +884,26 @@ class ProvenanceTracker:
             lines.append(f"- ... and {len(self.transformations) - 10} more")
 
         return "\n".join(lines)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize tracker state to dictionary."""
+        return {
+            "units": {uid: unit.to_dict() for uid, unit in self.units.items()},
+            "transformations": self.transformations,
+            "next_id": self._next_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ProvenanceTracker":
+        """Deserialize tracker state from dictionary."""
+        tracker = cls()
+        tracker.units = {
+            uid: TrackedUnit.from_dict(unit_data)
+            for uid, unit_data in data.get("units", {}).items()
+        }
+        tracker.transformations = data.get("transformations", [])
+        tracker._next_id = data.get("next_id", 1)
+        return tracker
 
 
 def parse_stamp(text: str) -> dict[str, str | list[str]] | None:
