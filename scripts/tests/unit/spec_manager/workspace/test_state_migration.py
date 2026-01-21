@@ -18,8 +18,8 @@ from typing import Any
 
 import pytest
 
-from scripts.spec_manager.spec_manager.workspace.manager import WorkspaceManager
-from scripts.spec_manager.spec_manager.workspace.state import (
+from spec_manager.workspace.manager import WorkspaceManager
+from spec_manager.workspace.state import (
     Phase,
     PhaseStatus,
     WorkspaceState,
