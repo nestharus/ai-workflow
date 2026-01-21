@@ -467,10 +467,10 @@ class SequenceAnalyzer:
                 # Check if same content (true duplicate) or different (conflict)
                 previews = [p for _, p in occurrences]
                 if len(set(previews)) == 1:
-                    severity = "warning"
+                    severity = Severity.WARNING
                     msg = f"Duplicate Algorithm {num} (same content)"
                 else:
-                    severity = "error"
+                    severity = Severity.ERROR
                     msg = f"Conflicting Algorithm {num} (different content)"
 
                 gaps.append(
@@ -616,11 +616,11 @@ class ContentVerifier:
 
             if similarity < 0.95:
                 if similarity < 0.5:
-                    severity = "error"
+                    severity = Severity.ERROR
                 elif similarity < 0.8:
-                    severity = "warning"
+                    severity = Severity.WARNING
                 else:
-                    severity = "info"
+                    severity = Severity.INFO
 
                 gaps.append(
                     DetectorFinding(
@@ -1271,7 +1271,9 @@ class UncertaintyDetector:
                 if marker_type != "lean_sorry" and self._in_code_block(content, match.start()):
                     continue
 
-                severity = "warning" if marker_type in ("todo", "lean_sorry") else "info"
+                severity = (
+                    Severity.WARNING if marker_type in ("todo", "lean_sorry") else Severity.INFO
+                )
 
                 gaps.append(
                     DetectorFinding(
