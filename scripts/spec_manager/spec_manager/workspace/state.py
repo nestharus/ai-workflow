@@ -2,10 +2,10 @@
 Workspace state management for spec processing.
 
 The workspace maintains state across the 4 phases:
-1. STAGING: Validate and legalize
-2. PLANNING: Decompose into batches
-3. MERGING: Apply batches
-4. VERIFICATION: Confirm correctness
+1. CLEANING: Validate and legalize
+2. DISCOVERY: Decompose into batches
+3. REVIEW: Apply batches
+4. FINALIZATION: Confirm correctness
 """
 
 from __future__ import annotations
@@ -16,6 +16,20 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from spec_manager.core.data_structures import (
+    ComplianceMetrics,
+    ConflictBundle,
+    StrategyRecord,
+)
+
+# Mapping from legacy phase values to new phase values
+_LEGACY_PHASE_MAP: dict[str, str] = {
+    "staging": "cleaning",
+    "planning": "discovery",
+    "merging": "review",
+    "verification": "finalization",
+}
 
 
 class PhaseStatus(Enum):
@@ -31,10 +45,10 @@ class PhaseStatus(Enum):
 class Phase(Enum):
     """Workflow phases."""
 
-    STAGING = "staging"
-    PLANNING = "planning"
-    MERGING = "merging"
-    VERIFICATION = "verification"
+    CLEANING = "cleaning"
+    DISCOVERY = "discovery"
+    REVIEW = "review"
+    FINALIZATION = "finalization"
 
 
 @dataclass
@@ -51,6 +65,54 @@ class PhaseResult:
 
 
 @dataclass
+class CoverageSnapshot:
+    """
+    Snapshot of coverage tracking metrics.
+
+    Tracks the number of units processed and their status breakdown
+    at a point in time.
+
+    Attributes:
+        total_units: Total number of tracked units.
+        mapped_units: Units successfully mapped.
+        dropped_units: Units dropped/discarded.
+        coverage_percent: Percentage of coverage (0.0-100.0).
+        by_status: Count of units by status.
+        timestamp: ISO timestamp of snapshot.
+    """
+
+    total_units: int
+    mapped_units: int
+    dropped_units: int
+    coverage_percent: float
+    by_status: dict[str, int] = field(default_factory=dict)
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "total_units": self.total_units,
+            "mapped_units": self.mapped_units,
+            "dropped_units": self.dropped_units,
+            "coverage_percent": self.coverage_percent,
+            "by_status": self.by_status,
+            "timestamp": self.timestamp,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CoverageSnapshot:
+        """Deserialize from dictionary."""
+        return cls(
+            total_units=data["total_units"],
+            mapped_units=data["mapped_units"],
+            dropped_units=data["dropped_units"],
+            coverage_percent=data["coverage_percent"],
+            by_status=data.get("by_status", {}),
+            timestamp=data.get("timestamp", datetime.now().isoformat()),
+        )
+
+
+@dataclass
 class WorkspaceState:
     """
     Persistent state for spec workspace processing.
@@ -63,13 +125,24 @@ class WorkspaceState:
     """
 
     spec_folder: str
+    schema_version: str = "2.0"
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    current_phase: Phase = Phase.STAGING
+    current_phase: Phase = Phase.CLEANING
     phases: dict[str, PhaseResult] = field(default_factory=dict)
     inputs: list[str] = field(default_factory=list)  # Input files to process
     processed: list[str] = field(default_factory=list)  # Files that have been processed
     ambiguous_inputs: list[str] = field(default_factory=list)  # Files with ambiguous ordering
     history: list[dict[str, Any]] = field(default_factory=list)
+    # v2.0 fields
+    run_id: str | None = None
+    input_hashes: dict[str, str] = field(default_factory=dict)
+    metrics: ComplianceMetrics | None = None
+    strategies: list[StrategyRecord] = field(default_factory=list)
+    conflicts: list[ConflictBundle] = field(default_factory=list)
+    coverage: CoverageSnapshot | None = None
+    outputs: dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         # Initialize phase results
@@ -117,7 +190,7 @@ class WorkspaceState:
 
     def get_next_phase(self) -> Phase | None:
         """Get the next phase to execute."""
-        phase_order = [Phase.STAGING, Phase.PLANNING, Phase.MERGING, Phase.VERIFICATION]
+        phase_order = [Phase.CLEANING, Phase.DISCOVERY, Phase.REVIEW, Phase.FINALIZATION]
 
         for phase in phase_order:
             status = self.get_phase_status(phase)
@@ -150,6 +223,7 @@ class WorkspaceState:
         """Convert state to dictionary for JSON serialization."""
         return {
             "spec_folder": self.spec_folder,
+            "schema_version": self.schema_version,
             "created_at": self.created_at,
             "current_phase": self.current_phase.value,
             "phases": {
@@ -168,25 +242,60 @@ class WorkspaceState:
             "processed": self.processed,
             "ambiguous_inputs": self.ambiguous_inputs,
             "history": self.history,
+            # v2.0 fields
+            "run_id": self.run_id,
+            "input_hashes": self.input_hashes,
+            "metrics": self.metrics.to_dict() if self.metrics else None,
+            "strategies": [s.to_dict() for s in self.strategies],
+            "conflicts": [c.to_dict() for c in self.conflicts],
+            "coverage": self.coverage.to_dict() if self.coverage else None,
+            "outputs": self.outputs,
+            "errors": self.errors,
+            "warnings": self.warnings,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> WorkspaceState:
         """Create state from dictionary."""
+        # Map legacy phase values to new values
+        raw_phase = data.get("current_phase", "cleaning")
+        mapped_phase = _LEGACY_PHASE_MAP.get(raw_phase, raw_phase)
+        try:
+            current_phase = Phase(mapped_phase)
+        except ValueError:
+            current_phase = Phase.CLEANING
+
         state = cls(
             spec_folder=data["spec_folder"],
+            schema_version=data.get("schema_version", "2.0"),
             created_at=data.get("created_at", datetime.now().isoformat()),
-            current_phase=Phase(data.get("current_phase", "staging")),
+            current_phase=current_phase,
             inputs=data.get("inputs", []),
             processed=data.get("processed", []),
             ambiguous_inputs=data.get("ambiguous_inputs", []),
             history=data.get("history", []),
+            # v2.0 simple fields
+            run_id=data.get("run_id"),
+            input_hashes=data.get("input_hashes", {}),
+            outputs=data.get("outputs", {}),
+            errors=data.get("errors", []),
+            warnings=data.get("warnings", []),
         )
 
         # Restore phase results
         for name, phase_data in data.get("phases", {}).items():
+            # Map legacy phase values in phase results
+            raw_result_phase = phase_data["phase"]
+            mapped_result_phase = _LEGACY_PHASE_MAP.get(
+                raw_result_phase, raw_result_phase
+            )
+            try:
+                result_phase = Phase(mapped_result_phase)
+            except ValueError:
+                result_phase = Phase.CLEANING
+
             state.phases[name] = PhaseResult(
-                phase=Phase(phase_data["phase"]),
+                phase=result_phase,
                 status=PhaseStatus(phase_data["status"]),
                 started_at=phase_data.get("started_at"),
                 completed_at=phase_data.get("completed_at"),
@@ -194,6 +303,18 @@ class WorkspaceState:
                 outputs=phase_data.get("outputs", {}),
                 issues=phase_data.get("issues", []),
             )
+
+        # Restore v2.0 complex fields
+        if data.get("metrics"):
+            state.metrics = ComplianceMetrics.from_dict(data["metrics"])
+        state.strategies = [
+            StrategyRecord.from_dict(s) for s in data.get("strategies", [])
+        ]
+        state.conflicts = [
+            ConflictBundle.from_dict(c) for c in data.get("conflicts", [])
+        ]
+        if data.get("coverage"):
+            state.coverage = CoverageSnapshot.from_dict(data["coverage"])
 
         return state
 
