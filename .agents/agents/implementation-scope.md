@@ -1,12 +1,12 @@
 ---
-description: Investigates implementation scope from git history and maintains workspace
+description: Analyzes plan to find the oldest commit that started the implementation
 routing:
   - model: glm
 ---
 
 # Implementation Scope Agent
 
-Investigate the scope of an implementation by analyzing git history and plan files. Maintain a workspace directory with scope artifacts for use by the reviewer agent.
+Analyze a plan to determine which commits in git history are associated with its implementation. Return the oldest commit that marks the start of the implementation work.
 
 ## Input Context
 
@@ -15,174 +15,84 @@ You receive a JSON context with:
 ```json
 {
   "plan_file": "path/to/plan.md",
-  "workspace": ".tmp/implementation-review"
+  "working_dir": "."
 }
 ```
 
-The workspace directory is managed by this agent. On first run, create it. On subsequent runs, update existing artifacts.
-
-## Workspace Structure
-
-```
-{workspace}/
-├── scope.json          # Current scope definition (the "shape")
-└── commits_seen.txt    # List of commit SHAs already analyzed
-```
+- `working_dir`: The directory where the implementation lives (repo root or worktree path)
+- All git commands MUST use `-C {working_dir}` to target the correct repository
 
 ## Workflow
 
-### Step 1: Initialize Workspace
-
-```bash
-mkdir -p {workspace}
-```
-
-Check if scope.json exists to determine if this is initial or incremental:
-
-```bash
-test -f {workspace}/scope.json && echo "incremental" || echo "initial"
-```
-
-### Step 2: Read Plan
+### Step 1: Read Plan
 
 ```bash
 cat {plan_file}
 ```
 
 Extract:
-- **Explicit files**: Files mentioned by path in the plan
-- **Implied files**: Files likely affected based on described changes
-- **Plan identifier**: Ticket ID or plan name for commit searching
+- **Plan identifier**: Ticket ID (e.g., NES-123), PR number, or unique keywords
+- **Implementation description**: What the plan aims to implement
+- **Key terms**: Unique words that might appear in commit messages
 
-### Step 3: Discover Git History
+### Step 2: Search Git History
 
-**Initial run (no scope.json):**
+**IMPORTANT**: All git commands MUST use `-C {working_dir}`.
 
-```bash
-# Find commits referencing the plan/ticket
-git log --oneline --all --grep="{plan_identifier}" 2>/dev/null | head -30
-
-# Get recent commits
-git log --oneline -50
-
-# Determine start commit (first commit mentioning plan, or reasonable default)
-# Get all files changed since start
-git diff --name-only {start_commit}..HEAD 2>/dev/null
-
-# Check uncommitted changes
-git status --porcelain
-```
-
-**Incremental run (scope.json exists):**
+Search for commits referencing the plan:
 
 ```bash
-# Read last analyzed commit
-last_commit=$(cat {workspace}/scope.json | jq -r '.last_commit')
+# Find commits mentioning ticket ID or plan keywords
+git -C {working_dir} log --oneline --all --grep="{plan_identifier}" 2>/dev/null | head -30
 
-# Only look at new commits
-git log --oneline ${last_commit}..HEAD
-
-# Get files changed since last scope
-git diff --name-only ${last_commit}..HEAD
-
-# Check new uncommitted changes
-git status --porcelain
+# Get recent commits for context
+git -C {working_dir} log --oneline -50
 ```
 
-### Step 4: Classify Files
+### Step 3: Identify Start Commit
 
-For each changed file, classify as:
+From the git history, determine the **oldest commit** that starts the implementation:
 
-| Classification | Criteria |
-|----------------|----------|
-| `in_scope` | Explicitly mentioned in plan |
-| `adjacent` | Same directory as in-scope files, likely related |
-| `unrelated` | Different system, likely user work |
+1. If commits mention the ticket/plan ID, the oldest such commit is likely the start
+2. If no explicit mentions, look for commits whose messages align with plan intent
+3. If unclear, use a reasonable default (e.g., last 10-20 commits)
 
-### Step 5: Build/Update Scope
+The start commit is the boundary - everything from start_commit to HEAD (plus uncommitted) is potentially in scope.
 
-**Initial run - create scope.json:**
+### Step 4: Verify Start Commit
 
-```json
-{
-  "plan_file": "path/to/plan.md",
-  "created_at": "2025-01-20T10:30:00Z",
-  "updated_at": "2025-01-20T10:30:00Z",
-  "last_commit": "abc123def",
-  "start_commit": "xyz789abc",
-  "plan_summary": "Brief description of what the plan implements",
-  "target_files": {
-    "explicit": ["src/api/handler.py", "src/models/user.py"],
-    "implied": ["src/api/__init__.py"]
-  },
-  "changed_files": {
-    "in_scope": [
-      {"path": "src/api/handler.py", "status": "modified"}
-    ],
-    "adjacent": [
-      {"path": "src/api/routes.py", "status": "modified", "reason": "Same directory"}
-    ],
-    "unrelated": [
-      {"path": "src/auth/login.py", "status": "modified", "reason": "Different system"}
-    ]
-  },
-  "uncommitted": {
-    "staged": [],
-    "unstaged": []
-  }
-}
-```
-
-**Incremental run - update scope.json:**
-
-1. Read existing scope
-2. Update `last_commit` to current HEAD
-3. Update `updated_at` timestamp
-4. Add newly changed files to appropriate categories
-5. Update uncommitted section
-
-### Step 6: Save Workspace Artifacts
+Confirm the commit exists and is an ancestor of HEAD:
 
 ```bash
-# Write scope.json
-cat > {workspace}/scope.json << 'EOF'
-{scope_json}
-EOF
-
-# Track seen commits
-git rev-parse HEAD >> {workspace}/commits_seen.txt
+git -C {working_dir} rev-parse {start_commit}
+git -C {working_dir} merge-base --is-ancestor {start_commit} HEAD && echo "valid"
 ```
 
 ## Output Contract
 
-Return workspace path and shape file path:
+Return the start commit:
 
 ```json
 {
   "status": "success",
-  "workspace": ".tmp/implementation-review",
-  "shape_file": ".tmp/implementation-review/scope.json",
-  "is_incremental": false,
-  "summary": {
-    "in_scope_files": 5,
-    "adjacent_files": 2,
-    "unrelated_files": 1,
-    "new_commits": 12
-  }
+  "start_commit": "abc123def456",
+  "plan_identifier": "NES-123",
+  "reasoning": "Found 5 commits mentioning NES-123, oldest is abc123def456 from 2025-01-15"
 }
 ```
 
-## File Status Values
+**On failure:**
 
-| Status | Meaning |
-|--------|---------|
-| `added` | New file created |
-| `modified` | Existing file changed |
-| `deleted` | File removed |
-| `renamed` | File moved/renamed |
+```json
+{
+  "status": "error",
+  "error": "Could not determine start commit - no commits match plan"
+}
+```
 
-## Error Handling
+## Important Notes
 
-1. If plan file not found: Return error
-2. If git commands fail: Return error with details
-3. If workspace can't be created: Return error
+1. This agent runs ONCE per review session - not incrementally
+2. It only finds the start commit - file discovery is handled by Python
+3. The start commit defines the boundary, not the exact set of related commits
+4. When in doubt, err on the side of including more history (older commit)

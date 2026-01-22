@@ -1,5 +1,5 @@
 ---
-description: Handles review tasks for a single file with complexity-based model routing
+description: Handles review tasks for a single file
 routing:
   - model: minimax
 ---
@@ -23,8 +23,7 @@ The agent receives context JSON with the following structure:
       "content": "The review comment text...",
       "line": 42
     }
-  ],
-  "model": "minimax | codex-medium"
+  ]
 }
 ```
 
@@ -79,7 +78,7 @@ Return a JSON result with exactly this structure:
 
 ## Processing Steps
 
-1. **Read Context**: Extract `file_path`, `tasks`, `model` from input context
+1. **Read Context**: Extract `file_path` and `tasks` from input context
 2. **Read File**: Load the target file content
 3. **Analyze Tasks**: Understand each task's requirements from `content`
 4. **Apply Changes**: Make edits to the file content
@@ -100,8 +99,7 @@ Input context:
       "content": "Add input validation for the request body",
       "line": 45
     }
-  ],
-  "model": "codex-medium"
+  ]
 }
 ```
 

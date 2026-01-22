@@ -1,6 +1,4 @@
-from pathlib import Path
-from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -11,160 +9,200 @@ from scripts.dev.review.coderabbit_review import (
     run_coderabbit,
 )
 
-if TYPE_CHECKING:
-    from pyfakefs.fake_filesystem import FakeFilesystem
-
 
 class TestRunCoderabbit:
-    def test_raises_when_coderabbit_not_found(self, fs: FakeFilesystem) -> None:
+    def test_raises_when_coderabbit_not_found(self) -> None:
         """Should raise CoderabbitNotFoundError when coderabbit not found."""
-        fs.create_dir("/output")
-
         with patch("shutil.which", return_value=None), pytest.raises(CoderabbitNotFoundError):
-            run_coderabbit(["--base", "main"], [], Path("/output"))
+            run_coderabbit(["--base", "main"], [])
 
-    def test_creates_output_directory(self, fs: FakeFilesystem) -> None:
-        """Should create output directory if it doesn't exist."""
-        with (
-            patch("shutil.which", return_value="/usr/bin/coderabbit"),
-            patch("scripts.dev.review.coderabbit_review.run_command_with_tee", return_value=0),
-        ):
-            run_coderabbit(["--base", "main"], [], Path("/new/output"))
-
-        assert Path("/new/output").exists()
-
-    def test_calls_coderabbit_with_prompt_only(self, fs: FakeFilesystem) -> None:
+    def test_calls_coderabbit_with_prompt_only(self) -> None:
         """Should call coderabbit with --prompt-only flag."""
-        fs.create_dir("/output")
+        mock_process = MagicMock()
+        mock_process.stdout = iter([])
+        mock_process.wait.return_value = 0
 
         with (
             patch("shutil.which", return_value="/usr/bin/coderabbit"),
-            patch("scripts.dev.review.coderabbit_review.run_command_with_tee") as mock_tee,
+            patch("subprocess.Popen", return_value=mock_process) as mock_popen,
         ):
-            mock_tee.return_value = 0
+            run_coderabbit(["--base", "main"], [])
 
-            run_coderabbit(["--base", "main"], [], Path("/output"))
-
-            call_args = mock_tee.call_args[0][0]
+            call_args = mock_popen.call_args[0][0]
             assert "--prompt-only" in call_args
 
-    def test_raises_system_exit_on_failure(self, fs: FakeFilesystem) -> None:
-        """Should raise SystemExit on non-zero return code."""
-        fs.create_dir("/output")
+    def test_returns_exit_code_from_process(self) -> None:
+        """Should return exit code from coderabbit process."""
+        mock_process = MagicMock()
+        mock_process.stdout = iter([])
+        mock_process.wait.return_value = 0
 
         with (
             patch("shutil.which", return_value="/usr/bin/coderabbit"),
-            patch("scripts.dev.review.coderabbit_review.run_command_with_tee", return_value=1),
-            pytest.raises(SystemExit) as exc_info,
+            patch("subprocess.Popen", return_value=mock_process),
         ):
-            run_coderabbit(["--base", "main"], [], Path("/output"))
+            result = run_coderabbit(["--base", "main"], [])
 
-        assert exc_info.value.code == 1
+        assert result == 0
 
-    def test_returns_output_path(
-        self, fs: FakeFilesystem, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Should return output path on success."""
-        fs.create_dir("/output")
+    def test_returns_nonzero_on_failure(self) -> None:
+        """Should return non-zero exit code on failure."""
+        mock_process = MagicMock()
+        mock_process.stdout = iter([])
+        mock_process.wait.return_value = 1
 
         with (
             patch("shutil.which", return_value="/usr/bin/coderabbit"),
-            patch("scripts.dev.review.coderabbit_review.run_command_with_tee", return_value=0),
+            patch("subprocess.Popen", return_value=mock_process),
         ):
-            result = run_coderabbit(["--base", "main"], [], Path("/output"))
+            result = run_coderabbit(["--base", "main"], [])
 
-        assert result.suffix == ".coderabbit"
-        assert result.parent == Path("/output")
+        assert result == 1
+
+    def test_streams_output_to_stdout(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should stream process output to stdout."""
+        mock_process = MagicMock()
+        mock_process.stdout = iter(["line 1\n", "line 2\n"])
+        mock_process.wait.return_value = 0
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/coderabbit"),
+            patch("subprocess.Popen", return_value=mock_process),
+        ):
+            run_coderabbit(["--base", "main"], [])
+
+        captured = capsys.readouterr()
+        assert "line 1" in captured.out
+        assert "line 2" in captured.out
+
+    def test_returns_error_when_stdout_is_none(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Should return 1 and print error when stdout is None."""
+        mock_process = MagicMock()
+        mock_process.stdout = None
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/coderabbit"),
+            patch("subprocess.Popen", return_value=mock_process),
+        ):
+            result = run_coderabbit(["--base", "main"], [])
+
+        assert result == 1
+        mock_process.kill.assert_called_once()
+        captured = capsys.readouterr()
+        assert "ERROR" in captured.err
+
+
+class TestParseArgs:
+    def test_parses_base_argument(self) -> None:
+        """Should parse --base argument."""
+        args = parse_args(["--base", "develop"])
+        assert args.base == "develop"
+
+    def test_parses_type_argument(self) -> None:
+        """Should parse --type argument."""
+        args = parse_args(["--type", "uncommitted"])
+        assert args.type == "uncommitted"
+
+    def test_parses_base_commit_argument(self) -> None:
+        """Should parse --base-commit argument."""
+        args = parse_args(["--base-commit", "abc123"])
+        assert args.base_commit == "abc123"
+
+    def test_captures_extra_args(self) -> None:
+        """Should capture extra arguments."""
+        args = parse_args(["--base", "main", "--", "--extra", "arg"])
+        assert args.extra_args == ["--", "--extra", "arg"]
 
 
 class TestMain:
-    def test_defaults_to_base_main(self, fs: FakeFilesystem) -> None:
+    def test_defaults_to_base_main(self) -> None:
         """Should default to --base main when no target specified."""
-        fs.create_dir(".review")
+        mock_process = MagicMock()
+        mock_process.stdout = iter([])
+        mock_process.wait.return_value = 0
 
         with (
             patch("shutil.which", return_value="/usr/bin/coderabbit"),
-            patch("scripts.dev.review.coderabbit_review.run_command_with_tee") as mock_tee,
+            patch("subprocess.Popen", return_value=mock_process) as mock_popen,
         ):
-            mock_tee.return_value = 0
-
             main([])
 
-            call_args = mock_tee.call_args[0][0]
+            call_args = mock_popen.call_args[0][0]
             assert "--base" in call_args
             assert "main" in call_args
 
-    def test_uses_provided_base(self, fs: FakeFilesystem) -> None:
+    def test_uses_provided_base(self) -> None:
         """Should use provided --base argument."""
-        fs.create_dir(".review")
+        mock_process = MagicMock()
+        mock_process.stdout = iter([])
+        mock_process.wait.return_value = 0
 
         with (
             patch("shutil.which", return_value="/usr/bin/coderabbit"),
-            patch("scripts.dev.review.coderabbit_review.run_command_with_tee") as mock_tee,
+            patch("subprocess.Popen", return_value=mock_process) as mock_popen,
         ):
-            mock_tee.return_value = 0
-
             main(["--base", "develop"])
 
-            call_args = mock_tee.call_args[0][0]
+            call_args = mock_popen.call_args[0][0]
             assert "develop" in call_args
 
-    def test_uses_type_argument(self, fs: FakeFilesystem) -> None:
+    def test_uses_type_argument(self) -> None:
         """Should use --type argument."""
-        fs.create_dir(".review")
+        mock_process = MagicMock()
+        mock_process.stdout = iter([])
+        mock_process.wait.return_value = 0
 
         with (
             patch("shutil.which", return_value="/usr/bin/coderabbit"),
-            patch("scripts.dev.review.coderabbit_review.run_command_with_tee") as mock_tee,
+            patch("subprocess.Popen", return_value=mock_process) as mock_popen,
         ):
-            mock_tee.return_value = 0
-
             main(["--type", "uncommitted"])
 
-            call_args = mock_tee.call_args[0][0]
+            call_args = mock_popen.call_args[0][0]
             assert "--type" in call_args
             assert "uncommitted" in call_args
 
-    def test_strips_leading_double_dash_from_extra(self, fs: FakeFilesystem) -> None:
+    def test_strips_leading_double_dash_from_extra(self) -> None:
         """Should strip leading -- from extra args."""
-        fs.create_dir(".review")
+        mock_process = MagicMock()
+        mock_process.stdout = iter([])
+        mock_process.wait.return_value = 0
 
         with (
             patch("shutil.which", return_value="/usr/bin/coderabbit"),
-            patch("scripts.dev.review.coderabbit_review.run_command_with_tee") as mock_tee,
+            patch("subprocess.Popen", return_value=mock_process) as mock_popen,
         ):
-            mock_tee.return_value = 0
-
             main(["--base", "main", "--", "--extra"])
 
-            call_args = mock_tee.call_args[0][0]
-            # Should have --extra but only one --
+            call_args = mock_popen.call_args[0][0]
             assert "--extra" in call_args
 
-    def test_returns_zero_on_success(self, fs: FakeFilesystem) -> None:
+    def test_returns_zero_on_success(self) -> None:
         """Should return 0 on success."""
-        fs.create_dir(".review")
+        mock_process = MagicMock()
+        mock_process.stdout = iter([])
+        mock_process.wait.return_value = 0
 
         with (
             patch("shutil.which", return_value="/usr/bin/coderabbit"),
-            patch("scripts.dev.review.coderabbit_review.run_command_with_tee", return_value=0),
+            patch("subprocess.Popen", return_value=mock_process),
         ):
             result = main([])
 
         assert result == 0
 
-    def test_uses_base_commit_argument(self, fs: FakeFilesystem) -> None:
-        """Should use --base-commit argument (covers line 83, branch [82,83])."""
-        fs.create_dir(".review")
+    def test_uses_base_commit_argument(self) -> None:
+        """Should use --base-commit argument."""
+        mock_process = MagicMock()
+        mock_process.stdout = iter([])
+        mock_process.wait.return_value = 0
 
         with (
             patch("shutil.which", return_value="/usr/bin/coderabbit"),
-            patch("scripts.dev.review.coderabbit_review.run_command_with_tee") as mock_tee,
+            patch("subprocess.Popen", return_value=mock_process) as mock_popen,
         ):
-            mock_tee.return_value = 0
-
             main(["--base-commit", "abc123def456"])
 
-            call_args = mock_tee.call_args[0][0]
+            call_args = mock_popen.call_args[0][0]
             assert "--base-commit" in call_args
             assert "abc123def456" in call_args

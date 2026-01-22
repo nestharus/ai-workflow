@@ -2,9 +2,7 @@ import pytest
 
 from scripts.dev.review.coderabbit_review import (
     CoderabbitNotFoundError,
-    main,
     parse_args,
-    run_coderabbit,
 )
 
 
@@ -21,8 +19,8 @@ class TestCoderabbitNotFoundError:
 
 
 class TestParseArgs:
-    def test_default_base_is_main(self) -> None:
-        """Should default to --base main when no target specified."""
+    def test_default_values(self) -> None:
+        """Should have None for all target args when no args specified."""
         args = parse_args([])
         assert args.base is None
         assert args.type is None
@@ -47,16 +45,6 @@ class TestParseArgs:
         """Should reject multiple target arguments."""
         with pytest.raises(SystemExit):
             parse_args(["--base", "main", "--type", "uncommitted"])
-
-    def test_default_output_dir(self) -> None:
-        """Should default to .review output directory."""
-        args = parse_args([])
-        assert args.output_dir == ".review"
-
-    def test_custom_output_dir(self) -> None:
-        """Should accept custom output directory."""
-        args = parse_args(["--output-dir", "/custom/path"])
-        assert args.output_dir == "/custom/path"
 
     def test_captures_extra_args(self) -> None:
         """Should capture extra arguments."""

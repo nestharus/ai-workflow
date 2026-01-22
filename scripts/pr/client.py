@@ -36,6 +36,9 @@ Usage:
     uv run pr sandbox-status [--request-id <uuid>]
     echo "file1.py\nfile2.py" | uv run pr file-hash [--root <dir>] > hashes.json
     uv run pr file-hash-compare before.json after.json
+    uv run pr setup-review [--ticket <id>] [--worktree <path>] [--tasks-file <file>] [tasks...]
+    uv run pr finalize-review --state-file <path>
+    uv run pr review-loop [--ticket <id>] [--worktree <path>] [--tasks-file <file>] [tasks...]
 """
 
 from __future__ import annotations
@@ -447,6 +450,47 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Directory to write task JSON files to",
     )
 
+    # parse-review-tasks command
+    parse_review_parser = subparsers.add_parser(
+        "parse-review-tasks",
+        help="Parse a review.txt file into task JSON files",
+    )
+    parse_review_parser.add_argument(
+        "--review-file",
+        type=Path,
+        required=True,
+        help="Path to the review.txt file",
+    )
+    parse_review_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Directory to write task JSON files to",
+    )
+
+    # discover-scope-files command
+    discover_scope_parser = subparsers.add_parser(
+        "discover-scope-files",
+        help="Discover files in scope since a starting commit",
+    )
+    discover_scope_parser.add_argument(
+        "--working-dir",
+        type=Path,
+        required=True,
+        help="Git working directory",
+    )
+    discover_scope_parser.add_argument(
+        "--start-commit",
+        required=True,
+        help="Starting commit SHA",
+    )
+    discover_scope_parser.add_argument(
+        "--state-file",
+        type=Path,
+        default=None,
+        help="Optional path to persist/load scope state for incremental updates",
+    )
+
     # aggregate-tasks command
     aggregate_tasks_parser = subparsers.add_parser(
         "aggregate-tasks",
@@ -612,6 +656,80 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Second hash JSON file",
     )
 
+    # setup-review command
+    setup_review_parser = subparsers.add_parser(
+        "setup-review",
+        help="Setup PR review workspace with folder structure and session state",
+    )
+    setup_review_parser.add_argument(
+        "--ticket",
+        default=None,
+        help="Linear ticket ID (e.g., NES-123). Triggers worktree mode.",
+    )
+    setup_review_parser.add_argument(
+        "--worktree",
+        type=Path,
+        default=None,
+        help="Path to existing worktree. Triggers worktree mode without ticket.",
+    )
+    setup_review_parser.add_argument(
+        "--tasks-file",
+        type=Path,
+        default=None,
+        help="Path to file containing tasks separated by ---",
+    )
+    setup_review_parser.add_argument(
+        "local_tasks",
+        nargs="*",
+        help="Local task strings (use --- to separate multiple tasks)",
+    )
+
+    # finalize-review command
+    finalize_review_parser = subparsers.add_parser(
+        "finalize-review",
+        help="Finalize PR review with lint, squash, push, and cleanup",
+    )
+    finalize_review_parser.add_argument(
+        "--state-file",
+        type=Path,
+        required=True,
+        help="Path to session state JSON file",
+    )
+
+    # review-loop command (orchestrates setup, cycles, finalize)
+    review_loop_parser = subparsers.add_parser(
+        "review-loop",
+        help="Complete PR review workflow: setup, cycle loop, finalize",
+    )
+    review_loop_parser.add_argument(
+        "--ticket",
+        default=None,
+        help="Linear ticket ID (e.g., NES-123). Triggers worktree mode.",
+    )
+    review_loop_parser.add_argument(
+        "--worktree",
+        type=Path,
+        default=None,
+        help="Path to existing worktree. Triggers worktree mode without ticket.",
+    )
+    review_loop_parser.add_argument(
+        "--tasks-file",
+        type=Path,
+        default=None,
+        help="Path to file containing tasks separated by ---",
+    )
+    review_loop_parser.add_argument(
+        "--max-cycles",
+        type=int,
+        default=10,
+        help="Maximum number of cycles before stopping (default: 10)",
+    )
+    review_loop_parser.add_argument(
+        "local_tasks",
+        nargs="*",
+        help="Local task strings (use --- to separate multiple tasks)",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -680,6 +798,12 @@ def main(argv: list[str] | None = None) -> int:
         return commands.list_unresolved_comments_command(args.ticket_id)
     if args.command == "parse-coderabbit":
         return commands.parse_coderabbit_command(args.review_file, args.output_dir)
+    if args.command == "parse-review-tasks":
+        return commands.parse_review_tasks_command(args.review_file, args.output_dir)
+    if args.command == "discover-scope-files":
+        return commands.discover_scope_files_command(
+            args.working_dir, args.start_commit, args.state_file
+        )
     if args.command == "aggregate-tasks":
         return commands.aggregate_tasks_command(args.input_dir, files_only=args.files_only)
     if args.command == "promote-worktree":
@@ -700,6 +824,27 @@ def main(argv: list[str] | None = None) -> int:
         return commands.file_hash_command(args.root)
     if args.command == "file-hash-compare":
         return commands.file_hash_compare_command(args.file1, args.file2)
+    if args.command == "setup-review":
+        # Join local_tasks with --- separator if multiple provided
+        local_tasks = None
+        if args.local_tasks:
+            # Reconstruct from space-separated args, handling --- as separator
+            raw = " ".join(args.local_tasks)
+            local_tasks = [t.strip() for t in raw.split("---") if t.strip()]
+        return commands.setup_review_command(
+            args.ticket, args.worktree, args.tasks_file, local_tasks
+        )
+    if args.command == "finalize-review":
+        return commands.finalize_review_command(args.state_file)
+    if args.command == "review-loop":
+        # Join local_tasks with --- separator if multiple provided
+        local_tasks = None
+        if args.local_tasks:
+            raw = " ".join(args.local_tasks)
+            local_tasks = [t.strip() for t in raw.split("---") if t.strip()]
+        return commands.review_loop_command(
+            args.ticket, args.worktree, args.tasks_file, local_tasks, args.max_cycles
+        )
 
     return 1
 

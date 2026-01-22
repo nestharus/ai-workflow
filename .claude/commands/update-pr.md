@@ -11,63 +11,69 @@ Process code review comments: $ARGUMENTS
 
 ## Overview
 
-This command processes code review comments using the pr-outer-loop agent.
+This command processes code review comments using the review-loop Python script.
 
 **Two modes:**
-- **Local mode** (no ticket): Reviews uncommitted code or most recent commit
-- **Worktree mode** (with ticket): Works in a worktree, pulls PR comments first
+- **Local mode** (no ticket/worktree): Reviews uncommitted code or most recent commit in current directory
+- **Worktree mode** (with ticket or worktree): Works in a worktree, pulls PR comments first
 
 ## Arguments
 
 - Empty: Local mode - review uncommitted code in current directory
-- `--loop`: Local mode with continuous cycles until clean
-- Ticket ID (e.g., `NES-123`): Worktree mode - work in worktree, pull PR comments
-- Text after identifier: Treated as local tasks (both modes)
+- `--ticket <id>`: Worktree mode - work in worktree for Linear ticket, pull PR comments
+- `--worktree <path>`: Worktree mode - work in specified worktree (no ticket)
+- `--tasks-file <path>`: Load tasks from file (tasks separated by --- or review.txt format)
+- Text after flags: Treated as local tasks (use --- to separate multiple)
 
 Examples:
-- `/update-pr` - local mode, single cycle
-- `/update-pr --loop` - local mode, continuous loop
-- `/update-pr NES-123` - worktree mode for ticket
-- `/update-pr NES-123 ## Fix the bug...` - worktree mode + local tasks
-- `/update-pr --loop ## Add tests...` - local mode + local tasks
+- `/update-pr` - local mode, review current directory
+- `/update-pr --ticket NES-123` - worktree mode for ticket
+- `/update-pr --ticket NES-123 fix the bug` - worktree mode + local task
+- `/update-pr --worktree .worktrees/my-branch` - worktree mode without ticket
+- `/update-pr --tasks-file .tmp/tasks.txt` - local mode with tasks from file
+- `/update-pr fix typo --- add docstring` - local mode with multiple local tasks
 
 ## CRITICAL: Synchronization Rules
 
-**The agent command MUST complete before proceeding.**
+**The command MUST complete before proceeding.**
 
 - If the bash command goes to background, call `TaskOutput(task_id=<id>, block=true, timeout=600000)` to wait
 - If TaskOutput times out but task is still running, call TaskOutput again (task continues in background)
 - Repeat until status shows completed/failed
 
+## Worktree Rules
+
+When `--ticket` or `--worktree` is present:
+1. Commands run from repo root (scripts/agents live there)
+2. The review-loop script handles worktree setup internally
+3. Workspace is created INSIDE the worktree (`{worktree}/.tmp/pr-review/`)
+4. All file operations target the worktree
+5. Git operations happen in the worktree
+6. Cleanup is handled by the Python script
+
 ## Execution
 
-### Step 1: Create Workspace
+### Step 1: Run PR Review Loop
 
 ```bash
-rm -rf .tmp/pr-review && mkdir -p .tmp/pr-review
+uv run pr review-loop $ARGUMENTS
 ```
 
-### Step 2: Run PR Outer Loop Agent
-
-```bash
-uv run python -m scripts.agents pr-outer-loop '$ARGUMENTS'
-```
-
-Pass through all arguments exactly as provided (quoted as a single string).
+Pass through all arguments exactly as provided. The Python script handles:
+- Mode detection (local vs worktree)
+- Worktree setup (if --ticket provided)
+- Workspace creation in correct location
+- Task importing and processing
+- Cleanup on completion
 
 **WAIT**: If this goes to background, call TaskOutput and wait until status is completed/failed.
 
-### Step 3: Check Completion
+### Step 2: Check Completion
 
-**Check pr-outer-loop result:**
+**Check review-loop result:**
 - If output contains "no tasks found" or "0 tasks": All tasks were evaluated and deemed non-actionable. Workflow is complete.
 - If tasks were handled: Workflow is complete.
 - If error occurred: Go to Error Handling.
-
-Output summary and clean up:
-```bash
-rm -rf .tmp/pr-review
-```
 
 ## Error Handling
 
@@ -76,9 +82,9 @@ When the command fails, invoke workflow-repair to fix the *tooling* (not content
 ```bash
 uv run python -m scripts.agents workflow-repair '{
   "workflow": "pr-review",
-  "step": "pr-outer-loop",
-  "state_file": ".tmp/pr-review/state.json",
-  "failed_command": "uv run python -m scripts.agents pr-outer-loop ...",
+  "step": "review-loop",
+  "state_file": ".tmp/pr-review/state/session.json",
+  "failed_command": "uv run pr review-loop ...",
   "exit_code": 1,
   "stdout": "{captured_stdout}",
   "stderr": "{captured_stderr}",

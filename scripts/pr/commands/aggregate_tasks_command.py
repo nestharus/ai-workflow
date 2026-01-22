@@ -17,7 +17,7 @@ from collections import defaultdict
 from pathlib import Path
 
 # Task file patterns to search for
-TASK_PATTERNS = ["coderabbit_*.json", "thread_*.json", "local_*.json"]
+TASK_PATTERNS = ["coderabbit_*.json", "thread_*.json", "local_*.json", "review_*.json"]
 
 # Key for tasks without a file path (e.g., local tasks)
 GLOBAL_TASKS_KEY = "__global__"

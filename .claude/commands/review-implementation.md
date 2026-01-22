@@ -13,6 +13,23 @@ Review implementation against the following plan: $ARGUMENTS
 
 This command reviews an implementation against a plan, identifies issues, and fixes them iteratively.
 
+**Two modes:**
+- **Local mode** (no ticket/worktree): Reviews implementation in current directory
+- **Worktree mode** (with ticket or worktree): Reviews implementation in a worktree
+
+## Arguments
+
+The first part of arguments may contain flags:
+- `--ticket <id>`: Worktree mode - work in worktree for Linear ticket
+- `--worktree <path>`: Worktree mode - work in specified worktree
+
+Everything after flags is the plan text.
+
+Examples:
+- `/review-implementation <plan text>` - local mode
+- `/review-implementation --ticket NES-123 <plan text>` - worktree mode for ticket
+- `/review-implementation --worktree .worktrees/my-branch <plan text>` - worktree mode
+
 ## CRITICAL: Synchronization Rules
 
 **EVERY agent command MUST complete before proceeding to the next step.**
@@ -23,106 +40,162 @@ This command reviews an implementation against a plan, identifies issues, and fi
 - NEVER read output files until the writing agent has completed
 - NEVER skip ahead while an agent is still running
 
+## Worktree Rules
+
+When `--ticket` or `--worktree` is present:
+1. Commands run from repo root (scripts/agents live there)
+2. Workspace is created INSIDE the worktree (`{working_dir}/.tmp/implementation-review/`)
+3. All file paths in agent calls use `{working_dir}/...`
+4. All agents receive `working_dir` parameter
+5. Git operations happen in the worktree
+6. The review-loop call passes `--worktree {working_dir}`
+
 ## Execution
+
+### Step 0: Parse Arguments and Determine Working Directory
+
+Parse `$ARGUMENTS` to extract flags and plan text:
+
+1. If `--ticket <id>` is present:
+   - Extract ticket ID
+   - Get branch name: `uv run pr get-expected-branch-name <ticket_id>`
+   - Set `working_dir` = `.worktrees/{branch_name}`
+   - Ensure worktree exists: `uv run pr setup-worktree <ticket_id>`
+   - Remove `--ticket <id>` from arguments, remainder is plan text
+
+2. If `--worktree <path>` is present:
+   - Set `working_dir` = `<path>`
+   - Verify path exists
+   - Remove `--worktree <path>` from arguments, remainder is plan text
+
+3. Otherwise (local mode):
+   - Set `working_dir` = `.` (current directory)
+   - All of `$ARGUMENTS` is plan text
+
+Define paths:
+- `workspace` = `{working_dir}/.tmp/implementation-review`
+- `plan_file` = `{workspace}/plan.txt`
+- `scope_state_file` = `{workspace}/scope_state.json`
+- `conclusions_file` = `{workspace}/conclusions.json`
+- `review_file` = `{workspace}/review.txt`
+- `state_file` = `{workspace}/state.json`
 
 ### Step 1: Setup Workspace
 
 Clean any stale data from previous runs and create fresh workspace:
 
 ```bash
-rm -rf .tmp/implementation-review && mkdir -p .tmp/implementation-review
+rm -rf {workspace} && mkdir -p {workspace}
 ```
 
 Save the plan text to a file:
 
 ```bash
-cat > .tmp/implementation-review/plan.txt << 'EOF'
-$ARGUMENTS
+cat > {plan_file} << 'EOF'
+{plan_text}
 EOF
 ```
 
-### Step 2: Run Scope Agent
+### Step 2: Run Scope Agent (ONCE)
 
-Analyze git history to determine what files are in scope:
+Analyze the plan to find the starting commit:
 
 ```bash
-uv run python -m scripts.agents implementation-scope '{"plan_file": ".tmp/implementation-review/plan.txt", "workspace": ".tmp/implementation-review"}'
+uv run python -m scripts.agents implementation-scope '{"plan_file": "{plan_file}", "working_dir": "{working_dir}"}'
 ```
 
 **WAIT**: If this goes to background, call TaskOutput and wait until status is completed/failed.
 
-### Step 3: Run Reviewer Agent
+Parse the output to extract `start_commit`. Save to state file:
+
+```bash
+# Extract start_commit from agent output and save to state
+echo '{"start_commit": "{start_commit}", "iteration": 0}' > {state_file}
+```
+
+**NOTE**: The scope agent only runs ONCE per review session. It finds the commit boundary.
+
+### Step 3: Discover Scope Files
+
+Use Python to discover files changed since start_commit:
+
+```bash
+uv run pr discover-scope-files --working-dir {working_dir} --start-commit {start_commit} --state-file {scope_state_file}
+```
+
+This returns a list of files in scope. Parse the JSON output to get the `files` array.
+
+### Step 4: Run Reviewer Agent
 
 Review the implementation against the plan:
 
 ```bash
-uv run python -m scripts.agents implementation-reviewer '{"plan_file": ".tmp/implementation-review/plan.txt", "shape_file": ".tmp/implementation-review/scope.json", "review_file": ".tmp/implementation-review/review.txt", "previous_review_file": null, "working_dir": "."}'
+uv run python -m scripts.agents implementation-reviewer '{
+  "plan_file": "{plan_file}",
+  "files": {files_json_array},
+  "review_file": "{review_file}",
+  "conclusions_file": "{conclusions_file}",
+  "working_dir": "{working_dir}"
+}'
 ```
 
 **WAIT**: If this goes to background, call TaskOutput and wait until status is completed/failed. Do NOT proceed until complete.
 
-For subsequent iterations, pass the previous review for comparison:
+### Step 5: Check Review Status
+
+Only after Step 4 has fully completed:
 
 ```bash
-# Iteration 2+: Pass previous review for comparison
-uv run python -m scripts.agents implementation-reviewer '{
-  "plan_file": ".tmp/implementation-review/plan.txt",
-  "shape_file": ".tmp/implementation-review/scope.json",
-  "review_file": ".tmp/implementation-review/review.txt",
-  "previous_review_file": ".tmp/implementation-review/review.txt.prev",
-  "working_dir": "."
-}'
+head -1 {review_file}
 ```
 
-### Step 4: Check Review Status
+- If `[CLEAN]`: Go to Step 8: Finalization (clean review path)
+- If `[OPEN]` issues exist: Continue to Step 6
 
-Only after Step 3 has fully completed:
+### Step 6: Run PR Review Loop to Fix Issues
 
+Build the review-loop command based on mode:
+
+**Local mode:**
 ```bash
-head -1 .tmp/implementation-review/review.txt
+uv run pr review-loop --tasks-file {review_file}
 ```
 
-- If `[CLEAN]`: Go to Step 7: Finalization (clean review path)
-- If `[OPEN]` issues exist: Continue to Step 5
-
-### Step 5: Run PR Outer Loop to Fix Issues
-
-Pass arguments as a single prompt string (not CLI flags):
-
+**Worktree mode:**
 ```bash
-uv run python -m scripts.agents pr-outer-loop '--loop --tasks-file .tmp/implementation-review/review.txt'
+uv run pr review-loop --worktree {working_dir} --tasks-file {review_file}
 ```
 
 **WAIT**: If this goes to background, call TaskOutput and wait until status is completed/failed.
 
-**Check pr-outer-loop result:**
-- If output contains "no tasks found" or "0 tasks": All issues were evaluated and deemed non-actionable. **Set review.txt to [CLEAN] and go to Step 7** - workflow is complete.
-- If tasks were fixed: Continue to Step 6 to verify fixes.
+**Check review-loop result:**
+- If output contains "no tasks found" or "0 tasks": All issues were evaluated and deemed non-actionable. **Set review.txt to [CLEAN] and go to Step 8** - workflow is complete.
+- If tasks were fixed: Continue to Step 7 to verify fixes.
 
-### Step 6: Re-run Review Cycle
+### Step 7: Re-run Review Cycle
 
-Only if pr-outer-loop actually fixed tasks (not "no tasks found").
+Only if review-loop actually fixed tasks (not "no tasks found").
 
-Repeat Steps 2-5 up to 3 times until clean.
+Repeat Steps 3-6 up to 3 times until clean.
 
 **Iteration Counter Mechanism:**
-- The iteration count is stored in `state.json` under the key `pr_outer_loop.iteration`
-- At the start of each Step 6 cycle, the pr-outer-loop reads `state.json` to get the current iteration count
-- Before re-running the cycle, the count is incremented and persisted back to `state.json` (per Rule 1)
+- The iteration count is stored in `{state_file}` under the key `iteration`
+- At the start of each Step 7 cycle, read `{state_file}` to get the current iteration count
+- Before re-running the cycle, the count is incremented and persisted back to `{state_file}`
 - The loop condition is checked as `while iteration < 3` to decide whether to continue
 
 On each iteration:
-1. Run scope agent (incremental update) - WAIT for completion via TaskOutput
-2. Run reviewer with `previous_review_file` set to verify fixes - WAIT for completion via TaskOutput
-3. If still `[OPEN]` issues and iterations < 3, run pr-outer-loop again - WAIT for completion via TaskOutput
-4. **If pr-outer-loop reports "no tasks found" or "0 tasks"**: All remaining issues are non-actionable. **Set review.txt to [CLEAN] and go to Step 7** - workflow is complete.
+1. Run discover-scope-files (checks for new commits/files) - captures new files automatically
+2. Run reviewer with files list and conclusions_file - WAIT for completion
+3. If still `[OPEN]` issues and iterations < 3, run review-loop again - WAIT for completion
+4. **If review-loop reports "no tasks found" or "0 tasks"**: All remaining issues are non-actionable. **Set review.txt to [CLEAN] and go to Step 8** - workflow is complete.
 
-### Step 7: Finalization
+### Step 8: Finalization
 
 **On clean review:**
 
 ```bash
-rm -rf .tmp/implementation-review
+rm -rf {workspace}
 ```
 
 Output:
@@ -130,6 +203,7 @@ Output:
 === Implementation Review Complete ===
 Status: CLEAN
 Iterations: {count}
+Working Directory: {working_dir}
 ```
 
 **On max iterations:**
@@ -139,7 +213,7 @@ Preserve workspace for inspection:
 === Implementation Review Incomplete ===
 Status: ISSUES REMAIN
 Iterations: 3
-Workspace preserved: .tmp/implementation-review/
+Workspace preserved: {workspace}
 ```
 
 ## Error Handling
@@ -150,12 +224,13 @@ When any step fails, invoke workflow-repair to fix the *tooling* (not content):
 uv run python -m scripts.agents workflow-repair '{
   "workflow": "implementation-review",
   "step": "{current_step}",
-  "state_file": ".tmp/implementation-review/state.json",
+  "state_file": "{state_file}",
   "failed_command": "...",
   "exit_code": 1,
   "stdout": "{captured_stdout}",
   "stderr": "{captured_stderr}",
-  "workspace": ".tmp/implementation-review"
+  "workspace": "{workspace}",
+  "working_dir": "{working_dir}"
 }'
 ```
 
@@ -168,10 +243,11 @@ uv run python -m scripts.agents workflow-repair '{
 
 ## State Tracking
 
-All state lives in `.tmp/implementation-review/`:
-- `state.json` - Current step, history, errors
-- `scope.json` - File classifications (shape)
-- `review.txt` - Issues in pr-outer-loop format
+All state lives in `{workspace}/`:
+- `state.json` - Current step, iteration count, start_commit
+- `scope_state.json` - Files discovered, last HEAD tracked
+- `conclusions.json` - Reviewer reasoning about each file
+- `review.txt` - Issues in review format
 - `plan.txt` - The plan being reviewed against
 
 ## Rules
@@ -181,3 +257,5 @@ All state lives in `.tmp/implementation-review/`:
 3. Workflow-repair fixes tooling, not content
 4. Maximum 3 review iterations
 5. Preserve workspace on unrecoverable failure
+6. Always pass `working_dir` to agents in worktree mode
+7. Scope agent runs ONCE - Python discovers files on each cycle
