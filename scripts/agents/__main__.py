@@ -30,7 +30,6 @@ def main() -> int:
         prog="uv run python -m scripts.agents",
     )
     parser.add_argument("agent", nargs="?", help="Agent name (without .md extension)")
-    parser.add_argument("prompt", nargs="?", help="Prompt to send")
     parser.add_argument("--model", "-m", help="Execute model directly instead of agent")
     parser.add_argument("--file", "-f", type=Path, help="Read prompt from file instead of argument")
     parser.add_argument(
@@ -41,11 +40,13 @@ def main() -> int:
         help="Project root directory (default: current directory)",
     )
 
-    args = parser.parse_args()
+    # Use parse_known_args to capture everything after agent name as prompt
+    # This allows passing flags like --loop --tasks-file without quoting
+    args, remaining = parser.parse_known_args()
 
     # When using --model, the prompt is the first positional (captured as agent)
-    # When using agent mode, both agent and prompt are positional
-    prompt_arg = args.agent if args.model else args.prompt
+    # When using agent mode, remaining args form the prompt (supports flags like --loop)
+    prompt_arg = args.agent if args.model else " ".join(remaining) if remaining else None
 
     # Get prompt from argument, file, or stdin
     if args.file:

@@ -101,7 +101,12 @@ Determine whether to use PR threads or spawn CODERABBIT-RUNNER as the review sou
 ### Decision Logic
 
 ```text
-IF mode == "worktree" AND cycle == 1:
+# Check for local tasks first - they take precedence over coderabbit
+IF any local_*.json files exist in {tmp_folder}:
+    review_source = "local"
+    # Local tasks are handled first, skip coderabbit this cycle
+
+ELIF mode == "worktree" AND cycle == 1:
     Run: uv run pr fetch-threads --pr {pr_number} --output-dir {tmp_folder}
 
     IF any thread_*.json files exist in {tmp_folder}:
@@ -122,7 +127,12 @@ ELSE:
 
 ## Step 2: Acquire Review Input
 
-Based on the review source, either use existing thread files or spawn CODERABBIT-RUNNER.
+Based on the review source, either use existing task files or spawn CODERABBIT-RUNNER.
+
+### If review_source == "local"
+
+Local tasks are already present in `{tmp_folder}` as `local_*.json`.
+Proceed directly to Step 3 (aggregation). Skip coderabbit entirely for this cycle.
 
 ### If review_source == "threads"
 
@@ -183,7 +193,7 @@ Store the `review_file` path for later cleanup.
 
 Parse CodeRabbit output (if applicable) and aggregate all task sources.
 
-### If review_source != "threads"
+### If review_source == "coderabbit_base" or "coderabbit_incremental"
 
 Parse the CodeRabbit review into task files:
 
@@ -206,7 +216,7 @@ If no task files exist, set `status = "clean"` and proceed to cleanup (Step 6).
 Run aggregation:
 
 ```bash
-cd {working_dir} && uv run pr aggregate-tasks --input-dir {tmp_folder}
+cd {working_dir} && uv run pr aggregate-tasks --input-dir {tmp_folder} > {tmp_folder}/aggregated.json
 ```
 
 This produces `{tmp_folder}/aggregated.json` with structure:

@@ -225,6 +225,7 @@ def _is_structured_element(unit: TrackedUnit) -> bool:
             r"^#{1,4}\s*Claim\b",  # Claim with optional punctuation/title
             r"^#{1,4}\s*Invariant\b",  # Invariant with optional punctuation/title
             r"^#{1,4}\s*Goal\b",  # Goal with optional punctuation/title
+            r"^#{1,4}\s*Comp\d+",  # Comp# (components)
         ]
 
         for line in unit.content.splitlines():
