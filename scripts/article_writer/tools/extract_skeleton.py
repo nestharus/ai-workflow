@@ -146,11 +146,11 @@ def build_skeleton(md: str) -> tuple[str, str, dict]:
         last_a = a_sents[-1].text if a_sents else ""
 
         # First sentence of next section: prefer first paragraph first sentence.
-        first_b = (
-            b["first_sentences"][0]
-            if b["first_sentences"]
-            else (extract_sentences(b_text)[0].text if extract_sentences(b_text) else "")
-        )
+        if b["first_sentences"]:
+            first_b = b["first_sentences"][0]
+        else:
+            b_sents = extract_sentences(b_text)
+            first_b = b_sents[0].text if b_sents else ""
 
         borders_lines.append(f"## {a['title']} -> {b['title']}")
         borders_lines.append("")

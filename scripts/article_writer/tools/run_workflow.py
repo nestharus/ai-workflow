@@ -1430,8 +1430,6 @@ def _build_agent_prompt(
             # Try to extract the limit from the violation reason
             reason = first_violation.get("reason", "")
             # Parse numbers from reason like "3320 characters exceeds 3000 limit"
-            import re
-
             numbers = re.findall(r"\d+", reason)
             if len(numbers) >= 2:
                 limit = int(numbers[1])  # Second number is usually the limit

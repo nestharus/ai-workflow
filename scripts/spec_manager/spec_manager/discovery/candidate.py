@@ -32,6 +32,45 @@ from typing import Any, Protocol
 
 from spec_manager.core.provenance import TrackedUnit, UnitType
 
+# Minimal English stopwords for TF-IDF (no hardcoded structural terms)
+_ENGLISH_STOPWORDS = frozenset(
+    {
+        "that",
+        "this",
+        "with",
+        "from",
+        "have",
+        "will",
+        "been",
+        "each",
+        "which",
+        "their",
+        "when",
+        "where",
+        "they",
+        "them",
+        "then",
+        "than",
+        "also",
+        "only",
+        "more",
+        "some",
+        "such",
+        "other",
+        "into",
+        "over",
+        "after",
+        "before",
+        "through",
+        "what",
+        "about",
+        "would",
+        "could",
+        "should",
+        "there",
+    }
+)
+
 
 class LLMClient(Protocol):
     """Protocol for LLM client interface."""
@@ -270,43 +309,6 @@ class CandidateIdentifier:
             for word in words:
                 global_doc_freq[word] += 1
 
-        # Minimal English stopwords (no hardcoded structural terms - TF-IDF handles that)
-        english_stopwords = {
-            "that",
-            "this",
-            "with",
-            "from",
-            "have",
-            "will",
-            "been",
-            "each",
-            "which",
-            "their",
-            "when",
-            "where",
-            "they",
-            "them",
-            "then",
-            "than",
-            "also",
-            "only",
-            "more",
-            "some",
-            "such",
-            "other",
-            "into",
-            "over",
-            "after",
-            "before",
-            "through",
-            "what",
-            "about",
-            "would",
-            "could",
-            "should",
-            "there",
-        }
-
         clusters: dict[str, list[TrackedUnit]] = {}
 
         for cluster_units in raw_clusters:
@@ -314,7 +316,7 @@ class CandidateIdentifier:
             cluster_tf: dict[str, int] = defaultdict(int)
             for unit in cluster_units:
                 words = set(re.findall(r"\b[a-z]{4,}\b", unit.content.lower()))
-                words = words - english_stopwords
+                words = words - _ENGLISH_STOPWORDS
                 for word in words:
                     cluster_tf[word] += 1
 
@@ -390,47 +392,11 @@ class CandidateIdentifier:
             for word in words:
                 global_doc_freq[word] += 1
 
-        english_stopwords = {
-            "that",
-            "this",
-            "with",
-            "from",
-            "have",
-            "will",
-            "been",
-            "each",
-            "which",
-            "their",
-            "when",
-            "where",
-            "they",
-            "them",
-            "then",
-            "than",
-            "also",
-            "only",
-            "more",
-            "some",
-            "such",
-            "other",
-            "into",
-            "over",
-            "after",
-            "before",
-            "through",
-            "what",
-            "about",
-            "would",
-            "could",
-            "should",
-            "there",
-        }
-
         # Compute TF-IDF for orphan cluster
         cluster_tf: dict[str, int] = defaultdict(int)
         for unit in orphan_units:
             words = set(re.findall(r"\b[a-z]{4,}\b", unit.content.lower()))
-            words = words - english_stopwords
+            words = words - _ENGLISH_STOPWORDS
             for word in words:
                 cluster_tf[word] += 1
 
@@ -704,47 +670,11 @@ class CandidateIdentifier:
         """
         import math
 
-        english_stopwords = {
-            "that",
-            "this",
-            "with",
-            "from",
-            "have",
-            "will",
-            "been",
-            "each",
-            "which",
-            "their",
-            "when",
-            "where",
-            "they",
-            "them",
-            "then",
-            "than",
-            "also",
-            "only",
-            "more",
-            "some",
-            "such",
-            "other",
-            "into",
-            "over",
-            "after",
-            "before",
-            "through",
-            "what",
-            "about",
-            "would",
-            "could",
-            "should",
-            "there",
-        }
-
         # Compute TF within cluster
         cluster_tf: dict[str, int] = defaultdict(int)
         for unit in cluster_units:
             words = set(re.findall(r"\b[a-z]{4,}\b", unit.content.lower()))
-            words = words - english_stopwords
+            words = words - _ENGLISH_STOPWORDS
             for word in words:
                 cluster_tf[word] += 1
 
@@ -822,7 +752,23 @@ Output as JSON array: [{{"name": "...", "elements": ["id1", "id2"], "description
             response = self._llm.complete(prompt)
             import json
 
-            systems = json.loads(response)
+            # Strip markdown code fences if present (e.g., ```json ... ```)
+            stripped = response.strip()
+            if stripped.startswith("```"):
+                # Extract content between code fences using regex
+                match = re.search(r"```(?:json)?\s*\n(.*?)\n```", stripped, re.DOTALL)
+                if match:
+                    stripped = match.group(1)
+                else:
+                    # Fallback for compact one-line fences (e.g., ```json{"name":"x"}```)
+                    # Remove surrounding backticks and optional "json" marker
+                    lower = stripped.lower()
+                    stripped = stripped.strip("`").strip()
+                    if lower.startswith("json") and (len(lower) == 4 or not lower[4].isalnum()):
+                        stripped = stripped[4:].strip()
+                    stripped = stripped.strip("`").strip()
+
+            systems = json.loads(stripped)
 
             candidates = []
             for sys in systems:

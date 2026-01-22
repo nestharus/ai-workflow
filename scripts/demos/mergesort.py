@@ -36,6 +36,12 @@ def interpolate_arrays(arr_start, arr_end, t):
 
 
 def build_layout(n):
+    # Validate that n is a positive power of 2
+    if n <= 0:
+        raise ValueError(f"n must be positive, got {n}")
+    if (n & (n - 1)) != 0:
+        raise ValueError(f"n must be a power of 2, got {n}")
+
     max_depth = int(np.log2(n))
     levels = []
     total_width = 1400.0  # Wide layout
@@ -196,7 +202,16 @@ def scanner_sorter_gen(source_data):
         for p_idx, p in enumerate(puzzles):
             l_idx, r_idx = p_idx * 2, p_idx * 2 + 1
             L, R = tree_data[d][l_idx], tree_data[d][r_idx]
-            merged_vals = sorted(L + R)
+            # Reconstruct merged_vals by replaying the puzzle's merge history
+            l_pos, r_pos = 0, 0
+            merged_vals = []
+            for side in p["L_hist"]:  # 1.0 means take from L, -1.0 means take from R
+                if side > 0:
+                    merged_vals.append(L[l_pos])
+                    l_pos += 1
+                else:
+                    merged_vals.append(R[r_pos])
+                    r_pos += 1
             tree_data[parent_depth][p_idx] = merged_vals
 
     yield "done", 0, 0, tree_data, None, None
@@ -497,7 +512,7 @@ def update(frame_data):
             cur_ry = r_node["cy"] + (p_node["cy"] - r_node["cy"]) * progress
 
             c_l, c_r = (
-                cursors[p_idx] if cursors else (len(tree_data[d][l_idx]), len(tree_data[d][r_idx]))
+                cursors[p_idx] if cursors else [len(tree_data[d][l_idx]), len(tree_data[d][r_idx])]
             )
 
             plot_scanner_active(

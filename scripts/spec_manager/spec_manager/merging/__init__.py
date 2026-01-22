@@ -10,6 +10,8 @@ Operations:
 """
 
 from spec_manager.merging.operations import (
+    MergeAction,
+    MergingResult,
     extract_to_libraries,
     fix_duplicates,
     move_to_correct_library,
@@ -18,6 +20,8 @@ from spec_manager.merging.operations import (
 )
 
 __all__ = [
+    "MergeAction",
+    "MergingResult",
     "extract_to_libraries",
     "fix_duplicates",
     "move_to_correct_library",

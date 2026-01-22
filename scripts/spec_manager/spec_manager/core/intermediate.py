@@ -166,7 +166,9 @@ class IntermediateManager:
                     # Map source atoms to target locations
                     for i, line in enumerate(unit.content.split("\n")):
                         if line.strip():
-                            atom_id = f"{uid}_L{i + 1}_{hash(line) % 10000:04d}"
+                            # Use deterministic SHA-256 hash instead of built-in hash()
+                            line_hash = hashlib.sha256(line.encode()).hexdigest()[:8]
+                            atom_id = f"{uid}_L{i + 1}_{line_hash}"
                             target_loc = f"{unit.target.file}:{unit.target.line_start + i}"
                             computed_atom_mapping[atom_id] = target_loc
 

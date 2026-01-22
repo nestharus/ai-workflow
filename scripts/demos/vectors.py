@@ -83,7 +83,11 @@ def update(frame):
     current_wobble = wobble_magnitude[:frame]
 
     line.set_data(current_t, current_angle)
-    dot.set_data([t_smooth[frame - 1]], [angle_smooth[frame - 1]])
+    # Guard against frame == 0 to avoid negative indexing
+    if frame == 0:
+        dot.set_data([], [])
+    else:
+        dot.set_data([t_smooth[frame - 1]], [angle_smooth[frame - 1]])
 
     # Update the "Cloud" (Fill Between)
     # We create the "Tube" by adding/subtracting wobble from the main line

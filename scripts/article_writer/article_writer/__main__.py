@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 # The outer package root (where tools/ lives) is the parent of this module's parent
@@ -215,7 +216,7 @@ def cmd_feedback(args: argparse.Namespace) -> int:
     feedback_list.append(
         {
             "feedback": args.feedback,
-            "timestamp": __import__("datetime").datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     )
     config["user_feedback"] = feedback_list

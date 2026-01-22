@@ -15,6 +15,7 @@ The inner article_writer module provides the same CLI when cd'd into the package
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Add the article_writer package to path for imports
@@ -115,7 +116,7 @@ except ImportError:
         feedback_list.append(
             {
                 "feedback": args.feedback,
-                "timestamp": __import__("datetime").datetime.now().isoformat(),
+                "timestamp": datetime.now().isoformat(),
             }
         )
         config["user_feedback"] = feedback_list

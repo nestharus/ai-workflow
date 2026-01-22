@@ -81,19 +81,23 @@ def analyze_tempo(markdown: str) -> dict:
     medium = sum(1 for l in sent_lens if 8 <= l <= 20)
     long = sum(1 for l in sent_lens if l >= 21)
 
+    # Compute stats once to avoid redundant calls
+    sent_stats = _summary_stats(sent_lens)
+    para_stats = _summary_stats(para_lens)
+
     return {
         "sentences": {
-            "stats": _summary_stats(sent_lens),
+            "stats": sent_stats,
             "buckets": {"short<=7": short, "medium8-20": medium, "long>=21": long},
         },
-        "paragraphs": {"stats": _summary_stats(para_lens)},
+        "paragraphs": {"stats": para_stats},
         "runs": runs,
         "heuristics": {
             "metronomic_sentence_cv_lt_0.35": (
-                _summary_stats(sent_lens).get("cv", 0.0) < 0.35 if sent_lens else False
+                sent_stats.get("cv", 0.0) < 0.35 if sent_lens else False
             ),
             "metronomic_paragraph_cv_lt_0.45": (
-                _summary_stats(para_lens).get("cv", 0.0) < 0.45 if para_lens else False
+                para_stats.get("cv", 0.0) < 0.45 if para_lens else False
             ),
         },
     }

@@ -183,7 +183,7 @@ class StrategyRegistry:
                 "purpose": d.purpose,
                 "phases": d.phases,
                 "tools": d.tools_used,
-                "status": d.metadata.get("status", "stable"),  # stable/experimental
+                "status": (d.metadata or {}).get("status", "stable"),  # stable/experimental
             }
             for d in self.definitions.values()
         ]

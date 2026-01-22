@@ -6,6 +6,7 @@ Legacy module name 'planning' maps to the DISCOVERY workflow phase.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -228,8 +229,6 @@ def _check_number_sequence(category: str, numbers: list[int]) -> list[SequenceIs
     sorted_nums = sorted(numbers)
 
     # Check for duplicates
-    from collections import Counter
-
     counts = Counter(numbers)
     duplicates = [n for n, c in counts.items() if c > 1]
     if duplicates:

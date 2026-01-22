@@ -754,7 +754,7 @@ class ProvenanceTracker:
                 return UnitType.CLAIM
             if re.match(r"^D\d+$", decl):
                 return UnitType.DATA_STRUCTURE
-            if re.match(r"^P?\d*I\d+$", decl) or re.match(r"^I\d+$", decl):
+            if re.match(r"^P?\d*I\d+$", decl):
                 return UnitType.INVARIANT
             if re.match(r"^G\d+$", decl):
                 return UnitType.GOAL
