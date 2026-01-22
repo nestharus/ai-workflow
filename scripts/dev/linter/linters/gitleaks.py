@@ -187,11 +187,41 @@ class GitleaksLinter(BaseLinter):
                 print("No scannable files for gitleaks")
                 return LinterResult(success=True)
 
-            # Add files to scan
-            cmd.extend(scannable_files)
-        else:
-            # Scan entire repo directory
-            cmd.append(".")
+            # Gitleaks dir command only accepts ONE path argument.
+            # When multiple files are passed, it misinterprets them and scans the whole repo.
+            # We must run gitleaks once per file and aggregate results.
+            all_errors: list[LintError] = []
+            for file_path in scannable_files:
+                file_cmd = [*cmd, file_path]
+                try:
+                    result = subprocess.run(
+                        file_cmd,
+                        capture_output=True,
+                        text=True,
+                        cwd=str(REPO_ROOT),
+                        timeout=GITLEAKS_TIMEOUT_SECONDS,
+                    )
+                    if result.returncode == 1:
+                        errors = _parse_gitleaks_json(result.stdout)
+                        all_errors.extend(errors)
+                    elif result.returncode not in (0, 1):
+                        # Non-standard exit code - report but continue
+                        print(
+                            f"gitleaks returned {result.returncode} for {file_path}",
+                            file=sys.stderr,
+                        )
+                except subprocess.TimeoutExpired:
+                    print(f"gitleaks timed out on {file_path}", file=sys.stderr)
+                except FileNotFoundError:
+                    print(GITLEAKS_CLI_NOT_FOUND, file=sys.stderr)
+                    return LinterResult(success=False, message=GITLEAKS_CLI_NOT_FOUND)
+
+            if all_errors:
+                return LinterResult(success=False, errors=all_errors)
+            return LinterResult(success=True)
+
+        # Scan entire repo directory (no file filtering)
+        cmd.append(".")
 
         # Run gitleaks
         try:
