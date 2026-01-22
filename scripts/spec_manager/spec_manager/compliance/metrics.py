@@ -34,10 +34,10 @@ from __future__ import annotations
 import logging
 import re
 
-from spec_manager.core.annotations import AnnotationParser
-from spec_manager.core.data_structures import ComplianceMetrics
-from spec_manager.core.ids import IdCategory, IdValidator
-from spec_manager.core.provenance import TrackedUnit, UnitType
+from ..core.annotations import AnnotationParser
+from ..core.data_structures import ComplianceMetrics
+from ..core.ids import IdCategory, IdValidator
+from ..core.provenance import TrackedUnit, UnitType
 
 # =============================================================================
 # Module-level Singletons
@@ -125,8 +125,9 @@ def _is_format_compliant(
                     (r"D(\d+)", IdCategory.DATA_STRUCTURE, "D{}"),
                     (r"Claim\s+(\d+)", IdCategory.CLAIM, "C{}"),
                     (r"Invariant\s+(\d+)", IdCategory.INVARIANT, "I{}"),
-                    (r"Goal\s+(\d+)", IdCategory.PATCH_INVARIANT, "P{}I{}"),
+                    (r"Goal\s+G?(\d+(?:\.\d+)?)", IdCategory.GOAL, "G{}"),
                     (r"I(\d+(?:\.\d+)?)", IdCategory.INVARIANT, "I{}"),
+                    (r"G(\d+(?:\.\d+)?)", IdCategory.GOAL, "G{}"),
                     (r"C(\d+)", IdCategory.CLAIM, "C{}"),
                     (r"Comp(\d+)", IdCategory.COMPONENT, "Comp{}"),
                     (r"Lean(\d+)", IdCategory.LEAN, "Lean{}"),
@@ -292,6 +293,11 @@ def _has_id_annotation(
                 return True
             if category == IdCategory.INVARIANT and unit.unit_type == UnitType.INVARIANT:
                 return True
+            if category == IdCategory.GOAL and unit.unit_type == UnitType.GOAL:
+                return True
+            # GOAL units can be represented as I# (canonical format)
+            if category == IdCategory.INVARIANT and unit.unit_type == UnitType.GOAL:
+                return True
             if category == IdCategory.PATCH_INVARIANT and unit.unit_type == UnitType.INVARIANT:
                 return True
             if category == IdCategory.PATCH_CLAIM and unit.unit_type == UnitType.CLAIM:
@@ -315,6 +321,11 @@ def _has_id_annotation(
                         if category == IdCategory.CLAIM and header_text.startswith("claim"):
                             return True
                         if category == IdCategory.INVARIANT and header_text.startswith("invariant"):
+                            return True
+                        if category == IdCategory.GOAL and header_text.startswith("goal"):
+                            return True
+                        # GOAL headers can have I# declarations (canonical format)
+                        if category == IdCategory.INVARIANT and header_text.startswith("goal"):
                             return True
                         if category == IdCategory.PATCH_INVARIANT and (
                             header_text.startswith("invariant") or header_text.startswith("p")
@@ -415,6 +426,8 @@ def _is_canonical_format(id_value: str) -> bool:
     if category == IdCategory.UNKNOWN or category not in canonical_patterns:
         return False
 
+    return False
+
 
 # =============================================================================
 # Main Compliance Functions
@@ -457,8 +470,8 @@ def compute_format_compliance(units: list[TrackedUnit]) -> float:
     try:
         compliant_count = sum(1 for unit in units if _is_format_compliant(unit))
         return compliant_count / len(units)
-    except Exception as e:
-        _logger.exception(f"Error computing format compliance: {e}")
+    except Exception:
+        _logger.exception("Error computing format compliance:")
         return 1.0
 
 
@@ -502,8 +515,8 @@ def compute_annotation_coverage(units: list[TrackedUnit]) -> float:
 
         annotated_count = sum(1 for unit in structured_units if _has_id_annotation(unit))
         return annotated_count / len(structured_units)
-    except Exception as e:
-        _logger.exception(f"Error computing annotation coverage: {e}")
+    except Exception:
+        _logger.exception("Error computing annotation coverage:")
         return 1.0
 
 
@@ -547,8 +560,8 @@ def compute_id_normalization(units: list[TrackedUnit]) -> float:
 
         canonical_count = sum(1 for id_value in unique_ids if _is_canonical_format(id_value))
         return canonical_count / len(unique_ids)
-    except Exception as e:
-        _logger.exception(f"Error computing ID normalization: {e}")
+    except Exception:
+        _logger.exception("Error computing ID normalization:")
         return 1.0
 
 
@@ -599,8 +612,8 @@ def compute_compliance_metrics(
             id_normalization=id_normalization,
             gate_threshold=gate_threshold,
         )
-    except Exception as e:
-        _logger.exception(f"Error computing compliance metrics: {e}")
+    except Exception:
+        _logger.exception("Error computing compliance metrics:")
         # Return default metrics on error
         return ComplianceMetrics(
             format_compliance=1.0,
