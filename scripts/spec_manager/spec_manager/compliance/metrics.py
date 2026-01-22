@@ -66,6 +66,7 @@ def _is_format_compliant(
     2. All references in unit.references match (@[+ID]) or (@[=ID]) patterns
     3. All IDs are valid (match known ID patterns)
     4. Headers with IDs have proper declaration annotations
+    5. No legacy or malformed annotation patterns exist in content
 
     Units without any IDs/references are considered compliant.
 
@@ -87,6 +88,13 @@ def _is_format_compliant(
             _logger.warning(
                 "Unit missing required attributes (content, declarations, or references)"
             )
+            return False
+
+        # Check for legacy or malformed annotation patterns in content
+        # This must run before returning True, so any legacy syntax fails format compliance
+        legacy_findings = parser.find_legacy_patterns(unit.content)
+        if legacy_findings:
+            _logger.debug(f"Unit contains legacy annotation patterns: {len(legacy_findings)} found")
             return False
 
         # Extract actual annotations from content
@@ -216,7 +224,6 @@ def _is_structured_element(unit: TrackedUnit) -> bool:
             r"^#{1,4}\s*D\d+",  # D# (data structures)
             r"^#{1,4}\s*Claim\b",  # Claim with optional punctuation/title
             r"^#{1,4}\s*Invariant\b",  # Invariant with optional punctuation/title
-            r"^#{1,4}\s*Component\b",  # Component with optional punctuation/title
             r"^#{1,4}\s*Goal\b",  # Goal with optional punctuation/title
         ]
 
@@ -303,6 +310,9 @@ def _has_id_annotation(
             if category == IdCategory.PATCH_CLAIM and unit.unit_type == UnitType.CLAIM:
                 return True
 
+            # Component handling - map to UNKNOWN unit type for header text matching
+            # Components don't have a dedicated UnitType, so we check via header text below
+
             # If unit_type is not set, infer from header text
             if unit.unit_type == UnitType.UNKNOWN:
                 lines = unit.content.splitlines()
@@ -334,6 +344,9 @@ def _has_id_annotation(
                         if category == IdCategory.PATCH_CLAIM and (
                             header_text.startswith("claim") or header_text.startswith("p")
                         ):
+                            return True
+                        # Component header matching
+                        if category == IdCategory.COMPONENT and header_text.startswith("component"):
                             return True
 
         return False
