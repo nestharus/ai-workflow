@@ -616,6 +616,17 @@ def orchestrate(args: Namespace) -> int:
                                 if linter not in errors_by_linter:
                                     errors_by_linter[linter] = set()
                                 errors_by_linter[linter].update(linter_files)
+                    else:
+                        # Investigator made no changes - remove files from tracking
+                        # to avoid infinite loop
+                        _log(
+                            f"Investigation made no changes to {len(inv_files)} file(s), "
+                            "marking as unfixable"
+                        )
+                        for linter in list(errors_by_linter.keys()):
+                            errors_by_linter[linter] -= inv_files
+                            if not errors_by_linter[linter]:
+                                del errors_by_linter[linter]
                 except Exception as e:
                     _log(f"Investigation failed: {e}")
 
