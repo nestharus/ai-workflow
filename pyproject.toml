@@ -97,6 +97,8 @@ lint = "scripts.dev.linter.lint_cli:main"
 # GitHub PR operations
 "pr" = "scripts.pr.client:main"
 "pr.sandbox" = "scripts.servers.sandbox.server:main"
+# Repository management operations
+"repo" = "scripts.repo_manager.client:main"
 # Planning and code generation state machines
 "planner" = "scripts.planner.client:main"
 "codegen" = "scripts.codegen.client:main"
