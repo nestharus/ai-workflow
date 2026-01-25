@@ -1,0 +1,23 @@
+schema_version: 1
+workflow_id: step_execute_v1
+display_name: "Step execute (v1)"
+description: "Execute a single step from a validated step plan."
+inputs:
+  type: object
+  required: [ticket_id, task_id, step_id]
+  properties:
+    ticket_id: { type: string }
+    task_id: { type: string }
+    step_id: { type: string }
+    step_execution_id: { type: string }
+steps:
+  - step_id: execute
+    kind: agent
+    entrypoint: "agent:step_executor_v1"
+    description: "Execute the step; may hydrate, run sandbox commands, and apply patches."
+    capabilities_required: ["sandbox_exec", "apply_patch", "llm_call"]
+    with:
+      ticket_id: "${inputs.ticket_id}"
+      task_id: "${inputs.task_id}"
+      step_id: "${inputs.step_id}"
+      step_execution_id: "${inputs.step_execution_id}"

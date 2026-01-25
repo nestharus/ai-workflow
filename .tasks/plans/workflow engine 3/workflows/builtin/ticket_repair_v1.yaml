@@ -1,0 +1,21 @@
+schema_version: 1
+workflow_id: ticket_repair_v1
+display_name: "Ticket repair (v1)"
+description: "Attempt an automated repair for a failed step/run, then re-validate."
+inputs:
+  type: object
+  required: [ticket_id, run_id]
+  properties:
+    ticket_id: { type: string }
+    run_id: { type: string }
+    step_execution_id: { type: string }
+steps:
+  - step_id: repair
+    kind: agent
+    entrypoint: "agent:ticket_repairer_v1"
+    description: "Apply repair changes, update evidence, and rerun targeted validation."
+    capabilities_required: ["apply_patch", "sandbox_exec", "llm_call"]
+    with:
+      ticket_id: "${inputs.ticket_id}"
+      run_id: "${inputs.run_id}"
+      step_execution_id: "${inputs.step_execution_id}"

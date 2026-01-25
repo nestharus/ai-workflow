@@ -48,6 +48,26 @@ Skills are a feature of AI coding CLIs (Claude Code, OpenCode, etc.). We deploy 
 - Small footprint, comprehensive knowledge
 - Agent can write workflows, agents, configure models, run commands—all from one skill
 
+### 1.4 Configuration layers and precedence (normative)
+
+This system loads configuration from multiple layers.
+
+Config files are TOML:
+
+- **User-global (installation)**: `~/.workflow/config.toml`
+- **Repo machine-local (repo binding)**: `~/.workflow/repos/<repo_uid>/config.toml`
+- **Repo shared (optional, committed)**: `<repo_root>/.workflow/config.toml`
+
+Precedence (highest wins):
+1. CLI flags
+2. Repo machine-local (repo binding)
+3. Repo shared (project)
+4. User-global (installation)
+5. Built-in defaults
+
+Notes:
+- Workflow and agent file precedence are separate (see “Workflow locations and precedence” and “Agent file locations”).
+- Model routing override precedence is defined in Core Infrastructure §11.4.2.
 ## 2) Onboarding flow
 
 ### 2.1 Entry point
@@ -126,8 +146,8 @@ The agent:
 |-----|-------------------|
 | Claude Code | `claude "<prompt>"` |
 | OpenCode | `opencode "<prompt>"` |
-| Cursor | TBD |
-| Windsurf | TBD |
+| Cursor | (IDE-managed; not specified) |
+| Windsurf | (IDE-managed; not specified) |
 
 ## 3) Skill deployment
 
@@ -161,7 +181,7 @@ One skill, small footprint, comprehensive coverage.
 |-----|---------------------|------------------|
 | Claude Code | `~/.claude/skills/workflow-manager.md` | `<repo>/.claude/skills/workflow-manager.md` |
 | OpenCode | `~/.opencode/skills/workflow-manager.md` | `<repo>/.opencode/skills/workflow-manager.md` |
-| Cursor | TBD | TBD |
+| Cursor | (IDE-managed; not specified) | (IDE-managed; not specified) |
 
 Project-level skill can override or extend the user-global one.
 
@@ -176,152 +196,271 @@ description: Manage workflows, agents, and configuration for the workflow engine
 
 # Workflow Manager
 
-You are an expert at working with the workflow engine. When users ask you to write workflows, configure the system, or create agents, use this knowledge.
+You are an expert at working with the workflow engine (`workflowctl` + WSS + filesystem queues + jj-backed Patch-Stream).
+Use **evidence-first** reasoning: prefer WSS documents and Logs Store events over assumptions.
 
-## Configuration
+## Quick commands
 
-To configure the workflow engine:
-- `workflowctl config show` - view current config
-- `workflowctl config set <key> <value>` - set a value
-- `workflowctl providers add <name>` - add a model provider (API key stored in OS keychain)
+- `workflowctl doctor` — verify dependencies and repo compatibility
+- `workflowctl init` — initialize the repo binding under `~/.workflow/repos/<repo_uid>/`
+- `workflowctl run --workflow <workflow_id_or_path>` — run a workflow
+- `workflowctl notifications tail` — watch notifications
+- `workflowctl recover` — WAJ + queue recovery
+- `workflowctl fsck` — integrity checks
 
-## Writing Workflows
+## Where state lives (paths)
 
-Workflows are YAML files with this structure:
-[... workflow schema and examples ...]
+Default `WORKFLOW_HOME`: `~/.workflow`
+
+Repo binding root:
+- `~/.workflow/repos/<repo_uid>/`
+  - `config.toml` (machine-local overrides)
+  - `repo.json` (repo_uid + repo_root)
+  - `workspace/` (**WSS root**; durable JSON/YAML artifacts)
+  - `logs/` (append-only JSONL shards; one per writer)
+  - `notifications/` and `control_actions/` (maildir-like queues)
+  - `sandboxes/` (ephemeral jj workspaces for tool execution)
+
+## Terminology (do not overload “workspace”)
+
+- **WSS**: the durable store in `.../workspace/`
+- **Sandbox**: an ephemeral environment for tool execution (implemented as a **jj workspace**)
+- **jj workspace**: jj’s working copy concept; use this term only when referencing jj CLI commands
+
+## ID conventions
+
+Semantic IDs (human strings):
+- `project_id`, `ticket_id`, `task_id`, `step_id`
+- `workflow_id` (workflow definition ID, e.g. `task_decompose_v1`)
+- `agent_id` (agent definition ID, e.g. `approval_agent_v1`)
+
+Generated IDs (ULID):
+- `run_id`, `step_execution_id`, `writer_id`
+- `request_id`, `notification_id`, `journal_id`, `op_id`, `bundle_id`
+
+## Configuration layers and precedence
+
+TOML config files:
+
+- User-global: `~/.workflow/config.toml`
+- Repo machine-local: `~/.workflow/repos/<repo_uid>/config.toml`
+- Repo shared (optional, committed): `<repo_root>/.workflow/config.toml`
+
+Precedence (highest wins):
+1) CLI flags
+2) Repo machine-local
+3) Repo shared
+4) User-global
+5) Built-in defaults
+
+## Workflow locations and precedence
+
+Workflow search order (highest wins):
+1) Repo overrides (committed): `<repo_root>/.workflow/workflows/`
+2) Repo overrides (machine-local): `~/.workflow/repos/<repo_uid>/workflows/`
+3) Global personal workflows: `~/.workflow/workflows/`
+4) Built-ins: packaged with `workflowctl`
+
+Agent prompt search order (highest wins):
+1) Repo overrides (committed): `<repo_root>/.workflow/agents/`
+2) Repo overrides (machine-local): `~/.workflow/repos/<repo_uid>/agents/`
+3) Global personal agents: `~/.workflow/agents/`
+4) Built-ins: packaged with `workflowctl`
+
+## Workflow runner semantics (v1)
+
+- Steps form a DAG via `depends_on`.
+- v1 runner is **single-threaded** and chooses the next ready step by **file order**.
+- `on_failure` modes:
+  - `stop`, `pause`, `investigate`, `continue` (see Integration §7.2.9).
+- Step IO:
+  - Step inputs are materialized from `with:` expressions.
+  - Step outputs are stored in the step execution doc (`.../steps/<step_execution_id>.json`) as a bounded JSON object.
+
+## Inputs schema subset
+
+Workflows define `inputs` using a small JSON-schema-like subset (Integration §7.2.6).
+When inputs are missing, `workflowctl` may prompt. Validation failures return `E_VALIDATION_FAILED`.
+
+## Gateway tool contract (`workflow_engine`)
+
+The workflow engine exposes a single gateway tool (`workflow_engine`) with subcommands like:
+- `hydrate`, `sandbox_run`, `apply_patch`, `export_stack`, `queue_*`, `wss_*`
+
+Responses use a standard envelope:
+- success: `{ "ok": true, ... }`
+- failure: `{ "ok": false, "error": { "error_id": "...", "code": "E_...", ... } }`
+
+Error codes and event types are defined in Core Infrastructure §8.2.
+
+## Troubleshooting playbooks (actionable)
+
+### Journal recovery: `journal_abandoned`
+1. Open the notification and note `op_id` and paths.
+2. Run `workflowctl recover`.
+3. If `expected_rev` mismatch is reported, do not overwrite; request user decision.
+
+### Sparse sandbox missing files
+- If the tool fails with missing files:
+  - allow sparse expansion (`x_allow_sparse_expand: true`) OR
+  - fallback to `sparse_mode: full` for that step
+- Evidence: sandbox manifest + tool stderr in the step logs.
+
+### Rebase conflicts
+- Inspect the evidence bundle under:
+  - `workspace/runs/<run_id>/artifacts/rebase/<bundle_id>/`
+- Prefer conflict resolution records stored under:
+  - `workspace/tickets/<ticket_id>/rebase/conflicts/`
+
+## Minimal workflow example
+
+~~~yaml
+schema_version: 1
+workflow_id: task_decompose_v1
+description: "Decompose a task into concrete steps."
+
+inputs:
+  type: object
+  additionalProperties: false
+  required: [task_text]
+  properties:
+    task_text:
+      type: string
+      description: "The user request to decompose into steps."
+
+steps:
+  - step_id: plan
+    kind: agent
+    agent_id: task_decomposer_v1
+    with:
+      task_text: ${{ inputs.task_text }}
+    on_failure: { mode: investigate }
+~~~
+
+
+## Minimal agent prompt example
+
+~~~markdown
+# task_decomposer_v1
+
+Goal: convert `task_text` into a step plan.
+
+Constraints:
+- steps must be small, testable, and file-scoped
+- produce YAML with `step_id`, `kind`, `depends_on`, and `with` inputs
+~~~
+
+
+### Validation and debugging
+
+Recommended practices:
+
+- Validate workflow YAML before execution (schema + DAG):
+  - `workflowctl workflow validate <path>`
+- Keep workflows deterministic:
+  - avoid hidden environment coupling (prefer explicit inputs)
+- Use `gate` steps when user decisions are required (no silent auto-selection).
+
+
 
 ## Writing Agent Prompts
 
-Agent prompts are markdown files:
-[... agent format and examples ...]
+Agent prompts are Markdown files that define:
+- purpose and constraints
+- required inputs (typed)
+- required outputs (typed)
+- tool access (capabilities)
 
-## Running Workflows
+They are referenced from workflows via `entrypoint: agent:<name>` or `file:<repo_relative_path>` (Integration §7.2.3).
 
-- `workflowctl run --workflow <name>` - run a workflow
-- `workflowctl agents run <name>` - run an agent
+### Prompt file format (v1)
 
-## Model Routing
+An agent prompt is a Markdown document with optional YAML front matter.
 
-[... model routing config ...]
-```
+#### YAML front matter (recommended)
 
-### 3.5 Skill vs Command distinction
-
-| Type | Example | Purpose |
-|------|---------|---------|
-| **Command** | `/project-manager`, `/ticket-manager` | Execute `workflowctl run <workflow>` |
-| **Skill** | `/workflow-manager` | Teaches the agent how to work with the workflow engine |
-
-Commands invoke specific workflows; the skill gives the agent comprehensive knowledge.
-
-## 4) CLI integration
-
-### 4.1 Supported CLIs
-
-The configuration agent asks users which CLI they use. Supported options:
-- Claude Code
-- OpenCode
-- Cursor
-- Windsurf
-- Generic (MCP-based)
-
-### 4.2 Installation command
-
-```bash
-workflowctl install --cli <name> [--project]
-```
-
-Without `--project`: installs to user-global CLI location (e.g., `~/.claude/`)
-With `--project`: installs to project CLI location (e.g., `<repo>/.claude/`)
-
-This installs commands and the workflow-manager skill into the CLI's expected locations.
-
-### 4.3 What gets installed
-
-**Commands** (in CLI's commands directory):
-- `/project-manager` → `workflowctl run project-manager`
-- `/ticket-manager` → `workflowctl run ticket-manager`
-
-**Skill** (in CLI's skills directory):
-- `/workflow-manager` → teaches the agent how to configure, write workflows, write agents, manage models
-
-### 4.4 CLI-specific locations
-
-| CLI | Commands | Skills |
-|-----|----------|--------|
-| Claude Code | `~/.claude/commands/` | `~/.claude/skills/` |
-| OpenCode | `~/.opencode/commands/` | `~/.opencode/skills/` |
-| Cursor | TBD | TBD |
-| Windsurf | TBD | TBD |
-
-Project-level: same structure under `<repo>/` instead of `~/`.
-
-### 4.5 Command format (Claude Code example)
-
-`~/.claude/commands/project-manager.md`:
-```markdown
+```yaml
 ---
-description: Manage projects and tickets
+schema_version: 1
+agent_id: step_patch_author_v1
+display_name: Step patch author
+description: Produce a unified diff for a single planned step.
+capabilities_required: ["patch_write"]
+tools_allowed: ["workflow_engine"]   # optional; default []
+input_schema:
+  type: object
+  additionalProperties: false
+  properties:
+    context: { type: object }
+    hydration: { type: object }
+  required: ["context","hydration"]
+output_schema:
+  type: object
+  additionalProperties: false
+  properties:
+    patch: { type: string, description: "Unified diff" }
+    summary: { type: string }
+  required: ["patch","summary"]
 ---
-Run: workflowctl run project-manager $ARGUMENTS
 ```
 
-### 4.6 MCP server (generic integration)
+Rules:
 
-For CLIs that support MCP but not native commands/skills:
-```bash
-workflowctl mcp-server start
-# Exposes commands as MCP tools
+- `schema_version` MUST be `1` for v1 prompts.
+- `agent_id` MUST be unique within its resolution scope.
+- `input_schema` and `output_schema` use the same restricted schema subset as workflow inputs (Integration §7.2.6).
+
+#### Markdown body
+
+The body is free-form Markdown and should include:
+
+- What the agent must do
+- Hard constraints (scope limits, formatting rules)
+- Output format instructions (see below)
+
+### Input passing model
+
+At runtime, the runner invokes an LLM with:
+
+- **system prompt**: the agent prompt Markdown (including front matter)
+- **user message**: a JSON object containing the runtime input value
+
+The runner MUST also attach (or inline) any hydrated file slices needed for the task.
+
+The durable input is always stored as:
+
+- `workspace/runs/<run_id>/steps/<step_id>/agent_input.json`
+
+### Output capture model
+
+The agent MUST emit a single JSON object in the **first** fenced code block labeled `json`:
+
+```json
+{
+  "patch": "diff --git ...\n...",
+  "summary": "What changed and why"
+}
 ```
 
-## 5) Model provider configuration
+Rules:
 
-### 5.1 Provider setup
+- The runner parses the first ```json``` block.
+- The parsed object MUST validate against `output_schema`.
+- If parsing or validation fails, the step fails loudly and follows `on_failure`.
 
-Model providers are configured via the configuration agent or CLI:
+For patch-authoring agents, `patch` MUST be a unified diff.
 
-```bash
-# Add a provider (prompts for API key, stores in OS keychain)
-workflowctl providers add anthropic
-workflowctl providers add openai
-workflowctl providers add google
+### Tool access
 
-# List configured providers
-workflowctl providers list
+By default, agents have **no tool access**.
 
-# Test a provider
-workflowctl providers test anthropic
+Tool access is granted only when:
 
-# Remove a provider
-workflowctl providers remove anthropic
-```
+- the workflow step declares required capabilities, and
+- the agent prompt front matter allows the tool (`tools_allowed`), and
+- the repo trust policy allows it (Integration §7.3)
 
-### 5.2 API key storage
 
-All API keys are stored in the OS keychain via Python `keyring` (see Core Infrastructure §12.1):
-
-```
-Service: workflow
-Username: provider/<provider_name>
-Password: <api_key>
-```
-
-### 5.3 Model routing
-
-Default routing is configured in `~/.workflow/config.toml` (see Core Infrastructure §11.4):
-
-```toml
-[models]
-default = "claude-sonnet"
-
-[models.routing]
-planning = "claude-opus"
-implementation = "claude-sonnet"
-validation = "chatgpt-5"
-multimodal = "gemini-3"
-```
-
-Routing can be overridden per-workflow and per-step.
 
 ## 6) Agent file locations
 

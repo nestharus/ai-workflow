@@ -1,0 +1,14 @@
+schema_version: 1
+workflow_id: migrate_v1
+display_name: "Migrate (v1)"
+description: "Migrate runtime state and schemas to the current version."
+inputs:
+  type: object
+  required: []
+  properties: {}
+steps:
+  - step_id: migrate
+    kind: tool
+    entrypoint: "tool:migrate"
+    description: "Invoke the gateway migration routine."
+    with: {}

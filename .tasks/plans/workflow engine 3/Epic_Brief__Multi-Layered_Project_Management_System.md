@@ -69,6 +69,22 @@ Developers using “AI coding assistants” hit recurring failure modes that cur
 - Constraints: low-friction installs; no required database/services; cross-platform (Linux/macOS/Windows/WSL).
 
 
+## 0.1 Glossary (terminology)
+
+**This glossary is normative**. When these terms appear in specs, they MUST be used with the meanings below.
+
+- **WSS (Workspace State Store)**: The durable on-disk state store under:
+  - `~/.workflow/repos/<repo_uid>/workspace/`
+  - Contains tickets, tasks, runs, logs, and artifacts. (Core Infrastructure §2)
+- **jj workspace**: A Jujutsu (jj) working copy concept (VCS term). Not the same as WSS.
+- **sandbox**: An ephemeral execution environment implemented as a **jj workspace** created under:
+  - `~/.workflow/repos/<repo_uid>/sandboxes/<sandbox_id>/`
+  - Used for safe validation/execution and destroyed by GC. (Integration §9, Core Infrastructure §11.4)
+- **repo root**: The user’s git/jj repository path being managed.
+- **runtime root**: `~/.workflow/repos/<repo_uid>/` (the per-repo runtime directory).
+
+The term **“workspace”** MUST be qualified as either **WSS**, **jj workspace**, or **sandbox** (do not use unqualified “workspace” in new text).
+
 ## 1) Product priorities (decision order)
 
 1. **Trust**
@@ -264,7 +280,7 @@ This system intentionally collapses “architecture + algorithms + evidence” i
 
 ## 7) Global invariants (non-negotiable)
 Global invariants and data shapes are defined in:
-- **Tech_Plan__Core_Infrastructure_&_Data_Model.md**
+- **Tech_Plan__Core_Infrastructure.md**
 
 Key reminders:
 - Local-only, single machine; no required ports or services.

@@ -1,0 +1,21 @@
+schema_version: 1
+workflow_id: rebase_enhanced_v1
+display_name: "Enhanced rebase (v1)"
+description: "Perform enhanced rebase with deterministic conflict handling and recovery."
+inputs:
+  type: object
+  required: [ticket_id]
+  properties:
+    ticket_id: { type: string }
+    source_ref: { type: string, description: "Optional source ref; defaults to ticket head." }
+    target_ref: { type: string, description: "Optional target ref; defaults to trunk/main." }
+steps:
+  - step_id: rebase
+    kind: agent
+    entrypoint: "agent:rebase_driver_v1"
+    description: "Run rebase, detect conflicts, and resolve using the enhanced protocol."
+    capabilities_required: ["sandbox_exec", "apply_patch", "llm_call"]
+    with:
+      ticket_id: "${inputs.ticket_id}"
+      source_ref: "${inputs.source_ref}"
+      target_ref: "${inputs.target_ref}"

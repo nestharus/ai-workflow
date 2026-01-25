@@ -22,7 +22,7 @@ Every flow step specifies:
 - **Durable evidence** (what must be written so we can debug after a crash)
 
 Global invariants and data shapes are defined in:
-- Tech_Plan__Core_Infrastructure_&_Data_Model.md
+- Tech_Plan__Core_Infrastructure.md
 
 ---
 
@@ -164,7 +164,10 @@ Evidence: none required (UX convenience).
 2. If no stack metadata:
    - create jj ticket stack and bookmark
    - store stack metadata into `ticket.json`
-3. Set ticket status `in_progress` (with `expected_rev`).
+3. Set ticket status:
+   - If ticket was newly created by TM: set `in_progress` (creation implies start)
+   - Else: transition `open → in_progress`
+   (also set `expected_rev`).
 
 Evidence:
 - `ticket.json`
@@ -225,21 +228,119 @@ Evidence:
 
 ## Flow 8 — Step execution (patch creation; workflow-driven)
 
-For each step (sequential by default):
+**Goal**: Execute a single planned step and produce a durable patch + evidence with no silent failures.
 
-1. Hydrate context (Mode A by default).
-2. Generate patch.
-3. Hunk-lint (fast reject).
-4. Apply patch to jj stack.
-5. Record deviations if needed.
-6. Emit `step_stop`.
+Inputs (minimum):
 
-Evidence:
-- step doc in WSS
-- patch id recorded
-- shard events: `step_start`, `tool_*`, `progress`, `step_stop`
+- `ticket_id`
+- `step_id`
+- `step_plan_item` (from `tasks/<task_id>/steps/step_plan.yaml`)
 
----
+Outputs (durable evidence):
+
+- `steps/<step_id>/patch.diff` (unified diff; may be empty only if explicitly allowed)
+- `steps/<step_id>/patch_meta.json`
+- `steps/<step_id>/hydration_manifest.json`
+- `steps/<step_id>/hunk_lint.json` (Stage 1 result)
+- logs for any tool runs
+- optional `deviations/<deviation_id>.md` (see Project & Ticket Management §7.3)
+
+### 8.1 Mode selection
+
+Step execution supports two modes (Integration §6):
+
+- **Mode A (virtual hydration)**: read files directly from VCS state without a checkout
+- **Mode B (sandbox)**: create a `jj` workspace sandbox, run tools there, then translate results back into patches
+
+Mode selection is policy-driven (Integration §6). Core rule:
+
+- Prefer Mode A unless:
+  - the step explicitly requires a sandbox (`sandbox.required: true`), or
+  - virtual hydration is not possible for required inputs (binary/too-large/unsupported), or
+  - an earlier guarded failure triggered a Mode B fallback.
+
+### 8.2 Hydration protocol
+
+Hydration is **deterministic** and driven by the step plan. The runner must not guess silently.
+
+#### 8.2.1 Hydration scope
+
+Primary hydration set = the file list declared by the step plan item:
+
+- `step.inputs.files[*].path` (Project & Ticket Management §6.4)
+
+Each file entry may include:
+
+- `rev` (revset string; default `ticket.tip`)
+- `slice` (optional; line range for prompt-size control)
+
+No automatic dependency-closure heuristic is applied by default.
+
+If additional context is needed, the step agent must request it explicitly via the gateway hydration tools; these requests are logged and persisted in `hydration_manifest.json`.
+
+#### 8.2.2 Hydration execution
+
+For each distinct `rev` referenced in the file list:
+
+1. Call `workflow_engine.invoke` with subcommand `hydrate` (Integration §8) for the required paths.
+2. Store a `hydration_manifest.json` with:
+   - requested paths
+   - resolved revisions
+   - per-path status (`ok|not_found|binary|too_large|error`)
+   - content hashes and blob refs (if applicable)
+
+#### 8.2.3 Hydration failure handling
+
+Hydration failures are handled loudly.
+
+- `not_found`:
+  - Allowed only when the step is permitted to create the file.
+  - The manifest records `exists=false` and the step runner provides an empty virtual file to the patch author.
+
+- `binary` / `too_large` / `error`:
+  - If Mode A was selected:
+    - the runner MUST attempt a single **Mode B fallback** when allowed by policy and sandbox backend is available
+    - the fallback is recorded as a deviation
+  - If Mode B is unavailable or the fallback also fails:
+    - the step fails and the workflow applies the step’s `on_failure` policy (Workflow schema §7.2.7)
+
+### 8.3 Agent handoff contract
+
+The step runner passes a single structured input object to the patch author agent:
+
+- `context`:
+  - `ticket_id`, `step_id`, `run_id`
+  - `base_rev`, `tip_rev`
+  - `mode` (`A|B`)
+  - `allowed_write_paths` (derived from step plan)
+- `hydration`:
+  - `manifest_ref` (path to `hydration_manifest.json`)
+  - `files[]`:
+    - `path`
+    - `rev`
+    - `content_inline` (for small text files) **or** `blob_ref`
+    - `sha256`
+    - `is_binary`
+    - `slice` (if applied)
+- `artifacts`:
+  - references to prior step outputs required for continuity
+
+The runner may inline file content into the LLM prompt, but the durable contract is the manifest + blob refs.
+
+### 8.4 Patch generation and gating
+
+1. Patch author agent emits:
+   - unified diff (required)
+   - patch metadata (rationale, touched paths, expected effects)
+2. Stage 1 hunk-lint runs (Enhanced Rebase & Evaluation §3):
+   - validates unified diff structure
+   - enforces scope: patch MUST NOT modify paths outside `allowed_write_paths`
+   - computes a stable `failure_signature` on failure
+3. If hunk-lint passes:
+   - apply patch to the ticket stack (PGS adapter)
+   - persist evidence and update `ticket.json` progress
+
+
 
 ## Flow 9 — Validation (sandbox; workflow-driven; recovery-first)
 
@@ -325,49 +426,107 @@ Evidence: conflict record + evidence refs.
 
 ---
 
-## Flow 12 — PAUSE/RESUME protocol (mandatory)
+## Flow 12 — PAUSE/RESUME protocol
 
-### Request (control action)
-`control_actions/inbox/pause.<request_id>.json`
+**Goal**: Provide a reliable, evidence-driven way to pause and resume runs without silent failure.
+
+### 12.1 Control action transport
+
+Control actions are file-based envelopes in the WSS:
+
+- Inbox: `workspace/control/inbox/`
+- Outbox: `workspace/control/outbox/`
+
+A control action is a JSON document with required fields (Core Infrastructure §5.2) plus:
+
+- `control_kind` (string enum): `pause|resume|ack|kill_request|user_decision|notification_ack`
+- `run_id` (string)
+- `step_process_id` (string, optional)
+- `created_at` (RFC3339 timestamp)
+- `deadline_ms` (int, optional)
+
+### 12.2 Discovery mechanism
+
+Step processes MUST discover control actions via polling, and MAY additionally use OS file watchers:
+
+- `poll_interval_ms` default: `250`
+- The poll loop MUST be integrated into the step process main loop such that:
+  - a pause request is observed even during long agent/tool operations (at latest, between operations)
+
+### 12.3 Deadline semantics
+
+If a control action includes `deadline_ms`, the deadline is measured from `created_at`:
+
+- `deadline_at = created_at + deadline_ms`
+
+This avoids ambiguity about when the step “received” the request.
+
+If the step observes a request after `deadline_at`, it still MUST ACK, but the ACK MUST indicate `deadline_missed: true`.
+
+### 12.4 PAUSE request
+
+Root writes `pause.json` to `control/inbox/`:
 
 ```json
 {
   "schema_version": 1,
-  "request_id": "01...",
-  "action_type": "pause",
-  "target": { "step_execution_id": "01..." },
-  "deadline_ms": 10000
+  "control_kind": "pause",
+  "run_id": "<run_id>",
+  "step_process_id": "<optional>",
+  "created_at": "2026-01-24T00:00:00Z",
+  "deadline_ms": 10000,
+  "reason": "user_requested"
 }
 ```
 
-### ACK (step writes)
-`control_actions/ack/pause.<request_id>.<step_execution_id>.json`
+### 12.5 ACK contract
 
-```json
-{
-  "schema_version": 1,
-  "request_id": "01...",
-  "action_type": "pause",
-  "run_id": "01...",
-  "step_execution_id": "01...",
-  "ack_ts": "2026-01-24T00:00:00Z",
-  "result": "acknowledged",
-  "details": {
-    "tool_subprocesses_stopped": true,
-    "logs_flushed": true,
-    "wss_mutations_stopped": true
-  }
-}
-```
+On observing a PAUSE request, the step process MUST write `pause_ack.json` to `control/outbox/` with:
 
-Paused definition:
-- no tools running, no WSS mutations, control loop waiting, logs flushed.
+- `control_kind: "ack"`
+- `ack_for`: ULID of the PAUSE request
+- `ack_at`: timestamp
+- `result` (enum):
+  - `paused` — step entered paused state at a safe point
+  - `cannot_pause` — step is in a non-interruptible operation (must include reason)
+  - `already_finished` — step already completed
+  - `investigating` — step could not pause cleanly and is requesting investigation
 
-If cannot ACK:
-- step emits `pause_failed` evidence and requests investigation
-- root spawns investigator
+### 12.6 Root behavior on missed ACK deadline
 
----
+If Root does not observe an ACK by `deadline_at`:
+
+1. Root writes a **notification**:
+   - severity: `warn`
+   - kind: `pause_ack_timeout`
+   - includes: `run_id`, `step_process_id`, `deadline_at`
+2. Root spawns an investigator (`investigate_v1`) with bounded evidence:
+   - last N run events
+   - step heartbeat status (if available)
+   - the PAUSE request envelope
+
+Root MUST NOT silently continue execution after a pause request.
+
+### 12.7 Forced termination policy
+
+Root MUST NOT force-kill a step solely because the ACK is late.
+
+Forced termination is allowed only when one of these conditions holds:
+
+- The user explicitly requested a kill (`kill_request`) **or**
+- Investigator concludes the step is wedged and recommends termination **and**
+- Root has evidence the step is unresponsive (no heartbeat beyond `heartbeat_timeout_ms`)
+
+A forced termination MUST be recorded as a deviation and must emit a loud notification.
+
+### 12.8 RESUME
+
+RESUME is symmetric:
+
+- Root writes `resume.json` to inbox.
+- Step ACKs and exits paused state at the next safe point.
+
+
 
 ## Flow 13 — Spawn-step (flat orchestration)
 

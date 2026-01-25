@@ -1,0 +1,21 @@
+schema_version: 1
+workflow_id: investigate_v1
+display_name: "Investigate (v1)"
+description: "Collect evidence and classify failures into actionable next steps."
+inputs:
+  type: object
+  required: [run_id]
+  properties:
+    run_id: { type: string }
+    step_execution_id: { type: string }
+    error_code: { type: string }
+steps:
+  - step_id: investigate
+    kind: agent
+    entrypoint: "agent:investigator_v1"
+    description: "Gather evidence (logs, artifacts) and emit a classification + repair plan."
+    capabilities_required: ["sandbox_exec", "llm_call"]
+    with:
+      run_id: "${inputs.run_id}"
+      step_execution_id: "${inputs.step_execution_id}"
+      error_code: "${inputs.error_code}"

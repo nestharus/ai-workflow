@@ -1,0 +1,20 @@
+schema_version: 1
+workflow_id: task_decompose_v1
+display_name: "Task decompose (v1)"
+description: "Decompose a task into a converged, executable step plan."
+inputs:
+  type: object
+  required: [ticket_id, task_id]
+  properties:
+    ticket_id: { type: string }
+    task_id: { type: string }
+    force: { type: boolean, default: false }
+steps:
+  - step_id: decompose
+    kind: agent
+    entrypoint: "agent:task_decomposer_v1"
+    description: "Produce/merge step_plan.yaml and candidates for the task."
+    with:
+      ticket_id: "${inputs.ticket_id}"
+      task_id: "${inputs.task_id}"
+      force: "${inputs.force}"

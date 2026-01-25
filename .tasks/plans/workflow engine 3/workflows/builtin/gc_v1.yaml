@@ -1,0 +1,14 @@
+schema_version: 1
+workflow_id: gc_v1
+display_name: "Garbage collect (v1)"
+description: "Run runtime GC: clean expired sandboxes and compact logs."
+inputs:
+  type: object
+  required: []
+  properties: {}
+steps:
+  - step_id: gc
+    kind: tool
+    entrypoint: "tool:gc"
+    description: "Invoke the gateway GC routine."
+    with: {}

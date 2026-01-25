@@ -1,0 +1,19 @@
+schema_version: 1
+workflow_id: ticket_evaluate_v1
+display_name: "Ticket evaluate (v1)"
+description: "Evaluate a ticket against its requirements and produce an evaluation report."
+inputs:
+  type: object
+  required: [ticket_id]
+  properties:
+    ticket_id: { type: string }
+    rev: { type: string, description: "Optional revision/bookmark to evaluate; defaults to ticket head." }
+steps:
+  - step_id: evaluate
+    kind: agent
+    entrypoint: "agent:ticket_evaluator_v1"
+    description: "Run evaluation and record findings."
+    capabilities_required: ["sandbox_exec", "llm_call"]
+    with:
+      ticket_id: "${inputs.ticket_id}"
+      rev: "${inputs.rev}"
