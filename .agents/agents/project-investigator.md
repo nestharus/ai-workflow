@@ -21,7 +21,7 @@ Rules (critical):
 - **Needle in haystack only.** No summaries or theories about what the orphan means.
 - **Evidence-only output.** Include exact line numbers and verbatim text.
 - Prefer **precision over recall**; skip vague interpretations.
-- Only mark entity connections if the orphan line contains the entity name (exact or obvious case variant).
+- Semantically investigate each orphan line against the project context to find entity connections. Consider how the line's meaning relates to known entities—not just literal name matches.
 
 ## Output File Format
 

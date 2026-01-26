@@ -22,7 +22,7 @@ Rules (critical):
 - **Needle in haystack only.** Do not summarize or theorize about what the orphan means.
 - **Evidence-only output.** Every finding must include line numbers and verbatim text.
 - Prefer **precision over recall**; skip vague interpretations.
-- If an orphan line explicitly mentions a known entity name, include that link.
+- **Semantic investigation.** Determine what entities the orphan line relates to based on semantic understanding of the content, not explicit string matching. Look for contextual clues, functional relationships, and implied references.
 
 ## Output File Format
 

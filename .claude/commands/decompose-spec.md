@@ -11,7 +11,7 @@ Break down large specifications into isolated entity documents using GLM sub-age
 
 1. **Needle in Haystack**: LLMs find WHERE something is with high accuracy
 2. **No Categorization**: Never ask "is this X or Y?" - list comparison fails
-3. **Theorize with Evidence**: Agents guess and provide line numbers as proof
+3. **Theorize with Evidence**: Agents make semantic hypotheses and cite line numbers as proof—not string matching, but contextual reasoning about what lines mean and relate to each other
 4. **Files Not Returns**: Agents write to files, return only filename
 5. **Orchestrator Loops, Not Agents**: Each agent is ONE forward pass
 
@@ -130,10 +130,13 @@ uv run python -m scripts.spec_decomposition investigate-orphans \
   --workspace .tmp/spec_decomposition \
   --level entity
 
-# 2. Run orphan-investigator agent
+# 2. Run orphan-investigator agent with original file context
 uv run python -m scripts.agents orphan-investigator <<EOF
 orphan_lines: |
 $(cat .tmp/spec_decomposition/orphans_entity_input.json)
+
+original_content: |
+$(cat .tmp/spec_decomposition/orphans_entity_original.json)
 
 known_entities: |
 $(cat .tmp/spec_decomposition/orphans_entity_context.json)
@@ -141,7 +144,7 @@ $(cat .tmp/spec_decomposition/orphans_entity_context.json)
 output_file: .tmp/spec_decomposition/orphan_entity_analysis.json
 EOF
 
-# 3. Process orphan findings
+# 3. Process orphan findings (investigations, cross_cutting, no_context_found)
 uv run python -m scripts.spec_decomposition process-orphans \
   --workspace .tmp/spec_decomposition \
   --findings .tmp/spec_decomposition/orphan_entity_analysis.json

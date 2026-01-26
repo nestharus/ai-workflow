@@ -15,13 +15,18 @@ Given an entity and what we already know, find *additional context lines* that s
 
 ## Task
 
-Find lines that:
+Ask semantic questions to discover how the entity fits into the system:
 
-- mention `entity_name` AND
-- reveal a relationship, dependency, constraint, or interaction with something else.
+- **What relates to this entity?** What other concepts are connected to it?
+- **What uses this entity?** What depends on it or calls it?
+- **What does this entity depend on?** What does it reference or require?
+- **What constraints or interactions involve this entity?**
+
+For each relationship found, identify the line(s) that reveal it.
 
 Rules (critical):
 
+- **Semantic discovery.** Look for relationships conceptually, not just string matches.
 - **Needle in haystack only.** No summaries, no theories.
 - **Evidence-only output.** Every item must include line numbers and verbatim line text.
 - Prefer precision over recall; skip vague pronouns.

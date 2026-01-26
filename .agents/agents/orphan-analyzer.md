@@ -17,7 +17,7 @@ You are given remaining lines that were not claimed by any entity during extract
 For each remaining line (or small contiguous group):
 
 - State what it is about *in a short phrase*.
-- If it clearly relates to one or more known entities *by name*, list them.
+- If it semantically relates to one or more known entities, list them.
 
 Rules:
 

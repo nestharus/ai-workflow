@@ -1369,9 +1369,10 @@ def cmd_investigate_orphans(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace)
     level = args.level
 
-    # Get remaining orphan lines from discovery staging
+    # Get remaining orphan lines from discovery staging with original file content
     discovery_dir = workspace / "staging" / "discovery"
     orphan_lines = []
+    file_contents: dict[str, str] = {}
 
     for staging_file in sorted(discovery_dir.glob("*_staged.md")):
         remaining = get_remaining_lines(staging_file)
@@ -1384,6 +1385,24 @@ def cmd_investigate_orphans(args: argparse.Namespace) -> int:
                     "text": item["text"],
                 }
             )
+        # Load original file content for context
+        if original_source not in file_contents:
+            source_path = Path(original_source)
+            if source_path.exists():
+                try:
+                    file_contents[original_source] = source_path.read_text(encoding="utf-8")
+                except (PermissionError, UnicodeDecodeError, OSError):
+                    file_contents[original_source] = ""
+            else:
+                # Try to find in staging directory
+                copy_path = staging_file.parent / f"{staging_file.stem.replace('_staged', '_original')}.md"
+                if copy_path.exists():
+                    try:
+                        file_contents[original_source] = copy_path.read_text(encoding="utf-8")
+                    except (PermissionError, UnicodeDecodeError, OSError):
+                        file_contents[original_source] = ""
+                else:
+                    file_contents[original_source] = ""
 
     if not orphan_lines:
         print(
@@ -1397,9 +1416,17 @@ def cmd_investigate_orphans(args: argparse.Namespace) -> int:
         )
         return 0
 
-    # Write orphan lines to file for agent
+    # Write orphan lines to file for agent (with original_content for investigator)
     orphans_file = workspace / f"orphans_{level}_input.json"
-    orphans_file.write_text(json.dumps({"orphan_lines": orphan_lines}, indent=2))
+    orphans_file.write_text(
+        json.dumps(
+            {
+                "orphan_lines": orphan_lines,
+                "original_content": file_contents,
+            },
+            indent=2,
+        )
+    )
 
     # Load context based on level
     entity_index = load_entity_index(workspace)
@@ -1407,12 +1434,12 @@ def cmd_investigate_orphans(args: argparse.Namespace) -> int:
 
     if level == "entity":
         context = {
-            "known_entities": list(entity_index.values()),
+            "known_entities": [info.get("name", "") for info in entity_index.values()],
             "entity_count": len(entity_index),
         }
     else:  # project level
         context = {
-            "known_entities": list(entity_index.values()),
+            "known_entities": [info.get("name", "") for info in entity_index.values()],
             "entity_count": len(entity_index),
             "files": state.get("files_remaining", []) + state.get("files_completed", []),
             "extracted_relations": state.get("extracted_relations", []),
@@ -1533,6 +1560,12 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
         return 1
 
     findings = json.loads(findings_file.read_text())
+
+    # Support both orphan-investigator output schema (investigations/cross_cutting/no_context_found)
+    # and orphan-analyzer output schema (analysis)
+    investigations = findings.get("investigations", [])
+    cross_cutting = findings.get("cross_cutting", [])
+    no_context = findings.get("no_context_found", [])
     analysis = findings.get("analysis", [])
 
     # Load state and ID map
@@ -1541,20 +1574,171 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
 
     created_orphans = []
 
+    # Ensure orphans directory exists once before processing all loops
+    (workspace / "orphans").mkdir(exist_ok=True)
+
+    # Process orphan-investigator output (investigations, cross_cutting, no_context_found)
+    for inv in investigations:
+        orphan_id = generate_id(IDType.ORPHAN, id_map)
+        orphan_file = workspace / "orphans" / f"{orphan_id}.md"
+
+        orphan_line = inv.get("orphan_line", 0)
+        orphan_text = inv.get("orphan_text", "")
+        context_lines = inv.get("context_lines", [])
+        entity_mentions = inv.get("entity_mentions", [])
+
+        doc_lines = [
+            "# Orphan Statement",
+            "",
+            f"**ID**: `{orphan_id}`",
+            f"**Importance**: `medium`",
+            f"**Related Entities**: {', '.join(entity_mentions) if entity_mentions else 'None'}",
+            "",
+            "## Content",
+            "",
+            f"> {orphan_text}",
+            "",
+            "## Context Lines",
+            "",
+        ]
+        for ctx in context_lines:
+            doc_lines.append(f"- **{ctx.get('line', 0)}**: {ctx.get('text', '')}")
+
+        doc_lines.extend(
+            [
+                "",
+                "## Evidence",
+                "",
+                f"- **Line**: {orphan_line}",
+            ]
+        )
+
+        orphan_file.write_text("\n".join(doc_lines))
+
+        id_map[orphan_id] = [
+            {
+                "file": inv.get("file", ""),
+                "line": orphan_line,
+                "type": "orphan",
+                "context_lines": context_lines,
+                "entity_mentions": entity_mentions,
+            }
+        ]
+
+        state["orphans_found"] = state.get("orphans_found", 0) + 1
+        created_orphans.append(
+            {
+                "orphan_id": orphan_id,
+                "line": orphan_line,
+                "importance": "medium",
+            }
+        )
+
+    # Process cross-cutting orphans from investigator
+    for cc in cross_cutting:
+        orphan_id = generate_id(IDType.ORPHAN, id_map)
+        orphan_file = workspace / "orphans" / f"{orphan_id}.md"
+
+        lines = cc.get("lines", [])
+        affects = cc.get("affects_entities", [])
+
+        doc_lines = [
+            "# Orphan Statement",
+            "",
+            f"**ID**: `{orphan_id}`",
+            f"**Importance**: `high`",
+            f"**Related Entities**: {', '.join(affects) if affects else 'None'}",
+            "",
+            "## Content",
+            "",
+            f"> Cross-cutting concern affecting multiple entities",
+            "",
+            "## Evidence",
+            "",
+            f"- **Lines**: {', '.join(str(l) for l in lines)}",
+        ]
+
+        orphan_file.write_text("\n".join(doc_lines))
+
+        id_map[orphan_id] = [
+            {
+                "lines": lines,
+                "type": "orphan",
+                "cross_cutting": True,
+                "affects_entities": affects,
+            }
+        ]
+
+        state["orphans_found"] = state.get("orphans_found", 0) + 1
+        created_orphans.append(
+            {
+                "orphan_id": orphan_id,
+                "lines": lines,
+                "importance": "high",
+            }
+        )
+
+    # Process orphans with no context found
+    for nc in no_context:
+        orphan_id = generate_id(IDType.ORPHAN, id_map)
+        orphan_file = workspace / "orphans" / f"{orphan_id}.md"
+
+        line = nc.get("line", 0)
+        text = nc.get("text", "")
+
+        doc_lines = [
+            "# Orphan Statement",
+            "",
+            f"**ID**: `{orphan_id}`",
+            f"**Importance**: `low`",
+            "**Related Entities**: None",
+            "",
+            "## Content",
+            "",
+            f"> {text}",
+            "",
+            "## Evidence",
+            "",
+            f"- **Line**: {line}",
+            "- **Note**: No contextual evidence found",
+        ]
+
+        orphan_file.write_text("\n".join(doc_lines))
+
+        id_map[orphan_id] = [
+            {
+                "line": line,
+                "type": "orphan",
+                "no_context_found": True,
+            }
+        ]
+
+        state["orphans_found"] = state.get("orphans_found", 0) + 1
+        created_orphans.append(
+            {
+                "orphan_id": orphan_id,
+                "line": line,
+                "importance": "low",
+            }
+        )
+
+    # Process orphan-analyzer output (analysis with text array and 'about' field)
     for item in analysis:
         lines = item.get("lines", [])
-        content = item.get("content", "")
-        interpretation = item.get("interpretation", "")
+        # Handle text as array (from orphan-analyzer) or string
+        text_array = item.get("text", [])
+        content = " ".join(text_array) if isinstance(text_array, list) else item.get("content", "")
+        interpretation = item.get("about", item.get("interpretation", ""))
         importance = item.get("importance", "unknown")
         related_entities = item.get("related_entities", [])
         theories = item.get("theories", [])
 
-        # Generate orphan ID
-        orphan_id = generate_id(IDType.ORPHAN, id_map)
+        # Skip if no valid content
+        if not content:
+            continue
 
-        # Create orphan document
+        orphan_id = generate_id(IDType.ORPHAN, id_map)
         orphan_file = workspace / "orphans" / f"{orphan_id}.md"
-        (workspace / "orphans").mkdir(exist_ok=True)
 
         doc_lines = [
             "# Orphan Statement",
@@ -1582,13 +1766,12 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
                 "",
                 "## Evidence",
                 "",
-                f"- **Lines**: {lines}",
+                f"- **Lines**: {', '.join(str(l) for l in lines)}",
             ]
         )
 
         orphan_file.write_text("\n".join(doc_lines))
 
-        # Update ID map
         id_map[orphan_id] = [
             {
                 "lines": lines,
