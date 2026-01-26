@@ -1,13 +1,129 @@
-"""Workspace management for spec decomposition."""
+"""Workspace management for spec decomposition.
+
+This module is deliberately *mechanical*:
+
+- It copies source material into a workspace without rewriting content.
+- It records provenance so other steps can reliably point back to
+  (source file, line number).
+
+Reliability edge cases handled here:
+
+- Multiple input files with the same filename (e.g., `spec.md`) no longer
+  collide inside the workspace.
+"""
 
 from __future__ import annotations
 
 import json
-import re
+import logging
 import shutil
 from pathlib import Path
 
 from scripts.spec_decomposition.id_generator import save_id_map
+
+
+def _spec_root(spec_path: Path) -> Path:
+    """Determine a stable root for relative paths."""
+    return spec_path.parent if spec_path.is_file() else spec_path
+
+
+def _with_suffix_before_ext(path: Path, suffix: str) -> Path:
+    """Insert suffix before the file extension.
+
+    Example: docs/spec.md + _staged -> docs/spec_staged.md
+    """
+    if path.suffix:
+        return path.with_name(f"{path.stem}{suffix}{path.suffix}")
+    return path.with_name(f"{path.name}{suffix}")
+
+
+def save_file_index(workspace: Path, index: dict) -> None:
+    """Persist file index to workspace."""
+    (workspace / "file_index.json").write_text(json.dumps(index, indent=2))
+
+
+def load_file_index(workspace: Path) -> dict:
+    """Load file index from workspace."""
+    p = workspace / "file_index.json"
+    if p.exists():
+        return json.loads(p.read_text())
+    return {"spec_root": None, "files": []}
+
+
+def resolve_source_to_discovery_staging(workspace: Path, source: str) -> Path | None:
+    """Resolve a source file reference to a discovery staging file.
+
+    `source` can be:
+    - absolute source path
+    - path relative to spec_root
+    - a staged filename (ending with _staged.md)
+    """
+    p = Path(source)
+    if p.exists() and p.name.endswith("_staged.md"):
+        return p
+
+    idx = load_file_index(workspace)
+    spec_root = Path(idx.get("spec_root") or "")
+
+    # Convert absolute -> relative if under spec_root
+    rel_str: str | None = None
+    try:
+        if p.is_absolute() and spec_root and p.is_relative_to(spec_root):
+            rel_str = str(p.relative_to(spec_root))
+    except (ValueError, TypeError, PermissionError) as e:
+        logging.debug("Path resolution failed for %s: %s", p, e)
+        rel_str = None
+
+    if rel_str is None:
+        rel_str = source
+
+    # Exact match against file index
+    for entry in idx.get("files", []):
+        if entry.get("relative") == rel_str or entry.get("source") == source:
+            staged_rel = entry.get("discovery_staging")
+            if staged_rel:
+                candidate = workspace / staged_rel
+                if candidate.exists():
+                    return candidate
+
+    # Fallback: try by basename (only if unique)
+    candidates = list((workspace / "staging" / "discovery").rglob(p.name))
+    if len(candidates) == 1:
+        return candidates[0]
+
+    return None
+
+
+def resolve_source_to_original_copy(workspace: Path, source: str) -> Path | None:
+    """Resolve a source file reference to the workspace original copy."""
+    p = Path(source)
+    idx = load_file_index(workspace)
+    spec_root = Path(idx.get("spec_root") or "")
+
+    rel_str: str | None = None
+    try:
+        if p.is_absolute() and spec_root and p.is_relative_to(spec_root):
+            rel_str = str(p.relative_to(spec_root))
+    except (ValueError, TypeError, PermissionError) as e:
+        logging.debug("Path resolution failed for %s: %s", p, e)
+        rel_str = None
+
+    if rel_str is None:
+        rel_str = source
+
+    for entry in idx.get("files", []):
+        if entry.get("relative") == rel_str or entry.get("source") == source:
+            orig_rel = entry.get("original_copy")
+            if orig_rel:
+                candidate = workspace / orig_rel
+                if candidate.exists():
+                    return candidate
+
+    candidates = list((workspace / "original").rglob(p.name))
+    if len(candidates) == 1:
+        return candidates[0]
+
+    return None
 
 
 def init_workspace(workspace: Path, spec_path: Path) -> None:
@@ -46,28 +162,46 @@ def init_workspace(workspace: Path, spec_path: Path) -> None:
 
     # Collect all files to stage
     spec_path = spec_path.resolve()
-    spec_root = spec_path if spec_path.is_dir() else spec_path.parent
+    root = _spec_root(spec_path)
 
     files_to_stage: list[Path] = []
     if spec_path.is_file():
         files_to_stage.append(spec_path)
     else:
+        # Markdown is the only supported input type for now.
         files_to_stage.extend(sorted(p.resolve() for p in spec_path.rglob("*.md") if p.is_file()))
 
-    # Build a stable mapping from original file paths -> workspace basenames.
-    # This avoids collisions when multiple files share the same stem.
-    file_map: dict[str, str] = {}
-    for file_path in files_to_stage:
-        file_map[str(file_path)] = _safe_workspace_basename(file_path, spec_root)
+    # Build file index (avoids basename collisions by preserving relative paths)
+    file_index = {
+        "spec_root": str(root),
+        "files": [],
+    }
 
-    # Initialize state with file tracking
+    for file_path in files_to_stage:
+        rel = str(file_path.relative_to(root))
+
+        original_rel = _with_suffix_before_ext(Path("original") / rel, "_original")
+        staging_rel = _with_suffix_before_ext(Path("staging") / "discovery" / rel, "_staged")
+
+        file_index["files"].append(
+            {
+                "source": str(file_path),
+                "relative": rel,
+                "original_copy": str(original_rel),
+                "discovery_staging": str(staging_rel),
+            }
+        )
+
+    save_file_index(workspace, file_index)
+
+    # Initialize state with file tracking (store *relative* paths for stability)
     state = {
         "phase": "entity_discovery",
         "discovery_round": 0,
         "current_file": None,
         "current_entity": None,
         "files_completed": [],
-        "files_remaining": [str(f) for f in files_to_stage],
+        "files_remaining": [e["relative"] for e in file_index["files"]],
         "extracted_entities": [],
         "extracted_relations": [],
         "extracted_contexts": [],
@@ -76,8 +210,7 @@ def init_workspace(workspace: Path, spec_path: Path) -> None:
         "entities_from_snippets": 0,
         "orphans_found": 0,
         "spec_path": str(spec_path),
-        "spec_root": str(spec_root),
-        "file_map": file_map,
+        "spec_root": str(root),
     }
     save_state(workspace, state)
 
@@ -89,207 +222,128 @@ def init_workspace(workspace: Path, spec_path: Path) -> None:
     entity_index_file.write_text("{}")
 
     # Store original copies (never modified) and create discovery staging
-    for file_path in files_to_stage:
-        basename = file_map[str(file_path)]
+    for entry in file_index["files"]:
+        src = Path(entry["source"])
+        rel = Path(entry["relative"])
+
         # Store original
-        _store_original(file_path, workspace / "original", basename)
-        # Create discovery staging copy
-        _stage_file(file_path, workspace / "staging" / "discovery", basename)
+        _store_original(src, rel, workspace)
+
+        # Create discovery staging
+        _stage_file(src, rel, workspace)
 
 
-def _safe_workspace_basename(source: Path, spec_root: Path) -> str:
-    """Create a workspace-safe, collision-resistant basename for a source file."""
-    try:
-        rel = source.relative_to(spec_root)
-        rel_str = rel.as_posix()
-    except ValueError:
-        rel_str = source.name
-
-    # Drop the suffix if present.
-    if rel_str.lower().endswith(".md"):
-        rel_str = rel_str[:-3]
-
-    safe = rel_str.replace("/", "__").replace("\\", "__")
-    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", safe)
-    safe = safe.strip("._-")
-    return safe or source.stem
-
-
-def _store_original(source: Path, original_dir: Path, basename: str) -> Path:
-    """Store an original copy of the source file (never modified).
-
-    Args:
-        source: Original source file path
-        original_dir: Directory to store original
-
-    Returns:
-        Path to the stored original
-    """
-    original_name = f"{basename}_original.md"
-    original_path = original_dir / original_name
+def _store_original(source: Path, relative: Path, workspace: Path) -> Path:
+    """Store an original copy of the source file (never modified)."""
+    original_rel = _with_suffix_before_ext(relative, "_original")
+    original_path = workspace / "original" / original_rel
+    original_path.parent.mkdir(parents=True, exist_ok=True)
 
     content = source.read_text()
-    header = f"<!-- ORIGINAL FROM: {source} -->\n\n"
+    header = "\n".join(
+        [
+            f"<!-- ORIGINAL FROM (relative): {relative} -->",
+            f"<!-- ORIGINAL FROM (absolute): {source} -->",
+            "",
+        ]
+    )
     original_path.write_text(header + content)
 
     return original_path
 
 
-def _stage_file(source: Path, staging_dir: Path, basename: str) -> Path:
-    """Create a staging copy of a file with line numbers tracked.
-
-    The staging file has the same content but with a comment at the top
-    indicating it's a staged copy for ID embedding.
-    """
-    staged_name = f"{basename}_staged.md"
-    staged_path = staging_dir / staged_name
+def _stage_file(source: Path, relative: Path, workspace: Path) -> Path:
+    """Create a discovery staging copy of a source file."""
+    staged_rel = _with_suffix_before_ext(relative, "_staged")
+    staged_path = workspace / "staging" / "discovery" / staged_rel
+    staged_path.parent.mkdir(parents=True, exist_ok=True)
 
     content = source.read_text()
-    header = f"<!-- STAGED FROM: {source} -->\n\n"
+    header = "\n".join(
+        [
+            f"<!-- STAGED FROM (relative): {relative} -->",
+            f"<!-- STAGED FROM (absolute): {source} -->",
+            "",
+        ]
+    )
     staged_path.write_text(header + content)
 
     return staged_path
 
 
 def create_investigation_staging(workspace: Path, entity_name: str) -> Path:
-    """Create fresh investigation staging from original for an entity.
+    """Create fresh investigation staging from originals for ONE entity.
 
-    Args:
-        workspace: Workspace directory
-        entity_name: Entity being investigated
+    A separate investigation file is created per original source file. This keeps
+    prompts small and preserves stable line numbers.
 
-    Returns:
-        Path to the investigation staging file
+    Returns the investigation directory path.
     """
-    investigation_dir = workspace / "staging" / "investigation"
-    investigation_dir.mkdir(parents=True, exist_ok=True)
+    investigation_root = workspace / "staging" / "investigation"
+    investigation_root.mkdir(parents=True, exist_ok=True)
 
-    # Sanitize entity name for filename
     safe_name = entity_name.replace(" ", "_").replace("/", "_")
+    entity_dir = investigation_root / safe_name
+    if entity_dir.exists():
+        shutil.rmtree(entity_dir)
+    entity_dir.mkdir(parents=True, exist_ok=True)
 
-    # Combine all originals into one investigation staging file so the agent can
-    # operate on a single numbered line space, while we still retain a mapping
-    # back to (file, line, text).
-    original_dir = workspace / "original"
-    original_files = sorted(original_dir.glob("*_original.md"))
+    # Copy from original (not from discovery staging)
+    for original_file in sorted((workspace / "original").rglob("*_original.md")):
+        content = original_file.read_text()
 
-    combined_path = investigation_dir / f"{safe_name}_combined_investigation.md"
-    map_path = investigation_dir / f"{safe_name}_combined_map.json"
+        header = "\n".join(
+            [
+                f"<!-- INVESTIGATION STAGING FOR: {entity_name} -->",
+                f"<!-- SOURCE: {original_file} -->",
+                "",
+            ]
+        )
 
-    combined_lines: list[str] = [
-        f"<!-- INVESTIGATION STAGING FOR: {entity_name} -->",
-        f"<!-- COMBINED SOURCES: {len(original_files)} -->",
-        "",
-    ]
+        # Strip the original header block (all leading HTML comments + first blank line)
+        lines = content.split("\n")
+        start_idx = 0
+        for i, line in enumerate(lines):
+            if line.startswith("<!--"):
+                continue
+            if line.strip() == "":
+                start_idx = i + 1
+                break
+            start_idx = i
+            break
 
-    # Line numbers in agent output are 1-indexed and count lines after this header.
-    combined_content_line_no = 0
+        body = "\n".join(lines[start_idx:])
 
-    # Map: combined_line_number -> {file, line, text}
-    line_map: dict[str, dict] = {}
-    sources: list[dict] = []
+        # Preserve original relative path structure under the entity folder
+        rel_path = original_file.relative_to(workspace / "original")
+        rel_path = rel_path.with_name(rel_path.name.replace("_original.md", "_investigation.md"))
+        investigation_path = entity_dir / rel_path
+        investigation_path.parent.mkdir(parents=True, exist_ok=True)
+        investigation_path.write_text(header + body)
 
-    for original_file in original_files:
-        raw_lines = original_file.read_text().split("\n")
-
-        # Extract the original file path from the stored header.
-        original_source = None
-        if raw_lines and raw_lines[0].startswith("<!-- ORIGINAL FROM:"):
-            original_source = raw_lines[0].split("ORIGINAL FROM:", 1)[1].strip().rstrip("-->").strip()
-
-        # Strip the original header (comment + blank line) from the stored copy.
-        if raw_lines and raw_lines[0].startswith("<!-- ORIGINAL FROM:"):
-            content_lines = raw_lines[2:]
-        else:
-            content_lines = raw_lines
-
-        sources.append({
-            "workspace_original": str(original_file),
-            "original_source": original_source,
-        })
-
-        # Internal marker so humans can see boundaries; agents should not treat as content.
-        combined_lines.append(f"<!-- FILE: {original_source or original_file.name} -->")
-        combined_content_line_no += 1
-        combined_lines.append("")
-        combined_content_line_no += 1
-
-        source_line_no = 0
-        for line in content_lines:
-            combined_lines.append(line)
-            combined_content_line_no += 1
-            source_line_no += 1
-            if original_source is not None:
-                line_map[str(combined_content_line_no)] = {
-                    "file": original_source,
-                    "line": source_line_no,
-                    "text": line,
-                }
-
-    combined_path.write_text("\n".join(combined_lines))
-
-    map_path.write_text(json.dumps({
-        "entity": entity_name,
-        "combined_file": str(combined_path),
-        "sources": sources,
-        "line_map": line_map,
-    }, indent=2))
-
-    # Track the latest investigation staging in state for tooling that needs it.
-    state = load_state(workspace)
-    state.setdefault("investigation_staging", {})[safe_name] = {
-        "entity": entity_name,
-        "combined_file": str(combined_path),
-        "map_file": str(map_path),
-    }
-    save_state(workspace, state)
-
-    return combined_path
+    return entity_dir
 
 
 def resolve_original_copy(workspace: Path, original_file: str | Path) -> Path | None:
-    """Resolve an original source file path to its workspace-stored original copy."""
-    state = load_state(workspace)
-    file_map: dict[str, str] = state.get("file_map", {})
-    key = str(Path(original_file).resolve())
+    """Resolve an original source file path to its workspace-stored original copy.
 
-    basename = file_map.get(key) or file_map.get(str(original_file))
-    if not basename:
-        # Fallback: try to match by filename if unambiguous.
-        target_name = Path(original_file).name
-        matches = [bn for path, bn in file_map.items() if Path(path).name == target_name]
-        if len(matches) == 1:
-            basename = matches[0]
-
-    if not basename:
-        return None
-
-    return workspace / "original" / f"{basename}_original.md"
+    Delegates to resolve_source_to_original_copy which uses the file_index.
+    """
+    return resolve_source_to_original_copy(workspace, str(original_file))
 
 
 def resolve_discovery_staging(workspace: Path, original_file: str | Path) -> Path | None:
-    """Resolve an original source file path to its discovery staging file."""
-    state = load_state(workspace)
-    file_map: dict[str, str] = state.get("file_map", {})
-    key = str(Path(original_file).resolve())
+    """Resolve an original source file path to its discovery staging file.
 
-    basename = file_map.get(key) or file_map.get(str(original_file))
-    if not basename:
-        target_name = Path(original_file).name
-        matches = [bn for path, bn in file_map.items() if Path(path).name == target_name]
-        if len(matches) == 1:
-            basename = matches[0]
-
-    if not basename:
-        return None
-
-    return workspace / "staging" / "discovery" / f"{basename}_staged.md"
+    Delegates to resolve_source_to_discovery_staging which uses the file_index.
+    """
+    return resolve_source_to_discovery_staging(workspace, str(original_file))
 
 
 def list_discovery_staging_files(workspace: Path) -> list[Path]:
     """List all discovery staging files in deterministic order."""
     discovery_dir = workspace / "staging" / "discovery"
-    return sorted(discovery_dir.glob("*_staged.md"))
+    return sorted(discovery_dir.rglob("*_staged.md"))
 
 
 def load_state(workspace: Path) -> dict:

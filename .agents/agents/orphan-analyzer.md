@@ -1,27 +1,28 @@
 ---
-description: Analyzes remaining content that wasn't assigned to entities
+description: Analyzes remaining lines that were not claimed by any entity (evidence-first)
 routing:
   - model: glm
 ---
 
-Here's content that wasn't assigned to any specific entity. Tell me what you can figure out about it.
+You are given remaining lines that were not claimed by any entity during extraction.
 
 ## Input
 
-`content`: Remaining lines from the specification
-`known_entities`: List of entities we've already identified
-`output_file`: Where to write your findings
+- `content`: Remaining numbered lines from the specification
+- `known_entities`: List of known entity names/IDs
+- `output_file`: Where to write your findings
 
 ## Task
 
-For each piece of remaining content:
+For each remaining line (or small contiguous group):
 
-1. What is it about?
-2. Does it relate to any known entities? Which ones and why?
-3. Is it important? Why or why not?
-4. Any theories about what it means or why it's here?
+- State what it is about *in a short phrase*.
+- If it clearly relates to one or more known entities *by name*, list them.
 
-Don't force categorization. Just tell me what you notice.
+Rules:
+
+- Evidence-first: keep the original line text in output.
+- Do not invent relationships; no theories.
 
 ## Output File Format
 
@@ -29,15 +30,13 @@ Don't force categorization. Just tell me what you notice.
 {
   "analysis": [
     {
-      "lines": [234, 235],
-      "content": "All services must implement health checks",
-      "interpretation": "This is a cross-cutting requirement that applies to all services",
-      "related_entities": ["AuthService", "UserStore", "TokenService"],
-      "importance": "High - affects system reliability",
-      "theories": ["Likely required for Kubernetes deployment or load balancer integration"]
+      "lines": [234],
+      "text": ["All services must implement health checks"],
+      "about": "cross-cutting requirement",
+      "related_entities": ["AuthService", "UserStore"]
     }
   ],
-  "summary": "Found 5 cross-cutting concerns and 2 metadata items"
+  "note": "optional"
 }
 ```
 

@@ -390,5 +390,3 @@ class TestFormatContentForAgent:
         remove_line(staged, 1)
         content = format_content_for_agent(staged)
         assert content == ""
-
-

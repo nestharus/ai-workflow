@@ -212,7 +212,9 @@ class TestCheckRediscovery:
 
     def test_partial_keyword_match(self, workspace: Path):
         """Test finds match with partial keyword overlap."""
-        add_entity_to_index(workspace, "E-001", "AuthService", ["authentication", "login"], "spec.md:5")
+        add_entity_to_index(
+            workspace, "E-001", "AuthService", ["authentication", "login"], "spec.md:5"
+        )
 
         result = check_rediscovery(workspace, "Auth", ["auth"])
         assert result["match"] == "E-001"  # "auth" is substring of "authentication"
@@ -226,7 +228,9 @@ class TestCheckRediscovery:
 
     def test_no_match_below_threshold(self, workspace: Path):
         """Test no match when confidence is below threshold."""
-        add_entity_to_index(workspace, "E-001", "AuthService", ["auth", "login", "session", "token"], "spec.md:5")
+        add_entity_to_index(
+            workspace, "E-001", "AuthService", ["auth", "login", "session", "token"], "spec.md:5"
+        )
 
         # Completely unrelated keywords
         result = check_rediscovery(workspace, "Database", ["db", "sql", "query"])
@@ -234,7 +238,9 @@ class TestCheckRediscovery:
 
     def test_returns_matched_keywords(self, workspace: Path):
         """Test returns list of matched keywords."""
-        add_entity_to_index(workspace, "E-001", "AuthService", ["auth", "login", "session"], "spec.md:5")
+        add_entity_to_index(
+            workspace, "E-001", "AuthService", ["auth", "login", "session"], "spec.md:5"
+        )
 
         result = check_rediscovery(workspace, "Auth", ["auth", "session"])
         assert result["match"] == "E-001"
@@ -245,7 +251,9 @@ class TestCheckRediscovery:
         """Test finds best match when multiple entities exist."""
         add_entity_to_index(workspace, "E-001", "AuthService", ["auth", "login"], "spec.md:5")
         add_entity_to_index(workspace, "E-002", "UserStore", ["user", "store", "db"], "spec.md:10")
-        add_entity_to_index(workspace, "E-003", "TokenService", ["token", "jwt", "auth"], "spec.md:15")
+        add_entity_to_index(
+            workspace, "E-003", "TokenService", ["token", "jwt", "auth"], "spec.md:15"
+        )
 
         # Should match E-001 better than E-003 for "login"
         result = check_rediscovery(workspace, "Login", ["auth", "login"])

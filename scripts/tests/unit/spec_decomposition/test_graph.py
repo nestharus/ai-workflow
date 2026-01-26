@@ -56,22 +56,26 @@ def populated_workspace(workspace: Path) -> Path:
         "E-001": [{"file": "spec.md", "line": 5, "type": "entity"}],
         "E-002": [{"file": "spec.md", "line": 20, "type": "entity"}],
         "E-003": [{"file": "spec.md", "line": 35, "type": "entity"}],
-        "R-001": [{
-            "file": "spec.md",
-            "line": 10,
-            "type": "relation",
-            "from": "E-001",
-            "to": "E-002",
-            "relation_type": "uses",
-        }],
-        "R-002": [{
-            "file": "spec.md",
-            "line": 12,
-            "type": "relation",
-            "from": "E-001",
-            "to": "E-003",
-            "relation_type": "depends_on",
-        }],
+        "R-001": [
+            {
+                "file": "spec.md",
+                "line": 10,
+                "type": "relation",
+                "from": "E-001",
+                "to": "E-002",
+                "relation_type": "uses",
+            }
+        ],
+        "R-002": [
+            {
+                "file": "spec.md",
+                "line": 12,
+                "type": "relation",
+                "from": "E-001",
+                "to": "E-003",
+                "relation_type": "depends_on",
+            }
+        ],
     }
     (workspace / "id_map.json").write_text(json.dumps(id_map))
 
@@ -210,7 +214,7 @@ class TestGenerateMermaidDiagram:
         }
 
         mermaid = generate_mermaid_diagram(graph)
-        assert '"Auth \'Service\'"' in mermaid  # Quotes replaced with single quotes
+        assert "\"Auth 'Service'\"" in mermaid  # Quotes replaced with single quotes
 
     def test_uses_different_arrow_styles(self):
         """Test different relation types use different arrows."""

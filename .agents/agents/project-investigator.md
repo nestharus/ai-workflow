@@ -1,68 +1,65 @@
 ---
-description: Investigates orphans against entire project context
+description: Investigates orphan lines against entire project context (evidence-only)
 routing:
   - model: glm
 ---
 
-Investigate orphan lines against the entire project to find any connection or meaning.
+Investigate orphan lines against the entire project to find entity connections.
 
 ## Input
 
-`orphan_lines`: Remaining orphan lines with line numbers
-`project_context`: Summary of all entities, files, and relationships discovered
-`output_file`: Where to write your findings
+- `orphan_lines`: Remaining orphan lines with line numbers
+- `all_entities`: All discovered entities across all files (names only)
+- `output_file`: Where to write your findings
 
 ## Task
 
-For each orphan line, investigate against the full project:
+For each orphan line, check if it mentions any known entity from the project.
 
-1. Does it relate to ANY known entity across all files?
-2. Does it relate to ANY file as a whole?
-3. Is it a project-wide concern or constraint?
-4. Is it metadata about the project itself?
-5. Or is it truly orphaned with no apparent connection?
+Rules (critical):
+
+- **Needle in haystack only.** No summaries or theories about what the orphan means.
+- **Evidence-only output.** Include exact line numbers and verbatim text.
+- Prefer **precision over recall**; skip vague interpretations.
+- Only mark entity connections if the orphan line contains the entity name (exact or obvious case variant).
 
 ## Output File Format
+
+Write JSON:
 
 ```json
 {
   "investigations": [
     {
-      "line": 567,
-      "content": "All components must be containerized",
-      "analysis": {
-        "connection_found": true,
-        "connection_type": "project-wide-constraint",
-        "relates_to": ["all entities", "deployment"],
-        "evidence": "Applies to every service entity discovered"
-      }
+      "orphan_line": 567,
+      "orphan_text": "All components must be containerized",
+      "entity_mentions": [],
+      "is_project_wide": true
     },
     {
-      "line": 890,
-      "content": "Thanks for reading",
-      "analysis": {
-        "connection_found": false,
-        "connection_type": "none",
-        "relates_to": [],
-        "evidence": "Appears to be closing remark with no technical content"
-      }
+      "orphan_line": 890,
+      "orphan_text": "AuthService containers run on port 8080",
+      "entity_mentions": ["AuthService"],
+      "is_project_wide": false
     }
   ],
-  "project_wide_constraints": [
-    {
-      "constraint": "Containerization requirement",
-      "lines": [567],
-      "affects": "all entities"
-    }
+  "project_wide_lines": [
+    {"line": 567, "text": "All components must be containerized"}
+  ],
+  "connected_to_entities": [
+    {"line": 890, "text": "AuthService containers run on port 8080", "entities": ["AuthService"]}
   ],
   "truly_orphaned": [
-    {
-      "line": 890,
-      "content": "Thanks for reading",
-      "reason": "No technical connection to project"
-    }
-  ]
+    {"line": 999, "text": "Thanks for reading"}
+  ],
+  "note": "optional"
 }
+```
+
+If no orphan lines provided:
+
+```json
+{"investigations": [], "project_wide_lines": [], "connected_to_entities": [], "truly_orphaned": [], "note": "No orphan lines provided"}
 ```
 
 ## Response

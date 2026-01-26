@@ -1,69 +1,63 @@
 ---
-description: Investigates orphan lines to determine their meaning relative to known entities
+description: Investigates orphan lines against original file context (evidence-only)
 routing:
   - model: glm
 ---
 
-Orphan lines are content that wasn't claimed by any entity during discovery. Investigate them against the original file to determine what they mean.
+Investigate orphan lines by finding evidence in the original file context.
 
 ## Input
 
-`orphan_lines`: Remaining lines with their line numbers
-`original_content`: The ORIGINAL file content (full, unredacted)
-`known_entities`: All discovered entities with their info
-`output_file`: Where to write your findings
+- `orphan_lines`: Remaining lines with their line numbers
+- `original_content`: The ORIGINAL file content (full, numbered lines)
+- `known_entities`: List of entity names already discovered
+- `output_file`: Where to write your findings
 
 ## Task
 
-For each orphan line, investigate:
+For each orphan line, find nearby lines in the original content that might explain what it relates to.
 
-1. What is this line actually about?
-2. Does it relate to any known entity? How?
-3. Is it a cross-cutting concern affecting multiple entities?
-4. Is it truly standalone information?
+Rules (critical):
 
-Use the original content for context - see what surrounds each orphan line.
+- **Needle in haystack only.** Do not summarize or theorize about what the orphan means.
+- **Evidence-only output.** Every finding must include line numbers and verbatim text.
+- Prefer **precision over recall**; skip vague interpretations.
+- If an orphan line explicitly mentions a known entity name, include that link.
 
 ## Output File Format
+
+Write JSON:
 
 ```json
 {
   "investigations": [
     {
-      "line": 234,
-      "content": "All services must implement health checks",
-      "analysis": {
-        "about": "System-wide health check requirement",
-        "relates_to_entities": ["AuthService", "UserStore", "PaymentService"],
-        "relationship_type": "cross-cutting-requirement",
-        "evidence": "Line 235-237 list specific endpoints for each service"
-      }
-    },
-    {
-      "line": 301,
-      "content": "Version 2.0 migration notes",
-      "analysis": {
-        "about": "Migration documentation",
-        "relates_to_entities": [],
-        "relationship_type": "metadata",
-        "evidence": "Standalone section header with no entity references"
-      }
+      "orphan_line": 234,
+      "orphan_text": "All services must implement health checks",
+      "context_lines": [
+        {"line": 235, "text": "AuthService exposes /health endpoint"},
+        {"line": 236, "text": "UserStore exposes /health endpoint"}
+      ],
+      "entity_mentions": ["AuthService", "UserStore"]
     }
   ],
-  "cross_cutting_concerns": [
+  "cross_cutting": [
     {
-      "concern": "Health checks",
-      "affects": ["AuthService", "UserStore", "PaymentService"],
-      "lines": [234, 235, 236, 237]
+      "lines": [234, 235, 236, 237],
+      "affects_entities": ["AuthService", "UserStore", "PaymentService"]
     }
   ],
-  "truly_orphan": [
-    {
-      "line": 301,
-      "reason": "Migration metadata, not related to any entity"
-    }
-  ]
+  "no_context_found": [
+    {"line": 301, "text": "Version 2.0 migration notes"}
+  ],
+  "note": "optional"
 }
+```
+
+If no orphan lines can be investigated:
+
+```json
+{"investigations": [], "cross_cutting": [], "no_context_found": [], "note": "No orphan lines provided"}
 ```
 
 ## Response

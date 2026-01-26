@@ -17,7 +17,6 @@ from scripts.spec_decomposition.workspace import (
 from scripts.spec_decomposition.id_generator import IDType, generate_id, load_id_map, save_id_map
 from scripts.spec_decomposition.staging import (
     create_staging_file,
-    embed_id_at_line,
     remove_lines,
     get_remaining_lines,
     format_content_for_agent,
@@ -48,6 +47,7 @@ from scripts.spec_decomposition.graph import build_dependency_graph, save_depend
 from scripts.spec_decomposition.finalize import finalize_output
 from scripts.spec_decomposition.tagging import tag_facts
 from scripts.spec_decomposition.recompose import recompose
+from scripts.spec_decomposition.execution import execute_spec
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -61,7 +61,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     init_workspace(workspace, spec_path)
     print(f"Workspace initialized: {workspace}")
-    print(f"Spec staged: {workspace}/staging/")
+    print(f"Spec staged: {workspace}/staging/discovery/")
     return 0
 
 
@@ -88,7 +88,11 @@ def cmd_extract_entity(args: argparse.Namespace) -> int:
         entity_id = generate_id(IDType.ENTITY, id_map)
 
         # Add to entity index (one-time)
-        source_ref = f"{evidence[0].get('file', 'unknown')}:{evidence[0].get('line', 0)}" if evidence else "unknown:0"
+        source_ref = (
+            f"{evidence[0].get('file', 'unknown')}:{evidence[0].get('line', 0)}"
+            if evidence
+            else "unknown:0"
+        )
         add_entity_to_index(workspace, entity_id, entity_name, keywords, source_ref)
 
     # Deduplicate evidence per-entity (by file+line) to avoid repeated appends.
@@ -158,11 +162,13 @@ def cmd_extract_entity(args: argparse.Namespace) -> int:
 
     # Update ID map (only for newly-added evidence).
     for ev in filtered_evidence:
-        id_map.setdefault(entity_id, []).append({
-            "file": ev.get("file", ""),
-            "line": int(ev.get("line", 0)),
-            "type": "entity",
-        })
+        id_map.setdefault(entity_id, []).append(
+            {
+                "file": ev.get("file", ""),
+                "line": int(ev.get("line", 0)),
+                "type": "entity",
+            }
+        )
 
     # Update state
     if entity_id not in state.get("extracted_entities", []):
@@ -173,13 +179,17 @@ def cmd_extract_entity(args: argparse.Namespace) -> int:
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
-    print(json.dumps({
-        "entity_id": entity_id,
-        "entity_name": entity_name,
-        "entity_file": str(entity_file),
-        "evidence_count": len(filtered_evidence),
-        "keywords": keywords,
-    }))
+    print(
+        json.dumps(
+            {
+                "entity_id": entity_id,
+                "entity_name": entity_name,
+                "entity_file": str(entity_file),
+                "evidence_count": len(filtered_evidence),
+                "keywords": keywords,
+            }
+        )
+    )
     return 0
 
 
@@ -202,11 +212,15 @@ def cmd_check_file_empty(args: argparse.Namespace) -> int:
     empty = is_file_empty(staging_file)
     remaining = get_remaining_lines(staging_file) if not empty else []
 
-    print(json.dumps({
-        "empty": empty,
-        "remaining_lines": len(remaining),
-        "sample": remaining[:5] if remaining else [],
-    }))
+    print(
+        json.dumps(
+            {
+                "empty": empty,
+                "remaining_lines": len(remaining),
+                "sample": remaining[:5] if remaining else [],
+            }
+        )
+    )
     return 0
 
 
@@ -217,11 +231,15 @@ def cmd_build_graph(args: argparse.Namespace) -> int:
     graph = build_dependency_graph(workspace)
     save_dependency_graph(workspace, graph)
 
-    print(json.dumps({
-        "nodes": graph["statistics"]["node_count"],
-        "edges": graph["statistics"]["edge_count"],
-        "output": str(workspace / "output" / "dependency_graph.json"),
-    }))
+    print(
+        json.dumps(
+            {
+                "nodes": graph["statistics"]["node_count"],
+                "edges": graph["statistics"]["edge_count"],
+                "output": str(workspace / "output" / "dependency_graph.json"),
+            }
+        )
+    )
     return 0
 
 
@@ -262,13 +280,15 @@ def cmd_extract_orphan(args: argparse.Namespace) -> int:
     orphan_file.write_text("\n".join(lines))
 
     # Update ID map
-    id_map[orphan_id] = [{
-        "file": ev.get("file", ""),
-        "line": ev.get("line", 0),
-        "type": "orphan",
-        "category": analysis,
-        "possible_entities": possible_entities,
-    }]
+    id_map[orphan_id] = [
+        {
+            "file": ev.get("file", ""),
+            "line": ev.get("line", 0),
+            "type": "orphan",
+            "category": analysis,
+            "possible_entities": possible_entities,
+        }
+    ]
 
     # Update state
     state["orphans_found"] = state.get("orphans_found", 0) + 1
@@ -277,11 +297,15 @@ def cmd_extract_orphan(args: argparse.Namespace) -> int:
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
-    print(json.dumps({
-        "orphan_id": orphan_id,
-        "category": analysis,
-        "orphan_file": str(orphan_file),
-    }))
+    print(
+        json.dumps(
+            {
+                "orphan_id": orphan_id,
+                "category": analysis,
+                "orphan_file": str(orphan_file),
+            }
+        )
+    )
     return 0
 
 
@@ -321,22 +345,28 @@ def cmd_mark_relation_snippets(args: argparse.Namespace) -> int:
         if target_file and target_file.exists():
             mark_relation_snippet(target_file, int(snippet["line"]), snippet_id, source_entity)
 
-            original_source = snippet.get("file") or get_staged_from_path(target_file) or str(target_file)
+            original_source = (
+                snippet.get("file") or get_staged_from_path(target_file) or str(target_file)
+            )
 
             # Update ID map
-            id_map[snippet_id] = [{
-                "file": original_source,
-                "line": int(snippet["line"]),
-                "type": "snippet",
-                "source_entity": source_entity,
-                "text": snippet.get("text", ""),
-                "references": snippet.get("references", []),
-            }]
+            id_map[snippet_id] = [
+                {
+                    "file": original_source,
+                    "line": int(snippet["line"]),
+                    "type": "snippet",
+                    "source_entity": source_entity,
+                    "text": snippet.get("text", ""),
+                    "references": snippet.get("references", []),
+                }
+            ]
 
-            marked.append({
-                "snippet_id": snippet_id,
-                "line": int(snippet["line"]),
-            })
+            marked.append(
+                {
+                    "snippet_id": snippet_id,
+                    "line": int(snippet["line"]),
+                }
+            )
 
     # Update state
     state["snippets_marked"] = state.get("snippets_marked", 0) + len(marked)
@@ -345,11 +375,15 @@ def cmd_mark_relation_snippets(args: argparse.Namespace) -> int:
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
-    print(json.dumps({
-        "source_entity": source_entity,
-        "snippets_marked": len(marked),
-        "marked": marked,
-    }))
+    print(
+        json.dumps(
+            {
+                "source_entity": source_entity,
+                "snippets_marked": len(marked),
+                "marked": marked,
+            }
+        )
+    )
     return 0
 
 
@@ -398,10 +432,14 @@ def cmd_collect_relation_snippets(args: argparse.Namespace) -> int:
 
     save_state(workspace, state)
 
-    print(json.dumps({
-        "snippets_collected": total_collected,
-        "snippet_files": snippet_files,
-    }))
+    print(
+        json.dumps(
+            {
+                "snippets_collected": total_collected,
+                "snippet_files": snippet_files,
+            }
+        )
+    )
     return 0
 
 
@@ -442,10 +480,12 @@ def cmd_create_discovered_entity(args: argparse.Namespace) -> int:
     save_entity_index(workspace, index)
 
     # Update ID map
-    id_map[entity_id] = [{
-        "type": "entity",
-        "discovered_from": discovered_from,
-    }]
+    id_map[entity_id] = [
+        {
+            "type": "entity",
+            "discovered_from": discovered_from,
+        }
+    ]
 
     # Update state
     state.setdefault("extracted_entities", []).append(entity_id)
@@ -455,12 +495,16 @@ def cmd_create_discovered_entity(args: argparse.Namespace) -> int:
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
-    print(json.dumps({
-        "entity_id": entity_id,
-        "entity_name": entity_name,
-        "discovered_from": discovered_from,
-        "entity_file": str(entity_file),
-    }))
+    print(
+        json.dumps(
+            {
+                "entity_id": entity_id,
+                "entity_name": entity_name,
+                "discovered_from": discovered_from,
+                "entity_file": str(entity_file),
+            }
+        )
+    )
     return 0
 
 
@@ -494,12 +538,16 @@ def cmd_create_rich_relation(args: argparse.Namespace) -> int:
     # Build targets list with names
     target_list = []
     for target in targets:
-        target_name = entity_index.get(target["id"], {}).get("name", target.get("name", target["id"]))
-        target_list.append({
-            "id": target["id"],
-            "name": target_name,
-            "discovered_from_snippet": target.get("discovered_from_snippet", False),
-        })
+        target_name = entity_index.get(target["id"], {}).get(
+            "name", target.get("name", target["id"])
+        )
+        target_list.append(
+            {
+                "id": target["id"],
+                "name": target_name,
+                "discovered_from_snippet": target.get("discovered_from_snippet", False),
+            }
+        )
 
     # Create rich relation document
     relation_file = create_rich_relation_document(
@@ -517,16 +565,18 @@ def cmd_create_rich_relation(args: argparse.Namespace) -> int:
     )
 
     # Update ID map
-    id_map[relation_id] = [{
-        "file": file,
-        "line": line,
-        "type": "relation",
-        "source": source_entity,
-        "targets": [t["id"] for t in target_list],
-        "relation_type": relationship_type,
-        "context": relationship_context,
-        "snippet_id": snippet_id,
-    }]
+    id_map[relation_id] = [
+        {
+            "file": file,
+            "line": line,
+            "type": "relation",
+            "source": source_entity,
+            "targets": [t["id"] for t in target_list],
+            "relation_type": relationship_type,
+            "context": relationship_context,
+            "snippet_id": snippet_id,
+        }
+    ]
 
     # Update state
     state.setdefault("extracted_relations", []).append(relation_id)
@@ -536,13 +586,17 @@ def cmd_create_rich_relation(args: argparse.Namespace) -> int:
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
-    print(json.dumps({
-        "relation_id": relation_id,
-        "source": source_entity,
-        "targets": [t["id"] for t in target_list],
-        "type": relationship_type,
-        "relation_file": str(relation_file),
-    }))
+    print(
+        json.dumps(
+            {
+                "relation_id": relation_id,
+                "source": source_entity,
+                "targets": [t["id"] for t in target_list],
+                "type": relationship_type,
+                "relation_file": str(relation_file),
+            }
+        )
+    )
     return 0
 
 
@@ -571,20 +625,22 @@ def cmd_extract_relation(args: argparse.Namespace) -> int:
         evidence=evidence,
     )
 
-    # Embed ID in discovery staging file
+    # Redact line from discovery staging file
     staging_file = resolve_discovery_staging(workspace, evidence.get("file", ""))
     if staging_file and staging_file.exists():
-        embed_id_at_line(staging_file, int(evidence["line"]), relation_id)
+        remove_lines(staging_file, [int(evidence["line"])], note=relation_id)
 
     # Update ID map
-    id_map[relation_id] = [{
-        "file": evidence["file"],
-        "line": evidence["line"],
-        "type": "relation",
-        "from": from_id,
-        "to": to_id,
-        "relation_type": relation_type,
-    }]
+    id_map[relation_id] = [
+        {
+            "file": evidence["file"],
+            "line": evidence["line"],
+            "type": "relation",
+            "from": from_id,
+            "to": to_id,
+            "relation_type": relation_type,
+        }
+    ]
 
     # Update state
     if relation_id not in state.get("extracted_relations", []):
@@ -594,13 +650,17 @@ def cmd_extract_relation(args: argparse.Namespace) -> int:
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
-    print(json.dumps({
-        "relation_id": relation_id,
-        "from": from_id,
-        "to": to_id,
-        "type": relation_type,
-        "relation_file": str(relation_file),
-    }))
+    print(
+        json.dumps(
+            {
+                "relation_id": relation_id,
+                "from": from_id,
+                "to": to_id,
+                "type": relation_type,
+                "relation_file": str(relation_file),
+            }
+        )
+    )
     return 0
 
 
@@ -629,20 +689,22 @@ def cmd_extract_context(args: argparse.Namespace) -> int:
         evidence=evidence,
     )
 
-    # Embed ID in discovery staging file
+    # Redact line from discovery staging file
     ev = evidence.get("evidence", evidence)
     staging_file = resolve_discovery_staging(workspace, ev.get("file", ""))
     if staging_file and staging_file.exists():
-        embed_id_at_line(staging_file, int(ev["line"]), context_id)
+        remove_lines(staging_file, [int(ev["line"])], note=context_id)
 
     # Update ID map
-    id_map[context_id] = [{
-        "file": ev["file"],
-        "line": ev["line"],
-        "type": "context",
-        "entity": entity_id,
-        "context_type": context_type,
-    }]
+    id_map[context_id] = [
+        {
+            "file": ev["file"],
+            "line": ev["line"],
+            "type": "context",
+            "entity": entity_id,
+            "context_type": context_type,
+        }
+    ]
 
     # Update state
     if context_id not in state.get("extracted_contexts", []):
@@ -652,12 +714,16 @@ def cmd_extract_context(args: argparse.Namespace) -> int:
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
-    print(json.dumps({
-        "context_id": context_id,
-        "entity_id": entity_id,
-        "context_type": context_type,
-        "context_file": str(context_file),
-    }))
+    print(
+        json.dumps(
+            {
+                "context_id": context_id,
+                "entity_id": entity_id,
+                "context_type": context_type,
+                "context_file": str(context_file),
+            }
+        )
+    )
     return 0
 
 
@@ -688,6 +754,17 @@ def cmd_recompose(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_execute_spec(args: argparse.Namespace) -> int:
+    """Execute recomposed specs with iterative implementation tracking."""
+    workspace = Path(args.workspace)
+    repo = Path(args.repo) if getattr(args, "repo", None) else None
+    ingest_path = Path(args.ingest) if getattr(args, "ingest", None) else None
+
+    result = execute_spec(workspace, repo=repo, ingest_path=ingest_path)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
 def cmd_format_discovery(args: argparse.Namespace) -> int:
     """Format discovery staging content for agent consumption."""
     workspace = Path(args.workspace)
@@ -695,7 +772,9 @@ def cmd_format_discovery(args: argparse.Namespace) -> int:
 
     discovery_dir = workspace / "staging" / "discovery"
     if not discovery_dir.exists():
-        print(f"Error: Discovery staging directory does not exist: {discovery_dir}", file=sys.stderr)
+        print(
+            f"Error: Discovery staging directory does not exist: {discovery_dir}", file=sys.stderr
+        )
         return 1
 
     # Collect formatted content from all discovery staging files
@@ -710,35 +789,101 @@ def cmd_format_discovery(args: argparse.Namespace) -> int:
 
     output_file.write_text("\n".join(all_content))
 
-    print(json.dumps({
-        "output_file": str(output_file),
-        "lines_remaining": sum(1 for line in all_content if line and not line.startswith("#")),
-    }))
+    print(
+        json.dumps(
+            {
+                "output_file": str(output_file),
+                "lines_remaining": sum(
+                    1 for line in all_content if line and not line.startswith("#")
+                ),
+            }
+        )
+    )
     return 0
 
 
 def cmd_create_investigation_staging(args: argparse.Namespace) -> int:
     """Create fresh investigation staging from original for an entity."""
-    from scripts.spec_decomposition.workspace import create_investigation_staging
+    from scripts.spec_decomposition.workspace import (
+        create_investigation_staging,
+        load_file_index,
+    )
 
     workspace = Path(args.workspace)
     entity_name = args.entity
 
-    investigation_path = create_investigation_staging(workspace, entity_name)
+    investigation_dir = create_investigation_staging(workspace, entity_name)
 
-    formatted_path = investigation_path.parent / f"{investigation_path.stem}_formatted.txt"
-    formatted_path.write_text(format_content_for_agent(investigation_path))
-
+    # Combine all investigation files into a single formatted output with line mapping
     safe_name = entity_name.replace(" ", "_").replace("/", "_")
-    state = load_state(workspace)
-    map_file = state.get("investigation_staging", {}).get(safe_name, {}).get("map_file")
+    all_formatted_lines = []
+    line_map = {}  # combined_line -> {file, line, text}
+    combined_line_number = 1
 
-    print(json.dumps({
-        "investigation_file": str(investigation_path),
-        "formatted_file": str(formatted_path),
-        "map_file": map_file,
-        "entity": entity_name,
-    }))
+    # Get file index to map back to original source files
+    file_index = load_file_index(workspace)
+
+    # Iterate over all investigation files in the directory
+    for investigation_file in sorted(investigation_dir.rglob("*_investigation.md")):
+        remaining = get_remaining_lines(investigation_file)
+        if not remaining:
+            continue
+
+        # Try to determine original source file from investigation file path
+        # Investigation files are named like: {original_stem}_investigation.md
+        rel_path = investigation_file.relative_to(investigation_dir)
+        original_stem = investigation_file.stem.replace("_investigation", "_original")
+
+        # Find the matching original file entry
+        original_source = None
+        for entry in file_index.get("files", []):
+            orig_copy = entry.get("original_copy", "")
+            if original_stem in orig_copy:
+                original_source = entry.get("source", "")
+                break
+
+        if original_source is None:
+            original_source = str(investigation_file)
+
+        all_formatted_lines.append(f"# From: {original_source}")
+        for item in remaining:
+            all_formatted_lines.append(f"{combined_line_number}: {item['text']}")
+            line_map[str(combined_line_number)] = {
+                "file": original_source,
+                "line": item["line"],
+                "text": item["text"],
+            }
+            combined_line_number += 1
+        all_formatted_lines.append("")
+
+    # Write combined formatted output
+    combined_file = investigation_dir / f"{safe_name}_combined_investigation.md"
+    combined_file.write_text("\n".join(all_formatted_lines))
+
+    # Write line map for later tracing
+    map_file = investigation_dir / f"{safe_name}_combined_map.json"
+    map_file.write_text(json.dumps({"line_map": line_map}, indent=2))
+
+    # Update state with investigation staging info
+    state = load_state(workspace)
+    state.setdefault("investigation_staging", {})[safe_name] = {
+        "combined_file": str(combined_file),
+        "map_file": str(map_file),
+        "investigation_dir": str(investigation_dir),
+    }
+    save_state(workspace, state)
+
+    print(
+        json.dumps(
+            {
+                "investigation_dir": str(investigation_dir),
+                "combined_file": str(combined_file),
+                "map_file": str(map_file),
+                "entity": entity_name,
+                "total_lines": combined_line_number - 1,
+            }
+        )
+    )
 
     return 0
 
@@ -773,11 +918,15 @@ def cmd_process_investigation(args: argparse.Namespace) -> int:
     )
 
     if not map_path.exists():
-        print(json.dumps({
-            "entity": entity_name,
-            "status": "error",
-            "message": f"Investigation map file not found: {map_path}",
-        }))
+        print(
+            json.dumps(
+                {
+                    "entity": entity_name,
+                    "status": "error",
+                    "message": f"Investigation map file not found: {map_path}",
+                }
+            )
+        )
         return 1
 
     map_data = json.loads(map_path.read_text())
@@ -790,11 +939,15 @@ def cmd_process_investigation(args: argparse.Namespace) -> int:
 
     combined_lines = sorted(set(combined_lines))
     if not combined_lines:
-        print(json.dumps({
-            "entity": entity_name,
-            "status": "no_findings",
-            "message": "No line numbers found in investigation",
-        }))
+        print(
+            json.dumps(
+                {
+                    "entity": entity_name,
+                    "status": "no_findings",
+                    "message": "No line numbers found in investigation",
+                }
+            )
+        )
         return 0
 
     # Map combined line numbers back to original file/line/text so we never store
@@ -804,37 +957,47 @@ def cmd_process_investigation(args: argparse.Namespace) -> int:
         mapped = line_map.get(str(cl))
         if not mapped:
             continue
-        evidence.append({
-            "file": mapped.get("file", ""),
-            "line": int(mapped.get("line", 0)),
-            "text": mapped.get("text", ""),
-        })
+        evidence.append(
+            {
+                "file": mapped.get("file", ""),
+                "line": int(mapped.get("line", 0)),
+                "text": mapped.get("text", ""),
+            }
+        )
 
     # If everything failed to map, bail rather than generating junk.
     if not evidence:
-        print(json.dumps({
-            "entity": entity_name,
-            "status": "no_mapped_evidence",
-            "message": "No findings lines mapped back to source files (check map generation)",
-        }))
+        print(
+            json.dumps(
+                {
+                    "entity": entity_name,
+                    "status": "no_mapped_evidence",
+                    "message": "No findings lines mapped back to source files (check map generation)",
+                }
+            )
+        )
         return 0
 
-    # Find existing entity ID by name (investigation should add evidence to an
-    # existing entity when possible).
+    # Find existing entity ID by name (investigation MUST add to an existing entity).
+    # Investigation phase requires the entity to have been discovered first.
     entity_id = None
     for existing_id, info in entity_index.items():
         if info.get("name", "").strip().lower() == entity_name.strip().lower():
             entity_id = existing_id
             break
 
-    created_new_entity = False
     if not entity_id:
-        entity_id = generate_id(IDType.ENTITY, id_map)
-        created_new_entity = True
-
-        keywords = related_entities
-        source_ref = f"{evidence[0].get('file', 'unknown')}:{evidence[0].get('line', 0)}"
-        add_entity_to_index(workspace, entity_id, entity_name, keywords, source_ref)
+        print(
+            json.dumps(
+                {
+                    "entity": entity_name,
+                    "status": "error",
+                    "message": f"Entity '{entity_name}' not found in entity index. "
+                    "Investigation requires the entity to exist from discovery phase.",
+                }
+            )
+        )
+        return 1
 
     # Deduplicate evidence per-entity by (file,line).
     existing_keys = {
@@ -896,11 +1059,13 @@ def cmd_process_investigation(args: argparse.Namespace) -> int:
 
     # Update ID map
     for ev in filtered_evidence:
-        id_map.setdefault(entity_id, []).append({
-            "file": ev.get("file", ""),
-            "line": int(ev.get("line", 0)),
-            "type": "entity",
-        })
+        id_map.setdefault(entity_id, []).append(
+            {
+                "file": ev.get("file", ""),
+                "line": int(ev.get("line", 0)),
+                "type": "entity",
+            }
+        )
 
     # Update state
     if entity_id not in state.get("extracted_entities", []):
@@ -911,16 +1076,19 @@ def cmd_process_investigation(args: argparse.Namespace) -> int:
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
-    print(json.dumps({
-        "entity_id": entity_id,
-        "entity_name": entity_name,
-        "entity_file": str(entity_file),
-        "lines_claimed": len(combined_lines),
-        "theories": theories,
-        "related_entities": related_entities,
-        "created_new_entity": created_new_entity,
-        "redacted_discovery": redact_discovery,
-    }))
+    print(
+        json.dumps(
+            {
+                "entity_id": entity_id,
+                "entity_name": entity_name,
+                "entity_file": str(entity_file),
+                "lines_claimed": len(combined_lines),
+                "theories": theories,
+                "related_entities": related_entities,
+                "redacted_discovery": redact_discovery,
+            }
+        )
+    )
     return 0
 
 
@@ -986,22 +1154,26 @@ def cmd_process_relations(args: argparse.Namespace) -> int:
             )
 
             # Update ID map
-            id_map[relation_id] = [{
-                "type": "relation",
-                "file": source_file,
-                "line": source_line,
-                "snippet_id": item.get("snippet_id", ""),
-                "source": source_id,
-                "target": target_id,
-                "relationship": item.get("relationship", "related"),
-            }]
+            id_map[relation_id] = [
+                {
+                    "type": "relation",
+                    "file": source_file,
+                    "line": source_line,
+                    "snippet_id": item.get("snippet_id", ""),
+                    "source": source_id,
+                    "target": target_id,
+                    "relationship": item.get("relationship", "related"),
+                }
+            ]
 
             state.setdefault("extracted_relations", []).append(relation_id)
-            created_relations.append({
-                "relation_id": relation_id,
-                "source": source_id,
-                "target": target_id,
-            })
+            created_relations.append(
+                {
+                    "relation_id": relation_id,
+                    "source": source_id,
+                    "target": target_id,
+                }
+            )
 
     # Check for newly discovered entities
     discovered = findings.get("discovered_entities", [])
@@ -1020,11 +1192,15 @@ def cmd_process_relations(args: argparse.Namespace) -> int:
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
-    print(json.dumps({
-        "relations_created": len(created_relations),
-        "relations": created_relations,
-        "newly_discovered_entities": new_entities,
-    }))
+    print(
+        json.dumps(
+            {
+                "relations_created": len(created_relations),
+                "relations": created_relations,
+                "newly_discovered_entities": new_entities,
+            }
+        )
+    )
     return 0
 
 
@@ -1042,11 +1218,15 @@ def cmd_process_context(args: argparse.Namespace) -> int:
     context_items = findings.get("context_found", [])
 
     if not context_items:
-        print(json.dumps({
-            "entity": entity_name,
-            "context_found": False,
-            "message": "No context found in this round",
-        }))
+        print(
+            json.dumps(
+                {
+                    "entity": entity_name,
+                    "context_found": False,
+                    "message": "No context found in this round",
+                }
+            )
+        )
         return 0
 
     # Load state and ID map
@@ -1074,11 +1254,15 @@ def cmd_process_context(args: argparse.Namespace) -> int:
     )
 
     if not map_path.exists():
-        print(json.dumps({
-            "entity": entity_name,
-            "status": "error",
-            "message": f"Investigation map file not found: {map_path}",
-        }))
+        print(
+            json.dumps(
+                {
+                    "entity": entity_name,
+                    "status": "error",
+                    "message": f"Investigation map file not found: {map_path}",
+                }
+            )
+        )
         return 1
 
     map_data = json.loads(map_path.read_text())
@@ -1103,12 +1287,14 @@ def cmd_process_context(args: argparse.Namespace) -> int:
             mapped = line_map.get(str(cl))
             if not mapped:
                 continue
-            mapped_evidence.append({
-                "file": mapped.get("file", ""),
-                "line": int(mapped.get("line", 0)),
-                "text": mapped.get("text", ""),
-                "combined_line": cl,
-            })
+            mapped_evidence.append(
+                {
+                    "file": mapped.get("file", ""),
+                    "line": int(mapped.get("line", 0)),
+                    "text": mapped.get("text", ""),
+                    "combined_line": cl,
+                }
+            )
             original_text_lines.append(mapped.get("text", ""))
 
         if not mapped_evidence:
@@ -1157,19 +1343,27 @@ def cmd_process_context(args: argparse.Namespace) -> int:
         or (workspace / "staging" / "investigation" / f"{safe_name}_combined_investigation.md")
     )
     if combined_investigation_path.exists() and all_combined_lines:
-        remove_lines(combined_investigation_path, sorted(set(all_combined_lines)), note=f"context:{entity_id}")
+        remove_lines(
+            combined_investigation_path,
+            sorted(set(all_combined_lines)),
+            note=f"context:{entity_id}",
+        )
 
     # Save
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
-    print(json.dumps({
-        "entity": entity_name,
-        "context_found": True,
-        "relations_created": len(created_relations),
-        "lines_redacted": len(set(all_combined_lines)),
-        "theories": findings.get("theories", []),
-    }))
+    print(
+        json.dumps(
+            {
+                "entity": entity_name,
+                "context_found": True,
+                "relations_created": len(created_relations),
+                "lines_redacted": len(set(all_combined_lines)),
+                "theories": findings.get("theories", []),
+            }
+        )
+    )
     return 0
 
 
@@ -1186,18 +1380,24 @@ def cmd_investigate_orphans(args: argparse.Namespace) -> int:
         remaining = get_remaining_lines(staging_file)
         original_source = get_staged_from_path(staging_file) or staging_file.name
         for item in remaining:
-            orphan_lines.append({
-                "file": original_source,
-                "line": item["line"],
-                "text": item["text"],
-            })
+            orphan_lines.append(
+                {
+                    "file": original_source,
+                    "line": item["line"],
+                    "text": item["text"],
+                }
+            )
 
     if not orphan_lines:
-        print(json.dumps({
-            "level": level,
-            "orphans_found": 0,
-            "message": "No orphan lines remaining",
-        }))
+        print(
+            json.dumps(
+                {
+                    "level": level,
+                    "orphans_found": 0,
+                    "message": "No orphan lines remaining",
+                }
+            )
+        )
         return 0
 
     # Write orphan lines to file for agent
@@ -1224,13 +1424,17 @@ def cmd_investigate_orphans(args: argparse.Namespace) -> int:
     context_file = workspace / f"orphans_{level}_context.json"
     context_file.write_text(json.dumps(context, indent=2))
 
-    print(json.dumps({
-        "level": level,
-        "orphans_found": len(orphan_lines),
-        "orphans_file": str(orphans_file),
-        "context_file": str(context_file),
-        "message": f"Run orphan-investigator (entity) or project-investigator (project) agent",
-    }))
+    print(
+        json.dumps(
+            {
+                "level": level,
+                "orphans_found": len(orphan_lines),
+                "orphans_file": str(orphans_file),
+                "context_file": str(context_file),
+                "message": f"Run orphan-investigator (entity) or project-investigator (project) agent",
+            }
+        )
+    )
     return 0
 
 
@@ -1250,27 +1454,37 @@ def cmd_assess_orphan_value(args: argparse.Namespace) -> int:
         for staging_file in sorted(discovery_dir.glob("*_staged.md")):
             remaining = get_remaining_lines(staging_file)
             for item in remaining:
-                truly_orphaned.append({
-                    "line": item["line"],
-                    "content": item["text"],
-                })
+                truly_orphaned.append(
+                    {
+                        "line": item["line"],
+                        "content": item["text"],
+                    }
+                )
 
     if not truly_orphaned:
-        print(json.dumps({
-            "orphans_to_assess": 0,
-            "message": "No orphans to assess",
-        }))
+        print(
+            json.dumps(
+                {
+                    "orphans_to_assess": 0,
+                    "message": "No orphans to assess",
+                }
+            )
+        )
         return 0
 
     # Write for agent
     value_input = workspace / "value_assessment_input.json"
     value_input.write_text(json.dumps({"orphan_lines": truly_orphaned}, indent=2))
 
-    print(json.dumps({
-        "orphans_to_assess": len(truly_orphaned),
-        "input_file": str(value_input),
-        "message": "Run value-assessor agent",
-    }))
+    print(
+        json.dumps(
+            {
+                "orphans_to_assess": len(truly_orphaned),
+                "input_file": str(value_input),
+                "message": "Run value-assessor agent",
+            }
+        )
+    )
     return 0
 
 
@@ -1298,11 +1512,17 @@ def cmd_format_other_files(args: argparse.Namespace) -> int:
     output_file = workspace / f"other_files_for_{target_file}.txt"
     output_file.write_text("\n".join(all_content))
 
-    print(json.dumps({
-        "target_file": target_file,
-        "output_file": str(output_file),
-        "lines_from_other_files": sum(1 for line in all_content if line and not line.startswith("#")),
-    }))
+    print(
+        json.dumps(
+            {
+                "target_file": target_file,
+                "output_file": str(output_file),
+                "lines_from_other_files": sum(
+                    1 for line in all_content if line and not line.startswith("#")
+                ),
+            }
+        )
+    )
     return 0
 
 
@@ -1360,39 +1580,49 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
         for theory in theories:
             doc_lines.append(f"- {theory}")
 
-        doc_lines.extend([
-            "",
-            "## Evidence",
-            "",
-            f"- **Lines**: {lines}",
-        ])
+        doc_lines.extend(
+            [
+                "",
+                "## Evidence",
+                "",
+                f"- **Lines**: {lines}",
+            ]
+        )
 
         orphan_file.write_text("\n".join(doc_lines))
 
         # Update ID map
-        id_map[orphan_id] = [{
-            "lines": lines,
-            "type": "orphan",
-            "interpretation": interpretation,
-            "related_entities": related_entities,
-        }]
+        id_map[orphan_id] = [
+            {
+                "lines": lines,
+                "type": "orphan",
+                "interpretation": interpretation,
+                "related_entities": related_entities,
+            }
+        ]
 
         state["orphans_found"] = state.get("orphans_found", 0) + 1
-        created_orphans.append({
-            "orphan_id": orphan_id,
-            "lines": lines,
-            "importance": importance,
-        })
+        created_orphans.append(
+            {
+                "orphan_id": orphan_id,
+                "lines": lines,
+                "importance": importance,
+            }
+        )
 
     # Save
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
-    print(json.dumps({
-        "orphans_created": len(created_orphans),
-        "orphans": created_orphans,
-        "summary": findings.get("summary", ""),
-    }))
+    print(
+        json.dumps(
+            {
+                "orphans_created": len(created_orphans),
+                "orphans": created_orphans,
+                "summary": findings.get("summary", ""),
+            }
+        )
+    )
     return 0
 
 
@@ -1420,7 +1650,9 @@ def main() -> int:
     entity_parser.add_argument("--evidence", required=True, help="Evidence JSON")
     entity_parser.add_argument("--keywords", "-k", help="Keywords JSON")
     entity_parser.add_argument("--file", "-f", help="Staging file to remove lines from")
-    entity_parser.add_argument("--append", "-a", action="store_true", help="Append to current entity")
+    entity_parser.add_argument(
+        "--append", "-a", action="store_true", help="Append to current entity"
+    )
 
     # extract-relation command
     relation_parser = subparsers.add_parser("extract-relation", help="Extract relation")
@@ -1438,7 +1670,9 @@ def main() -> int:
     context_parser.add_argument("--evidence", required=True, help="Evidence JSON")
 
     # check-rediscovery command
-    rediscovery_parser = subparsers.add_parser("check-rediscovery", help="Check for entity rediscovery")
+    rediscovery_parser = subparsers.add_parser(
+        "check-rediscovery", help="Check for entity rediscovery"
+    )
     rediscovery_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
     rediscovery_parser.add_argument("--entity-name", required=True, help="Entity name to check")
     rediscovery_parser.add_argument("--keywords", required=True, help="Keywords JSON")
@@ -1481,14 +1715,30 @@ def main() -> int:
         help="Output directory (default: <workspace>/output/recomposed)",
     )
 
+    # execute-spec command
+    execute_spec_parser = subparsers.add_parser(
+        "execute-spec",
+        help="Execute recomposed specs with iterative implementation tracking",
+    )
+    execute_spec_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
+    execute_spec_parser.add_argument("--repo", "-r", help="Implementation repository root")
+    execute_spec_parser.add_argument(
+        "--ingest",
+        help="Path to evidence file to ingest (implementation_map.json)",
+    )
+
     # mark-relation-snippets command
     mark_snippets_parser = subparsers.add_parser(
         "mark-relation-snippets",
         help="Mark lines as relation snippets",
     )
-    mark_snippets_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
+    mark_snippets_parser.add_argument(
+        "--workspace", "-w", required=True, help="Workspace directory"
+    )
     mark_snippets_parser.add_argument("--source-entity", required=True, help="Source entity ID")
-    mark_snippets_parser.add_argument("--snippets", required=True, help="Snippets JSON (list of {line, text})")
+    mark_snippets_parser.add_argument(
+        "--snippets", required=True, help="Snippets JSON (list of {line, text})"
+    )
     mark_snippets_parser.add_argument("--file", "-f", required=True, help="Staging file name")
 
     # collect-relation-snippets command
@@ -1496,25 +1746,35 @@ def main() -> int:
         "collect-relation-snippets",
         help="Collect marked snippets to relation_staging",
     )
-    collect_snippets_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
+    collect_snippets_parser.add_argument(
+        "--workspace", "-w", required=True, help="Workspace directory"
+    )
 
     # create-discovered-entity command
     discovered_entity_parser = subparsers.add_parser(
         "create-discovered-entity",
         help="Create entity discovered from relation snippet",
     )
-    discovered_entity_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
+    discovered_entity_parser.add_argument(
+        "--workspace", "-w", required=True, help="Workspace directory"
+    )
     discovered_entity_parser.add_argument("--entity", "-e", required=True, help="Entity name")
     discovered_entity_parser.add_argument("--keywords", "-k", required=True, help="Keywords JSON")
-    discovered_entity_parser.add_argument("--discovered-from", required=True, help="Snippet ID where discovered")
-    discovered_entity_parser.add_argument("--context", required=True, help="Context text from snippet")
+    discovered_entity_parser.add_argument(
+        "--discovered-from", required=True, help="Snippet ID where discovered"
+    )
+    discovered_entity_parser.add_argument(
+        "--context", required=True, help="Context text from snippet"
+    )
 
     # create-rich-relation command
     rich_relation_parser = subparsers.add_parser(
         "create-rich-relation",
         help="Create rich relation document with context",
     )
-    rich_relation_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
+    rich_relation_parser.add_argument(
+        "--workspace", "-w", required=True, help="Workspace directory"
+    )
     rich_relation_parser.add_argument("--source", required=True, help="Source entity ID")
     rich_relation_parser.add_argument(
         "--source-name",
@@ -1525,59 +1785,91 @@ def main() -> int:
     rich_relation_parser.add_argument("--type", required=True, help="Relationship type")
     rich_relation_parser.add_argument("--context", required=True, help="Relationship context")
     rich_relation_parser.add_argument("--snippet-id", required=True, help="Source snippet ID")
-    rich_relation_parser.add_argument("--original-text", required=True, help="Original text from spec")
+    rich_relation_parser.add_argument(
+        "--original-text", required=True, help="Original text from spec"
+    )
     rich_relation_parser.add_argument("--file", "-f", required=True, help="Source file")
-    rich_relation_parser.add_argument("--line", "-l", type=int, required=True, help="Source line number")
+    rich_relation_parser.add_argument(
+        "--line", "-l", type=int, required=True, help="Source line number"
+    )
 
     # format-discovery command
     format_discovery_parser = subparsers.add_parser(
         "format-discovery",
         help="Format discovery staging content for agent consumption",
     )
-    format_discovery_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
-    format_discovery_parser.add_argument("--output", "-o", required=True, help="Output file for formatted content")
+    format_discovery_parser.add_argument(
+        "--workspace", "-w", required=True, help="Workspace directory"
+    )
+    format_discovery_parser.add_argument(
+        "--output", "-o", required=True, help="Output file for formatted content"
+    )
 
     # create-investigation-staging command
     create_investigation_parser = subparsers.add_parser(
         "create-investigation-staging",
         help="Create fresh investigation staging from original for an entity",
     )
-    create_investigation_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
-    create_investigation_parser.add_argument("--entity", "-e", required=True, help="Entity name to investigate")
+    create_investigation_parser.add_argument(
+        "--workspace", "-w", required=True, help="Workspace directory"
+    )
+    create_investigation_parser.add_argument(
+        "--entity", "-e", required=True, help="Entity name to investigate"
+    )
 
     # process-investigation command
     process_investigation_parser = subparsers.add_parser(
         "process-investigation",
         help="Process entity investigation findings from agent output",
     )
-    process_investigation_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
-    process_investigation_parser.add_argument("--findings", "-f", required=True, help="Path to findings JSON file")
-    process_investigation_parser.add_argument("--redact-discovery", action="store_true", help="Also redact from discovery staging")
+    process_investigation_parser.add_argument(
+        "--workspace", "-w", required=True, help="Workspace directory"
+    )
+    process_investigation_parser.add_argument(
+        "--findings", "-f", required=True, help="Path to findings JSON file"
+    )
+    process_investigation_parser.add_argument(
+        "--redact-discovery", action="store_true", help="Also redact from discovery staging"
+    )
 
     # process-relations command
     process_relations_parser = subparsers.add_parser(
         "process-relations",
         help="Process relation analysis findings from agent output",
     )
-    process_relations_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
-    process_relations_parser.add_argument("--findings", "-f", required=True, help="Path to findings JSON file")
+    process_relations_parser.add_argument(
+        "--workspace", "-w", required=True, help="Workspace directory"
+    )
+    process_relations_parser.add_argument(
+        "--findings", "-f", required=True, help="Path to findings JSON file"
+    )
 
     # process-context command
     process_context_parser = subparsers.add_parser(
         "process-context",
         help="Process context extraction findings from agent output",
     )
-    process_context_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
-    process_context_parser.add_argument("--findings", "-f", required=True, help="Path to findings JSON file")
-    process_context_parser.add_argument("--entity", "-e", required=True, help="Entity name the context is for")
+    process_context_parser.add_argument(
+        "--workspace", "-w", required=True, help="Workspace directory"
+    )
+    process_context_parser.add_argument(
+        "--findings", "-f", required=True, help="Path to findings JSON file"
+    )
+    process_context_parser.add_argument(
+        "--entity", "-e", required=True, help="Entity name the context is for"
+    )
 
     # investigate-orphans command
     investigate_orphans_parser = subparsers.add_parser(
         "investigate-orphans",
         help="Investigate orphans at entity or project level",
     )
-    investigate_orphans_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
-    investigate_orphans_parser.add_argument("--level", "-l", required=True, choices=["entity", "project"], help="Investigation level")
+    investigate_orphans_parser.add_argument(
+        "--workspace", "-w", required=True, help="Workspace directory"
+    )
+    investigate_orphans_parser.add_argument(
+        "--level", "-l", required=True, choices=["entity", "project"], help="Investigation level"
+    )
 
     # assess-orphan-value command
     assess_value_parser = subparsers.add_parser(
@@ -1592,15 +1884,21 @@ def main() -> int:
         help="Format content from other files for file-level extraction",
     )
     format_other_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
-    format_other_parser.add_argument("--target-file", "-t", required=True, help="Target file to find info about")
+    format_other_parser.add_argument(
+        "--target-file", "-t", required=True, help="Target file to find info about"
+    )
 
     # process-orphans command
     process_orphans_parser = subparsers.add_parser(
         "process-orphans",
         help="Process orphan analysis findings from agent output",
     )
-    process_orphans_parser.add_argument("--workspace", "-w", required=True, help="Workspace directory")
-    process_orphans_parser.add_argument("--findings", "-f", required=True, help="Path to findings JSON file")
+    process_orphans_parser.add_argument(
+        "--workspace", "-w", required=True, help="Workspace directory"
+    )
+    process_orphans_parser.add_argument(
+        "--findings", "-f", required=True, help="Path to findings JSON file"
+    )
 
     args = parser.parse_args()
 
@@ -1616,6 +1914,7 @@ def main() -> int:
         "finalize": cmd_finalize,
         "tag-facts": cmd_tag_facts,
         "recompose": cmd_recompose,
+        "execute-spec": cmd_execute_spec,
         "mark-relation-snippets": cmd_mark_relation_snippets,
         "collect-relation-snippets": cmd_collect_relation_snippets,
         "create-discovered-entity": cmd_create_discovered_entity,

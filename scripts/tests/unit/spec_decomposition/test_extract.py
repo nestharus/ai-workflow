@@ -302,4 +302,6 @@ class TestCreateDiscoveredEntityDocument:
         assert "- TokenService" in content
         assert "- JWT" in content
         assert "## Evidence" in content
-        assert "*Entity discovered from relation snippet - no direct definition found yet.*" in content
+        assert (
+            "*Entity discovered from relation snippet - no direct definition found yet.*" in content
+        )

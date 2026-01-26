@@ -244,7 +244,9 @@ def mark_relation_snippet(
         current_line = lines[actual_line_idx]
         # Don't mark if already marked or extracted
         if "<!-- SNIPPET:" not in current_line and "<!-- EXTRACTED:" not in current_line:
-            lines[actual_line_idx] = f"{current_line} <!-- SNIPPET: {snippet_id} for {source_entity_id} -->"
+            lines[actual_line_idx] = (
+                f"{current_line} <!-- SNIPPET: {snippet_id} for {source_entity_id} -->"
+            )
 
     staging_file.write_text("\n".join(lines))
 
@@ -276,12 +278,14 @@ def get_marked_snippets(staging_file: Path) -> list[dict]:
     for i, line in enumerate(lines[header_lines:], start=1):
         match = re.match(pattern, line)
         if match:
-            snippets.append({
-                "line": i,
-                "text": match.group(1).strip(),
-                "snippet_id": match.group(2),
-                "source_entity": match.group(3),
-            })
+            snippets.append(
+                {
+                    "line": i,
+                    "text": match.group(1).strip(),
+                    "snippet_id": match.group(2),
+                    "source_entity": match.group(3),
+                }
+            )
 
     return snippets
 
@@ -302,12 +306,14 @@ def collect_and_remove_snippets(staging_file: Path) -> list[dict]:
     for i, line in enumerate(lines[header_lines:], start=1):
         match = re.match(pattern, line)
         if match:
-            snippets.append({
-                "line": i,
-                "text": match.group(1).strip(),
-                "snippet_id": match.group(2),
-                "source_entity": match.group(3),
-            })
+            snippets.append(
+                {
+                    "line": i,
+                    "text": match.group(1).strip(),
+                    "snippet_id": match.group(2),
+                    "source_entity": match.group(3),
+                }
+            )
             # Mark as extracted
             actual_idx = header_lines + i - 1
             lines[actual_idx] = f"<!-- EXTRACTED: {i} (snippet {match.group(2)}) -->"
@@ -348,13 +354,15 @@ def write_snippet_staging_file(
     ]
 
     for snippet in snippets:
-        lines.extend([
-            f"## {snippet['snippet_id']}",
-            f"- **Line**: {snippet['line']}",
-            f"- **File**: {source_file}",
-            f"> {snippet['text']}",
-            "",
-        ])
+        lines.extend(
+            [
+                f"## {snippet['snippet_id']}",
+                f"- **Line**: {snippet['line']}",
+                f"- **File**: {source_file}",
+                f"> {snippet['text']}",
+                "",
+            ]
+        )
 
     # Append if file exists, otherwise create
     if snippet_file.exists():

@@ -36,10 +36,19 @@ def build_dependency_graph(workspace: Path) -> dict:
         for src in sources:
             rel_type = src.get("relation_type") or src.get("relationship") or "relates_to"
             if src.get("from") and src.get("to"):
-                out.append({"from": src.get("from"), "to": src.get("to"), "type": rel_type, "src": src})
+                out.append(
+                    {"from": src.get("from"), "to": src.get("to"), "type": rel_type, "src": src}
+                )
                 continue
             if src.get("source") and src.get("target"):
-                out.append({"from": src.get("source"), "to": src.get("target"), "type": rel_type, "src": src})
+                out.append(
+                    {
+                        "from": src.get("source"),
+                        "to": src.get("target"),
+                        "type": rel_type,
+                        "src": src,
+                    }
+                )
                 continue
             if src.get("source") and isinstance(src.get("targets"), list):
                 for t in src.get("targets", []):
@@ -93,16 +102,20 @@ def build_dependency_graph(workspace: Path) -> dict:
             edges.append(edge)
 
             # Update adjacency
-            adjacency[from_id]["outgoing"].append({
-                "target": to_id,
-                "type": rel_type,
-                "relation_id": rel_id,
-            })
-            adjacency[to_id]["incoming"].append({
-                "source": from_id,
-                "type": rel_type,
-                "relation_id": rel_id,
-            })
+            adjacency[from_id]["outgoing"].append(
+                {
+                    "target": to_id,
+                    "type": rel_type,
+                    "relation_id": rel_id,
+                }
+            )
+            adjacency[to_id]["incoming"].append(
+                {
+                    "source": from_id,
+                    "type": rel_type,
+                    "relation_id": rel_id,
+                }
+            )
 
     graph = {
         "nodes": nodes,
@@ -156,9 +169,9 @@ def generate_mermaid_diagram(graph: dict) -> str:
     for edge in graph["edges"]:
         arrow = arrow_styles.get(edge["type"], "-->")
         if "|" in arrow:
-            lines.append(f'    {edge["from"]} {arrow} {edge["to"]}')
+            lines.append(f"    {edge['from']} {arrow} {edge['to']}")
         else:
-            lines.append(f'    {edge["from"]} {arrow}|{edge["type"]}| {edge["to"]}')
+            lines.append(f"    {edge['from']} {arrow}|{edge['type']}| {edge['to']}")
 
     return "\n".join(lines)
 

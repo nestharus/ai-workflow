@@ -45,7 +45,9 @@ def _next_fact_id(existing: dict[str, Any]) -> str:
     return f"{IDType.FACT.value}-{max_n + 1:03d}"
 
 
-def _read_source_line_from_original_copy(workspace: Path, source_file: str, line_number: int) -> str:
+def _read_source_line_from_original_copy(
+    workspace: Path, source_file: str, line_number: int
+) -> str:
     """Read a 1-indexed source line from the workspace's original snapshot.
 
     Falls back to reading from `source_file` directly if the snapshot is unavailable.

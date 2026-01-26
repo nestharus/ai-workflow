@@ -141,7 +141,9 @@ class TestLoadSaveIDMap:
                 {"file": "spec.md", "line": 10, "type": "entity"},
                 {"file": "spec.md", "line": 15, "type": "entity"},
             ],
-            "R-001": [{"file": "spec.md", "line": 20, "type": "relation", "from": "E-001", "to": "E-002"}],
+            "R-001": [
+                {"file": "spec.md", "line": 20, "type": "relation", "from": "E-001", "to": "E-002"}
+            ],
         }
         save_id_map(tmp_path, original)
         loaded = load_id_map(tmp_path)

@@ -130,7 +130,9 @@ def _generate_relations_doc(workspace: Path, output_dir: Path, id_map: dict) -> 
         for rel_id in relation_ids:
             sources = id_map.get(rel_id, [])
             for edge in _relation_edges(sources):
-                lines.append(f"{edge.get('from','?')} --[{edge.get('type','?')}]--> {edge.get('to','?')}  ({rel_id})")
+                lines.append(
+                    f"{edge.get('from', '?')} --[{edge.get('type', '?')}]--> {edge.get('to', '?')}  ({rel_id})"
+                )
         lines.append("```")
         lines.append("")
 
@@ -207,12 +209,14 @@ def _generate_summary(workspace: Path, output_dir: Path, id_map: dict) -> None:
     relations_summary: list[dict] = []
     for rel_id in relation_ids:
         for edge in _relation_edges(id_map.get(rel_id, [])):
-            relations_summary.append({
-                "id": rel_id,
-                "from": edge.get("from"),
-                "to": edge.get("to"),
-                "type": edge.get("type"),
-            })
+            relations_summary.append(
+                {
+                    "id": rel_id,
+                    "from": edge.get("from"),
+                    "to": edge.get("to"),
+                    "type": edge.get("type"),
+                }
+            )
 
     summary = {
         "statistics": {

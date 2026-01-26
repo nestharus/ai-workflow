@@ -1,65 +1,68 @@
 ---
-description: Analyzes relation snippets to understand connections between entities
+description: Extracts explicit entity-to-entity relations from marked relation snippets
 routing:
   - model: glm
 ---
 
-Analyze these relation snippets and tell me everything about how entities connect.
+You are given relation snippets (short lines) that were marked during decomposition. Your job is to extract:
+
+- which entities are mentioned in each snippet
+- which explicit relation edges are stated
 
 ## Input
 
-`snippets`: Text containing relation statements
-`known_entities`: List of entity names we already know about
-`output_file`: Where to write your findings
+- `snippets`: A list of snippet objects OR text blocks. Each snippet includes:
+  - `snippet_id`
+  - `text` (verbatim relation line)
+  - `file` (if provided)
+  - `line` (if provided)
+- `known_entities`: List of known entity names (strings)
+- `output_file`: Where to write your findings
 
 ## Task
 
-For each snippet, tell me:
+For each snippet:
 
-1. What entities are involved?
-2. How do they relate? (don't force into categories - just describe)
-3. What's the context? Why or when does this relationship matter?
-4. Are there entities mentioned that aren't in known_entities? (new discoveries)
-5. If the snippet contains statements that apply to **multiple** entities, split them into separate per-entity facts.
-6. Any theories about what this relationship implies?
+1. Identify the *explicit entity names* present in the snippet text.
+2. Produce one or more directed edges that reflect the snippet.
+   - Prefer simple `from` -> `to` edges.
+   - The `relation_text` must be a short verbatim phrase copied from the snippet (no paraphrase).
+3. If the snippet mentions an entity name not in `known_entities`, include it in `discovered_entities`.
+
+Rules (critical):
+
+- **Needle in haystack only.** No theories, no implied dependencies beyond the text.
+- **No forced categorization.** Do not invent relation types like "depends_on" unless the exact words appear.
+- **Evidence preserving.** Keep `original_text` exactly as provided.
 
 ## Output File Format
 
+Write JSON:
+
 ```json
 {
-  "analysis": [
+  "relations": [
     {
       "snippet_id": "S-001",
-      "source_file": "path/to/spec.md",
-      "source_line": 23,
-      "snippet": "AuthService uses UserStore for credential validation",
-      "entities_involved": ["AuthService", "UserStore"],
-      "relationship": "AuthService depends on UserStore to validate user credentials",
-      "context": "This happens during the login flow",
-      "new_entities": [],
-      "entity_facts": [
-        {
-          "entity": "AuthService",
-          "fact": "AuthService validates credentials via UserStore",
-          "evidence": {"source_file": "path/to/spec.md", "source_line": 23}
-        },
-        {
-          "entity": "UserStore",
-          "fact": "UserStore is the backing store for credential validation",
-          "evidence": {"source_file": "path/to/spec.md", "source_line": 23}
-        }
-      ],
-      "theories": ["UserStore likely contains password hashes or connects to identity provider"]
+      "file": "spec.md",
+      "line": 123,
+      "original_text": "AuthService uses UserStore for credential validation",
+      "entities": ["AuthService", "UserStore"],
+      "edges": [
+        {"from": "AuthService", "to": "UserStore", "relation_text": "uses"}
+      ]
     }
   ],
-  "discovered_entities": ["TokenService", "SessionManager"]
+  "discovered_entities": ["TokenService"],
+  "note": "optional"
 }
 ```
 
-Notes:
-- If the input snippets include a header like `## S-001` and `- **File**:` / `- **Line**:`, carry that through into
-  `snippet_id`, `source_file`, `source_line`.
-- Keep `snippet` as close to verbatim as possible.
+If no relations can be extracted:
+
+```json
+{"relations": [], "discovered_entities": [], "note": "No explicit entity-to-entity relations found"}
+```
 
 ## Response
 

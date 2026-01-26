@@ -74,7 +74,8 @@ class TestInitWorkspace:
         workspace = tmp_path / "workspace"
         init_workspace(workspace, sample_spec)
 
-        staged_files = list((workspace / "staging").glob("*.md"))
+        # Files are now in staging/discovery/ subdirectory
+        staged_files = list((workspace / "staging" / "discovery").rglob("*_staged.md"))
         assert len(staged_files) == 1
         assert staged_files[0].name == "spec_staged.md"
 
@@ -83,7 +84,8 @@ class TestInitWorkspace:
         workspace = tmp_path / "workspace"
         init_workspace(workspace, spec_directory)
 
-        staged_files = list((workspace / "staging").glob("*.md"))
+        # Files are now in staging/discovery/ subdirectory
+        staged_files = list((workspace / "staging" / "discovery").rglob("*_staged.md"))
         assert len(staged_files) == 2
         names = {f.name for f in staged_files}
         assert "spec1_staged.md" in names
@@ -95,7 +97,7 @@ class TestInitWorkspace:
         init_workspace(workspace, sample_spec)
 
         state = load_state(workspace)
-        assert state["phase"] == "definition_extraction"
+        assert state["phase"] == "entity_discovery"
         assert state["current_file"] is None
         assert state["current_entity"] is None
         assert state["files_completed"] == []

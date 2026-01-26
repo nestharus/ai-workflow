@@ -10,13 +10,13 @@ from pathlib import Path
 class IDType(Enum):
     """Types of IDs used in spec decomposition."""
 
-    ENTITY = "E"       # Entity ID (E-001, E-002, ...)
-    RELATION = "R"     # Relation ID (R-001, R-002, ...)
-    CONTEXT = "C"      # Context ID (C-001, C-002, ...)
+    ENTITY = "E"  # Entity ID (E-001, E-002, ...)
+    RELATION = "R"  # Relation ID (R-001, R-002, ...)
+    CONTEXT = "C"  # Context ID (C-001, C-002, ...)
     COMPOSITION = "X"  # Composition ID (X-001, X-002, ...)
-    ORPHAN = "O"       # Orphan ID (O-001, O-002, ...)
-    SNIPPET = "S"      # Snippet ID (S-001, S-002, ...)
-    FACT = "F"         # Fact ID anchored to a source line (F-001, F-002, ...)
+    ORPHAN = "O"  # Orphan ID (O-001, O-002, ...)
+    SNIPPET = "S"  # Snippet ID (S-001, S-002, ...)
+    FACT = "F"  # Fact ID anchored to a source line (F-001, F-002, ...)
 
 
 def generate_id(id_type: IDType, id_map: dict) -> str:

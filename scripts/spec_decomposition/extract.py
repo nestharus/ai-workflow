@@ -233,26 +233,30 @@ def create_rich_relation_document(
     ]
 
     for target in targets:
-        discovered_note = " - *discovered from this snippet*" if target.get("discovered_from_snippet") else ""
+        discovered_note = (
+            " - *discovered from this snippet*" if target.get("discovered_from_snippet") else ""
+        )
         lines.append(f"  - `{target['id']}` ({target['name']}){discovered_note}")
 
-    lines.extend([
-        "",
-        "## Relationship",
-        "",
-        f"- **Type**: `{relationship_type}`",
-        f"- **Context**: {relationship_context}",
-        "",
-        "## Original Text",
-        "",
-        f"> {original_text}",
-        "",
-        "## Source Location",
-        "",
-        f"- **File**: `{file}`",
-        f"- **Line**: {line}",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Relationship",
+            "",
+            f"- **Type**: `{relationship_type}`",
+            f"- **Context**: {relationship_context}",
+            "",
+            "## Original Text",
+            "",
+            f"> {original_text}",
+            "",
+            "## Source Location",
+            "",
+            f"- **File**: `{file}`",
+            f"- **Line**: {line}",
+            "",
+        ]
+    )
 
     relation_file.write_text("\n".join(lines))
     return relation_file
@@ -298,13 +302,15 @@ def create_discovered_entity_document(
     for kw in keywords:
         lines.append(f"- {kw}")
 
-    lines.extend([
-        "",
-        "## Evidence",
-        "",
-        "*Entity discovered from relation snippet - no direct definition found yet.*",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Evidence",
+            "",
+            "*Entity discovered from relation snippet - no direct definition found yet.*",
+            "",
+        ]
+    )
 
     entity_file.write_text("\n".join(lines))
     return entity_file

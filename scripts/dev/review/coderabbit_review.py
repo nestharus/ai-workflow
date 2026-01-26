@@ -77,9 +77,7 @@ def run_coderabbit(target_args: list[str], extra_args: list[str]) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for the coderabbit wrapper."""
-    parser = argparse.ArgumentParser(
-        description="Run CodeRabbit review and output to stdout"
-    )
+    parser = argparse.ArgumentParser(description="Run CodeRabbit review and output to stdout")
     target_group = parser.add_mutually_exclusive_group()
     target_group.add_argument("--base", help="Base branch for the review (default: main)")
     target_group.add_argument("--type", help="CodeRabbit review type (e.g., uncommitted)")

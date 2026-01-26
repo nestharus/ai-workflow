@@ -55,12 +55,14 @@ def _build_file_handler_context(
                 # Map task file format to handler format
                 task_id = task_file.replace(".json", "")
                 task_type = "coderabbit" if task_file.startswith("coderabbit_") else "pr_comment"
-                tasks.append({
-                    "id": task_id,
-                    "type": task_type,
-                    "content": task_data.get("content", task_data.get("description", "")),
-                    "line": task_data.get("line", task_data.get("line_start")),
-                })
+                tasks.append(
+                    {
+                        "id": task_id,
+                        "type": task_type,
+                        "content": task_data.get("content", task_data.get("description", "")),
+                        "line": task_data.get("line", task_data.get("line_start")),
+                    }
+                )
             except (json.JSONDecodeError, OSError):
                 continue
 
@@ -112,10 +114,12 @@ def _spawn_file_handlers(
                 if result.get("deferred_reply"):
                     # Check if it's a local task
                     if any(tf.startswith("local_") for tf in tasks_by_file.get(file_path, [])):
-                        local_task_responses.append({
-                            "task_id": file_path,
-                            "reply": result["deferred_reply"],
-                        })
+                        local_task_responses.append(
+                            {
+                                "task_id": file_path,
+                                "reply": result["deferred_reply"],
+                            }
+                        )
             except json.JSONDecodeError:
                 print(f"Warning: Could not parse handler result for {file_path}", file=sys.stderr)
         else:
@@ -135,10 +139,12 @@ def _spawn_file_handlers(
             try:
                 result = json.loads(stdout)
                 if result.get("deferred_reply") and task_file.startswith("local_"):
-                    local_task_responses.append({
-                        "task_id": task_file.replace(".json", ""),
-                        "reply": result["deferred_reply"],
-                    })
+                    local_task_responses.append(
+                        {
+                            "task_id": task_file.replace(".json", ""),
+                            "reply": result["deferred_reply"],
+                        }
+                    )
             except json.JSONDecodeError:
                 pass
         else:
@@ -182,11 +188,13 @@ def _run_tests(working_dir: Path, modified_files: list[str]) -> bool:
         else:
             continue
 
-        context = json.dumps({
-            "file_path": file_path,
-            "test_file": test_file,
-            "working_dir": str(working_dir),
-        })
+        context = json.dumps(
+            {
+                "file_path": file_path,
+                "test_file": test_file,
+                "working_dir": str(working_dir),
+            }
+        )
 
         proc = subprocess.Popen(
             ["uv", "run", "python", "-m", "scripts.agents", "pr-test-fixer", context],
@@ -266,9 +274,16 @@ def _parse_coderabbit(
         return
 
     _run_command(
-        ["uv", "run", "pr", "parse-coderabbit",
-         "--review-file", str(review_file),
-         "--output-dir", str(tasks_folder)],
+        [
+            "uv",
+            "run",
+            "pr",
+            "parse-coderabbit",
+            "--review-file",
+            str(review_file),
+            "--output-dir",
+            str(tasks_folder),
+        ],
         working_dir,
     )
 
@@ -393,13 +408,15 @@ def inner_cycle_command(state_file: Path, cycle: int) -> dict[str, Any]:
     # Step 9: Update session state
     state["commits_made"] = state.get("commits_made", 0) + (1 if committed else 0)
     state["all_modified_files"] = list(set(state.get("all_modified_files", []) + modified_files))
-    state.setdefault("cycle_summaries", []).append({
-        "cycle": cycle,
-        "tasks_processed": task_count,
-        "files_modified": len(modified_files),
-        "committed": committed,
-        "commit_sha": commit_sha,
-    })
+    state.setdefault("cycle_summaries", []).append(
+        {
+            "cycle": cycle,
+            "tasks_processed": task_count,
+            "files_modified": len(modified_files),
+            "committed": committed,
+            "commit_sha": commit_sha,
+        }
+    )
     state.setdefault("local_task_responses", []).extend(local_task_responses)
 
     # Atomic write

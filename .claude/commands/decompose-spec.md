@@ -18,7 +18,7 @@ Break down large specifications into isolated entity documents using GLM sub-age
 ## Extraction Hierarchy
 
 1. **Entity extraction** (within files) → entity orphans
-2. **File extraction** (cross-file, files become entities) → file orphans  
+2. **File extraction** (cross-file, files become entities) → file orphans
 3. **Project investigation** (against entire project) → final orphans
 4. **Value assessment** → drop orphans that add no value
 
@@ -34,7 +34,7 @@ $ARGUMENTS - Path to specification file(s)
 uv run python -m scripts.spec_decomposition init "$ARGUMENTS" --workspace .tmp/spec_decomposition
 ```
 
-### Phase 2-3: Entity Discovery and Investigation
+### Phase 2-3: Entity Discovery and Extraction
 
 Iterative entity discovery within each file:
 
@@ -42,21 +42,111 @@ Iterative entity discovery within each file:
 WHILE entities found:
     A: entity-finder on discovery staging
     FOR each entity:
-        B: Information extraction (fresh staging) - what IS it
-        C: Context extraction (redacted, iterative) - what does it FIT INTO
+        B: entity-investigator (fresh staging) - what IS it
+        C: context-finder (redacted, iterative) - what does it FIT INTO
+```
+
+**Step A: Entity Discovery**
+
+```bash
+# 1. Format discovery content
+uv run python -m scripts.spec_decomposition format-discovery \
+  --workspace .tmp/spec_decomposition \
+  --output .tmp/spec_decomposition/discovery_input.txt
+
+# 2. Run entity-finder agent
+uv run python -m scripts.agents entity-finder <<EOF
+content: |
+$(cat .tmp/spec_decomposition/discovery_input.txt)
+
+output_file: .tmp/spec_decomposition/entities_found.json
+EOF
+
+# 3. For each entity found, extract to workspace
+uv run python -m scripts.spec_decomposition extract-entity \
+  --workspace .tmp/spec_decomposition \
+  --entity "<EntityName>" \
+  --evidence '[{"file": "<source>", "line": <num>, "text": "<text>"}]' \
+  --keywords '["keyword1", "keyword2"]'
+```
+
+**Step B: Entity Investigation (for each entity)**
+
+```bash
+# 1. Create fresh staging from originals
+uv run python -m scripts.spec_decomposition create-investigation-staging \
+  --workspace .tmp/spec_decomposition \
+  --entity "<EntityName>"
+
+# 2. Run entity-investigator agent
+uv run python -m scripts.agents entity-investigator <<EOF
+entity_name: <EntityName>
+
+content: |
+$(cat .tmp/spec_decomposition/staging/investigation/<EntityName>_combined_investigation.md)
+
+output_file: .tmp/spec_decomposition/investigation_<EntityName>.json
+EOF
+
+# 3. Process findings
+uv run python -m scripts.spec_decomposition process-investigation \
+  --workspace .tmp/spec_decomposition \
+  --findings .tmp/spec_decomposition/investigation_<EntityName>.json \
+  --redact-discovery
+```
+
+**Step C: Context Extraction (iterative until empty)**
+
+```bash
+# 1. Run context-finder agent on redacted investigation content
+uv run python -m scripts.agents context-finder <<EOF
+entity_name: <EntityName>
+
+entity_info: |
+$(cat .tmp/spec_decomposition/entities/<EntityID>.md)
+
+content: |
+$(cat .tmp/spec_decomposition/staging/investigation/<EntityName>_combined_investigation.md)
+
+output_file: .tmp/spec_decomposition/context_<EntityName>.json
+EOF
+
+# 2. Process context findings
+uv run python -m scripts.spec_decomposition process-context \
+  --workspace .tmp/spec_decomposition \
+  --findings .tmp/spec_decomposition/context_<EntityName>.json \
+  --entity "<EntityName>"
+
+# 3. Repeat until no more context found
 ```
 
 ### Phase 4: Entity-Level Orphan Investigation
 
-Orphans that might relate to known entities:
+Orphans that might relate to known entities.
 
 ```bash
+# 1. Prepare orphan investigation input
 uv run python -m scripts.spec_decomposition investigate-orphans \
   --workspace .tmp/spec_decomposition \
   --level entity
+
+# 2. Run orphan-investigator agent
+uv run python -m scripts.agents orphan-investigator <<EOF
+orphan_lines: |
+$(cat .tmp/spec_decomposition/orphans_entity_input.json)
+
+known_entities: |
+$(cat .tmp/spec_decomposition/orphans_entity_context.json)
+
+output_file: .tmp/spec_decomposition/orphan_entity_analysis.json
+EOF
+
+# 3. Process orphan findings
+uv run python -m scripts.spec_decomposition process-orphans \
+  --workspace .tmp/spec_decomposition \
+  --findings .tmp/spec_decomposition/orphan_entity_analysis.json
 ```
 
-Run orphan-investigator against ORIGINAL file with known entities.
 Links orphans to entities or marks as file-level orphans.
 
 ### Phase 5: File-Level Extraction (Cross-File)
@@ -125,7 +215,7 @@ This creates:
 - `facts.json` (canonical fact store keyed by `F-###`)
 - `fact_id` annotations inside `id_map.json` entries
 
-### Phase 9: Recompose
+### Phase 9: Recomposition
 
 Recomposition turns the decomposed artifacts into **implementable** specs without rewriting content
 (pure regrouping/moving by IDs).
