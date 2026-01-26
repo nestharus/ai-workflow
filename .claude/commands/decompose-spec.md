@@ -83,7 +83,7 @@ uv run python -m scripts.agents entity-investigator <<EOF
 entity_name: <EntityName>
 
 content: |
-$(cat .tmp/spec_decomposition/staging/investigation/<EntityName>_combined_investigation.md)
+$(cat .tmp/spec_decomposition/staging/investigation/<EntityName>/<EntityName>_combined_investigation.md)
 
 output_file: .tmp/spec_decomposition/investigation_<EntityName>.json
 EOF
@@ -106,7 +106,7 @@ entity_info: |
 $(cat .tmp/spec_decomposition/entities/<EntityID>.md)
 
 content: |
-$(cat .tmp/spec_decomposition/staging/investigation/<EntityName>_combined_investigation.md)
+$(cat .tmp/spec_decomposition/staging/investigation/<EntityName>/<EntityName>_combined_investigation.md)
 
 output_file: .tmp/spec_decomposition/context_<EntityName>.json
 EOF
