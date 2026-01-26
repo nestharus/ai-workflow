@@ -51,15 +51,13 @@ def _parse_review_block(block: str) -> dict[str, str | int | None] | None:
                 line_num = int(line[5:].strip())
             except ValueError:
                 pass
-        elif line.startswith("Issue:"):
-            content_parts.append(line)
-        elif line.startswith("Action:"):
-            content_parts.append(line)
-        elif line.startswith("Fix:"):
-            content_parts.append(line)
-        elif line.startswith("Expected:"):
-            content_parts.append(line)
-        elif line.startswith("Current:"):
+        elif (
+            line.startswith("Issue:")
+            or line.startswith("Action:")
+            or line.startswith("Fix:")
+            or line.startswith("Expected:")
+            or line.startswith("Current:")
+        ):
             content_parts.append(line)
         elif line:
             # Include other non-empty lines in content

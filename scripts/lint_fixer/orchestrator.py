@@ -367,7 +367,7 @@ def filter_lint_output_for_files(lint_output: str, files: list[str]) -> str:
                             lines.append(f"    column: {error.get('column', 0)}")
                             lines.append(f"    code: {error.get('code', '')}")
                             msg = error.get("message", "")
-                            if "\n" in msg or ":" in msg:
+                            if "\n" in msg or ":" in msg or "`" in msg:
                                 lines.append("    message: |")
                                 for msg_line in msg.splitlines():
                                     lines.append(f"      {msg_line}")
@@ -377,7 +377,12 @@ def filter_lint_output_for_files(lint_output: str, files: list[str]) -> str:
                             lines.append(f"    fix_available: {fix_avail}")
                             if error.get("fix_message"):
                                 fix_msg = str(error.get("fix_message"))
-                                if "\n" in fix_msg or ":" in fix_msg or '"' in fix_msg:
+                                if (
+                                    "\n" in fix_msg
+                                    or ":" in fix_msg
+                                    or '"' in fix_msg
+                                    or "`" in fix_msg
+                                ):
                                     lines.append("    fix_message: |")
                                     for fix_line in fix_msg.splitlines():
                                         lines.append(f"      {fix_line}")
@@ -440,7 +445,7 @@ def _combine_yaml_outputs(outputs: list[str]) -> str:
         lines.append(f"    column: {error.get('column', 0)}")
         lines.append(f"    code: {error.get('code', '')}")
         msg = str(error.get("message", ""))
-        if "\n" in msg or ":" in msg:
+        if "\n" in msg or ":" in msg or "`" in msg:
             lines.append("    message: |")
             for msg_line in msg.splitlines():
                 lines.append(f"      {msg_line}")
@@ -450,7 +455,7 @@ def _combine_yaml_outputs(outputs: list[str]) -> str:
         lines.append(f"    fix_available: {fix_avail}")
         if error.get("fix_message"):
             fix_msg = str(error.get("fix_message"))
-            if "\n" in fix_msg or ":" in fix_msg or '"' in fix_msg:
+            if "\n" in fix_msg or ":" in fix_msg or '"' in fix_msg or "`" in fix_msg:
                 lines.append("    fix_message: |")
                 for fix_line in fix_msg.splitlines():
                     lines.append(f"      {fix_line}")

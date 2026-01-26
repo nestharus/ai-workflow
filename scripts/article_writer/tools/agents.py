@@ -40,8 +40,8 @@ CODEBLOCK_RE = re.compile(r"```(\w+)?\n(.*?)\n```", re.DOTALL)
 def extract_first_codeblock(text: str, lang: str) -> str | None:
     """Extract first code block of given language."""
     for m in CODEBLOCK_RE.finditer(text):
-        l = (m.group(1) or "").strip().lower()
-        if l == lang.lower():
+        _lang = (m.group(1) or "").strip().lower()
+        if _lang == lang.lower():
             return m.group(2).strip()
     return None
 
@@ -177,7 +177,7 @@ class AgentRunner:
             Tuple of (exit_code, stdout, stderr)
         """
         python = os.fspath(shutil.which("python") or "python")
-        argv = [python, os.fspath(tool_script)] + args
+        argv = [python, os.fspath(tool_script), *args]
 
         proc = subprocess.run(
             argv,

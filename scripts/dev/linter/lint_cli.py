@@ -382,7 +382,7 @@ def _output_yaml_results(results: dict[str, LinterResult]) -> None:
         print(f"    code: {err['code']}")
         # Handle message with potential special characters
         msg = str(err["message"])
-        if "\n" in msg or ":" in msg or '"' in msg:
+        if "\n" in msg or ":" in msg or '"' in msg or "`" in msg:
             print("    message: |")
             for line in msg.splitlines():
                 print(f"      {line}")
@@ -391,7 +391,7 @@ def _output_yaml_results(results: dict[str, LinterResult]) -> None:
         print(f"    fix_available: {str(err['fix_available']).lower()}")
         if err["fix_message"]:
             fix_msg = str(err["fix_message"])
-            if "\n" in fix_msg or ":" in fix_msg or '"' in fix_msg:
+            if "\n" in fix_msg or ":" in fix_msg or '"' in fix_msg or "`" in fix_msg:
                 print("    fix_message: |")
                 for line in fix_msg.splitlines():
                     print(f"      {line}")

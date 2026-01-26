@@ -67,7 +67,9 @@ def get_staged_files(cwd: Path) -> set[Path]:
         Set of Path objects for staged files that exist on disk.
     """
     try:
-        stdout = run_git_command(["git", "diff", "--cached", "--name-only", "--diff-filter=d"], cwd=cwd)
+        stdout = run_git_command(
+            ["git", "diff", "--cached", "--name-only", "--diff-filter=d"], cwd=cwd
+        )
     except GitCommandError:
         return set()
 

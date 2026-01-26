@@ -25,8 +25,8 @@ from spec_manager.compliance.metrics import (
 )
 
 __all__ = [
+    "compute_annotation_coverage",
     "compute_compliance_metrics",
     "compute_format_compliance",
-    "compute_annotation_coverage",
     "compute_id_normalization",
 ]

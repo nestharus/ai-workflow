@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from scripts.spec_decomposition.workspace import init_workspace, load_state, save_state
 from scripts.spec_decomposition.entity_index import save_entity_index
+from scripts.spec_decomposition.workspace import init_workspace, load_state, save_state
 
 
 @pytest.fixture
@@ -124,9 +124,10 @@ class TestProcessInvestigationRequiresEntity:
 
     def test_fails_for_nonexistent_entity(self, initialized_workspace: Path):
         """Test that process-investigation fails for non-existent entity."""
-        from scripts.spec_decomposition.workspace import create_investigation_staging
-        from scripts.spec_decomposition.cli import cmd_process_investigation
         import argparse
+
+        from scripts.spec_decomposition.cli import cmd_process_investigation
+        from scripts.spec_decomposition.workspace import create_investigation_staging
 
         # Create investigation staging for a fake entity
         entity_name = "FakeEntity"
@@ -182,7 +183,7 @@ class TestLineRedaction:
 
     def test_remove_lines_marks_as_extracted(self, initialized_workspace: Path, sample_spec: Path):
         """Test that remove_lines marks lines as extracted."""
-        from scripts.spec_decomposition.staging import remove_lines, get_remaining_lines
+        from scripts.spec_decomposition.staging import get_remaining_lines, remove_lines
         from scripts.spec_decomposition.workspace import resolve_discovery_staging
 
         staging_file = resolve_discovery_staging(initialized_workspace, str(sample_spec))

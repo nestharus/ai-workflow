@@ -471,10 +471,7 @@ class StateMachine:
 
         # Check if we've already run drift detection for this iteration
         last_drift_iteration = config.get("last_drift_iteration", -1)
-        if last_drift_iteration >= current_iteration:
-            return False
-
-        return True
+        return not last_drift_iteration >= current_iteration
 
     def _mark_drift_detection_run(self) -> None:
         """Mark that drift detection has run for the current iteration."""

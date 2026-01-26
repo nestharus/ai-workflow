@@ -176,8 +176,5 @@ def offset_to_linecol(text: str, offset: int) -> tuple[int, int]:
 
     line = text.count("\n", 0, offset) + 1
     last_nl = text.rfind("\n", 0, offset)
-    if last_nl == -1:
-        col = offset + 1
-    else:
-        col = offset - last_nl
+    col = offset + 1 if last_nl == -1 else offset - last_nl
     return line, col

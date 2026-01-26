@@ -8,20 +8,20 @@ from pathlib import Path
 import pytest
 
 from scripts.spec_decomposition.execution import (
-    SpecStatus,
-    SpecEntry,
     Gap,
     Ledger,
+    SpecEntry,
+    SpecStatus,
     compute_content_hash,
-    load_ledger,
-    save_ledger,
-    save_gaps,
     compute_spec_hashes,
     detect_spec_changes,
-    get_runnable_ids,
-    generate_prompt_files,
-    ingest_evidence,
     execute_spec,
+    generate_prompt_files,
+    get_runnable_ids,
+    ingest_evidence,
+    load_ledger,
+    save_gaps,
+    save_ledger,
 )
 
 

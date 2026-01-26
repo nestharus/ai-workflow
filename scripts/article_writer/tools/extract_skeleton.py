@@ -99,7 +99,7 @@ def build_skeleton(md: str) -> tuple[str, str, dict]:
     # Build per-section paragraph first sentences.
     section_firsts: list[dict] = []
 
-    for s_idx, sec in enumerate(sections):
+    for _s_idx, sec in enumerate(sections):
         sec_text = text[sec.start_offset : sec.end_offset]
 
         # Gather paragraphs inside section.

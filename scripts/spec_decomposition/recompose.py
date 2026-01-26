@@ -15,7 +15,7 @@ Outputs (under output/recomposed/):
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -138,7 +138,7 @@ def recompose(workspace: Path, out_dir: Path | None = None) -> dict[str, Any]:
 
     spec = {
         "metadata": {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         },
         "facts": facts,
         "entities": entities,
@@ -184,7 +184,7 @@ def recompose(workspace: Path, out_dir: Path | None = None) -> dict[str, Any]:
             if not isinstance(rec, dict):
                 continue
             ent_lines.append(
-                f"- `{fid}` `{rec.get('file', '')}:{rec.get('line', '')}` — {str(rec.get('text', ''))}"
+                f"- `{fid}` `{rec.get('file', '')}:{rec.get('line', '')}` — {rec.get('text', '')!s}"
             )
 
         # Relations

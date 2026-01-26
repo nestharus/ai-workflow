@@ -232,10 +232,7 @@ def cmd_process(args: argparse.Namespace) -> int:
         sm = load_workflow(db, args.workflow_id)
 
         # Parse result from stdin or argument
-        if args.result == "-":
-            result_str = sys.stdin.read()
-        else:
-            result_str = args.result
+        result_str = sys.stdin.read() if args.result == "-" else args.result
 
         result = json.loads(result_str)
         sm.process_result(result)

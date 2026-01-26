@@ -63,23 +63,23 @@ def analyze_tempo(markdown: str) -> dict:
     min_run = 4
     runs: list[dict] = []
     current: list[int] = []
-    for l in sent_lens:
+    for _len in sent_lens:
         if not current:
-            current = [l]
+            current = [_len]
             continue
-        if abs(l - current[-1]) <= run_threshold:
-            current.append(l)
+        if abs(_len - current[-1]) <= run_threshold:
+            current.append(_len)
         else:
             if len(current) >= min_run:
                 runs.append({"length": len(current), "values": current[:]})
-            current = [l]
+            current = [_len]
     if len(current) >= min_run:
         runs.append({"length": len(current), "values": current[:]})
 
     # Short / long balance
-    short = sum(1 for l in sent_lens if l <= 7)
-    medium = sum(1 for l in sent_lens if 8 <= l <= 20)
-    long = sum(1 for l in sent_lens if l >= 21)
+    short = sum(1 for _len in sent_lens if _len <= 7)
+    medium = sum(1 for _len in sent_lens if 8 <= _len <= 20)
+    long = sum(1 for _len in sent_lens if _len >= 21)
 
     # Compute stats once to avoid redundant calls
     sent_stats = _summary_stats(sent_lens)
@@ -174,10 +174,7 @@ def main() -> int:
 
     report = analyze_tempo(md)
 
-    if args.format == "json":
-        out = json.dumps(report, indent=2)
-    else:
-        out = render_markdown(report)
+    out = json.dumps(report, indent=2) if args.format == "json" else render_markdown(report)
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:

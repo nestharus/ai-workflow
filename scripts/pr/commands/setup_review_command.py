@@ -6,7 +6,7 @@ import json
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -64,9 +64,7 @@ def setup_review_command(
         Exit code (0 for success).
     """
     # Determine mode
-    if ticket is not None:
-        mode = "worktree"
-    elif worktree is not None:
+    if ticket is not None or worktree is not None:
         mode = "worktree"
     else:
         mode = "local"
@@ -181,7 +179,7 @@ def setup_review_command(
         "commits_made": 0,
         "all_modified_files": [],
         "cycle_summaries": [],
-        "loop_start_time": datetime.now(timezone.utc).isoformat(),
+        "loop_start_time": datetime.now(UTC).isoformat(),
         "pr_number": pr_number,
         "base_branch": base_branch,
         "branch_name": branch_name,

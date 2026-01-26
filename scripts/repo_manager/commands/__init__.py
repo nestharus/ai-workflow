@@ -6,6 +6,6 @@ from scripts.repo_manager.commands.zip_files_command import zip_files_command
 
 __all__ = [
     "get_changed_files_command",
-    "zip_files_command",
     "zip_changes_command",
+    "zip_files_command",
 ]

@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.spec_decomposition.id_generator import IDType, get_ids_by_type, load_id_map
 from scripts.spec_decomposition.entity_index import load_entity_index
+from scripts.spec_decomposition.id_generator import IDType, get_ids_by_type, load_id_map
 
 
 def build_dependency_graph(workspace: Path) -> dict:

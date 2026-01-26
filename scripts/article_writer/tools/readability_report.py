@@ -183,10 +183,7 @@ def main() -> int:
 
     report = analyze_readability(md)
 
-    if args.format == "json":
-        out = json.dumps(report, indent=2)
-    else:
-        out = render_markdown(report)
+    out = json.dumps(report, indent=2) if args.format == "json" else render_markdown(report)
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:

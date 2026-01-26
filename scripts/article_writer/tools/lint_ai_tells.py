@@ -174,7 +174,7 @@ def lint_markdown(markdown: str) -> tuple[list[Finding], dict[str, int]]:
         first = m.group(1).lower() if m else ""
         by_para.setdefault(s.paragraph_index, []).append((s.span.start, first, s.sentence_index))
 
-    for p_idx, items in by_para.items():
+    for _p_idx, items in by_para.items():
         # items are in order by sentence_index already.
         for i in range(0, len(items) - 2):
             a_off, a_first, _ = items[i]

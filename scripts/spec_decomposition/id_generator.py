@@ -33,7 +33,7 @@ def generate_id(id_type: IDType, id_map: dict) -> str:
 
     # Find highest existing number for this prefix
     existing_nums = []
-    for id_str in id_map.keys():
+    for id_str in id_map:
         if id_str.startswith(f"{prefix}-"):
             num_part = id_str.split("-")[1]
             if num_part.isdigit():
@@ -72,7 +72,7 @@ def save_id_map(workspace: Path, id_map: dict) -> None:
 def get_ids_by_type(id_map: dict, id_type: IDType) -> list[str]:
     """Get all IDs of a specific type."""
     prefix = id_type.value
-    return [id_str for id_str in id_map.keys() if id_str.startswith(f"{prefix}-")]
+    return [id_str for id_str in id_map if id_str.startswith(f"{prefix}-")]
 
 
 def get_source_lines(id_map: dict, id_str: str) -> list[dict]:

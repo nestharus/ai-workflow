@@ -933,7 +933,7 @@ def _run_workflow_loop(
                 # Check if agent requires user input (e.g., condenser asking for cut selection)
                 if result.get("user_input_required"):
                     # Create input request
-                    request_id = sm.request_input(
+                    sm.request_input(
                         prompt=result.get("user_prompt", "User input required"),
                         request_type="cut_selection",
                         options=result.get("user_options", []),

@@ -13,7 +13,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 from scripts.spec_decomposition.id_generator import IDType, load_id_map, save_id_map
 from scripts.spec_decomposition.workspace import resolve_original_copy
 
@@ -34,7 +33,7 @@ def _sha256_text(text: str) -> str:
 
 def _next_fact_id(existing: dict[str, Any]) -> str:
     max_n = 0
-    for fid in existing.keys():
+    for fid in existing:
         if not isinstance(fid, str) or not fid.startswith(f"{IDType.FACT.value}-"):
             continue
         try:
