@@ -2,7 +2,7 @@
 description: >
   Applies user-selected cuts to the draft, maintaining flow and coherence
 routing:
-  - model: glm
+  - model: cerebras
     ambiguity: true
 ---
 

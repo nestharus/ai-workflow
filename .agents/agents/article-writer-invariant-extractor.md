@@ -2,7 +2,7 @@
 description: >
   Extracts all non-negotiable constraints (invariants) from the brief and discovered requirements
 routing:
-  - model: glm
+  - model: cerebras
     ambiguity: true
 ---
 

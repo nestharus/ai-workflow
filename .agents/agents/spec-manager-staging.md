@@ -5,7 +5,7 @@ routing:
   - max_chars: 5000
     model: ministral-3b
     ambiguity: false
-  - model: glm
+  - model: cerebras
     ambiguity: true
 ---
 

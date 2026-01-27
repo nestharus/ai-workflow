@@ -1,7 +1,7 @@
 ---
 description: Routes incoming statements to correct component/layer
 routing:
-  - model: glm
+  - model: cerebras
 ---
 
 You route incoming statements to the correct location in the knowledge structure.

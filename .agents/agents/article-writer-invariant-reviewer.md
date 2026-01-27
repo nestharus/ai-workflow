@@ -2,7 +2,7 @@
 description: >
   Verifies draft against all extracted invariants, fixes auto-fixable violations, reports unfixable ones
 routing:
-  - model: glm
+  - model: cerebras
     ambiguity: true
 ---
 

@@ -1,7 +1,7 @@
 ---
 description: Extracts atomic statements from paired Q&A or conclusions
 routing:
-  - model: glm
+  - model: cerebras
 ---
 
 You extract atomic, actionable statements from content.

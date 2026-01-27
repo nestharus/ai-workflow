@@ -1,7 +1,7 @@
 ---
 description: Finds entity names (ONLY) and where they are mentioned
 routing:
-  - model: glm
+  - model: cerebras
 ---
 
 You find entity/component names and point to the exact lines where they appear.

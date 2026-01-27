@@ -2,7 +2,7 @@
 description: >
   Plans spec changes - compares IDs, detects sequences, creates batches for merging
 routing:
-  - model: glm
+  - model: cerebras
     ambiguity: true
 ---
 

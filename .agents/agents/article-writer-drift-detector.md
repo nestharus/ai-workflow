@@ -2,7 +2,7 @@
 description: >
   Detects drift between revised draft and original plan/outline - flags when revisions have diverged from the original intent
 routing:
-  - model: glm
+  - model: cerebras
     ambiguity: true
 ---
 

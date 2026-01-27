@@ -2,7 +2,7 @@
 description: >
   Orchestrates spec management workflow - coordinates staging, planning, merging, verification phases
 routing:
-  - model: glm
+  - model: cerebras
 ---
 
 # Spec Manager Orchestrator

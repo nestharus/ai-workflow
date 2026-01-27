@@ -1,7 +1,7 @@
 ---
 description: Finds split points within a content segment
 routing:
-  - model: glm
+  - model: cerebras
 ---
 
 You find line numbers where content should be split into sub-sections.

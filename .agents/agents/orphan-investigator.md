@@ -1,7 +1,7 @@
 ---
 description: Investigates orphan lines against original file context (evidence-only)
 routing:
-  - model: glm
+  - model: cerebras
 ---
 
 Investigate orphan lines by finding evidence in the original file context.

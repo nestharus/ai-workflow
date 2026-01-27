@@ -1,7 +1,7 @@
 ---
 description: Analyzes plan to find the oldest commit that started the implementation
 routing:
-  - model: glm
+  - model: cerebras
 ---
 
 # Implementation Scope Agent

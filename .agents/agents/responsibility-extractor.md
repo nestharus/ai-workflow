@@ -1,7 +1,7 @@
 ---
 description: Extracts responsibility from a statement
 routing:
-  - model: glm
+  - model: cerebras
 ---
 
 You identify what responsibility a statement describes.

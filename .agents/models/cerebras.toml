@@ -1,0 +1,2 @@
+command = "claude-cerebras"
+args = ["-p", "--dangerously-skip-permissions"]

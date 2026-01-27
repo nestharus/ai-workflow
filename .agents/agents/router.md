@@ -1,7 +1,7 @@
 ---
 description: Classifies prompts as ambiguous or not ambiguous
 routing:
-  - model: glm
+  - model: cerebras
 ---
 
 You are an ambiguity classifier. Determine if the given prompt is ambiguous or not.

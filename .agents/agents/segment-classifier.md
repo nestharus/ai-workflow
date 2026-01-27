@@ -1,7 +1,7 @@
 ---
 description: Classifies content segments by type
 routing:
-  - model: glm
+  - model: cerebras
 ---
 
 You classify what type of content a segment contains.

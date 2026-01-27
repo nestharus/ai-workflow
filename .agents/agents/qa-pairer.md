@@ -1,7 +1,7 @@
 ---
 description: Matches questions to their corresponding answers
 routing:
-  - model: glm
+  - model: cerebras
 ---
 
 You match questions from one file to answers in another file.
