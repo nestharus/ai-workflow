@@ -123,8 +123,13 @@ Execution of a ready step:
    * `kind: agent` → spawn a step process (Monitoring §2.2) which performs
      LLM calls via the gateway
    * `kind: script` → run a registered script artifact via the gateway
-   * `kind: workflow` → run a nested workflow (child run) and capture its
+   * `kind: subworkflow` → run a nested workflow (child run) and capture its
      outputs
+   * `kind: gate` → pause execution, wait for control action (user approval,
+     selection, or resume), then either resume with user-provided data or fail
+     with specified error
+   * `kind: noop` → mark step as completed immediately with no side effects,
+     useful for checkpoints, markers, or conditional no-ops
 4. On success:
    * Update step execution doc: `status:"completed"`, `ended_at`, and
      `output` (bounded JSON object)
@@ -154,11 +159,15 @@ Expression evaluation (${{ }}) — evaluation order + errors (v1):
   not required for correctness).
 * **Allowed references**: Expressions may only reference:
   * `inputs.<field>`
+  * `steps.<step_id>.output` (entire output object)
   * `steps.<step_id>.output.<field>`
+  * `steps.<step_id>.artifacts.<name>` (artifact reference emitted by step runner)
 * **Forbidden references**: Expressions MUST NOT reference siblings in the same
   `with` object (no `with.foo` access).
-* **Error handling**: Missing reference or type mismatch → fail
-  `E_VALIDATION_FAILED` (no defaulting).
+* **Error handling**:
+  * Missing reference or type mismatch → fail `E_VALIDATION_FAILED`
+  * Exception: If the step declares `x_allow_missing: true` (extension key),
+    missing references are not treated as errors (may resolve to null)
 * **Type rules**:
   * If the entire string is exactly one expression token, preserve the
     referenced JSON type.
