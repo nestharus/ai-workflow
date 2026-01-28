@@ -54,9 +54,51 @@ When `--ticket` or `--worktree` is present:
 
 ## Execution
 
-### Step 0: Parse Arguments and Determine Working Directory
+### Step 0: Normalize Input and Determine Working Directory
 
-Parse `$ARGUMENTS` to extract flags and plan text:
+Before proceeding, YOU (Claude) must check if `$ARGUMENTS` matches the expected format and rewrite if necessary.
+
+**Expected formats the workflow understands:**
+- `--ticket <id> <plan text>`
+- `--worktree <path> <plan text>`
+- `<plan text>` (local mode, entire input is plan)
+
+**If input is freeform/unstructured (e.g., issue descriptions, review comments):**
+
+YOU must rewrite the input into a clear plan before proceeding:
+
+1. **Extract the requirements** from the freeform input
+2. **Rewrite as a structured plan** with clear acceptance criteria
+3. **Preserve `folder: "..."` prefix** if present (indicates which files to review)
+
+**Example:**
+
+Input:
+```
+folder: ".tasks/plans/foo"
+
+### 2.9 Issue Title
+**Issue**: Something is unclear
+**Recommendation**: Clarify X, Y, Z
+```
+
+Rewritten plan:
+```
+Review and update documentation in .tasks/plans/foo:
+
+Requirements:
+1. Clarify X - add explicit rules
+2. Clarify Y - define expected behavior
+3. Clarify Z - document edge cases
+
+Acceptance criteria:
+- All three items are addressed with normative language
+- No ambiguity remains in the specified section
+```
+
+**Key principle:** The reviewer needs a clear plan to compare against. Verbose issue descriptions must be distilled into reviewable requirements.
+
+**Parse normalized `$ARGUMENTS` to extract flags and plan text:**
 
 1. If `--ticket <id>` is present:
    - Extract ticket ID
@@ -82,11 +124,11 @@ Parse `$ARGUMENTS` to extract flags and plan text:
 
 **Check for folder prefix in plan text:**
 
-If the plan text starts with `folder: "..."` or `folder: '...'`:
+The plan text may start with `folder: "..."` which whitelists files to a specific folder:
 - Extract the folder path (the quoted string after `folder:`)
 - Set `scope_folder` = extracted path (e.g., `.tasks/plans/workflow engine 3`)
 - The folder whitelists files in scope (only files within this folder are reviewed)
-- Does NOT skip git analysis - still searches for relevant commits in the folder
+- Does NOT skip git analysis - still searches for relevant commits touching the folder
 - If no `folder:` prefix, set `scope_folder` = null
 
 Define paths:
@@ -129,23 +171,7 @@ uv run python -m scripts.agents implementation-scope '{"plan_file": "{plan_file}
 
 **WAIT**: If this goes to background, call TaskOutput and wait until status is completed/failed.
 
-Parse the output to extract scope information. The agent returns:
-
-```json
-{
-  "status": "success",
-  "start_commit": "abc123def456",
-  "folder": ".tasks/plans/my-feature",  // null if no folder: prefix in plan
-  "plan_identifier": "NES-123",
-  "reasoning": "Found 5 commits mentioning NES-123 touching folder, oldest is abc123"
-}
-```
-
-The agent:
-- Searches git history for commits related to the plan
-- If `folder:` prefix in plan, filters to only commits touching that folder
-- If `from_commit` provided, limits search to commits after that SHA
-- Returns `start_commit` (oldest relevant commit) and `folder` (whitelist or null)
+The agent searches git history for commits related to the plan. If `folder:` prefix was in plan, it filters to only commits touching that folder. Returns `start_commit` (oldest relevant commit) and `folder` (whitelist or null).
 
 Save to state file:
 
@@ -153,28 +179,25 @@ Save to state file:
 echo '{"start_commit": "{start_commit}", "folder": "{folder_or_null}", "from_commit": "{from_commit_or_null}", "iteration": 0}' > {state_file}
 ```
 
-**NOTE**: The scope agent only runs ONCE per review session. It finds commits related to the plan, filtered by folder if specified.
+**NOTE**: The scope agent only runs ONCE per review session.
 
 ### Step 3: Discover Scope Files
 
 Use Python to discover files, optionally filtered by folder:
 
-**If folder was specified (from scope agent or `scope_folder` in Step 0):**
+**If folder was specified (from scope agent):**
 ```bash
 uv run pr discover-scope-files --working-dir {working_dir} --start-commit {start_commit} --folder "{scope_folder}" --state-file {scope_state_file}
 ```
 
-**If no folder (git-only scope):**
+**If no folder:**
 ```bash
 uv run pr discover-scope-files --working-dir {working_dir} --start-commit {start_commit} --state-file {scope_state_file}
 ```
 
 This returns a list of files in scope. Parse the JSON output to get the `files` array.
 
-**Folder behavior**: When `--folder` is specified:
-- Git-changed files are filtered to only those within the folder
-- If no git changes exist in the folder, ALL files in the folder are returned
-- This ensures documentation reviews work even with no recent commits
+**Folder behavior**: When `--folder` is specified, git-changed files are filtered to only those within the folder. If no git changes exist in the folder, ALL files in the folder are returned.
 
 ### Step 4: Run Reviewer Agent
 
@@ -227,18 +250,17 @@ uv run pr review-loop --worktree {working_dir} --tasks-file {review_file}
 
 Only if review-loop actually fixed tasks (not "no tasks found").
 
-Repeat Steps 3-6 up to 3 times until clean.
+Repeat Steps 3-6 until clean.
 
 **Iteration Counter Mechanism:**
 - The iteration count is stored in `{state_file}` under the key `iteration`
 - At the start of each Step 7 cycle, read `{state_file}` to get the current iteration count
 - Before re-running the cycle, the count is incremented and persisted back to `{state_file}`
-- The loop condition is checked as `while iteration < 3` to decide whether to continue
 
 On each iteration:
 1. Run discover-scope-files (checks for new commits/files) - captures new files automatically
 2. Run reviewer with files list and conclusions_file - WAIT for completion
-3. If still `[OPEN]` issues and iterations < 3, run review-loop again - WAIT for completion
+3. If still `[OPEN]` issues, run review-loop again - WAIT for completion
 4. **If review-loop reports "no tasks found" or "0 tasks"**: All remaining issues are non-actionable. **Set review.txt to [CLEAN] and go to Step 8** - workflow is complete.
 
 ### Step 8: Finalization
@@ -255,16 +277,6 @@ Output:
 Status: CLEAN
 Iterations: {count}
 Working Directory: {working_dir}
-```
-
-**On max iterations:**
-
-Preserve workspace for inspection:
-```
-=== Implementation Review Incomplete ===
-Status: ISSUES REMAIN
-Iterations: 3
-Workspace preserved: {workspace}
 ```
 
 ## Error Handling
@@ -306,10 +318,9 @@ All state lives in `{workspace}/`:
 1. Save state before running each step
 2. On failure, invoke workflow-repair with failed command details
 3. Workflow-repair fixes tooling, not content
-4. Maximum 3 review iterations
-5. Preserve workspace on unrecoverable failure
-6. Always pass `working_dir` to agents in worktree mode
-7. Scope agent runs ONCE - finds commits related to plan, filtered by folder
-8. When `folder:` prefix is present, pass `--folder` to discover-scope-files
-9. Folder is a whitelist - scope agent still searches git for relevant commits in folder
-10. `--from-commit` limits git search to commits after that SHA
+4. Preserve workspace on unrecoverable failure
+5. Always pass `working_dir` to agents in worktree mode
+6. Scope agent runs ONCE - finds commits related to plan, filtered by folder
+7. When `folder:` prefix is present, pass `--folder` to discover-scope-files
+8. Folder is a whitelist - scope agent still searches git for relevant commits in folder
+9. `--from-commit` limits git search to commits after that SHA
