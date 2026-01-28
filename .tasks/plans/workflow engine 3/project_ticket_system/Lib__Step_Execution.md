@@ -162,7 +162,78 @@ The deviation record MUST track:
 }
 ```
 
-#### 3.4.4 Late approval handling (normative)
+#### 3.4.4 Extension envelope lifecycle (normative)
+
+**Critical**: Extension envelopes MUST be processed according to their arrival time relative to the deadline and the run state.
+
+**3-phase envelope processing model**:
+
+1. **Phase A: Pre-deadline (while timer is active)**
+   - Extension arrives before `deadline`
+   - Runner accepts envelope and updates `deadline`
+   - Timer is rescheduled to new deadline
+   - Run continues in PAUSE state
+
+2. **Phase B: Post-deadline, pre-stop (after timer fires, before stop executes)**
+   - Extension arrives after `deadline` but before run state transitions to `stopped`
+   - Runner records the extension attempt with `late: true` and `outcome: "rejected_post_timer"`
+   - Extension is NOT applied; original timeout action proceeds
+   - Notification `deviation_extension_rejected` is emitted with:
+     ```json
+     {
+       "deviation_id": "...",
+       "attempted_at": "<rfc3339>",
+       "deadline": "<rfc3339>",
+       "reason": "Extension arrived after timer fired but before stop finalized",
+       "outcome": "rejected_no_effect"
+     }
+     ```
+   - This phase is atomic and bounded; it ends as soon as the run state becomes `stopped`
+
+3. **Phase C: Post-stop (after run state is `stopped`)**
+   - Extension arrives after run state is `stopped`
+   - Runner records the extension attempt with `late: true`
+   - Extension is REJECTED with error; run remains stopped
+   - Error response is written to the control action inbox:
+     ```json
+     {
+       "control_kind": "deviation_extend_response",
+       "deviation_id": "...",
+       "status": "error",
+       "error": "Cannot extend stopped run",
+       "rejected_at": "<rfc3339>",
+       "run_state": "stopped",
+       "instructions": "Use workflowctl run resume <run_id> instead of extension"
+     }
+     ```
+   - Notification `deviation_extension_rejected` is emitted with details
+   - Run is NOT revived under any circumstances
+
+**Timer/stop reconciliation rules**:
+
+- The timeout timer is the primary authority on deadline enforcement
+- Upon timer expiration, the runner atomically:
+  1. Marks timeout as expired
+  2. Checks for in-flight extension envelopes (any arriving within a bounded race window, typically 100ms)
+  3. If any in-flight envelopes exist, marks them as arrived post-timer and rejects them
+  4. Transitions run state to `stopped`
+- Any extension envelope arriving after the run state becomes `stopped` is automatically rejected
+- The run state transition to `stopped` is irreversible; once stopped, extensions never revive the run
+
+**Edge case: in-flight extension at exact deadline**
+
+- If an extension envelope is in-flight (received but not yet processed) when the timer expires:
+  - The runner processes the envelope and marks it `late: true`
+  - The extension is NOT applied
+  - The stop action proceeds as scheduled
+- This ensures deterministic behavior: the timer fire takes precedence over in-flight extensions
+
+**User-facing guidance**:
+
+- If a user attempts to extend a paused run and receives `deviation_extension_rejected`, they must use `workflowctl run resume <run_id>` to manually continue (if they want to proceed despite the timeout expiring)
+- Extension is for extending the deadline while paused, not for reviving a stopped run
+
+#### 3.4.5 Late approval handling (normative)
 
 If an approval arrives after the timeout has expired and the run has already stopped:
 

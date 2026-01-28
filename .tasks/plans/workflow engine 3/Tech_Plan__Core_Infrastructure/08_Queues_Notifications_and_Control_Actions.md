@@ -151,3 +151,83 @@ On ack:
 - the notification is moved to `notifications/archive/`
 - the ack envelope is moved to `control_actions/applied/`
 
+### 9.5 Deviation approval control kinds (normative)
+
+Deviation-related control actions follow the maildir lifecycle for `control_actions/`.
+
+Permitted deviation approval `control_kind` values:
+- `deviation_approval_request`
+- `deviation_approval`
+- `deviation_extend`
+
+#### 9.5.1 deviation_approval_request
+
+**Envelope location**: `control_actions/inbox/deviation_approval_request_<deviation_id>.json`
+
+**Required fields**:
+- `control_kind`: `"deviation_approval_request"`
+- `deviation_id` (string; ULID)
+- `ticket_id` (string)
+- `task_id` (string)
+- `step_id` (string)
+- `capability` (string)
+- `approval_timeout_ms` (integer)
+- `deadline` (RFC3339 timestamp)
+- `created_at` (RFC3339 timestamp; optional, defaults to envelope creation time)
+
+**Lifecycle moves**:
+1. `inbox/` → `processing/<consumer_id>/` (claim)
+2. On resolution (via `deviation_approval` or timeout):
+   - `processing/<consumer_id>/` → `ack/` (if action is consumed)
+   - `processing/<consumer_id>/` → `failed/` (if timeout without response)
+
+**Idempotency**: `deviation_id` serves as the idempotency key. Consumers MUST reject processing if a request envelope with the same `deviation_id` has already been resolved (`ack/` or `failed/`).
+
+#### 9.5.2 deviation_approval
+
+**Envelope location**: `control_actions/inbox/deviation_approval_<deviation_id>.json`
+
+**Required fields**:
+- `control_kind`: `"deviation_approval"`
+- `deviation_id` (string; ULID)
+- `decision` (enum: `"approve"| "deny"`)
+- `actor` (string; user id)
+- `created_at` (RFC3339 timestamp; optional)
+- `note` (string; optional)
+
+**Lifecycle moves**:
+1. `inbox/` → `processing/<consumer_id>/` (claim)
+2. On processing:
+   - If matching `deviation_approval_request` exists and is unresolved:
+     - Update deviation record with `approved_by`
+     - Move request envelope to `ack/`
+   - If request is already resolved or does not exist:
+     - Move to `failed/` with error annotation
+3. After successful processing:
+   - `processing/<consumer_id>/` → `applied/`
+
+**Maildir consistency**: Both the request and approval envelopes MUST be atomically moved. The runner MUST check both `ack/` and `applied/` when polling for approval status.
+
+#### 9.5.3 deviation_extend
+
+**Envelope location**: `control_actions/inbox/deviation_extend_<deviation_id>.json`
+
+**Required fields**:
+- `control_kind`: `"deviation_extend"`
+- `deviation_id` (string; ULID)
+- `extend_ms` (integer)
+- `note` (string)
+- `created_at` (RFC3339 timestamp; optional)
+
+**Lifecycle moves**:
+1. `inbox/` → `processing/<consumer_id>/` (claim)
+2. On processing:
+   - Validate `extend_ms` against `max_approval_extensions` config
+   - Update deviation record with new `deadline` and extension entry
+   - If validation fails or extension limit exceeded:
+     - Move to `failed/` with error annotation
+3. After successful processing:
+   - `processing/<consumer_id>/` → `applied/`
+
+**Constraint**: Maximum of 3 extensions per deviation (configurable). Consumers MUST track `extension_count` in the deviation record and reject extension attempts beyond the limit.
+

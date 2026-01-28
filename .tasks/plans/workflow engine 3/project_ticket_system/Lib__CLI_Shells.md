@@ -50,6 +50,9 @@ Within a ticket context:
 - `validate` — run validation (`ticket_validate_v1`)
 - `close` — run validate + evaluation + mark done (if pass)
 - `pause` / `resume` — write control actions (Core Flows Flow 12)
+- `approve-deviation approve|deny <notification_id> [--extend-ms <milliseconds>]` — respond to a deviation request
+
+**Late approval guidance**: After approving a deviation that required pausing, resume execution via `workflowctl run resume <run_id> --from-step <step_id>` to restart from the point where the deviation was recorded.
 
 ## 5) Integration with the runtime (normative)
 
@@ -59,3 +62,6 @@ Within a ticket context:
   - `workflowctl runs list`
   - `workflowctl runs show <run_id>`
   - `workflowctl notifications tail`
+  - `workflowctl approve-deviation approve|deny <notification_id> [--extend-ms <milliseconds>]`
+
+**Late approval guidance**: After approving a deviation that required pausing, resume execution via `workflowctl run resume <run_id> --from-step <step_id>` to restart from the point where the deviation was recorded.
