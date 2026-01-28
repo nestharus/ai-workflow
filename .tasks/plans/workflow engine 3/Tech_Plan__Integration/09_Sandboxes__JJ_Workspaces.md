@@ -92,16 +92,13 @@ Given a set of file input paths (from step-plan or derived), the following algor
    2.3. Reject `p` if it contains glob metacharacters (`*`, `?`, `[]`, `**`) unless `x_allow_globs_in_inputs = true`:
        - If glob patterns are present and `x_allow_globs_in_inputs` is not true, fail with `E_VALIDATION_FAILED`
        - Include the violating path and requirement for `x_allow_globs_in_inputs: true` in error details
-   2.4. Add exact file pattern: `P.add(p)`
-   2.5. Expand wildcards:
-       - If `p` contains glob patterns (`*`, `?`, `[]`, `**`) (only when `x_allow_globs_in_inputs = true`):
-         - Attempt to resolve expansion via `jj` or filesystem at baseline
-         - If expansion fails or exceeds pattern expansion limit (see below), add `p` as-is
-         - If expansion succeeds, add each resolved path `r` to `P`
-   2.6. Add parent directory pattern for `p`:
-       - Extract `parent_dir = dirname(p)`
-       - Normalize `parent_dir` to ensure trailing `/` for directories
-       - Add `parent_dir` to `P`
+   2.4. If `p` contains glob patterns (`*`, `?`, `[]`, `**`) (only when `x_allow_globs_in_inputs = true`):
+       - Extract `non_glob_prefix` by truncating at the first glob metacharacter
+       - Add directory pattern `ensure_dir(non_glob_prefix)` to `P` (see TOO_BROAD rules in Step 5)
+       - Do not add `p` directly; do not attempt pre-expansion
+   2.5. If `p` contains no glob patterns (ordinary path):
+       - Add exact file pattern: `P.add(p)`
+       - Add parent directory pattern: `P.add(ensure_dir(dirname(p)))`
 
 **Step 3**: Add toolchain root files (conditional):
    - If `[sandbox].include_toolchain_config = true` (default `true`):
@@ -109,27 +106,26 @@ Given a set of file input paths (from step-plan or derived), the following algor
        - If `c` exists at repo root, add `c` to `P`
 
 **Step 4**: Stable deduplication with first-occurrence preservation:
-   4.1. Convert `P` to sorted list using stable sort by specificity (most specific first):
-       - Exact file paths (no trailing `/`) come before directory patterns
-       - Longer directory paths come before shorter parent paths
-       - Preserve input order for equal-specificity patterns
-   4.2. Initialize empty list `include_patterns = []`
-   4.3. Initialize empty set `seen_patterns = {}`
-   4.4. For each pattern `p` in sorted list:
+   4.1. Initialize empty list `include_patterns = []`
+   4.2. Initialize empty set `seen_patterns = {}`
+   4.3. For each pattern `p` in `P` in insertion order:
        - If `p in seen_patterns`: skip (first occurrence preserved)
        - If `p` is a file path and is covered by an existing directory pattern in `include_patterns`, skip
        - If `p` is a directory and is a prefix of an existing pattern in `include_patterns`, keep both
        - Otherwise, add `p` to `include_patterns` and `p` to `seen_patterns`
 
 **Step 5**: Broadness guard validation:
-   5.1. Count patterns by prefix:
-       - For too-broad detection, check if any pattern starts with `TOO_BROAD_PREFIX` (configurable, default `""`)
-   5.2. If `len(include_patterns) > BROADNESS_THRESHOLD` (default 200):
+   5.1. Check for too-broad prefixes from glob-derived patterns:
+       - For each pattern in `include_patterns`, check if it is a glob-derived prefix (added in Step 2.4)
+       - If any glob-derived prefix is in `TOO_BROAD_PREFIXES` (default `{"", ".", "/"}`), mark pattern as `TOO_BROAD`
+   5.2. If `len(include_patterns) > BROADNESS_THRESHOLD` (default 200) OR any pattern is marked `TOO_BROAD`:
        - If `policy.allow_full_fallback = true`:
+         - Record deviation: "Escalated to full mode due to broadness (pattern count: X, broad prefixes present: Y)"
+         - Emit notification at `warn` severity with deviation details
          - Escalate to full sparse mode (recreate sandbox with `sparse_mode=full`)
          - Return empty include_patterns (full mode takes precedence)
        - Else, fail with `E_SPARSE_DERIVATION_FAILED`
-       - Include current pattern count, threshold, and a list of patterns in error details
+       - Include current pattern count, threshold, broad prefixes detected (if any), and list of broad patterns in error details
 
 **Step 6**: Validate pattern count limit:
    6.1. If `len(include_patterns) > MAX_PATTERNS` (default 1000):
@@ -139,7 +135,7 @@ Given a set of file input paths (from step-plan or derived), the following algor
 
 **Constants**:
 - `DEFAULT_TOOLCHAIN_FILES = [".editorconfig", ".gitignore", "pyproject.toml", "requirements.txt", "poetry.lock", "package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json", "go.mod", "go.sum", "Cargo.toml", "Cargo.lock", "Makefile"]`
-- `TOO_BROAD_PREFIX = ""` (configurable via `[sandbox].too_broad_prefix`)
+- `TOO_BROAD_PREFIXES = {"", ".", "/"}` (configurable via `[sandbox].too_broad_prefixes`)
 - `BROADNESS_THRESHOLD = 200` (configurable via `[sandbox].broadness_threshold`)
 - `MAX_PATTERNS = 1000` (configurable via `[sandbox].max_patterns`)
 
@@ -194,12 +190,15 @@ Input file inputs:
 
 Algorithm execution:
 - Step 2.1-2.3: Normalize and validate all paths
-- Step 2.4: Add exact patterns to `P`: `{src/main.py, src/utils/helper.py, README.md}`
-- Step 2.6: Add parent directories: `{src/main.py, src/utils/helper.py, README.md, src/, src/utils/}`
+- Step 2.5: Add exact patterns and parent dirs to `P` (no glob patterns): `{src/main.py, src/, src/utils/helper.py, src/utils/, README.md, /}`
 - Step 3: (assume toolchain config enabled) Add `pyproject.toml` → `{..., pyproject.toml}`
-- Step 4: Stable deduplication with ordering:
-  - Sorted by specificity: `src/main.py, src/utils/helper.py, README.md, pyproject.toml, src/utils/, src/`
-  - Final `include_patterns`: `[src/main.py, src/utils/helper.py, README.md, pyproject.toml, src/utils/, src/]`
+- Step 4: Stable deduplication with insertion order:
+  - In insertion order, preserve first occurrence of each unique pattern
+  - Final `include_patterns` (after dedup): `[src/main.py, src/, src/utils/helper.py, src/utils/, README.md, /, pyproject.toml]`
+- Step 5: Broadness guard check:
+  - No glob-derived patterns, no too-broad prefixes detected
+  - Pattern count (7) < BROADNESS_THRESHOLD (200)
+  - Proceed with derived `include_patterns`
 
 **Example 2: Overlap handling**
 
@@ -209,11 +208,13 @@ Input file inputs:
 ```
 
 Algorithm execution:
-- Step 2.4-2.6: `P = {src/app/feature.py, src/app/, src/app/common.py}` (plus parents)
-- Step 4 deduplication:
-  - `src/app/feature.py` → add to `include_patterns` (not covered by dir pattern yet)
-  - `src/app/` → add to `include_patterns` (directory pattern)
-  - `src/app/common.py` → covered by `src/app/`, skip per de-overlap rule
+- Step 2.5: Add exact patterns and parent dirs to `P`: `{src/app/feature.py, src/app/, src/app/, src/app/common.py, src/app/}`
+  - Note: `src/app/` appears multiple times (once as explicit input, once as parent)
+- Step 4 Stable deduplication in insertion order:
+  - `src/app/feature.py` → add to `include_patterns`
+  - `src/app/` (first explicit input) → add to `include_patterns`
+  - Subsequent `src/app/` entries → skip (already in `seen_patterns`)
+  - `src/app/common.py` → skip (covered by existing `src/app/` directory pattern)
   - Final `include_patterns`: `[src/app/feature.py, src/app/]`
 
 **Example 3: Glob rejection (default behavior)**
