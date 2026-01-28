@@ -311,8 +311,11 @@ For each hunk, track:
 
 1. For each modified file:
    - Read the base file content at `base_rev`
-   - Split into lines with preserved line endings
-2. Store as `FileContent { path, lines, line_ending }`
+   - Normalize line endings to `\n` (CRLF and LF are converted to LF)
+   - Split into normalized lines
+2. Store as `FileContent { path, lines }` (line endings are normalized)
+
+**Line-ending normalization note**: Base file content is normalized to `\n` before any comparison, making dry-run matching line-ending agnostic. This uses the same normalization as patch parsing/validation (see §3.1.1.1 line 259).
 
 **Step 3a: Dry-run apply with fuzz matching**
 
@@ -321,6 +324,7 @@ For each hunk on a file:
 1. **Locate match region**: Search the base file for the hunk's context lines within `+/- max_fuzz_lines` positions around `old_start`
    - `max_fuzz_lines` defaults to 50 (workflow-configurable)
    - Use exact preimage matching at anchor position `old_start` within fuzz range
+   - Matching is performed on normalized lines (line-ending agnostic)
 
 2. **Match types**:
    - **Exact match**: Found at exactly `old_start`
@@ -449,6 +453,34 @@ Scope enforcement applies equally to:
 - File deletions (paths present in `---` but not `+++`)
 
 Any of these operations on a path outside `allowed_write_paths[]` is a scope violation.
+
+##### 3.1.1.5 Rename handling
+
+**Scope validation for renames**:
+
+When a patch includes a rename operation (indicated by `rename from` and `rename to` git-style headers), both the `from` path and the `to` path MUST be validated independently against `allowed_write_paths[]`.
+
+**Requirement**:
+
+- Both `rename from` (old path) and `rename to` (new path) MUST each match at least one pattern in `allowed_write_paths[]`
+- A mismatch on EITHER side is a scope violation
+
+**Path normalization for renames**:
+
+Both paths are normalized using the same rules as other paths:
+- Collapse `./` and redundant `//` sequences
+- Convert all path separators to forward slashes (`\` → `/`)
+- Strip leading `a/` or `b/` prefixes if present
+- Strip trailing slashes before comparison
+
+**Scope failure on rename mismatch**:
+
+If either the `from` path or the `to` path does NOT match `allowed_write_paths[]`:
+- Fail with `error_code: E_OWNERSHIP_VIOLATION`
+- Include `failure_signature` and list the offending path(s) in error report:
+  - If `from` mismatches: list `"rename from: <old_path>"` as offending
+  - If `to` mismatches: list `"rename to: <new_path>"` as offending
+  - If both mismatch: list both paths as offending
 
 ##### 3.1.1.4 Optional syntax checks
 
