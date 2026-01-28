@@ -133,6 +133,10 @@ tail` and similar commands. It does NOT affect persistence.
 of deduplication status. The deduplication window affects only what is displayed
 to the user, not what is recorded.
 
+**Deduplication condition (normative)**: Display deduplication ONLY applies when
+`dedupe_key` is provided and non-empty. If `dedupe_key` is missing or blank,
+consumers MUST NOT dedupe and MUST display all notifications.
+
 **Deduplication key**: `(dedupe_key, severity)` tuple. Two notifications are
 considered duplicates for display purposes if and only if both fields match.
 

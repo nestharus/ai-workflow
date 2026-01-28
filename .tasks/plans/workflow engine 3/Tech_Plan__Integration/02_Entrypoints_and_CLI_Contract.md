@@ -115,7 +115,9 @@ Implementation requirement (normative):
 
 **Display deduplication behavior (normative):**
 
-1. Within a configurable time window (default: 60 seconds per `notification_dedupe_window_ms`), suppress display of duplicate notifications where duplicates are defined as notifications sharing the same:
+1. **Deduplication condition (normative):** Display deduplication ONLY applies when `dedupe_key` is provided and non-empty. If `dedupe_key` is missing or blank, consumers MUST NOT dedupe and MUST display all notifications.
+
+2. Within a configurable time window (default: 60 seconds per `notification_dedupe_window_ms`), suppress display of duplicate notifications where duplicates are defined as notifications sharing the same:
    - `dedupe_key`: normalized content fingerprint (e.g., hash of notification template + resolved parameter values)
    - `severity`: notification severity level
 

@@ -9,17 +9,15 @@ from pathlib import Path
 
 
 def _extract_file_path(content: str) -> str | None:
-    """Extract folder path from task content.
+    """Extract file path from task content.
 
-    Looks for pattern:
-    - folder: "path/to/folder"
+    Looks for pattern: `file:path/to/file.md`
 
-    Returns the folder path found, or None.
+    Returns the file path found, or None.
     """
-    # Pattern for 'folder: "path"' at start of content
-    folder_match = re.search(r'^folder:\s*["\']([^"\']+)["\']', content, re.MULTILINE)
-    if folder_match:
-        return folder_match.group(1).strip().replace("\\", "/")
+    file_match = re.search(r"`file:([^`]+)`", content)
+    if file_match:
+        return file_match.group(1).strip().replace("\\", "/")
 
     return None
 
