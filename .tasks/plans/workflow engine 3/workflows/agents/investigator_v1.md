@@ -10,7 +10,7 @@ input_schema:
   required: ["run_id", "error_code", "evidence_index"]
   properties:
     run_id: { type: string }
-    step_execution_id: { type: [string, "null"] }
+    step_execution_id: { type: [string, "null"], description: "ULID for a specific step execution instance (optional)" }
     error_code: { type: string }
     evidence_index: { type: object, description: "Pointers to logs/artifacts; already bounded by host." }
 output_schema:

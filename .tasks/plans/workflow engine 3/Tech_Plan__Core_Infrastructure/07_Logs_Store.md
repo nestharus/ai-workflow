@@ -36,7 +36,7 @@ Every event MUST include:
 - `run_id` (ULID string)
 
 - `writer_id` (string)  
-  - Identifies the log writer. For step executions, `writer_id` SHOULD equal `step_execution_id`.
+  - Identifies the log writer. For step executions, `writer_id` MUST equal `step_execution_id` (the ULID execution instance, not the semantic `step_id`).
 
 - `seq` (int)  
   - Monotonic per `(run_id, writer_id)` shard, starting at `1`.
@@ -46,8 +46,12 @@ Every event MUST include:
 
 #### 8.2.2 Optional fields (recommended)
 
-- `step_execution_id` (ULID string)
-- `ticket_id`, `task_id`, `step_id` (semantic IDs)
+- `step_execution_id` (ULID string)  
+  - SHOULD be present for all step-related events.
+- `ticket_id` (semantic ID)
+- `task_id` (semantic ID)
+- `step_id` (semantic ID)  
+  - Semantic step identifier from plan (e.g., `step-001`).
 - `severity` (string enum): `debug|info|warn|error|critical`  
   - If omitted, default is `info`.
 
@@ -270,4 +274,3 @@ Readers MUST:
   - the reader MUST fail loudly (do not silently continue),
   - using `E_INTERNAL` with `details.reason="LOG_SEQ_GAP"`,
   - and MUST recommend running `workflowctl fsck` / `workflowctl recover`.
-

@@ -14,6 +14,7 @@ This system uses **two ID families**:
 
 1. **Semantic IDs** (human-meaningful strings) — see Terminology §0.1:
    - `project_id`, `ticket_id`, `task_id`, `step_id`
+   - `workflow_step_id` (step identifier within workflow YAML; use when disambiguation from plan `step_id` is needed)
    - `workflow_id`, `agent_id`
 
 2. **Generated IDs (ULID)** for durable, globally unique identifiers:
@@ -69,7 +70,17 @@ On each call:
 
 **Clock-backwards note**: clamping is required; ULIDs MUST NOT go backwards due to NTP adjustments.
 
-#### 4.1.3 Collision handling for file-backed queues (normative)
+#### 4.1.3 ID disambiguation rules (normative)
+
+This spec defines three distinct identifiers that are often confused:
+
+- `step_id`:
+  - In **step plan** context: the semantic plan step identifier (e.g., `step-001`) from `tasks/<task_id>/steps/step_plan.yaml`.
+  - In **workflow YAML** context: the workflow step identifier (the `step_id` field inside workflow YAML).
+- `step_execution_id`: always the ULID for a specific execution attempt/instance.
+- `workflow_step_id`: use this name explicitly in runtime docs and events when the workflow YAML step identifier might be confused with plan `step_id`.
+
+#### 4.1.4 Collision handling for file-backed queues (normative)
 
 ULID collision probability is negligible, but file-backed queues MUST still be correct.
 
@@ -87,3 +98,4 @@ Consumers MUST treat filenames as opaque identifiers (ordering is a convenience 
 - All persisted timestamps are RFC3339 UTC strings (`...Z`).
 - Filenames MUST NOT contain colons (Windows); ULIDs are used for filenames.
 
+See also: Tech_Plan__Integration/01_Scope_and_Terminology.md §1.2 for usage examples.

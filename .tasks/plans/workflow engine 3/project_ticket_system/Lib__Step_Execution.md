@@ -21,7 +21,7 @@ Parallelism:
 ## 2) Minimum evidence (normative)
 
 Each executed step MUST produce:
-- WSS step execution doc (`workspace/runs/<run_id>/steps/<step_execution_id>.json`, per Core Infrastructure)
+- WSS step execution doc (`workspace/runs/<run_id>/steps/<step_execution_id>.json`, per Core Infrastructure; where `step_execution_id` is the ULID execution instance, distinct from the semantic `step_id` in the step plan)
 - patch diff + metadata under the step artifacts directory (runner-defined)
 - shard events: `step_start`, `tool_*`, `progress`, `step_stop`
 
@@ -65,7 +65,8 @@ Minimum JSON schema:
   "created_at": "<rfc3339>",
   "task_id": "<task_id>",
   "ticket_id": "<ticket_id>",
-  "step_id": "<step_id>",
+  "step_id": "<step_id>", // semantic step identifier from plan (e.g., step-001)
+  "step_execution_id": "<ulid>", // ULID execution instance
   "kind": "mode_fallback|scope_expand|sparse_expand|tool_substitute|plan_adjustment|other",
   "severity": "info|warn|error",
   "summary": "one-line description",
@@ -77,6 +78,27 @@ Minimum JSON schema:
 ```
 
 If user approval is required, `approved_by` is set and the corresponding control action ID MUST be referenced in `evidence_refs`.
+
+Example:
+
+```json
+{
+  "schema_version": 1,
+  "deviation_id": "01J...",
+  "created_at": "2026-01-26T12:34:56Z",
+  "task_id": "task-001",
+  "ticket_id": "TICK-123",
+  "step_id": "step-001",
+  "step_execution_id": "01J...",
+  "kind": "mode_fallback",
+  "severity": "warn",
+  "summary": "Mode A hydration failed; fell back to Mode B sandbox",
+  "expected": "Virtual hydration (Mode A) succeeds with declared file list only",
+  "actual": "Sandbox hydration (Mode B) used due to binary/too_large inputs",
+  "evidence_refs": ["workspace/runs/<run_id>/artifacts/steps/<step_execution_id>/hydration_manifest.json"],
+  "approved_by": null
+}
+```
 
 ### 3.4 Approval flow (normative)
 
@@ -92,7 +114,7 @@ Protocol:
 3. Runner writes a control action request envelope:
    - `control_actions/inbox/deviation_approval_request_<deviation_id>.json`
    - `control_kind: "deviation_approval_request"`
-   - includes `deviation_id`, `ticket_id`, `task_id`, `step_id`, `capability`, `approval_timeout_ms`
+   - includes `deviation_id`, `ticket_id`, `task_id`, `step_id`, `step_execution_id`, `capability`, `approval_timeout_ms`
 4. Runner MUST enter the PAUSE protocol (Core Flows Flow 12) until resolved.
 5. User responds via CLI:
    - `workflowctl approve-deviation <deviation_id> --approve|--deny [--note "..."]`
@@ -251,6 +273,7 @@ If an approval arrives after the timeout has expired and the run has already sto
    - `deviation_id`
    - `run_id`
    - `step_id`
+   - `step_execution_id`
    - User instructions: `workflowctl run resume <run_id> --from-step <step_id>`
 
 3. Do NOT automatically resume on late approval (avoids silent race resolution)

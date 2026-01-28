@@ -1,15 +1,20 @@
+# ID naming: step_id=semantic, step_execution_id=ULID (see Tech_Plan__Core_Infrastructure/03_IDs_and_Time.md)
 schema_version: 1
 workflow_id: step_execute_v1
 display_name: "Step execute (v1)"
 description: "Execute a single step from a validated step plan."
 inputs:
   type: object
-  required: [ticket_id, task_id, step_id]
+  required: [ticket_id, task_id, step_id, step_execution_id]
   properties:
     ticket_id: { type: string }
     task_id: { type: string }
-    step_id: { type: string }
-    step_execution_id: { type: string }
+    step_id:
+      type: string
+      description: "Semantic step identifier from plan"
+    step_execution_id:
+      type: string
+      description: "ULID for this execution instance"
 steps:
   - step_id: execute
     kind: agent

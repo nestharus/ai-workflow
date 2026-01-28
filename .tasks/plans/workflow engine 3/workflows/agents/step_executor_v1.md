@@ -11,8 +11,8 @@ input_schema:
   properties:
     ticket_id: { type: string }
     task_id: { type: string }
-    step_id: { type: string }
-    step_execution_id: { type: string }
+    step_id: { type: string, description: "Semantic step identifier from plan (e.g., 'step-001')" }
+    step_execution_id: { type: string, description: "ULID for this specific execution instance" }
     ticket_doc: { type: object }
     task_doc: { type: object }
     step_spec: { type: object }
@@ -28,7 +28,7 @@ output_schema:
     status: { type: string, enum: ["completed", "needs_user", "failed"] }
     mode_used: { type: string, enum: ["A", "B"] }
     applied: { type: boolean }
-    artifacts: { type: object, description: "Key artifact paths: patch.diff, hunk_lint.json, hydration_manifest.json, etc." }
+    artifacts: { type: object, description: "Key artifact paths under workspace/runs/<run_id>/artifacts/steps/<step_execution_id>/ (patch.diff, hunk_lint.json, hydration_manifest.json, etc.)." }
     touched_paths: { type: array, items: { type: string } }
     failure_signature: { type: [string, "null"] }
     summary: { type: string }
@@ -62,7 +62,8 @@ Normative algorithm:
 
 6) Apply patch:
    - workflow_engine.invoke {subcommand:"apply_patch", ...}
-   - Persist patch artifact and references
+   - Persist patch artifact and references under: workspace/runs/<run_id>/artifacts/steps/<step_execution_id>/
+   - Ensure all step-related log events include both step_id (semantic) and step_execution_id (ULID) for correlation
 
 7) On any failure:
    - Store artifacts and an error object

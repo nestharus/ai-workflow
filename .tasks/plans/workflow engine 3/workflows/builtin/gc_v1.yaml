@@ -1,3 +1,4 @@
+# ID naming: step_id=semantic, step_execution_id=ULID (see Tech_Plan__Core_Infrastructure/03_IDs_and_Time.md)
 schema_version: 1
 workflow_id: gc_v1
 display_name: "Garbage collect (v1)"

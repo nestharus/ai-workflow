@@ -431,7 +431,7 @@ The runner MUST also attach (or inline) any hydrated file slices needed for the 
 
 The durable input is always stored as:
 
-- `workspace/runs/<run_id>/steps/<step_id>/agent_input.json`
+- `workspace/runs/<run_id>/artifacts/steps/<step_execution_id>/agent_input.json`
 
 ### Output capture model
 

@@ -91,9 +91,12 @@ Optional fields:
 
 Each item in `steps` is a mapping with these fields.
 
+Note: the `step_id` field in workflow YAML refers to the workflow step identifier. At runtime, this is distinct from the semantic `step_id` in step plans and the `step_execution_id` ULID.
+
 Required:
 
 - `step_id` (string)  
+  - This is the workflow step identifier. In runtime contexts, distinguish from plan `step_id` by using `workflow_step_id` when needed.
   - Unique within the workflow.  
   - Regex: `^[a-z][a-z0-9_\-]*$`
 

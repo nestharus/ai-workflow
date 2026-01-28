@@ -35,7 +35,7 @@ workspace/
       conflicts/
   runs/<run_id>/
     run.json
-    steps/<step_execution_id>.json
+    steps/<step_execution_id>.json        # step_execution_id is ULID execution instance (not semantic step_id)
     artifacts/
       env/                           # env capture, tool versions, fingerprints
       sandbox/                       # lint/test/build outputs (durable)
@@ -68,4 +68,3 @@ All updates to JSON docs use **JSON Merge Patch (RFC 7396)**:
 - `null` in a patch indicates deletion and MUST NOT be used as a business value.
 
 RFC 7396: https://datatracker.ietf.org/doc/html/rfc7396
-

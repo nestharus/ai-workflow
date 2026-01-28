@@ -233,17 +233,27 @@ Evidence:
 Inputs (minimum):
 
 - `ticket_id`
-- `step_id`
+- `step_id` (semantic ID from step plan, e.g., `step-001`)
+- `step_execution_id` (ULID for this execution instance)
 - `step_plan_item` (from `tasks/<task_id>/steps/step_plan.yaml`)
 
 Outputs (durable evidence):
 
-- `steps/<step_id>/patch.diff` (unified diff; may be empty only if explicitly allowed)
-- `steps/<step_id>/patch_meta.json`
-- `steps/<step_id>/hydration_manifest.json`
-- `steps/<step_id>/hunk_lint.json` (Stage 1 result)
+- `workspace/runs/<run_id>/artifacts/steps/<step_execution_id>/patch.diff` (unified diff; may be empty only if explicitly allowed)
+- `workspace/runs/<run_id>/artifacts/steps/<step_execution_id>/patch_meta.json`
+- `workspace/runs/<run_id>/artifacts/steps/<step_execution_id>/hydration_manifest.json`
+- `workspace/runs/<run_id>/artifacts/steps/<step_execution_id>/hunk_lint.json` (Stage 1 result)
 - logs for any tool runs
 - optional `deviations/<deviation_id>.md` (see Project & Ticket Management §7.3)
+
+### 8.0 Identifier contract
+
+- `step_id`: semantic identifier from `tasks/<task_id>/steps/step_plan.yaml` (e.g., `step-001`)
+- `step_execution_id`: ULID generated when the step execution begins
+- All artifact paths use `step_execution_id`
+- All log events include both identifiers for correlation
+
+See Core Infrastructure §4.1 for ID definitions.
 
 ### 8.1 Mode selection
 
@@ -309,7 +319,10 @@ Hydration failures are handled loudly.
 The step runner passes a single structured input object to the patch author agent:
 
 - `context`:
-  - `ticket_id`, `step_id`, `run_id`
+  - `ticket_id`
+  - `step_id`              # semantic step identifier from plan (e.g., step-001)
+  - `step_execution_id`    # ULID for this execution instance
+  - `run_id`
   - `base_rev`, `tip_rev`
   - `mode` (`A|B`)
   - `allowed_write_paths` (derived from step plan)
@@ -531,7 +544,7 @@ RESUME is symmetric:
 ## Flow 13 — Spawn-step (flat orchestration)
 
 Agents request child steps by writing a `spawn_step` control action.
-Root validates, spawns as a direct child, and writes an ACK with `child_step_execution_id`.
+Root validates, spawns as a direct child, and writes an ACK with `child_step_execution_id`. # ULID for child execution instance
 
 Evidence: control action file + ACK + child step doc.
 

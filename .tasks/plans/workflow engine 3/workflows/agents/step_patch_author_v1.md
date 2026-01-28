@@ -15,7 +15,7 @@ input_schema:
       properties:
         ticket_id: { type: string }
         task_id: { type: string }
-        step_id: { type: string }
+        step_id: { type: string, description: "Semantic step identifier from plan (e.g., 'step-001')" }
         base_rev: { type: string }
         tip_rev: { type: string }
         mode: { type: string, enum: ["A", "B"] }

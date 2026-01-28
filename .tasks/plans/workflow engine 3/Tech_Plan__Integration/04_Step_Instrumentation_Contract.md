@@ -24,6 +24,7 @@ Every step process MUST:
 `@step` is the boundary where durability is guaranteed:
 
 - creates/updates: `workspace/runs/<run_id>/steps/<step_execution_id>.json`
-- appends to: `logs/runs/<run_id>/writers/<writer_id>.jsonl`
+- appends to: `logs/runs/<run_id>/writers/<writer_id>.jsonl` where `writer_id` equals `step_execution_id` for step processes
+- includes both `step_id` (semantic) and `step_execution_id` (ULID) in all events for correlation
 - emits periodic progress markers for long-running work:
   - `event_type="progress"` with `data.progress_key` and `data.progress_value`

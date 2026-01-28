@@ -130,3 +130,20 @@ To add a new terminology rule:
 5. Document the rule in TERMINOLOGY_RULES.md
 6. Update this file (01_Scope_and_Terminology.md) with rule specifics
 7. Run the linter to baseline compliance and generate initial violations
+
+## 1.2 Step Identifier Terminology
+
+Authoritative definitions live in: Tech_Plan__Core_Infrastructure/03_IDs_and_Time.md.
+
+Definitions:
+
+- `step_id`: semantic identifier from the step plan (e.g., `step-001`)
+- `step_execution_id`: ULID for a specific execution attempt/instance of a step
+- `workflow_step_id`: step identifier within workflow YAML (use when disambiguation is needed)
+
+Examples:
+
+- Step plan: `tasks/<task_id>/steps/step_plan.yaml` defines `step_id: step-001`
+- Workflow YAML: `workflows/*.yaml` defines `step_id: validate_inputs` (use `workflow_step_id` in runtime docs/events when ambiguity is possible)
+- Runtime artifacts: `workspace/runs/<run_id>/artifacts/steps/<step_execution_id>/...`
+- Runtime logs: `logs/runs/<run_id>/writers/<step_execution_id>.jsonl` events include both `step_id` (semantic) and `step_execution_id` (ULID)

@@ -11,7 +11,7 @@ input_schema:
   properties:
     ticket_id: { type: string }
     run_id: { type: string }
-    step_execution_id: { type: [string, "null"] }
+    step_execution_id: { type: [string, "null"], description: "ULID for a specific step execution instance (optional)" }
     failure_context: { type: object, description: "Investigator output + bounded artifacts/log excerpts." }
     policy: { type: object }
 output_schema:
