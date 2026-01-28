@@ -79,6 +79,22 @@ implementation = "claude-sonnet"
 validation = "chatgpt-5"
 multimodal = "gemini-3"
 
+[models.fallbacks]
+# Fallback mappings for unavailable models (optional)
+# format: primary_model_id = "fallback_model_id"
+# When a primary model is unavailable, the fallback is used
+# Example: claude-opus = "claude-sonnet-4-1-20250515"
+# Required: when a fallback is applied, emit notification and set
+# run metric llm_model_fallback_used=true (see Integration §7.2.9)
+# Fallbacks only apply when model availability is checked via catalog;
+# explicit resolution failures (e.g., routing key not found) are distinct
+
+# Budget controls per workflow run (optional)
+budget_tokens_per_run = 1000000
+budget_usd_per_run = 5.00
+# Note: USD enforcement requires a cost table to be configured for
+# token-to-USD conversion (see Integration §7.2.9 for gateway contract)
+
 [dependencies]
 jj_min_version = "0.22.0"
 jj_recommended_version = "0.37.0"
@@ -139,6 +155,7 @@ Where `<model_ref>` is either:
 - a routing key (e.g., `planning`, `implementation`, `validation`, `multimodal`)
 
 **Routing resolution (normative)**:
+Convention: **implicit key resolution** (no `route:` prefix).
 - If `<model_ref>` matches a known explicit model name, use it.
 - Otherwise treat it as a routing key and resolve via `[models.routing].<key>`.
 - If no mapping exists, fail loudly with `E_MODEL_ROUTE_NOT_FOUND` and include:

@@ -40,20 +40,24 @@ On `workflowctl run --workflow <id-or-path>`:
 1. Resolve the workflow definition file (precedence §7.1) and validate against
    schema (§7.2).
 2. Resolve and validate workflow `inputs` (see §7.2.6 + prompt rules below).
-3. **Model selection** ( precedence resolution):
+3. **Model selection** (precedence resolution):
    * CLI flag `--model <value>` (highest precedence)
    * Step-level `steps[].model` (if defined)
    * Workflow-level `workflow.defaults.model` (if defined, see §7.2.8)
    * Config `models.default` (lowest precedence)
-   * Model routing resolution:
-     * If model value starts with `route:<key>`, resolve via
-       `models.routing.<key>` in config
-     * If routing key not found → fail loudly with `E_MODEL_ROUTE_NOT_FOUND`
+   * Model routing resolution (implicit key resolution; normative):
+     * If model value matches a known explicit model name, use it
+     * Otherwise treat as a routing key and resolve via `models.routing.<key>` in config
+     * If routing key not found → fail loudly with `E_MODEL_ROUTE_NOT_FOUND` and include:
+       - the unresolved key
+       - the effective config file(s) used (paths only)
+       - the workflow and step IDs (if applicable)
    * Model availability validation:
      * If the resolved model is not available in the configured model catalog,
        fail loudly with `E_DEPENDENCY_MISSING` (explicit model name in error)
      * Fallback model use is ONLY permitted when `[models.fallbacks]` contains
        an explicit mapping from the unavailable model to a fallback ID
+       (see Core Infrastructure §11.4 for schema definition)
 
 4. Allocate `run_id` (ULID).
 5. Write `workspace/runs/<run_id>/run.json` with:
