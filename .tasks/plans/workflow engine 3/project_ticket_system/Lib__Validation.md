@@ -26,17 +26,23 @@ This ensures tickets cannot be closed without explicit validation, even when "no
 
 ### 1.2 Evaluation for empty plans (normative)
 
-When a task completes via an empty step plan, the evaluation report MUST include:
+When a task completes via an empty step plan, the evaluation report MUST match the canonical schema defined in `Lib__Task_Decomposition.md` §6.2:
 
-- `task_id` (string)
-- `status = "completed"`
-- `empty_plan_executed = true`
-- `rationale` (string): either `"no work needed"` or `"already satisfied"`
-- `evidence_refs` (object):
-  - `plan_hash` (string): the hash of the empty step plan
-  - `validation_run_id` (string): ID of the validation workflow run
+```json
+{
+  "task_id": "<task_id>",
+  "status": "completed",
+  "empty_plan_executed": true,
+  "rationale": "<no work needed|already satisfied|other>",
+  "evidence_refs": {
+    "plan_hash": "sha256:<hex>",
+    "validation_run_id": "<run_id>",
+    "step_plan_validated_event_id": "<event_id>"
+  }
+}
+```
 
-This provides an auditable record of why no code changes were produced.
+See `Lib__Task_Decomposition.md` §6.2 for the complete specification including rationale value definitions and validation rules. This provides an auditable record of why no code changes were produced.
 
 ## 2) Minimum required behavior (normative)
 
