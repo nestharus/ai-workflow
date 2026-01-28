@@ -15,5 +15,5 @@ steps:
     description: "Run evaluation and record findings."
     capabilities_required: ["sandbox_exec", "llm_call"]
     with:
-      ticket_id: "${inputs.ticket_id}"
-      rev: "${inputs.rev}"
+      ticket_id: ${{ inputs.ticket_id }}
+      rev: ${{ inputs.rev }}

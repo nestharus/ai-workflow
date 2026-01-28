@@ -16,6 +16,6 @@ steps:
     description: "Apply repair changes, update evidence, and rerun targeted validation."
     capabilities_required: ["apply_patch", "sandbox_exec", "llm_call"]
     with:
-      ticket_id: "${inputs.ticket_id}"
-      run_id: "${inputs.run_id}"
-      step_execution_id: "${inputs.step_execution_id}"
+      ticket_id: ${{ inputs.ticket_id }}
+      run_id: ${{ inputs.run_id }}
+      step_execution_id: ${{ inputs.step_execution_id }}

@@ -16,6 +16,6 @@ steps:
     description: "Run rebase, detect conflicts, and resolve using the enhanced protocol."
     capabilities_required: ["sandbox_exec", "apply_patch", "llm_call"]
     with:
-      ticket_id: "${inputs.ticket_id}"
-      source_ref: "${inputs.source_ref}"
-      target_ref: "${inputs.target_ref}"
+      ticket_id: ${{ inputs.ticket_id }}
+      source_ref: ${{ inputs.source_ref }}
+      target_ref: ${{ inputs.target_ref }}

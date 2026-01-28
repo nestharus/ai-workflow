@@ -15,6 +15,6 @@ steps:
     entrypoint: "agent:task_decomposer_v1"
     description: "Produce/merge step_plan.yaml and candidates for the task."
     with:
-      ticket_id: "${inputs.ticket_id}"
-      task_id: "${inputs.task_id}"
-      force: "${inputs.force}"
+      ticket_id: "${{ inputs.ticket_id }}"
+      task_id: "${{ inputs.task_id }}"
+      force: "${{ inputs.force }}"
