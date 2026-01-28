@@ -40,8 +40,17 @@ On `workflowctl run --workflow <id-or-path>`:
 1. Resolve the workflow definition file (precedence §7.1) and validate against
    schema (§7.2).
 2. Resolve and validate workflow `inputs` (see §7.2.6 + prompt rules below).
-3. Allocate `run_id` (ULID).
-4. Write `workspace/runs/<run_id>/run.json` with:
+3. **Model selection** ( precedence resolution):
+   * CLI flag `--model <value>` (highest precedence)
+   * Step-level `steps[].model` (if defined)
+   * Workflow-level `workflow.defaults.model` (if defined, see §7.2.8)
+   * Config `models.default` (lowest precedence)
+   * Model routing resolution:
+     * If model value starts with `route:<key>`, resolve via
+       `models.routing.<key>` in config
+     * If routing key not found → fail loudly with `E_MODEL_ROUTE_NOT_FOUND`
+4. Allocate `run_id` (ULID).
+5. Write `workspace/runs/<run_id>/run.json` with:
    * `workflow_id`
    * `status: "running"`
    * `started_at`
@@ -167,7 +176,72 @@ Step output storage (schema + size limits)—normative storage rules (v1):
 * **Validation failure**: On mismatch, fail loudly `E_VALIDATION_FAILED` with
   field-level errors (best effort).
 
-##### E) Failure policy semantics (explicit statuses and propagation)
+##### E) LLM usage tracking and budget enforcement
+
+**Fallback model configuration** (optional):
+
+* Config may include `[models.fallbacks]` mapping from primary model IDs to
+  fallback model IDs
+* When a fallback is used:
+  * Emit explicit informational notification to user (not silent)
+  * Set run metric `llm_model_fallback_used=true` in run metadata
+* Fallback selection logic is governed by the gateway contract (Integration §8)
+
+**Usage tracking**:
+
+* Each `llm_call` returns usage object (gateway contract, Integration §8):
+  * `prompt_tokens`: int
+  * `completion_tokens`: int
+  * `total_tokens`: int
+  * `latency_ms`: int
+* Runner aggregates usage across all LLM calls in the workflow run
+* Write aggregated usage to `workspace/runs/<run_id>/artifacts/llm_usage.json`:
+
+  ```json
+  {
+    "run_id": "<run_id>",
+    "workflow_id": "<workflow_id>",
+    "total_prompt_tokens": 12345,
+    "total_completion_tokens": 54321,
+    "total_tokens": 66666,
+    "total_latency_ms": 15000,
+    "calls_by_model": {
+      "claude-opus-4-5-20251101": {
+        "prompt_tokens": 10000,
+        "completion_tokens": 40000,
+        "total_tokens": 50000,
+        "call_count": 5
+      }
+    },
+    "fallback_used": false
+  }
+  ```
+
+**Budget enforcement**:
+
+* Config may include `[budgets]` section with token and USD limits:
+  * `max_tokens_per_run`: int (optional, e.g., 1000000)
+  * `max_usd_per_run`: decimal (optional, e.g., 5.00)
+* After each LLM call, runner checks if any budget would be exceeded:
+  * If exceeded: stop the run, set `status="needs_user"`, and halt step
+    execution
+  * Rationale: User intervention required to either increase budget or
+    modify workflow
+* Budget status is tracked in `run.json`:
+
+  ```json
+  {
+    "budget_status": {
+      "tokens_used": 66666,
+      "tokens_limit": 1000000,
+      "usd_used": 0.33,
+      "usd_limit": 5.00,
+      "budget_exceeded": false
+    }
+  }
+  ```
+
+##### F) Failure policy semantics (explicit statuses and propagation)
 
 `on_failure.mode` applies to the step that failed:
 
@@ -206,6 +280,7 @@ Terminal condition:
 * `failed` when:
   * Any step is `failed` and `on_failure.mode != "pause"/"investigate"` OR
   * Any step is `blocked` at end of scheduling.
+* `needs_user` when budget limits are exceeded (see §E).
 
 ### 7.3 Capability gating (trust)
 
