@@ -1,7 +1,7 @@
 ---
 description: Handles review tasks for a single file
 routing:
-  - model: minimax
+  - model: cerebras
 ---
 
 # PR File Handler Agent

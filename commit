@@ -1,2 +1,4 @@
 #!/bin/bash
-aicommit2 --all --auto-select --confirm && git push
+git add -A
+./cerb -p "Look at the staged git changes and create a commit with an appropriate message."
+git push

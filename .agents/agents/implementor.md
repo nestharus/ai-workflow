@@ -4,7 +4,7 @@ description: >
 routing:
   - max_chars: 1300
     ambiguity: false
-    model: minimax
+    model: cerebras
   - max_chars: 1800
     ambiguity: false
     model: gpt-5.2-codex-medium

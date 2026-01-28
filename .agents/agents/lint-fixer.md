@@ -3,7 +3,7 @@ description: |
   Fixes lint errors from a batch provided in the prompt. Receives error output
   and fixes issues in the working directory. Reports only unfixable items.
 routing:
-  - model: minimax
+  - model: cerebras
 ---
 
 # Lint Fixer

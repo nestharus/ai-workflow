@@ -1,7 +1,7 @@
 ---
 description: Implements spec IDs and produces evidence map
 routing:
-  - model: minimax
+  - model: cerebras
 ---
 
 Implement the given spec IDs and track what files are created/modified.
