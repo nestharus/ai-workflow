@@ -8,6 +8,36 @@
 
 Validation is a workflow (default `ticket_validate_v1`) and MUST block ticket close on failure (see `lifecycle` and `export`).
 
+### 1.1 Validation for empty plans (normative)
+
+Validation MUST run even when all tasks completed via empty step plans (`steps: []`):
+
+- Step plan schema validation runs regardless of step count (emits `step_plan_validated` event)
+- Ticket validation workflow runs as normal during ticket close
+- An empty plan does NOT bypass validation requirements
+
+When no code changes exist (`base_rev == tip_rev`):
+- Sandbox creation still occurs (from ticket tip)
+- Configured validation commands still run
+- Commands may pass trivially if there is nothing to test
+- Validation summary records `no_changes: true` alongside pass/fail status
+
+This ensures tickets cannot be closed without explicit validation, even when "no work needed".
+
+### 1.2 Evaluation for empty plans (normative)
+
+When a task completes via an empty step plan, the evaluation report MUST include:
+
+- `task_id` (string)
+- `status = "completed"`
+- `empty_plan_executed = true`
+- `rationale` (string): either `"no work needed"` or `"already satisfied"`
+- `evidence_refs` (object):
+  - `plan_hash` (string): the hash of the empty step plan
+  - `validation_run_id` (string): ID of the validation workflow run
+
+This provides an auditable record of why no code changes were produced.
+
 ## 2) Minimum required behavior (normative)
 
 Validation MUST:

@@ -171,10 +171,37 @@ Before executing a step plan, the runner MUST validate:
 8. Unknown fields are ALLOWED and MUST be preserved (forward compatibility).
 
 Empty plans:
-- `steps: []` is VALID and represents “no work needed”.
+- `steps: []` is VALID and represents "no work needed".
 - Execution of an empty plan MUST:
-  - emit a `step_plan_validated` event
-  - mark the task `completed` without running patch/tool steps.
+  - emit a `step_plan_validated` event (validation runs regardless of step count)
+  - mark the task `completed` without running patch/tool steps
+  - record empty plan execution in evaluation artifacts (see §6.2)
+
+### 6.2 Empty plan evaluation representation (normative)
+
+When a task completes via an empty step plan, the evaluation record MUST include:
+
+```json
+{
+  "task_id": "<task_id>",
+  "status": "completed",
+  "empty_plan_executed": true,
+  "rationale": "<no work needed|already satisfied|other>",
+  "evidence_refs": {
+    "plan_hash": "sha256:<hex>",
+    "validation_run_id": "<run_id>",
+    "step_plan_validated_event_id": "<event_id>"
+  }
+}
+```
+
+Rationale values (v1):
+- `"no work needed"`: The decomposition determined no changes are required
+- `"already satisfied"`: Requirements are already met by existing code
+- `"deferred"`: Work is explicitly deferred to a later task (must include task reference)
+- `"other"`: Free-text explanation required in `rationale_detail` field
+
+The evaluator MUST NOT treat empty plan completion as a gap or missing implementation.
 
 On validation failure:
 - emit `E_VALIDATION_FAILED` with field-level errors (best-effort)

@@ -12,6 +12,28 @@ Ticket completion requires:
 3. Record export metadata in `ticket.json`.
 4. Mark ticket `done`.
 
+### 1.1 Empty plan ticket close eligibility (normative)
+
+A ticket MAY be closed even if all tasks completed via empty step plans (`steps: []`), provided:
+
+1. All tasks are in `completed` status (empty plan completion counts as `completed`)
+2. Ticket validation workflow passes (validation is NOT bypassed for empty plans)
+3. Each empty-plan task has a recorded rationale in its evaluation artifacts (§6.2 of `decompose`)
+
+Empty plan tickets:
+- Validation still runs even when no code changes were made
+- The validation workflow may pass trivially if there are no changes to test
+- Export produces a no-op commit or is skipped entirely (policy-dependent, see §1.2)
+
+### 1.2 Export policy for empty plans (normative)
+
+When exporting a ticket where `base_rev == tip_rev` (no actual changes):
+
+- `squash` policy: Create no commit; record `exported_tip: null` and `no_change: true` in metadata
+- `linear` policy: Create no commits; record `exported_tip: null` and `no_change: true` in metadata
+
+The export is still considered successful, and the ticket may transition to `done`.
+
 Concurrency (normative):
 - Export and ticket state updates MUST be performed under:
   - `locks/ticket.<ticket_id>.lock`
