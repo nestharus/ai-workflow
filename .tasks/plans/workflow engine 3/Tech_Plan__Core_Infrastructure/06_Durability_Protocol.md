@@ -90,14 +90,18 @@ Operations that MUST be journaled:
 `consumer_id` identifies the queue consumer that has claimed an item in `processing/<consumer_id>/`.
 
 Format (v1):
-- `consumer_id` MUST be: `<pid>.<ulid>`
+- `consumer_id` MUST be: `<role>.<pid>.<ulid>`
+  - `role`: short consumer role identifier (`root`, `pm`, `tm`, `step`, `ui`, `gc`, `doctor`, `recover`, etc.)
   - `pid`: OS process id of the consumer process
   - `ulid`: ULID generated once at consumer start
 
 Staleness detection (v1):
-- A `processing/<consumer_id>/` directory is considered **stale** if:
-  - `pid` is not running (best-effort), OR
-  - the directory’s newest mtime is older than `processing_stale_after_ms` (default `900000` = 15 minutes)
+- A `processing/<consumer_id>/` directory is considered **stale** if the lease.json
+  is missing or expired AND no file in the directory has mtime within
+  `queues.processing_ttl_ms` (default `300000` = 5 minutes).
+
+See [`08_Queues_Notifications_and_Control_Actions.md`](08_Queues_Notifications_and_Control_Actions.md)
+§9.0 for the complete staleness definition and reaper responsibilities.
 
 Stale processing directories MUST be re-queued by recovery (`workflowctl recover`), moving items back to `inbox/` with a `warn`-severity `fsck_issue` event.
 
