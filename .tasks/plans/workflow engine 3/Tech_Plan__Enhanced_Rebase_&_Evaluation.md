@@ -168,12 +168,36 @@ Strict domination is evaluated deterministically from artifacts (patch, hunk-lin
 
 #### 2.3.3 Selection policy
 
-- If exactly one option satisfies all hard constraints, the system MAY auto-select it.
-- If one option strictly dominates all others, the system MAY auto-select the dominating option.
-- Otherwise, the system MUST:
-  - stop with a `gate` (Workflow schema §7.2.3),
-  - notify the user, and
-  - require an explicit user selection.
+The selection policy is fully deterministic based on hard constraints, strict domination, and option count.
+
+**Algorithm**:
+
+```
+options = all proposed options
+feasible = [o for o in options if o satisfies ALL hard constraints]
+
+if feasible empty:
+  persist escalated conflict record
+  stop needs_user (no auto retries)
+elif len(feasible) == 1:
+  select feasible[0] (MUST auto-select)
+else:
+  nondominated = remove_strictly_dominated(feasible)
+  if len(nondominated) == 1:
+    select nondominated[0] (MUST auto-select)
+  else:
+    require user selection (gate)
+    present options sorted by option_id lexicographic
+```
+
+**Strict domination computation**:
+
+Y dominates X if:
+
+- X fails any hard constraint and Y passes all, OR
+- both pass all constraints AND paths(X) is a strict superset of paths(Y)
+
+If patches touch different files (neither a superset), neither dominates ⇒ gate.
 
 In all cases, the chosen option and its selection rationale MUST be persisted in the conflict record (`resolution_id>.md` + optional `resolution_choice.json`).
 
