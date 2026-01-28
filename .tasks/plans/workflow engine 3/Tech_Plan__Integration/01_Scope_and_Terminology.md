@@ -29,7 +29,7 @@ To avoid ambiguity:
 
 * **WSS (Workspace State Store)**: the durable state store directory under the runtime root
   * Path example: `~/.workflow/repos/<repo_uid>/workspace/` (directory name is `workspace/`)
-  * In text, always call this **WSS** or **WSS root** (never "workspace" unqualified).
+  * In text, always call this **WSS** or **WSS root**.
 
 * **Sandbox**: an ephemeral environment used for tool execution (Integration §9).
   * In this system, a sandbox is implemented as a **jj workspace** created under the repo runtime root.
@@ -39,15 +39,15 @@ To avoid ambiguity:
 
 ### 1.1.1 Linter Rule Specification
 
-**Rule name**: `TERMINO001` - Bare "workspace" usage
+**Rule name**: `TERMINO001` - Bare workspace usage
 
-**Description**: Flag bare "workspace" tokens except in the following allowed contexts:
+**Description**: Flag bare workspace tokens except in the following allowed contexts:
 
 1. When preceded by `"jj "` (Jujutsu tool references)
 2. When followed by `"/"` (file path contexts)
 3. When part of the phrases "Workspace State Store" or "WSS"
 
-**Pattern**: Standalone word `"workspace"` (case-insensitive, word boundary) is a violation unless:
+**Pattern**: Standalone word workspace is a violation unless:
 * Preceded by `jj\s+` (e.g., "jj workspace", "jj workspace add")
 * Followed by the path separator `\/` (e.g., "workspace/", "workspace/README.md")
 * Inside "Workspace State Store" or its abbreviation "WSS"
@@ -93,7 +93,7 @@ python3 ".tasks/plans/workflow engine 3/tools/terminology_linter.py" generate-re
 The linter is implemented using a rule-based pattern matching system:
 
 * `TerminologyRule`: Base class for all terminology rules
-* `RuleTERMINO001`: Implements the bare "workspace" detection rule
+* `RuleTERMINO001`: Implements the bare workspace detection rule
 * `TerminologyLinter`: Orchestrates scanning of directories and applies all rules
 * `LinterResult`: Collects and formats violation data for reporting
 

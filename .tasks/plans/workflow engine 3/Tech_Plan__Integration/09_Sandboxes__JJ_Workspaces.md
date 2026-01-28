@@ -32,7 +32,7 @@ Sparse patterns are controlled via `jj sparse`:
 
 ### 9.2 Sandbox creation algorithm
 
-A **sandbox** is an ephemeral `jj` workspace created under the repo runtime root:
+A **sandbox** is an ephemeral jj workspace created under the repo runtime root:he repo runtime root:
 
 `~/.workflow/repos/<repo_uid>/sandboxes/<run_id>/<sandbox_id>/`
 
@@ -353,7 +353,7 @@ Given `(repo_root, baseline_revset, purpose, sparse_mode, include_patterns)`:
 
   1. Allocate `sandbox_id` (ULID)
   2. Create directory: `~/.workflow/repos/<repo_uid>/sandboxes/<run_id>/<sandbox_id>/`
-  3. Create a `jj` workspace:
+  3. Create a jj workspace sandbox:
 
      `jj workspace add <sandbox_path> --name <sandbox_id> --revision
      <baseline_revset> --sparse-patterns <copy|full|empty>`

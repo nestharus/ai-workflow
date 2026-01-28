@@ -26,7 +26,7 @@ Each migration MUST declare:
 - `migration_id` (string; stable)
 - `from_schema_version` (int)
 - `to_schema_version` (int)
-- `applies_to` (enum): `workspace|repo_runtime|tickets|projects|logs|queues|index`
+- `applies_to` (enum): `wss|repo_runtime|tickets|projects|logs|queues|index`
 - `preconditions` (checks; fail loudly if unmet)
 - `actions` (file transforms)
 

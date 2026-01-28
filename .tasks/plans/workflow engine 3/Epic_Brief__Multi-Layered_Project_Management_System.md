@@ -73,9 +73,7 @@ Developers using “AI coding assistants” hit recurring failure modes that cur
 
 **This glossary is normative**. When these terms appear in specs, they MUST be used with the meanings below.
 
-- **WSS (Workspace State Store)**: The durable on-disk state store under:
-  - `~/.workflow/repos/<repo_uid>/workspace/`
-  - Contains tickets, tasks, runs, logs, and artifacts. (Core Infrastructure §2)
+- **WSS (Workspace State Store)**: The durable on-disk state store located at `~/.workflow/repos/<repo_uid>/workspace/`. Contains tickets, tasks, runs, logs, and artifacts. (Core Infrastructure §2)
 - **jj workspace**: A Jujutsu (jj) working copy concept (VCS term). Not the same as WSS.
 - **sandbox**: An ephemeral execution environment implemented as a **jj workspace** created under:
   - `~/.workflow/repos/<repo_uid>/sandboxes/<sandbox_id>/`
@@ -83,7 +81,7 @@ Developers using “AI coding assistants” hit recurring failure modes that cur
 - **repo root**: The user’s git/jj repository path being managed.
 - **runtime root**: `~/.workflow/repos/<repo_uid>/` (the per-repo runtime directory).
 
-The term **“workspace”** MUST be qualified as either **WSS**, **jj workspace**, or **sandbox** (do not use unqualified “workspace” in new text).
+The term **"workspace"** MUST be qualified as either **WSS**, **jj workspace**, or **sandbox** (do not use unqualified "workspace" in new text).
 
 ## 1) Product priorities (decision order)
 

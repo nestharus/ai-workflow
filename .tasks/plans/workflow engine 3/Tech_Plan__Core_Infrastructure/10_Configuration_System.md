@@ -55,10 +55,10 @@ Sensitive keys include:
 ```toml
 [sandbox]
 # Defaults: cross-platform safe; performance tuning is optional
-mode = "workspace"                 # workspace (default)
+mode = "sandbox"                  # sandbox (default)
 max_concurrent = 4
 default_sparse = "copy"            # copy|full|empty (jj workspace add behavior)
-copy_fallback = true               # allow fallback when sparse/workspace is insufficient
+copy_fallback = true               # allow fallback when sparse/sandbox is insufficient
 ttl_minutes = 120
 
 [queues]

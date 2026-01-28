@@ -540,7 +540,7 @@ Syntax checkers are specified in the step specification as `step_spec.hunk_lint.
 
 1. **Prerequisite**: Patch must have successfully applied (dry-run passed in Mode A/B)
 2. **Sandbox requirement**: Syntax checks run in the sandbox (or created sandbox):
-   - **If sandbox exists**: Run checks directly in the sandbox workspace
+   - **If sandbox exists**: Run checks directly in the sandbox directory
    - **If no sandbox exists**:
      - Create a temporary sandbox from the base revision
      - Apply the patch to the sandbox

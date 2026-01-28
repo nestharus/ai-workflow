@@ -176,12 +176,12 @@ Fields:
   - `step` — sandbox lifetime is the step execution
   - `run` — sandbox lifetime is the whole workflow run (may be reused across steps)
 
-- `sparse_mode` (string enum, default `empty`)  
+- `sparse_mode` (string enum, default `empty`)
   - Passed to `jj workspace add --sparse-patterns=<MODE>`:
-    - `copy` — inherit sparse rules from the parent workspace
+    - `copy` — inherit sparse patterns from parent jj workspace
     - `full` — full working copy
-    - `empty` — empty working copy  
-  - After workspace creation, the runner may still apply explicit patterns via `jj sparse set`.
+    - `empty` — empty working copy
+  - After sandbox creation, the runner may still apply explicit patterns via `jj sparse set`.
 
 - `include_patterns` (array of strings, optional)  
   - If present, these are applied via `jj sparse set --clear --add ...`.
