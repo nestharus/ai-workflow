@@ -328,28 +328,19 @@ On prompt timeout:
 
 Fields:
 
-- `policy` (string enum, required)  
-  - `investigate` — spawn investigator with bounded evidence  
-  - `retry` — re-run the step under progress-guard rules  
-  - `escalate` — stop and require user action  
-  - `abort` — stop the workflow run and mark failed
+- `mode` (string enum, required)
+  - `stop` — stop the workflow run and mark failed
+  - `pause` — stop and require user action
+  - `investigate` — spawn investigator with bounded evidence
+  - `continue` — continue to the next step despite failure
 
 Optional sub-objects:
 
-- `retry` (object, optional; used when `policy: retry`)
-  - `strategy` (string enum, default `progress_guarded`)  
-    - `progress_guarded` means: only retry if there is evidence of novelty; repeated failure signatures trigger escalation.
-  - `repeat_signature_threshold` (int, default `2`)  
-    - If the same failure signature repeats this many times, the runner MUST stop retrying and apply the next action:
-      - if Mode A was used, switch to Mode B and retry once
-      - otherwise escalate
-  - `switch_to_mode_b_on_repeat` (bool, default `true`)
-
-- `investigate` (object, optional; used when `policy: investigate`)
+- `investigate` (object, optional; used when `mode: investigate`)
   - `pause_before_investigate` (bool, default `true`)
   - `bundle_event_limit` (int, default `200`)
 
-- `escalate` (object, optional; used when `policy: escalate`)
+- `pause` (object, optional; used when `mode: pause`)
   - `notification_severity` (string enum, default `error`) — `info|warn|error|critical`
   - `require_user_ack` (bool, default `true`)
 
