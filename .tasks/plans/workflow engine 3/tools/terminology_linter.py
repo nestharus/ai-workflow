@@ -89,7 +89,7 @@ class RuleTERMINO001(TerminologyRule):
 
     rule_id = "TERMINO001"
     description = 'Bare "workspace" usage'
-    severity = "warn"
+    severity = "error"
 
     # Pattern to find all "workspace" tokens (case-insensitive, word boundary)
     _workspace_pattern = re.compile(r"\bworkspace\b", re.IGNORECASE)
