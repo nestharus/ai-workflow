@@ -89,13 +89,16 @@ Given a set of file input paths (from step-plan or derived), the following algor
 **Step 2**: For each file path `p` in `file_inputs`:
    2.1. Normalize `p` (see §9.2.2 normalization rules)
    2.2. Reject `p` if it violates safety rules (absolute path, contains `..`, empty)
-   2.3. Add exact file pattern: `P.add(p)`
-   2.4. Expand wildcards:
-       - If `p` contains glob patterns (`*`, `?`, `[]`, `**`):
+   2.3. Reject `p` if it contains glob metacharacters (`*`, `?`, `[]`, `**`) unless `x_allow_globs_in_inputs = true`:
+       - If glob patterns are present and `x_allow_globs_in_inputs` is not true, fail with `E_VALIDATION_FAILED`
+       - Include the violating path and requirement for `x_allow_globs_in_inputs: true` in error details
+   2.4. Add exact file pattern: `P.add(p)`
+   2.5. Expand wildcards:
+       - If `p` contains glob patterns (`*`, `?`, `[]`, `**`) (only when `x_allow_globs_in_inputs = true`):
          - Attempt to resolve expansion via `jj` or filesystem at baseline
          - If expansion fails or exceeds pattern expansion limit (see below), add `p` as-is
          - If expansion succeeds, add each resolved path `r` to `P`
-   2.5. Add parent directory pattern for `p`:
+   2.6. Add parent directory pattern for `p`:
        - Extract `parent_dir = dirname(p)`
        - Normalize `parent_dir` to ensure trailing `/` for directories
        - Add `parent_dir` to `P`
@@ -105,24 +108,45 @@ Given a set of file input paths (from step-plan or derived), the following algor
      - For each toolchain config file `c` in the standard list (see `DEFAULT_TOOLCHAIN_FILES`):
        - If `c` exists at repo root, add `c` to `P`
 
-**Step 4**: Deduplicate and de-overlap patterns:
-   4.1. Convert `P` to sorted list by specificity (most specific first):
+**Step 4**: Stable deduplication with first-occurrence preservation:
+   4.1. Convert `P` to sorted list using stable sort by specificity (most specific first):
        - Exact file paths (no trailing `/`) come before directory patterns
        - Longer directory paths come before shorter parent paths
-   4.2. For each pattern `p` in sorted list:
-       - If `p` is a file path and is covered by an existing directory pattern, skip
-       - If `p` is a directory and is a prefix of an existing pattern, keep both
-       - Otherwise, add `p` to `include_patterns`
+       - Preserve input order for equal-specificity patterns
+   4.2. Initialize empty list `include_patterns = []`
+   4.3. Initialize empty set `seen_patterns = {}`
+   4.4. For each pattern `p` in sorted list:
+       - If `p in seen_patterns`: skip (first occurrence preserved)
+       - If `p` is a file path and is covered by an existing directory pattern in `include_patterns`, skip
+       - If `p` is a directory and is a prefix of an existing pattern in `include_patterns`, keep both
+       - Otherwise, add `p` to `include_patterns` and `p` to `seen_patterns`
 
-**Step 5**: Validate pattern count limit:
-   5.1. If `len(include_patterns) > MAX_PATTERNS` (default 1000):
+**Step 5**: Broadness guard validation:
+   5.1. Count patterns by prefix:
+       - For too-broad detection, check if any pattern starts with `TOO_BROAD_PREFIX` (configurable, default `""`)
+   5.2. If `len(include_patterns) > BROADNESS_THRESHOLD` (default 200):
+       - If `policy.allow_full_fallback = true`:
+         - Escalate to full sparse mode (recreate sandbox with `sparse_mode=full`)
+         - Return empty include_patterns (full mode takes precedence)
+       - Else, fail with `E_SPARSE_DERIVATION_FAILED`
+       - Include current pattern count, threshold, and a list of patterns in error details
+
+**Step 6**: Validate pattern count limit:
+   6.1. If `len(include_patterns) > MAX_PATTERNS` (default 1000):
        - Fail with `E_SPARSE_PATTERN_LIMIT_EXCEEDED`
        - Include current count and limit in error details
-   5.2. Return `include_patterns`
+   6.2. Return `include_patterns`
 
 **Constants**:
 - `DEFAULT_TOOLCHAIN_FILES = [".editorconfig", ".gitignore", "pyproject.toml", "requirements.txt", "poetry.lock", "package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json", "go.mod", "go.sum", "Cargo.toml", "Cargo.lock", "Makefile"]`
+- `TOO_BROAD_PREFIX = ""` (configurable via `[sandbox].too_broad_prefix`)
+- `BROADNESS_THRESHOLD = 200` (configurable via `[sandbox].broadness_threshold`)
 - `MAX_PATTERNS = 1000` (configurable via `[sandbox].max_patterns`)
+
+**Markers and tool requirements**:
+- Marker patterns are included from `step.tool_requirements.markers[*].pattern` when provided
+- Markers serve as explicit inclusion hints beyond derived file inputs
+- If `tool_requirements` defines markers, add all marker patterns to `P` after Step 3 and before deduplication
 
 ##### Wildcard and directory pattern handling (normative)
 
@@ -152,6 +176,70 @@ The pattern derivation algorithm does **not** distinguish between binary and tex
 If a workflow needs to exclude binary files:
 - Use workflow-level `sandbox.exclude_patterns` (未来的jj版本) when available
 - Or use explicit directory patterns rather than wildcards for fine control
+
+**Binary and oversize file edit escalation**:
+- If a step requires editing a binary file or a file exceeding edit size limits (e.g., >10MB):
+  - The system MUST force Mode B (sandbox with `sparse_mode=full`) OR escalate to `needs_user` state
+  - No speculative automated patching of binary/oversize files is permitted
+  - This requirement applies regardless of the derived sparse patterns or `sparse_mode` setting
+
+##### Worked examples
+
+**Example 1: Simple file inputs**
+
+Input file inputs:
+```
+["src/main.py", "src/utils/helper.py", "README.md"]
+```
+
+Algorithm execution:
+- Step 2.1-2.3: Normalize and validate all paths
+- Step 2.4: Add exact patterns to `P`: `{src/main.py, src/utils/helper.py, README.md}`
+- Step 2.6: Add parent directories: `{src/main.py, src/utils/helper.py, README.md, src/, src/utils/}`
+- Step 3: (assume toolchain config enabled) Add `pyproject.toml` → `{..., pyproject.toml}`
+- Step 4: Stable deduplication with ordering:
+  - Sorted by specificity: `src/main.py, src/utils/helper.py, README.md, pyproject.toml, src/utils/, src/`
+  - Final `include_patterns`: `[src/main.py, src/utils/helper.py, README.md, pyproject.toml, src/utils/, src/]`
+
+**Example 2: Overlap handling**
+
+Input file inputs:
+```
+["src/app/feature.py", "src/app/", "src/app/common.py"]
+```
+
+Algorithm execution:
+- Step 2.4-2.6: `P = {src/app/feature.py, src/app/, src/app/common.py}` (plus parents)
+- Step 4 deduplication:
+  - `src/app/feature.py` → add to `include_patterns` (not covered by dir pattern yet)
+  - `src/app/` → add to `include_patterns` (directory pattern)
+  - `src/app/common.py` → covered by `src/app/`, skip per de-overlap rule
+  - Final `include_patterns`: `[src/app/feature.py, src/app/]`
+
+**Example 3: Glob rejection (default behavior)**
+
+Input file inputs (without `x_allow_globs_in_inputs: true`):
+```
+["src/**/*.py", "README.md"]
+```
+
+Algorithm execution:
+- Step 2.3: `src/**/*.py` contains glob metacharacters
+- Reject with `E_VALIDATION_FAILED`: "Glob patterns in file inputs require `x_allow_globs_in_inputs: true`. Invalid path: src/**/*.py"
+
+**Example 4: Too-broad detection**
+
+Input file inputs:
+```
+["file1.txt", "file2.txt", ..., "file201.txt"] (201 files)
+```
+
+Assume `BROADNESS_THRESHOLD = 200`, `policy.allow_full_fallback = true`:
+
+Algorithm execution:
+- Step 5: Broadness guard detects 201 patterns exceeds threshold
+- Since `policy.allow_full_fallback = true`: escalate to full sparse mode
+- Recreate sandbox with `sparse_mode=full`, return empty `include_patterns`
 
 ##### Pattern breadth limits and escalation
 
