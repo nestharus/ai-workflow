@@ -379,8 +379,7 @@ On failure, hunk-lint MUST include:
 
 ```json
 {
-  "error_code": "APPLY_FAILED",
-  "failure_mode": "no_match|ambiguous",
+  "error_code": "apply_failed_no_match",
   "hunk_index": 2,
   "file_path": "src/main.py",
   "hunk_header": "@@ -42,7 +42,8 @@",
@@ -454,7 +453,7 @@ Scope enforcement applies equally to:
 
 Any of these operations on a path outside `allowed_write_paths[]` is a scope violation.
 
-##### 3.1.1.5 Rename handling
+##### 3.1.1.4 Rename handling
 
 **Scope validation for renames**:
 
@@ -482,7 +481,7 @@ If either the `from` path or the `to` path does NOT match `allowed_write_paths[]
   - If `to` mismatches: list `"rename to: <new_path>"` as offending
   - If both mismatch: list both paths as offending
 
-##### 3.1.1.4 Optional syntax checks
+##### 3.1.1.5 Optional syntax checks
 
 **Purpose and surface (per plan.txt §2.4.4)**:
 
