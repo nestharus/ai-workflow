@@ -40,9 +40,9 @@ steps:
     entrypoint: "agent:task_decomposer_v1"
     description: "Produce/merge step_plan.yaml and candidates for the task."
     with:
-      ticket_id: "${inputs.ticket_id}"
-      task_id: "${inputs.task_id}"
-      force: "${inputs.force}"
+      ticket_id: "${{ inputs.ticket_id }}"
+      task_id: "${{ inputs.task_id }}"
+      force: "${{ inputs.force }}"
 ```
 
 ### 2.2 step_execute_v1
@@ -67,10 +67,10 @@ steps:
     description: "Execute the step; may hydrate, run sandbox commands, and apply patches."
     capabilities_required: ["sandbox_exec", "apply_patch", "llm_call"]
     with:
-      ticket_id: "${inputs.ticket_id}"
-      task_id: "${inputs.task_id}"
-      step_id: "${inputs.step_id}"
-      step_execution_id: "${inputs.step_execution_id}"
+      ticket_id: "${{ inputs.ticket_id }}"
+      task_id: "${{ inputs.task_id }}"
+      step_id: "${{ inputs.step_id }}"
+      step_execution_id: "${{ inputs.step_execution_id }}"
 ```
 
 ### 2.3 ticket_validate_v1
@@ -93,8 +93,8 @@ steps:
     description: "Execute validation commands and record results."
     capabilities_required: ["sandbox_exec", "llm_call"]
     with:
-      ticket_id: "${inputs.ticket_id}"
-      rev: "${inputs.rev}"
+      ticket_id: "${{ inputs.ticket_id }}"
+      rev: "${{ inputs.rev }}"
 ```
 
 ### 2.4 rebase_enhanced_v1
@@ -118,9 +118,9 @@ steps:
     description: "Run rebase, detect conflicts, and resolve using the enhanced protocol."
     capabilities_required: ["sandbox_exec", "apply_patch", "llm_call"]
     with:
-      ticket_id: "${inputs.ticket_id}"
-      source_ref: "${inputs.source_ref}"
-      target_ref: "${inputs.target_ref}"
+      ticket_id: "${{ inputs.ticket_id }}"
+      source_ref: "${{ inputs.source_ref }}"
+      target_ref: "${{ inputs.target_ref }}"
 ```
 
 ### 2.5 ticket_evaluate_v1
@@ -143,8 +143,8 @@ steps:
     description: "Run evaluation and record findings."
     capabilities_required: ["sandbox_exec", "llm_call"]
     with:
-      ticket_id: "${inputs.ticket_id}"
-      rev: "${inputs.rev}"
+      ticket_id: "${{ inputs.ticket_id }}"
+      rev: "${{ inputs.rev }}"
 ```
 
 ### 2.6 investigate_v1
@@ -168,9 +168,9 @@ steps:
     description: "Gather evidence (logs, artifacts) and emit a classification + repair plan."
     capabilities_required: ["sandbox_exec", "llm_call"]
     with:
-      run_id: "${inputs.run_id}"
-      step_execution_id: "${inputs.step_execution_id}"
-      error_code: "${inputs.error_code}"
+      run_id: "${{ inputs.run_id }}"
+      step_execution_id: "${{ inputs.step_execution_id }}"
+      error_code: "${{ inputs.error_code }}"
 ```
 
 ### 2.7 ticket_repair_v1
@@ -194,9 +194,9 @@ steps:
     description: "Apply repair changes, update evidence, and rerun targeted validation."
     capabilities_required: ["apply_patch", "sandbox_exec", "llm_call"]
     with:
-      ticket_id: "${inputs.ticket_id}"
-      run_id: "${inputs.run_id}"
-      step_execution_id: "${inputs.step_execution_id}"
+      ticket_id: "${{ inputs.ticket_id }}"
+      run_id: "${{ inputs.run_id }}"
+      step_execution_id: "${{ inputs.step_execution_id }}"
 ```
 
 ### 2.8 gc_v1
