@@ -79,7 +79,7 @@ steps:
 schema_version: 1
 workflow_id: ticket_validate_v1
 display_name: "Ticket validate (v1)"
-description: "Run the ticket's validation workflow in a sandbox (jj workspace)."
+description: "Run the ticket's validation workflow in a sandbox."
 inputs:
   type: object
   required: [ticket_id]

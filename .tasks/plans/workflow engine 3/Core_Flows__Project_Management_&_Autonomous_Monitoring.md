@@ -250,7 +250,7 @@ Outputs (durable evidence):
 Step execution supports two modes (Integration §6):
 
 - **Mode A (virtual hydration)**: read files directly from VCS state without a checkout
-- **Mode B (sandbox)**: create a `jj` workspace sandbox, run tools there, then translate results back into patches
+- **Mode B (sandbox)**: create a sandbox, run tools there, then translate results back into patches
 
 Mode selection is policy-driven (Integration §6). Core rule:
 
