@@ -1395,7 +1395,9 @@ def cmd_investigate_orphans(args: argparse.Namespace) -> int:
                     file_contents[original_source] = ""
             else:
                 # Try to find in staging directory
-                copy_path = staging_file.parent / f"{staging_file.stem.replace('_staged', '_original')}.md"
+                copy_path = (
+                    staging_file.parent / f"{staging_file.stem.replace('_staged', '_original')}.md"
+                )
                 if copy_path.exists():
                     try:
                         file_contents[original_source] = copy_path.read_text(encoding="utf-8")
@@ -1591,7 +1593,7 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
             "# Orphan Statement",
             "",
             f"**ID**: `{orphan_id}`",
-            f"**Importance**: `medium`",
+            "**Importance**: `medium`",
             f"**Related Entities**: {', '.join(entity_mentions) if entity_mentions else 'None'}",
             "",
             "## Content",
@@ -1646,12 +1648,12 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
             "# Orphan Statement",
             "",
             f"**ID**: `{orphan_id}`",
-            f"**Importance**: `high`",
+            "**Importance**: `high`",
             f"**Related Entities**: {', '.join(affects) if affects else 'None'}",
             "",
             "## Content",
             "",
-            f"> Cross-cutting concern affecting multiple entities",
+            "> Cross-cutting concern affecting multiple entities",
             "",
             "## Evidence",
             "",
@@ -1690,7 +1692,7 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
             "# Orphan Statement",
             "",
             f"**ID**: `{orphan_id}`",
-            f"**Importance**: `low`",
+            "**Importance**: `low`",
             "**Related Entities**: None",
             "",
             "## Content",
