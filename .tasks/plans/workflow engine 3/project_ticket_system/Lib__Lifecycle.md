@@ -80,6 +80,7 @@ stateDiagram-v2
   - `blocked` requires an explicit `reason` field + `evidence_refs`.
   - `blocked` MUST include `blocker_kind` (see §1.1).
 - Locking and atomicity:
+  - All lock acquisition MUST comply with the global lock order defined in `Tech_Plan__Core_Infrastructure/05_Multi_Writer_Correctness.md` §6.4.
   - TM MUST perform ticket status transitions under `locks/ticket.<ticket_id>.lock`.
   - Transitions MUST be atomic while the ticket lock is held.
 
@@ -152,5 +153,10 @@ Rules (normative):
 - Retrying does not “loop”; retries produce new run IDs and MUST add new evidence.
 
 Locking (normative):
+- All lock acquisition MUST comply with the global lock order defined in `Tech_Plan__Core_Infrastructure/05_Multi_Writer_Correctness.md` §6.4.
 - Task lifecycle updates MUST occur under `locks/ticket.<ticket_id>.lock` (single-writer).
-- Decomposition additionally requires `locks/task.<ticket_id>.<task_id>.lock` as defined in `decompose`.
+- When decomposition requires both ticket and task locks:
+  - MUST acquire `locks/ticket.<ticket_id>.lock` first
+  - THEN acquire `locks/task.<ticket_id>.<task_id>.lock`
+  - MUST release in reverse order (task lock first, then ticket lock)
+- Decomposition-specific lock acquisition details are defined in `project_ticket_system/Lib__Task_Decomposition.md` §4.

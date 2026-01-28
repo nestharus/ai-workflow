@@ -70,3 +70,61 @@ Lock implementation:
 - cross-platform lockfile using atomic create (`O_EXCL`) + process id + start time in file body
 - stale lock reaping only via explicit `workflowctl recover-locks` (loud)
 
+Implementation requirements (normative):
+- The lock implementation MUST track the set of locks currently held by the process (including lock path and the corresponding priority defined in §6.4).
+- Before acquiring any new lock, the implementation MUST validate that the acquisition complies with the global lock order defined in §6.4.
+- Attempting to acquire a lock out of order MUST fail immediately with `E_LOCK_ORDER_VIOLATION` (no retries).
+
+`E_LOCK_ORDER_VIOLATION` structure (normative):
+```json
+{
+  "error_code": "E_LOCK_ORDER_VIOLATION",
+  "requested_lock": "<lock_path>",
+  "requested_priority": <int>,
+  "held_locks": [{"path": "<lock_path>", "priority": <int>}],
+  "message": "Cannot acquire <requested_lock> (priority <N>) while holding <held_lock> (priority <M>)"
+}
+```
+
+### 6.4 Global lock acquisition order (normative)
+
+The lock hierarchy is (highest priority / outermost scope → lowest priority / innermost scope):
+1. `locks/gc.lock`
+2. `locks/branch.<name>.lock`
+3. `locks/ticket.<ticket_id>.lock`
+4. `locks/task.<ticket_id>.<task_id>.lock`
+
+Same-class ordering rule (normative):
+- If multiple locks of the same class are required, they MUST be acquired in lexicographic order of the full lock filename (e.g., `locks/ticket.A.lock` before `locks/ticket.B.lock`).
+
+Strict ordering invariant (normative):
+- A process MUST NOT acquire a higher-priority lock after acquiring a lower-priority lock.
+
+Violation behavior (normative):
+- Attempting to acquire locks out of order MUST fail immediately with `E_LOCK_ORDER_VIOLATION`, including:
+  - the lock being requested
+  - the locks currently held
+  - the expected acquisition order (via priorities and the hierarchy above)
+
+Rationale (informative):
+- This prevents deadlock by ensuring all processes acquire locks in the same total order, eliminating circular wait conditions.
+
+```mermaid
+graph TD
+    A[locks/gc.lock<br/>Priority: 1<br/>Scope: Global GC] --> B[locks/branch.&lt;name&gt;.lock<br/>Priority: 2<br/>Scope: Branch export]
+    B --> C[locks/ticket.&lt;ticket_id&gt;.lock<br/>Priority: 3<br/>Scope: Ticket lifecycle]
+    C --> D[locks/task.&lt;ticket_id&gt;.&lt;task_id&gt;.lock<br/>Priority: 4<br/>Scope: Task decomposition]
+    
+    style A fill:#ff6b6b
+    style B fill:#ffa500
+    style C fill:#4ecdc4
+    style D fill:#95e1d3
+```
+
+| Scenario | Lock Sequence | Valid? | Reason |
+|----------|---------------|--------|--------|
+| GC then ticket inspection | gc → ticket | ❌ | Cannot acquire lower-priority lock while holding gc |
+| Ticket then task decomposition | ticket → task | ✅ | Follows priority order (3 → 4) |
+| Task then ticket update | task → ticket | ❌ | Violates order (4 → 3) |
+| Branch export then ticket read | branch → ticket | ❌ | Violates order (2 → 3) |
+| Two tickets (alphabetical) | ticket.A → ticket.B | ✅ | Same class, lexicographic order |

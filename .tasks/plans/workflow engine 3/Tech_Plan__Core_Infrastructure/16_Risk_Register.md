@@ -16,7 +16,7 @@ All known risks have explicit controls; none require unspecified future work.
 | Evidence bloat | Medium | retention + compression + GC; block GC on active runs |
 | Secrets exfiltration | High | keyring secrets + outbound scanning + network policy + export scrubber |
 | Concurrency hazards | Medium | ownership enforcement + expected_rev + locks |
+| RISK-LOCK-001 Lock Order Violation Detection | Medium | lock acquisition wrapper validates order before acquiring; integration tests verify lock order enforcement; runtime diagnostics log all lock acquisitions with stack traces; residual risk: developer may bypass lock wrapper, code review required |
 | Toolchain drift | Medium | env capture + tool fingerprints + workflow-defined tool commands |
 | Schema drift | Medium | explicit migrate tool + loud failure on unknown schema_version |
 | Notification deduplication window inappropriate | Low | default 60s window, configurable; users may need to adjust based on workflow patterns |
-

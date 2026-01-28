@@ -49,7 +49,15 @@ TM MUST NOT delete or overwrite evidence artifacts on failure.
 
 ## 4) Concurrency model (normative)
 
+All lock acquisition MUST comply with the global lock order defined in `Tech_Plan__Core_Infrastructure/05_Multi_Writer_Correctness.md` §6.4.
+
 TM MUST:
 - perform ticket status transitions under `locks/ticket.<ticket_id>.lock`
 - perform task lifecycle writes under the same ticket lock (single-writer)
 - respect the decomposition lock `locks/task.<ticket_id>.<task_id>.lock` when invoking `decompose`
+
+TM lock acquisition pattern (normative):
+- TM acquires `locks/ticket.<ticket_id>.lock` at the start of ticket operations.
+- TM holds this lock for the duration of ticket status transitions and task lifecycle writes.
+- When invoking decomposition (which needs `locks/task.<ticket_id>.<task_id>.lock`), the decomposition inherits the ticket lock context and acquires the task lock (compliant with the global order).
+- TM MUST NOT release the ticket lock while decomposition holds the task lock (maintains the lock nesting invariant).

@@ -35,9 +35,14 @@ When exporting a ticket where `base_rev == tip_rev` (no actual changes):
 The export is still considered successful, and the ticket may transition to `done` (per `project_ticket_system/Lib__Lifecycle.md` §1).
 
 Concurrency (normative):
-- Export and ticket state updates MUST be performed under:
-  - `locks/ticket.<ticket_id>.lock`
-  - `locks/branch.<name>.lock` for the export target bookmark/ref (Core §6.3)
+- All lock acquisition MUST comply with the global lock order defined in `Tech_Plan__Core_Infrastructure/05_Multi_Writer_Correctness.md` §6.4.
+- Export operations MUST acquire `locks/branch.<name>.lock` before exporting to a branch/ref.
+- Ticket state updates (e.g., writing export metadata to `ticket.json`) MUST occur under `locks/ticket.<ticket_id>.lock`.
+
+### 1.3 Lock acquisition (normative)
+
+- Export typically runs after ticket completion, when the ticket lock is already released, so branch lock acquisition is safe.
+- If export needs to read ticket state while holding `locks/branch.<name>.lock`, `locks/ticket.<ticket_id>.lock` MUST NOT be acquired (would violate the global lock order); instead, read ticket state before acquiring the branch lock.
 
 ## 2) Export policy selection (normative)
 

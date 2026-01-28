@@ -83,12 +83,28 @@ When detected:
 
 ## 4) Concurrency control (normative)
 
-Decomposition MUST acquire `locks/task.<ticket_id>.<task_id>.lock` before:
+All lock acquisition MUST comply with the global lock order defined in `Tech_Plan__Core_Infrastructure/05_Multi_Writer_Correctness.md` §6.4.
+
+Two-lock scenario (Ticket Manager invocation; normative):
+- When decomposition is invoked by Ticket Manager (which already holds `locks/ticket.<ticket_id>.lock`), the decomposition process:
+  - inherits the ticket lock from the parent TM session
+  - acquires `locks/task.<ticket_id>.<task_id>.lock` (lower priority, safe to acquire)
+  - performs decomposition work
+  - releases the task lock before TM releases the ticket lock
+
+Standalone decomposition scenario (normative):
+- When decomposition runs independently (not under TM), it:
+  - MUST acquire `locks/ticket.<ticket_id>.lock` first
+  - THEN acquire `locks/task.<ticket_id>.<task_id>.lock`
+  - MUST release in reverse order
+
+Decomposition MUST hold `locks/task.<ticket_id>.<task_id>.lock` before:
 - reading `task.json`
 - writing any artifacts under `tasks/<task_id>/steps/` (including `step_plan.yaml` and `candidates/`)
 - writing any artifacts under `tasks/<task_id>/deviations/` that are produced during decomposition
 
 If lock acquisition fails:
+- if the failure is due to lock order validation, emit `E_LOCK_ORDER_VIOLATION` (per Core Infrastructure §6.3/§6.4) and fail immediately
 - emit `E_LOCK_FAILED` including the lock path and (if available) lock holder info
 - do not retry automatically
 - instruct the user to check task status or wait for the other process to finish

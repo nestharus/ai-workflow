@@ -73,3 +73,15 @@ Before deleting a run, GC MUST ensure that ticket-level durable evidence remains
 
 GC is allowed to delete *run-local* artifacts that are reproducible from ticket state (e.g., hydration blobs), but must not delete ticket state.
 
+### 11.5.6 GC Lock Acquisition (normative)
+
+- GC operations MUST acquire `locks/gc.lock` before performing any deletion or compaction.
+- `locks/gc.lock` is the highest-priority lock in the global lock order (see `Tech_Plan__Core_Infrastructure/05_Multi_Writer_Correctness.md` §6.4).
+- GC MUST NOT acquire any other locks (`branch`, `ticket`, `task`) while holding `locks/gc.lock` to prevent blocking other operations.
+
+If GC needs to inspect ticket or task state, it MUST:
+1. release `locks/gc.lock`
+2. acquire the necessary lower-priority locks
+3. perform inspection
+4. release lower-priority locks
+5. re-acquire `locks/gc.lock` if needed
