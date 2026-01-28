@@ -247,7 +247,7 @@ This system intentionally collapses “architecture + algorithms + evidence” i
 3. Create a task; decompose into steps; user may edit/approve step plan.
 4. Execute steps sequentially; each step produces a patch.
 5. Validate in sandbox (required at ticket close).
-6. Export (squash or linear) and mark done.
+6. Export (squash or linear) and mark ticket `done` (status transition semantics per `project_ticket_system/Lib__Lifecycle.md` §1).
 
 ### Flow B — Observe → Pause → Investigate → Repair → Resume
 1. Monitor detects anomaly (time is a signal, not the decision).

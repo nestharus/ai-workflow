@@ -164,9 +164,9 @@ Evidence: none required (UX convenience).
 2. If no stack metadata:
    - create jj ticket stack and bookmark
    - store stack metadata into `ticket.json`
-3. Set ticket status:
-   - If ticket was newly created by TM: set `in_progress` (creation implies start)
-   - Else: transition `open → in_progress`
+3. Set ticket status (See `project_ticket_system/Lib__Lifecycle.md` §1 for the complete authoritative state machine):
+   - If ticket was newly created by TM: create directly in `in_progress` (creation implies start)
+   - Else: apply the Lifecycle §1 start-work transition
    (also set `expected_rev`).
 
 Evidence:
@@ -378,7 +378,8 @@ The runner may inline file content into the LLM prompt, but the durable contract
    - TM keeps ticket eligible for close.
 
 4. **If validation fails (ticket becomes blocked)**
-   - TM sets `ticket.json.status = "blocked"`
+   - TM transitions ticket `in_progress → blocked` (see `project_ticket_system/Lib__Lifecycle.md` §1)
+   - TM MUST record `reason="validation_failure"`, `evidence_refs=[validation_run_id]`, and `blocker_kind="validation_failure"`
    - TM writes `validation_report.md` and emits a notification including:
      - failing command(s)
      - artifact paths and evidence IDs
@@ -388,6 +389,8 @@ The runner may inline file content into the LLM prompt, but the durable contract
    - Create follow-up task: `workflowctl task create --ticket <ticket_id> --from-validation <run_id>`
    - Run repair workflow: `workflowctl run --workflow ticket_repair_v1 --ticket <ticket_id> --run <run_id>`
    - Export for review (without closing): `workflowctl export --ticket <ticket_id> --mode review`
+   - Recovery actions transition `blocked → in_progress` when the blocker is resolved (see `project_ticket_system/Lib__Lifecycle.md` §1)
+     - On repair workflow success, TM transitions `blocked → in_progress` with `reason="blocker_resolved"`
 
 ---
 
@@ -401,7 +404,7 @@ The runner may inline file content into the LLM prompt, but the durable contract
    - Rule: required validation workflow MUST have a passing result for the current ticket tip.
 
 2. **If validation is failing**
-   - TM blocks close (ticket remains `blocked`)
+   - TM blocks close (ticket remains in `blocked` state; no transition; see `project_ticket_system/Lib__Lifecycle.md` §1)
    - TM prints the path to the latest validation report and the next action commands
    - Optional: user may export **for review only** (does not mark done)
 

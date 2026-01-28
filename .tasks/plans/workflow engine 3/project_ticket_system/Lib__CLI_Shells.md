@@ -29,8 +29,8 @@ Both shells are line-oriented REPLs that call the same underlying `workflowctl` 
 * `projects list`
 * `projects create "<title>"` → prints `project_id`
 * `projects open <project_id>` — sets current project context
-* `tickets list [--status open|in_progress|blocked|done]`
-* `tickets create "<title>"` → prints `ticket_id` (created in `open` status)
+* `tickets list [--status open|in_progress|blocked|done|abandoned]`
+* `tickets create "<title>"` → prints `ticket_id` (created in `open` status; status semantics follow `project_ticket_system/Lib__Lifecycle.md` §1)
 * `tickets archive <ticket_id>` (optional)
 
 Integration points:
@@ -43,13 +43,13 @@ Integration points:
 Within a ticket context:
 
 * `help`
-* `open <ticket_id>` — loads ticket + stack context
+* `open <ticket_id>` — loads ticket + stack context (any status transitions MUST follow `project_ticket_system/Lib__Lifecycle.md` §1)
 * `status` — show ticket status + current rev
 * `plan` — run decomposition (`task_decompose_v1`) and show step plan summary
 * `step run <step_id>` — execute a single step (`step_execute_v1`)
 * `run` — execute remaining steps in order
 * `validate` — run validation (`ticket_validate_v1`)
-* `close` — run validate + evaluation + mark done (if pass)
+* `close` — run validate + evaluation + mark done (if pass; transition semantics follow `project_ticket_system/Lib__Lifecycle.md` §1)
 * `pause` / `resume` — write control actions (Core Flows Flow 12)
 * `approve-deviation <deviation_id> --approve|--deny [--note "..."]` — respond to a
   deviation request
@@ -74,3 +74,36 @@ the point where the deviation was recorded.
 **Late approval guidance**: After approving a deviation that required pausing, resume
 execution via `workflowctl run resume <run_id> --from-step <step_id>` to restart from
 the point where the deviation was recorded.
+
+## 6) `workflowctl` ticket status commands (normative)
+
+All ticket status transitions performed by `workflowctl` MUST conform to `project_ticket_system/Lib__Lifecycle.md` §1 (authoritative state machine + recording requirements).
+
+### 6.1 `workflowctl ticket reopen`
+
+Reopen a completed ticket (explicit `done → in_progress`).
+
+Required arguments:
+- `--ticket <ticket_id>`
+- `--reason <string>`
+
+Optional:
+- `--evidence <path>` (repeatable)
+
+Behavior:
+- Validates ticket is in `done` state.
+- Transitions `done → in_progress` and creates a new `ticket_rev` (never implicit).
+- Records the transition per Lifecycle §1 (including the provided reason and evidence refs).
+
+### 6.2 `workflowctl ticket abandon`
+
+Explicitly cancel a ticket (current state → `abandoned`).
+
+Required arguments:
+- `--ticket <ticket_id>`
+- `--reason <string>`
+
+Behavior:
+- Validates ticket is NOT already `done` or `abandoned`.
+- Transitions the ticket to `abandoned`.
+- Records the transition per Lifecycle §1 (including the provided reason and evidence refs as applicable).

@@ -10,7 +10,7 @@ Ticket completion requires:
 1. Required validation workflow passes.
 2. Export the ticket stack using an explicit export policy.
 3. Record export metadata in `ticket.json`.
-4. Mark ticket `done`.
+4. Mark ticket `done` (per `project_ticket_system/Lib__Lifecycle.md` §1).
 
 ### 1.1 Empty plan ticket close eligibility (normative)
 
@@ -32,7 +32,7 @@ When exporting a ticket where `base_rev == tip_rev` (no actual changes):
 - `squash` policy: Create no commit; record `exported_tip: null` and `no_change: true` in metadata
 - `linear` policy: Create no commits; record `exported_tip: null` and `no_change: true` in metadata
 
-The export is still considered successful, and the ticket may transition to `done`.
+The export is still considered successful, and the ticket may transition to `done` (per `project_ticket_system/Lib__Lifecycle.md` §1).
 
 Concurrency (normative):
 - Export and ticket state updates MUST be performed under:
@@ -101,11 +101,11 @@ To reduce friction while preserving trust, export supports two modes:
 
 1. Validated export (default; required for `done`)
    - only allowed when required validation passes
-   - ticket transitions to `done`
+   - TM transitions the ticket to `done` (per `project_ticket_system/Lib__Lifecycle.md` §1)
 
 2. Review export (allowed when blocked)
    - allowed even when validation is failing
    - exports current patch stack to `review/<ticket_id>`
-   - ticket remains `blocked` and MUST be explicitly labeled:
+   - ticket remains in `blocked` state (no transition; see `project_ticket_system/Lib__Lifecycle.md` §1) and MUST be explicitly labeled:
      - `ticket.json.export.validated = false`
      - include a link to the failing validation report

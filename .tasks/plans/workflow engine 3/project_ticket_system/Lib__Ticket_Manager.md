@@ -17,8 +17,8 @@ Ticket Manager MUST:
 ## 2) Ticket execution lifecycle (orchestration)
 
 ### 2.1 Open / start work
-- When opening a ticket for work, TM MUST perform state transitions per `lifecycle`:
-  - `open → in_progress` when `/ticket-manager open <ticket_id>` begins work.
+- When opening a ticket for work, TM MUST perform ticket status transitions per `project_ticket_system/Lib__Lifecycle.md` §1 (authoritative state machine + recording requirements).
+  - When `/ticket-manager open <ticket_id>` begins work, TM transitions the ticket from `open` to `in_progress` as defined by Lifecycle §1.
 - If a ticket is created implicitly by TM (create+start), TM MUST create it directly in `in_progress`.
 
 ### 2.2 Plan (decomposition)
@@ -36,7 +36,7 @@ Ticket Manager MUST:
 ### 2.5 Close (complete ticket)
 - `close` runs validate + evaluation + export + marks done (only if validation passes).
 - Export policies and “review export” rules are defined by `export`.
-- Ticket state transition to `done` is governed by `lifecycle`.
+- Ticket state transition to `done` is governed by `project_ticket_system/Lib__Lifecycle.md` §1.
 
 ## 3) Failure behavior (normative)
 

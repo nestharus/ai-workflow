@@ -123,7 +123,7 @@ Protocol:
 
 Resolution:
 - Approve: runner sets `approved_by` and resumes.
-- Deny: runner MUST stop loudly and mark task `needs_user_plan` (or ticket `blocked`) with evidence refs.
+- Deny: runner MUST stop loudly and mark task `needs_user_plan` (or transition the ticket to `blocked` per `project_ticket_system/Lib__Lifecycle.md` §1, using `blocker_kind="approval_required"` and recording evidence refs).
 
 #### 3.4.1 Timeout override mechanism (normative)
 

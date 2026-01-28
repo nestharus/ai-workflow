@@ -103,7 +103,8 @@ stdout/stderr:
 ## 4) Recovery when validation fails (normative)
 
 On validation failure, TM MUST:
-- set `ticket.json.status = "blocked"`
+- transition ticket `in_progress → blocked` (see `project_ticket_system/Lib__Lifecycle.md` §1)
+  - TM MUST record `reason="validation_failure"`, `evidence_refs=[validation_run_id]`, and `blocker_kind="validation_failure"`
 - write a human-readable `validation_report.md` alongside the structured summary
 - emit a notification with:
   - failing command(s)
