@@ -144,6 +144,20 @@ Resolvers MUST output at least two options when feasible:
 
 Each option MUST be a fully specified patch proposal that can be validated by the same gates as normal patch creation (hunk-lint, scope rules, etc.).
 
+**Required option metadata**:
+
+Each option MUST include:
+- `option_id`: A unique and stable identifier per conflict (e.g., deterministic ordinal or hash of the patch content)
+- `patch`: The unified diff patch content
+- `description`: Human-readable rationale for this option
+- `paths_affected`: List of file paths this option modifies
+
+**option_id requirements**:
+- MUST be unique within a single conflict's option list
+- MUST be stable (idempotent) across multiple resolution attempts for the same conflict
+- Recommended: Use a deterministic ordinal (e.g., `opt_001`, `opt_002`) or content-based hash
+- All option lists use this field for ordering and persistence during gating (see §2.3.3)
+
 #### 2.3.1 Hard constraints
 
 Before any option can be selected, it MUST satisfy all applicable hard constraints:
