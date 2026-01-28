@@ -54,13 +54,30 @@ Example:
 **Allocation rule**:
 - A process that consumes a queue MUST generate exactly one `consumer_id` at startup and reuse it for the lifetime of the process.
 
-**Crash recovery / stale consumer cleanup**:
+**PID reuse after reboot**:
+- PID reuse is not a collision because the ULID component differs.
+- Old processing directories from previous process instances are cleaned by the lease TTL reaper.
+
+**ULID generation failure**:
+- If ULID generation fails, the process MUST fail loudly with `E_INTERNAL` ("cannot generate consumer_id") and refuse to consume queues.
+- No fallback or retry for ULID generation itself.
+
+**Collision detection (defensive)**:
+On consumer startup:
+1. Attempt to create `processing/<consumer_id>/` directory exclusively (atomic mkdir).
+2. If directory already exists:
+   - Generate a new ULID and retry (up to 3 attempts).
+   - If still exists after 3 retries → fail loudly with `E_ULID_COLLISION`.
+
+**Stale consumer cleanup**:
 - Reaping is performed by the root runtime (or `workflowctl recover`).
-- A claimed item is eligible for requeue when:
-  - the queue item file `mtime` is older than `queues.processing_ttl_ms` (default `300000`), OR
-  - a consumer lease file exists and is stale:
-    - `processing/<consumer_id>/lease.json` with field `last_heartbeat_ts`
-- Requeue means: move the file back to `inbox/` and record the move in WAJ (§7.2).
+- A processing directory is stale if:
+  - `lease.json` is missing or expired (`last_heartbeat_ts` older than `queues.lease_ttl_ms`), AND
+  - no file in the directory has `mtime` within `queues.processing_ttl_ms` (default `300000`)
+- Reaper action:
+  1. Move all queue items back to `inbox/` (atomic rename per file).
+  2. Record each move in WAJ (§7.2).
+  3. Delete the stale `processing/<consumer_id>/` directory.
 
 Empty processing directories MAY be removed by the reaper.
 ### 9.1 Notification schema and priority
