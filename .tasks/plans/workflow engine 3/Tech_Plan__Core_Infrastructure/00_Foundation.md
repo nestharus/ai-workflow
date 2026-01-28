@@ -66,10 +66,10 @@ This document set uses the following canonical terms. New specs and code SHOULD 
 - **Virtual hydration**: reconstruct file content at a given revision without checking out a working copy.
 - **Sandbox**: a disposable, materialized environment used to run tools (lint/tests/build/search). In this system, sandboxes are implemented as **jj workspaces**.
 
-### Workspace terminology (avoid overload)
-The word "workspace" is overloaded in tools and in English. This spec set uses these rules:
+### WSS and sandbox terminology
+The word "workspace" <!-- TERMINO001: intentional violation for documentation explaining the rule --> is overloaded in tools and in English. This spec set uses these rules:
 
-- **WSS root**: the directory named `workspace/` under the runtime root. Always refer to this concept as **WSS** or **WSS root**, never "workspace" unqualified.
+- **WSS root**: the directory named `workspace/` under the runtime root. Always refer to this concept as **WSS** or **WSS root**.
 - **jj workspace**: a Jujutsu working copy created by `jj workspace add`. Always refer to as **jj workspace**.
 - **Sandbox**: an ephemeral jj workspace created under `~/.workflow/repos/<repo_uid>/sandboxes/...` for tool execution.
 

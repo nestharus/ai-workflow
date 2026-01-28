@@ -81,7 +81,7 @@ Developers using “AI coding assistants” hit recurring failure modes that cur
 - **repo root**: The user’s git/jj repository path being managed.
 - **runtime root**: `~/.workflow/repos/<repo_uid>/` (the per-repo runtime directory).
 
-The term **"workspace"** MUST be qualified as either **WSS**, **jj workspace**, or **sandbox** (do not use unqualified "workspace" in new text).
+The term "workspace" <!-- TERMINO001: intentional violation for documentation explaining the rule --> MUST be qualified as either **WSS**, **jj workspace** (for CLI commands), or **sandbox** (for ephemeral environments).
 
 ## 1) Product priorities (decision order)
 

@@ -39,15 +39,15 @@ To avoid ambiguity:
 
 ### 1.1.1 Linter Rule Specification
 
-**Rule name**: `TERMINO001` - Bare workspace usage
+**Rule name**: `TERMINO001` - Bare "workspace" usage <!-- TERMINO001: intentional violation for rule specification -->
 
-**Description**: Flag bare workspace tokens except in the following allowed contexts:
+**Description**: Flag bare "workspace" tokens <!-- TERMINO001: intentional violation for rule specification --> except in the following allowed contexts:
 
 1. When preceded by `"jj "` (Jujutsu tool references)
 2. When followed by `"/"` (file path contexts)
 3. When part of the phrases "Workspace State Store" or "WSS"
 
-**Pattern**: Standalone word workspace is a violation unless:
+**Pattern**: Bare "workspace" <!-- TERMINO001: intentional violation for rule specification --> is a violation unless:
 * Preceded by `jj\s+` (e.g., "jj workspace", "jj workspace add")
 * Followed by the path separator `\/` (e.g., "workspace/", "workspace/README.md")
 * Inside "Workspace State Store" or its abbreviation "WSS"
@@ -93,7 +93,7 @@ python3 ".tasks/plans/workflow engine 3/tools/terminology_linter.py" generate-re
 The linter is implemented using a rule-based pattern matching system:
 
 * `TerminologyRule`: Base class for all terminology rules
-* `RuleTERMINO001`: Implements the bare workspace detection rule
+* `RuleTERMINO001`: Implements the bare "workspace" <!-- TERMINO001: intentional violation for code component name --> detection rule
 * `TerminologyLinter`: Orchestrates scanning of directories and applies all rules
 * `LinterResult`: Collects and formats violation data for reporting
 

@@ -94,6 +94,12 @@ class RuleTERMINO001(TerminologyRule):
     # Pattern to find all "workspace" tokens (case-insensitive, word boundary)
     _workspace_pattern = re.compile(r"\bworkspace\b", re.IGNORECASE)
 
+    # Pattern to detect intentional violation comments
+    _intentional_violation_pattern = re.compile(
+        r"<!--\s*TERMINO001:\s*intentional\s+violation",
+        re.IGNORECASE
+    )
+
     # Patterns for allowed contexts
     _jj_prefix_pattern = re.compile(r"jj\s+workspace\b", re.IGNORECASE)
     _path_suffix_pattern = re.compile(r"\bworkspace/", re.IGNORECASE)
@@ -110,6 +116,10 @@ class RuleTERMINO001(TerminologyRule):
         lines = content.split("\n")
 
         for line_num, line in enumerate(lines, start=1):
+            # Skip lines with intentional violation comments
+            if self._has_intentional_violation_comment(line):
+                continue
+
             # Find all workspace occurrences in this line
             for match in self._workspace_pattern.finditer(line):
                 start = match.start()
@@ -132,6 +142,10 @@ class RuleTERMINO001(TerminologyRule):
                 )
 
         return violations
+
+    def _has_intentional_violation_comment(self, line: str) -> bool:
+        """Check if line contains an intentional violation comment."""
+        return bool(self._intentional_violation_pattern.search(line))
 
     def _is_allowed(self, line: str, start: int, end: int) -> bool:
         """Check if the workspace occurrence at [start:end] is allowed."""
@@ -192,7 +206,10 @@ class TerminologyLinter:
         """Scan all .md files in a directory recursively."""
         result = LinterResult()
 
-        md_files = list(directory.rglob("*.md"))
+        # Skip the compliance report itself to avoid self-references
+        skip_files = {directory / "TERMINOLOGY_COMPLIANCE_REPORT.md"}
+
+        md_files = [f for f in directory.rglob("*.md") if f not in skip_files]
         result.files_scanned = len(md_files)
 
         for md_file in md_files:

@@ -22,7 +22,7 @@ JJ workspaces are designed for parallel working copies:
 
 * Working copy docs: <https://docs.jj-vcs.dev/latest/working-copy/>
 * `jj workspace add` supports controlling sparse patterns (`--sparse-patterns`) (v0.22+):
-  * <https://man.archlinux.org/man/extra/jujutsu/jj-workspace-add.1.en>
+  * <https://man.archlinux.org/man/extra/jujutsu/jj-workspace-add.1.en> <!-- TERMINO001: intentional violation - URL to jj workspace documentation -->
   * release note excerpt (v0.22): <https://github.com/jj-vcs/jj/discussions/4568>
 
 Sparse patterns are controlled via `jj sparse`:

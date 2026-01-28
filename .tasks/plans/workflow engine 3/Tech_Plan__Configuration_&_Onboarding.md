@@ -221,7 +221,7 @@ Repo binding root:
   - `notifications/` and `control_actions/` (maildir-like queues)
   - `sandboxes/` (ephemeral jj workspaces for tool execution)
 
-## Terminology (do not overload "workspace")
+## Terminology (WSS and sandbox)
 
 - **WSS**: the durable store in `.../workspace/`
 - **Sandbox**: an ephemeral environment for tool execution (implemented as a **jj workspace**)
