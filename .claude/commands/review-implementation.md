@@ -176,18 +176,17 @@ uv run pr review-loop --worktree {working_dir} --tasks-file {review_file}
 
 Only if review-loop actually fixed tasks (not "no tasks found").
 
-Repeat Steps 3-6 up to 3 times until clean.
+Repeat Steps 3-6 until clean.
 
 **Iteration Counter Mechanism:**
 - The iteration count is stored in `{state_file}` under the key `iteration`
 - At the start of each Step 7 cycle, read `{state_file}` to get the current iteration count
 - Before re-running the cycle, the count is incremented and persisted back to `{state_file}`
-- The loop condition is checked as `while iteration < 3` to decide whether to continue
 
 On each iteration:
 1. Run discover-scope-files (checks for new commits/files) - captures new files automatically
 2. Run reviewer with files list and conclusions_file - WAIT for completion
-3. If still `[OPEN]` issues and iterations < 3, run review-loop again - WAIT for completion
+3. If still `[OPEN]` issues, run review-loop again - WAIT for completion
 4. **If review-loop reports "no tasks found" or "0 tasks"**: All remaining issues are non-actionable. **Set review.txt to [CLEAN] and go to Step 8** - workflow is complete.
 
 ### Step 8: Finalization
@@ -204,16 +203,6 @@ Output:
 Status: CLEAN
 Iterations: {count}
 Working Directory: {working_dir}
-```
-
-**On max iterations:**
-
-Preserve workspace for inspection:
-```
-=== Implementation Review Incomplete ===
-Status: ISSUES REMAIN
-Iterations: 3
-Workspace preserved: {workspace}
 ```
 
 ## Error Handling
@@ -255,7 +244,6 @@ All state lives in `{workspace}/`:
 1. Save state before running each step
 2. On failure, invoke workflow-repair with failed command details
 3. Workflow-repair fixes tooling, not content
-4. Maximum 3 review iterations
-5. Preserve workspace on unrecoverable failure
-6. Always pass `working_dir` to agents in worktree mode
-7. Scope agent runs ONCE - Python discovers files on each cycle
+4. Preserve workspace on unrecoverable failure
+5. Always pass `working_dir` to agents in worktree mode
+6. Scope agent runs ONCE - Python discovers files on each cycle
