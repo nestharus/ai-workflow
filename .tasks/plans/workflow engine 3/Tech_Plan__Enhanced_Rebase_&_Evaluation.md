@@ -200,7 +200,12 @@ Required checks:
 
 Hunk-lint accepts ONLY the following unified diff formats:
 
-1. **Git-style unified diff**: Starts with `diff --git a/<path> b/<path>` headers
+1. **Git-style unified diff**: Starts with `diff --git a/<path> b/<path>` headers. Additional git-style headers are permitted and ignored by hunk parsing:
+   - `index <hash>..<hash> <mode>`
+   - `new file mode <mode>`
+   - `deleted file mode <mode>`
+   - `rename from <path>`
+   - `rename to <path>`
 2. **Plain unified diff**: Standard POSIX format with `---`/`+++` file headers
 
 No other patch formats are accepted.
@@ -209,7 +214,10 @@ No other patch formats are accepted.
 
 Hunk-lint MUST reject patches that:
 
-1. **Binary diffs**: Contain NUL bytes or base64-encoded binary content
+1. **Binary diffs**: Contain NUL bytes, base64-encoded binary content, or git binary patch markers:
+   - NUL bytes in patch content
+   - Lines prefixed with `GIT binary patch`
+   - Lines starting with `literal` or `delta` (git binary diff format)
 2. **Absolute paths**: File headers contain paths starting with `/`, **EXCEPT** for `/dev/null` which is permitted in `---`/`+++` headers for add/delete patches
 3. **Parent directory escapes**: File headers contain `../` sequences or paths with `..` segments
 4. **Malformed hunks**: Cannot be parsed into valid hunk headers and bodies
@@ -393,6 +401,7 @@ for pattern in allowed_write_paths:
 Before matching, both patch paths and allowed patterns MUST be normalized:
 - Collapse `./` and redundant `//` sequences
 - Convert all path separators to forward slashes (`\` → `/`)
+- Strip leading `a/` or `b/` prefixes from file paths (typically from `--- a/path` or `+++ b/path` headers)
 - Strip trailing slashes from paths before comparison (except for patterns explicitly ending with `/`)
 
 **Scope failure**:
