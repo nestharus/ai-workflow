@@ -53,9 +53,80 @@ To avoid ambiguity:
 * Inside "Workspace State Store" or its abbreviation "WSS"
 
 **Implementation notes**:
-* Use regex negative lookbehind/lookahead to detect violations
+* Linter implementation: `.tasks/plans/workflow engine 3/tools/terminology_linter.py`
 * File extension scope: `.md` files only
-* Severity: `warn` (allows for documentation while flagging potential terminology drift)
-* Linter should be categorized under documentation/spec linting
+* Severity: `error` (blocking; CI fails on violations to enforce strict terminology compliance)
+* Linter is categorized under documentation/spec linting
 
 **Reference**: See TERMINOLOGY_RULES.md for full rule documentation and enforcement wiring into CI pipeline.
+
+### 1.1.2 Implementation: Terminology Linter Tool
+
+**Location**: `.tasks/plans/workflow engine 3/tools/terminology_linter.py`
+
+**Commands**:
+
+```bash
+# Scan directory and print violations to console
+python3 ".tasks/plans/workflow engine 3/tools/terminology_linter.py" scan ".tasks/plans/workflow engine 3"
+
+# Generate markdown compliance report
+python3 ".tasks/plans/workflow engine 3/tools/terminology_linter.py" generate-report ".tasks/plans/workflow engine 3"
+
+# Generate report to specific output file
+python3 ".tasks/plans/workflow engine 3/tools/terminology_linter.py" generate-report ".tasks/plans/workflow engine 3" -o /path/to/report.md
+```
+
+**Output**:
+
+* Console scan output: Color-coded violations with line/column information
+* Markdown report: `TERMINOLOGY_COMPLIANCE_REPORT.md` in the scanned directory (or custom path)
+
+**Report contents**:
+
+* Summary statistics (files scanned, files with violations, total violations)
+* Violations grouped by file with line/column references
+* Remediation steps with guidance on correcting violations
+
+**Architecture**:
+
+The linter is implemented using a rule-based pattern matching system:
+
+* `TerminologyRule`: Base class for all terminology rules
+* `RuleTERMINO001`: Implements the bare "workspace" detection rule
+* `TerminologyLinter`: Orchestrates scanning of directories and applies all rules
+* `LinterResult`: Collects and formats violation data for reporting
+
+Each rule implements a `check(content, file_path)` method that returns a list of `TerminologyViolation` objects. The linter can be extended by adding new rule classes that inherit from `TerminologyRule`.
+
+### 1.1.3 Verification Workflow
+
+**Pre-commit verification**:
+
+Before documenting or changing terminology rules:
+
+1. Run the linter: `python3 ".tasks/plans/workflow engine 3/tools/terminology_linter.py" generate-report ".tasks/plans/workflow engine 3"`
+2. Review the `TERMINOLOGY_COMPLIANCE_REPORT.md` output
+3. Address all violations or document intentional exceptions in TERMINOLOGY_RULES.md
+4. Re-run the linter to verify compliance
+
+**CI integration**:
+
+The linter should be integrated into the CI pipeline to ensure ongoing compliance:
+
+* Phase: Pre-merge validation
+* Trigger: On all changes to `.tasks/plans/workflow engine 3/**`
+* Action: Run `.tasks/plans/workflow engine 3/tools/terminology_linter.py scan` and fail on violations
+* Severity: Blocking (non-zero exit code on violations)
+
+**Adding new rules**:
+
+To add a new terminology rule:
+
+1. Define a new class in `.tasks/plans/workflow engine 3/tools/terminology_linter.py` inheriting from `TerminologyRule`
+2. Set `rule_id`, `description`, and `severity` class attributes
+3. Implement the `check()` method to detect violations
+4. Register the rule by adding it to `TerminologyLinter.__init__()`
+5. Document the rule in TERMINOLOGY_RULES.md
+6. Update this file (01_Scope_and_Terminology.md) with rule specifics
+7. Run the linter to baseline compliance and generate initial violations
