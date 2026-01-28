@@ -9,37 +9,17 @@ from pathlib import Path
 
 
 def _extract_file_path(content: str) -> str | None:
-    """Extract file path from task content.
+    """Extract folder path from task content.
 
-    Looks for patterns like:
-    - "Relevant files: path/to/file.md"
-    - "Relevant files: path1.md and path2.md" (returns first)
-    - "file: path/to/file.md"
+    Looks for pattern:
+    - folder: "path/to/folder"
 
-    Returns the first file path found, or None.
+    Returns the folder path found, or None.
     """
-    # Pattern for "Relevant files:" section
-    relevant_match = re.search(r"Relevant files?:\s*(.+?)(?:\n|$)", content, re.IGNORECASE)
-    if relevant_match:
-        files_text = relevant_match.group(1).strip()
-        # Split by " and " or commas to get individual files
-        # Take the first file path
-        parts = re.split(r"\s+and\s+|,\s*", files_text)
-        for part in parts:
-            part = re.sub(r"^\s*([-+*]|\d+\.)\s*", "", part).strip()
-            # Check if it looks like a file path (has extension or path separator)
-            if part and ("." in part or "/" in part or "\\" in part):
-                # Normalize Windows paths to Unix
-                return part.replace("\\", "/")
-
-    # Pattern for "file: path" or "in file.ext"
-    file_match = re.search(
-        r"(?:file:\s*|in\s+(?:the\s+)?file\s*[`'\"]?)([^\s`'\"]+\.[a-zA-Z0-9]+)",
-        content,
-        re.IGNORECASE,
-    )
-    if file_match:
-        return file_match.group(1).replace("\\", "/")
+    # Pattern for 'folder: "path"' at start of content
+    folder_match = re.search(r'^folder:\s*["\']([^"\']+)["\']', content, re.MULTILINE)
+    if folder_match:
+        return folder_match.group(1).strip().replace("\\", "/")
 
     return None
 

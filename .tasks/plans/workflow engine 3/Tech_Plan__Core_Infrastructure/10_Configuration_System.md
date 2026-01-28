@@ -65,6 +65,7 @@ ttl_minutes = 120
 processing_ttl_ms = 300000         # 5 minutes
 lease_refresh_ms = 30000           # consumer heartbeat cadence
 max_requeue_attempts = 1           # bounded; avoid silent loops
+notification_dedupe_window_ms = 60000  # 60 seconds; CLI display deduplication window
 
 [retention]
 keep_runs = 50
@@ -114,7 +115,37 @@ auto_bootstrap_jj = true
 default = ""                       # "claude-code"|"opencode"|"cursor"|"windsurf"|""
 ```
 
-### 11.4.3 Model fallback behavior (normative)
+### 11.4.3 Notification Deduplication Window (normative)
+
+The `notification_dedupe_window_ms` setting controls time-based deduplication for
+CLI display to reduce notification spam.
+
+**Purpose**: When multiple notifications with the same `(dedupe_key, severity)`
+tuple are generated within the configured window, CLI consumers suppress
+displaying duplicates while showing a count of suppressed notifications.
+
+**Default value**: `60000` milliseconds (60 seconds)
+
+**Scope**: This setting applies ONLY to CLI display via `workflowctl notifications
+tail` and similar commands. It does NOT affect persistence.
+
+**Invariant (normative)**: All notifications MUST be persisted to disk regardless
+of deduplication status. The deduplication window affects only what is displayed
+to the user, not what is recorded.
+
+**Deduplication key**: `(dedupe_key, severity)` tuple. Two notifications are
+considered duplicates for display purposes if and only if both fields match.
+
+**Behavior**: Within the configured window, duplicate notifications are suppressed
+from display but counted. The CLI displays a `+N suppressed` indicator showing
+how many notifications were suppressed. After the window expires, the next
+notification with the same `(dedupe_key, severity)` starts a new deduplication
+window.
+
+Cross-reference: See Queues & Notifications §9.1 for the full deduplication
+specification, and Integration §2.2.1 for CLI display behavior.
+
+### 11.4.4 Model fallback behavior (normative)
 
 **Fallback trigger conditions**:
 
@@ -134,7 +165,7 @@ default = ""                       # "claude-code"|"opencode"|"cursor"|"windsurf
 4. Fallback selection logic is governed by the gateway contract (Integration
    §7.2.9.E)
 
-### 11.4.4 Gateway usage payload schema (normative)
+### 11.4.5 Gateway usage payload schema (normative)
 
 The gateway returns a usage object on each LLM call with the following fields:
 
@@ -157,7 +188,7 @@ Field definitions (normative):
 This schema is the contract between gateway, config, and runner. All three MUST
 use these exact field names and types.
 
-### 11.4.5 Aggregated LLM usage artifact schema (normative)
+### 11.4.6 Aggregated LLM usage artifact schema (normative)
 
 The runner aggregates all LLM usage across a workflow run and writes to:
 `workspace/runs/<run_id>/artifacts/llm_usage.json`

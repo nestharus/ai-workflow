@@ -115,7 +115,7 @@ Implementation requirement (normative):
 
 **Display deduplication behavior (normative):**
 
-1. Within a configurable time window (default: 30 seconds), suppress display of duplicate notifications where duplicates are defined as notifications sharing the same:
+1. Within a configurable time window (default: 60 seconds per `notification_dedupe_window_ms`), suppress display of duplicate notifications where duplicates are defined as notifications sharing the same:
    - `dedupe_key`: normalized content fingerprint (e.g., hash of notification template + resolved parameter values)
    - `severity`: notification severity level
 
@@ -123,13 +123,18 @@ Implementation requirement (normative):
    - Display the first occurrence normally
    - For subsequent duplicates within the window, display a suppression counter instead of the full notification
    - Suppress counter format: `+N suppressed` where N is the count of suppressed duplicates
-   - Counter placement: Immediately after the displayed notification, on the same line, separated by a single space
+   - Counter placement: On a line following the notification details, indented to align with the notification body
 
 **Example output:**
 
-```
-[2026-01-28 14:32:15 INFO] Workflow step completed successfully +5 suppressed
-[2026-01-28 14:32:45 WARNING] Agent timeout exceeded
+```text
+[2026-01-28 14:32:15] ERROR: Step execution failed
+  step_id: step_01J3ZQK9X5J9H6R8V2S4J2E9P3
+  error: E_TOOL_TIMEOUT
+  +5 suppressed
+
+[2026-01-28 14:33:20] WARN: Sandbox cleanup delayed
+  sandbox_id: sb_01J3ZQK9X5J9H6R8V2S4J2E9P4
 ```
 
 3. Window tracking:
@@ -141,3 +146,5 @@ Implementation requirement (normative):
 - Maintain an in-memory cache of `(dedupe_key, severity, first_seen_timestamp)` tuples
 - Evict entries from the cache after the window expires based on `first_seen_timestamp`
 - The cache is per-invocation of the tail command (not persisted)
+
+**Configuration**: See Configuration System §11.4.3 for the `notification_dedupe_window_ms` setting.
