@@ -104,13 +104,34 @@ A notification is a JSON document with required fields (Core §5.2) plus:
 * `expires_at` (RFC3339 timestamp; optional)
 
 **Deduplication rule (normative)**:
+
+Deduplication operates at two distinct levels:
+
+1. **Persistence level**: All notifications MUST be written to `notifications/inbox/`
+   atomically. No deduplication occurs at the storage layer.
+
+2. **Display level**: CLI consumers MAY suppress notifications with the same
+   `(dedupe_key, severity)` tuple within `notification_dedupe_window_ms` of the
+   first notification's `created_at` timestamp. This suppression is UI-only
+   and does not affect the durable queue.
+
+**Producer recommendations**:
 * Producers SHOULD set `dedupe_key` for error-like notifications to prevent
   accidental spam (e.g., repeated retries).
 * For step failures, the recommended v1 key is:
   * `sha256(event_type + "|" + run_id + "|" + step_execution_id + "|" +
     error.code).hexdigest()\[:16\]`
-* Consumers MAY suppress notifications with the same `dedupe_key` within the
-  active run, but MUST NOT delete the underlying evidence.
+
+**Consumer behavior**:
+* Consumers MAY suppress display of duplicate notifications based on
+  `(dedupe_key, severity)` within `notification_dedupe_window_ms`.
+* Duplicates are identified by comparing the `created_at` timestamp of the
+  first stored notification with subsequent notifications.
+* Suppression at display level MUST NOT delete or move notifications from the
+  durable queue.
+
+**Configuration**: `notification_dedupe_window_ms` is part of the queue
+configuration managed by the Configuration System (see §11.4.3).
 
 Priority mapping (normative):
 

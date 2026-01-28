@@ -107,4 +107,37 @@ Implementation requirement (normative):
 ### 2.2 Entrypoint implementation notes (packaging)
 
 - `workflowctl` is the only required OS-level executable.
-- All other “entrypoints” (project-manager/ticket-manager) are *logical commands* provided via skills and map to `workflowctl` subcommands or `workflowctl run --workflow ...`.
+- All other "entrypoints" (project-manager/ticket-manager) are *logical commands* provided via skills and map to `workflowctl` subcommands or `workflowctl run --workflow ...`.
+
+#### 2.2.1 `workflowctl notifications tail` — Display Deduplication
+
+**Persistence invariant (normative):** The tail command MUST NOT delete or skip persisted notifications. Every notification written to the persistence layer MUST be observed and emitted exactly once per invocation; deduplication applies ONLY to terminal display output.
+
+**Display deduplication behavior (normative):**
+
+1. Within a configurable time window (default: 30 seconds), suppress display of duplicate notifications where duplicates are defined as notifications sharing the same:
+   - `dedupe_key`: normalized content fingerprint (e.g., hash of notification template + resolved parameter values)
+   - `severity`: notification severity level
+
+2. When a duplicate suppression occurs:
+   - Display the first occurrence normally
+   - For subsequent duplicates within the window, display a suppression counter instead of the full notification
+   - Suppress counter format: `+N suppressed` where N is the count of suppressed duplicates
+   - Counter placement: Immediately after the displayed notification, on the same line, separated by a single space
+
+**Example output:**
+
+```
+[2026-01-28 14:32:15 INFO] Workflow step completed successfully +5 suppressed
+[2026-01-28 14:32:45 WARNING] Agent timeout exceeded
+```
+
+3. Window tracking:
+   - Window tracking is based on `created_at` timestamps of notifications
+   - Window expiry behavior: When the first occurrence's `created_at` timestamp exceeds the window duration, that entry is no longer considered for deduplication matching and subsequent identical notifications are treated as new (displayed with their suppression counter reset)
+
+**Implementation notes:**
+
+- Maintain an in-memory cache of `(dedupe_key, severity, first_seen_timestamp)` tuples
+- Evict entries from the cache after the window expires based on `first_seen_timestamp`
+- The cache is per-invocation of the tail command (not persisted)
