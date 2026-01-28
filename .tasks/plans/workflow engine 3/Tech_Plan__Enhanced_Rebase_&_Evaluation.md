@@ -685,6 +685,8 @@ Normative algorithm:
    - `tasks/<task_id>/steps/verification_result.json`
    - `tasks/<task_id>/deviations/` (if present)
 
+   **Handle empty plans**: If `step_plan` has `steps: []`, mark task as `empty_plan_executed` and proceed to section 4.4.1.
+
 2. Load reality artifacts:
    - `base_rev` and `tip_rev` from `ticket.json`
    - VCS diff summary for `base_rev..tip_rev` (changed paths + stats)
@@ -705,6 +707,7 @@ Normative algorithm:
 - **Missing planned change**:
   - a planned step is marked `done` but none of its declared files appear in `actual_path_set`
   - (this is a strong indicator that the plan was not actually implemented)
+  - **Exception**: This gap MUST NOT be emitted for tasks with empty step plans (`steps: []`). Empty plans are explicitly "no work needed" - not a gap.
 
 - **Validation missing**:
   - required validation workflow did not run for the ticket close attempt
@@ -715,6 +718,23 @@ Normative algorithm:
 6. Persist outputs:
    - `gaps.md` (human-readable)
    - `gaps.json` (machine-readable; suitable for ticket creation)
+
+### 4.4.1 Empty plan evaluation record
+
+When a task has an empty step plan (`steps: []`), the evaluation MUST emit a specific record indicating that the plan was intentionally empty:
+
+**Required fields**:
+- `task_id`: The identifier of the task with the empty plan
+- `status`: `completed`
+- `empty_plan_executed`: `true`
+- `rationale`: Either `"no work needed"` or `"already satisfied"`
+- `evidence_refs[]`:
+  - `plan_hash`: Hash of the step plan document for reproducibility
+  - `validation_run_id`: Reference to the validation run that confirmed the empty state
+
+**Purpose**: This record distinguishes between:
+- Intentionally empty plans (no changes required)
+- Accidentally incomplete implementations
 
 ### 4.5 Gap taxonomy
 
