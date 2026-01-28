@@ -66,36 +66,120 @@ Notes:
 
 Patterns are selected from one of the following sources, in priority order:
 
-1. **Workflow explicit include patterns**  
-   - Workflow YAML step: `sandbox.include_patterns: [...]` (Workflow schema §7.2.5)  
+1. **Workflow explicit include patterns**
+   - Workflow YAML step: `sandbox.include_patterns: [...]` (Workflow schema §7.2.5)
    - If present, these patterns are applied exactly.
 
-2. **Step-plan declared file inputs**  
+2. **Step-plan declared file inputs**
    - If the step is derived from a step plan, use `step.inputs.files[*].path` (Project & Ticket System §6.4).
 
-3. **Fallback defaults by sandbox purpose**  
+3. **Fallback defaults by sandbox purpose**
    - Used only when neither (1) nor (2) is available.
 
-Default derivation (normative):
+##### Pattern derivation algorithm (normative)
 
-- If `purpose` is `validation`, `rebase_conflict`, or `evaluation`:
-  - Use a full working copy (`sparse_mode = full`)
-  - Do not apply derived include patterns (full means full).
+Given a set of file input paths (from step-plan or derived), the following algorithm computes the final sparse pattern set:
 
-- If `purpose` is `step_edit`:
-  - Use an empty working copy (`sparse_mode = empty`)
-  - Derive `include_patterns` from the declared step file list:
-    - For each file `p`:
-      - add `p`
-      - add the immediate parent directory of `p` (e.g., `src/` for `src/app/main.py`)
-    - Add toolchain “root” files to increase tool correctness:
-      - `.editorconfig`, `.gitignore`
-      - `pyproject.toml`, `requirements.txt`, `poetry.lock`
-      - `package.json`, `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`
-      - `go.mod`, `go.sum`
-      - `Cargo.toml`, `Cargo.lock`
-      - `Makefile`
-  - If the step file list is missing or empty, fail loudly with `E_SPARSE_DERIVATION_FAILED` (Core §8.2.5).
+**Input**: `file_inputs = [p1, p2, ... pn]` (array of repo-relative file paths)
+
+**Output**: `include_patterns = []` (array of normalized sparse patterns)
+
+**Step 1**: Initialize empty set `P = {}`
+
+**Step 2**: For each file path `p` in `file_inputs`:
+   2.1. Normalize `p` (see §9.2.2 normalization rules)
+   2.2. Reject `p` if it violates safety rules (absolute path, contains `..`, empty)
+   2.3. Add exact file pattern: `P.add(p)`
+   2.4. Expand wildcards:
+       - If `p` contains glob patterns (`*`, `?`, `[]`, `**`):
+         - Attempt to resolve expansion via `jj` or filesystem at baseline
+         - If expansion fails or exceeds pattern expansion limit (see below), add `p` as-is
+         - If expansion succeeds, add each resolved path `r` to `P`
+   2.5. Add parent directory pattern for `p`:
+       - Extract `parent_dir = dirname(p)`
+       - Normalize `parent_dir` to ensure trailing `/` for directories
+       - Add `parent_dir` to `P`
+
+**Step 3**: Add toolchain root files (conditional):
+   - If `[sandbox].include_toolchain_config = true` (default `true`):
+     - For each toolchain config file `c` in the standard list (see `DEFAULT_TOOLCHAIN_FILES`):
+       - If `c` exists at repo root, add `c` to `P`
+
+**Step 4**: Deduplicate and de-overlap patterns:
+   4.1. Convert `P` to sorted list by specificity (most specific first):
+       - Exact file paths (no trailing `/`) come before directory patterns
+       - Longer directory paths come before shorter parent paths
+   4.2. For each pattern `p` in sorted list:
+       - If `p` is a file path and is covered by an existing directory pattern, skip
+       - If `p` is a directory and is a prefix of an existing pattern, keep both
+       - Otherwise, add `p` to `include_patterns`
+
+**Step 5**: Validate pattern count limit:
+   5.1. If `len(include_patterns) > MAX_PATTERNS` (default 1000):
+       - Fail with `E_SPARSE_PATTERN_LIMIT_EXCEEDED`
+       - Include current count and limit in error details
+   5.2. Return `include_patterns`
+
+**Constants**:
+- `DEFAULT_TOOLCHAIN_FILES = [".editorconfig", ".gitignore", "pyproject.toml", "requirements.txt", "poetry.lock", "package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json", "go.mod", "go.sum", "Cargo.toml", "Cargo.lock", "Makefile"]`
+- `MAX_PATTERNS = 1000` (configurable via `[sandbox].max_patterns`)
+
+##### Wildcard and directory pattern handling (normative)
+
+**Glob patterns** (`*`, `?`, `[]`, `**`):
+- Glob patterns are treated as **opaque strings** and passed to `jj sparse set`
+- `jj` evaluates globs at sandbox creation time, matching against repo state
+- If a glob pattern matches zero files, `jj` will record it with no effect
+- The runner does NOT pre-expand globs except in the derivation expansion step (Step 2.4)
+
+**Directory patterns** (trailing `/`):
+- Patterns ending in `/` denote directory prefix matching
+- `src/` matches all files under `src/` recursively
+- Exact file patterns (`src/app.py`) have precedence over directory patterns
+
+**Pattern overlap resolution**:
+- Multiple patterns may reference the same files—this is acceptable
+- `jj` evaluates sparse patterns as a union, not as overrides
+- No deduplication beyond algorithm Step 4 is performed
+
+##### Binary vs text file handling
+
+The pattern derivation algorithm does **not** distinguish between binary and text files:
+- File type is determined by extension and content during tool execution
+- Binary files can be materialized in the sandbox if matched by patterns
+- The `jj` sparse system treats all content uniformly
+
+If a workflow needs to exclude binary files:
+- Use workflow-level `sandbox.exclude_patterns` (未来的jj版本) when available
+- Or use explicit directory patterns rather than wildcards for fine control
+
+##### Pattern breadth limits and escalation
+
+When derived patterns are too broad (approaching full checkout):
+
+**Detection**:
+- If `len(include_patterns) > BREADTH_THRESHOLD * total_files_in_repo` (default `BREADTH_THRESHOLD = 0.5`)
+- Emit a warning at `info` severity:
+  - "Derived sparse patterns include ~X% of repo files; consider using `sparse_mode=full`"
+
+**Automatic escalation to full mode** (optional, opt-in):
+- If `[sandbox].auto_escalate_to_full = true` (default `false`):
+  - When breadth threshold exceeded, recreate sandbox with `sparse_mode=full`
+  - Log escalation and skip pattern derivation entirely
+
+**User override**:
+- Workflow declarer can set `sandbox.sparse_mode = full` explicitly to override derivation
+
+##### Default derivation by sandbox purpose (normative apply of algorithm)
+
+**If `purpose` is `validation`, `rebase_conflict`, or `evaluation`**:
+- Use a full working copy (`sparse_mode = full`)
+- Do not apply derived include patterns (full means full).
+
+**If `purpose` is `step_edit`**:
+- Use an empty working copy (`sparse_mode = empty`)
+- Run the derivation algorithm above on the declared step file list
+- If the step file list is missing or empty, fail loudly with `E_SPARSE_DERIVATION_FAILED` (Core §8.2.5).
 
 #### 9.2.4 Algorithm
 
