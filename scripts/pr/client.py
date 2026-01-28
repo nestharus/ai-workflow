@@ -485,6 +485,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Starting commit SHA",
     )
     discover_scope_parser.add_argument(
+        "--folder",
+        default=None,
+        help="Optional folder to whitelist files (only return files in this folder)",
+    )
+    discover_scope_parser.add_argument(
         "--state-file",
         type=Path,
         default=None,
@@ -802,7 +807,7 @@ def main(argv: list[str] | None = None) -> int:
         return commands.parse_review_tasks_command(args.review_file, args.output_dir)
     if args.command == "discover-scope-files":
         return commands.discover_scope_files_command(
-            args.working_dir, args.start_commit, args.state_file
+            args.working_dir, args.start_commit, args.folder, args.state_file
         )
     if args.command == "aggregate-tasks":
         return commands.aggregate_tasks_command(args.input_dir, files_only=args.files_only)

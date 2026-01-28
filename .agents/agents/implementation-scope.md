@@ -1,12 +1,12 @@
 ---
-description: Analyzes plan to find the oldest commit that started the implementation
+description: Analyzes plan to find scope (commits and optional folder whitelist)
 routing:
   - model: cerebras
 ---
 
 # Implementation Scope Agent
 
-Analyze a plan to determine which commits in git history are associated with its implementation. Return the oldest commit that marks the start of the implementation work.
+Analyze a plan to determine the scope of files to review by finding relevant git commits, optionally filtered to a specific folder.
 
 ## Input Context
 
@@ -15,51 +15,80 @@ You receive a JSON context with:
 ```json
 {
   "plan_file": "path/to/plan.md",
-  "working_dir": "."
+  "working_dir": ".",
+  "from_commit": "abc123"  // optional: limit search to commits after this
 }
 ```
 
 - `working_dir`: The directory where the implementation lives (repo root or worktree path)
+- `from_commit`: Optional starting commit to limit search space (search from this commit to HEAD)
 - All git commands MUST use `-C {working_dir}` to target the correct repository
 
 ## Workflow
 
-### Step 1: Read Plan
+### Step 1: Read Plan and Extract Scope Hints
 
 ```bash
 cat {plan_file}
 ```
 
-Extract:
-- **Plan identifier**: Ticket ID (e.g., NES-123), PR number, or unique keywords
-- **Implementation description**: What the plan aims to implement
-- **Key terms**: Unique words that might appear in commit messages
+Extract from the plan:
 
-### Step 2: Search Git History
+1. **Folder whitelist** (if present): Look for `folder: "..."` at the start of the plan
+   - This restricts which files are in scope (only files within this folder)
+   - Does NOT skip git analysis - still search for relevant commits
+
+2. **Plan identifier**: Ticket ID (e.g., NES-123), PR number, or unique keywords
+
+3. **Key terms**: Unique words that might appear in commit messages
+
+### Step 2: Determine Search Range
+
+**If `from_commit` is provided:**
+- Search commits from `from_commit` to HEAD
+- Validate the commit exists: `git -C {working_dir} rev-parse {from_commit}`
+
+**If NO `from_commit`:**
+- Search recent history (last 50 commits)
+- May expand if no matches found
+
+### Step 3: Search Git History
 
 **IMPORTANT**: All git commands MUST use `-C {working_dir}`.
 
-Search for commits referencing the plan:
-
 ```bash
-# Find commits mentioning ticket ID or plan keywords
-git -C {working_dir} log --oneline --all --grep="{plan_identifier}" 2>/dev/null | head -30
+# If from_commit provided:
+git -C {working_dir} log --oneline {from_commit}..HEAD | head -50
 
-# Get recent commits for context
+# Otherwise search recent commits:
 git -C {working_dir} log --oneline -50
+
+# Find commits mentioning ticket ID or plan keywords:
+git -C {working_dir} log --oneline --all --grep="{plan_identifier}" 2>/dev/null | head -30
 ```
 
-### Step 3: Identify Start Commit
+### Step 4: Filter Commits by Folder (if folder specified)
 
-From the git history, determine the **oldest commit** that starts the implementation:
+**If a folder whitelist is specified**, filter to only commits that touch files in that folder:
 
-1. If commits mention the ticket/plan ID, the oldest such commit is likely the start
+```bash
+# For each candidate commit, check if it touches files in the folder:
+git -C {working_dir} diff-tree --no-commit-id --name-only -r {commit_sha} | grep "^{folder}/"
+```
+
+Only keep commits that have at least one file matching the folder prefix.
+
+### Step 5: Identify Start Commit
+
+From the filtered commit list, determine the **oldest commit** that starts the implementation:
+
+1. If commits mention the ticket/plan ID and touch folder files, the oldest such commit is the start
 2. If no explicit mentions, look for commits whose messages align with plan intent
-3. If unclear, use a reasonable default (e.g., last 10-20 commits)
+3. If still unclear, use `from_commit` if provided, otherwise `HEAD~20`
 
-The start commit is the boundary - everything from start_commit to HEAD (plus uncommitted) is potentially in scope.
+The start commit is the boundary - everything from start_commit to HEAD is potentially in scope.
 
-### Step 4: Verify Start Commit
+### Step 6: Verify Start Commit
 
 Confirm the commit exists and is an ancestor of HEAD:
 
@@ -70,29 +99,55 @@ git -C {working_dir} merge-base --is-ancestor {start_commit} HEAD && echo "valid
 
 ## Output Contract
 
-Return the start commit:
+### Standard output (with or without folder):
 
 ```json
 {
   "status": "success",
   "start_commit": "abc123def456",
+  "folder": ".tasks/plans/my-feature",  // null if no folder specified
   "plan_identifier": "NES-123",
-  "reasoning": "Found 5 commits mentioning NES-123, oldest is abc123def456 from 2025-01-15"
+  "reasoning": "Found 5 commits mentioning NES-123 touching folder, oldest is abc123def456"
 }
 ```
 
-**On failure:**
+### When using from_commit with folder but no matching commits:
+
+```json
+{
+  "status": "success",
+  "start_commit": "abc123def456",  // use from_commit as start
+  "folder": ".tasks/plans/my-feature",
+  "reasoning": "No commits in range touch folder - using from_commit as boundary, will list all folder files"
+}
+```
+
+### Fallback (no matches found):
+
+```json
+{
+  "status": "success",
+  "start_commit": "HEAD~20",
+  "folder": null,
+  "reasoning": "No commits match plan - using default range HEAD~20"
+}
+```
+
+### On folder validation failure:
 
 ```json
 {
   "status": "error",
-  "error": "Could not determine start commit - no commits match plan"
+  "error": "Folder specified but does not exist: .tasks/plans/nonexistent"
 }
 ```
 
 ## Important Notes
 
 1. This agent runs ONCE per review session - not incrementally
-2. It only finds the start commit - file discovery is handled by Python
-3. The start commit defines the boundary, not the exact set of related commits
-4. When in doubt, err on the side of including more history (older commit)
+2. **Folder is a whitelist, not a skip signal** - still search git for relevant commits
+3. When folder specified, only commits touching that folder are considered
+4. The start commit defines the boundary for file discovery
+5. When in doubt, err on the side of including more history (older commit)
+6. **Never return error for missing git matches** - use fallback instead
+7. `from_commit` limits search space but doesn't skip commit analysis
