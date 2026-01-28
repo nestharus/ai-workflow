@@ -16,6 +16,6 @@ steps:
     description: "Gather evidence (logs, artifacts) and emit a classification + repair plan."
     capabilities_required: ["sandbox_exec", "llm_call"]
     with:
-      run_id: "${inputs.run_id}"
-      step_execution_id: "${inputs.step_execution_id}"
-      error_code: "${inputs.error_code}"
+      run_id: "${{ inputs.run_id }}"
+      step_execution_id: "${{ inputs.step_execution_id }}"
+      error_code: "${{ inputs.error_code }}"

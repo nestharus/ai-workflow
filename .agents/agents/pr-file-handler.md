@@ -29,16 +29,23 @@ The agent receives context JSON with the following structure:
 
 ## Output Contract
 
-Return a JSON result with exactly this structure:
+**CRITICAL**: Your ONLY output must be a single JSON object. Do NOT include any explanatory text, markdown formatting, code blocks, or commentary before or after the JSON. The entire response must be valid JSON that can be parsed directly.
 
-```json
+Return ONLY this JSON structure (no markdown code fences, no explanation):
+
 {
   "file_path": "path/to/file.py",
   "status": "success | error",
   "changes_made": true,
   "deferred_reply": "Response to post on PR thread"
 }
-```
+
+Example of CORRECT output:
+{"file_path": "src/api/handler.py", "status": "success", "changes_made": true, "deferred_reply": "Fixed the issue."}
+
+Example of WRONG output (includes text before JSON):
+Looking at the file, I see the issue...
+{"file_path": "src/api/handler.py", "status": "success", "changes_made": true, "deferred_reply": "Fixed."}
 
 ## Rules
 
@@ -88,31 +95,10 @@ Return a JSON result with exactly this structure:
 ## Example Workflow
 
 Input context:
+{"file_path": "src/api/handler.py", "tasks": [{"id": "thread_123", "type": "pr_comment", "content": "Add input validation for the request body", "line": 45}]}
 
-```json
-{
-  "file_path": "src/api/handler.py",
-  "tasks": [
-    {
-      "id": "thread_123",
-      "type": "pr_comment",
-      "content": "Add input validation for the request body",
-      "line": 45
-    }
-  ]
-}
-```
-
-Expected output:
-
-```json
-{
-  "file_path": "src/api/handler.py",
-  "status": "success",
-  "changes_made": true,
-  "deferred_reply": "Added input validation for the request body as suggested."
-}
-```
+Your ENTIRE output (nothing else):
+{"file_path": "src/api/handler.py", "status": "success", "changes_made": true, "deferred_reply": "Added input validation for the request body as suggested."}
 
 ## Quality Standards
 
