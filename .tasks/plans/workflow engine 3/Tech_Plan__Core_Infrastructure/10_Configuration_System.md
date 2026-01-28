@@ -84,10 +84,96 @@ multimodal = "gemini-3"
 # format: primary_model_id = "fallback_model_id"
 # When a primary model is unavailable, the fallback is used
 # Example: claude-opus = "claude-sonnet-4-1-20250515"
-# Required: when a fallback is applied, emit notification and set
-# run metric llm_model_fallback_used=true (see Integration §7.2.9)
-# Fallbacks only apply when model availability is checked via catalog;
-# explicit resolution failures (e.g., routing key not found) are distinct
+
+### 11.4.3 Model fallback behavior (normative)
+
+**Fallback trigger conditions**:
+- A fallback is used ONLY when the resolved model is not available in the configured
+  model catalog AND `[models.fallbacks]` contains an explicit mapping from the
+  unavailable model ID to a fallback ID
+- Fallbacks DO NOT apply to explicit resolution failures (e.g., routing key not found)
+
+**Fallback behavior (normative)**:
+1. When a fallback is applied, emit an explicit informational notification to the
+   user (must not be silent)
+2. Set run metric `llm_model_fallback_used = true` in run.json metadata
+3. The gateway usage payload (see §11.4.4 below) applies to the actual model used
+   (whether fallback or primary)
+4. Fallback selection logic is governed by the gateway contract (Integration §7.2.9.E)
+
+### 11.4.4 Gateway usage payload schema (normative)
+
+The gateway returns a usage object on each LLM call with the following fields:
+
+```json
+{
+  "prompt_tokens": 12345,
+  "completion_tokens": 6789,
+  "total_tokens": 19134,
+  "latency_ms": 3250
+}
+```
+
+Field definitions (normative):
+- `prompt_tokens` (int): Number of tokens in the request prompt
+- `completion_tokens` (int): Number of tokens in the model response
+- `total_tokens` (int): Sum of prompt_tokens and completion_tokens
+- `latency_ms` (int): Request-to-response latency in milliseconds
+
+This schema is the contract between gateway, config, and runner. All three MUST
+use these exact field names and types.
+
+### 11.4.5 Aggregated LLM usage artifact schema (normative)
+
+The runner aggregates all LLM usage across a workflow run and writes to:
+`workspace/runs/<run_id>/artifacts/llm_usage.json`
+
+```json
+{
+  "run_id": "<run_id>",
+  "workflow_id": "<workflow_id>",
+  "total_prompt_tokens": 12345,
+  "total_completion_tokens": 54321,
+  "total_tokens": 66666,
+  "total_latency_ms": 15000,
+  "calls_by_model": {
+    "claude-opus-4-5-20251101": {
+      "prompt_tokens": 10000,
+      "completion_tokens": 40000,
+      "total_tokens": 50000,
+      "call_count": 5
+    },
+    "gemini-3-pro-20250115": {
+      "prompt_tokens": 2345,
+      "completion_tokens": 14321,
+      "total_tokens": 16666,
+      "call_count": 2
+    }
+  },
+  "fallback_used": false
+}
+```
+
+Field definitions (normative):
+- `run_id` (string): The ULID of the run
+- `workflow_id` (string): The workflow identifier
+- `total_prompt_tokens` (int): Sum of all prompt_tokens across all calls
+- `total_completion_tokens` (int): Sum of all completion_tokens across all calls
+- `total_tokens` (int): Sum of all total_tokens across all calls
+- `total_latency_ms` (int): Sum of all latency_ms across all calls
+- `calls_by_model` (object): Nested object keyed by model ID with per-model stats:
+  - `prompt_tokens` (int): Total prompt tokens for that model
+  - `completion_tokens` (int): Total completion tokens for that model
+  - `total_tokens` (int): sum of prompt_tokens and completion_tokens for that model
+  - `call_count` (int): Number of calls made to that model
+- `fallback_used` (boolean): true iff any model fallback occurred during the run
+
+**Run metadata field (normative)**:
+- `llm_model_fallback_used` (boolean, in run.json): Mirror of fallback_used for
+  quick query; MUST match fallback_used in llm_usage.json
+
+Cross-reference: Integration §7.2.9.E defines the execution behavior for
+collecting and aggregating this data. This section defines the normative schema.
 
 # Budget controls per workflow run (optional)
 budget_tokens_per_run = 1000000
