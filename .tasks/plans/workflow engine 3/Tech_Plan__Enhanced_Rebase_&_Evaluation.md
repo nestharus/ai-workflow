@@ -210,7 +210,7 @@ No other patch formats are accepted.
 Hunk-lint MUST reject patches that:
 
 1. **Binary diffs**: Contain NUL bytes or base64-encoded binary content
-2. **Absolute paths**: File headers contain paths starting with `/`
+2. **Absolute paths**: File headers contain paths starting with `/`, **EXCEPT** for `/dev/null` which is permitted in `---`/`+++` headers for add/delete patches
 3. **Parent directory escapes**: File headers contain `../` sequences or paths with `..` segments
 4. **Malformed hunks**: Cannot be parsed into valid hunk headers and bodies
 
@@ -287,8 +287,8 @@ For each hunk, track:
 For each hunk on a file:
 
 1. **Locate match region**: Search the base file for the hunk's context lines within `+/- max_fuzz_lines` positions around `old_start`
-   - `max_fuzz_lines` defaults to 3 (workflow-configurable)
-   - Use exact matching for context lines (leading space prefix)
+   - `max_fuzz_lines` defaults to 50 (workflow-configurable)
+   - Use exact preimage matching at anchor position `old_start` within fuzz range
 
 2. **Match types**:
    - **Exact match**: Found at exactly `old_start`
@@ -308,8 +308,7 @@ For each hunk on a file:
 1. If all hunks succeed: dry-run passes, proceed to scope validation
 2. If any hunk fails:
    - Record `failure_signature` with:
-     - `error_code: APPLY_FAILED`
-     - `failure_mode: no_match | ambiguous`
+     - `error_code: apply_failed_no_match | apply_failed_ambiguous` (under E_TOOL_FAILED)
      - `hunk_id`: Index of failing hunk
      - `file_path`: Path of failing file
      - `expected_context`: The context lines that could not be matched
@@ -317,14 +316,14 @@ For each hunk on a file:
 
 **Failure modes**:
 
-- **no_match**: No context lines from the hunk could be found in the base file within fuzz range. Indicates the base has changed significantly, hunk is stale, or hunk is malformed.
-- **ambiguous**: Multiple positions matched the hunk context within fuzz range. Indicates duplicate content or insufficient context. Application would be unpredictable.
+- **apply_failed_no_match** (E_TOOL_FAILED): No context lines from the hunk could be found in the base file within fuzz range. Indicates the base has changed significantly, hunk is stale, or hunk is malformed.
+- **apply_failed_ambiguous** (E_TOOL_FAILED): Multiple positions matched the hunk context within fuzz range. Indicates duplicate content or insufficient context. Application would be unpredictable.
 
 **Mode A vs Mode B distinction**:
 
 Both modes use the same in-repo algorithm. The only difference is the source of base file contents:
-- **Mode A (hydrated base)**: Load files directly from repo at `base_rev` using `jj file show` or VCS commands
-- **Mode B (sandbox base)**: Load files from the sandbox workspace (via `jj workspace attach` + `jj file show`)
+- **Mode A (hydrated base)**: Load hydrated content from hydrate manifest matching `base_rev`
+- **Mode B (sandbox base)**: Load sandbox filesystem at baseline revision (via `jj workspace attach` + `jj file show`)
 
 The dry-run algorithm itself is unchanged between modes—only the file source differs.
 
@@ -333,7 +332,7 @@ The dry-run algorithm itself is unchanged between modes—only the file source d
 ```json
 {
   "hunk_fuzz": {
-    "max_fuzz_lines": 3
+    "max_fuzz_lines": 50
   }
 }
 ```
@@ -359,7 +358,7 @@ On failure, hunk-lint MUST include:
 
 **Allowed write paths matching**:
 
-The step declares an `allowed_write_set` which is a list of path patterns that the patch MAY modify. Per v1 specification, globs are forbidden—only exact matches and directory prefixes are supported.
+The step declares `allowed_write_paths[]` which is a list of path patterns that the patch MAY modify. Per v1 specification, globs are forbidden—only exact matches and directory prefixes are supported.
 
 **Pattern types (v1)**:
 
@@ -376,7 +375,7 @@ The step declares an `allowed_write_set` which is a list of path patterns that t
 For each file path `p` in the patch:
 ```
 allowed = false
-for pattern in allowed_write_set:
+for pattern in allowed_write_paths:
     if pattern ends with "/":
         # Directory prefix match
         if p starts with pattern:
@@ -398,17 +397,16 @@ Before matching, both patch paths and allowed patterns MUST be normalized:
 
 **Scope failure**:
 
-If ANY modified file path in the patch does NOT match the `allowed_write_set`:
-- Fail hunk-lint with `error_code: SCOPE_VIOLATION` (per plan.txt: `E_OWNERSHIP_VIOLATION`)
-- Include `failure_signature` and `violating_paths` list
-- Include `allowed_write_set` for user context
+If ANY modified file path in the patch does NOT match `allowed_write_paths[]`:
+- Fail with `error_code: E_OWNERSHIP_VIOLATION`
+- Include `failure_signature` and list of offending paths in error report
 
 **Strict enforcement**:
 
 Scope enforcement is ALWAYS applied:
-- Empty `allowed_write_set` is NOT valid—if empty, hunk-lint MUST fail with `error_code: SCOPE_VIOLATION`
+- Empty `allowed_write_paths` is NOT valid—if empty, hunk-lint MUST fail with `error_code: E_OWNERSHIP_VIOLATION`
 - There is no "disable enforcement" behavior
-- Any path in the patch that is not in `allowed_write_set` is a violation, no exceptions
+- Any path in the patch that is not in `allowed_write_paths[]` is a violation, no exceptions
 
 **File addition vs modification**:
 
@@ -417,7 +415,7 @@ Scope enforcement applies equally to:
 - File modifications (paths present in both `+++` and `---`)
 - File deletions (paths present in `---` but not `+++`)
 
-Any of these operations on a path outside `allowed_write_set` is a scope violation.
+Any of these operations on a path outside `allowed_write_paths[]` is a scope violation.
 
 ##### 3.1.1.4 Optional syntax checks
 
@@ -518,76 +516,7 @@ Checkers are NOT predefined—they are explicitly declared per step with their f
 | `flake8` | Python | `flake8` | No |
 | `pylint` | Python | `pylint --errors-only` | No |
 
-**Configuration**:
-
-Checkers are configured at the workflow level in `step.inputs.syntax_checkers`:
-
-```json
-{
-  "syntax_checkers": [
-    {
-      "name": "python_ast",
-      "enabled": true,
-      "file_patterns": ["**/*.py"],
-      "fail_fast": false
-    },
-    {
-      "name": "flake8",
-      "enabled": true,
-      "file_patterns": ["src/**/*.py"],
-      "options": ["--max-line-length=120"],
-      "fail_fast": true
-    }
-  ]
-}
-```
-
-**Execution logic**:
-
-1. For each enabled checker:
-   - Compute the set of affected files from the patch (files with additions or modifications)
-   - Filter files by `file_patterns` using glob matching
-   - Run the checker command against the filtered files
-   - Capture `stdout`, `stderr`, and exit code
-
-2. Determine result:
-   - Exit code 0: checker passed
-   - Exit code non-zero: checker failed
-
-3. If `fail_fast` is true for any checker and that checker fails, immediately fail hunk-lint with `error_code: SYNTAX_CHECK_FAILED`
-
-4. If `fail_fast` is false, run all enabled checkers and fail ONLY if at least one checker fails
-
-**Integration points**:
-
-Syntax checkers run AFTER the following validations pass:
-1. Unified diff format validation
-2. Dry-run apply (patch physically applies)
-
-This ensures only syntactically valid patches undergo syntax checking.
-
-**Error reporting**:
-
-On syntax check failure, hunk-lint MUST include in `failure_signature`:
-- `checker_name`: Which checker failed
-- `affected_files`: List of files checked
-- `exit_code`: Checker's exit code
-- `stderr_sha256`: Hash of normalized stderr (strip temp paths, line numbers)
-
-**Tool discovery**:
-
-Checkers are discovered via workflow config OR project-level toolchain configuration:
-- Project-level: `workspace/projects/<project_id>/config/syntax_checkers.json`
-- Ticket-level (override): `workspace/tickets/<ticket_id>/config/syntax_checkers.json`
-- Workflow-level (ephemeral): Embedded in `step.inputs.syntax_checkers`
-
-Priority (highest to lowest): workflow → ticket → project → defaults
-
-**Unknown checkers**:
-
-If an enabled checker `name` is not available on the system:
-- Fail hunk-lint with `error_code: TOOL_NOT_FOUND`
-- Include the missing checker name in `failure_signature`
+#### 3.1.2 Failure signature
 
 #### 3.1.2 Failure signature
 
