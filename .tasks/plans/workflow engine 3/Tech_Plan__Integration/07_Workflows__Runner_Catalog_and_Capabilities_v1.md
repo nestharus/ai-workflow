@@ -49,6 +49,12 @@ On `workflowctl run --workflow <id-or-path>`:
      * If model value starts with `route:<key>`, resolve via
        `models.routing.<key>` in config
      * If routing key not found → fail loudly with `E_MODEL_ROUTE_NOT_FOUND`
+   * Model availability validation:
+     * If the resolved model is not available in the configured model catalog,
+       fail loudly with `E_DEPENDENCY_MISSING` (explicit model name in error)
+     * Fallback model use is ONLY permitted when `[models.fallbacks]` contains
+       an explicit mapping from the unavailable model to a fallback ID
+
 4. Allocate `run_id` (ULID).
 5. Write `workspace/runs/<run_id>/run.json` with:
    * `workflow_id`
@@ -219,9 +225,11 @@ Step output storage (schema + size limits)—normative storage rules (v1):
 
 **Budget enforcement**:
 
-* Config may include `[budgets]` section with token and USD limits:
-  * `max_tokens_per_run`: int (optional, e.g., 1000000)
-  * `max_usd_per_run`: decimal (optional, e.g., 5.00)
+* Config may include `models` section with token and USD limits:
+  * `budget_tokens_per_run`: int (optional, e.g., 1000000)
+  * `budget_usd_per_run`: decimal (optional, e.g., 5.00)
+    * Note: USD enforcement requires a cost table to be configured for token-
+      to-USD conversion
 * After each LLM call, runner checks if any budget would be exceeded:
   * If exceeded: stop the run, set `status="needs_user"`, and halt step
     execution
