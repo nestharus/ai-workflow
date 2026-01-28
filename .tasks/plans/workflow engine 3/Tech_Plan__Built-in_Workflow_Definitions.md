@@ -4,6 +4,7 @@
 - **Doc**: Tech_Plan__Built-in_Workflow_Definitions.md
 - **Depends on**: `Tech_Plan__Integration.md` (§7.2 workflow schema)
 - **Purpose**: Provide the complete, canonical YAML for all built-in workflows referenced across the spec set.
+- **See Also**: `Tech_Plan__Agent_Prompt_Definitions.md` for agent prompt definitions referenced by these workflows
 
 ## 1) Scope and location (normative)
 
@@ -240,3 +241,4 @@ steps:
 
 - These workflows intentionally declare broad `capabilities_required` for agent steps. Implementations may later refine capability declarations as agents and gateway schemas stabilize.
 - Workflow IDs and filenames MUST remain stable; version by creating new IDs (e.g., `*_v2`) rather than modifying semantics in-place.
+- Agent prompt definitions referenced by these workflows are defined in `Tech_Plan__Agent_Prompt_Definitions.md`. Each workflow step with `kind: agent` and `entrypoint: agent:<agent_id>` resolves to the corresponding agent prompt definition.

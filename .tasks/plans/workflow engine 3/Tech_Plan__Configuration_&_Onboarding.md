@@ -363,7 +363,7 @@ Recommended practices:
 
 
 
-## Writing Agent Prompts
+## 5) Writing Agent Prompts
 
 Agent prompts are Markdown files that define:
 - purpose and constraints
@@ -372,6 +372,8 @@ Agent prompts are Markdown files that define:
 - tool access (capabilities)
 
 They are referenced from workflows via `entrypoint: agent:<name>` or `file:<repo_relative_path>` (Integration §7.2.3).
+
+**See Also**: `Tech_Plan__Agent_Prompt_Definitions.md` for complete definitions of all built-in agents used by workflow engine v3.
 
 ### Prompt file format (v1)
 
