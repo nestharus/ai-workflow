@@ -83,22 +83,52 @@ def aggregate_tasks_command(input_dir: Path, *, files_only: bool = False) -> int
         # Multiple distinct task files may legitimately reference the same target path
         # (e.g., separate CodeRabbit suggestions for the same file). We intentionally
         # append all filenames without deduplication to preserve each task.
-        file_path = task_data.get("path")
+        #
+        # Support both "path" (string) and "paths" (list) fields.
+        file_paths: list[str] = []
 
-        # Validate path is a non-empty string before using as dict key
-        if isinstance(file_path, str) and file_path.strip():
-            tasks_by_file[file_path].append(task_file.name)
-        elif file_path is not None:
-            # Log warning for unexpected path type/value and treat as global task
+        # Check for "paths" list first (new format)
+        paths_field = task_data.get("paths")
+        if isinstance(paths_field, list):
+            for p in paths_field:
+                if isinstance(p, str) and p.strip():
+                    file_paths.append(p.strip())
+                else:
+                    print(
+                        f"Warning: Invalid path entry in {task_file.name}: "
+                        f"expected non-empty string, got {type(p).__name__}={p!r}; skipping",
+                        file=sys.stderr,
+                    )
+        elif paths_field is not None:
+            # Log warning for unexpected paths type and fall back to legacy path handling
             print(
-                f"Warning: Invalid 'path' in {task_file.name}: "
-                f"expected non-empty string, got {type(file_path).__name__}={file_path!r}; "
-                f"treating as global task",
+                f"Warning: Invalid 'paths' in {task_file.name}: "
+                f"expected list, got {type(paths_field).__name__}={paths_field!r}; "
+                f"falling back to legacy 'path' handling",
                 file=sys.stderr,
             )
-            tasks_by_file[GLOBAL_TASKS_KEY].append(task_file.name)
+
+        # Fall back to "path" string (legacy format)
+        if not file_paths:
+            path_field = task_data.get("path")
+            if isinstance(path_field, str) and path_field.strip():
+                file_paths.append(path_field.strip())
+            elif path_field is not None:
+                # Log warning for unexpected path type/value and treat as global task
+                print(
+                    f"Warning: Invalid 'path' in {task_file.name}: "
+                    f"expected non-empty string, got {type(path_field).__name__}={path_field!r}; "
+                    f"treating as global task",
+                    file=sys.stderr,
+                )
+
+        # Add task to each referenced file's bucket, or global if none
+        if file_paths:
+            # Deduplicate paths so each target file receives the task only once
+            for file_path in list(dict.fromkeys(file_paths)):
+                tasks_by_file[file_path].append(task_file.name)
         else:
-            # Tasks without a path go to global bucket
+            # Tasks without paths go to global bucket
             tasks_by_file[GLOBAL_TASKS_KEY].append(task_file.name)
 
     # Sort each list of task filenames for deterministic output

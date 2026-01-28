@@ -8,18 +8,41 @@ import sys
 from pathlib import Path
 
 
-def _extract_file_path(content: str) -> str | None:
-    """Extract file path from task content.
+def _extract_file_paths(content: str) -> list[str]:
+    """Extract file paths from task content.
 
-    Looks for pattern: `file:path/to/file.md`
+    Supports two formats:
+    1. Backtick format: `file:path/to/file.md` (can appear multiple times)
+    2. Referenced Files section:
+       ### Referenced Files
+       - path/to/file.md
+       - path/to/other.md
 
-    Returns the file path found, or None.
+    Returns list of file paths found (empty if none).
     """
-    file_match = re.search(r"`file:([^`]+)`", content)
-    if file_match:
-        return file_match.group(1).strip().replace("\\", "/")
+    paths: list[str] = []
 
-    return None
+    # Try backtick format (find all occurrences)
+    for match in re.finditer(r"`file:([^`]+)`", content):
+        path = match.group(1).strip().replace("\\", "/")
+        if path and path not in paths:
+            paths.append(path)
+
+    # Try Referenced Files section
+    # Match "### Referenced Files" or "## Referenced Files" followed by list items
+    ref_match = re.search(
+        r"#{2,3}\s*Referenced Files\s*\n((?:\s*-\s*.+\n?)+)",
+        content,
+        re.IGNORECASE,
+    )
+    if ref_match:
+        list_content = ref_match.group(1)
+        for item_match in re.finditer(r"-\s*(.+)", list_content):
+            path = item_match.group(1).strip().replace("\\", "/")
+            if path and path not in paths:
+                paths.append(path)
+
+    return paths
 
 
 def import_local_tasks_command(
@@ -82,10 +105,10 @@ def import_local_tasks_command(
                 }
             ],
         }
-        # Extract file path from content if present
-        file_path = _extract_file_path(body)
-        if file_path:
-            task_data["path"] = file_path
+        # Extract file paths from content if present
+        file_paths = _extract_file_paths(body)
+        if file_paths:
+            task_data["paths"] = file_paths
 
         task_file = output_dir / f"local_{index}.json"
         task_file.write_text(json.dumps(task_data, indent=2), encoding="utf-8")
