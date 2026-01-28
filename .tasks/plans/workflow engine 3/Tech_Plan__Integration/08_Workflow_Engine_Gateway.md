@@ -27,7 +27,7 @@ Tool: `workflow_engine.invoke(payload: JSON) -> JSON`
 | `hydrate` | virtual hydration (Mode A) | `read_stack` |
 | `apply_patch` | apply patch to ticket stack | `apply_patch` |
 | `sandbox_create` | create sandbox (jj workspace) | `sandbox_exec` |
-| `sandbox_run` | run tool in sandbox/workspace | `sandbox_exec` |
+| `sandbox_run` | run tool in sandbox | `sandbox_exec` |
 | `sandbox_destroy` | cleanup sandbox (jj workspace) | `sandbox_exec` |
 | `llm_call` | cancellable LLM call wrapper | `net_llm` |
 | `spawn_step` | request child step | `spawn_child` |

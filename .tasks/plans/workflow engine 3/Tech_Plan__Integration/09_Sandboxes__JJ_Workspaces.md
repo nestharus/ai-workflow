@@ -360,8 +360,7 @@ Given `(repo_root, baseline_revset, purpose, sparse_mode, include_patterns)`:
   4. Apply sparse patterns (if any):
 
      * If `include_patterns` is present and non-empty:
-       * `jj sparse set --clear --add <pattern> ...` inside the sandbox (jj
-         workspace)
+       * `jj sparse set --clear --add <pattern> ...` inside the sandbox
   5. Record sandbox metadata:
 
      * `sandbox_id`, `run_id`, `repo_uid`
@@ -449,7 +448,7 @@ in this order:
   1. Copy fallback
 
      * Recreate the sandbox with `sparse_mode="copy"` (copy sparse patterns from
-       the source workspace)
+       the source jj workspace)
      * Apply the current include pattern list (if any)
      * Re-run the tool once
 
@@ -477,7 +476,7 @@ Every fallback escalation MUST:
 
 * Destroy tool subprocesses
 * Flush sandbox logs and persist required artifacts
-* Remove workspace directory
+* Remove sandbox directory
 * Run `jj workspace forget` if required by jj state
 
 All actions are logged.
