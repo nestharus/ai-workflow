@@ -103,9 +103,88 @@ Resolution:
 - Approve: runner sets `approved_by` and resumes.
 - Deny: runner MUST stop loudly and mark task `needs_user_plan` (or ticket `blocked`) with evidence refs.
 
-Timeout:
-- default `approval_timeout_ms = 300000` (5 minutes)
-- on timeout, runner MUST stop loudly and escalate as `needs_user` (Monitoring §5.4.2).
+#### 3.4.1 Timeout override mechanism (normative)
+
+Timeout values follow this precedence order:
+1. `step_spec.approval_timeout_ms` (step-specific override)
+2. `workflow.defaults.approval_timeout_ms` (workflow default)
+3. config default: 300000ms (5 minutes)
+
+The control action request MUST include the resolved timeout value:
+```json
+{
+  "control_kind": "deviation_approval_request",
+  "approval_timeout_ms": 300000,
+  "deadline": "<rfc3339>"
+}
+```
+
+#### 3.4.2 Pre-timeout reminder (normative)
+
+At `deadline - 30s`, the runner MUST emit a notification to remind the user:
+- `notification_type`: `"deviation_approval_pending"`
+- Deduplication: use `deviation_id` as the dedupe key
+- If the user is already watching the run or has existing pending notifications, do not duplicate
+
+The reminder MUST be lightweight and not block workflow execution.
+
+#### 3.4.3 Timeout extension (normative)
+
+Users may extend an approval timeout via CLI:
+
+```bash
+workflowctl approve-deviation <deviation_id> --extend-ms <ms> [--note "..."]
+```
+
+This writes a control action:
+- `control_actions/inbox/deviation_extend_<deviation_id>.json`
+- `control_kind`: `"deviation_extend"`
+- includes `deviation_id`, `extend_ms`, `note`, and `created_at`
+
+Extension rules:
+- Maximum of 3 extensions per deviation (configurable via `max_approval_extensions`)
+- Each extension updates the deviation record with a new `deadline`
+- Total timeout is tracked: original + sum of all extensions
+- Extension attempts beyond the limit are rejected with error
+
+The deviation record MUST track:
+```json
+{
+  "extensions": [
+    {
+      "granted_at": "<rfc3339>",
+      "extend_ms": 300000,
+      "note": "Need more time to review",
+      "new_deadline": "<rfc3339>"
+    }
+  ],
+  "extension_count": 1
+}
+```
+
+#### 3.4.4 Late approval handling (normative)
+
+If an approval arrives after the timeout has expired and the run has already stopped:
+
+1. Record the approval with `late: true` in the deviation record:
+   ```json
+   {
+     "approved_by": "<user_id>",
+     "approval_recorded_at": "<rfc3339>",
+     "late": true,
+     "late_reason": "Approval received after timeout and run stop"
+   }
+   ```
+
+2. Emit notification `deviation_approval_late` with:
+   - `deviation_id`
+   - `run_id`
+   - `step_id`
+   - User instructions: `workflowctl run resume <run_id> --from-step <step_id>`
+
+3. Do NOT automatically resume on late approval (avoids silent race resolution)
+
+The user must explicitly resume the run if they want to proceed with the late approval.
 
 ## 4) How deviations are used (non-normative)
 
