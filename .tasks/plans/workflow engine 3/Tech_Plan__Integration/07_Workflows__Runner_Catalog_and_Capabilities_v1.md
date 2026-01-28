@@ -50,6 +50,39 @@ A step is **ready** when:
 - its plan status is `pending`, AND
 - all `depends_on` steps have plan status `completed`
 
+DAG traversal algorithm (v1, deterministic, single-threaded):
+
+```
+parse workflow YAML → workflow
+validate schema_version, unique step_id, DAG acyclic
+
+order = workflow.steps in file order
+state[step_id] = PENDING
+
+while exists PENDING step:
+  ready = [s in order where state[s] == PENDING and all deps are COMPLETED]
+  if ready is empty:
+     blocked = [s in order where state[s] == PENDING and any dep in {FAILED, BLOCKED, SKIPPED}]
+     if blocked is non-empty:
+        for s in blocked:
+           state[s] = BLOCKED with blocked_by = list of failed deps
+        continue
+     else:
+        fail loudly: E_VALIDATION_FAILED ("deadlock / unsatisfied deps")
+  s = ready[0]  # earliest in file order
+  execute s → result (COMPLETED | FAILED | NEEDS_USER)
+  if result == COMPLETED:
+     state[s] = COMPLETED
+  else:
+     state[s] = FAILED (or NEEDS_USER mapped to FAILED with error_code)
+     apply on_failure policy:
+       - stop: mark remaining PENDING as BLOCKED(reason="run_stopped") and end run
+       - pause: same as stop + emit PAUSE
+       - investigate: spawn investigator workflow, then end run (unless explicit resume)
+       - continue: keep going; dependents will become BLOCKED by the rule above
+end
+```
+
 Execution of a ready step:
 
 1. Allocate `step_execution_id` (ULID).
@@ -80,11 +113,32 @@ Execution of a ready step:
     - `steps.<step_id>.artifacts.*` from already-completed steps
 - The runner MUST fail loudly with `E_VALIDATION_FAILED` if an expression references a missing value, unless `x_allow_missing: true`.
 
-Step output storage (normative):
-- The step’s **bounded** output object is stored in the step execution doc as `output`.
-- Large results MUST be written as artifacts under `workspace/runs/<run_id>/artifacts/` and referenced via `output.artifacts`.
+Expression evaluation (${{ }}) — evaluation order + errors (v1):
 
-##### E) Failure policy semantics (interaction with DAG)
+- **Evaluation timing**: Expressions MUST be evaluated before starting the step process.
+- **Recursive evaluation**: Evaluation is recursive over objects/arrays.
+- **Map iteration order**: MUST use YAML order as parsed (deterministic display; not required for correctness).
+- **Allowed references**: Expressions may only reference:
+  - `inputs.<field>`
+  - `steps.<step_id>.output.<field>`
+- **Forbidden references**: Expressions MUST NOT reference siblings in the same `with` object (no `with.foo` access).
+- **Error handling**: Missing reference or type mismatch → fail `E_VALIDATION_FAILED` (no defaulting).
+- **Type rules**:
+  - If the entire string is exactly one expression token, preserve the referenced JSON type.
+  - Otherwise, perform string interpolation.
+
+Step output storage (schema + size limits)—normative storage rules (v1):
+
+- **Step execution doc location**: `workspace/runs/<run_id>/steps/<step_execution_id>.json`
+- **Inline output location**: `step_exec.output` (JSON object only).
+- **Artifact outputs location**: `workspace/runs/<run_id>/artifacts/steps/<step_execution_id>/...`
+- **Size limit** (v1, to avoid bloat and silent truncation):
+  - `max_inline_step_output_bytes = 262144` (256 KiB) after canonical JSON encoding.
+- **Oversize handling**: If exceeded, step MUST fail loudly with `E_VALIDATION_FAILED` and message "step output too large; store as artifact and reference it".
+- **Schema validation**: If the step definition includes an `output_schema`, runner MUST validate output against it.
+- **Validation failure**: On mismatch, fail loudly `E_VALIDATION_FAILED` with field-level errors (best effort).
+
+##### E) Failure policy semantics (explicit statuses and propagation)
 
 `on_failure.mode` applies to the step that failed:
 
@@ -100,6 +154,17 @@ Step output storage (normative):
   - mark the step as failed and continue scheduling any steps that are still runnable.
   - Any step that depends (directly or transitively) on a failed step is left `blocked` in the plan.
   - The run ends as `failed` if any step is `failed` or `blocked`; otherwise it ends `completed`.
+
+Failure propagation semantics (explicit statuses):
+
+- **If a step fails**:
+  - Any step that depends (directly or transitively) on the failed step becomes **BLOCKED** with `blocked_by=[...]`.
+- **`continue` mode**:
+  - Runner continues executing steps whose deps are satisfied.
+  - Blocked steps remain blocked (never silently skipped).
+- **`stop`/`pause`/`investigate` mode**:
+  - Runner stops scheduling any further steps.
+  - Remaining pending steps MUST be marked **BLOCKED**(reason="run_stopped").
 
 Terminal condition:
 - `completed` when all plan steps are `completed`.
