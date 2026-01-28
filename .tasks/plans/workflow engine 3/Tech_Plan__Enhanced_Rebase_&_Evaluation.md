@@ -196,9 +196,25 @@ Required checks:
 
 ##### 3.1.1.1 Unified diff format validation
 
-**Accepted format**:
+**Accepted formats (v1)**:
 
-Standard unified diff format per POSIX (as produced by `diff -u` or `git diff`) with the following constraints:
+Hunk-lint accepts ONLY the following unified diff formats:
+
+1. **Git-style unified diff**: Starts with `diff --git a/<path> b/<path>` headers
+2. **Plain unified diff**: Standard POSIX format with `---`/`+++` file headers
+
+No other patch formats are accepted.
+
+**Explicit reject rules**:
+
+Hunk-lint MUST reject patches that:
+
+1. **Binary diffs**: Contain NUL bytes or base64-encoded binary content
+2. **Absolute paths**: File headers contain paths starting with `/`
+3. **Parent directory escapes**: File headers contain `../` sequences or paths with `..` segments
+4. **Malformed hunks**: Cannot be parsed into valid hunk headers and bodies
+
+Standard unified diff format requirements (for accepted formats):
 
 - **Header format**: All hunks MUST be preceded by one or more `---`/`+++` file headers
 - **Hunk format**: Each hunk MUST follow the pattern:
@@ -234,106 +250,165 @@ On malformed diff detection, hunk-lint MUST fail with `error_code: MALFORMED_DIF
 - `parse_error_detail` describing which constraint failed
 - Offending line numbers if available
 
-##### 3.1.1.2 Dry-run apply mechanics
+##### 3.1.1.2 Dry-run apply mechanics (in-repo, cross-platform)
 
-**Mode A (hydrated base)**:
+**Algorithm overview**:
 
-1. Create a temporary directory for the dry-run
-2. Check out or copy all files from the `base_rev` into the temp directory
-3. Apply the patch using `patch --dry-run --check --unified -p<n>` where:
-   - `--dry-run`: Apply changes to memory only, no disk modification
-   - `--check`: Exit with status 1 if any hunk would fail, without actually applying
-   - `-p<n>`: Strip `n` leading path components (usually `n=1` for `a/` `b/` prefixes)
-4. Capture `stdout` and `stderr`, including any hunk-level failure messages
-5. If `patch` exits with status 0: dry-run passed, proceed to scope validation
-6. If `patch` exits with status 1 or higher:
-   - Parse stderr to identify which hunks would fail and why
-   - Record `failure_signature` including `stderr_sha256` and `error_code: APPLY_FAILED`
-   - Fail the gate
+Hunk-lint implements an in-repo dry-run apply algorithm that parses hunks and applies them in memory without dependency on external `patch` commands. This ensures cross-platform compatibility (including Windows) and deterministic behavior.
 
-**Mode B (sandbox base)**:
+**Step 1: Parse hunks**
 
-Same mechanics as Mode A, but the base files are extracted from the sandbox workspace instead of directly from the repo:
-1. Use `jj workspace attach --change <base_rev>` to orient the workspace
-2. Use `worktree_file_paths` or `jj file show` to hydrate the temp directory
-3. Apply the same `patch --dry-run --check` process
+1. Extract all hunk headers (`@@ -old_start,old_count +new_start,new_count @@`)
+2. For each hunk, parse:
+   - `old_start`: Line number in base file (1-indexed)
+   - `old_count`: Number of context + removed lines
+   - `new_start`: Line number in patched file (1-indexed)
+   - `new_count`: Number of context + added lines
+3. Accumulate hunk bodies into structured data:
+   - Context lines (prefix ` `)
+   - Removed lines (prefix `-`)
+   - Added lines (prefix `+`)
 
-**Dry-run conflict handling**:
+**Step 2: Identify modified files**
 
-During dry-run, `patch` may report:
-- **Hunk offset adjustments**: `Hunk #x succeeded at <offset> (offset Y lines)` - this is NOT a failure
-- **Hunk failures**: `Hunk #x FAILED at line <line> - <reason>` - this IS a failure
-- **Fuzzy patch application**: `Hunk #x succeeded fuzzily` - MUST be treated as a warning but not a blocking failure (unless workflow config requires strict matching)
+For each hunk, track:
+- The file path(s) affected (from `---`/`+++` headers)
+- The hunk range(s) on that file
 
-Hunk-lint MUST:
-- Parse `patch` stderr to distinguish between offset adjustments and actual failures
-- Succeed if all hunks apply (offset warnings are acceptable)
-- Fail only on explicit hunk failure messages
+**Step 3: Load base file contents**
 
-**Conflict detection**:
+1. For each modified file:
+   - Read the base file content at `base_rev`
+   - Split into lines with preserved line endings
+2. Store as `FileContent { path, lines, line_ending }`
 
-Hunk-lint MUST detect the following conflict types from `patch` output:
-- `Conflicting hunks`: Multiple hunks targeting overlapping ranges
-- `Out-of-order hunks`: Hunks that cannot apply in order due to prior modifications
-- `Context mismatches`: Context lines in the hunk do not match the base file
+**Step 3a: Dry-run apply with fuzz matching**
 
-Each conflict MUST be recorded with:
-- File path
-- Hunk numbers involved
-- Conflict reason
-- `failure_signature`
+For each hunk on a file:
 
-##### 3.1.1.3 Scope enforcement algorithm
+1. **Locate match region**: Search the base file for the hunk's context lines within `+/- max_fuzz_lines` positions around `old_start`
+   - `max_fuzz_lines` defaults to 3 (workflow-configurable)
+   - Use exact matching for context lines (leading space prefix)
+
+2. **Match types**:
+   - **Exact match**: Found at exactly `old_start`
+   - **Offset match**: Found within `+/- max_fuzz_lines` of `old_start`
+   - **No match**: Context lines not found anywhere in the file
+
+3. **Apply in memory**: Simulate the hunk application:
+   - Remove the removed lines at the match position
+   - Insert the added lines at the match position
+
+4. **Result determination**:
+   - **Success**: Hunk applies cleanly (exact or offset match)
+   - **Failure**: Hunk found no context match (no_match) OR multiple matches found (ambiguous) within fuzz range
+
+**Step 4: Aggregate results**
+
+1. If all hunks succeed: dry-run passes, proceed to scope validation
+2. If any hunk fails:
+   - Record `failure_signature` with:
+     - `error_code: APPLY_FAILED`
+     - `failure_mode: no_match | ambiguous`
+     - `hunk_id`: Index of failing hunk
+     - `file_path`: Path of failing file
+     - `expected_context`: The context lines that could not be matched
+   - Fail hunk-lint
+
+**Failure modes**:
+
+- **no_match**: No context lines from the hunk could be found in the base file within fuzz range. Indicates the base has changed significantly, hunk is stale, or hunk is malformed.
+- **ambiguous**: Multiple positions matched the hunk context within fuzz range. Indicates duplicate content or insufficient context. Application would be unpredictable.
+
+**Mode A vs Mode B distinction**:
+
+Both modes use the same in-repo algorithm. The only difference is the source of base file contents:
+- **Mode A (hydrated base)**: Load files directly from repo at `base_rev` using `jj file show` or VCS commands
+- **Mode B (sandbox base)**: Load files from the sandbox workspace (via `jj workspace attach` + `jj file show`)
+
+The dry-run algorithm itself is unchanged between modes—only the file source differs.
+
+**Configuration parameters** (workflow-level):
+
+```json
+{
+  "hunk_fuzz": {
+    "max_fuzz_lines": 3
+  }
+}
+```
+
+**Error reporting format**:
+
+On failure, hunk-lint MUST include:
+
+```json
+{
+  "error_code": "APPLY_FAILED",
+  "failure_mode": "no_match|ambiguous",
+  "hunk_index": 2,
+  "file_path": "src/main.py",
+  "hunk_header": "@@ -42,7 +42,8 @@",
+  "expected_context_lines": ["    def foo(", "        pass"],
+  "expected_removed_lines": ["        print('old')"],
+  "expected_added_lines": ["        print('new')"]
+}
+```
+
+##### 3.1.1.3 Scope enforcement algorithm (v1 rules)
 
 **Allowed write paths matching**:
 
-The step declares an `allowed_write_set` which is a list of path patterns that the patch MAY modify. Scope matching uses the following rules in order:
+The step declares an `allowed_write_set` which is a list of path patterns that the patch MAY modify. Per v1 specification, globs are forbidden—only exact matches and directory prefixes are supported.
 
-1. **Pattern types** supported:
-   - **Exact match**: `"src/main.py"` matches only `src/main.py`
-   - **Glob pattern**: `"src/**/*.py"` matches `src/a.py`, `src/sub/b.py`, etc.
-   - **Directory prefix**: `"src/"` matches `src/` and everything under it
-   - **Negation**: `"!src/generated/"` excludes `src/generated/` from matches
+**Pattern types (v1)**:
 
-2. **Matching algorithm**:
-   For each file path `p` in the patch:
-   ```
-   allowed = false
-   for pattern in allowed_write_set:
-       if pattern starts with "!":
-           negated_pattern = substring(pattern, 1)
-           if path_matches_glob(p, negated_pattern):
-               allowed = false
-               break
-       else:
-           if path_matches_glob(p, pattern):
-               allowed = true
-   ```
+1. **Exact file path**: `"src/main.py"` matches only `src/main.py`
+2. **Directory prefix**: `"src/"` matches `src/` and all files/directories under it
 
-   Where `path_matches_glob` implements POSIX glob semantics:
-   - `*` matches any sequence within a directory component
-   - `**` matches across directory boundaries
-   - `?` matches any single character
-   - `[abc]` matches any character in brackets
+**Glob patterns are NOT supported**:
+- `*`, `**`, `?`, `[abc]` wildcard patterns are rejected
+- Negation patterns (`!`) starting with `!` are rejected
+- If a pattern contains these characters, hunk-lint MUST fail with `error_code: INVALID_SCOPE_PATTERN`
 
-3. **Path normalization**:
-   Before matching, both patch paths and allowed patterns MUST be normalized:
-   - Collapse `./` and redundant `//` sequences
-   - Resolve `../` relative to a stable anchor (repo root)
-   - Convert all path separators to forward slashes (`\` → `/`)
-   - Strip trailing slashes except for directory-only patterns
+**Matching algorithm (v1)**:
 
-4. **Edge cases**:
-   - **Empty allowed_write_set**: If empty, the feature is disabled and scope enforcement is skipped (treat all paths as allowed)
-   - **Pattern with trailing slash**: `"src/"` matches `src/` and `src/**/*` but NOT `src` itself (file)
-   - **Empty patch**: No file paths to check, scope passes trivially
+For each file path `p` in the patch:
+```
+allowed = false
+for pattern in allowed_write_set:
+    if pattern ends with "/":
+        # Directory prefix match
+        if p starts with pattern:
+            allowed = true
+            break
+    else:
+        # Exact file match
+        if p == pattern:
+            allowed = true
+            break
+```
+
+**Path normalization**:
+
+Before matching, both patch paths and allowed patterns MUST be normalized:
+- Collapse `./` and redundant `//` sequences
+- Convert all path separators to forward slashes (`\` → `/`)
+- Strip trailing slashes from paths before comparison (except for patterns explicitly ending with `/`)
 
 **Scope failure**:
 
-If any modified file path in the patch does NOT match the `allowed_write_set` after negation processing:
-- Fail hunk-lint with `error_code: SCOPE_VIOLATION`
+If ANY modified file path in the patch does NOT match the `allowed_write_set`:
+- Fail hunk-lint with `error_code: SCOPE_VIOLATION` (per plan.txt: `E_OWNERSHIP_VIOLATION`)
 - Include `failure_signature` and `violating_paths` list
 - Include `allowed_write_set` for user context
+
+**Strict enforcement**:
+
+Scope enforcement is ALWAYS applied:
+- Empty `allowed_write_set` is NOT valid—if empty, hunk-lint MUST fail with `error_code: SCOPE_VIOLATION`
+- There is no "disable enforcement" behavior
+- Any path in the patch that is not in `allowed_write_set` is a violation, no exceptions
 
 **File addition vs modification**:
 
@@ -346,9 +421,93 @@ Any of these operations on a path outside `allowed_write_set` is a scope violati
 
 ##### 3.1.1.4 Optional syntax checks
 
-**Supported checkers**:
+**Purpose and surface (per plan.txt §2.4.4)**:
 
-Syntax checkers are external tools that validate the syntactic correctness of files affected by the patch. Supported checkers include:
+Syntax checks are optional, explicit tools that run AFTER the patch is successfully applied (in sandbox or hydrated base). If no sandbox is available, hunk-lint MUST either create one or fail loudly—it MUST NOT silently skip syntax checking.
+
+**Configuration surface**:
+
+Syntax checkers are specified in the step specification as `step_spec.hunk_lint.syntax_checks[]`:
+
+```json
+{
+  "step_spec": {
+    "hunk_lint": {
+      "syntax_checks": [
+        {
+          "name": "python_ast",
+          "file_patterns": ["**/*.py"],
+          "command": ["python", "-m", "py_compile"],
+          "fail_fast": false
+        },
+        {
+          "name": "flake8",
+          "file_patterns": ["src/**/*.py"],
+          "command": ["flake8"],
+          "fail_fast": true
+        }
+      ]
+    }
+  }
+}
+```
+
+**Explicit per-step specification**:
+
+- Each step declares its own `syntax_checks` array
+- No automatic discovery, no default checkers, no inheritance
+- If `syntax_checks` is omitted or null: syntax checking is SKIPPED (optional feature)
+- If `syntax_checks` is an empty array: syntax checking is explicitly disabled for this step
+- If `syntax_checks` contains entries: ALL specified checkers MUST run
+
+**Execution logic**:
+
+1. **Prerequisite**: Patch must have successfully applied (dry-run passed in Mode A/B)
+2. **Sandbox requirement**: Syntax checks run in the sandbox (or created sandbox):
+   - **If sandbox exists**: Run checks directly in the sandbox workspace
+   - **If no sandbox exists**:
+     - Create a temporary sandbox from the base revision
+     - Apply the patch to the sandbox
+     - Run checks in the sandbox
+     - Clean up the temporary sandbox
+   - **Failure to create sandbox**: Fail hunk-lint with `error_code: SANDBOX_REQUIRED` (no silent skip)
+
+3. **File selection**:
+   - For each checker, compute the set of affected files from the patch (files with additions or modifications)
+   - Filter by `file_patterns` using glob matching
+   - Empty filtered set: checker passes trivially
+
+4. **Run checker**:
+   - Execute the checker `command` with filtered files as arguments
+   - Capture `stdout`, `stderr`, and exit code
+   - Exit code 0: checker passed
+   - Exit code non-zero: checker failed
+
+5. **Result aggregation**:
+   - If `fail_fast` is true for any checker and that checker fails: immediately fail hunk-lint
+   - If `fail_fast` is false: run ALL checkers, fail if ANY checker fails
+
+**Failure reporting**:
+
+On syntax check failure, hunk-lint MUST include in `failure_signature`:
+- `checker_name`: Which checker failed
+- `affected_files`: List of files checked
+- `exit_code`: Checker's exit code
+- `stderr_sha256`: Hash of normalized stderr (strip temp paths, line numbers)
+- `error_code: SYNTAX_CHECK_FAILED`
+
+**Supported checkers (examples)**:
+
+| Checker | Languages | Example command |
+|---------|-----------|-----------------|
+| `python_ast` | Python | `["python", "-m", "py_compile"]` |
+| `eslint` | JavaScript/TypeScript | `["eslint", "--no-eslintrc", "--parser-options=ecmaVersion:latest"]` |
+| `go_compile` | Go | `["go", "build", "-o", "/dev/null"]` |
+| `rust_check` | Rust | `["rustc", "--emit=metadata"]` |
+| `flake8` | Python | `["flake8"]` |
+| `pylint` | Python | `["pylint", "--errors-only"]` |
+
+Checkers are NOT predefined—they are explicitly declared per step with their full command.
 
 | Checker | Languages | Command (default) | Required by default? |
 |---------|-----------|-------------------|---------------------|
