@@ -53,13 +53,65 @@ When `--ticket` or `--worktree` is present:
 
 ## Execution
 
+### Step 0: Normalize Input
+
+Before passing to the Python script, YOU (Claude) must check if `$ARGUMENTS` matches the expected format and rewrite if necessary.
+
+**Expected formats the Python script understands:**
+- Empty (no arguments)
+- Starts with `--ticket`, `--worktree`, or `--tasks-file` flag
+- Clean local task text (concise descriptions, `---` separators between multiple tasks)
+
+**If input is freeform/unstructured (e.g., issue descriptions, review comments, multi-paragraph text):**
+
+YOU must rewrite the input into actionable task text before calling the script:
+
+1. **Extract the core task(s)** from the freeform input
+2. **Rewrite each task** as a clear, actionable instruction
+3. **Separate multiple tasks** with `---` on its own line
+4. **Preserve `folder: "..."` prefix** if present (indicates which files to target)
+
+**Examples:**
+
+Input:
+```
+folder: ".tasks/plans/foo"
+
+### 2.9 Issue Title
+**Location**: Section 6.4
+**Issue**: Something is unclear
+**Recommendation**: Clarify X, Y, Z
+```
+
+Rewritten:
+```
+folder: ".tasks/plans/foo"
+
+Clarify X, Y, Z in section 6.4. The issue is that something is unclear. Add explicit rules for X, Y, and Z.
+```
+
+Input:
+```
+The validation doesn't handle edge cases properly. See lines 42-50 in validator.py.
+Also the error messages are confusing.
+```
+
+Rewritten:
+```
+Fix validation edge case handling in validator.py lines 42-50
+---
+Improve error messages in validator.py to be clearer
+```
+
+**Key principle:** The Python script expects task text it can act on directly. Verbose issue descriptions, recommendations, and context must be distilled into clear instructions.
+
 ### Step 1: Run PR Review Loop
 
 ```bash
 uv run pr review-loop $ARGUMENTS
 ```
 
-Pass through all arguments exactly as provided. The Python script handles:
+Pass through normalized arguments. The Python script handles:
 - Mode detection (local vs worktree)
 - Worktree setup (if --ticket provided)
 - Workspace creation in correct location

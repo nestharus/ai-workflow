@@ -52,9 +52,51 @@ When `--ticket` or `--worktree` is present:
 
 ## Execution
 
-### Step 0: Parse Arguments and Determine Working Directory
+### Step 0: Normalize Input and Determine Working Directory
 
-Parse `$ARGUMENTS` to extract flags and plan text:
+Before proceeding, YOU (Claude) must check if `$ARGUMENTS` matches the expected format and rewrite if necessary.
+
+**Expected formats the workflow understands:**
+- `--ticket <id> <plan text>`
+- `--worktree <path> <plan text>`
+- `<plan text>` (local mode, entire input is plan)
+
+**If input is freeform/unstructured (e.g., issue descriptions, review comments):**
+
+YOU must rewrite the input into a clear plan before proceeding:
+
+1. **Extract the requirements** from the freeform input
+2. **Rewrite as a structured plan** with clear acceptance criteria
+3. **Preserve `folder: "..."` prefix** if present (indicates which files to review)
+
+**Example:**
+
+Input:
+```
+folder: ".tasks/plans/foo"
+
+### 2.9 Issue Title
+**Issue**: Something is unclear
+**Recommendation**: Clarify X, Y, Z
+```
+
+Rewritten plan:
+```
+Review and update documentation in .tasks/plans/foo:
+
+Requirements:
+1. Clarify X - add explicit rules
+2. Clarify Y - define expected behavior
+3. Clarify Z - document edge cases
+
+Acceptance criteria:
+- All three items are addressed with normative language
+- No ambiguity remains in the specified section
+```
+
+**Key principle:** The reviewer needs a clear plan to compare against. Verbose issue descriptions must be distilled into reviewable requirements.
+
+**Parse normalized `$ARGUMENTS` to extract flags and plan text:**
 
 1. If `--ticket <id>` is present:
    - Extract ticket ID
