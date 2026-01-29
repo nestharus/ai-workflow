@@ -115,6 +115,9 @@ Maintenance:
 - `fsck_started`
 - `fsck_issue`
 - `fsck_ok`
+- `backup_created` (include `output_path`, `size_bytes`, `repo_uid`)
+- `backup_restored` (include `backup_path`, `repo_uid`, `fsck_result`)
+- `backup_repo_uid_warning` (repo_uid mismatch detected during restore)
 
 Notes:
 - Extensions MAY introduce new event types, but built-in components MUST NOT change the meaning of the above.
@@ -177,6 +180,11 @@ Models / routing:
 Dependencies:
 - `E_DEPENDENCY_MISSING`
 - `E_UNSUPPORTED_PLATFORM`
+
+Backup / restore:
+- `E_BACKUP_FAILED`: Backup creation failed (file I/O, permissions, or ZIP error)
+- `E_RESTORE_FAILED`: Restore failed (invalid ZIP, extraction error, or fsck failure)
+- `E_REPO_UID_MISMATCH`: Backup repo_uid doesn't match current repo_uid
 
 #### 8.2.6 Example events
 

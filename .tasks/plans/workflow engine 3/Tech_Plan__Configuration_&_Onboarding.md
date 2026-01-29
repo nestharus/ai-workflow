@@ -531,6 +531,10 @@ workflowctl uninstall --cli <name> [--project]
 workflowctl agents list
 workflowctl agents show <name>
 workflowctl agents run <name> [--input <file>]
+
+# Backup and restore
+workflowctl backup create --output <path.zip>
+workflowctl backup restore <path.zip> [--force-repo-uid-mismatch]
 ```
 
 ## 8) Integration with other tech plans
@@ -564,6 +568,10 @@ default = ""              # Set by configuration agent: "claude-code"|"opencode"
 - **Always**: Launch that CLI with bootstrap prompt
 - **Always**: Agent installs skill first, then uses it to configure
 - **With --project**: Also create `<repo>/.workflow/` structure
+
+### 8.4 Backup and restore commands
+
+Backup/restore commands are part of the maintenance toolset. They integrate with integrity tooling by running `workflowctl fsck` after restore (Core Infrastructure §15) and follow the secrets policy where backups never export secrets (Core Infrastructure §12).
 
 ## 9) Risk register
 

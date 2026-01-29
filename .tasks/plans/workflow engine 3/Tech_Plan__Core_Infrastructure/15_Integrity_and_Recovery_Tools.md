@@ -41,3 +41,44 @@ Options (v1):
 - `workflowctl recover` — run deterministic recovery across journals/queues/tmp debris (bounded by policy).
 - `workflowctl recover --op <op_id>` — inspect and recover a specific journaled operation by `op_id` (decision tree output is mandatory).
 - `workflowctl recover --clear-ownership <resource_id>` — clear a stale ownership record when `fsck --check-ownership` indicates it is safe.
+
+### 15.3 `workflowctl backup` and `workflowctl restore`
+
+Backup and restore provide portable snapshots of durable state.
+
+#### 15.3.1 `workflowctl backup create --output <path.zip>`
+
+Creates a compressed ZIP archive containing:
+- `workspace/**` (entire WSS)
+- `logs/**` (all JSONL shards)
+- `config.toml` (repo-machine-local config)
+- `repo.json` (repo_uid metadata)
+
+Excludes:
+- `sandboxes/**` (ephemeral)
+- `caches/**` (disposable)
+- `locks/**` (runtime-only)
+- `vcs/**` (jj sidecar)
+- Temporary files (`*.tmp`)
+
+Secrets policy:
+- Never exports secrets from OS keychain
+- Config files may contain secret references (key names), not values
+- Backup manifest documents this policy
+
+#### 15.3.2 `workflowctl backup restore <path.zip>`
+
+Restores backup into runtime root for current `repo_uid`:
+- Extracts to `~/.workflow/repos/<current_repo_uid>/`
+- Runs `workflowctl fsck` after extraction
+- Warns if backup `repo_uid` ≠ current `repo_uid`
+- Requires `--force-repo-uid-mismatch` to proceed with mismatch
+
+Post-restore validation:
+- `workflowctl fsck` ensures integrity
+- `workflowctl doctor` validates dependencies
+
+Portability requirements:
+- Repo checkout must exist at same or equivalent path
+- Dependencies must be installed (`workflowctl doctor` validates)
+- Secrets must be reconfigured in OS keychain on target machine
