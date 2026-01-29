@@ -163,22 +163,81 @@ Authoritative contract:
 
 Purpose: print ticket base/tip revs and a jj log view of the ticket stack.
 
+Synopsis:
+```text
+workflowctl ticket show-stack <ticket_id> [--graph] [--limit <n>] [--format text|json] [--refresh]
+```
+
 Required arguments:
-- `--ticket <ticket_id>`
+- `<ticket_id>` (positional)
+
+Options (summary):
+| Option | Default | Description |
+|---|---:|---|
+| `--graph` | `false` | Include an ASCII graph view of the stack (jj-style). |
+| `--limit <n>` | `50` | Maximum number of patches/log entries displayed. |
+| `--format text\|json` | `text` | Output format. |
+| `--refresh` | `false` | Refresh stack metadata from jj and write it back to `ticket.json`. |
+
+Examples:
+```text
+workflowctl ticket show-stack NES-47
+workflowctl ticket show-stack NES-47 --graph --limit 100 --refresh
+```
 
 ### 7.2 `workflowctl ticket diff`
 
 Purpose: print a diff for the entire stack or a specific patch.
 
+Synopsis:
+```text
+workflowctl ticket diff <ticket_id> [--patch <change_id>] [--stat] [--context <n>] [--color auto|always|never] [--format text|json]
+```
+
 Required arguments:
-- `--ticket <ticket_id>`
+- `<ticket_id>` (positional)
+
+Options (summary):
+| Option | Default | Description |
+|---|---:|---|
+| `--patch <change_id>` | - | Show diff for a single patch identified by jj `change_id`. |
+| `--stat` | `false` | Show a diffstat summary instead of a full unified diff. |
+| `--context <n>` | - | Unified diff context lines. |
+| `--color auto\|always\|never` | `auto` | Color mode for text output. |
+| `--format text\|json` | `text` | Output format (`json` is only valid with `--stat`). |
+
+Examples:
+```text
+workflowctl ticket diff NES-47
+workflowctl ticket diff NES-47 --patch <change_id>
+workflowctl ticket diff NES-47 --stat --format json
+```
 
 ### 7.3 `workflowctl ticket list-patches`
 
 Purpose: print ordered patch ids + summaries + exported status.
 
+Synopsis:
+```text
+workflowctl ticket list-patches <ticket_id> [--limit <n>] [--format table|json] [--refresh]
+```
+
 Required arguments:
-- `--ticket <ticket_id>`
+- `<ticket_id>` (positional)
+
+Options (summary):
+| Option | Default | Description |
+|---|---:|---|
+| `--limit <n>` | `200` | Maximum number of patches listed. |
+| `--format table\|json` | `table` | Output format. |
+| `--refresh` | `false` | Refresh stack metadata from jj and write it back to `ticket.json`. |
+
+Examples:
+```text
+workflowctl ticket list-patches NES-47
+workflowctl ticket list-patches NES-47 --format json
+workflowctl ticket list-patches NES-47 --refresh
+```
 
 ## 8) `workflowctl` rollback commands (NEW; normative)
 
