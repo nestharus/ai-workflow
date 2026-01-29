@@ -1,7 +1,7 @@
 # Tech Plan: Configuration & Onboarding
 
 - **Doc**: Tech_Plan__Configuration_&_Onboarding.md
-- **Updated**: 2026-01-24
+- **Updated**: 2026-01-29
 - **Component**: Configuration agent + CLI integration + Skills system
 - **Primary responsibility**: Help users configure the workflow engine, manage models, and integrate with their preferred AI coding tools—without polluting the project.
 
@@ -572,6 +572,9 @@ default = ""              # Set by configuration agent: "claude-code"|"opencode"
 ### 8.4 Backup and restore commands
 
 Backup/restore commands are part of the maintenance toolset. They integrate with integrity tooling by running `workflowctl fsck` after restore (Core Infrastructure §15) and follow the secrets policy where backups never export secrets (Core Infrastructure §12).
+
+Usage guide:
+- See [`Usage__Backup_and_Restore.md`](Usage__Backup_and_Restore.md).
 
 ## 9) Risk register
 
