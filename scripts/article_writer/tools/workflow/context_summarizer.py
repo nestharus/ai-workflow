@@ -63,8 +63,7 @@ class ContextSummarizer:
     """
 
     # Prompt template for summarization
-    SUMMARIZE_PROMPT = (
-        """Summarize this agent session for workflow resume. Be concise but comprehensive.
+    SUMMARIZE_PROMPT = """Summarize this agent session for workflow resume. Be concise but comprehensive.
 
 Structure your response with these exact headers:
 
@@ -92,7 +91,6 @@ Brief overview of what was accomplished and current state.
 Session Log:
 {session_log}
 """
-    )
 
     def __init__(self, glm_cmd: str | Path = "./glm") -> None:
         """Initialize context summarizer.

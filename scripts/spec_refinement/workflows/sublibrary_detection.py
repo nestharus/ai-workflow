@@ -6,7 +6,7 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from scripts.dev.agent_runner import AgentRunner
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, parse_gaps_markdown
@@ -72,7 +72,10 @@ def detect_sublibraries(
     tracker.finish()
 
     if total_sublibraries_created > 0:
-        _recursive_refinement(manager, config_path, max_depth, current_depth=1)
+        newly_created = _collect_newly_created_sublibraries(manager)
+        _recursive_refinement(
+            manager, config_path, max_depth, current_depth=1, newly_created=newly_created
+        )
 
     phase_result = manager.state.phases[Phase.SUBLIBRARY_DETECTION.value]
     phase_result.issues = errors + issues
@@ -161,17 +164,41 @@ def _detect_library_sublibraries(
     }
 
 
+def _collect_newly_created_sublibraries(manager: WorkspaceManager) -> set[Path]:
+    """Collect all sub-libraries created during initial detection."""
+    newly_created: set[Path] = set()
+    libraries_dir = manager.structure.libraries_dir
+
+    for lib_dir in sorted(libraries_dir.iterdir()):
+        if not lib_dir.is_dir():
+            continue
+        sublibraries_dir = lib_dir / "sublibraries"
+        if not sublibraries_dir.exists():
+            continue
+        for sub_lib_dir in sorted(sublibraries_dir.iterdir()):
+            if sub_lib_dir.is_dir():
+                newly_created.add(sub_lib_dir)
+
+    return newly_created
+
+
 def _recursive_refinement(
     manager: WorkspaceManager,
     config_path: Path,
     max_depth: int,
     current_depth: int,
+    newly_created: set[Path] | None = None,
+    min_overlap_threshold: float = 0.2,
 ) -> None:
     """Recursively refine sub-libraries until no more candidates or max depth."""
     if current_depth >= max_depth:
         return
 
-    sublibrary_dirs = _find_sublibraries_at_depth(manager, current_depth)
+    sublibrary_dirs: set[Path] | list[Path]
+    if newly_created is not None:
+        sublibrary_dirs = newly_created
+    else:
+        sublibrary_dirs = _find_sublibraries_at_depth(manager, current_depth)
 
     if not sublibrary_dirs:
         return
@@ -180,12 +207,22 @@ def _recursive_refinement(
         _expand_sublibrary_evidence(manager, sub_lib_dir, config_path)
         _build_sublibrary_spec(manager, sub_lib_dir, config_path)
 
+    next_newly_created: set[Path] = set()
     for sub_lib_dir in sublibrary_dirs:
         result = _detect_library_sublibraries(
             manager, sub_lib_dir, config_path, max_depth, min_overlap_threshold=0.2
         )
         if result.get("sublibraries_created", 0) > 0:
-            _recursive_refinement(manager, config_path, max_depth, current_depth + 1)
+            parent_sublibraries_dir = sub_lib_dir / "sublibraries"
+            if parent_sublibraries_dir.exists():
+                for child_dir in parent_sublibraries_dir.iterdir():
+                    if child_dir.is_dir():
+                        next_newly_created.add(child_dir)
+
+    if next_newly_created:
+        _recursive_refinement(
+            manager, config_path, max_depth, current_depth + 1, next_newly_created
+        )
 
 
 def _build_sublibrary_prompt(
@@ -217,10 +254,10 @@ def parse_sublibrary_output(output: str) -> dict[str, Any]:
     """Parse Opus sub-library planner output."""
     json_match = re.search(r"```json\s*(\{.*?\})\s*```", output, re.DOTALL)
     if json_match:
-        return json.loads(json_match.group(1))
+        return cast("dict[str, Any]", json.loads(json_match.group(1)))
 
     try:
-        return json.loads(output)
+        return cast("dict[str, Any]", json.loads(output))
     except json.JSONDecodeError as exc:
         raise ValueError(f"Output is not valid JSON: {exc}") from exc
 

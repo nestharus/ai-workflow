@@ -15,9 +15,7 @@ from .progress import ProgressTracker
 MAX_WORKERS = 4
 
 
-def _build_summary_prompt(
-    file_id: str, file_path: Path, sections: list[str], content: str
-) -> str:
+def _build_summary_prompt(file_id: str, file_path: Path, sections: list[str], content: str) -> str:
     section_list = ", ".join(sections) if sections else "None"
     lines = [
         "Summarize the following spec file for Phase 1. Provide structured markdown with "

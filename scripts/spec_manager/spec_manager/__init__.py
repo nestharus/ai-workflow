@@ -160,12 +160,12 @@ def __getattr__(name: str) -> object:
     ):
         from .workflow import (
             ContextIndex,  # noqa: F401
-            ingest,  # noqa: F401
             PatchDependencyGraph,  # noqa: F401
             WorkflowConfig,  # noqa: F401
             WorkflowOrchestrator,  # noqa: F401
             WorkflowPhase,  # noqa: F401
             WorkflowState,  # noqa: F401
+            ingest,  # noqa: F401
         )
 
         return locals()[name]
@@ -184,13 +184,13 @@ def __getattr__(name: str) -> object:
         from .discovery import (
             CandidateIdentifier,  # noqa: F401
             CandidateLibrary,  # noqa: F401
-            discover_libraries,  # noqa: F401
-            discover_libraries_sync,  # noqa: F401
             ElementLabels,  # noqa: F401
             LibraryRefiner,  # noqa: F401
             LibraryShape,  # noqa: F401
             MultiLabeler,  # noqa: F401
             ShapeAggregator,  # noqa: F401
+            discover_libraries,  # noqa: F401
+            discover_libraries_sync,  # noqa: F401
         )
 
         return locals()[name]

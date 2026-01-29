@@ -58,10 +58,7 @@ class IntegrationRunner:
         match = re.search(r"Current Spec:\n(.*?)\n\nSource File:", prompt, re.S)
         current_spec = match.group(1).strip() if match else ""
         if self.mode == "append":
-            return (
-                f"{current_spec}\n\n## Requirements\n"
-                "- Own keyword workflows [file_001::INTRO]\n"
-            )
+            return f"{current_spec}\n\n## Requirements\n- Own keyword workflows [file_001::INTRO]\n"
         return current_spec
 
 

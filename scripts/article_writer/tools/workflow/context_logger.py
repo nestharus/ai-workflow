@@ -111,9 +111,7 @@ class ContextLogger:
             if lang == "json":
                 try:
                     parsed = json.loads(content)
-                    if isinstance(parsed, dict) and (
-                        "tool" in parsed or "function" in parsed
-                    ):
+                    if isinstance(parsed, dict) and ("tool" in parsed or "function" in parsed):
                         result["tool_calls"].append(parsed)
                 except json.JSONDecodeError:
                     pass
