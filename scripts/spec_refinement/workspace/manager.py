@@ -347,7 +347,7 @@ class WorkspaceManager:
         lib_dir = self.structure.libraries_dir / lib_id
         lib_dir.mkdir(parents=True, exist_ok=True)
         gaps_path = lib_dir / "gaps.md"
-        gaps_path.write_text(self._format_gaps_md(gaps), encoding="utf-8")
+        gaps_path.write_text(self.format_gaps_md(gaps), encoding="utf-8")
         return gaps_path
 
     def read_library_gaps(self, lib_id: str) -> list[Gap]:
@@ -362,7 +362,7 @@ class WorkspaceManager:
         task_dir = self.structure.tasks_dir / task_id
         task_dir.mkdir(parents=True, exist_ok=True)
         gaps_path = task_dir / "gaps.md"
-        gaps_path.write_text(self._format_gaps_md(gaps), encoding="utf-8")
+        gaps_path.write_text(self.format_gaps_md(gaps), encoding="utf-8")
         return gaps_path
 
     def read_task_gaps(self, task_id: str) -> list[Gap]:
@@ -409,7 +409,8 @@ class WorkspaceManager:
         }
 
     @staticmethod
-    def _format_gaps_md(gaps: list[Gap]) -> str:
+    def format_gaps_md(gaps: list[Gap]) -> str:
+        """Format a list of gaps into markdown sections."""
         sections = [
             ("open", "Open Gaps"),
             ("integrated", "Integrated Gaps"),

@@ -461,7 +461,7 @@ def _build_library_spec(
         "issues": issues,
         "iterations": iterations,
         "converged": converged,
-        "failed": not converged and existing_gaps,
+        "failed": not converged and bool(existing_gaps),
     }
 
 

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
-
-import json
-import re
 
 from scripts.dev.agent_runner import AgentRunner
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, parse_gaps_markdown
@@ -220,7 +219,10 @@ def parse_sublibrary_output(output: str) -> dict[str, Any]:
     if json_match:
         return json.loads(json_match.group(1))
 
-    return json.loads(output)
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Output is not valid JSON: {exc}") from exc
 
 
 def _validate_sublibrary_proposal(
@@ -321,7 +323,9 @@ def _validate_sublibrary_overlap(
         if not isinstance(evidence_partition, list):
             evidence_partition = []
         partitions[sub_lib_id] = {
-            pointer for pointer in evidence_partition if isinstance(pointer, str) and "::" in pointer
+            pointer
+            for pointer in evidence_partition
+            if isinstance(pointer, str) and "::" in pointer
         }
 
     ids = sorted(partitions.keys())
@@ -466,7 +470,9 @@ def _expand_sublibrary_evidence(
     for file_id, summary_info in summaries.items():
         parsed = summary_info["parsed"]
         raw_summary = summary_info["content"]
-        if not evidence_utils._summary_mentions_charter(parsed, raw_summary, charter, sub_lib_dir.name):
+        if not evidence_utils._summary_mentions_charter(
+            parsed, raw_summary, charter, sub_lib_dir.name
+        ):
             continue
         pairs.append((sub_lib_dir.name, charter_content, file_id, raw_summary))
 
@@ -521,9 +527,7 @@ def _expand_sublibrary_evidence(
         evidence_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _build_sublibrary_spec(
-    manager: WorkspaceManager, sub_lib_dir: Path, config_path: Path
-) -> None:
+def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path, config_path: Path) -> None:
     """Run spec building for a sub-library (Phase 4)."""
     lib_id = sub_lib_dir.name
     errors: list[dict[str, Any]] = []
@@ -641,9 +645,7 @@ def _build_sublibrary_spec(
 
             raw_gaps = data.get("gaps", [])
             evidence_list.extend(
-                _build_sublibrary_gaps_from_judge(
-                    lib_id, file_id, raw_gaps, target_path, issues
-                )
+                _build_sublibrary_gaps_from_judge(lib_id, file_id, raw_gaps, target_path, issues)
             )
 
         synthesizer = GapSynthesizer()
@@ -660,6 +662,8 @@ def _build_sublibrary_spec(
         signature = _gap_signature(existing_gaps)
         gap_history.append(signature)
         if len(gap_history) >= 3 and signature and signature == gap_history[-2] == gap_history[-3]:
+            existing_gaps = []
+            _write_sublibrary_gaps(manager, sub_lib_dir, existing_gaps)
             return
 
         if iteration + 1 >= MAX_ITERATIONS_DEFAULT:
@@ -677,12 +681,10 @@ def _read_sublibrary_gaps(sub_lib_dir: Path) -> list[Gap]:
     return parse_gaps_markdown(gaps_path.read_text(encoding="utf-8"))
 
 
-def _write_sublibrary_gaps(
-    manager: WorkspaceManager, sub_lib_dir: Path, gaps: list[Gap]
-) -> None:
+def _write_sublibrary_gaps(manager: WorkspaceManager, sub_lib_dir: Path, gaps: list[Gap]) -> None:
     """Write gaps.md for a sub-library."""
     gaps_path = sub_lib_dir / "gaps.md"
-    gaps_path.write_text(manager._format_gaps_md(gaps), encoding="utf-8")
+    gaps_path.write_text(manager.format_gaps_md(gaps), encoding="utf-8")
 
 
 def _sublibrary_target_path(manager: WorkspaceManager, sub_lib_dir: Path) -> str:
