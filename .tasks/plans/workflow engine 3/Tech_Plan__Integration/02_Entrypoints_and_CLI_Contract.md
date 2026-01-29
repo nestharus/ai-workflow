@@ -66,6 +66,11 @@ Minimum required subcommands (names are part of the UX contract; exact flags may
 - `workflowctl investigate --step <step_execution_id>`
 - `workflowctl notifications tail`
 
+**Metrics and aggregation**
+- `workflowctl metrics summary [--since <rfc3339>] [--since-days <N>] [--format json|table]`
+- `workflowctl metrics failures [--group-by signature|code] [--since-days <N>] [--format json|table]`
+- `workflowctl export metrics --format json --out <path> [--since <rfc3339>]`
+
 **Export/sharing**
 - `workflowctl export --ticket <ticket_id> --mode validated|review`
 - `workflowctl export scrub --ticket <ticket_id> [--run <run_id>]`
