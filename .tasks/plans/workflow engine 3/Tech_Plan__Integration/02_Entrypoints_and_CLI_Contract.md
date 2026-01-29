@@ -167,6 +167,17 @@ Output (example):
 - `workflowctl metrics summary [--since <rfc3339>] [--since-days <N>] [--format json|table]`
 - `workflowctl metrics failures [--group-by signature|code] [--since-days <N>] [--format json|table]`
 
+**Conclusions (self-healing memory; Monitoring §7)**
+- `workflowctl conclusions list [--state draft|confirmed|promoted]`
+- `workflowctl conclusions show <conclusion_id>`
+- `workflowctl conclusions promote <conclusion_id>`
+- `workflowctl conclusions invalidate <conclusion_id>`
+- `workflowctl conclusions apply <conclusion_id> --run <run_id>`
+- `workflowctl conclusions stats [--since-days N] [--format json|table]`
+- `workflowctl conclusions disable <conclusion_id> [--until <RFC3339>] --reason <string>` (**required**)
+- `workflowctl conclusions export --out <path> [--state draft|confirmed|promoted] [--redact-secrets]`
+- `workflowctl conclusions import <path> [--merge-strategy skip|overwrite|update] [--dry-run]`
+
 **Export/sharing**
 - `workflowctl export --ticket <ticket_id> --mode validated|review`
 - `workflowctl export scrub --ticket <ticket_id> [--run <run_id>]`
@@ -188,6 +199,29 @@ Examples (disambiguating expected invocation syntax):
 - Scrub ticket export: `workflowctl export scrub --ticket NES-47 --run 01J... --out ./export.scrubbed.zip`
 - Metrics export: `workflowctl export metrics --since-days 7 --out ./metrics.jsonl`
 
+#### Conclusions command help text (examples)
+
+```
+workflowctl conclusions stats --help
+  Show effectiveness metrics for conclusions
+
+  Options:
+    --since-days N    Calculate metrics over last N days (default: 30)
+    --format FORMAT   Output format: table|json (default: table)
+
+workflowctl conclusions disable --help
+  Temporarily disable a conclusion from automatic application
+
+  Arguments:
+    <conclusion_id>   ULID of the conclusion to disable
+
+  Options:
+    --until TIMESTAMP  RFC3339 timestamp when to re-enable (default: indefinite)
+    --reason TEXT      Reason for disabling (required for audit trail)
+```
+
+Parser rule (normative):
+- `workflowctl conclusions disable` MUST fail when `--reason` is missing, with a clear stderr message (e.g., "`--reason` is required") and a non-zero exit code.
 
 ### 2.1 CLI bootstrap sequence (normative)
 

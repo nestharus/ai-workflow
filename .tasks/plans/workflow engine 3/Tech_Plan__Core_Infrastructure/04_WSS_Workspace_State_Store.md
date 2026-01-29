@@ -44,6 +44,7 @@ workspace/
       undo/                          # undo-last evidence bundles (tm §5.1)
       reset/                         # reset evidence bundles + safety bookmarks (tm §5.2)
   conclusions/
+    <conclusion_id>.json             # conclusion documents (Monitoring §7.3)
     tools/<tool_fingerprint>/
     perf/<step_signature>/
   trace_overrides/
@@ -178,3 +179,86 @@ Validation rules (normative):
 **Schema versioning note**:
 - `ticket.json.schema_version` is bumped to `2` to add `history[]`.
 - Writers MUST reject unsupported schema versions per Multi-writer correctness §6.2.
+
+### 5.5 `workspace/conclusions/<conclusion_id>.json` schema (v1)
+
+`workspace/conclusions/<conclusion_id>.json` is the durable conclusion document that stores an evidence-backed “known failure → known fix” record (Monitoring §7).
+
+Storage:
+- Path: `workspace/conclusions/<conclusion_id>.json`
+- Key: `conclusion_id` (ULID; see `Tech_Plan__Core_Infrastructure/03_IDs_and_Time.md` §4.1.1)
+
+#### 5.5.1 Minimal shape (normative)
+
+```json
+{
+  "schema_version": 1,
+  "conclusion_id": "<ULID>",
+  "state": "draft|confirmed|promoted",
+  "failure_signature": "<string>",
+  "tool_fingerprint": "<optional>",
+  "remediation": { },
+  "reproductions": [],
+  "applications": [],
+  "disabled_until": "<RFC3339 or null>",
+  "disabled_reason": "<string or null>",
+  "stats": { },
+  "created_at": "<RFC3339>",
+  "updated_at": "<RFC3339>",
+  "rev": 1
+}
+```
+
+#### 5.5.2 Field rules (normative)
+
+- `schema_version` MUST be `1`.
+- `conclusion_id` MUST be a ULID string.
+- `state` MUST be one of: `draft`, `confirmed`, `promoted` (Monitoring §7).
+- `failure_signature` MUST be a stable signature string suitable for grouping repeated incidents.
+- `tool_fingerprint` MAY be present to constrain applicability to a specific tool/environment fingerprint.
+- `remediation` MUST be a JSON object describing the fix (e.g., workflow id, script recipe, patch recipe). The exact remediation schema is defined in Monitoring §7.x.
+- `reproductions[]` MUST be an array of reproduction records with durable evidence refs.
+- `applications[]` MUST be an array of application records. Each record MUST include:
+  - `timestamp` (RFC3339 UTC, ends in `Z`) — used for rolling-window stats
+  - `outcome` (`success|fail`)
+  - evidence refs sufficient for audit/promotion/demotion accounting
+
+`disabled_until` / `disabled_reason`:
+- `disabled_until` MAY be absent or `null`. When set, it MUST be an RFC3339 UTC timestamp ending in `Z`.
+- `disabled_reason` MAY be absent or `null`. When present, it MUST be a non-empty string intended for audit trail.
+- Readers MUST treat missing and `null` equivalently (“not disabled” / “no reason”).
+
+`stats`:
+- `stats` MUST be a JSON object (may be empty).
+- When present, `stats` SHOULD contain the fields defined in §5.5.3.
+
+#### 5.5.3 `stats` object (normative)
+
+`stats` tracks derived effectiveness metrics for a conclusion (aggregated from `applications[]` and/or external evidence).
+
+Allowed fields:
+- `total_applications` (int)
+- `successful_applications` (int)
+- `failed_applications` (int)
+- `last_applied_at` (RFC3339 timestamp)
+- `avg_resolution_time_ms` (int, optional)
+- `most_common_triggers` (array of failure signatures)
+
+Rules:
+- `successful_applications + failed_applications` SHOULD equal `total_applications` when all applications are classified.
+- `last_applied_at` SHOULD reflect the most recent `applications[].timestamp`.
+
+#### 5.5.4 Backwards validity (normative)
+
+Older conclusion documents that omit `disabled_until`, `disabled_reason`, or `stats` remain valid.
+- Missing `disabled_until` MUST be treated as “not disabled”.
+- Missing `stats` MUST be treated as `{}`.
+
+#### 5.5.5 Migration (normative)
+
+A schema migration MUST be provided to update existing conclusion documents by:
+- adding `disabled_until` and `disabled_reason` (defaults: `null`)
+- adding `stats` (default: `{}`)
+
+Backfill:
+- When possible, backfill `stats.total_applications`, `stats.successful_applications`, `stats.failed_applications`, and `stats.last_applied_at` by scanning existing `applications[]` entries.

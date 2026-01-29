@@ -1,7 +1,7 @@
 # Tech Plan: Monitoring & Self-Healing (Restructured)
 
 - **Doc**: Tech_Plan__Monitoring_&_Investigator.md
-- **Updated**: 2026-01-24
+- **Updated**: 2026-01-29
 - **Component**: Monitoring / Investigation / Repair
 - **Primary responsibility**: Detect anomalies early, pause safely, investigate using durable evidence, and (when safe) repair via auditable patches.
 
@@ -280,7 +280,12 @@ Resume plans are intended to be machine-consumable by Root (Flow 13) and user-re
 
 Before proposing a new remediation, the investigator MUST:
 - search conclusions for matching signatures/tool fingerprints
-- if a promoted conclusion exists:
+- when considering any conclusion candidate:
+  - if `disabled_until` is present and `disabled_until > current_time`:
+    - skip it
+    - emit `event_type="conclusion_skipped"` with `reason="disabled"` and include `disabled_until` and `disabled_reason` for audit trail
+    - continue to the next candidate
+- if an applicable promoted conclusion exists:
   - propose applying it unless evidence indicates it is inapplicable
 
 Any time a conclusion is applied, the outcome MUST be recorded and linked back for promotion/demotion accounting.
@@ -350,15 +355,32 @@ Promoted conclusions must remain trustworthy.
 
 ### 7.3 Required fields in a conclusion record
 
-Each conclusion must store:
+Each conclusion record stored in WSS (Core Infrastructure — WSS §5.5) MUST store:
 
+- `schema_version` (int)
 - `conclusion_id` (ULID)
 - `state` (`draft|confirmed|promoted`)
 - `failure_signature` (string)
 - optional `tool_fingerprint` constraints
 - `remediation` (what to do; workflow id or patch recipe)
 - `reproductions[]` with evidence refs
-- `applications[]` with outcome (`success|fail`) and evidence refs
+- `applications[]` with:
+  - `timestamp` (RFC3339 UTC, ends in `Z`)
+  - outcome (`success|fail`)
+  - evidence refs
+- optional disable fields:
+  - `disabled_until` (RFC3339 timestamp, optional)
+  - `disabled_reason` (string, optional)
+- `stats` (object) containing:
+  - `total_applications` (int)
+  - `successful_applications` (int)
+  - `failed_applications` (int)
+  - `last_applied_at` (RFC3339 timestamp)
+  - `avg_resolution_time_ms` (int, optional)
+  - `most_common_triggers[]` (array of failure signatures)
+- `created_at` (RFC3339)
+- `updated_at` (RFC3339)
+- `rev` (int)
 
 
 
@@ -371,8 +393,124 @@ CLI commands (minimum):
 - `workflowctl conclusions promote <conclusion_id>` (manual override)
 - `workflowctl conclusions invalidate <conclusion_id>`
 - `workflowctl conclusions apply <conclusion_id> --run <run_id>` (force apply for debugging)
+- `workflowctl conclusions stats [--since-days N] [--format json|table]`
+- `workflowctl conclusions disable <conclusion_id> [--until <RFC3339>] --reason <string>`
+- `workflowctl conclusions export --out <path> [--state draft|confirmed|promoted] [--redact-secrets]`
+- `workflowctl conclusions import <path> [--merge-strategy skip|overwrite|update] [--dry-run]`
 
 All commands must print evidence refs and never hide the underlying artifacts.
+
+### 7.5 Operational management semantics (normative)
+
+This section defines required behavior for the conclusion management commands listed in §7.4.
+
+#### 7.5.1 `workflowctl conclusions stats`
+
+Signature:
+- `workflowctl conclusions stats [--since-days N] [--format json|table]`
+
+Behavior:
+- Reads all conclusion documents from `workspace/conclusions/`.
+- If `--since-days N` is provided, filter applications by `applications[].timestamp >= now - N days` (rolling window).
+- Aggregates:
+  - total applications in window
+  - success rate = `successful_applications / total_applications * 100`
+  - top 5 most common triggers (group by `failure_signature`)
+  - optional: time-saved estimate (sum `avg_resolution_time_ms` across successful applications)
+
+Errors:
+- If WSS is not initialized, MUST fail with `E_NOT_FOUND` per Integration §2.1.2.
+- If no conclusions exist, MUST emit a warning and exit `0`.
+
+#### 7.5.2 `workflowctl conclusions disable`
+
+Signature:
+- `workflowctl conclusions disable <conclusion_id> [--until <RFC3339>] [--reason <string>]`
+
+Behavior:
+- `--reason` is REQUIRED for audit trail.
+- If `--until` is omitted, disable indefinitely by setting `disabled_until` to a far-future timestamp (e.g., `2099-12-31T00:00:00Z`).
+- Update the conclusion doc via JSON Merge Patch (RFC 7396; Core Infrastructure — WSS §5.3):
+  - set `disabled_until`
+  - set `disabled_reason`
+  - increment `rev`
+  - update `updated_at`
+- Emit structured log event:
+  - `event_type="conclusion_disabled"`
+  - include `conclusion_id`, `disabled_until`, `disabled_reason`, and `actor` (user/system)
+
+Application gating:
+- Automatic application MUST skip conclusions where `disabled_until > current_time` and MUST emit `event_type="conclusion_skipped"` with `reason="disabled"` including `disabled_until` and `disabled_reason`.
+
+#### 7.5.3 `workflowctl conclusions export`
+
+Signature:
+- `workflowctl conclusions export --out <path> [--state draft|confirmed|promoted] [--redact-secrets]`
+
+Export bundle (JSON):
+```json
+{
+  "export_version": 1,
+  "exported_at": "<RFC3339>",
+  "source_repo_uid": "<repo_uid>",
+  "conclusions": [],
+  "metadata": {
+    "total_count": 0,
+    "redacted": false
+  }
+}
+```
+
+Privacy:
+- If `--redact-secrets` is set, remediation fields MUST be scrubbed per Core Infrastructure §12.
+- The bundle MUST include a `redaction_manifest` in `metadata` listing what was redacted.
+
+Write rules:
+- Output MUST be written using the atomic write protocol (Core Infrastructure — Durability §7.1).
+- File permissions MUST be set to `0600` (user-only read/write).
+
+#### 7.5.4 `workflowctl conclusions import`
+
+Signature:
+- `workflowctl conclusions import <path> [--merge-strategy skip|overwrite|update] [--dry-run]`
+
+Validation:
+- Load JSON bundle and validate `export_version` compatibility.
+- Validate each conclusion’s schema and required fields (Monitoring §7.3).
+
+Conflicts:
+- For each imported conclusion, detect whether `conclusion_id` exists locally and apply `--merge-strategy`:
+  - `skip` (default): skip existing conclusions
+  - `overwrite`: replace local conclusion entirely
+  - `update`: merge `applications[]` and `reproductions[]`, keep higher `rev`
+
+Import normalization:
+- Imported conclusions MUST start in `draft` state (require re-confirmation in the new repo).
+- Disable state MUST NOT be imported:
+  - clear `disabled_until` and `disabled_reason`
+- Reset lifecycle bookkeeping:
+  - update `created_at` to import time
+  - set `rev` to `1`
+
+Dry-run:
+- When `--dry-run` is set, perform validation and conflict detection without writing, and exit with a summary.
+
+Audit:
+- Emit structured log event `event_type="conclusion_imported"` for each imported conclusion.
+
+### 7.6 Testing considerations (required)
+
+Unit tests:
+- Stats calculation with various time windows
+- Disable/enable state transitions
+- Export bundle generation and privacy scrubbing
+- Import conflict resolution strategies
+- Investigator skip logic for disabled conclusions
+
+Integration tests:
+- End-to-end: export from one repo, import to another
+- Disable → wait → auto-enable workflow
+- Stats accuracy across multiple runs
 
 
 
