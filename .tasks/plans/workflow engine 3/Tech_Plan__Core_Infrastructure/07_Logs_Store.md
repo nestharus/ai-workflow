@@ -1,7 +1,7 @@
 # Core Infrastructure — Logs Store (Sharded JSONL)
 
 - **Doc**: Tech_Plan__Core_Infrastructure/07_Logs_Store.md
-- **Updated**: 2026-01-26
+- **Updated**: 2026-01-29
 - **Library**: `workflow_engine.storage.logs`
 - **Depends on**: [`00_Foundation.md`](00_Foundation.md), [`03_IDs_and_Time.md`](03_IDs_and_Time.md)
 - **Primary responsibility**: Append-only, sharded JSONL logs with integrity features and corruption handling rules.
@@ -108,6 +108,10 @@ LLM:
 - `net_llm_start`
 - `net_llm_stop`
 
+Compatibility note (v1):
+- Log readers MUST accept legacy `llm_call_start` / `llm_call_stop` as deprecated aliases for `net_llm_start` / `net_llm_stop` and MUST emit a warning when encountered.
+- v2 will drop the `llm_call_*` aliases.
+
 Maintenance:
 - `doctor_started`
 - `doctor_failed`
@@ -175,7 +179,11 @@ Sandbox / tools:
 
 Models / routing:
 - `E_MODEL_ROUTE_NOT_FOUND`
-- `E_LLM_CALL_FAILED`
+- `E_NET_LLM_FAILED`
+
+Compatibility note (v1):
+- When reading legacy logs, `E_LLM_CALL_FAILED` MUST be treated as a deprecated alias for `E_NET_LLM_FAILED` and MUST emit a warning when encountered.
+- v2 will drop the `E_LLM_CALL_FAILED` alias.
 
 Dependencies:
 - `E_DEPENDENCY_MISSING`

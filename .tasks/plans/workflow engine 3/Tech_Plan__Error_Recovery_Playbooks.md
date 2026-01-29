@@ -522,7 +522,7 @@ The investigator produces a bounded evidence bundle automatically (Monitoring §
 
 **Related Error Codes**:
 - `E_TOOL_FAILED`
-- `E_LLM_CALL_FAILED`
+- `E_NET_LLM_FAILED`
 
 **Configuration References**:
 - `timeouts.tool_default_ms` (integer)
@@ -567,15 +567,17 @@ The investigator produces a bounded evidence bundle automatically (Monitoring §
   - workflow definition snippet indicating the model name
 
 **Related Error Codes**:
-- `E_LLM_CALL_FAILED`
+- `E_NET_LLM_FAILED`
 
 **Configuration References**:
 - `models` (object)
 - `models.<model_name>.provider` (string)
 
-### Error Code: E_LLM_CALL_FAILED
+### Error Code: E_NET_LLM_FAILED
 
 **Severity**: medium (retryable=true), high (retryable=false)
+
+**Legacy alias (deprecated)**: `E_LLM_CALL_FAILED` (v1 readers accept with a warning; v2 will drop the alias)
 
 **Symptoms**:
 - LLM API call failed.
@@ -1111,7 +1113,7 @@ The investigator produces a bounded evidence bundle automatically (Monitoring §
 | E_TOOL_FAILED | Medium | Inspect tool_run artifacts + reproduce | Failure remains unclear/unexpected |
 | E_TOOL_TIMEOUT | Medium | Check PID/progress + adjust timeout | Repeated timeouts with no progress |
 | E_MODEL_ROUTE_NOT_FOUND | High | Configure model route | Configured but routing still fails |
-| E_LLM_CALL_FAILED | Medium/High | Retry if retryable; fix creds/network if not | Non-retryable persists with valid creds |
+| E_NET_LLM_FAILED | Medium/High | Retry if retryable; fix creds/network if not | Non-retryable persists with valid creds |
 | E_DEPENDENCY_MISSING | High | `doctor` + install missing tool | Installed but not detected |
 | E_UNSUPPORTED_PLATFORM | Critical | STOP + run on supported platform | Always |
 | E_CAPABILITY_DENIED | High | Grant capability if safe | Should be granted but still blocked |

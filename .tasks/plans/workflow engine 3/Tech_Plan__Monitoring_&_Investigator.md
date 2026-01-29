@@ -204,7 +204,7 @@ The investigator MUST set `classification` according to this decision tree:
    - Example evidence patterns:
      - `E_TOOL_TIMEOUT`
      - `timeout_or_hang` with no data corruption indicators
-     - transient network/provider errors for LLM calls (`E_LLM_CALL_FAILED` with retryable=true)
+     - transient network/provider errors for LLM calls (`E_NET_LLM_FAILED` with retryable=true)
 
 3. **Needs user** (`needs_user`)
    - Set when:
@@ -239,7 +239,7 @@ If any condition is false, classification MUST be `needs_user` or `needs_shutdow
 When a structured error code is available, the investigator SHOULD start with this mapping (then confirm with evidence):
 
 - `E_TOOL_TIMEOUT` → `needs_retry`
-- `E_LLM_CALL_FAILED` with `retryable=true` → `needs_retry`
+- `E_NET_LLM_FAILED` with `retryable=true` → `needs_retry` (warn if legacy `E_LLM_CALL_FAILED`)
 - `E_DEPENDENCY_MISSING` → `needs_user`
 - `E_CAPABILITY_DENIED` / `E_POLICY_BLOCKED` → `needs_user`
 - `E_EXPECTED_REV_MISMATCH` → `needs_user`
