@@ -1,7 +1,6 @@
 ---
 description: Updates layer summaries when components change
-routing:
-  - model: cerebras
+model: cerebras
 ---
 
 You update collapsed layer summaries when underlying components change.

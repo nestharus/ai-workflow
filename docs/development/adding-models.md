@@ -1,7 +1,7 @@
 # How To Add Models Correctly
 
 Models are AI backend configurations stored in `.agents/models/` as TOML files. Each model
-defines how to invoke an AI backend (Claude, GPT, Ollama, etc.) via command line.
+defines how to invoke an AI backend (Claude, GPT, OpenCode, etc.) via command line.
 
 ## Directory Structure
 
@@ -11,10 +11,9 @@ defines how to invoke an AI backend (Claude, GPT, Ollama, etc.) via command line
 │   ├── claude-sonnet.toml
 │   ├── claude-opus.toml
 │   ├── opencode-glm.toml
-│   ├── smollm2-135.toml
 │   └── ...
-└── agents/          # Agent configurations (Markdown - routing rules + instructions)
-    └── router.md
+└── agents/          # Agent configurations (Markdown - model + instructions)
+    └── implementor.md
 ```
 
 ## Model Configuration Format
@@ -42,7 +41,6 @@ Determine how to invoke your model from the command line:
 |---------|-----------------|
 | Claude Code | `claude -p --model sonnet` |
 | GLM via Z.AI | `glm -p` (uses `~/.claude-glm` config) |
-| Ollama | `ollama run smollm2:135m` |
 | OpenCode | `opencode -p -m factory:gpt-5.2-high` |
 
 ### Step 2: Create the TOML File
@@ -57,14 +55,14 @@ touch .agents/models/my-model.toml
 
 ```toml
 # .agents/models/my-model.toml
-command = "ollama"
-args = ["run", "my-model:latest"]
+command = "opencode"
+args = ["-p", "-m", "factory:my-model", "--dangerously-skip-permissions"]
 ```
 
 ### Step 4: Test the Model
 
 ```bash
-echo "Hello, world!" | ollama run my-model:latest
+echo "Hello, world!" | opencode -p -m factory:my-model
 ```
 
 ## Model Examples
@@ -88,14 +86,6 @@ args = ["-p", "--dangerously-skip-permissions"]
 The `glm` command is a bash alias that runs Claude Code with a custom config directory
 pointing to Z.AI's API endpoint with GLM models.
 
-### SmolLM2 via Ollama
-
-```toml
-# .agents/models/smollm2-135.toml
-command = "ollama-smollm2-135"
-args = []
-```
-
 ### GPT via OpenCode
 
 ```toml
@@ -104,32 +94,15 @@ command = "opencode"
 args = ["-p", "-m", "factory:gpt-5.2-high", "--dangerously-skip-permissions"]
 ```
 
-## Model Context Limits
-
-When using models in agent routing rules, use these approximate character limits:
-
-| Model | Context (tokens) | Recommended max_chars |
-|-------|------------------|----------------------|
-| SmolLM2-135M | 2,048 | 4,000 |
-| SmolLM2-360M | 2,048 | 6,000 |
-| GLM-4.7 | 32,768-128,768 | (no limit - fallback) |
-| Claude Sonnet | 200,000 | 600,000 |
-| GPT-5.x | 272,000 | 800,000 |
-
-The `max_chars` value should be conservative (roughly 3-4 characters per token) to leave
-room for model output. Omit `max_chars` for fallback models that should handle any size.
-
 ## Using Models in Agents
 
-Models are referenced by name (filename without `.toml`) in agent routing rules:
+Models are referenced by name (filename without `.toml`) in agent frontmatter:
 
 ```markdown
 ---
-routing:
-  - max_chars: 4000
-    model: smollm2-135      # References .agents/models/smollm2-135.toml
-  - model: opencode-glm     # References .agents/models/opencode-glm.toml
+description: Implements code changes based on task files
+model: gpt-5.2-high
 ---
 ```
 
-See [`docs/development/writing-agents.md`](writing-agents.md) for agent configuration details.
+See `docs/development/writing-agents.md` for agent configuration details.

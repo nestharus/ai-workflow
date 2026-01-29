@@ -1,9 +1,8 @@
 ---
-description: >
-  Removes hard ban violations and template-generated patterns
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Removes hard ban violations and template-generated patterns
+
+  '
+model: claude-opus
 ---
 
 # Agent: AI-tells Reviewer

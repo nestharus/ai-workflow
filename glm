@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-claude-glm --dangerously-skip-permissions "$@"
+claude-cerebras --dangerously-skip-permissions "$@"

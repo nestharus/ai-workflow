@@ -1,12 +1,9 @@
 ---
-description: >
-  Applies spec changes - extracts to libraries, moves sections, removes duplicates
-routing:
-  - max_chars: 3000
-    model: ministral-3b
-    ambiguity: false
-  - model: cerebras
-    ambiguity: true
+description: 'Applies spec changes - extracts to libraries, moves sections, removes
+  duplicates
+
+  '
+model: cerebras
 ---
 
 # Spec Manager Merging Agent

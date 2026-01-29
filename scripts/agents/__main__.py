@@ -7,7 +7,6 @@ Usage:
     echo "prompt" | uv run python -m scripts.agents <agent_name>
 
 Examples:
-    uv run python -m scripts.agents router "Is this ambiguous?"
     uv run python -m scripts.agents implementor task_001.md
     uv run python -m scripts.agents --model claude-sonnet "Write a haiku"
     echo "Help me" | uv run python -m scripts.agents my-agent
@@ -20,7 +19,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from scripts.agents.router import load_agents, load_models, route_prompt
+from scripts.agents.config import load_agents, load_models
 
 
 def main() -> int:
@@ -87,7 +86,7 @@ def main() -> int:
             )
         return result.returncode
 
-    # Agent execution with routing
+    # Agent execution
     if not args.agent:
         parser.error("Either agent name or --model required")
 
@@ -98,31 +97,13 @@ def main() -> int:
     if not agent:
         print(f"Error: Agent not found: {args.agent}", file=sys.stderr)
         return 1
+    if not agent.model:
+        print(f"Error: Agent missing model: {args.agent}", file=sys.stderr)
+        return 1
 
-    # Router agent called directly - skip routing, use size-based selection only
-    if args.agent == "router":
-        from scripts.agents.router import select_rule
-
-        rule = select_rule(agent.routing, len(prompt))
-        if not rule:
-            print("Error: No routing rule matched the prompt", file=sys.stderr)
-            return 1
-    else:
-        router = agents.get("router")
-
-        if not router:
-            print("Error: Router agent not found (.agents/agents/router.md)", file=sys.stderr)
-            return 1
-
-        # Route to find best model
-        rule = route_prompt(agent, router, models, prompt)
-        if not rule:
-            print("Error: No routing rule matched the prompt", file=sys.stderr)
-            return 1
-
-    model = models.get(rule.model)
+    model = models.get(agent.model)
     if not model:
-        print(f"Error: Model not found: {rule.model}", file=sys.stderr)
+        print(f"Error: Model not found: {agent.model}", file=sys.stderr)
         return 1
 
     # Build full prompt with agent instructions

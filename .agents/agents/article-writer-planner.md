@@ -1,9 +1,9 @@
 ---
-description: >
-  Turns raw notes + brief into a content plan with piece type, audience, storybeats, outline, and style guide
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Turns raw notes + brief into a content plan with piece type, audience,
+  storybeats, outline, and style guide
+
+  '
+model: claude-opus
 ---
 
 # Agent: Planner

@@ -1,9 +1,9 @@
 ---
-description: >
-  Adversarial review that tries to break the draft (objections, accusations, misreadings)
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Adversarial review that tries to break the draft (objections, accusations,
+  misreadings)
+
+  '
+model: claude-opus
 ---
 
 # Agent: Robustness Reviewer

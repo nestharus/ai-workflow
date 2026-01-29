@@ -1,9 +1,9 @@
 ---
-description: >
-  Detects drift between revised draft and original plan/outline - flags when revisions have diverged from the original intent
-routing:
-  - model: cerebras
-    ambiguity: true
+description: 'Detects drift between revised draft and original plan/outline - flags
+  when revisions have diverged from the original intent
+
+  '
+model: cerebras
 ---
 
 # Agent: Drift Detector

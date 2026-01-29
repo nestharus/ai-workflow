@@ -111,18 +111,17 @@ class ContextLogger:
             if lang == "json":
                 try:
                     parsed = json.loads(content)
-                    if isinstance(parsed, dict):
-                        if "tool" in parsed or "function" in parsed:
-                            result["tool_calls"].append(parsed)
+                    if isinstance(parsed, dict) and (
+                        "tool" in parsed or "function" in parsed
+                    ):
+                        result["tool_calls"].append(parsed)
                 except json.JSONDecodeError:
                     pass
 
         # Extract text outside code blocks as reasoning
         text_without_code = code_block_pattern.sub("", output).strip()
-        if text_without_code:
-            # Split into paragraphs
-            paragraphs = [p.strip() for p in text_without_code.split("\n\n") if p.strip()]
-            result["reasoning_blocks"] = paragraphs
+        paragraphs = [p.strip() for p in text_without_code.split("\n\n") if p.strip()]
+        result["reasoning_blocks"] = paragraphs
 
         return result
 
@@ -130,7 +129,7 @@ class ContextLogger:
         self,
         tool: str,
         params: dict[str, Any],
-        result: Any,
+        result: dict[str, Any] | str | list | None,
         error: str | None = None,
     ) -> None:
         """Log local tool invocation (lint, skeleton, etc.).
@@ -200,7 +199,7 @@ class ContextLogger:
             return logs
 
     def get_summary_input(self) -> str:
-        """Format logs for GLM-Flash summarization.
+        """Format logs for GLM summarization.
 
         Returns a formatted string suitable for the summarizer prompt.
 

@@ -1,7 +1,6 @@
 ---
 description: Detects responsibilities that have no handler
-routing:
-  - model: gpt-5.2-high
+model: gpt-5.2-high
 ---
 
 You detect gaps where a responsibility is no longer being handled.

@@ -1,2 +1,2 @@
-command = "claude-glm"
+command = "claude-cerebras"
 args = ["-p", "--dangerously-skip-permissions"]

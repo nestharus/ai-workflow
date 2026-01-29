@@ -1,9 +1,11 @@
 ---
-description: |
-  Fixes lint errors from a batch provided in the prompt. Receives error output
+description: 'Fixes lint errors from a batch provided in the prompt. Receives error
+  output
+
   and fixes issues in the working directory. Reports only unfixable items.
-routing:
-  - model: cerebras
+
+  '
+model: cerebras
 ---
 
 # Lint Fixer

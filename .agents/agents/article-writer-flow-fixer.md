@@ -1,9 +1,8 @@
 ---
-description: >
-  Fixes flow and structure issues identified in the review
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Fixes flow and structure issues identified in the review
+
+  '
+model: claude-opus
 ---
 
 # Agent: Flow Fixer

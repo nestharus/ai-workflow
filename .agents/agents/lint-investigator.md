@@ -1,9 +1,11 @@
 ---
-description: |
-  Investigates lint errors that the lint-fixer couldn't resolve. Analyzes config
+description: 'Investigates lint errors that the lint-fixer couldn''t resolve. Analyzes
+  config
+
   conflicts, complex type issues, and reports detailed findings with solutions.
-routing:
-  - model: gpt-5.2-high
+
+  '
+model: gpt-5.2-high
 ---
 
 # Lint Investigator

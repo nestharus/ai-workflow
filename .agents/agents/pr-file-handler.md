@@ -1,7 +1,6 @@
 ---
 description: Handles review tasks for a single file
-routing:
-  - model: cerebras
+model: cerebras
 ---
 
 # PR File Handler Agent

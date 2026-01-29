@@ -1,4 +1,10 @@
-"""Run-scoped workspace manager for spec refinement."""
+"""Run-scoped workspace manager for spec refinement.
+
+Agent Integration:
+- glm-file-what-summarizer: Phase 1 file inventory extraction
+- opus-library-synthesizer: Phase 2 library boundary detection
+- See .agents/agents/ for full agent definitions
+"""
 
 from __future__ import annotations
 

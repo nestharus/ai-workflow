@@ -15,8 +15,8 @@ This runner is designed to:
 
 AGENT EXECUTION:
 - Agents are defined in `.agents/agents/article-writer-*.md` with YAML frontmatter
-- Execution uses `uv run python -m scripts.agents` with model routing
-- Default model: glm-flash (configurable via .agents/models/)
+- Execution uses `uv run python -m scripts.agents` with the agent's configured model
+- Model selection is configured per-agent in `.agents/agents/`
 - SQLite-backed state machine for persistence and resume capability
 
 OPTIONAL LLM OVERRIDE:
@@ -44,6 +44,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -57,12 +58,11 @@ from typing import Any
 
 # Required imports for state machine
 try:
-    from scripts.article_writer.tools.agents import AgentRunner
     from scripts.article_writer.tools.workflow.context_logger import ContextLogger
     from scripts.article_writer.tools.workflow.database import Database
     from scripts.article_writer.tools.workflow.session import SessionManager
     from scripts.article_writer.tools.workflow.state_machine import (
-        Phase,
+        NextAction,
         StateMachine,
         Status,
         create_workflow,
@@ -73,12 +73,11 @@ try:
 except ImportError:
     try:
         # Fallback for running from within the package
-        from tools.agents import AgentRunner
         from tools.workflow.context_logger import ContextLogger
         from tools.workflow.database import Database
         from tools.workflow.session import SessionManager
         from tools.workflow.state_machine import (
-            Phase,
+            NextAction,
             StateMachine,
             Status,
             create_workflow,
@@ -92,8 +91,6 @@ except ImportError:
 # Optional imports for invariant enforcement
 try:
     from scripts.article_writer.tools.invariants import (
-        DynamicInvariantSystem,
-        InvariantSet,
         apply_fixes,
         check_all_invariants,
         extract_invariants_from_brief,
@@ -103,8 +100,6 @@ try:
 except ImportError:
     try:
         from tools.invariants import (
-            DynamicInvariantSystem,
-            InvariantSet,
             apply_fixes,
             check_all_invariants,
             extract_invariants_from_brief,
@@ -128,11 +123,11 @@ def _write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _load_json(path: Path) -> Any:
+def _load_json(path: Path) -> dict:
     return json.loads(_read_text(path))
 
 
-def _dump_json(path: Path, obj: Any) -> None:
+def _dump_json(path: Path, obj: dict) -> None:
     _write_text(path, json.dumps(obj, indent=2, ensure_ascii=False) + "\n")
 
 
@@ -220,8 +215,8 @@ def _clean_article_output(text: str) -> str:
 
 def _extract_first_codeblock(text: str, lang: str) -> str | None:
     for m in _CODEBLOCK_RE.finditer(text):
-        l = (m.group(1) or "").strip().lower()
-        if l == lang.lower():
+        block_lang = (m.group(1) or "").strip().lower()
+        if block_lang == lang.lower():
             return m.group(2).strip()
     return None
 
@@ -287,7 +282,7 @@ def run_agent(
     """Run an agent via the scripts.agents module.
 
     Uses `uv run python -m scripts.agents <agent_name> --file <prompt_file>`
-    to invoke the agent with proper routing. Retries on empty output.
+    to invoke the agent with its configured model. Retries on empty output.
     """
     # Map internal name to .agents/agents/ filename
     agent_id = _AGENT_NAME_MAP.get(agent_name, f"article-writer-{agent_name}")
@@ -331,13 +326,19 @@ def run_agent(
         )
 
         # Always log raw I/O for debugging.
-        (logs_dir / f"{agent_name}.stdout.txt").write_text(proc.stdout or "", encoding="utf-8")
-        (logs_dir / f"{agent_name}.stderr.txt").write_text(proc.stderr or "", encoding="utf-8")
+        (logs_dir / f"{agent_name}.stdout.txt").write_text(
+            proc.stdout or "", encoding="utf-8"
+        )
+        (logs_dir / f"{agent_name}.stderr.txt").write_text(
+            proc.stderr or "", encoding="utf-8"
+        )
 
         if proc.returncode != 0:
-            last_error = RuntimeError(
-                f"Agent failed (agent={agent_id}, exit={proc.returncode}). See logs/{agent_name}.stderr.txt"
+            msg = (
+                f"Agent failed (agent={agent_id}, exit={proc.returncode}). "
+                f"See logs/{agent_name}.stderr.txt"
             )
+            last_error = RuntimeError(msg)
             time.sleep(2**attempt)  # Exponential backoff
             continue
 
@@ -382,9 +383,11 @@ def run_llm(*, llm_cmd: str, prompt: str, workspace: Path, label: str) -> str:
     (logs_dir / f"{label}.stderr.txt").write_text(proc.stderr or "", encoding="utf-8")
 
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"LLM command failed (label={label}, exit={proc.returncode}). See logs/{label}.stderr.txt"
+        msg = (
+            f"LLM command failed (label={label}, exit={proc.returncode}). "
+            f"See logs/{label}.stderr.txt"
         )
+        raise RuntimeError(msg)
 
     out = (proc.stdout or "").strip()
     if not out:
@@ -394,6 +397,7 @@ def run_llm(*, llm_cmd: str, prompt: str, workspace: Path, label: str) -> str:
 
 
 def load_global_constraints(package_root: Path) -> str:
+    """Load global writing constraints from the master file."""
     # For prompt size, include only the non-negotiables + rubric headings.
     master = _read_text(package_root / "WRITING_SKILL_MASTER.md")
     # Extract from "## Non negotiables" to end of "## Rubrics" section headers.
@@ -403,6 +407,16 @@ def load_global_constraints(package_root: Path) -> str:
 
 
 def ensure_brief(*, brief_path: Path | None, notes: str, workspace: Path) -> dict[str, Any]:
+    """Ensure a brief exists for the workflow.
+
+    Args:
+        brief_path: Optional path to brief JSON file.
+        notes: Raw notes input.
+        workspace: Workspace path for output.
+
+    Returns:
+        The brief dictionary.
+    """
     if brief_path:
         brief = json.loads(_read_text(brief_path))
     else:
@@ -500,6 +514,16 @@ def enforce_invariants(
 
 
 def run_local_tools(*, package_root: Path, draft_path: Path, analysis_dir: Path) -> dict[str, Any]:
+    """Run local analysis tools on the draft.
+
+    Args:
+        package_root: Path to package root.
+        draft_path: Path to draft file.
+        analysis_dir: Path for analysis output.
+
+    Returns:
+        Dictionary containing lint results.
+    """
     tools_dir = package_root / "tools"
     analysis_dir.mkdir(parents=True, exist_ok=True)
 
@@ -577,11 +601,28 @@ def run_local_tools(*, package_root: Path, draft_path: Path, analysis_dir: Path)
 
 
 def lint_fail_count(lint_obj: dict[str, Any]) -> int:
+    """Count lint failures from lint object.
+
+    Args:
+        lint_obj: Lint result dictionary.
+
+    Returns:
+        Number of lint findings with severity "fail".
+    """
     findings = lint_obj.get("findings", []) if isinstance(lint_obj, dict) else []
     return sum(1 for f in findings if f.get("severity") == "fail")
 
 
 def build_prompt(template_path: Path, sections: dict[str, str]) -> str:
+    """Build prompt from template and sections.
+
+    Args:
+        template_path: Path to template file.
+        sections: Dictionary of section names to content.
+
+    Returns:
+        Formatted prompt string.
+    """
     base = _read_text(template_path).rstrip()
     parts = [base]
     for title, content in sections.items():
@@ -649,8 +690,9 @@ def run_resume_workflow(args: argparse.Namespace) -> int:
 
     try:
         sm = load_workflow(db, args.resume)
-    except ValueError as e:
-        raise SystemExit(f"Failed to load workflow: {e}")
+    except ValueError as err:
+        msg = f"Failed to load workflow: {err}"
+        raise SystemExit(msg) from err
 
     if sm.current_status == Status.COMPLETED:
         print(f"Workflow {args.resume} is already completed.")
@@ -808,54 +850,42 @@ def _run_workflow_loop(
     # Load extracted invariants if they exist
     inv_path = workspace / "analysis" / "extracted_invariants.json"
     if inv_path.exists():
-        try:
+        with contextlib.suppress(Exception):
             workflow_state["extracted_invariants"] = _load_json(inv_path)
-        except Exception:
-            pass
 
     # Load condenser analysis if it exists
     cond_path = workspace / "analysis" / "condenser_analysis.json"
     if cond_path.exists():
-        try:
+        with contextlib.suppress(Exception):
             workflow_state["condenser_analysis"] = _load_json(cond_path)
-        except Exception:
-            pass
 
     # Load plan if exists
     plan_path = workspace / "plan.json"
     if plan_path.exists():
-        try:
+        with contextlib.suppress(Exception):
             workflow_state["plan"] = _load_json(plan_path)
             workflow_state["style"] = workflow_state["plan"].get("style", {})
-        except Exception:
-            pass
 
     # Load outline if exists
     outline_path = workspace / "outline.md"
     if outline_path.exists():
-        try:
+        with contextlib.suppress(Exception):
             workflow_state["outline"] = _read_text(outline_path)
-        except Exception:
-            pass
 
     # Load sources if exists
     sources_path = workspace / "sources.json"
     if sources_path.exists():
-        try:
+        with contextlib.suppress(Exception):
             workflow_state["sources"] = _load_json(sources_path)
-        except Exception:
-            pass
 
     # Load reviews if exist
     reviews_dir = workspace / "reviews"
     if reviews_dir.exists():
         for review_file in reviews_dir.glob("*.md"):
-            try:
-                workflow_state.setdefault("reviews", {})[review_file.stem + ".md"] = _read_text(
-                    review_file
-                )
-            except Exception:
-                pass
+            with contextlib.suppress(Exception):
+                workflow_state.setdefault(
+                    "reviews", {}
+                )[review_file.stem + ".md"] = _read_text(review_file)
 
     # Load analysis outputs for agents that need them
     analysis_dir = workspace / "analysis"
@@ -863,12 +893,10 @@ def _run_workflow_loop(
         for name in ["lint.md", "skeleton.md", "borders.md", "tempo.md", "readability.md"]:
             file_path = analysis_dir / name
             if file_path.exists():
-                try:
+                with contextlib.suppress(Exception):
                     # Store with underscore key for state dict (lint.md -> lint_md)
                     key = name.replace(".", "_")
                     workflow_state[key] = _read_text(file_path)
-                except Exception:
-                    pass
 
     # Load input
     input_path = Path(config.get("input_path", ""))
@@ -953,7 +981,8 @@ def _run_workflow_loop(
                     sm._update_workflow(config=sm_config)
 
                     # Advance phase from CONDENSE to APPLY_CUT before returning
-                    # This ensures when resumed with user input, the cutter runs instead of condenser
+                    # This ensures when resumed with user input, the cutter runs
+                    # instead of condenser
                     sm.process_result(result, context_logger)
                     return 0
 
@@ -1001,9 +1030,8 @@ def _run_workflow_loop(
             # Check if we should pause after this phase
             if pause_after and sm.current_phase.value == pause_after:
                 sm.pause(f"Paused after {pause_after} phase (--pause-after)")
-                print(
-                    f"Workflow paused after {pause_after}. Resume with: --resume {sm.workflow_id}"
-                )
+                msg = f"Workflow paused after {pause_after}. Resume with: --resume {sm.workflow_id}"
+                print(msg)
                 return 0
 
     except KeyboardInterrupt:
@@ -1057,8 +1085,16 @@ def _execute_agent_action(
     """Execute an agent action.
 
     Args:
+        action: NextAction dataclass containing agent name and inputs.
+        sm: State machine instance.
+        state: Workflow state dictionary.
+        workspace: Workspace path.
+        package_root: Package root path.
+        llm_cmd: LLM command string for legacy mode.
+        constraints: Global writing constraints.
+        context_logger: Context logger instance.
         use_agent_system: If True, use scripts.agents module for execution.
-                         If False, use legacy llm_cmd mode.
+            If False, use legacy llm_cmd mode.
     """
     agent_name = action.agent
     print(f"Running agent: {agent_name}")
@@ -1079,7 +1115,7 @@ def _execute_agent_action(
 
     # Run the agent - use scripts.agents system or legacy llm_cmd
     if use_agent_system:
-        # Use the scripts.agents module with routing
+        # Use the scripts.agents module with the configured model
         # Project root is the repo root (3 levels up from this file)
         project_root = Path(__file__).resolve().parents[3]
         output = run_agent(
@@ -1128,11 +1164,9 @@ def _execute_tool_action(
     for name in ["lint.md", "skeleton.md", "borders.md", "tempo.md", "readability.md"]:
         file_path = analysis_dir / name
         if file_path.exists():
-            try:
+            with contextlib.suppress(Exception):
                 key = name.replace(".", "_")  # lint.md -> lint_md
                 state[key] = _read_text(file_path)
-            except Exception:
-                pass
 
     return {
         "tool": "analysis",
@@ -1587,16 +1621,18 @@ def _parse_agent_output(
                 recommendation = cond_result.get("recommendation", {})
 
                 # Format options for user
-                options = []
+                options: list[str] = []
                 for c in candidates:
                     rec_marker = (
                         " [RECOMMENDED]"
                         if c["id"] in recommendation.get("suggested_cuts", [])
                         else ""
                     )
-                    options.append(
-                        f"{c['id']}: {c['description']} (saves ~{c.get('savings', '?')} chars){rec_marker}"
+                    line = (
+                        f"{c['id']}: {c['description']} "
+                        f"(saves ~{c.get('savings', '?')} chars){rec_marker}"
                     )
+                    options.append(line)
 
                 result["content"] = cond_json_str
                 result["user_input_required"] = True
@@ -1643,6 +1679,11 @@ def _parse_agent_output(
 
 
 def main() -> int:
+    """Main entry point for the article writer workflow.
+
+    Returns:
+        Exit code (0 for success, non-zero for error).
+    """
     ap = argparse.ArgumentParser(
         description="Multi-agent writing workflow with SQLite-backed state tracking."
     )

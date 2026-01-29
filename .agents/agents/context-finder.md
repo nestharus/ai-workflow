@@ -1,7 +1,7 @@
 ---
-description: Finds contextual lines around a known entity (relationships/adjacent constraints)
-routing:
-  - model: cerebras
+description: Finds contextual lines around a known entity (relationships/adjacent
+  constraints)
+model: cerebras
 ---
 
 Given an entity and what we already know, find *additional context lines* that show how it fits into the surrounding system.

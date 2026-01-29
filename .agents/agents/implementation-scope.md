@@ -1,7 +1,6 @@
 ---
 description: Analyzes plan to find scope (commits and optional folder whitelist)
-routing:
-  - model: cerebras
+model: cerebras
 ---
 
 # Implementation Scope Agent

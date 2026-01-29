@@ -1,9 +1,8 @@
 ---
-description: >
-  Fixes low-value sections identified in the review
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Fixes low-value sections identified in the review
+
+  '
+model: claude-opus
 ---
 
 # Agent: Value Fixer

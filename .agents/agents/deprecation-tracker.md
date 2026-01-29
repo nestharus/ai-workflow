@@ -1,7 +1,6 @@
 ---
 description: Tracks deprecated components and cascades removal
-routing:
-  - model: gpt-5.2-high
+model: gpt-5.2-high
 ---
 
 You track deprecated components and detect when they become empty.

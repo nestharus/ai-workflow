@@ -1,12 +1,9 @@
 ---
-description: >
-  Validates and legalizes spec content - checks annotations, formats, duplicates
-routing:
-  - max_chars: 5000
-    model: ministral-3b
-    ambiguity: false
-  - model: cerebras
-    ambiguity: true
+description: 'Validates and legalizes spec content - checks annotations, formats,
+  duplicates
+
+  '
+model: cerebras
 ---
 
 # Spec Manager Staging Agent

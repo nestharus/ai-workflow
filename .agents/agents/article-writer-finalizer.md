@@ -1,9 +1,8 @@
 ---
-description: >
-  Performs constrained cleanup pass when linter still reports failures
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Performs constrained cleanup pass when linter still reports failures
+
+  '
+model: claude-opus
 ---
 
 # Agent: Finalizer

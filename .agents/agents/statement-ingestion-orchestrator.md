@@ -1,7 +1,6 @@
 ---
 description: Orchestrates statement ingestion pipeline
-routing:
-  - model: cerebras
+model: cerebras
 ---
 
 You orchestrate the full statement ingestion pipeline.

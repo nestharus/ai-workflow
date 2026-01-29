@@ -1,7 +1,7 @@
-"""Context summarizer using GLM-4.7-Flash.
+"""Context summarizer using GLM.
 
 Summarizes agent session context for pause/resume functionality.
-Uses the glm-flash wrapper script to call GLM-4.7-Flash for compression.
+Uses the glm wrapper script for compression.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ class PartialState:
 
 
 class ContextSummarizer:
-    """Summarizes session context using GLM-4.7-Flash.
+    """Summarizes session context using GLM.
 
     Usage:
         summarizer = ContextSummarizer()
@@ -63,7 +63,8 @@ class ContextSummarizer:
     """
 
     # Prompt template for summarization
-    SUMMARIZE_PROMPT = """Summarize this agent session for workflow resume. Be concise but comprehensive.
+    SUMMARIZE_PROMPT = (
+        """Summarize this agent session for workflow resume. Be concise but comprehensive.
 
 Structure your response with these exact headers:
 
@@ -91,24 +92,25 @@ Brief overview of what was accomplished and current state.
 Session Log:
 {session_log}
 """
+    )
 
-    def __init__(self, glm_flash_cmd: str | Path = "./glm-flash") -> None:
+    def __init__(self, glm_cmd: str | Path = "./glm") -> None:
         """Initialize context summarizer.
 
         Args:
-            glm_flash_cmd: Path to glm-flash wrapper script
+            glm_cmd: Path to glm wrapper script
         """
-        self.glm_flash_cmd = str(glm_flash_cmd)
+        self.glm_cmd = str(glm_cmd)
 
     def summarize_session(self, session_log: str, max_chars: int = 50000) -> str:
-        """Summarize session log using GLM-Flash.
+        """Summarize session log using GLM.
 
         Args:
             session_log: Formatted session log text
             max_chars: Maximum characters to include (truncates from start)
 
         Returns:
-            Summary text from GLM-Flash
+            Summary text from GLM
         """
         # Truncate if too long (keep recent context)
         if len(session_log) > max_chars:
@@ -116,9 +118,9 @@ Session Log:
 
         prompt = self.SUMMARIZE_PROMPT.format(session_log=session_log)
 
-        # Call GLM-Flash
+        # Call GLM
         result = subprocess.run(
-            [self.glm_flash_cmd, "-p", prompt],
+            [self.glm_cmd, "-p", prompt],
             capture_output=True,
             text=True,
             timeout=120,  # 2 minute timeout
@@ -225,18 +227,18 @@ Session Log:
 
 def create_checkpoint_summary(
     session_log: str,
-    glm_flash_cmd: str = "./glm-flash",
+    glm_cmd: str = "./glm",
 ) -> tuple[str, PartialState]:
     """Convenience function to create a checkpoint summary.
 
     Args:
         session_log: Formatted session log text
-        glm_flash_cmd: Path to glm-flash script
+        glm_cmd: Path to glm script
 
     Returns:
         Tuple of (resume_context_text, partial_state)
     """
-    summarizer = ContextSummarizer(glm_flash_cmd)
+    summarizer = ContextSummarizer(glm_cmd)
     summary = summarizer.summarize_session(session_log)
     partial_state = summarizer.extract_partial_state(summary)
     resume_context = summarizer.format_resume_context(partial_state)

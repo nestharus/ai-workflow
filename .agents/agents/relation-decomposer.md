@@ -1,7 +1,6 @@
 ---
 description: Extracts explicit entity-to-entity relations from marked relation snippets
-routing:
-  - model: cerebras
+model: cerebras
 ---
 
 You are given relation snippets (short lines) that were marked during decomposition. Your job is to extract:

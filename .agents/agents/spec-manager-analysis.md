@@ -1,9 +1,9 @@
 ---
-description: >
-  Analyzes spec structure - detects divergence/convergence patterns, suggests restructuring
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Analyzes spec structure - detects divergence/convergence patterns, suggests
+  restructuring
+
+  '
+model: claude-opus
 ---
 
 # Spec Manager Analysis Agent

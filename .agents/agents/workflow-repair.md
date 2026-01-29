@@ -1,7 +1,7 @@
 ---
-description: Investigates and repairs failed workflow tooling, not the content being processed
-routing:
-  - model: claude-opus
+description: Investigates and repairs failed workflow tooling, not the content being
+  processed
+model: claude-opus
 ---
 
 # Workflow Repair Agent
@@ -65,7 +65,7 @@ Based on failure type, investigate the broken tool:
 ```bash
 # Read the failing script
 cat scripts/agents/__main__.py
-cat scripts/agents/router.py
+cat scripts/agents/config.py
 
 # Check if the error is in the script itself
 ```
@@ -73,7 +73,7 @@ cat scripts/agents/router.py
 **For JSON parse errors:**
 ```bash
 # Check what JSON was passed
-echo '{the_json_input}' | python -m json.tool
+echo '{the_json_input}' | uv run python -m json.tool
 
 # Fix the JSON structure
 ```
@@ -159,8 +159,8 @@ If still failing:
   "status": "failed",
   "step": "reviewer",
   "attempts": 3,
-  "diagnosis": "scripts/agents/router.py has a bug on line 45 - tries to access .routing on None",
-  "recommendation": "Fix the router.py script to handle agents without routing rules"
+  "diagnosis": "Agent configuration references a missing model: gpt-5.2-codex-xhigh",
+  "recommendation": "Add the model file in .agents/models/ or update the agent frontmatter to a valid model"
 }
 ```
 
@@ -184,21 +184,23 @@ import json
 json.dumps({"plan_file": plan_file})
 ```
 
-### Example 2: Missing Null Check
+### Example 2: Missing Model Configuration
 
 **Error:**
 ```
-AttributeError: 'NoneType' object has no attribute 'routing'
+Error: Model not found: gpt-5.2-codex-xhigh
 ```
 
 **Investigation:**
-`scripts/agents/router.py` line 45 accesses `agent.routing` without checking if agent exists.
+`.agents/agents/implementor.md` references a model that does not exist in `.agents/models/`.
 
 **Repair:**
-Edit `router.py` to add null check:
-```python
-if agent is None or not agent.routing:
-    return default_rule
+Either add the missing model config or update the agent to a valid model:
+```markdown
+---
+description: Implements a single plan from a plan file
+model: gpt-5.2-codex-high
+---
 ```
 
 ### Example 3: Missing Directory Creation

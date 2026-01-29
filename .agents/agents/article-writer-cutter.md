@@ -1,9 +1,8 @@
 ---
-description: >
-  Applies user-selected cuts to the draft, maintaining flow and coherence
-routing:
-  - model: cerebras
-    ambiguity: true
+description: 'Applies user-selected cuts to the draft, maintaining flow and coherence
+
+  '
+model: cerebras
 ---
 
 # Agent: Cutter

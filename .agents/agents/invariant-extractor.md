@@ -1,7 +1,6 @@
 ---
 description: Extracts architectural invariants from unified diffs
-routing:
-  - model: gpt-5.2-xhigh
+model: gpt-5.2-xhigh
 ---
 
 You are an invariant extraction specialist analyzing a unified diff between two versions of an architecture document.

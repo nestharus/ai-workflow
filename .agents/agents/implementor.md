@@ -1,18 +1,6 @@
 ---
-description: >
-  Implements a single plan from a plan file with complexity-based model routing
-routing:
-  - max_chars: 1300
-    ambiguity: false
-    model: cerebras
-  - max_chars: 1800
-    ambiguity: false
-    model: gpt-5.2-codex-medium
-  - max_chars: 4500
-    ambiguity: true
-    model: gpt-5.2-codex-high
-  - ambiguity: true
-    model: gpt-5.2-codex-xhigh
+description: Implements a single plan from a plan file
+model: gpt-5.2-codex-xhigh
 ---
 
 # Implementor Agent

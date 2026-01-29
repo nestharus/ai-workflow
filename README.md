@@ -250,14 +250,12 @@ model is a TOML file specifying how to invoke the AI backend.
 | **Z.AI** | glm (GLM-4.7) | `Z_AI_API_KEY` | [z.ai](https://z.ai/) |
 | **Minimax** | minimax | `MINIMAX_API_KEY` |
   [minimax.chat](https://www.minimax.chat/) |
-| **Ollama** | ministral-3b, smollm2-* | None (local) | Bundled via Docker |
+| **Ollama** | ministral-3b | None (local) | Bundled via Docker |
 
 ### Model Context Limits
 
 | Model | Context (tokens) | Recommended max_chars |
 |-------|------------------|----------------------|
-| SmolLM2-135M | 2,048 | 4,000 |
-| SmolLM2-360M | 2,048 | 6,000 |
 | Ministral-3B | 4,096 | 8,000 |
 | GLM-4.7 | 32,768-128,768 | (no limit - fallback) |
 | Claude Sonnet | 200,000 | 600,000 |
@@ -267,7 +265,7 @@ model is a TOML file specifying how to invoke the AI backend.
 ### Running Agents
 
 ```bash
-# Run an agent with default routing
+# Run an agent with its configured model
 uv run agent.claude "Your prompt here"
 
 # Run with a specific model

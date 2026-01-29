@@ -1,7 +1,6 @@
 ---
 description: Investigates orphan lines against original file context (evidence-only)
-routing:
-  - model: cerebras
+model: cerebras
 ---
 
 Investigate orphan lines by finding evidence in the original file context.

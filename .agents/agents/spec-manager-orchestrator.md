@@ -1,8 +1,9 @@
 ---
-description: >
-  Orchestrates spec management workflow - coordinates staging, planning, merging, verification phases
-routing:
-  - model: cerebras
+description: 'Orchestrates spec management workflow - coordinates staging, planning,
+  merging, verification phases
+
+  '
+model: cerebras
 ---
 
 # Spec Manager Orchestrator

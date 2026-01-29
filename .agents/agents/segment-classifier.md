@@ -1,7 +1,6 @@
 ---
 description: Classifies content segments by type
-routing:
-  - model: cerebras
+model: cerebras
 ---
 
 You classify what type of content a segment contains.

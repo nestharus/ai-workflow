@@ -1,7 +1,6 @@
 ---
 description: Detects when two systems have the same responsibility
-routing:
-  - model: claude-opus
+model: claude-opus
 ---
 
 You detect conflicts where multiple systems handle the same responsibility.

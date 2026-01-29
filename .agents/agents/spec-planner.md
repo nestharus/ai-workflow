@@ -1,7 +1,6 @@
 ---
 description: Plans implementation order for spec IDs based on content analysis
-routing:
-  - model: opus
+model: opus
 ---
 
 Analyze spec IDs and create an implementation plan.

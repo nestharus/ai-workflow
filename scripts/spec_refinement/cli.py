@@ -341,7 +341,12 @@ def cmd_gap_resolve(args: argparse.Namespace) -> int:
 def main() -> int:
     """Main entry point for spec refinement CLI."""
     parser = argparse.ArgumentParser(
-        description="Spec Refinement - Refine and execute large specs",
+        description=(
+            "Spec Refinement - Refine and execute large specs\n\n"
+            "Planned commands:\n"
+            "  spec.summarize_all (agent: glm-file-what-summarizer)\n"
+            "  library.synthesize (agent: opus-library-synthesizer)"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 

@@ -1,7 +1,6 @@
 ---
 description: Promotes unknowns to components when enough evidence exists
-routing:
-  - model: claude-opus
+model: claude-opus
 ---
 
 You decide when an unknown label has enough evidence to become a real component.

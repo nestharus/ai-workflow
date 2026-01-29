@@ -1,9 +1,9 @@
 ---
-description: >
-  Plans spec changes - compares IDs, detects sequences, creates batches for merging
-routing:
-  - model: cerebras
-    ambiguity: true
+description: 'Plans spec changes - compares IDs, detects sequences, creates batches
+  for merging
+
+  '
+model: cerebras
 ---
 
 # Spec Manager Planning Agent

@@ -1,9 +1,9 @@
 ---
-description: >
-  Detects misalignments between user input and generated article - catches when the article misrepresents what the user said
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Detects misalignments between user input and generated article - catches
+  when the article misrepresents what the user said
+
+  '
+model: claude-opus
 ---
 
 # Agent: Alignment Reviewer

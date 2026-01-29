@@ -1,7 +1,6 @@
 ---
 description: Reviews implementation against a plan for completeness and correctness
-routing:
-  - model: gpt-5.2-xhigh
+model: gpt-5.2-xhigh
 ---
 
 # Implementation Reviewer Agent

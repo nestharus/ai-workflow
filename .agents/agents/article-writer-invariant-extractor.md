@@ -1,9 +1,9 @@
 ---
-description: >
-  Extracts all non-negotiable constraints (invariants) from the brief and discovered requirements
-routing:
-  - model: cerebras
-    ambiguity: true
+description: 'Extracts all non-negotiable constraints (invariants) from the brief
+  and discovered requirements
+
+  '
+model: cerebras
 ---
 
 # Agent: Invariant Extractor

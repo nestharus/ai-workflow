@@ -1,9 +1,9 @@
 ---
-description: >
-  Analyzes content and presents cutting options when draft exceeds length constraints
-routing:
-  - model: cerebras
-    ambiguity: true
+description: 'Analyzes content and presents cutting options when draft exceeds length
+  constraints
+
+  '
+model: cerebras
 ---
 
 # Agent: Condenser

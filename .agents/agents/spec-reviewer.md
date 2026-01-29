@@ -1,7 +1,6 @@
 ---
 description: Reviews implementation against spec requirements
-routing:
-  - model: gpt-5.2-high
+model: gpt-5.2-high
 ---
 
 Review implementation files against spec requirements.

@@ -1,9 +1,8 @@
 ---
-description: >
-  Writes the full draft from plan + outline + optional sources
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Writes the full draft from plan + outline + optional sources
+
+  '
+model: claude-opus
 ---
 
 # Agent: Writer

@@ -1,23 +1,10 @@
-"""Agent routing and execution utilities."""
+"""Agent configuration and execution utilities."""
 
-from scripts.agents.router import (
-    AgentConfig,
-    ModelConfig,
-    RoutingRule,
-    classify_ambiguity,
-    load_agents,
-    load_models,
-    route_prompt,
-    select_rule,
-)
+from scripts.agents.config import AgentConfig, ModelConfig, load_agents, load_models
 
 __all__ = [
     "AgentConfig",
     "ModelConfig",
-    "RoutingRule",
-    "classify_ambiguity",
     "load_agents",
     "load_models",
-    "route_prompt",
-    "select_rule",
 ]

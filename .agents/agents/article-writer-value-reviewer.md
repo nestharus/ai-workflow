@@ -1,9 +1,9 @@
 ---
-description: >
-  Finds low-value sections in drafts (common knowledge, repeated framing, vague abstractions)
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Finds low-value sections in drafts (common knowledge, repeated framing,
+  vague abstractions)
+
+  '
+model: claude-opus
 ---
 
 # Agent: Value Reviewer

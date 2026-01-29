@@ -1,9 +1,9 @@
 ---
-description: >
-  Verifies draft against all extracted invariants, fixes auto-fixable violations, reports unfixable ones
-routing:
-  - model: cerebras
-    ambiguity: true
+description: 'Verifies draft against all extracted invariants, fixes auto-fixable
+  violations, reports unfixable ones
+
+  '
+model: cerebras
 ---
 
 # Agent: Invariant Reviewer

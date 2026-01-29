@@ -1,9 +1,9 @@
 ---
-description: >
-  Performs surgical edits on spec content - dislodges stuck fragments by making them self-contained
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Performs surgical edits on spec content - dislodges stuck fragments
+  by making them self-contained
+
+  '
+model: claude-opus
 ---
 
 # Spec Manager Surgeon Agent

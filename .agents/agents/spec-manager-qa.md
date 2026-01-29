@@ -1,9 +1,9 @@
 ---
-description: >
-  Resolves spec management problems - diagnoses failures, provides fixes, handles edge cases
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Resolves spec management problems - diagnoses failures, provides fixes,
+  handles edge cases
+
+  '
+model: claude-opus
 ---
 
 # Spec Manager QA Agent

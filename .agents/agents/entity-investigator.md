@@ -1,7 +1,7 @@
 ---
-description: Investigates ONE entity by asking semantic questions about what it IS, does, and its properties
-routing:
-  - model: cerebras
+description: Investigates ONE entity by asking semantic questions about what it IS,
+  does, and its properties
+model: cerebras
 ---
 
 You are given ONE entity name. Your job is to investigate it by asking semantic questions and extracting all evidence-based information about the entity.

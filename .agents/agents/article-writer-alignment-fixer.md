@@ -1,9 +1,8 @@
 ---
-description: >
-  Fixes alignment issues where the draft misrepresents the user
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Fixes alignment issues where the draft misrepresents the user
+
+  '
+model: claude-opus
 ---
 
 # Agent: Alignment Fixer

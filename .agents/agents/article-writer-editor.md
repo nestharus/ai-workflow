@@ -1,9 +1,8 @@
 ---
-description: >
-  Applies review notes and user feedback to produce a revised draft
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Applies review notes and user feedback to produce a revised draft
+
+  '
+model: claude-opus
 ---
 
 # Agent: Editor

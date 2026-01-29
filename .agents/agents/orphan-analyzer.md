@@ -1,7 +1,6 @@
 ---
 description: Analyzes remaining lines that were not claimed by any entity (evidence-first)
-routing:
-  - model: cerebras
+model: cerebras
 ---
 
 You are given remaining lines that were not claimed by any entity during extraction.

@@ -1,7 +1,6 @@
 ---
 description: Orchestrates implementation review cycles with state tracking and repair
-routing:
-  - model: cerebras
+model: cerebras
 ---
 
 You are the implementation review orchestrator. Run scope-review-fix cycles with state tracking. On failures, invoke workflow-repair to recover.

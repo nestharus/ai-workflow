@@ -227,17 +227,18 @@ Identifies libraries that should be merged:
 
 ## Agent Architecture
 
-The spec-manager uses multiple specialized agents with model routing:
+The spec-manager uses multiple specialized agents with single-model configs:
 
-| Agent | Models | Purpose |
-|-------|--------|---------|
-| spec-manager-orchestrator | glm-flash | Coordinates phases, handles routing |
-| spec-manager-cleaning | smollm2-360/glm-flash | Fast validation |
-| spec-manager-discovery | glm-flash/glm | Batch decomposition |
-| spec-manager-review | smollm2-360/glm-flash | Section extraction |
-| spec-manager-finalization | smollm2-360/glm-flash | Consistency checks |
-| spec-manager-analysis | glm/claude-opus | Complex pattern detection |
-| spec-manager-qa | claude-opus | Troubleshooting |
+| Agent | Model | Purpose |
+|-------|-------|---------|
+| spec-manager-orchestrator | cerebras | Coordinates phases and workflow orchestration |
+| spec-manager-staging | cerebras | Validates and legalizes spec content |
+| spec-manager-planning | cerebras | Plans spec changes and batching |
+| spec-manager-merging | cerebras | Applies spec changes and deduplication |
+| spec-manager-verification | cerebras | Verifies spec integrity and assignments |
+| spec-manager-analysis | claude-opus | Detects divergence/convergence patterns |
+| spec-manager-surgeon | claude-opus | Performs surgical edits on stuck fragments |
+| spec-manager-qa | claude-opus | Diagnoses failures and provides fixes |
 
 ## Package Structure
 

@@ -5,10 +5,10 @@ Agents are executed via `uv run python -m scripts.agents`.
 ## Usage
 
 ```bash
-# Execute agent with routing
+# Execute agent with its configured model
 uv run python -m scripts.agents <agent_name> "<prompt>"
 
-# Execute model directly (no agent routing)
+# Execute model directly (no agent frontmatter)
 uv run python -m scripts.agents --model <model_name> "<prompt>"
 
 # Execute with prompt from file
@@ -21,7 +21,7 @@ echo "<prompt>" | uv run python -m scripts.agents <agent_name>
 ## Examples
 
 ```bash
-# Execute agent with automatic model routing
+# Execute agent with its configured model
 uv run python -m scripts.agents implementor task_001.md
 
 # Execute model directly for general tasks

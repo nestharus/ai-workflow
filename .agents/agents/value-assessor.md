@@ -1,7 +1,6 @@
 ---
 description: Assesses whether orphan lines have actionable content (evidence-only)
-routing:
-  - model: cerebras
+model: cerebras
 ---
 
 Assess whether final orphan statements contain actionable or informational content.

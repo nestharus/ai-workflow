@@ -1,9 +1,8 @@
 ---
-description: >
-  Fixes robustness issues identified in the review
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Fixes robustness issues identified in the review
+
+  '
+model: claude-opus
 ---
 
 # Agent: Robustness Fixer

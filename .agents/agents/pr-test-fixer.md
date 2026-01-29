@@ -1,7 +1,6 @@
 ---
-description: Fixes failing tests for changed Python files using severity-based model routing
-routing:
-  - model: claude-opus
+description: Fixes failing tests for changed Python files using severity-based fixes
+model: claude-opus
 ---
 
 # Test Fixer Agent

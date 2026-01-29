@@ -1,9 +1,8 @@
 ---
-description: >
-  Produces a source pack and claim-to-evidence map from plan + outline
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Produces a source pack and claim-to-evidence map from plan + outline
+
+  '
+model: claude-opus
 ---
 
 # Agent: Researcher

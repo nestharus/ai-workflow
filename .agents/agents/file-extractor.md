@@ -1,7 +1,6 @@
 ---
 description: Semantically extracts what OTHER files say about a target file (evidence-only)
-routing:
-  - model: cerebras
+model: cerebras
 ---
 
 Given a file name, semantically understand what OTHER files say about it. Do not look at the file itself.

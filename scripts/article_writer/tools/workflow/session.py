@@ -33,15 +33,15 @@ class SessionManager:
         resume_context = manager.get_resume_context(session.id)
     """
 
-    def __init__(self, db: Database, glm_flash_cmd: str = "./glm-flash") -> None:
+    def __init__(self, db: Database, glm_cmd: str = "./glm") -> None:
         """Initialize session manager.
 
         Args:
             db: Database instance
-            glm_flash_cmd: Path to glm-flash script for summarization
+            glm_cmd: Path to glm script for summarization
         """
         self.db = db
-        self.summarizer = ContextSummarizer(glm_flash_cmd)
+        self.summarizer = ContextSummarizer(glm_cmd)
 
     def create_session(self, workflow_id: str, agent_type: str) -> Session:
         """Create a new agent session.
@@ -129,7 +129,7 @@ class SessionManager:
     ) -> PartialState:
         """Pause a session with context summarization.
 
-        Calls GLM-Flash to summarize the session context and stores it
+        Calls GLM to summarize the session context and stores it
         for later resume.
 
         Args:
@@ -143,7 +143,7 @@ class SessionManager:
         # Get session logs
         summary_input = context_logger.get_summary_input()
 
-        # Summarize with GLM-Flash
+        # Summarize with GLM
         summary_text = self.summarizer.summarize_session(summary_input)
         partial_state = self.summarizer.extract_partial_state(summary_text)
 

@@ -16,6 +16,10 @@ from .database import Database
 from .models import Artifact, InputRequest, Workflow
 from .session import SessionManager
 
+# Types for workflow configuration and updates
+WorkflowConfigValue = str | int | bool | float | None | dict | list
+WorkflowConfig = dict[str, WorkflowConfigValue]
+
 
 class Phase(Enum):
     """Workflow phases in order.
@@ -176,18 +180,18 @@ class StateMachine:
         self,
         db: Database,
         workflow_id: str,
-        glm_flash_cmd: str = "./glm-flash",
+        glm_cmd: str = "./glm",
     ) -> None:
         """Initialize state machine.
 
         Args:
             db: Database instance
             workflow_id: Workflow to manage
-            glm_flash_cmd: Path to glm-flash script
+            glm_cmd: Path to glm script
         """
         self.db = db
         self.workflow_id = workflow_id
-        self.session_manager = SessionManager(db, glm_flash_cmd)
+        self.session_manager = SessionManager(db, glm_cmd)
         self._workflow: Workflow | None = None
         self._context_logger: ContextLogger | None = None
 
@@ -220,7 +224,7 @@ class StateMachine:
         """Get the current status."""
         return Status(self.workflow.status)
 
-    def _update_workflow(self, **kwargs: Any) -> None:
+    def _update_workflow(self, **kwargs: WorkflowConfigValue) -> None:
         """Update workflow fields in database."""
         with self.db.session() as session:
             workflow = session.query(Workflow).filter(Workflow.id == self.workflow_id).first()
@@ -532,7 +536,8 @@ class StateMachine:
 
         This implements the review feedback loop:
         1. REVIEW -> REVISE -> ANALYZE -> REVIEW (loop)
-        2. After max_loops iterations (from config, default MAX_REVIEW_ITERATIONS), proceed to FINALIZE
+        2. After max_loops iterations (from config, default MAX_REVIEW_ITERATIONS),
+           proceed to FINALIZE
         3. INVARIANT_CHECK may loop to CONDENSE for length violations
         4. CONDENSE waits for user input, then APPLY_CUT -> INVARIANT_CHECK
         """

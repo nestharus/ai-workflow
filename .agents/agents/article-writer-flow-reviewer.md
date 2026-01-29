@@ -1,9 +1,8 @@
 ---
-description: >
-  Checks section borders and paragraph-to-paragraph flow
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Checks section borders and paragraph-to-paragraph flow
+
+  '
+model: claude-opus
 ---
 
 # Agent: Flow Reviewer

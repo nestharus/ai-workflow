@@ -1,12 +1,9 @@
 ---
-description: >
-  Verifies spec integrity - checks content matches, no duplicates, correct assignments
-routing:
-  - max_chars: 4000
-    model: ministral-3b
-    ambiguity: false
-  - model: cerebras
-    ambiguity: true
+description: 'Verifies spec integrity - checks content matches, no duplicates, correct
+  assignments
+
+  '
+model: cerebras
 ---
 
 # Spec Manager Verification Agent

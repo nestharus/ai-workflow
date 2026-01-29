@@ -1,9 +1,8 @@
 ---
-description: >
-  Fixes hard ban violations and AI-tells identified in the review
-routing:
-  - model: claude-opus
-    ambiguity: true
+description: 'Fixes hard ban violations and AI-tells identified in the review
+
+  '
+model: claude-opus
 ---
 
 # Agent: AI-tells Fixer

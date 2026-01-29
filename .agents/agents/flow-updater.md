@@ -1,7 +1,6 @@
 ---
 description: Updates flows when components change
-routing:
-  - model: cerebras
+model: cerebras
 ---
 
 You update flow diagrams when components are added, deprecated, or changed.
