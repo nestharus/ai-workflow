@@ -34,13 +34,13 @@ All runtime artifacts live under a single runtime root:
                 refs/
                   prior_conflicts.jsonl   # Reference snapshot (§2.1.2)
       conclusions/
-	    trace_overrides/
-	      workflows/                    # WSS-scoped workflows (optional)
-	    agents/                         # repo machine-local agent prompts
-	    agent_tests/                    # stored agent prompt test runs
-	    logs/                           # Logs Store (durable, sharded JSONL)
-	    notifications/                  # Notifications queue (durable)
-	    control_actions/                # Control actions queue (durable)
+      trace_overrides/
+      workflows/                    # WSS-scoped workflows (optional)
+    agents/                         # repo machine-local agent prompts
+    agent_tests/                    # stored agent prompt test runs
+    logs/                           # Logs Store (durable, sharded JSONL)
+    notifications/                  # Notifications queue (durable)
+    control_actions/                # Control actions queue (durable)
     sandboxes/                      # ephemeral (disposable)
     caches/                         # disposable caches
     vcs/                            # optional jj sidecar mode
