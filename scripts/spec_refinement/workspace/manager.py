@@ -237,12 +237,14 @@ class WorkspaceManager:
 
     def read_agent_output(self, phase: Phase) -> dict[str, Any] | None:
         """Read output data from an agent."""
+        from typing import cast
+
         import yaml
 
         output_file = self.structure.root / phase.value / "agent_output.yaml"
         if not output_file.exists():
             return None
-        return yaml.safe_load(output_file.read_text(encoding="utf-8"))
+        return cast("dict[str, Any]", yaml.safe_load(output_file.read_text(encoding="utf-8")))
 
     def write_agent_output(self, phase: Phase, data: dict[str, Any]) -> Path:
         """Write output data from an agent."""
@@ -306,6 +308,37 @@ class WorkspaceManager:
     def get_all_files(self) -> dict[str, Path]:
         """Get all files as {file_id: Path} mapping."""
         return {file_id: Path(path_str) for file_id, path_str in self.state.file_manifest.items()}
+
+    def get_sublibrary_path(self, parent_lib_id: str, sub_lib_id: str) -> Path:
+        """Get path to a sub-library directory."""
+        return self.structure.libraries_dir / parent_lib_id / "sublibraries" / sub_lib_id
+
+    def list_sublibraries(self, parent_lib_id: str) -> list[str]:
+        """List all sub-libraries for a parent library."""
+        sublibraries_dir = self.structure.libraries_dir / parent_lib_id / "sublibraries"
+        if not sublibraries_dir.exists():
+            return []
+        return [d.name for d in sorted(sublibraries_dir.iterdir()) if d.is_dir()]
+
+    def get_all_libraries_recursive(self) -> dict[str, Path]:
+        """Get all libraries including sub-libraries as {lib_id: Path} mapping."""
+        libraries: dict[str, Path] = {}
+
+        def _traverse(current_dir: Path, prefix: str = "") -> None:
+            lib_id = f"{prefix}{current_dir.name}" if prefix else current_dir.name
+            libraries[lib_id] = current_dir
+
+            sublibraries_dir = current_dir / "sublibraries"
+            if sublibraries_dir.exists():
+                for sub_dir in sorted(sublibraries_dir.iterdir()):
+                    if sub_dir.is_dir():
+                        _traverse(sub_dir, f"{lib_id}/")
+
+        for lib_dir in sorted(self.structure.libraries_dir.iterdir()):
+            if lib_dir.is_dir():
+                _traverse(lib_dir)
+
+        return libraries
 
     # --- Gap Management ---
 

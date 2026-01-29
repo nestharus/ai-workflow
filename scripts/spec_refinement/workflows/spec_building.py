@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
-
 import json
 import re
+from pathlib import Path
+from typing import Any
 
 from scripts.dev.agent_runner import AgentRunner
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, format_gap_table
@@ -316,9 +315,7 @@ def _build_library_spec(
     if not charter_path.exists():
         return {
             "lib_id": lib_id,
-            "errors": [
-                {"lib_id": lib_id, "error": "Missing charter.md for library."}
-            ],
+            "errors": [{"lib_id": lib_id, "error": "Missing charter.md for library."}],
             "issues": [],
             "iterations": 0,
             "converged": False,
@@ -333,9 +330,7 @@ def _build_library_spec(
     if not evidence_map:
         return {
             "lib_id": lib_id,
-            "errors": [
-                {"lib_id": lib_id, "error": "No evidence sources available for library."}
-            ],
+            "errors": [{"lib_id": lib_id, "error": "No evidence sources available for library."}],
             "issues": [],
             "iterations": 0,
             "converged": False,
@@ -459,27 +454,6 @@ def _build_library_spec(
 
         signature = _gap_signature(existing_gaps)
         gap_history.append(signature)
-        if len(gap_history) >= 3 and signature and signature == gap_history[-2] == gap_history[-3]:
-            errors.append(
-                {
-                    "lib_id": lib_id,
-                    "error": "Gap closure loop detected repeated gaps for 3 iterations.",
-                }
-            )
-            return {
-                "lib_id": lib_id,
-                "errors": errors,
-                "issues": issues,
-                "iterations": iterations,
-                "converged": False,
-                "failed": True,
-            }
-
-        if iteration + 1 >= max_iterations:
-            break
-
-        if len(gap_history) >= 2 and gap_history[-1] == gap_history[-2]:
-            break
 
     return {
         "lib_id": lib_id,
@@ -487,7 +461,7 @@ def _build_library_spec(
         "issues": issues,
         "iterations": iterations,
         "converged": converged,
-        "failed": False if converged or not errors else True,
+        "failed": not converged and existing_gaps,
     }
 
 

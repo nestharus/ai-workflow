@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
-
-import json
-import re
 
 from scripts.dev.agent_runner import AgentRunner
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
@@ -288,6 +287,8 @@ def _validate_evidence_entry(
         entry["confidence"] = confidence_value
 
     entry["sections"] = filtered_sections
+    if not filtered_sections:
+        return issues, None
     return issues, entry
 
 
@@ -422,12 +423,9 @@ def expand_evidence(run_id: str, config_path: Path) -> dict[str, Any]:
                 "confidence": entry.get("confidence"),
                 "rationale": entry.get("rationale", ""),
             }
-            entry_issues, normalized = _validate_evidence_entry(
-                candidate_entry, manager, lib_id
-            )
+            entry_issues, normalized = _validate_evidence_entry(candidate_entry, manager, lib_id)
             issues.extend(entry_issues)
             if normalized is None:
-                per_lib_errors[lib_id] = per_lib_errors.get(lib_id, 0) + 1
                 continue
             confidence_value = normalized.get("confidence")
             if confidence_value is None or confidence_value < 0.5:
@@ -509,9 +507,7 @@ def spotcheck_evidence(
             file_id = source.get("file_id")
             if not isinstance(file_id, str):
                 continue
-            entry = evidence_by_file.setdefault(
-                file_id, {"sections": set(), "confidence": None}
-            )
+            entry = evidence_by_file.setdefault(file_id, {"sections": set(), "confidence": None})
             entry["sections"].update(source.get("sections", []))
             if source.get("confidence") is not None:
                 try:
@@ -550,9 +546,7 @@ def spotcheck_evidence(
                 continue
 
             file_content = file_path.read_text(encoding="utf-8")
-            existing_sections = sorted(
-                evidence_by_file.get(file_id, {}).get("sections", set())
-            )
+            existing_sections = sorted(evidence_by_file.get(file_id, {}).get("sections", set()))
             prompt = _build_spotcheck_prompt(
                 lib_id, charter_content, file_id, existing_sections, file_content
             )
@@ -636,9 +630,7 @@ def spotcheck_evidence(
                 "confidence": aggregated_confidence,
                 "rationale": rationale_text,
             }
-            entry_issues, normalized = _validate_evidence_entry(
-                candidate_entry, manager, lib_id
-            )
+            entry_issues, normalized = _validate_evidence_entry(candidate_entry, manager, lib_id)
             issues.extend(entry_issues)
             if normalized is None:
                 continue

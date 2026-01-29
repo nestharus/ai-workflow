@@ -532,6 +532,31 @@ def cmd_spec_build_specs(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_spec_detect_sublibraries(args: argparse.Namespace) -> int:
+    """Detect sub-libraries for Phase 5."""
+    run_id = args.run_id
+    config_path = Path(args.config)
+
+    from scripts.spec_refinement.workflows import detect_sublibraries
+
+    try:
+        result = detect_sublibraries(run_id, config_path, max_depth=args.max_depth)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Sub-libraries created: {result['sublibraries_created']}")
+    if result.get("issues"):
+        print(f"Issues: {len(result['issues'])}")
+    if result.get("errors"):
+        print("Errors:")
+        for error in result["errors"]:
+            lib_id = error.get("lib_id", "unknown")
+            message = error.get("error", "error")
+            print(f"  - {lib_id}: {message}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main entry point for spec refinement CLI."""
     parser = argparse.ArgumentParser(
@@ -688,6 +713,21 @@ def main(argv: list[str] | None = None) -> int:
         "--max-iterations", type=int, default=5, help="Max gap closure iterations"
     )
     p_spec_build.set_defaults(func=cmd_spec_build_specs)
+
+    p_spec_detect = spec_subparsers.add_parser(
+        "detect-sublibraries",
+        help="Detect sub-libraries for Phase 5",
+        description=(
+            "Run Phase 5 sub-library detection using opus-sublibrary-planner.\n"
+            "Requires Phase 4 spec building to be completed.\n"
+            "Outputs: libraries/*/sublibraries/ with nested library structures."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_detect.add_argument("run_id", help="Run identifier")
+    p_spec_detect.add_argument("--config", default=".tasks.yaml", help="Path to .tasks.yaml config")
+    p_spec_detect.add_argument("--max-depth", type=int, default=3, help="Max recursion depth")
+    p_spec_detect.set_defaults(func=cmd_spec_detect_sublibraries)
 
     if argv is None:
         argv = sys.argv[1:]
