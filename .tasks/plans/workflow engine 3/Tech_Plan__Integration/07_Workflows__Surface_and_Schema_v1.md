@@ -168,12 +168,21 @@ Rules:
 
 #### 7.2.5 Sandbox policy object
 
-Sandbox policy governs whether a step runs in a materialized working copy.
+Sandbox policy governs sandbox usage for a step:
+
+- whether the step MUST run in **Mode B** (patch derivation from a sandbox diff), and
+- whether a **Mode A** step may create an **ephemeral tooling-only sandbox** for tool execution.
 
 Fields:
 
 - `required` (bool, default `false`)  
-  - If `true`, the runner MUST execute the step in a sandbox.
+  - If `true`, the runner MUST execute the step in **Mode B** (sandbox patch-derivation path; Integration §6).
+
+- `tooling_only` (bool, default `false`)  
+  - If `true`, the runner MAY create an **ephemeral** sandbox in **Mode A** for tool execution only (Integration §9.2.0).
+  - This sandbox MUST NOT be used as the source of truth for patch derivation.
+  - The step MUST require capability `sandbox_exec` to use this feature (Integration §8).
+  - `required` and `tooling_only` are mutually exclusive; if both are `true`, workflow validation MUST fail.
 
 - `scope` (string enum, default `step`)  
   - `step` — sandbox lifetime is the step execution

@@ -50,10 +50,11 @@ Sandbox lifecycle timing is **context-dependent**. The runner MUST follow these 
 
 * A sandbox MUST NOT be created by default.
 * A sandbox MAY be created only when BOTH are true:
-  * the workflow step declares `sandbox.required: true`, and
+  * the workflow step declares `sandbox.tooling_only: true`, and
   * the workflow step requires capability `sandbox_exec` (Integration §8).
 * This Mode A exception is allowed only for **syntax validation / tooling** that cannot run without a materialized working copy.
   * The sandbox is a tool-execution environment only; it MUST NOT be used as the source of truth for patch derivation (Mode B is the “diff from sandbox” path; Integration §6).
+* `sandbox.required: true` selects Mode B and therefore MUST NOT be used to request a Mode A tooling-only sandbox.
 * If created in Mode A:
   * the sandbox MUST be ephemeral (per-step) and MUST be destroyed at step end, unless the step failed and `policy.sandbox_retain_on_failure=true` (Core Infrastructure §11.4).
 
@@ -93,7 +94,7 @@ flowchart TD
     Context -->|Validation| Val[Create Sandbox]
     Context -->|Rebase| Rebase{Conflicts Detected?}
 
-    ModeA --> SyntaxCheck{Sandboxed Tooling Declared?}
+    ModeA --> SyntaxCheck{tooling_only + sandbox_exec?}
     SyntaxCheck -->|No| NoSandbox[No Sandbox]
     SyntaxCheck -->|Yes| EphemeralSandbox[Create Ephemeral Sandbox]
     EphemeralSandbox --> CleanupA{Failed + Retain Policy?}

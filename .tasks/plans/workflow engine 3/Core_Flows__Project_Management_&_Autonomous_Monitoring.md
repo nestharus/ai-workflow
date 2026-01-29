@@ -260,7 +260,8 @@ See Core Infrastructure §4.1 for ID definitions.
 Step execution supports two modes (Integration §6):
 
 - **Mode A (virtual hydration)**: read files directly from VCS state without a checkout
-- **Mode B (sandbox)**: create a sandbox, run tools there, then translate results back into patches
+  - Mode A MAY use an **ephemeral tooling-only sandbox** when explicitly declared (Integration §9.2.0).
+- **Mode B (sandbox; patch derivation)**: create a sandbox, run tools there, then derive patches from sandbox diffs
 
 Sandbox lifecycle timing is context-specific; see Integration §9.2.0.
 
@@ -270,6 +271,11 @@ Mode selection is policy-driven (Integration §6). Core rule:
   - the workflow step declares `sandbox.required: true` (Workflow schema §7.2.5), or
   - virtual hydration is not possible for required inputs (binary/too-large/unsupported), or
   - an earlier guarded failure triggered a Mode B fallback.
+
+Notes (normative):
+
+- `sandbox.required: true` selects **Mode B** (patch derivation in a sandbox).
+- A tooling-only sandbox in Mode A MUST be declared via `sandbox.tooling_only: true` and MUST require capability `sandbox_exec` (Integration §8); this declaration MUST NOT force Mode B.
 
 ### 8.2 Hydration protocol
 
