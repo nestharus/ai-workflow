@@ -26,6 +26,8 @@ References:
 ### 1.3 Rebase workflow (high-level)
 This is executed via workflow `rebase_enhanced_v1` by default.
 
+Sandbox lifecycle timing for rebase conflict resolution is defined in Integration §9.2.0.
+
 1. Acquire `locks/ticket.<ticket_id>.lock`
 2. Invoke jj rebase operation for the ticket stack (pointer move + replay)
 3. If jj reports conflicts:

@@ -61,6 +61,10 @@ default_sparse = "copy"            # copy|full|empty (jj workspace add behavior)
 copy_fallback = true               # allow fallback when sparse/sandbox is insufficient
 ttl_minutes = 120
 
+[policy]
+# Debug hook: when true, sandboxes MAY be retained on failure (Integration §9.2.0)
+sandbox_retain_on_failure = false
+
 [queues]
 processing_ttl_ms = 300000         # 5 minutes
 lease_refresh_ms = 30000           # consumer heartbeat cadence
@@ -277,6 +281,23 @@ start time.
      `sandbox_id` and path
 
 Note: Skills are managed by the AI coding CLI, not by the workflow engine config.
+
+### 11.4.7 Sandbox retention on failure policy (normative)
+
+Retention-on-failure is a debugging hook used by sandbox lifecycle rules (Integration §9.2.0).
+
+Config:
+
+* `[policy] sandbox_retain_on_failure` (bool, default `false`)
+
+Normative behavior:
+
+* If `sandbox_retain_on_failure = true` and a step/validation/rebase sandboxed operation fails, the runner MAY retain the sandbox directory instead of destroying it.
+* If retained, the runner MUST emit a `warn` notification that includes:
+  * `sandbox_id`
+  * sandbox path
+  * the failing run/step identifiers
+* Retained sandboxes remain subject to sandbox TTL semantics (§11.4.1) and explicit GC (Core §11.5); retention-on-failure does not disable TTL enforcement.
 
 ### 11.4.2 Model selection and override precedence (normative)
 

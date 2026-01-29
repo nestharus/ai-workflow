@@ -42,6 +42,83 @@ A sandbox is used to:
 * preserve tool outputs as durable evidence (logs, exit codes)
 * avoid mutating the user's primary working copy
 
+#### 9.2.0 Lifecycle timing by execution context (normative)
+
+Sandbox lifecycle timing is **context-dependent**. The runner MUST follow these rules:
+
+**A) Mode A step execution (virtual hydration; preferred)**
+
+* A sandbox MUST NOT be created by default.
+* A sandbox MAY be created only when BOTH are true:
+  * the workflow step declares `sandbox.required: true`, and
+  * the workflow step requires capability `sandbox_exec` (Integration §8).
+* This Mode A exception is allowed only for **syntax validation / tooling** that cannot run without a materialized working copy.
+  * The sandbox is a tool-execution environment only; it MUST NOT be used as the source of truth for patch derivation (Mode B is the “diff from sandbox” path; Integration §6).
+* If created in Mode A:
+  * the sandbox MUST be ephemeral (per-step) and MUST be destroyed at step end, unless the step failed and `policy.sandbox_retain_on_failure=true` (Core Infrastructure §11.4).
+
+**B) Mode B step execution (sandbox editor; fallback)**
+
+* The sandbox MUST be created at step start (before any sandboxed tool invocation), using:
+  * `baseline_revset = ticket.tip` as of step start
+  * sparse pattern derivation per §9.2.3 (unless `sparse_mode=full`)
+* Any Mode A → Mode B fallback MUST record a deviation with `kind: mode_fallback` per `project_ticket_system/Lib__Step_Execution.md` §3.2.
+* The sandbox MUST be destroyed after patch application and evidence persistence, and before `step_stop` emission (Core Flows Flow 8 §8.4), unless:
+  * the step failed and `policy.sandbox_retain_on_failure=true` (Core Infrastructure §11.4).
+
+**C) Validation (ticket validation workflow)**
+
+* A sandbox MUST be created for validation runs (Core Flows Flow 9).
+* The sandbox MUST be destroyed after validation completes unless:
+  * validation failed and `policy.sandbox_retain_on_failure=true` (Core Infrastructure §11.4).
+
+**D) Enhanced rebase (conflict resolution)**
+
+* A sandbox MUST NOT be created when no conflicts are detected.
+* A sandbox MUST be created only when:
+  * conflicts are detected, OR
+  * a resolution option requires validation in a materialized working copy.
+* If created:
+  * the sandbox lifetime is bounded to conflict resolution
+  * evidence gathering rules remain normative (Enhanced Rebase §1)
+  * the sandbox MUST be destroyed after resolution unless conflict resolution fails and `policy.sandbox_retain_on_failure=true` (Core Infrastructure §11.4).
+
+##### Lifecycle decision tree (informative)
+
+```mermaid
+flowchart TD
+    Start[Step Execution Start] --> Context{Execution Context?}
+    Context -->|Mode A| ModeA[Virtual Hydration]
+    Context -->|Mode B| ModeB[Create Sandbox]
+    Context -->|Validation| Val[Create Sandbox]
+    Context -->|Rebase| Rebase{Conflicts Detected?}
+
+    ModeA --> SyntaxCheck{Sandboxed Tooling Declared?}
+    SyntaxCheck -->|No| NoSandbox[No Sandbox]
+    SyntaxCheck -->|Yes| EphemeralSandbox[Create Ephemeral Sandbox]
+    EphemeralSandbox --> CleanupA{Failed + Retain Policy?}
+    CleanupA -->|Yes| RetainA[Retain Sandbox]
+    CleanupA -->|No| DestroyA[Destroy at Step End]
+
+    ModeB --> RunTools[Run Tools in Sandbox]
+    RunTools --> DerivePatch[Derive Patch from Diff]
+    DerivePatch --> FailureCheck{Failed + Retain Policy?}
+    FailureCheck -->|Yes| RetainB[Retain Sandbox]
+    FailureCheck -->|No| DestroyB[Destroy Before step_stop]
+
+    Val --> RunValidation[Run Validation Commands]
+    RunValidation --> ValFailure{Failed + Retain Policy?}
+    ValFailure -->|Yes| RetainVal[Retain Sandbox]
+    ValFailure -->|No| DestroyVal[Destroy After Validation]
+
+    Rebase -->|No| NoRebaseSandbox[No Sandbox]
+    Rebase -->|Yes| CreateRebaseSandbox[Create Sandbox for Resolution]
+    CreateRebaseSandbox --> ResolveConflict[Apply Resolution Options]
+    ResolveConflict --> RebaseFailure{Failed + Retain Policy?}
+    RebaseFailure -->|Yes| RetainRebase[Retain Sandbox]
+    RebaseFailure -->|No| DestroyRebase[Destroy After Resolution]
+```
+
 #### 9.2.1 Inputs
 
 Sandbox creation is called with:

@@ -262,10 +262,12 @@ Step execution supports two modes (Integration §6):
 - **Mode A (virtual hydration)**: read files directly from VCS state without a checkout
 - **Mode B (sandbox)**: create a sandbox, run tools there, then translate results back into patches
 
+Sandbox lifecycle timing is context-specific; see Integration §9.2.0.
+
 Mode selection is policy-driven (Integration §6). Core rule:
 
 - Prefer Mode A unless:
-  - the step explicitly requires a sandbox (`sandbox.required: true`), or
+  - the workflow step declares `sandbox.required: true` (Workflow schema §7.2.5), or
   - virtual hydration is not possible for required inputs (binary/too-large/unsupported), or
   - an earlier guarded failure triggered a Mode B fallback.
 
@@ -310,7 +312,7 @@ Hydration failures are handled loudly.
 - `binary` / `too_large` / `error`:
   - If Mode A was selected:
     - the runner MUST attempt a single **Mode B fallback** when allowed by policy and sandbox backend is available
-    - the fallback is recorded as a deviation
+    - the fallback is recorded as a deviation with `kind: mode_fallback`
   - If Mode B is unavailable or the fallback also fails:
     - the step fails and the workflow applies the step’s `on_failure` policy (Workflow schema §7.2.7)
 
@@ -352,12 +354,16 @@ The runner may inline file content into the LLM prompt, but the durable contract
 3. If hunk-lint passes:
    - apply patch to the ticket stack (PGS adapter)
    - persist evidence and update `ticket.json` progress
+4. If a sandbox was created for the step, the runner MUST destroy it (unless retained by policy) after patch application + evidence persistence and before emitting `step_stop` (Integration §9.2.0).
+5. Emit `step_stop` with status + evidence refs.
 
 
 
 ## Flow 9 — Validation (sandbox; workflow-driven; recovery-first)
 
 **Trigger**: user requests validation or attempts to close ticket
+
+Sandbox lifecycle rules for validation are defined in Integration §9.2.0.
 
 1. **Create sandbox from ticket tip**
    - Responsibility: provide a tool-execution environment without mutating durable state
