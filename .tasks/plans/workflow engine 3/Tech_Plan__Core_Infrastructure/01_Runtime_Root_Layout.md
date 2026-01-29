@@ -22,7 +22,17 @@ All runtime artifacts live under a single runtime root:
       journals/                     # write-ahead journals for critical mutations
       projects/
       tickets/
+        <ticket_id>/
+          rebase/
+            conflicts/
+              <resolution_id>.md          # Canonical conflict records (§2.1)
       runs/
+        <run_id>/
+          artifacts/
+            rebase/
+              <bundle_id>/
+                refs/
+                  prior_conflicts.jsonl   # Reference snapshot (§2.1.2)
       conclusions/
       trace_overrides/
       workflows/                    # WSS-scoped workflows (optional)
@@ -37,6 +47,8 @@ All runtime artifacts live under a single runtime root:
 ```
 
 Note: Skills are deployed into CLI-specific locations (e.g., `~/.claude/skills/`), not into `~/.workflow/`. See Configuration & Onboarding §3.
+
+Note: Conflict record storage architecture is specified in Enhanced Rebase & Evaluation §2.1.
 
 This root is the durability boundary. The repository working tree is **not**.
 
@@ -56,4 +68,3 @@ Windows atomic replacement should prefer `ReplaceFile` where available (and the 
 - FlushFileBuffers docs: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers
 
 WSL filesystem guidance (performance + correctness): https://learn.microsoft.com/en-us/windows/wsl/filesystems
-

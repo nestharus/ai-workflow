@@ -80,6 +80,11 @@ workspace/runs/<run_id>/artifacts/rebase/<bundle_id>/
 
 The evidence bundle MUST include:
 
+See also:
+- Storage relationship: Conflict Resolution Records §2.1.1
+- `prior_conflicts.jsonl` schema: §2.1.2
+- Hash verification protocol: §2.1.4
+
 Always:
 - the ticket document `workspace/tickets/<ticket_id>/ticket.json`
 - the project document `workspace/projects/<project_id>/project.json`
@@ -124,8 +129,141 @@ Any time content cannot be captured (binary/oversize), the resolver MUST treat t
 workspace/tickets/<ticket_id>/rebase/conflicts/<resolution_id>.md
 ```
 
+Evidence bundles (§1.4.2) MUST reference canonical conflict records (not duplicate them) via `workspace/runs/<run_id>/artifacts/rebase/<bundle_id>/refs/prior_conflicts.jsonl` (see §2.1.1).
+
+#### 2.1.1 Storage Architecture and Relationship
+
+- **Canonical Storage (Source of Truth):**
+  - Location: `workspace/tickets/<ticket_id>/rebase/conflicts/<resolution_id>.md`
+  - Purpose: Durable, human-readable conflict resolution records
+  - Lifecycle: Created once per conflict resolution, never modified after creation
+  - Content: Full resolution details including rationale, evidence refs, selected option, and metadata
+
+- **Evidence Bundle References (Reproducibility Pointers):**
+  - Location: `workspace/runs/<run_id>/artifacts/rebase/<bundle_id>/refs/prior_conflicts.jsonl`
+  - Purpose: Snapshot reference list for reproducibility and context loading
+  - Lifecycle: Created per rebase run, references existing canonical records
+  - Content: Lightweight metadata only - MUST NOT duplicate full record content
+
+- **Key Principle:** Evidence bundles contain **references to** canonical records, not copies of them. This ensures:
+  - Single source of truth for conflict resolution history
+  - Efficient storage (no duplication)
+  - Reproducibility through hash verification
+  - Ability to reconstruct resolver context from any run
+
+| Aspect | Canonical Records | Evidence Bundle References |
+|--------|-------------------|---------------------------|
+| **Location** | `workspace/tickets/<ticket_id>/rebase/conflicts/` | `workspace/runs/<run_id>/artifacts/rebase/<bundle_id>/refs/` |
+| **Format** | Markdown (`.md`) | JSONL (`.jsonl`) |
+| **Content** | Full resolution details | Metadata only (IDs, hashes, paths) |
+| **Purpose** | Source of truth, human-readable history | Reproducibility, context reconstruction |
+| **Lifecycle** | Permanent (subject to retention policy) | Per-run, ephemeral evidence |
+| **Mutability** | Immutable after creation | Immutable after creation |
+| **Size** | Variable (full rationale + evidence) | Fixed per entry (~200 bytes) |
+| **Query Pattern** | By ticket_id, affected_paths, failure_signature | By run_id, bundle_id |
+
+#### 2.1.2 Evidence Bundle Reference Schema
+
+Schema (JSONL; one object per line):
+
+```jsonl
+{"resolution_id": "string", "sha256": "string", "affected_paths": ["string"], "failure_signature": "string?", "ticket_id": "string", "created_at": "ISO8601"}
+```
+
+Field definitions:
+
+- `resolution_id`: Unique identifier of the canonical conflict record (matches filename without `.md`)
+- `sha256`: SHA-256 hash of the canonical record content for verification
+- `affected_paths`: List of file paths involved in the conflict (for quick filtering)
+- `failure_signature`: Optional failure signature from §3.1.2 (for pattern matching)
+- `ticket_id`: Ticket ID owning the canonical record (for path reconstruction)
+- `created_at`: ISO timestamp when the canonical record was created
+
+Constraints:
+
+- Each line is a valid JSON object (JSONL format)
+- Lines are ordered by `created_at` descending (most recent first)
+- Maximum N entries (workflow-configurable, default 10)
+- Hash MUST match canonical record content at reference creation time
+
+#### 2.1.3 Data Flow and Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant Resolver as Rebase Resolver
+    participant Canonical as Canonical Records<br/>(tickets/<tid>/rebase/conflicts/)
+    participant Evidence as Evidence Bundle<br/>(runs/<rid>/artifacts/rebase/)
+    participant WSS as Workspace State Store
+
+    Note over Resolver: Conflict detected during rebase
+    
+    Resolver->>Canonical: 1. Load last N canonical records
+    Canonical-->>Resolver: Return conflict records
+    
+    Resolver->>Evidence: 2. Write prior_conflicts.jsonl
+    Note over Evidence: Contains:<br/>- resolution_id<br/>- sha256 hash<br/>- affected_paths<br/>- failure_signature
+    
+    Resolver->>Resolver: 3. Use canonical records as context<br/>for option generation
+    
+    Resolver->>Canonical: 4. Write new canonical record<br/><resolution_id>.md
+    Note over Canonical: Full resolution details:<br/>- rationale<br/>- evidence refs<br/>- selected option<br/>- metadata
+    
+    Resolver->>WSS: 5. Update workspace state<br/>with resolution outcome
+```
+
+1. **Context Loading:** Resolver queries canonical storage for last N conflict records matching current conflict signature or affected paths
+2. **Reference Snapshot:** Resolver writes `prior_conflicts.jsonl` to evidence bundle with metadata (IDs, hashes, paths) of loaded records
+3. **Option Generation:** Resolver uses full canonical records as context to generate resolution options
+4. **Record Creation:** On successful resolution, resolver writes new canonical record to `workspace/tickets/<ticket_id>/rebase/conflicts/<resolution_id>.md`
+5. **State Update:** Workspace state store is updated with resolution outcome and evidence bundle reference
+
+#### 2.1.4 Hash Verification and Reproducibility
+
+Verification protocol:
+
+- **At Reference Creation:**
+  - Compute SHA-256 hash of canonical record content (full `.md` file)
+  - Store hash in `prior_conflicts.jsonl` entry
+  - Hash is computed on normalized content (LF line endings, UTF-8 encoding)
+
+- **At Context Loading:**
+  - Load canonical record from path reconstructed from `ticket_id` and `resolution_id`
+  - Compute SHA-256 hash of loaded content
+  - Compare with hash in `prior_conflicts.jsonl`
+  - If mismatch: Log warning, mark record as potentially modified, continue with loaded content
+  - If canonical record missing: Log error, skip this reference, continue with remaining records
+
+- **Reproducibility Guarantees:**
+  - Evidence bundle can reconstruct exact resolver context by loading referenced canonical records
+  - Hash mismatches indicate canonical record modification (should be rare - records are immutable)
+  - Missing canonical records indicate cleanup/GC (acceptable - resolver degrades gracefully)
+
+Error handling:
+
+- Hash mismatch: `WARN` level, include both hashes in log, continue processing
+- Missing canonical record: `ERROR` level, include expected path in log, skip reference
+- Malformed JSONL: `ERROR` level, skip malformed line, continue with valid lines
+
+#### 2.1.5 Implementation Guidance
+
+Key implementation points:
+
+- **Path Construction:** Canonical record path is `workspace/tickets/{ticket_id}/rebase/conflicts/{resolution_id}.md` where `resolution_id` is a ULID or deterministic hash
+- **Atomic Writes:** Canonical records MUST be written atomically (write to temp file, then atomic rename)
+- **No Modifications:** Once written, canonical records are immutable - never modify existing records
+- **Reference Limits:** Evidence bundles should reference at most N canonical records (default 10, workflow-configurable)
+- **Query Optimization:** Index canonical records by `affected_paths` and `failure_signature` for efficient context loading
+- **GC Considerations:** Canonical records may be subject to retention policies (see Core Infrastructure §11 Retention and GC), but evidence bundle references remain valid (degrade gracefully on missing records)
+
+Data structures:
+
+- Use `ConflictBundle` from `file:scripts/spec_manager/spec_manager/core/data_structures.py` as foundation
+- Extend with fields for canonical storage (`resolution_id`, `sha256_self`, `created_at`, `immutable`)
+- Create new `ConflictReference` dataclass for `prior_conflicts.jsonl` entries
+
 ### 2.2 Required fields
 - `resolution_id`, `ticket_id`
+- `sha256_self`, `created_at`, `immutable` (always `true`)
 - baseline + target stack identifiers
 - affected paths
 - `resolution_type`: `auto | manual | escalated`
@@ -134,6 +272,8 @@ workspace/tickets/<ticket_id>/rebase/conflicts/<resolution_id>.md
   - run_id, step_execution_id, writer_id + seq ranges
   - WSS paths
   - jj change IDs
+
+**Rationale:** Self-hash enables verification when the record is referenced from evidence bundles, ensuring integrity across the lifecycle.
 
 ### 2.3 Resolution option format and selection policy
 
@@ -814,7 +954,8 @@ Test selection is **not** a silent optimization:
 - `base_rev` (ticket base)
 - `tip_rev` (ticket tip)
 - `changed_paths[]` (derived from VCS diff)
-- workflow-defined validation commands (Project & Ticket Management §8)
+- workflow-defined validation commands (Project & Ticket Management: Validation library (`project_ticket_system/Lib__Validation.md` §3))
+  - Command schema is defined in `Lib__Validation.md` §3; test selection references commands by `cmd_id`.
 
 ### 5.2 Default algorithm v1
 
@@ -830,10 +971,11 @@ Test selection is **not** a silent optimization:
    - If no marker is found, the package root is repo root.
 
 3. Select commands:
-   - Always include commands tagged `smoke`.
-   - Include package-scoped commands tagged `package` once per `changed_package`:
+   - Always include commands where `'smoke' ∈ tags`.
+   - Include package-scoped commands where `'package' ∈ tags` once per `changed_package`:
      - The runner sets `PWD` (or `cwd`) to the package root before running.
    - If no commands are tagged, run the full validation command list (loud: emit a warning notification that selection was impossible).
+   - Selection produces an ordered list of `cmd_id` values; the rationale artifact records `cmd_id` + selection reason pairs.
 
 4. Emit rationale artifact:
    - `workspace/runs/<run_id>/artifacts/test_selection_rationale.json`
@@ -845,13 +987,13 @@ Minimum fields:
   "schema_version": 1,
   "base_rev": "<commit>",
   "tip_rev": "<commit>",
-  "changed_paths": ["..."],
-  "changed_packages": ["..."],
-  "selected_commands": [
-    { "name": "pytest_smoke", "reason": "tag:smoke" }
-  ]
-}
-```
+	  "changed_paths": ["..."],
+	  "changed_packages": ["..."],
+	  "selected_commands": [
+	    { "cmd_id": "pytest_smoke", "reason": "tag:smoke" }
+	  ]
+	}
+	```
 
 ### 5.3 Pluggability
 
@@ -872,3 +1014,4 @@ The runner MUST persist the rationale artifact regardless of selection strategy.
 | Validation results are not reproducible | Medium | env capture + tool fingerprints; workflow-defined commands |
 | Evaluation artifacts drift from reality | Medium | source truth from logs + jj stack, not memory |
 | Tool output is noisy | Low | persist raw output + structured summary; avoid silent filtering |
+| **Reference Drift:** Evidence bundle references point to modified or deleted canonical records | Medium | Hash verification protocol (§2.1.4), immutable record policy, graceful degradation on missing records, retention policy coordination |
