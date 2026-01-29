@@ -49,7 +49,99 @@ Minimum required subcommands (names are part of the UX contract; exact flags may
 
 **Workflow execution**
 - `workflowctl run --workflow <id-or-path> ...`
-- `workflowctl workflow list|show|validate`
+- `workflowctl workflow list|show`
+- `workflowctl workflow validate <path-or-id>`
+- `workflowctl workflow dry-run <workflow_id> --inputs <json|@file>`
+- `workflowctl workflow eval-expr --expr '${{ ... }}' --inputs <json|@file> [--run <run_id>]`
+
+#### Workflow debugging commands (normative)
+
+The `workflowctl workflow` group includes **debugging commands** for workflow authors. These commands never execute tools/agents; they validate, evaluate expressions, and compute execution plans.
+
+All workflow debugging commands:
+- emit structured JSON to stdout
+- emit human-readable error messages to stderr
+- exit `0` on success, `1` on validation/evaluation errors
+- use structured error code `E_VALIDATION_FAILED` for workflow/schema/expression errors (Core Infrastructure §8.2.5)
+
+##### `workflowctl workflow validate <path-or-id>`
+
+Purpose:
+- validate workflow YAML (schema + DAG + entrypoints + capabilities + subworkflow nesting) without executing anything
+
+Resolution:
+- `<path-or-id>` MAY be a file path or a workflow ID
+- workflow IDs MUST be resolved by workflow precedence (Integration §7.1)
+
+Output (success):
+```json
+{
+  "valid": true,
+  "workflow_id": "task_decompose_v1",
+  "steps_count": 3,
+  "execution_order": ["plan", "validate", "commit"],
+  "capabilities_required": ["patch_write", "sandbox_exec"]
+}
+```
+
+Output (failure):
+- MUST include `code: "E_VALIDATION_FAILED"` and an `errors[]` list of structured issues (best-effort):
+  - `instance_path` (e.g., `steps[2].depends_on[0]`)
+  - `schema_path` (e.g., `steps.items.properties.depends_on`)
+  - `reason` (e.g., `CYCLE_DETECTED`, `INVALID_ENTRYPOINT`)
+  - `expected` / `actual` (optional)
+  - `details` (optional; e.g., `cycle_path`)
+
+##### `workflowctl workflow dry-run <workflow_id> --inputs <json|@file>`
+
+Purpose:
+- compute the workflow execution plan and evaluate `with:` expressions across the DAG without executing entrypoints
+
+Rules:
+- `--inputs` MUST accept either an inline JSON string or `@<file>` containing JSON (UTF-8).
+- inputs MUST validate against the workflow inputs schema (Integration §7.2.6).
+- `with:` expressions MUST evaluate per the expression rules (Integration §7.2.4).
+- step outputs MUST be simulated (v1 default: empty object) so downstream expressions can reference `steps.<step_id>.output`.
+
+Parallelism reporting:
+- output MUST include dependency-ready groupings derived from the DAG (even though the v1 runner is single-threaded; Integration §7.2.9).
+
+Output (example):
+```json
+{
+  "workflow_id": "task_decompose_v1",
+  "execution_order": ["plan", "validate", "commit"],
+  "parallel_groups": [["plan"], ["validate", "commit"]],
+  "steps": [
+    {
+      "step_id": "plan",
+      "kind": "agent",
+      "entrypoint": "agent:task_decomposer_v1",
+      "evaluated_with": { "task_text": "Implement user authentication" },
+      "dependencies_satisfied": true
+    }
+  ]
+}
+```
+
+##### `workflowctl workflow eval-expr --expr '${{ ... }}' --inputs <json|@file> [--run <run_id>]`
+
+Purpose:
+- evaluate a single expression in isolation, either using standalone inputs or a real run context
+
+Modes:
+- standalone mode (no `--run`): evaluate with only `--inputs`
+- run mode (`--run <run_id>`): load WSS run state from `workspace/runs/<run_id>/` and build a `steps.*` context from step execution outputs under `workspace/runs/<run_id>/steps/*.json`
+
+Output (example):
+```json
+{
+  "expression": "${{ inputs.task_id }}",
+  "result": "TASK-123",
+  "result_type": "string",
+  "context_used": { "inputs": true, "run_id": null }
+}
+```
 
 **Task control**
 - `workflowctl task approve-plan <ticket_id> <task_id> --plan <path>`
