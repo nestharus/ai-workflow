@@ -987,13 +987,13 @@ Minimum fields:
   "schema_version": 1,
   "base_rev": "<commit>",
   "tip_rev": "<commit>",
-	  "changed_paths": ["..."],
-	  "changed_packages": ["..."],
-	  "selected_commands": [
-	    { "cmd_id": "pytest_smoke", "reason": "tag:smoke" }
-	  ]
-	}
-	```
+  "changed_paths": ["..."],
+  "changed_packages": ["..."],
+  "selected_commands": [
+    { "cmd_id": "pytest_smoke", "reason": "tag:smoke" }
+  ]
+}
+```
 
 ### 5.3 Pluggability
 

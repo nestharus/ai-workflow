@@ -68,16 +68,37 @@ workspace/runs/<run_id>/artifacts/sandbox/validation_summary.json
 workspace/runs/<run_id>/artifacts/sandbox/commands/<cmd_id>/{stdout,stderr,meta}.*
 ```
 
-## 3) Validation command result interpretation (normative)
+## 3) Validation command schema and result interpretation (normative)
 
-A validation workflow executes an ordered list of commands. Each command record MUST include:
-- `cmd_id` (string)
-- `argv` (array of strings)
-- `cwd` (repo-relative path; optional)
-- `timeout_ms` (int; optional)
-- `success_exit_codes` (array of ints; default `[0]`)
-- `optional` (bool; default `false`)
-- `fail_on_stderr` (bool; default `false`)
+A validation workflow executes an ordered list of command records.
+
+### 3.1 Normative validation command schema (v1)
+
+Each command record MUST match this schema (all fields are required; defaults MUST be explicit in the record):
+
+```json
+{
+  "cmd_id": "pytest_smoke",
+  "argv": ["uv", "run", "python", "-m", "pytest", "-q"],
+  "cwd": ".",
+  "timeout_ms": 600000,
+  "success_exit_codes": [0],
+  "optional": false,
+  "fail_on_stderr": false,
+  "tags": ["smoke", "package"]
+}
+```
+
+Field definitions (normative):
+
+- `cmd_id` (string): Stable identifier for selection and reporting. MUST be unique within the command list.
+- `argv` (array of strings): Executable + args. For Python module invocations, use `["uv","run","python","-m", ...]` (see repo execution rules).
+- `cwd` (string): Repo-relative working directory. Default is `"."` (repo root).
+- `timeout_ms` (int): Wall-clock timeout in milliseconds. Default is `600000` (10 minutes) unless a workflow defines a different baseline.
+- `success_exit_codes` (array of ints): Default `[0]`.
+- `optional` (bool): If `true`, failures are recorded but MUST NOT block ticket completion. Default `false`.
+- `fail_on_stderr` (bool): If `true`, non-empty stderr fails the command even if exit code is successful. Default `false`.
+- `tags` (array of strings): Command classification used by selection algorithms (e.g., `["smoke"]`, `["package"]`). Default `[]`.
 
 Interpretation:
 - Command **pass** if:

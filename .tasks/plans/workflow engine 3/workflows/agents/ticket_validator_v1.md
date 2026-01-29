@@ -16,16 +16,26 @@ input_schema:
       type: array
       items:
         type: object
-        required: ["cmd_id", "argv"]
+        required:
+          [
+            "cmd_id",
+            "argv",
+            "cwd",
+            "timeout_ms",
+            "success_exit_codes",
+            "optional",
+            "fail_on_stderr",
+            "tags",
+          ]
         properties:
           cmd_id: { type: string }
           argv: { type: array, items: { type: string } }
-          cwd: { type: [string, "null"] }
-          timeout_ms: { type: [integer, "null"] }
+          cwd: { type: string, default: "." }
+          timeout_ms: { type: integer, default: 600000 }
           success_exit_codes: { type: array, items: { type: integer }, default: [0] }
           optional: { type: boolean, default: false }
           fail_on_stderr: { type: boolean, default: false }
-          tags: { type: array, items: { type: string } }
+          tags: { type: array, items: { type: string }, default: [] }
 output_schema:
   type: object
   required: ["status", "summary_artifact", "failing_cmd_ids"]
