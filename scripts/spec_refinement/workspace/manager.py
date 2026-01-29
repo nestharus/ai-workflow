@@ -1,0 +1,351 @@
+"""Run-scoped workspace manager for spec refinement."""
+
+from __future__ import annotations
+
+import json
+import shutil
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from .state import Phase, WorkspaceState
+
+
+@dataclass
+class RunFolderStructure:
+    """Expected structure of a run folder."""
+
+    run_id: str
+    root: Path
+
+    @property
+    def manifest_dir(self) -> Path:
+        """Path to the manifest directory."""
+        return self.root / "manifest"
+
+    @property
+    def summaries_dir(self) -> Path:
+        """Path to the summaries directory."""
+        return self.root / "summaries"
+
+    @property
+    def libraries_dir(self) -> Path:
+        """Path to the libraries directory."""
+        return self.root / "libraries"
+
+    @property
+    def architecture_dir(self) -> Path:
+        """Path to the architecture directory."""
+        return self.root / "architecture"
+
+    @property
+    def tasks_dir(self) -> Path:
+        """Path to the tasks directory."""
+        return self.root / "tasks"
+
+    @property
+    def audits_dir(self) -> Path:
+        """Path to the audits directory."""
+        return self.root / "audits"
+
+    @property
+    def files_json(self) -> Path:
+        """Path to the files manifest."""
+        return self.manifest_dir / "files.json"
+
+    @property
+    def sections_json(self) -> Path:
+        """Path to the sections manifest."""
+        return self.manifest_dir / "sections.json"
+
+    def validate(self) -> list[str]:
+        """Validate run folder structure."""
+        issues = []
+        if not self.root.exists():
+            issues.append(f"Run folder does not exist: {self.root}")
+        return issues
+
+
+@dataclass
+class WorkspaceManager:
+    """Manages the workspace for spec refinement."""
+
+    run_id: str
+    input_folder: Path
+    state: WorkspaceState = field(init=False)
+    structure: RunFolderStructure = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Initialize the workspace structure and state after dataclass construction."""
+        self.structure = RunFolderStructure(
+            run_id=self.run_id,
+            root=Path("runs") / self.run_id,
+        )
+
+        state_file = self.structure.root / "state.json"
+        if state_file.exists():
+            self.state = WorkspaceState.load(state_file)
+        else:
+            self.state = WorkspaceState(run_id=self.run_id, input_folder=str(self.input_folder))
+
+    # --- Workspace Lifecycle ---
+
+    def initialize(self, force: bool = False) -> list[str]:
+        """Initialize the workspace."""
+        issues: list[str] = []
+
+        if not self.input_folder.exists():
+            return [f"Input folder does not exist: {self.input_folder}"]
+
+        if self.structure.root.exists() and force:
+            shutil.rmtree(self.structure.root)
+
+        self.structure.root.mkdir(parents=True, exist_ok=True)
+        for subdir in [
+            self.structure.manifest_dir,
+            self.structure.summaries_dir,
+            self.structure.libraries_dir,
+            self.structure.architecture_dir,
+            self.structure.tasks_dir,
+            self.structure.audits_dir,
+        ]:
+            subdir.mkdir(parents=True, exist_ok=True)
+
+        file_manifest = self._enumerate_files()
+        if not file_manifest:
+            issues.append(f"No markdown files found in: {self.input_folder}")
+
+        section_manifest: dict[str, list[str]] = {}
+        for file_id, file_path in file_manifest.items():
+            sections = self._extract_section_labels(Path(file_path))
+            section_manifest[file_id] = sections
+            if not sections:
+                issues.append(f"No section labels found in: {file_path}")
+
+        self._write_manifest_files(file_manifest, section_manifest)
+
+        self.state.run_id = self.run_id
+        self.state.input_folder = str(self.input_folder)
+        self.state.file_manifest = file_manifest
+        self.state.section_manifest = section_manifest
+        self._save_state()
+
+        return issues
+
+    def cleanup(self, keep_audits: bool = True) -> None:
+        """Clean up the workspace, keeping manifest and state."""
+        if not self.structure.root.exists():
+            return
+
+        for item in self.structure.root.iterdir():
+            if item.name in {"manifest", "state.json"}:
+                continue
+            if keep_audits and item.name == "audits":
+                continue
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+
+        self.state = WorkspaceState(run_id=self.run_id, input_folder=str(self.input_folder))
+        if self.structure.files_json.exists():
+            self.state.file_manifest = json.loads(
+                self.structure.files_json.read_text(encoding="utf-8")
+            )
+        if self.structure.sections_json.exists():
+            self.state.section_manifest = json.loads(
+                self.structure.sections_json.read_text(encoding="utf-8")
+            )
+        self._save_state()
+
+    def finalize(self) -> Path:
+        """Finalize the workspace after successful processing."""
+        if not self.state.is_complete():
+            raise RuntimeError("Cannot finalize incomplete workspace")
+
+        summary_path = self._generate_summary_report()
+
+        archive_dir = self.structure.root / "archive"
+        archive_dir.mkdir(exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for file_id, path_str in self.state.file_manifest.items():
+            src = Path(path_str)
+            if src.exists():
+                dst = archive_dir / f"{timestamp}_{file_id}_{src.name}"
+                shutil.copy2(src, dst)
+
+        return summary_path
+
+    # --- Manifest Management ---
+
+    def _enumerate_files(self) -> dict[str, str]:
+        """Enumerate files in input folder and assign stable IDs."""
+        files: dict[str, str] = {}
+        for index, md_file in enumerate(sorted(self.input_folder.glob("*.md")), start=1):
+            file_id = f"file_{index:03d}"
+            files[file_id] = str(md_file)
+        return files
+
+    def _extract_section_labels(self, file_path: Path) -> list[str]:
+        """Extract section labels from a file."""
+        import re
+
+        content = file_path.read_text(encoding="utf-8")
+        section_pattern = r"\[([A-Z_]+)\]|^##\s+(.+)$"
+        sections: list[str] = []
+
+        for match in re.finditer(section_pattern, content, re.MULTILINE):
+            if match.group(1):
+                sections.append(match.group(1))
+            elif match.group(2):
+                section_name = match.group(2).strip()
+                section_id = section_name.upper().replace(" ", "_")
+                sections.append(section_id)
+
+        return sections
+
+    def _write_manifest_files(
+        self, file_manifest: dict[str, str], section_manifest: dict[str, list[str]]
+    ) -> None:
+        """Write manifest files to disk."""
+        self.structure.manifest_dir.mkdir(parents=True, exist_ok=True)
+        self.structure.files_json.write_text(
+            json.dumps(file_manifest, indent=2), encoding="utf-8"
+        )
+        self.structure.sections_json.write_text(
+            json.dumps(section_manifest, indent=2), encoding="utf-8"
+        )
+
+    # --- Agent Interface ---
+
+    def write_agent_input(self, phase: Phase, data: dict[str, Any]) -> Path:
+        """Write input data for an agent."""
+        import yaml
+
+        phase_dir = self.structure.root / phase.value
+        phase_dir.mkdir(parents=True, exist_ok=True)
+        input_file = phase_dir / "agent_input.yaml"
+        input_file.write_text(yaml.dump(data, default_flow_style=False), encoding="utf-8")
+        return input_file
+
+    def read_agent_output(self, phase: Phase) -> dict[str, Any] | None:
+        """Read output data from an agent."""
+        import yaml
+
+        output_file = self.structure.root / phase.value / "agent_output.yaml"
+        if not output_file.exists():
+            return None
+        return yaml.safe_load(output_file.read_text(encoding="utf-8"))
+
+    def write_agent_output(self, phase: Phase, data: dict[str, Any]) -> Path:
+        """Write output data from an agent."""
+        import yaml
+
+        phase_dir = self.structure.root / phase.value
+        phase_dir.mkdir(parents=True, exist_ok=True)
+        output_file = phase_dir / "agent_output.yaml"
+        output_file.write_text(yaml.dump(data, default_flow_style=False), encoding="utf-8")
+        return output_file
+
+    # --- Phase Management ---
+
+    def start_phase(self, phase: Phase) -> None:
+        """Start a phase."""
+        self.state.start_phase(phase)
+        self._save_state()
+
+    def complete_phase(self, phase: Phase, outputs: dict[str, Any] | None = None) -> None:
+        """Complete a phase."""
+        self.state.complete_phase(phase, outputs)
+        self._save_state()
+
+    def fail_phase(self, phase: Phase, error: str) -> None:
+        """Mark a phase as failed."""
+        self.state.fail_phase(phase, error)
+        self._save_state()
+
+    def get_next_phase(self) -> Phase | None:
+        """Get the next phase to execute."""
+        return self.state.get_next_phase()
+
+    # --- Convenience Properties ---
+
+    @property
+    def workspace_path(self) -> Path:
+        """Get the workspace directory path."""
+        return self.structure.root
+
+    @property
+    def is_initialized(self) -> bool:
+        """Check if workspace is initialized."""
+        return self.structure.root.exists() and (self.structure.root / "state.json").exists()
+
+    @property
+    def is_complete(self) -> bool:
+        """Check if all phases are complete."""
+        return self.state.is_complete()
+
+    # --- Manifest Access ---
+
+    def get_file_path(self, file_id: str) -> Path | None:
+        """Get file path for a file ID."""
+        path_str = self.state.file_manifest.get(file_id)
+        return Path(path_str) if path_str else None
+
+    def get_section_labels(self, file_id: str) -> list[str]:
+        """Get section labels for a file ID."""
+        return self.state.section_manifest.get(file_id, [])
+
+    def get_all_files(self) -> dict[str, Path]:
+        """Get all files as {file_id: Path} mapping."""
+        return {
+            file_id: Path(path_str)
+            for file_id, path_str in self.state.file_manifest.items()
+        }
+
+    def _save_state(self) -> None:
+        """Save current state to disk."""
+        state_file = self.structure.root / "state.json"
+        self.state.save(state_file)
+
+    def _generate_summary_report(self) -> Path:
+        """Generate a summary report of the run."""
+        report_path = self.structure.summaries_dir / "summary.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+
+        lines = [
+            "# Spec Refinement Summary",
+            "",
+            f"**Run ID**: `{self.run_id}`",
+            f"**Input Folder**: `{self.input_folder}`",
+            f"**Generated**: {datetime.now().isoformat()}",
+            "",
+            "## Phase Results",
+            "",
+        ]
+
+        for phase in Phase:
+            result = self.state.phases[phase.value]
+            lines.append(f"### {phase.value.title()}")
+            lines.append("")
+            lines.append(f"- **Status**: {result.status.value}")
+            if result.started_at:
+                lines.append(f"- **Started**: {result.started_at}")
+            if result.completed_at:
+                lines.append(f"- **Completed**: {result.completed_at}")
+            if result.error:
+                lines.append(f"- **Error**: {result.error}")
+            if result.issues:
+                lines.append(f"- **Issues**: {len(result.issues)}")
+            lines.append("")
+
+        lines.append("## Files")
+        lines.append("")
+        for file_id, file_path in self.state.file_manifest.items():
+            lines.append(f"- `{file_id}`: `{file_path}`")
+        if not self.state.file_manifest:
+            lines.append("- *No files recorded*")
+
+        report_path.write_text("\n".join(lines), encoding="utf-8")
+        return report_path
