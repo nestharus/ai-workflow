@@ -137,6 +137,25 @@ Queryability:
 Retention:
 - Audit log and evidence retention is governed by Core Infrastructure retention policies (see `Tech_Plan__Core_Infrastructure/11_Retention_and_GC.md`).
 
+### 1.8 Inter-ticket dependencies (normative)
+
+Tickets MAY declare dependencies on other tickets via `ticket.json.depends_on[]`.
+
+**Dependency semantics**:
+- A ticket with dependencies CANNOT transition to `done` until all dependencies are `done` and exported
+- Dependency validation occurs during export (see `export` §2.1)
+- Dependencies do NOT affect transitions to `in_progress`, `blocked`, or `abandoned`
+
+**Dependency lifecycle**:
+- Dependencies are set at ticket creation or via `workflowctl ticket set-dependencies`
+- Dependencies MUST NOT create cycles (validated at set time)
+- Dependencies are immutable once the ticket transitions to `in_progress` (prevents mid-flight dependency changes)
+
+**Concurrency implications**:
+- Multiple tickets with dependencies MAY be worked concurrently
+- Export order is constrained by dependency graph (topological sort)
+- See `tm` §4.2 for multi-ticket concurrency rules
+
 ## 2) Task lifecycle (state machine)
 
 Task status is durable and updated by TM (single-writer under the ticket lock):

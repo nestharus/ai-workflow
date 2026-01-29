@@ -63,6 +63,41 @@ Within a ticket context:
 execution via `workflowctl run resume <run_id> --from-step <step_id>` to restart from
 the point where the deviation was recorded.
 
+### `workflowctl tickets detect-overlap --active`
+
+**Purpose**: Early-warning detection of file conflicts between active tickets
+
+**Behavior**:
+1. Query all tickets with status `in_progress`
+2. Load `changed_paths[]` from each ticket's `ticket.json` (see `wss_surfaces` §2.1)
+3. Compute pairwise intersections of `changed_paths` sets
+4. Emit warnings for any overlapping paths:
+   ```
+   WARNING: Tickets <ticket_A> and <ticket_B> both modify:
+     - src/module/file.py
+     - tests/test_file.py
+   ```
+5. Exit with status 0 (informational only; does NOT block work)
+
+**Flags**:
+- `--active`: Only check tickets in `in_progress` status (default)
+- `--all`: Check all non-terminal tickets (`open`, `in_progress`, `blocked`)
+- `--json`: Output in JSON format for scripting
+
+**Output Format (JSON)**:
+```json
+{
+  "overlaps": [
+    {
+      "tickets": ["ticket_A", "ticket_B"],
+      "paths": ["src/module/file.py", "tests/test_file.py"]
+    }
+  ]
+}
+```
+
+This command is informational-only; the normative overlap detection semantics are defined by `tm` §4.2.3.
+
 ## 5) Integration with the runtime (normative)
 
 * Long-running commands start a run under `workspace/runs/<run_id>/`.

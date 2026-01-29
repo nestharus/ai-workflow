@@ -20,6 +20,21 @@ This library enumerates paths and surface contracts only.
 - `workspace/runs/<run_id>/steps/<step_execution_id>.json`
 - (optional) `workspace/projects/<project_id>/workflows/*.yaml`
 
+### 2.1 Ticket metadata extensions (normative)
+
+`workspace/tickets/<ticket_id>/ticket.json` MUST include:
+
+- `depends_on` (array of ticket_id strings): Tickets that must be exported before this ticket
+  - Default: `[]` (no dependencies)
+  - Semantics are defined by `tm` §4.2.4
+  - Validated at export time (see `export` §2.1)
+  - Circular dependencies are forbidden
+
+- `changed_paths` (array of strings): File paths modified by this ticket's patch stack
+  - Updated incrementally as steps execute
+  - Used for overlap detection (see `tm` §4.2.3)
+  - Relative to repository root
+
 ## 3) Task filesystem layout (normative)
 
 On task creation, TM creates:

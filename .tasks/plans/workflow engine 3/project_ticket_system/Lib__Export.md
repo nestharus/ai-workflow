@@ -46,6 +46,54 @@ Concurrency (normative):
 
 ## 2) Export policy selection (normative)
 
+### 2.1 Dependency validation (normative)
+
+Dependencies are declared via `ticket.json.depends_on[]` (see `wss_surfaces` §2.1), the dependency semantics are defined by `tm` §4.2.4, and the `done` transition gating rules are defined by `lifecycle` §1.8.
+
+Before exporting a ticket, TM MUST validate dependencies:
+
+1. Load `ticket.json.depends_on[]`
+2. For each dependency ticket ID:
+   - Verify the dependency ticket exists
+   - Verify the dependency ticket status is `done`
+   - Verify the dependency ticket has `export.exported_tip` set (successfully exported)
+3. If any dependency is not satisfied:
+   - Fail with `E_DEPENDENCY_NOT_EXPORTED`
+   - Include unsatisfied dependency IDs in error details
+   - Do NOT proceed with export
+
+**Circular dependency detection (normative)**:
+- When setting `depends_on[]` (via CLI or ticket creation), perform topological sort
+- If a cycle is detected, reject with `E_CIRCULAR_DEPENDENCY`
+- Include the cycle path in error details (e.g., `A → B → C → A`)
+
+**Rebase ordering (normative)**:
+- Dependencies define a partial order for export
+- If multiple tickets are ready to export, any valid topological order is acceptable
+- Users MAY export tickets in any order that respects dependencies
+
+### 2.2 Dependency error structures (normative)
+
+`E_DEPENDENCY_NOT_EXPORTED`:
+```json
+{
+  "error_code": "E_DEPENDENCY_NOT_EXPORTED",
+  "ticket_id": "<current_ticket>",
+  "unsatisfied_dependencies": [
+    {"ticket_id": "<dep_id>", "status": "in_progress", "reason": "not_done"},
+    {"ticket_id": "<dep_id>", "status": "done", "reason": "not_exported"}
+  ]
+}
+```
+
+`E_CIRCULAR_DEPENDENCY`:
+```json
+{
+  "error_code": "E_CIRCULAR_DEPENDENCY",
+  "cycle_path": ["ticket_A", "ticket_B", "ticket_C", "ticket_A"]
+}
+```
+
 Default export policy: `squash`
 
 Selection mechanisms (highest precedence first):
