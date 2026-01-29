@@ -1,4 +1,4 @@
 #!/bin/bash
 git add -A
-./glm -p "Look at the staged git changes and create a commit with an appropriate message."
+exec opencode run -m cerebras/zai-glm-4.7 "Look at the staged git changes and create a commit with an appropriate message."
 git push
