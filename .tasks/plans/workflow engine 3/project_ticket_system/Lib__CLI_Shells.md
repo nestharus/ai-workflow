@@ -45,6 +45,9 @@ Within a ticket context:
 * `help`
 * `open <ticket_id>` — loads ticket + stack context (any status transitions MUST follow `project_ticket_system/Lib__Lifecycle.md` §1)
 * `status` — show ticket status + current rev
+* `show-stack [--graph] [--limit <n>] [--refresh]` — show the ticket's Patch-Stream stack (see `project_ticket_system/Lib__Patch_Stack_Visualization.md`)
+* `diff [--patch <change_id>] [--stat] [--context <n>]` — show diff for the stack or a single patch (see `project_ticket_system/Lib__Patch_Stack_Visualization.md`)
+* `list-patches [--limit <n>] [--format table|json] [--refresh]` — list ordered patches with export status (see `project_ticket_system/Lib__Patch_Stack_Visualization.md`)
 * `plan` — run decomposition (`task_decompose_v1`) and show step plan summary
 * `step run <step_id>` — execute a single step (`step_execute_v1`)
 * `run` — execute remaining steps in order
@@ -107,3 +110,31 @@ Behavior:
 - Validates ticket is NOT already `done` or `abandoned`.
 - Transitions the ticket to `abandoned`.
 - Records the transition per Lifecycle §1 (including the provided reason and evidence refs as applicable).
+
+## 7) `workflowctl` ticket Patch-Stream inspection commands (normative)
+
+These commands provide observability into the jj-backed patch stack for a ticket.
+
+Authoritative contract:
+- `project_ticket_system/Lib__Patch_Stack_Visualization.md`
+
+### 7.1 `workflowctl ticket show-stack`
+
+Purpose: print ticket base/tip revs and a jj log view of the ticket stack.
+
+Required arguments:
+- `--ticket <ticket_id>`
+
+### 7.2 `workflowctl ticket diff`
+
+Purpose: print a diff for the entire stack or a specific patch.
+
+Required arguments:
+- `--ticket <ticket_id>`
+
+### 7.3 `workflowctl ticket list-patches`
+
+Purpose: print ordered patch ids + summaries + exported status.
+
+Required arguments:
+- `--ticket <ticket_id>`

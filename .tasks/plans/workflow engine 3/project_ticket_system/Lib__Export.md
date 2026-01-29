@@ -29,8 +29,8 @@ Empty plan tickets:
 
 When exporting a ticket where `base_rev == tip_rev` (no actual changes):
 
-- `squash` policy: Create no commit; record `exported_tip: null` and `no_change: true` in metadata
-- `linear` policy: Create no commits; record `exported_tip: null` and `no_change: true` in metadata
+- `squash` policy: Create no commit; record `no_change: true` and omit `exported_tip`
+- `linear` policy: Create no commits; record `no_change: true` and omit `exported_tip`
 
 The export is still considered successful, and the ticket may transition to `done` (per `project_ticket_system/Lib__Lifecycle.md` §1).
 
@@ -87,8 +87,10 @@ Minimum export metadata in `ticket.json`:
     "policy": "squash|linear",
     "bookmark": "export/<ticket_id>",
     "exported_tip": "<commit id>",
+    "source_tip_rev": "<commit id>",
     "exported_at": "<rfc3339>",
-    "validated": true
+    "validated": true,
+    "no_change": false
   }
 }
 ```
@@ -113,4 +115,5 @@ To reduce friction while preserving trust, export supports two modes:
    - exports current patch stack to `review/<ticket_id>`
    - ticket remains in `blocked` state (no transition; see `project_ticket_system/Lib__Lifecycle.md` §1) and MUST be explicitly labeled:
      - `ticket.json.export.validated = false`
+     - `ticket.json.export.source_tip_rev` recorded (ticket tip at export time)
      - include a link to the failing validation report

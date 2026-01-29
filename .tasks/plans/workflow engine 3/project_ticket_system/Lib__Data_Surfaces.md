@@ -44,4 +44,11 @@ workspace/tickets/<ticket_id>/tasks/<task_id>/
 Ticket stacks are managed in jj; Ticket Manager persists stack metadata in:
 - `workspace/tickets/<ticket_id>/ticket.json`
 
-All “stack operations” (base/tip rev IDs, export bookmarks, etc.) are reflected back into `ticket.json` as durable metadata.
+All “stack operations” (base/tip rev IDs, patch IDs, export bookmarks, etc.) are reflected back into `ticket.json` as durable metadata.
+
+Minimum required fields for stack-aware operations (authoritative schema is in Core Infrastructure):
+- `ticket.json.stack_bookmark`
+- `ticket.json.base_rev`
+- `ticket.json.tip_rev`
+- `ticket.json.patches[]`
+- `ticket.json.export` (when exported)

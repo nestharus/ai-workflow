@@ -61,6 +61,7 @@ Minimum required subcommands (names are part of the UX contract; exact flags may
 - `workflowctl runs list|show`
 - `workflowctl logs tail --run <run_id>`
 - `workflowctl logs export --run <run_id> [--error <error_id>]`
+- `workflowctl ticket show-stack|diff|list-patches --ticket <ticket_id>`
 - `workflowctl pause|resume --run <run_id> | --step <step_execution_id>`
 - `workflowctl investigate --step <step_execution_id>`
 - `workflowctl notifications tail`

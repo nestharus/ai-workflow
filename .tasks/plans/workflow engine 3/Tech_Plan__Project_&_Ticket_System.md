@@ -17,6 +17,7 @@
 | `pm` | `project_ticket_system/Lib__Project_Manager.md` | Project selection/creation, ticket triage entrypoints, project workflows surface |
 | `tm` | `project_ticket_system/Lib__Ticket_Manager.md` | Ticket/task execution driver, runs/steps orchestration, error handling |
 | `cli` | `project_ticket_system/Lib__CLI_Shells.md` | `/project-manager` + `/ticket-manager` REPL rules and command sets |
+| `stack_viz` | `project_ticket_system/Lib__Patch_Stack_Visualization.md` | Patch-Stream stack inspection commands (show stack, list patches, diffs, export status) |
 | `wss_surfaces` | `project_ticket_system/Lib__Data_Surfaces.md` | WSS paths used by PM/TM, and the jj/PGS integration surface |
 | `workflow_resolver` | `project_ticket_system/Lib__Workflow_Resolution.md` | Workflow selection model, overrides, and deterministic resolution |
 | `lifecycle` | `project_ticket_system/Lib__Lifecycle.md` | Ticket/task state machines, locking, optimistic concurrency expectations |
@@ -30,7 +31,7 @@
 ## Dependency sketch (non-normative)
 
 - `pm` depends on: `cli`, `wss_surfaces`, `workflow_resolver`, `indexer`
-- `tm` depends on: `cli`, `wss_surfaces`, `workflow_resolver`, `lifecycle`, `decompose`, `execute`, `validate`, `export`
+- `tm` depends on: `cli`, `stack_viz`, `wss_surfaces`, `workflow_resolver`, `lifecycle`, `decompose`, `execute`, `validate`, `export`
 - `decompose` depends on: `wss_surfaces`, `lifecycle`, `workflow_resolver`
 - `execute` depends on: `wss_surfaces`, `lifecycle`, `workflow_resolver`
 - `validate` depends on: `wss_surfaces`, `workflow_resolver`

@@ -70,3 +70,66 @@ All updates to JSON docs use **JSON Merge Patch (RFC 7396)**:
 - `null` in a patch indicates deletion and MUST NOT be used as a business value.
 
 RFC 7396: https://datatracker.ietf.org/doc/html/rfc7396
+
+### 5.4 `workspace/tickets/<ticket_id>/ticket.json` schema (v1)
+
+`ticket.json` is the durable ticket document stored in WSS. It contains:
+- lifecycle state (see `project_ticket_system/Lib__Lifecycle.md` §1),
+- Patch-Stream stack references (`base_rev`/`tip_rev` + patch IDs),
+- export metadata (see `project_ticket_system/Lib__Export.md`).
+
+#### 5.4.1 Minimal shape (normative)
+
+```json
+{
+  "schema_version": 1,
+  "ticket_id": "<ticket_id>",
+  "project_id": "<project_id>",
+  "created_at": "2026-01-26T00:00:00Z",
+  "updated_at": "2026-01-26T00:00:00Z",
+  "rev": 1,
+  "owned_by": "tm",
+  "status": "open|in_progress|blocked|done|abandoned",
+  "blocker_kind": "validation_failure|approval_required|missing_dependency|user_input_required",
+  "status_history": [],
+  "stack_bookmark": "ticket/<ticket_id>",
+  "base_rev": "<jj commit_id>",
+  "tip_rev": "<jj commit_id>",
+  "patches": [
+    { "change_id": "<jj change_id>", "commit_id": "<jj commit_id>" }
+  ],
+  "export": {
+    "policy": "squash|linear",
+    "bookmark": "export/<ticket_id>|review/<ticket_id>",
+    "exported_tip": "<jj commit_id>",
+    "exported_at": "2026-01-26T00:00:00Z",
+    "validated": true,
+    "source_tip_rev": "<jj commit_id>",
+    "no_change": false
+  }
+}
+```
+
+#### 5.4.2 Field rules (normative)
+
+Lifecycle fields:
+- `status` MUST be one of the states defined in `project_ticket_system/Lib__Lifecycle.md` §1.1.
+- When `status == "blocked"`, `blocker_kind` MUST be present and MUST be one of the enum values defined in Lifecycle §1.1.
+- When `status != "blocked"`, `blocker_kind` MUST be absent (do not use `null`).
+- `status_history` MUST be a bounded array containing the last N transitions as defined by Lifecycle §1.7.
+
+Patch-Stream stack fields:
+- `stack_bookmark`, `base_rev`, `tip_rev`, and `patches` MAY be absent for tickets that have not yet created a Patch-Stream stack (e.g., newly created tickets in `open`).
+- When present:
+  - `stack_bookmark` MUST be a bookmark name. Default naming convention: `ticket/<ticket_id>`.
+  - `base_rev` and `tip_rev` MUST be jj **commit IDs** (not change IDs).
+  - `patches` MUST be ordered base → tip and MUST represent the stack’s linearized first-parent chain from `base_rev` (exclusive) to `tip_rev` (inclusive).
+  - Each `patches[]` entry MUST include:
+    - `change_id` (required): jj change identifier
+    - `commit_id` (optional): last observed commit ID for that change
+
+Export fields:
+- `export` MAY be absent if the ticket has never been exported.
+- When present, `export` MUST conform to `project_ticket_system/Lib__Export.md` and:
+  - `source_tip_rev` MUST be recorded on successful export (commit ID of the ticket stack tip at export time). This enables per-patch exported markers.
+  - For “no-op export” cases (`base_rev == tip_rev`), `exported_tip` MUST be omitted or absent and `no_change` MUST be `true` (do not use `null`).
