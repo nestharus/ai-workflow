@@ -6,7 +6,16 @@ state transitions while keeping each phase resumable and auditable.
 
 from scripts.spec_refinement.workspace import Phase
 
+from .evidence_expansion import expand_evidence, spotcheck_evidence
 from .library_synthesis import synthesize_libraries
+from .spec_building import build_specs
 from .summarization import summarize_all
 
-__all__ = ["Phase", "summarize_all", "synthesize_libraries"]
+__all__ = [
+    "Phase",
+    "build_specs",
+    "expand_evidence",
+    "spotcheck_evidence",
+    "summarize_all",
+    "synthesize_libraries",
+]

@@ -7,6 +7,12 @@ uv run spec spec summarize my_run_001
 
 # Phase 2: Synthesize libraries
 uv run spec spec synthesize my_run_001
+
+# Phase 3: Expand evidence
+uv run spec spec expand-evidence my_run_001
+
+# Phase 4: Build specs
+uv run spec spec build-specs my_run_001
 """
 
 from __future__ import annotations
@@ -438,6 +444,94 @@ def cmd_spec_synthesize(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_spec_expand_evidence(args: argparse.Namespace) -> int:
+    """Expand evidence sources for Phase 3."""
+    run_id = args.run_id
+    config_path = Path(args.config)
+
+    from scripts.spec_refinement.workflows import expand_evidence
+
+    try:
+        result = expand_evidence(run_id, config_path)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Evidence expanded: {result['libraries_expanded']} libraries")
+    print(f"Evidence sources added: {result['evidence_sources_added']}")
+    if result.get("errors"):
+        print("Errors:")
+        for error in result["errors"]:
+            lib_id = error.get("lib_id", "unknown")
+            message = error.get("error", "error")
+            print(f"  - {lib_id}: {message}")
+    if result.get("issues"):
+        print("Issues:")
+        for issue in result["issues"]:
+            lib_id = issue.get("lib_id", "unknown")
+            message = issue.get("message", issue.get("type", "issue"))
+            print(f"  - {lib_id}: {message}")
+    return 0
+
+
+def cmd_spec_spotcheck_evidence(args: argparse.Namespace) -> int:
+    """Spot-check evidence coverage for Phase 3."""
+    run_id = args.run_id
+    config_path = Path(args.config)
+    lib_ids = args.lib_ids
+
+    from scripts.spec_refinement.workflows import spotcheck_evidence
+
+    try:
+        result = spotcheck_evidence(run_id, config_path, lib_ids)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Libraries spot-checked: {result['libraries_checked']}")
+    print(f"Missing sections found: {result['missing_sections_added']}")
+    if result.get("errors"):
+        print("Errors:")
+        for error in result["errors"]:
+            lib_id = error.get("lib_id", "unknown")
+            message = error.get("error", "error")
+            print(f"  - {lib_id}: {message}")
+    if result.get("issues"):
+        print("Issues:")
+        for issue in result["issues"]:
+            lib_id = issue.get("lib_id", "unknown")
+            message = issue.get("message", issue.get("type", "issue"))
+            print(f"  - {lib_id}: {message}")
+    return 0
+
+
+def cmd_spec_build_specs(args: argparse.Namespace) -> int:
+    """Build library specs for Phase 4."""
+    run_id = args.run_id
+    config_path = Path(args.config)
+
+    from scripts.spec_refinement.workflows import build_specs
+
+    try:
+        result = build_specs(run_id, config_path, max_iterations=args.max_iterations)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Libraries built: {result['libraries_built']}")
+    print(f"Converged: {result['converged_count']}/{result['libraries_built']}")
+    print(f"Total iterations: {result['total_iterations']}")
+    if result.get("issues"):
+        print(f"Issues: {len(result['issues'])}")
+    if result.get("errors"):
+        print("Errors:")
+        for error in result["errors"]:
+            lib_id = error.get("lib_id", "unknown")
+            message = error.get("error", "error")
+            print(f"  - {lib_id}: {message}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main entry point for spec refinement CLI."""
     parser = argparse.ArgumentParser(
@@ -449,7 +543,10 @@ def main(argv: list[str] | None = None) -> int:
             "  gaps\n"
             "  gap\n"
             "  spec summarize (agent: glm-file-what-summarizer)\n"
-            "  spec synthesize (agent: opus-library-synthesizer)"
+            "  spec synthesize (agent: opus-library-synthesizer)\n"
+            "  spec expand-evidence (agent: glm-library-evidence-mapper)\n"
+            "  spec spotcheck-evidence (agent: chatgpt-evidence-gap-judge)\n"
+            "  spec build-specs (agent: glm-library-spec-integrator)"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -538,6 +635,59 @@ def main(argv: list[str] | None = None) -> int:
         "--config", default=".tasks.yaml", help="Path to .tasks.yaml config"
     )
     p_spec_synthesize.set_defaults(func=cmd_spec_synthesize)
+
+    p_spec_expand = spec_subparsers.add_parser(
+        "expand-evidence",
+        help="Expand evidence sources for Phase 3",
+        description=(
+            "Run Phase 3 evidence expansion using glm-library-evidence-mapper.\n"
+            "Requires Phase 2 library synthesis to be completed.\n"
+            "Outputs: libraries/*/evidence.json updates and phase state updates."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_expand.add_argument("run_id", help="Run identifier")
+    p_spec_expand.add_argument("--config", default=".tasks.yaml", help="Path to .tasks.yaml config")
+    p_spec_expand.set_defaults(func=cmd_spec_expand_evidence)
+
+    p_spec_spotcheck = spec_subparsers.add_parser(
+        "spotcheck-evidence",
+        help="Spot-check evidence coverage for Phase 3",
+        description=(
+            "Optional Phase 3 spot-check using chatgpt-evidence-gap-judge.\n"
+            "Reads libraries/*/evidence.json and proposes missing sections."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_spotcheck.add_argument("run_id", help="Run identifier")
+    p_spec_spotcheck.add_argument(
+        "--config", default=".tasks.yaml", help="Path to .tasks.yaml config"
+    )
+    p_spec_spotcheck.add_argument(
+        "--lib-ids",
+        nargs="+",
+        default=None,
+        help="Library IDs to spot-check (default: all)",
+    )
+    p_spec_spotcheck.set_defaults(func=cmd_spec_spotcheck_evidence)
+
+    p_spec_build = spec_subparsers.add_parser(
+        "build-specs",
+        help="Build library specs for Phase 4",
+        description=(
+            "Run Phase 4 spec building using glm-library-spec-integrator and "
+            "chatgpt-library-spec-gap-judge.\n"
+            "Requires Phase 3 evidence expansion to be completed.\n"
+            "Outputs: libraries/*/spec.md, gaps.md, decisions.md updates."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_build.add_argument("run_id", help="Run identifier")
+    p_spec_build.add_argument("--config", default=".tasks.yaml", help="Path to .tasks.yaml config")
+    p_spec_build.add_argument(
+        "--max-iterations", type=int, default=5, help="Max gap closure iterations"
+    )
+    p_spec_build.set_defaults(func=cmd_spec_build_specs)
 
     if argv is None:
         argv = sys.argv[1:]

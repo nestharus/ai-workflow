@@ -20,6 +20,9 @@ class FileSummary:
     evidence_map: dict[str, list[str]]
 
 
+FileSummary.__doc__ = "Summary of a file's algorithms, components, workflows, and responsibilities."
+
+
 @dataclass(frozen=True)
 class LibraryCharter:
     lib_id: str
@@ -28,6 +31,9 @@ class LibraryCharter:
     responsibilities: list[str]
     evidence_sources: list[dict[str, Any]]
     overlap_resolutions: list[dict[str, str]]
+
+
+LibraryCharter.__doc__ = "Charter defining a library's intent, boundaries, and responsibilities."
 
 
 def _extract_sections(content: str, level: int) -> dict[str, str]:
@@ -230,8 +236,7 @@ def _extract_evidence_sources(block: str) -> list[dict[str, Any]]:
     for file_id, section in pointers:
         grouped.setdefault(file_id, set()).add(section)
     return [
-        {"file_id": file_id, "sections": sorted(sections)}
-        for file_id, sections in grouped.items()
+        {"file_id": file_id, "sections": sorted(sections)} for file_id, sections in grouped.items()
     ]
 
 
@@ -280,3 +285,39 @@ def parse_library_synthesis(content: str) -> tuple[list[LibraryCharter], str]:
         index_content = "\n".join(index_lines).strip() + "\n"
 
     return charters, index_content
+
+
+def parse_evidence_mapper_output(json_str: str) -> dict[str, Any]:
+    """Parse glm-library-evidence-mapper JSON output."""
+    import json
+
+    data = json.loads(json_str)
+    required_fields = ["file_id", "relevant_sections", "confidence", "rationale"]
+    for field in required_fields:
+        if field not in data:
+            raise ValueError(f"Missing required field: {field}")
+    return data
+
+
+def parse_gap_judge_output(json_str: str) -> dict[str, Any]:
+    """Parse chatgpt-library-spec-gap-judge JSON output."""
+    import json
+
+    data = json.loads(json_str)
+    required_fields = ["gaps", "total_gaps", "file_id"]
+    for field in required_fields:
+        if field not in data:
+            raise ValueError(f"Missing required field: {field}")
+    return data
+
+
+def parse_evidence_spotcheck_output(json_str: str) -> dict[str, Any]:
+    """Parse chatgpt-evidence-gap-judge JSON output."""
+    import json
+
+    data = json.loads(json_str)
+    required_fields = ["missing_sections", "scan_complete"]
+    for field in required_fields:
+        if field not in data:
+            raise ValueError(f"Missing required field: {field}")
+    return data

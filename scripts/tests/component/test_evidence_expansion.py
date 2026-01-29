@@ -1,0 +1,220 @@
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from unittest.mock import patch
+
+from scripts.spec_refinement.workflows.evidence_expansion import (
+    expand_evidence,
+    spotcheck_evidence,
+)
+from scripts.spec_refinement.workflows.formats import (
+    parse_evidence_mapper_output,
+    parse_evidence_spotcheck_output,
+)
+from scripts.spec_refinement.workspace import Phase, WorkspaceManager
+
+
+def _make_summary_output(file_id: str, section: str, keyword: str) -> str:
+    return (
+        f"# File Summary: {file_id}\n"
+        f"File ID: {file_id}\n\n"
+        "## Algorithms\n"
+        f"- Algo | {keyword} behavior | Evidence: [{file_id}::{section}]\n\n"
+        "## Components\n"
+        f"- Component | {keyword} data | Evidence: [{file_id}::{section}]\n\n"
+        "## Workflows\n"
+        f"- Workflow | {keyword} tasks | Evidence: [{file_id}::{section}]\n\n"
+        "## Candidate Responsibilities\n"
+        f"- {keyword} ownership | Evidence: [{file_id}::{section}]\n\n"
+        "## Dependencies\n"
+        "- dep-one\n\n"
+        "## Evidence Map\n"
+        f"- {section}: [{file_id}::{section}]\n"
+    )
+
+
+class DummyRunner:
+    def __init__(self, outputs: dict[str, str]) -> None:
+        self.outputs = outputs
+
+    def run(self, prompt: str) -> str:
+        match = re.search(r"File ID: (file_\d{3})", prompt)
+        if not match:
+            raise RuntimeError("Missing file id in prompt")
+        file_id = match.group(1)
+        return self.outputs[file_id]
+
+
+def _setup_workspace(fs, monkeypatch) -> WorkspaceManager:
+    fs.create_dir("/repo")
+    monkeypatch.chdir("/repo")
+    input_dir = Path("/repo/specs")
+    input_dir.mkdir(parents=True, exist_ok=True)
+    (input_dir / "a.md").write_text("## Intro\n[INTRO]\n", encoding="utf-8")
+    manager = WorkspaceManager(run_id="run1", input_folder=input_dir)
+    manager.initialize(force=True)
+    manager.start_phase(Phase.LIBRARY_SYNTHESIS)
+    manager.complete_phase(Phase.LIBRARY_SYNTHESIS, outputs={"libraries_count": 1})
+
+    lib_dir = manager.structure.libraries_dir / "lib_001"
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    (lib_dir / "charter.md").write_text(
+        "# Library Charter: lib_001\n\n## Intent\nCore keyword service.\n\n"
+        "## Boundaries\nFocus on keyword behaviors.\n\n"
+        "## Responsibilities\n- Own keyword workflows\n",
+        encoding="utf-8",
+    )
+    (lib_dir / "evidence.json").write_text(json.dumps({"sources": []}), encoding="utf-8")
+    return manager
+
+
+def test_parse_evidence_mapper_output() -> None:
+    payload = {
+        "file_id": "file_001",
+        "relevant_sections": ["INTRO"],
+        "confidence": 0.8,
+        "rationale": "Matches charter responsibilities.",
+    }
+    result = parse_evidence_mapper_output(json.dumps(payload))
+    assert result["file_id"] == "file_001"
+    assert result["confidence"] == 0.8
+
+
+def test_parse_evidence_spotcheck_output() -> None:
+    payload = {
+        "missing_sections": [{"section_label": "INTRO", "rationale": "Missing", "confidence": 0.9}],
+        "scan_complete": True,
+    }
+    result = parse_evidence_spotcheck_output(json.dumps(payload))
+    assert result["scan_complete"] is True
+
+
+def test_expand_evidence_validates_sections(fs, monkeypatch) -> None:
+    manager = _setup_workspace(fs, monkeypatch)
+    summary_path = manager.structure.summaries_dir / "file_001.what.md"
+    summary_path.write_text(_make_summary_output("file_001", "INTRO", "keyword"), encoding="utf-8")
+
+    outputs = {
+        "file_001": json.dumps(
+            {
+                "file_id": "file_001",
+                "relevant_sections": ["UNKNOWN"],
+                "confidence": 0.9,
+                "rationale": "Test",
+            }
+        )
+    }
+
+    with patch(
+        "scripts.spec_refinement.workflows.evidence_expansion.AgentRunner.from_agent_name",
+        side_effect=lambda *args, **kwargs: DummyRunner(outputs),
+    ):
+        result = expand_evidence("run1", Path("/repo/.tasks.yaml"))
+
+    assert any(issue["type"] == "unknown_section_reference" for issue in result["issues"])
+
+
+def test_expand_evidence_parallel_processing(fs, monkeypatch) -> None:
+    fs.create_dir("/repo")
+    monkeypatch.chdir("/repo")
+    input_dir = Path("/repo/specs")
+    input_dir.mkdir(parents=True, exist_ok=True)
+    (input_dir / "a.md").write_text("## Intro\n[INTRO]\n", encoding="utf-8")
+    (input_dir / "b.md").write_text("## Details\n[DETAILS]\n", encoding="utf-8")
+    manager = WorkspaceManager(run_id="run1", input_folder=input_dir)
+    manager.initialize(force=True)
+    manager.start_phase(Phase.LIBRARY_SYNTHESIS)
+    manager.complete_phase(Phase.LIBRARY_SYNTHESIS, outputs={"libraries_count": 1})
+
+    lib_dir = manager.structure.libraries_dir / "lib_001"
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    (lib_dir / "charter.md").write_text(
+        "# Library Charter: lib_001\n\n## Intent\nCore keyword service.\n\n"
+        "## Boundaries\nFocus on keyword behaviors.\n\n"
+        "## Responsibilities\n- Own keyword workflows\n",
+        encoding="utf-8",
+    )
+    (lib_dir / "evidence.json").write_text(json.dumps({"sources": []}), encoding="utf-8")
+
+    summary_dir = manager.structure.summaries_dir
+    (summary_dir / "file_001.what.md").write_text(
+        _make_summary_output("file_001", "INTRO", "keyword"),
+        encoding="utf-8",
+    )
+    (summary_dir / "file_002.what.md").write_text(
+        _make_summary_output("file_002", "DETAILS", "keyword"),
+        encoding="utf-8",
+    )
+
+    outputs = {
+        "file_001": json.dumps(
+            {
+                "file_id": "file_001",
+                "relevant_sections": ["INTRO"],
+                "confidence": 0.8,
+                "rationale": "Maps intent.",
+            }
+        ),
+        "file_002": json.dumps(
+            {
+                "file_id": "file_002",
+                "relevant_sections": ["DETAILS"],
+                "confidence": 0.9,
+                "rationale": "Maps boundaries.",
+            }
+        ),
+    }
+
+    with patch(
+        "scripts.spec_refinement.workflows.evidence_expansion.AgentRunner.from_agent_name",
+        side_effect=lambda *args, **kwargs: DummyRunner(outputs),
+    ):
+        result = expand_evidence("run1", Path("/repo/.tasks.yaml"))
+
+    assert result["libraries_expanded"] == 1
+    assert result["evidence_sources_added"] > 0
+
+
+def test_spotcheck_evidence_adds_missing_sections(fs, monkeypatch) -> None:
+    manager = _setup_workspace(fs, monkeypatch)
+    summary_path = manager.structure.summaries_dir / "file_001.what.md"
+    summary_path.write_text(_make_summary_output("file_001", "INTRO", "keyword"), encoding="utf-8")
+
+    lib_dir = manager.structure.libraries_dir / "lib_001"
+    evidence_path = lib_dir / "evidence.json"
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {"file_id": "file_001", "sections": [], "confidence": 0.4, "rationale": ""}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    spotcheck_output = json.dumps(
+        {
+            "missing_sections": [
+                {"section_label": "INTRO", "rationale": "Missing", "confidence": 0.95}
+            ],
+            "scan_complete": True,
+        }
+    )
+
+    class SpotcheckRunner:
+        def run(self, prompt: str) -> str:
+            return spotcheck_output
+
+    with patch(
+        "scripts.spec_refinement.workflows.evidence_expansion.AgentRunner.from_agent_name",
+        return_value=SpotcheckRunner(),
+    ):
+        result = spotcheck_evidence("run1", Path("/repo/.tasks.yaml"))
+
+    assert result["missing_sections_added"] > 0
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    sources = payload.get("sources", [])
+    assert any("INTRO" in source.get("sections", []) for source in sources)
