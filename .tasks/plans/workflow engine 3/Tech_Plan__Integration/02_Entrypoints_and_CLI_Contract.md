@@ -45,7 +45,12 @@ Minimum required subcommands (names are part of the UX contract; exact flags may
 - `workflowctl uninstall --cli <name> [--project]`
 
 **Agents** (see Configuration & Onboarding §6)
-- `workflowctl agents list|show|run <name> [--input <file>]`
+- `workflowctl agents list`
+- `workflowctl agents show <name> [--explain]`
+- `workflowctl agents show-io <name> [--format yaml|json]`
+- `workflowctl agents validate <path>`
+- `workflowctl agents run <name> [--input <json|@file>]`
+- `workflowctl agents test <name> --input <json|@file> [--model <name>]`
 
 **Workflow execution**
 - `workflowctl run --workflow <id-or-path> ...`

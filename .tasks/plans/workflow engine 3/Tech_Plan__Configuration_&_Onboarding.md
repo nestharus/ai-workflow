@@ -365,6 +365,11 @@ Recommended practices:
 
 - Validate workflow YAML before execution (schema + DAG):
   - `workflowctl workflow validate <path>`
+- Validate agent prompts before use (front matter + schema subset):
+  - `workflowctl agents validate <path>`
+  - `workflowctl agents show-io <name>`
+- Test agent prompts in isolation (stores a test run bundle):
+  - `workflowctl agents test <name> --input <json|@file>`
 - Keep workflows deterministic:
   - avoid hidden environment coupling (prefer explicit inputs)
 - Use `gate` steps when user decisions are required (no silent auto-selection).
@@ -529,8 +534,11 @@ workflowctl uninstall --cli <name> [--project]
 
 # Agents (workflow engine agent prompts)
 workflowctl agents list
-workflowctl agents show <name>
-workflowctl agents run <name> [--input <file>]
+workflowctl agents show <name> [--explain]
+workflowctl agents show-io <name> [--format yaml|json]
+workflowctl agents validate <path>
+workflowctl agents run <name> [--input <json|@file>]
+workflowctl agents test <name> --input <json|@file> [--model <name>]
 
 # Backup and restore
 workflowctl backup create --output <path.zip>
@@ -549,6 +557,7 @@ The following directories are added to the runtime root:
 
   repos/<repo_uid>/
     agents/               # Repo machine-local agent prompts
+    agent_tests/          # Stored agent prompt test runs
 ```
 
 Note: Skills are NOT in `~/.workflow/`. Skills are deployed into CLI-specific locations (e.g., `~/.claude/skills/`).

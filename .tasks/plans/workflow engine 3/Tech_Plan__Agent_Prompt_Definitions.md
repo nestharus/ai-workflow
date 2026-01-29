@@ -1,7 +1,7 @@
 # Tech Plan: Agent Prompt Definitions
 
 - **Doc**: Tech_Plan__Agent_Prompt_Definitions.md
-- **Updated**: 2026-01-27
+- **Updated**: 2026-01-29
 - **Component**: Built-in agent prompts for workflow engine v3
 - **Purpose**: Define all built-in agent prompt implementations referenced throughout the workflow engine v3 specification
 
@@ -17,10 +17,11 @@ All built-in agents follow the agent prompt format v1 specification defined in `
 
 Agent prompt files are searched in the following order (highest precedence first):
 
-1. **Repo-shared**: `<repo>/.workflow/agents/<agent_id>.md`
-2. **Repo machine-local**: `~/.workflow/repos/<repo_uid>/agents/<agent_id>.md`
-3. **Global personal**: `~/.workflow/agents/<agent_id>.md`
-4. **Built-in packaging path**: `agents/builtin/<agent_id>.md` (packaged with `workflowctl`)
+1. **CLI flag**: `--agent <path>`
+2. **Repo-shared**: `<repo>/.workflow/agents/<agent_id>.md`
+3. **Repo machine-local**: `~/.workflow/repos/<repo_uid>/agents/<agent_id>.md`
+4. **Global personal**: `~/.workflow/agents/<agent_id>.md`
+5. **Built-in packaging path**: `agents/builtin/<agent_id>.md` (packaged with `workflowctl`)
 
 This document defines the built-in agents that must be packaged with `workflowctl`.
 
@@ -71,6 +72,19 @@ Built-in workflow YAMLs pass only agent IDs. Implementation MUST expand those ID
 - Load any required artifacts
 
 This avoids adding "wss_read" tooling to the gateway and keeps a single auditable tool surface.
+
+### 3.4 Agent prompt testing commands (`workflowctl agents`)
+
+Developers SHOULD validate and test prompts in isolation before integrating them into workflows:
+
+- `workflowctl agents validate <path>`: validate agent prompt files (single file or directory recursion)
+- `workflowctl agents show-io <agent_id> [--format yaml|json]`: display `input_schema` and `output_schema`
+- `workflowctl agents test <agent_id> --input <json|@file> [--model <name>]`: run the prompt with a provided input payload and validate the output against `output_schema`
+
+Test runs are stored under:
+- `~/.workflow/repos/<repo_uid>/agent_tests/<test_id>/`
+
+See: `Usage__Agent_Prompt_Testing.md`.
 
 ## 4) Built-in Agent Definitions
 

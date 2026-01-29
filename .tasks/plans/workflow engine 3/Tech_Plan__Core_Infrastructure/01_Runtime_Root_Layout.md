@@ -1,7 +1,7 @@
 # Core Infrastructure — Runtime Root Layout
 
 - **Doc**: Tech_Plan__Core_Infrastructure/01_Runtime_Root_Layout.md
-- **Updated**: 2026-01-26
+- **Updated**: 2026-01-29
 - **Library**: `workflow_engine.runtime.root`
 - **Depends on**: [`00_Foundation.md`](00_Foundation.md)
 - **Primary responsibility**: Define the durability boundary and the canonical on-disk runtime root layout (cross-platform).
@@ -34,12 +34,13 @@ All runtime artifacts live under a single runtime root:
                 refs/
                   prior_conflicts.jsonl   # Reference snapshot (§2.1.2)
       conclusions/
-      trace_overrides/
-      workflows/                    # WSS-scoped workflows (optional)
-    agents/                         # repo machine-local agent prompts
-    logs/                           # Logs Store (durable, sharded JSONL)
-    notifications/                  # Notifications queue (durable)
-    control_actions/                # Control actions queue (durable)
+	    trace_overrides/
+	      workflows/                    # WSS-scoped workflows (optional)
+	    agents/                         # repo machine-local agent prompts
+	    agent_tests/                    # stored agent prompt test runs
+	    logs/                           # Logs Store (durable, sharded JSONL)
+	    notifications/                  # Notifications queue (durable)
+	    control_actions/                # Control actions queue (durable)
     sandboxes/                      # ephemeral (disposable)
     caches/                         # disposable caches
     vcs/                            # optional jj sidecar mode
