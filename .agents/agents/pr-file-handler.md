@@ -1,6 +1,6 @@
 ---
 description: Handles review tasks for a single file
-model: cerebras
+model: glm
 ---
 
 # PR File Handler Agent

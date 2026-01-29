@@ -1,6 +1,6 @@
 ---
 description: Finds entity names (ONLY) and where they are mentioned
-model: cerebras
+model: glm
 ---
 
 You find entity/component names and point to the exact lines where they appear.

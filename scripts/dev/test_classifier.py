@@ -7,8 +7,8 @@ Analyzes test files to determine their type based on:
 - Calls external services → integration test
 
 Usage:
-    uv run python -m scripts.dev.test_classifier scripts/tests/
-    uv run python -m scripts.dev.test_classifier scripts/tests/ --output report.json
+    uv run dev.test-classifier scripts/tests/
+    uv run dev.test-classifier scripts/tests/ --output report.json
 """
 
 from __future__ import annotations

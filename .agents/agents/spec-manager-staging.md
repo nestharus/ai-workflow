@@ -3,7 +3,7 @@ description: 'Validates and legalizes spec content - checks annotations, formats
   duplicates
 
   '
-model: cerebras
+model: glm
 ---
 
 # Spec Manager Staging Agent
@@ -20,7 +20,7 @@ Run staging validation on a spec folder and fix issues.
 Run staging and report issues:
 
 ```bash
-uv run python -m scripts.spec_manager stage <spec_folder>
+uv run spec-manager stage <spec_folder>
 ```
 
 Parse output for:

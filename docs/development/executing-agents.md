@@ -1,35 +1,35 @@
 # How To Execute Agents Correctly
 
-Agents are executed via `uv run python -m scripts.agents`.
+Agents are executed via `uv run agents`.
 
 ## Usage
 
 ```bash
 # Execute agent with its configured model
-uv run python -m scripts.agents <agent_name> "<prompt>"
+uv run agents <agent_name> "<prompt>"
 
 # Execute model directly (no agent frontmatter)
-uv run python -m scripts.agents --model <model_name> "<prompt>"
+uv run agents --model <model_name> "<prompt>"
 
 # Execute with prompt from file
-uv run python -m scripts.agents <agent_name> --file <prompt_file>
+uv run agents <agent_name> --file <prompt_file>
 
 # Execute with prompt from stdin
-echo "<prompt>" | uv run python -m scripts.agents <agent_name>
+echo "<prompt>" | uv run agents <agent_name>
 ```
 
 ## Examples
 
 ```bash
 # Execute agent with its configured model
-uv run python -m scripts.agents implementor task_001.md
+uv run agents implementor task_001.md
 
 # Execute model directly for general tasks
-uv run python -m scripts.agents --model claude-sonnet "Write a haiku"
-uv run python -m scripts.agents -m opencode-glm "Explain this code"
+uv run agents --model claude-sonnet "Write a haiku"
+uv run agents -m opencode-glm "Explain this code"
 
 # Pipe prompt from file
-cat prompt.txt | uv run python -m scripts.agents my-agent
+cat prompt.txt | uv run agents my-agent
 ```
 
 ## CLI Arguments

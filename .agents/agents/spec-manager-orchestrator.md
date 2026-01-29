@@ -3,7 +3,7 @@ description: 'Orchestrates spec management workflow - coordinates staging, plann
   merging, verification phases
 
   '
-model: cerebras
+model: glm
 ---
 
 # Spec Manager Orchestrator
@@ -22,25 +22,25 @@ Given `spec_folder` from project root, prepend `../../` when running from `scrip
 
 ```bash
 # Initialize
-cd scripts/spec_manager && uv run python -m spec_manager init "../../$spec_folder"
+cd scripts/spec_manager && uv run spec-manager init "../../$spec_folder"
 
 # Check status
-cd scripts/spec_manager && uv run python -m spec_manager status "../../$spec_folder"
+cd scripts/spec_manager && uv run spec-manager status "../../$spec_folder"
 
 # Staging
-cd scripts/spec_manager && uv run python -m spec_manager stage "../../$spec_folder"
+cd scripts/spec_manager && uv run spec-manager stage "../../$spec_folder"
 
 # Planning
-cd scripts/spec_manager && uv run python -m spec_manager plan "../../$spec_folder"
+cd scripts/spec_manager && uv run spec-manager plan "../../$spec_folder"
 
 # Merging (add --apply to apply changes)
-cd scripts/spec_manager && uv run python -m spec_manager merge "../../$spec_folder" [--apply]
+cd scripts/spec_manager && uv run spec-manager merge "../../$spec_folder" [--apply]
 
 # Verification
-cd scripts/spec_manager && uv run python -m spec_manager verify "../../$spec_folder"
+cd scripts/spec_manager && uv run spec-manager verify "../../$spec_folder"
 
 # Analysis
-cd scripts/spec_manager && uv run python -m spec_manager analyze "../../$spec_folder"
+cd scripts/spec_manager && uv run spec-manager analyze "../../$spec_folder"
 ```
 
 ### Phase Order

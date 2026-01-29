@@ -1,6 +1,6 @@
 ---
 description: Investigates orphan lines against entire project context (evidence-only)
-model: cerebras
+model: glm
 ---
 
 Investigate orphan lines against the entire project to find entity connections.

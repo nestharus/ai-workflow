@@ -203,7 +203,6 @@ def cmd_check_rediscovery(args: argparse.Namespace) -> int:
 
 def cmd_check_file_empty(args: argparse.Namespace) -> int:
     """Check if staging file has been fully extracted."""
-    workspace = Path(args.workspace)
     staging_file = Path(args.file)
 
     empty = is_file_empty(staging_file)
@@ -828,7 +827,6 @@ def cmd_create_investigation_staging(args: argparse.Namespace) -> int:
 
         # Try to determine original source file from investigation file path
         # Investigation files are named like: {original_stem}_investigation.md
-        rel_path = investigation_file.relative_to(investigation_dir)
         original_stem = investigation_file.stem.replace("_investigation", "_original")
 
         # Find the matching original file entry
@@ -932,7 +930,7 @@ def cmd_process_investigation(args: argparse.Namespace) -> int:
     # Collect all combined-line numbers from findings.
     combined_lines: list[int] = []
     for finding in findings.get("findings", []):
-        combined_lines.extend(int(l) for l in finding.get("lines", []) if str(l).isdigit())
+        combined_lines.extend(int(line) for line in finding.get("lines", []) if str(line).isdigit())
 
     combined_lines = sorted(set(combined_lines))
     if not combined_lines:
@@ -969,7 +967,9 @@ def cmd_process_investigation(args: argparse.Namespace) -> int:
                 {
                     "entity": entity_name,
                     "status": "no_mapped_evidence",
-                    "message": "No findings lines mapped back to source files (check map generation)",
+                    "message": (
+                        "No findings lines mapped back to source files (check map generation)"
+                    ),
                 }
             )
         )
@@ -1136,7 +1136,7 @@ def cmd_process_relations(args: argparse.Namespace) -> int:
             source_file = item.get("source_file") or str(findings_file)
             source_line = item.get("source_line") or 0
 
-            relation_file = create_rich_relation_document(
+            create_rich_relation_document(
                 workspace=workspace,
                 relation_id=relation_id,
                 snippet_id=item.get("snippet_id", ""),
@@ -1303,7 +1303,7 @@ def cmd_process_context(args: argparse.Namespace) -> int:
         relationship_type = item.get("relationship", "context") or "context"
         relationship_context = item.get("role", "")
 
-        relation_file = create_rich_relation_document(
+        create_rich_relation_document(
             workspace=workspace,
             relation_id=relation_id,
             snippet_id="",
@@ -1812,7 +1812,7 @@ def main() -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
         description="Spec decomposition operations",
-        prog="uv run python -m scripts.spec_decomposition",
+        prog="uv run spec-decompose",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

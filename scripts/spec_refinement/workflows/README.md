@@ -3,9 +3,9 @@
 ## Sequential execution
 
 ```bash
-uv run python -m scripts.spec_refinement.cli init my_run_001 ./specs
-uv run python -m scripts.spec_refinement.cli spec summarize my_run_001
-uv run python -m scripts.spec_refinement.cli spec synthesize my_run_001
+uv run spec init my_run_001 ./specs
+uv run spec spec summarize my_run_001
+uv run spec spec synthesize my_run_001
 ```
 
 ## Resumability

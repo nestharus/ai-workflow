@@ -85,25 +85,25 @@ Run from the `scripts/spec_manager` directory:
 cd scripts/spec_manager
 
 # Initialize workspace
-uv run python -m spec_manager init <spec_folder>
+uv run spec-manager init <spec_folder>
 
 # Check status
-uv run python -m spec_manager status <spec_folder>
+uv run spec-manager status <spec_folder>
 
 # Run individual phases
-uv run python -m spec_manager stage <spec_folder> --normalize   # CLEANING phase
-uv run python -m spec_manager plan <spec_folder>                # DISCOVERY phase
-uv run python -m spec_manager merge <spec_folder> --apply       # REVIEW phase
-uv run python -m spec_manager verify <spec_folder>              # FINALIZATION phase
+uv run spec-manager stage <spec_folder> --normalize   # CLEANING phase
+uv run spec-manager plan <spec_folder>                # DISCOVERY phase
+uv run spec-manager merge <spec_folder> --apply       # REVIEW phase
+uv run spec-manager verify <spec_folder>              # FINALIZATION phase
 
 # Run analysis
-uv run python -m spec_manager analyze <spec_folder> --json
+uv run spec-manager analyze <spec_folder> --json
 
 # Run all phases
-uv run python -m spec_manager run <spec_folder> --apply
+uv run spec-manager run <spec_folder> --apply
 
 # Cleanup
-uv run python -m spec_manager cleanup <spec_folder>
+uv run spec-manager cleanup <spec_folder>
 ```
 
 ### Claude Command
@@ -122,7 +122,7 @@ The spec-manager command orchestrates multiple specialized agents:
 
 ```bash
 # Execute via agent system
-uv run python -m scripts.agents spec-manager-orchestrator "Manage spec folder: .tasks/plans/my-spec"
+uv run agents spec-manager-orchestrator "Manage spec folder: .tasks/plans/my-spec"
 ```
 
 ### Python API

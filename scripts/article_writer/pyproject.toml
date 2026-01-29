@@ -8,6 +8,9 @@ dependencies = [
     "pyyaml>=6.0",
 ]
 
+[project.scripts]
+article-writer = "article_writer.__main__:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

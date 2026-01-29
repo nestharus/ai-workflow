@@ -6,9 +6,9 @@ Compares two folder sets to verify reorganization preserved all test functions:
 - Reports missing functions and content differences
 
 Usage:
-    uv run python -m scripts.dev.diff_test_functions scripts/tests/ \
+    uv run dev.diff-test-functions scripts/tests/ \
         scripts/tests/unit/ scripts/tests/component/
-    uv run python -m scripts.dev.diff_test_functions original/ new/ --verbose
+    uv run dev.diff-test-functions original/ new/ --verbose
 """
 
 from __future__ import annotations

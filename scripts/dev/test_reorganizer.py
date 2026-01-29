@@ -11,8 +11,8 @@ Key feature: Block-aware extraction
   the block is copied to both output files with the appropriate functions
 
 Usage:
-    uv run python -m scripts.dev.test_reorganizer scripts/tests/ --dry-run
-    uv run python -m scripts.dev.test_reorganizer scripts/tests/ --execute
+    uv run dev.test-reorganizer scripts/tests/ --dry-run
+    uv run dev.test-reorganizer scripts/tests/ --execute
 """
 
 from __future__ import annotations
@@ -1452,13 +1452,8 @@ def main(argv: list[str] | None = None) -> int:
         print("\nRun with --execute to apply these changes.")
     else:
         print("\nOriginal files preserved. To verify:")
-        print(
-            "  1. Run: uv run python -m scripts.dev.count_test_lines <new_folders> --verify-syntax"
-        )
-        print(
-            "  2. Run: uv run python -m scripts.dev.diff_test_functions "
-            "<original> --new <new_folders>"
-        )
+        print("  1. Run: uv run dev.count-test-lines <new_folders> --verify-syntax")
+        print("  2. Run: uv run dev.diff-test-functions <original> --new <new_folders>")
 
     return 0
 
@@ -1466,7 +1461,7 @@ def main(argv: list[str] | None = None) -> int:
 def _test_block_aware_extraction() -> None:
     """Test suite for block-aware function extraction.
 
-    Run with: uv run python -m scripts.dev.test_reorganizer --test
+    Run with: uv run dev.test-reorganizer --test
     """
     import textwrap
 

@@ -20,8 +20,8 @@ Key concepts:
 
 Usage:
     # CLI
-    uv run python -m scripts.spec_manager init <spec_folder>
-    uv run python -m scripts.spec_manager run <spec_folder> --apply
+    uv run spec-manager init <spec_folder>
+    uv run spec-manager run <spec_folder> --apply
 
     # Python API
     from spec_manager import WorkspaceManager
@@ -35,41 +35,41 @@ Usage:
 __all__ = [
     # Core
     "AnnotationParser",
-    "SectionExtractor",
     "IdValidator",
     "LibsRegistry",
-    # Provenance
-    "TrackedUnit",
-    "SourceLocation",
-    "UnitType",
-    "UnitStatus",
-    "ProvenanceTracker",
-    # Strategies
-    "StrategyRegistry",
-    "Strategy",
-    "StrategyPhase",
-    "ProcessingContext",
-    "StrategyResult",
+    "SectionExtractor",
     # Discovery
-    "CandidateLibrary",
     "CandidateIdentifier",
-    "ElementLabels",
-    "MultiLabeler",
-    "LibraryShape",
-    "ShapeAggregator",
-    "LibraryRefiner",
+    "CandidateLibrary",
     "discover_libraries",
     "discover_libraries_sync",
+    "ElementLabels",
+    "LibraryRefiner",
+    "LibraryShape",
+    "MultiLabeler",
+    "ShapeAggregator",
+    # Provenance
+    "ProvenanceTracker",
+    "SourceLocation",
+    "TrackedUnit",
+    "UnitStatus",
+    "UnitType",
+    # Strategies
+    "ProcessingContext",
+    "Strategy",
+    "StrategyPhase",
+    "StrategyRegistry",
+    "StrategyResult",
     # Workspace
     "WorkspaceManager",
     # Workflow
-    "WorkflowOrchestrator",
-    "WorkflowConfig",
-    "WorkflowState",
-    "WorkflowPhase",
-    "PatchDependencyGraph",
     "ContextIndex",
     "ingest",
+    "PatchDependencyGraph",
+    "WorkflowConfig",
+    "WorkflowOrchestrator",
+    "WorkflowPhase",
+    "WorkflowState",
     # Phase runners (legacy names, mapped to new phases)
     "run_staging",  # CLEANING phase
     "run_planning",  # DISCOVERY phase
@@ -79,25 +79,25 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> object:
     """Lazy imports to avoid circular dependencies."""
     if name in ("AnnotationParser", "SectionExtractor", "IdValidator", "LibsRegistry"):
         from .core import (
             AnnotationParser,
             IdValidator,
             LibsRegistry,
-            SectionExtractor,
+            SectionExtractor,  # noqa: F401
         )
 
         return locals()[name]
 
     if name in ("TrackedUnit", "SourceLocation", "UnitType", "UnitStatus", "ProvenanceTracker"):
         from .core import (
-            ProvenanceTracker,
-            SourceLocation,
-            TrackedUnit,
-            UnitStatus,
-            UnitType,
+            ProvenanceTracker,  # noqa: F401
+            SourceLocation,  # noqa: F401
+            TrackedUnit,  # noqa: F401
+            UnitStatus,  # noqa: F401
+            UnitType,  # noqa: F401
         )
 
         return locals()[name]
@@ -110,11 +110,11 @@ def __getattr__(name: str):
         "StrategyResult",
     ):
         from .strategies import (
-            ProcessingContext,
-            Strategy,
-            StrategyPhase,
-            StrategyRegistry,
-            StrategyResult,
+            ProcessingContext,  # noqa: F401
+            Strategy,  # noqa: F401
+            StrategyPhase,  # noqa: F401
+            StrategyRegistry,  # noqa: F401
+            StrategyResult,  # noqa: F401
         )
 
         return locals()[name]
@@ -155,17 +155,17 @@ def __getattr__(name: str):
         "WorkflowState",
         "WorkflowPhase",
         "PatchDependencyGraph",
-        "ContextIndex",
         "ingest",
+        "ContextIndex",
     ):
         from .workflow import (
-            ContextIndex,
-            PatchDependencyGraph,
-            WorkflowConfig,
-            WorkflowOrchestrator,
-            WorkflowPhase,
-            WorkflowState,
-            ingest,
+            ContextIndex,  # noqa: F401
+            ingest,  # noqa: F401
+            PatchDependencyGraph,  # noqa: F401
+            WorkflowConfig,  # noqa: F401
+            WorkflowOrchestrator,  # noqa: F401
+            WorkflowPhase,  # noqa: F401
+            WorkflowState,  # noqa: F401
         )
 
         return locals()[name]
@@ -182,15 +182,15 @@ def __getattr__(name: str):
         "discover_libraries_sync",
     ):
         from .discovery import (
-            CandidateIdentifier,
-            CandidateLibrary,
-            ElementLabels,
-            LibraryRefiner,
-            LibraryShape,
-            MultiLabeler,
-            ShapeAggregator,
-            discover_libraries,
-            discover_libraries_sync,
+            CandidateIdentifier,  # noqa: F401
+            CandidateLibrary,  # noqa: F401
+            discover_libraries,  # noqa: F401
+            discover_libraries_sync,  # noqa: F401
+            ElementLabels,  # noqa: F401
+            LibraryRefiner,  # noqa: F401
+            LibraryShape,  # noqa: F401
+            MultiLabeler,  # noqa: F401
+            ShapeAggregator,  # noqa: F401
         )
 
         return locals()[name]

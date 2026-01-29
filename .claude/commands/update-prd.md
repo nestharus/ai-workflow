@@ -262,7 +262,7 @@ fi
 ### Step 4: Chunk Input
 
 ```bash
-uv run python -m scripts.prd.chunker "$input_file" \
+uv run prd-chunker "$input_file" \
     --output-dir "$workspace_dir/chunks" \
     --mode headers
 
@@ -299,7 +299,7 @@ fi
 # (not when find failed or when there's one valid chunk)
 if [ "$find_succeeded" = true ] && [ "$chunk_count" -eq 0 ]; then
     rm -rf "$workspace_dir/chunks"/*
-    uv run python -m scripts.prd.chunker "$input_file" \
+    uv run prd-chunker "$input_file" \
         --output-dir "$workspace_dir/chunks" \
         --mode paragraphs \
         --min-size 500

@@ -63,25 +63,35 @@ class SurgicalDecompositionStrategy(Strategy):
         tools: dict[str, Tool] | None = None,
         agent_runner: str | None = None,
     ) -> None:
+        """Initialize surgical decomposition strategy.
+
+        Args:
+            definition: Strategy definition
+            tools: Available tools for strategy
+            agent_runner: Agent runner script path
+        """
         self.definition = definition
         self.tools = tools or {}
-        # Path to agent runner script (or use uv run)
-        self.agent_runner = agent_runner or "uv run python -m scripts.agents"
+        self.agent_runner = agent_runner or "uv run agents"
 
     @property
     def name(self) -> str:
+        """Strategy name."""
         return "surgical_decomposition"
 
     @property
     def purpose(self) -> str:
+        """Strategy purpose."""
         return "Surgically decompose prose into structured forms with full traceability"
 
     @property
     def risk_addressed(self) -> str:
+        """Risk addressed by this strategy."""
         return "Information loss during decomposition - every byte must be accounted for"
 
     @property
     def phases(self) -> list[StrategyPhase]:
+        """Strategy phases."""
         return [StrategyPhase.DECOMPOSITION, StrategyPhase.CLEANING]
 
     def applies_to(self, context: ProcessingContext) -> bool:

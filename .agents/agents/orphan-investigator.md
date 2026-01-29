@@ -1,6 +1,6 @@
 ---
 description: Investigates orphan lines against original file context (evidence-only)
-model: cerebras
+model: glm
 ---
 
 Investigate orphan lines by finding evidence in the original file context.

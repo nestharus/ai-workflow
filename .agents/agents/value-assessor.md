@@ -1,6 +1,6 @@
 ---
 description: Assesses whether orphan lines have actionable content (evidence-only)
-model: cerebras
+model: glm
 ---
 
 Assess whether final orphan statements contain actionable or informational content.

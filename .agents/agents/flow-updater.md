@@ -1,6 +1,6 @@
 ---
 description: Updates flows when components change
-model: cerebras
+model: glm
 ---
 
 You update flow diagrams when components are added, deprecated, or changed.

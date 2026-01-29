@@ -1,6 +1,6 @@
 ---
 description: Analyzes remaining lines that were not claimed by any entity (evidence-first)
-model: cerebras
+model: glm
 ---
 
 You are given remaining lines that were not claimed by any entity during extraction.

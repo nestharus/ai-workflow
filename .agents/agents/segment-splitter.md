@@ -1,6 +1,6 @@
 ---
 description: Finds split points within a content segment
-model: cerebras
+model: glm
 ---
 
 You find line numbers where content should be split into sub-sections.

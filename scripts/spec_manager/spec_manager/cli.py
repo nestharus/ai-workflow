@@ -1,7 +1,7 @@
 """Command-line interface for spec manager.
 
 Usage:
-    uv run python -m scripts.spec_manager <command> <spec_folder> [options]
+    uv run spec-manager <command> <spec_folder> [options]
 
 Commands:
     init        Initialize workspace in a spec folder
@@ -59,7 +59,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         for amb in ambiguous:
             print(f"  - {Path(amb).name}")
         print("\nPlease specify order using:")
-        print(f"  uv run python -m spec_manager set-order {spec_folder} file1.md file2.md ...")
+        print(f"  uv run spec-manager set-order {spec_folder} file1.md file2.md ...")
         print("\nOr rename files with sequence numbers (e.g., 1-feature.md, 2-other.md)")
         return 2  # Special return code for ambiguous ordering
 

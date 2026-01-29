@@ -1,6 +1,6 @@
 ---
 description: Analyzes plan to find scope (commits and optional folder whitelist)
-model: cerebras
+model: glm
 ---
 
 # Implementation Scope Agent

@@ -3,7 +3,7 @@ description: 'Plans spec changes - compares IDs, detects sequences, creates batc
   for merging
 
   '
-model: cerebras
+model: glm
 ---
 
 # Spec Manager Planning Agent
@@ -20,7 +20,7 @@ Plan changes for a spec folder by comparing sources and creating batches.
 Run planning:
 
 ```bash
-uv run python -m scripts.spec_manager plan <spec_folder>
+uv run spec-manager plan <spec_folder>
 ```
 
 Parse output for:

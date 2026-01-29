@@ -3,7 +3,7 @@ description: 'Analyzes content and presents cutting options when draft exceeds l
   constraints
 
   '
-model: cerebras
+model: glm
 ---
 
 # Agent: Condenser

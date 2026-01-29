@@ -29,7 +29,7 @@ The reorganization uses call graph analysis to classify tests:
 Before reorganizing, record the baseline line count:
 
 ```bash
-uv run python -m scripts.dev.count_test_lines scripts/tests/ --verify-syntax --json > baseline.json
+uv run dev.count-test-lines scripts/tests/ --verify-syntax --json > baseline.json
 ```
 
 Expected output:
@@ -50,7 +50,7 @@ Save this for comparison.
 Preview what the reorganization will do:
 
 ```bash
-uv run python -m scripts.dev.test_reorganizer scripts/tests/ --dry-run
+uv run dev.test-reorganizer scripts/tests/ --dry-run
 ```
 
 Review the output to understand:
@@ -64,7 +64,7 @@ Review the output to understand:
 Run the actual reorganization (originals are preserved):
 
 ```bash
-uv run python -m scripts.dev.test_reorganizer scripts/tests/ --execute
+uv run dev.test-reorganizer scripts/tests/ --execute
 ```
 
 This creates new files in `scripts/tests/unit/`, `scripts/tests/component/`, and
@@ -75,7 +75,7 @@ This creates new files in `scripts/tests/unit/`, `scripts/tests/component/`, and
 Check that all new files have valid Python syntax:
 
 ```bash
-uv run python -m scripts.dev.count_test_lines scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/ --verify-syntax
+uv run dev.count-test-lines scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/ --verify-syntax
 ```
 
 If syntax errors are reported, proceed to debugging.
@@ -85,7 +85,7 @@ If syntax errors are reported, proceed to debugging.
 Compare the new line count to the baseline:
 
 ```bash
-uv run python -m scripts.dev.count_test_lines scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/ --json
+uv run dev.count-test-lines scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/ --json
 ```
 
 The `total_lines` should match the baseline. If not, functions were lost or duplicated.
@@ -95,7 +95,7 @@ The `total_lines` should match the baseline. If not, functions were lost or dupl
 Compare functions between original and new folders:
 
 ```bash
-uv run python -m scripts.dev.diff_test_functions scripts/tests/ --new scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/ --verbose
+uv run dev.diff-test-functions scripts/tests/ --new scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/ --verbose
 ```
 
 This will report:
@@ -107,7 +107,7 @@ This will report:
 For detailed diffs of differing functions:
 
 ```bash
-uv run python -m scripts.dev.diff_test_functions scripts/tests/ --new scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/ --show-diffs
+uv run dev.diff-test-functions scripts/tests/ --new scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/ --show-diffs
 ```
 
 ## Debugging
@@ -116,7 +116,7 @@ uv run python -m scripts.dev.diff_test_functions scripts/tests/ --new scripts/te
 
 1. Check which files have errors:
    ```bash
-   uv run python -m scripts.dev.count_test_lines scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/ --verify-syntax
+   uv run dev.count-test-lines scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/ --verify-syntax
    ```
 
 2. Compare the problematic file with its original:
@@ -130,7 +130,7 @@ uv run python -m scripts.dev.diff_test_functions scripts/tests/ --new scripts/te
 
 1. Run the function diff to identify missing/extra functions:
    ```bash
-   uv run python -m scripts.dev.diff_test_functions scripts/tests/ --new scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/
+   uv run dev.diff-test-functions scripts/tests/ --new scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/
    ```
 
 2. Check for:
@@ -143,7 +143,7 @@ uv run python -m scripts.dev.diff_test_functions scripts/tests/ --new scripts/te
 
 1. Use `--show-diffs` to see actual content differences:
    ```bash
-   uv run python -m scripts.dev.diff_test_functions scripts/tests/ --new scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/ --show-diffs --max-diffs 20
+   uv run dev.diff-test-functions scripts/tests/ --new scripts/tests/unit/ scripts/tests/component/ scripts/tests/integration/ --show-diffs --max-diffs 20
    ```
 
 2. Common causes:

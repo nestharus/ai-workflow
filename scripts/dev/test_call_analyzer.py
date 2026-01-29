@@ -17,13 +17,13 @@ Mock Detection:
 
 Usage:
     # Report classification for a directory
-    uv run python -m scripts.dev.test_call_analyzer scripts/tests/ --report
+    uv run dev.test-call-analyzer scripts/tests/ --report
 
     # Preview reclassification (dry run)
-    uv run python -m scripts.dev.test_call_analyzer --dry-run
+    uv run dev.test-call-analyzer --dry-run
 
     # Execute reclassification
-    uv run python -m scripts.dev.test_call_analyzer --execute
+    uv run dev.test-call-analyzer --execute
 """
 
 from __future__ import annotations

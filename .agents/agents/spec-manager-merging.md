@@ -3,7 +3,7 @@ description: 'Applies spec changes - extracts to libraries, moves sections, remo
   duplicates
 
   '
-model: cerebras
+model: glm
 ---
 
 # Spec Manager Merging Agent
@@ -21,7 +21,7 @@ Apply planned changes to library files.
 Preview changes without writing:
 
 ```bash
-uv run python -m scripts.spec_manager merge <spec_folder>
+uv run spec-manager merge <spec_folder>
 ```
 
 Report:
@@ -35,7 +35,7 @@ Report:
 Apply changes:
 
 ```bash
-uv run python -m scripts.spec_manager merge <spec_folder> --apply
+uv run spec-manager merge <spec_folder> --apply
 ```
 
 ## Operations

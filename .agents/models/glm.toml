@@ -1,2 +1,3 @@
-command = "claude-cerebras"
-args = ["-p", "--dangerously-skip-permissions"]
+command = "opencode"
+args = ["run", "-m", "cerebras/zai-glm-4.7"]
+prompt_mode = "arg"

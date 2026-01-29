@@ -26,7 +26,7 @@ EOF
 2. Run the orchestrator:
 
 ```bash
-uv run python -m scripts.agents implementation-review-orchestrator '{"plan_file": ".tmp/implementation-review/plan.txt", "workspace": ".tmp/implementation-review"}'
+uv run agents implementation-review-orchestrator '{"plan_file": ".tmp/implementation-review/plan.txt", "workspace": ".tmp/implementation-review"}'
 ```
 
 ## What It Does

@@ -1,6 +1,6 @@
 ---
 description: Extracts atomic statements from paired Q&A or conclusions
-model: cerebras
+model: glm
 ---
 
 You extract atomic, actionable statements from content.

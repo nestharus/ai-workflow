@@ -3,10 +3,10 @@
 Workflow examples:
 
 # Phase 1: Summarize all files
-uv run python -m scripts.spec_refinement.cli spec summarize my_run_001
+uv run spec spec summarize my_run_001
 
 # Phase 2: Synthesize libraries
-uv run python -m scripts.spec_refinement.cli spec synthesize my_run_001
+uv run spec spec synthesize my_run_001
 """
 
 from __future__ import annotations

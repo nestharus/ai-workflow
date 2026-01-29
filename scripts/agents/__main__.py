@@ -1,15 +1,15 @@
 """Execute agents or models via CLI.
 
 Usage:
-    uv run python -m scripts.agents <agent_name> <prompt>
-    uv run python -m scripts.agents --model <model_name> <prompt>
-    uv run python -m scripts.agents <agent_name> --file <prompt_file>
-    echo "prompt" | uv run python -m scripts.agents <agent_name>
+    uv run agents <agent_name> <prompt>
+    uv run agents --model <model_name> <prompt>
+    uv run agents <agent_name> --file <prompt_file>
+    echo "prompt" | uv run agents <agent_name>
 
 Examples:
-    uv run python -m scripts.agents implementor task_001.md
-    uv run python -m scripts.agents --model claude-sonnet "Write a haiku"
-    echo "Help me" | uv run python -m scripts.agents my-agent
+    uv run agents implementor task_001.md
+    uv run agents --model claude-sonnet "Write a haiku"
+    echo "Help me" | uv run agents my-agent
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ def main() -> int:
     """Execute an agent or model."""
     parser = argparse.ArgumentParser(
         description="Execute an agent or model",
-        prog="uv run python -m scripts.agents",
+        prog="uv run agents",
     )
     parser.add_argument("agent", nargs="?", help="Agent name (without .md extension)")
     parser.add_argument("--model", "-m", help="Execute model directly instead of agent")
@@ -109,8 +109,18 @@ def main() -> int:
     # Build full prompt with agent instructions
     full_prompt = f"{agent.instructions}\n\n{prompt}"
 
+    print(
+        f"[agent-exec] model={agent.model} cmd={model.command} args={model.args} "
+        f"mode={model.prompt_mode} prompt_len={len(full_prompt)}",
+        file=sys.stderr,
+    )
+
     # Execute based on prompt_mode
     if model.prompt_mode == "arg":
+        print(
+            f"[agent-exec] launching: {model.command} {' '.join(model.args)} <prompt>",
+            file=sys.stderr,
+        )
         result = subprocess.run(
             [model.command, *model.args, full_prompt],
             capture_output=False,

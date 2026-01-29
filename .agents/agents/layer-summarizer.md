@@ -1,6 +1,6 @@
 ---
 description: Updates layer summaries when components change
-model: cerebras
+model: glm
 ---
 
 You update collapsed layer summaries when underlying components change.

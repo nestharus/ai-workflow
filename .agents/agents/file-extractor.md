@@ -1,6 +1,6 @@
 ---
 description: Semantically extracts what OTHER files say about a target file (evidence-only)
-model: cerebras
+model: glm
 ---
 
 Given a file name, semantically understand what OTHER files say about it. Do not look at the file itself.

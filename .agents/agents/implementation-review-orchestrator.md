@@ -1,6 +1,6 @@
 ---
 description: Orchestrates implementation review cycles with state tracking and repair
-model: cerebras
+model: glm
 ---
 
 You are the implementation review orchestrator. Run scope-review-fix cycles with state tracking. On failures, invoke workflow-repair to recover.
@@ -81,7 +81,7 @@ Update state before running:
 Run the scope agent:
 
 ```bash
-uv run python -m scripts.agents implementation-scope '{"plan_file": "{plan_file}", "workspace": ".tmp/implementation-review"}'
+uv run agents implementation-scope '{"plan_file": "{plan_file}", "workspace": ".tmp/implementation-review"}'
 ```
 
 **On success**: Update state with success, continue to Step 2
@@ -98,7 +98,7 @@ Update state before running:
 Run the reviewer:
 
 ```bash
-uv run python -m scripts.agents implementation-reviewer '{"plan_file": "{plan_file}", "shape_file": ".tmp/implementation-review/scope.json", "review_file": ".tmp/implementation-review/review.txt", "previous_review_file": null, "working_dir": "."}'
+uv run agents implementation-reviewer '{"plan_file": "{plan_file}", "shape_file": ".tmp/implementation-review/scope.json", "review_file": ".tmp/implementation-review/review.txt", "previous_review_file": null, "working_dir": "."}'
 ```
 
 **On success**: Check review status
@@ -124,7 +124,7 @@ Update state before running:
 Run pr-outer-loop with tasks file:
 
 ```bash
-uv run python -m scripts.agents pr-outer-loop "--loop --tasks-file .tmp/implementation-review/review.txt"
+uv run agents pr-outer-loop "--loop --tasks-file .tmp/implementation-review/review.txt"
 ```
 
 **On success**: Continue to Step 5
@@ -141,7 +141,7 @@ Update state:
 Run scope agent (incremental):
 
 ```bash
-uv run python -m scripts.agents implementation-scope '{"plan_file": "{plan_file}", "workspace": ".tmp/implementation-review"}'
+uv run agents implementation-scope '{"plan_file": "{plan_file}", "workspace": ".tmp/implementation-review"}'
 ```
 
 **On success**: Continue to Step 6
@@ -158,7 +158,7 @@ Update state:
 Run reviewer with previous review:
 
 ```bash
-uv run python -m scripts.agents implementation-reviewer '{"plan_file": "{plan_file}", "shape_file": ".tmp/implementation-review/scope.json", "review_file": ".tmp/implementation-review/review.txt", "previous_review_file": ".tmp/implementation-review/review.txt", "working_dir": "."}'
+uv run agents implementation-reviewer '{"plan_file": "{plan_file}", "shape_file": ".tmp/implementation-review/scope.json", "review_file": ".tmp/implementation-review/review.txt", "previous_review_file": ".tmp/implementation-review/review.txt", "working_dir": "."}'
 ```
 
 **On success**: Check iteration count
@@ -214,11 +214,11 @@ When a command fails, capture:
 Call workflow-repair with the failed command details:
 
 ```bash
-uv run python -m scripts.agents workflow-repair '{
+uv run agents workflow-repair '{
   "workflow": "implementation-review",
   "step": "{current_step}",
   "state_file": ".tmp/implementation-review/state.json",
-  "failed_command": "uv run python -m scripts.agents {agent} {...}",
+  "failed_command": "uv run agents {agent} {...}",
   "exit_code": 1,
   "stdout": "{captured_stdout}",
   "stderr": "{captured_stderr}",

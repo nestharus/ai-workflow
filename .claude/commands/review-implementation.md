@@ -161,12 +161,12 @@ Analyze the plan to find the scope (commits filtered by optional folder whitelis
 
 **If `from_commit` was specified:**
 ```bash
-uv run python -m scripts.agents implementation-scope '{"plan_file": "{plan_file}", "working_dir": "{working_dir}", "from_commit": "{from_commit}"}'
+uv run agents implementation-scope '{"plan_file": "{plan_file}", "working_dir": "{working_dir}", "from_commit": "{from_commit}"}'
 ```
 
 **Otherwise:**
 ```bash
-uv run python -m scripts.agents implementation-scope '{"plan_file": "{plan_file}", "working_dir": "{working_dir}"}'
+uv run agents implementation-scope '{"plan_file": "{plan_file}", "working_dir": "{working_dir}"}'
 ```
 
 **WAIT**: If this goes to background, call TaskOutput and wait until status is completed/failed.
@@ -204,7 +204,7 @@ This returns a list of files in scope. Parse the JSON output to get the `files` 
 Review the implementation against the plan:
 
 ```bash
-uv run python -m scripts.agents implementation-reviewer '{
+uv run agents implementation-reviewer '{
   "plan_file": "{plan_file}",
   "files": {files_json_array},
   "review_file": "{review_file}",
@@ -284,7 +284,7 @@ Working Directory: {working_dir}
 When any step fails, invoke workflow-repair to fix the *tooling* (not content):
 
 ```bash
-uv run python -m scripts.agents workflow-repair '{
+uv run agents workflow-repair '{
   "workflow": "implementation-review",
   "step": "{current_step}",
   "state_file": "{state_file}",

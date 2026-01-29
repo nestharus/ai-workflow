@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -85,161 +86,180 @@ def _build_file_handler_context(
     }
 
 
-def _spawn_file_handlers(
+def _run_single_task(
     working_dir: Path,
-    tasks_by_file: dict[str, list[str]],
+    file_path: str,
+    task_file: str,
+    tasks_folder: Path,
+) -> dict[str, Any] | None:
+    """Run a single task through the pr-file-handler agent.
+
+    Returns the parsed JSON result or None on failure.
+    """
+    context = _build_file_handler_context(file_path, [task_file], tasks_folder)
+    context_json = json.dumps(context)
+    task = context["tasks"][0]
+    content_preview = (task.get("content") or "")[:120]
+    print(
+        f"    task={task['id']} type={task.get('type')} "
+        f"line={task.get('line')} content={content_preview!r}",
+        file=sys.stderr,
+    )
+
+    success, exit_code, stdout, stderr = _run_command(
+        ["uv", "run", "agents", "pr-file-handler", context_json],
+        working_dir,
+    )
+    if not success:
+        print(
+            f"    [agent] Warning: Handler failed for {file_path} task={task['id']} "
+            f"(exit={exit_code})",
+            file=sys.stderr,
+        )
+        if stderr:
+            print(f"      stderr: {stderr[:500]}", file=sys.stderr)
+        return None
+
+    try:
+        result = json.loads(stdout)
+        if not isinstance(result, dict):
+            print(
+                f"    [agent] Warning: Result not a dict for {file_path} task={task['id']}",
+                file=sys.stderr,
+            )
+            return None
+        return result
+    except json.JSONDecodeError:
+        print(
+            f"    [agent] Warning: Could not parse result for {file_path} task={task['id']}",
+            file=sys.stderr,
+        )
+        print(f"      stdout: {stdout[:500]}", file=sys.stderr)
+        return None
+
+
+def _process_file_tasks(
+    working_dir: Path,
+    file_path: str,
+    task_files: list[str],
     tasks_folder: Path,
 ) -> tuple[list[str], list[dict[str, Any]]]:
-    """Spawn pr-file-handler agents in parallel and collect results.
+    """Process all tasks for a single file sequentially.
 
     Returns (modified_files, local_task_responses).
     """
     modified_files: list[str] = []
     local_task_responses: list[dict[str, Any]] = []
 
-    # Spawn handlers for file-specific tasks (in parallel)
-    processes: list[tuple[str, subprocess.Popen[str]]] = []
+    print(
+        f"  [agent] Processing {file_path} with {len(task_files)} task(s)",
+        file=sys.stderr,
+    )
 
-    for file_path, task_files in tasks_by_file.items():
-        if file_path == "__global__":
+    for task_file in task_files:
+        result = _run_single_task(working_dir, file_path, task_file, tasks_folder)
+        if result is None:
             continue
 
-        context = _build_file_handler_context(file_path, task_files, tasks_folder)
-        context_json = json.dumps(context)
-
+        changes = result.get("changes_made", False)
+        reply_preview = (result.get("deferred_reply") or "")[:200]
         print(
-            f"  [agent] Spawning pr-file-handler for {file_path} with "
-            f"{len(context['tasks'])} task(s)",
+            f"    [agent] Result: changes_made={changes}",
             file=sys.stderr,
         )
-        for task in context["tasks"]:
-            content_preview = (task.get("content") or "")[:120]
-            print(
-                f"    task={task['id']} type={task['type']} "
-                f"line={task.get('line')} content={content_preview!r}",
-                file=sys.stderr,
+        if reply_preview:
+            print(f"      reply: {reply_preview!r}", file=sys.stderr)
+        if changes and file_path not in modified_files:
+            modified_files.append(file_path)
+        if result.get("deferred_reply") and task_file.startswith("local_"):
+            local_task_responses.append(
+                {
+                    "task_id": task_file.replace(".json", ""),
+                    "reply": result["deferred_reply"],
+                }
             )
 
-        proc = subprocess.Popen(
-            ["uv", "run", "python", "-m", "scripts.agents", "pr-file-handler", context_json],
-            cwd=working_dir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        processes.append((file_path, proc))
+    return modified_files, local_task_responses
 
-    # Collect results from parallel handlers
-    for file_path, proc in processes:
-        stdout, stderr = proc.communicate()
-        if proc.returncode == 0:
-            try:
-                result = json.loads(stdout)
-                if not isinstance(result, dict):
+
+def _spawn_file_handlers(
+    working_dir: Path,
+    tasks_by_file: dict[str, list[str]],
+    tasks_folder: Path,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Run pr-file-handler agents: parallel across files, sequential per file.
+
+    Returns (modified_files, local_task_responses).
+    """
+    modified_files: list[str] = []
+    local_task_responses: list[dict[str, Any]] = []
+
+    # Separate file-specific and global tasks
+    file_tasks = {fp: tf for fp, tf in tasks_by_file.items() if fp != "__global__"}
+    global_task_files = tasks_by_file.get("__global__", [])
+
+    # Process file-specific tasks in parallel (one thread per file, sequential within)
+    if file_tasks:
+        with ThreadPoolExecutor(max_workers=len(file_tasks)) as executor:
+            futures = {
+                executor.submit(_process_file_tasks, working_dir, fp, tf, tasks_folder): fp
+                for fp, tf in file_tasks.items()
+            }
+            for future in as_completed(futures):
+                fp = futures[future]
+                try:
+                    mf, ltr = future.result()
+                    modified_files.extend(mf)
+                    local_task_responses.extend(ltr)
+                except Exception as exc:
                     print(
-                        f"  [agent] Warning: Could not parse handler result for {file_path} "
-                        "(not a dict)",
+                        f"  [agent] Error processing {fp}: {exc}",
                         file=sys.stderr,
                     )
-                    continue
-                changes = result.get("changes_made", False)
-                reply_preview = (result.get("deferred_reply") or "")[:200]
-                print(f"  [agent] Result for {file_path}: changes_made={changes}", file=sys.stderr)
-                if reply_preview:
-                    print(f"    reply: {reply_preview!r}", file=sys.stderr)
-                if changes:
-                    modified_files.append(file_path)
-                if result.get("deferred_reply"):
-                    for task_file in tasks_by_file.get(file_path, []):
-                        if task_file.startswith("local_"):
-                            local_task_responses.append(
-                                {
-                                    "task_id": task_file.replace(".json", ""),
-                                    "reply": result["deferred_reply"],
-                                }
-                            )
-            except json.JSONDecodeError:
-                print(
-                    f"  [agent] Warning: Could not parse handler result for {file_path}",
-                    file=sys.stderr,
-                )
-                print(f"    stdout: {stdout[:500]}", file=sys.stderr)
-        else:
-            print(
-                f"  [agent] Warning: Handler failed for {file_path} (exit={proc.returncode})",
-                file=sys.stderr,
-            )
-            if stderr:
-                print(f"    stderr: {stderr[:500]}", file=sys.stderr)
 
-    # Capture pre-diff state before global handlers run
-    pre_diff_files: set[str] | None = None
-    # Process global tasks sequentially
-    global_tasks = tasks_by_file.get("__global__", [])
-    if global_tasks:
+    # Process global tasks sequentially with pre/post diff tracking
+    if global_task_files:
         _ok, _ec, pre_out, _ = _run_command(["git", "diff", "--name-only"], working_dir)
+        pre_diff_files: set[str] = set()
         if _ok and pre_out.strip():
             pre_diff_files = {f.strip() for f in pre_out.strip().splitlines() if f.strip()}
-        else:
-            pre_diff_files = set()
-    for task_file in global_tasks:
-        context = _build_file_handler_context("__global__", [task_file], tasks_folder)
-        context_json = json.dumps(context)
 
-        print(f"  [agent] Running global handler for {task_file}", file=sys.stderr)
-        for task in context["tasks"]:
-            content_preview = (task.get("content") or "")[:120]
-            print(f"    task={task['id']} content={content_preview!r}", file=sys.stderr)
-
-        success, exit_code, stdout, stderr = _run_command(
-            ["uv", "run", "python", "-m", "scripts.agents", "pr-file-handler", context_json],
-            working_dir,
+        print(
+            f"  [agent] Processing __global__ with {len(global_task_files)} task(s)",
+            file=sys.stderr,
         )
-        if success:
-            try:
-                result = json.loads(stdout)
-                changes = result.get("changes_made", False)
-                reply_preview = (result.get("deferred_reply") or "")[:200]
-                print(
-                    f"  [agent] Global result for {task_file}: changes_made={changes}",
-                    file=sys.stderr,
-                )
-                if reply_preview:
-                    print(f"    reply: {reply_preview!r}", file=sys.stderr)
-                if result.get("deferred_reply") and task_file.startswith("local_"):
-                    local_task_responses.append(
-                        {
-                            "task_id": task_file.replace(".json", ""),
-                            "reply": result["deferred_reply"],
-                        }
-                    )
-            except json.JSONDecodeError:
-                print(
-                    f"  [agent] Warning: Could not parse global handler result for {task_file}",
-                    file=sys.stderr,
-                )
-                print(f"    stdout: {stdout[:500]}", file=sys.stderr)
-        else:
+        for task_file in global_task_files:
+            result = _run_single_task(working_dir, "__global__", task_file, tasks_folder)
+            if result is None:
+                continue
+
+            changes = result.get("changes_made", False)
+            reply_preview = (result.get("deferred_reply") or "")[:200]
             print(
-                f"  [agent] Warning: Global handler failed for {task_file} (exit={exit_code})",
+                f"    [agent] Global result: changes_made={changes}",
                 file=sys.stderr,
             )
-            if stderr:
-                print(f"    stderr: {stderr[:500]}", file=sys.stderr)
+            if reply_preview:
+                print(f"      reply: {reply_preview!r}", file=sys.stderr)
+            if result.get("deferred_reply") and task_file.startswith("local_"):
+                local_task_responses.append(
+                    {
+                        "task_id": task_file.replace(".json", ""),
+                        "reply": result["deferred_reply"],
+                    }
+                )
 
-    # Detect files modified by global handlers via pre/post git diff
-    if global_tasks and pre_diff_files is not None:
-        _ok, _ec, post_out, _ = _run_command(
-            ["git", "diff", "--name-only"],
-            working_dir,
-        )
+        # Detect files modified by global handlers
+        _ok, _ec, post_out, _ = _run_command(["git", "diff", "--name-only"], working_dir)
         if _ok and post_out.strip():
             post_files = {f.strip() for f in post_out.strip().splitlines() if f.strip()}
-            new_files = post_files - pre_diff_files
-            for changed in sorted(new_files):
+            for changed in sorted(post_files - pre_diff_files):
                 if changed not in modified_files:
                     modified_files.append(changed)
-                    print(f"  [agent] Global handler modified: {changed}", file=sys.stderr)
+                    print(
+                        f"    [agent] Global handler modified: {changed}",
+                        file=sys.stderr,
+                    )
 
     return modified_files, local_task_responses
 
@@ -293,7 +313,7 @@ def _run_tests(working_dir: Path, modified_files: list[str]) -> bool:
         )
 
         proc = subprocess.Popen(
-            ["uv", "run", "python", "-m", "scripts.agents", "pr-test-fixer", context],
+            ["uv", "run", "agents", "pr-test-fixer", context],
             cwd=working_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -499,9 +519,16 @@ def _commit_changes(working_dir: Path, cycle: int, tasks_processed: int) -> tupl
         return False, None
 
     # Stage and commit
-    add_ok, _add_ec, _, add_err = _run_command(["git", "add", "-A"], working_dir)
+    add_ok, add_ec, add_out, add_err = _run_command(["git", "add", "-A"], working_dir)
     if not add_ok:
-        print(f"Warning: git add failed: {add_err}", file=sys.stderr)
+        print(
+            f"Error: git add -A failed (exit={add_ec}) in {working_dir}",
+            file=sys.stderr,
+        )
+        if add_err.strip():
+            print(f"  stderr: {add_err.strip()}", file=sys.stderr)
+        if add_out.strip():
+            print(f"  stdout: {add_out.strip()}", file=sys.stderr)
         return False, None
 
     message = f"Review cycle {cycle}: applied {tasks_processed} tasks"

@@ -1,6 +1,6 @@
 ---
 description: Classifies content segments by type
-model: cerebras
+model: glm
 ---
 
 You classify what type of content a segment contains.

@@ -3,7 +3,7 @@ description: 'Verifies draft against all extracted invariants, fixes auto-fixabl
   violations, reports unfixable ones
 
   '
-model: cerebras
+model: glm
 ---
 
 # Agent: Invariant Reviewer

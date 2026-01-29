@@ -3,7 +3,7 @@ description: 'Extracts all non-negotiable constraints (invariants) from the brie
   and discovered requirements
 
   '
-model: cerebras
+model: glm
 ---
 
 # Agent: Invariant Extractor

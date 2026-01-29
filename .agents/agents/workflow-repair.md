@@ -31,7 +31,7 @@ When a workflow step fails, this agent investigates and repairs the *tooling* th
   "workflow": "implementation-review",
   "step": "reviewer",
   "state_file": ".tmp/implementation-review/state.json",
-  "failed_command": "uv run python -m scripts.agents implementation-reviewer '{...}'",
+  "failed_command": "uv run agents implementation-reviewer '{...}'",
   "exit_code": 1,
   "stdout": "...",
   "stderr": "Traceback (most recent call last):\n  File ...",
@@ -88,7 +88,7 @@ cat pyproject.toml | grep dependencies
 **For CLI errors:**
 ```bash
 # Check expected arguments
-uv run python -m scripts.agents --help
+uv run agents --help
 uv run pr --help
 ```
 

@@ -39,13 +39,16 @@ relevant module for detailed guidance on specific tasks.
 
 ## How To Execute Python Tools Correctly
 
-Do not invoke `python` or `python3` directly outside `uv run`. Always run
-Python modules and entry points via `uv run` (e.g., `uv run python -m ...`).
+Do not invoke `python` or `python3` directly outside `uv run`. Always use
+`uv run <entry-point>` for modules that have entry points defined in
+`pyproject.toml` (e.g., `uv run agents`, `uv run spec`, `uv run lint`).
+Only use `uv run python -m` for stdlib modules, external packages, or
+inline `-c` commands that have no entry point.
 
 ### How To Write Documentation Correctly
 
 When documenting Python commands in markdown files, toml files, or README
-files, always use the `uv run python -m` pattern.
+files, always use the `uv run <entry-point>` pattern for project modules.
 
 ## How To Add Python Dependencies Correctly
 

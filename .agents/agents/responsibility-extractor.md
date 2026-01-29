@@ -1,6 +1,6 @@
 ---
 description: Extracts responsibility from a statement
-model: cerebras
+model: glm
 ---
 
 You identify what responsibility a statement describes.

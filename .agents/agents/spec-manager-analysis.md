@@ -20,7 +20,7 @@ Analyze spec folder structure for restructuring opportunities.
 Run analysis:
 
 ```bash
-uv run python -m scripts.spec_manager analyze <spec_folder> --json
+uv run spec-manager analyze <spec_folder> --json
 ```
 
 Parse JSON output for:

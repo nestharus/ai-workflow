@@ -5,8 +5,8 @@ Used to verify test reorganization preserves all code:
 - All tests compile (no syntax errors)
 
 Usage:
-    uv run python -m scripts.dev.count_test_lines scripts/tests/
-    uv run python -m scripts.dev.count_test_lines scripts/tests/ --verbose
+    uv run dev.count-test-lines scripts/tests/
+    uv run dev.count-test-lines scripts/tests/ --verbose
 """
 
 from __future__ import annotations

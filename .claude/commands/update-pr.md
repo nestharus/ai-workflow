@@ -132,7 +132,7 @@ Pass through normalized arguments. The Python script handles:
 When the command fails, invoke workflow-repair to fix the *tooling* (not content):
 
 ```bash
-uv run python -m scripts.agents workflow-repair '{
+uv run agents workflow-repair '{
   "workflow": "pr-review",
   "step": "review-loop",
   "state_file": ".tmp/pr-review/state/session.json",

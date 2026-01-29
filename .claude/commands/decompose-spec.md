@@ -31,7 +31,7 @@ $ARGUMENTS - Path to specification file(s)
 ### Phase 1: Initialize Workspace
 
 ```bash
-uv run python -m scripts.spec_decomposition init "$ARGUMENTS" --workspace .tmp/spec_decomposition
+uv run spec-decompose init "$ARGUMENTS" --workspace .tmp/spec_decomposition
 ```
 
 ### Phase 2-3: Entity Discovery and Extraction
@@ -50,12 +50,12 @@ WHILE entities found:
 
 ```bash
 # 1. Format discovery content
-uv run python -m scripts.spec_decomposition format-discovery \
+uv run spec-decompose format-discovery \
   --workspace .tmp/spec_decomposition \
   --output .tmp/spec_decomposition/discovery_input.txt
 
 # 2. Run entity-finder agent
-uv run python -m scripts.agents entity-finder <<EOF
+uv run agents entity-finder <<EOF
 content: |
 $(cat .tmp/spec_decomposition/discovery_input.txt)
 
@@ -63,7 +63,7 @@ output_file: .tmp/spec_decomposition/entities_found.json
 EOF
 
 # 3. For each entity found, extract to workspace
-uv run python -m scripts.spec_decomposition extract-entity \
+uv run spec-decompose extract-entity \
   --workspace .tmp/spec_decomposition \
   --entity "<EntityName>" \
   --evidence '[{"file": "<source>", "line": <num>, "text": "<text>"}]' \
@@ -74,12 +74,12 @@ uv run python -m scripts.spec_decomposition extract-entity \
 
 ```bash
 # 1. Create fresh staging from originals
-uv run python -m scripts.spec_decomposition create-investigation-staging \
+uv run spec-decompose create-investigation-staging \
   --workspace .tmp/spec_decomposition \
   --entity "<EntityName>"
 
 # 2. Run entity-investigator agent
-uv run python -m scripts.agents entity-investigator <<EOF
+uv run agents entity-investigator <<EOF
 entity_name: <EntityName>
 
 content: |
@@ -89,7 +89,7 @@ output_file: .tmp/spec_decomposition/investigation_<EntityName>.json
 EOF
 
 # 3. Process findings
-uv run python -m scripts.spec_decomposition process-investigation \
+uv run spec-decompose process-investigation \
   --workspace .tmp/spec_decomposition \
   --findings .tmp/spec_decomposition/investigation_<EntityName>.json \
   --redact-discovery
@@ -99,7 +99,7 @@ uv run python -m scripts.spec_decomposition process-investigation \
 
 ```bash
 # 1. Run context-finder agent on redacted investigation content
-uv run python -m scripts.agents context-finder <<EOF
+uv run agents context-finder <<EOF
 entity_name: <EntityName>
 
 entity_info: |
@@ -112,7 +112,7 @@ output_file: .tmp/spec_decomposition/context_<EntityName>.json
 EOF
 
 # 2. Process context findings
-uv run python -m scripts.spec_decomposition process-context \
+uv run spec-decompose process-context \
   --workspace .tmp/spec_decomposition \
   --findings .tmp/spec_decomposition/context_<EntityName>.json \
   --entity "<EntityName>"
@@ -126,12 +126,12 @@ Orphans that might relate to known entities.
 
 ```bash
 # 1. Prepare orphan investigation input
-uv run python -m scripts.spec_decomposition investigate-orphans \
+uv run spec-decompose investigate-orphans \
   --workspace .tmp/spec_decomposition \
   --level entity
 
 # 2. Run orphan-investigator agent with original file context
-uv run python -m scripts.agents orphan-investigator <<EOF
+uv run agents orphan-investigator <<EOF
 orphan_lines: |
 $(cat .tmp/spec_decomposition/orphans_entity_input.json)
 
@@ -145,7 +145,7 @@ output_file: .tmp/spec_decomposition/orphan_entity_analysis.json
 EOF
 
 # 3. Process orphan findings (investigations, cross_cutting, no_context_found)
-uv run python -m scripts.spec_decomposition process-orphans \
+uv run spec-decompose process-orphans \
   --workspace .tmp/spec_decomposition \
   --findings .tmp/spec_decomposition/orphan_entity_analysis.json
 ```
@@ -179,7 +179,7 @@ This captures:
 Remaining orphans investigated against entire project:
 
 ```bash
-uv run python -m scripts.spec_decomposition investigate-orphans \
+uv run spec-decompose investigate-orphans \
   --workspace .tmp/spec_decomposition \
   --level project
 ```
@@ -194,7 +194,7 @@ Run project-investigator with:
 Final orphans assessed for value:
 
 ```bash
-uv run python -m scripts.spec_decomposition assess-orphan-value \
+uv run spec-decompose assess-orphan-value \
   --workspace .tmp/spec_decomposition
 ```
 
@@ -211,7 +211,7 @@ The decomposer produces evidence-heavy docs, but they are not directly usable as
 Tagging assigns stable IDs to **source lines** (facts) so duplicates can be referenced consistently.
 
 ```bash
-uv run python -m scripts.spec_decomposition tag-facts --workspace .tmp/spec_decomposition
+uv run spec-decompose tag-facts --workspace .tmp/spec_decomposition
 ```
 
 This creates:
@@ -224,7 +224,7 @@ Recomposition turns the decomposed artifacts into **implementable** specs withou
 (pure regrouping/moving by IDs).
 
 ```bash
-uv run python -m scripts.spec_decomposition recompose --workspace .tmp/spec_decomposition
+uv run spec-decompose recompose --workspace .tmp/spec_decomposition
 ```
 
 This writes a recomposed bundle under `output/recomposed/` including:
@@ -251,7 +251,7 @@ Implementation should proceed iteratively:
 ### Phase 11: Finalize
 
 ```bash
-uv run python -m scripts.spec_decomposition finalize --workspace .tmp/spec_decomposition
+uv run spec-decompose finalize --workspace .tmp/spec_decomposition
 ```
 
 ## Output

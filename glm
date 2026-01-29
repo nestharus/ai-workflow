@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-claude-cerebras --dangerously-skip-permissions "$@"
+exec opencode -m cerebras/zai-glm-4.7 "$@"

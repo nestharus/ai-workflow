@@ -5,7 +5,7 @@ They start a real Docker container with the MCP bridge and a simple echo MCP ser
 then verify the full request flow works end-to-end using Unix socket communication.
 
 Usage:
-    uv run python -m pytest scripts/tests/mcp/integration.py -v
+    uv run pytest scripts/tests/mcp/integration.py -v
 """
 
 from __future__ import annotations

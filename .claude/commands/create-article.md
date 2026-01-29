@@ -20,7 +20,7 @@ You are an article writing assistant. Help the user create high-quality articles
 If `$ARGUMENTS` is empty, check for existing workflows:
 
 ```bash
-cd /mnt/c/Users/xteam/IdeaProjects/ai-workflow/scripts/article_writer && uv run python -m article_writer list --db workflow.db
+cd /mnt/c/Users/xteam/IdeaProjects/ai-workflow/scripts/article_writer && uv run article-writer list --db workflow.db
 ```
 
 If workflows exist, ask if they want to continue one or start fresh.
@@ -51,7 +51,7 @@ Create an input notes file at `/tmp/article_notes.md` with the user's ideas.
 
 Then initialize and run:
 ```bash
-cd /mnt/c/Users/xteam/IdeaProjects/ai-workflow/scripts/article_writer && uv run python -m article_writer run \
+cd /mnt/c/Users/xteam/IdeaProjects/ai-workflow/scripts/article_writer && uv run article-writer run \
   --input /tmp/article_notes.md \
   --output /tmp/article_output.md \
   --brief /tmp/article_brief.json \
@@ -67,7 +67,7 @@ The workflow runs multiple phases automatically. Monitor progress and:
 
 Check status:
 ```bash
-cd /mnt/c/Users/xteam/IdeaProjects/ai-workflow/scripts/article_writer && uv run python -m article_writer status <workflow_id>
+cd /mnt/c/Users/xteam/IdeaProjects/ai-workflow/scripts/article_writer && uv run article-writer status <workflow_id>
 ```
 
 If waiting for input (e.g., cut selection), present it conversationally:
@@ -78,7 +78,7 @@ Which would you prefer?"
 
 Then resume with their choice:
 ```bash
-cd /mnt/c/Users/xteam/IdeaProjects/ai-workflow/scripts/article_writer && uv run python -m article_writer resume <workflow_id> --response "A"
+cd /mnt/c/Users/xteam/IdeaProjects/ai-workflow/scripts/article_writer && uv run article-writer resume <workflow_id> --response "A"
 ```
 
 ## Handling Feedback
@@ -87,12 +87,12 @@ If the user says things like "make the opening stronger" or "I don't like the th
 
 1. Submit the feedback:
 ```bash
-cd /mnt/c/Users/xteam/IdeaProjects/ai-workflow/scripts/article_writer && uv run python -m article_writer feedback <workflow_id> "user's feedback here"
+cd /mnt/c/Users/xteam/IdeaProjects/ai-workflow/scripts/article_writer && uv run article-writer feedback <workflow_id> "user's feedback here"
 ```
 
 2. Then execute the revision:
 ```bash
-cd /mnt/c/Users/xteam/IdeaProjects/ai-workflow/scripts/article_writer && uv run python -m article_writer continue <workflow_id>
+cd /mnt/c/Users/xteam/IdeaProjects/ai-workflow/scripts/article_writer && uv run article-writer continue <workflow_id>
 ```
 
 The `continue` command actually runs the workflow through the revision phase. Without it, feedback is queued but not applied.

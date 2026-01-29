@@ -15,7 +15,7 @@ This runner is designed to:
 
 AGENT EXECUTION:
 - Agents are defined in `.agents/agents/article-writer-*.md` with YAML frontmatter
-- Execution uses `uv run python -m scripts.agents` with the agent's configured model
+- Execution uses `uv run agents` with the agent's configured model
 - Model selection is configured per-agent in `.agents/agents/`
 - SQLite-backed state machine for persistence and resume capability
 
@@ -281,7 +281,7 @@ def run_agent(
 ) -> str:
     """Run an agent via the scripts.agents module.
 
-    Uses `uv run python -m scripts.agents <agent_name> --file <prompt_file>`
+    Uses `uv run agents <agent_name> --file <prompt_file>`
     to invoke the agent with its configured model. Retries on empty output.
     """
     # Map internal name to .agents/agents/ filename
@@ -326,12 +326,8 @@ def run_agent(
         )
 
         # Always log raw I/O for debugging.
-        (logs_dir / f"{agent_name}.stdout.txt").write_text(
-            proc.stdout or "", encoding="utf-8"
-        )
-        (logs_dir / f"{agent_name}.stderr.txt").write_text(
-            proc.stderr or "", encoding="utf-8"
-        )
+        (logs_dir / f"{agent_name}.stdout.txt").write_text(proc.stdout or "", encoding="utf-8")
+        (logs_dir / f"{agent_name}.stderr.txt").write_text(proc.stderr or "", encoding="utf-8")
 
         if proc.returncode != 0:
             msg = (
@@ -883,9 +879,9 @@ def _run_workflow_loop(
     if reviews_dir.exists():
         for review_file in reviews_dir.glob("*.md"):
             with contextlib.suppress(Exception):
-                workflow_state.setdefault(
-                    "reviews", {}
-                )[review_file.stem + ".md"] = _read_text(review_file)
+                workflow_state.setdefault("reviews", {})[review_file.stem + ".md"] = _read_text(
+                    review_file
+                )
 
     # Load analysis outputs for agents that need them
     analysis_dir = workspace / "analysis"

@@ -29,7 +29,7 @@ mkdir -p .tmp/pr-review
 2. Run the pr-outer-loop agent:
 
 ```bash
-uv run python -m scripts.agents pr-outer-loop $ARGUMENTS
+uv run agents pr-outer-loop $ARGUMENTS
 ```
 
 ## Error Handling
@@ -37,11 +37,11 @@ uv run python -m scripts.agents pr-outer-loop $ARGUMENTS
 When the command fails, invoke workflow-repair to fix the *tooling* (not content):
 
 ```bash
-uv run python -m scripts.agents workflow-repair '{
+uv run agents workflow-repair '{
   "workflow": "pr-review",
   "step": "pr-outer-loop",
   "state_file": ".tmp/pr-review/state.json",
-  "failed_command": "uv run python -m scripts.agents pr-outer-loop ...",
+  "failed_command": "uv run agents pr-outer-loop ...",
   "exit_code": 1,
   "stdout": "{captured_stdout}",
   "stderr": "{captured_stderr}",

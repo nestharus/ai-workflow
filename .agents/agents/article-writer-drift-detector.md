@@ -3,7 +3,7 @@ description: 'Detects drift between revised draft and original plan/outline - fl
   when revisions have diverged from the original intent
 
   '
-model: cerebras
+model: glm
 ---
 
 # Agent: Drift Detector

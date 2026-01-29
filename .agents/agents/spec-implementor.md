@@ -1,6 +1,6 @@
 ---
 description: Implements spec IDs and produces evidence map
-model: cerebras
+model: glm
 ---
 
 Implement the given spec IDs and track what files are created/modified.

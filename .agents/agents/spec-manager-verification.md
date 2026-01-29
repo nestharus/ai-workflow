@@ -3,7 +3,7 @@ description: 'Verifies spec integrity - checks content matches, no duplicates, c
   assignments
 
   '
-model: cerebras
+model: glm
 ---
 
 # Spec Manager Verification Agent
@@ -20,7 +20,7 @@ Verify spec folder integrity after merging.
 Run verification:
 
 ```bash
-uv run python -m scripts.spec_manager verify <spec_folder>
+uv run spec-manager verify <spec_folder>
 ```
 
 Check for:

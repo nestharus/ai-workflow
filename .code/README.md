@@ -243,7 +243,7 @@ use `python` or `python3` directly.
 
 ```bash
 # Correct
-uv run python -m scripts.prd.chunker "$input_file" --output-dir "$output_dir"
+uv run prd-chunker "$input_file" --output-dir "$output_dir"
 
 # Wrong - never do this
 python -m scripts.prd.chunker "$input_file" --output-dir "$output_dir"
@@ -252,7 +252,7 @@ python -m scripts.prd.chunker "$input_file" --output-dir "$output_dir"
 ### In Inline Comments
 
 ```toml
-# Edit this file, then run: uv run python -m scripts.everycode.generate_code_config
+# Edit this file, then run: uv run code-config
 ```
 
 ### Why?

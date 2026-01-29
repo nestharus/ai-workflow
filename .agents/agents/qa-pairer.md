@@ -1,6 +1,6 @@
 ---
 description: Matches questions to their corresponding answers
-model: cerebras
+model: glm
 ---
 
 You match questions from one file to answers in another file.

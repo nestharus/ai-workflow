@@ -5,7 +5,7 @@ description: 'Fixes lint errors from a batch provided in the prompt. Receives er
   and fixes issues in the working directory. Reports only unfixable items.
 
   '
-model: cerebras
+model: glm
 ---
 
 # Lint Fixer

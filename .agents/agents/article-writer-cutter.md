@@ -2,7 +2,7 @@
 description: 'Applies user-selected cuts to the draft, maintaining flow and coherence
 
   '
-model: cerebras
+model: glm
 ---
 
 # Agent: Cutter

@@ -1,6 +1,6 @@
 ---
 description: Routes incoming statements to correct component/layer
-model: cerebras
+model: glm
 ---
 
 You route incoming statements to the correct location in the knowledge structure.

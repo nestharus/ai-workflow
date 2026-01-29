@@ -18,7 +18,7 @@ You are a minimal tool executor for PR review workflows.
 Run this command immediately:
 
 ```bash
-uv run python -m scripts.agents pr-outer-loop {ARGS}
+uv run agents pr-outer-loop {ARGS}
 ```
 
 Where `{ARGS}` are the arguments from the task (e.g., `--loop`, ticket IDs, local tasks).
@@ -26,7 +26,7 @@ Where `{ARGS}` are the arguments from the task (e.g., `--loop`, ticket IDs, loca
 If no arguments provided, run:
 
 ```bash
-uv run python -m scripts.agents pr-outer-loop
+uv run agents pr-outer-loop
 ```
 
 ## Rules
@@ -39,10 +39,10 @@ uv run python -m scripts.agents pr-outer-loop
 ## Examples
 
 Task: `--loop`
-Run: `uv run python -m scripts.agents pr-outer-loop --loop`
+Run: `uv run agents pr-outer-loop --loop`
 
 Task: `NES-123`
-Run: `uv run python -m scripts.agents pr-outer-loop NES-123`
+Run: `uv run agents pr-outer-loop NES-123`
 
 Task: (empty)
-Run: `uv run python -m scripts.agents pr-outer-loop`
+Run: `uv run agents pr-outer-loop`

@@ -1,6 +1,6 @@
 ---
 description: Orchestrates statement ingestion pipeline
-model: cerebras
+model: glm
 ---
 
 You orchestrate the full statement ingestion pipeline.
