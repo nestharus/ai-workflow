@@ -1,7 +1,7 @@
 # Tech Plan: Integration — Entrypoints & CLI Contract
 
 - **Doc**: Tech_Plan__Integration/02_Entrypoints_and_CLI_Contract.md
-- **Updated**: 2026-01-26
+- **Updated**: 2026-01-29
 - **Shard**: Integration §2–§2.2
 - **Libraries / packages**:
   - `workflowctl/` (stable non-interactive automation surface)
@@ -69,11 +69,27 @@ Minimum required subcommands (names are part of the UX contract; exact flags may
 **Metrics and aggregation**
 - `workflowctl metrics summary [--since <rfc3339>] [--since-days <N>] [--format json|table]`
 - `workflowctl metrics failures [--group-by signature|code] [--since-days <N>] [--format json|table]`
-- `workflowctl export metrics --format json --out <path> [--since <rfc3339>]`
 
 **Export/sharing**
 - `workflowctl export --ticket <ticket_id> --mode validated|review`
 - `workflowctl export scrub --ticket <ticket_id> [--run <run_id>]`
+- `workflowctl export metrics --out <path> [--since <rfc3339>] [--since-days <N>]`
+
+**Export command hierarchy (normative)**
+
+`workflowctl export` is a command group with three distinct parser shapes:
+- **Ticket export (default action)**: `workflowctl export --ticket <ticket_id> --mode validated|review ...`
+- **Scrub**: `workflowctl export scrub --ticket <ticket_id> ...`
+- **Metrics export**: `workflowctl export metrics --out <path> ...`
+
+Parser disambiguation rule (normative):
+- If the first token after `export` is `scrub` or `metrics`, it MUST be parsed as a subcommand invocation.
+- Otherwise, `export` MUST be parsed as the ticket export action and MUST require `--ticket`.
+
+Examples (disambiguating expected invocation syntax):
+- Ticket export: `workflowctl export --ticket NES-47 --mode validated --out ./export.zip`
+- Scrub ticket export: `workflowctl export scrub --ticket NES-47 --run 01J... --out ./export.scrubbed.zip`
+- Metrics export: `workflowctl export metrics --since-days 7 --out ./metrics.jsonl`
 
 
 ### 2.1 CLI bootstrap sequence (normative)
