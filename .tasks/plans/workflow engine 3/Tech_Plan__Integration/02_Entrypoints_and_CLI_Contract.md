@@ -28,13 +28,17 @@ Minimum required subcommands (names are part of the UX contract; exact flags may
 
 **Onboarding** (see Configuration & Onboarding §2, §7)
 - `workflowctl init [--interactive] [--project]`
-- `workflowctl doctor`
+- `workflowctl doctor [--check-tools] [--tool <tool_name>]`
 - `workflowctl bootstrap` (optional)
+- `workflowctl version`
 
 **Configuration** (see Configuration & Onboarding §5, §7)
 - `workflowctl config show [--explain]`
+- `workflowctl config get <key>`
 - `workflowctl config set <key> <value>`
+- `workflowctl config export [--redact-secrets]`
 - `workflowctl providers list|add|remove|test <name>`
+- `workflowctl models list`
 
 **CLI Integration** (see Configuration & Onboarding §4)
 - `workflowctl install --cli <name> [--project]` (installs commands + workflow-manager skill)
@@ -45,7 +49,7 @@ Minimum required subcommands (names are part of the UX contract; exact flags may
 
 **Workflow execution**
 - `workflowctl run --workflow <id-or-path> ...`
-- `workflowctl workflows list|validate`
+- `workflowctl workflow list|show|validate`
 
 **Task control**
 - `workflowctl task approve-plan <ticket_id> <task_id> --plan <path>`
@@ -56,6 +60,7 @@ Minimum required subcommands (names are part of the UX contract; exact flags may
 **Observability + control**
 - `workflowctl runs list|show`
 - `workflowctl logs tail --run <run_id>`
+- `workflowctl logs export --run <run_id> [--error <error_id>]`
 - `workflowctl pause|resume --run <run_id> | --step <step_execution_id>`
 - `workflowctl investigate --step <step_execution_id>`
 - `workflowctl notifications tail`

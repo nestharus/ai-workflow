@@ -99,6 +99,7 @@ A notification is a JSON document with required fields (Core §5.2) plus:
 * `title` (string; required)
 * `message` (string; required)
 * `kind` (string; optional; machine classification)
+* `playbook_ref` (string; optional) — Reference to error recovery playbook section (e.g., "E_EXPECTED_REV_MISMATCH")
 * `evidence_refs` (array; optional): file paths / run ids / step ids
 * `requires_action` (bool; default `false`)
 * `expires_at` (RFC3339 timestamp; optional)

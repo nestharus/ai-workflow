@@ -228,7 +228,7 @@ algorithm computes the final sparse pattern set:
         `{"", ".", "/"}`), mark pattern as `TOO_BROAD`
   5.2. If `len(include_patterns) > BROADNESS_THRESHOLD` (default 200) OR any
       pattern is marked `TOO_BROAD`:
-      * If `policy.allow_full_fallback = true`:
+      * If `sandbox.allow_full_fallback = true`:
         * Record deviation: "Escalated to full mode due to broadness (pattern
           count: X, broad prefixes present: Y)"
         * Emit notification at `warn` severity with deviation details
@@ -380,12 +380,12 @@ Input file inputs:
 ["file1.txt", "file2.txt", ..., "file201.txt"] (201 files)
 ```
 
-Assume `BROADNESS_THRESHOLD = 200`, `policy.allow_full_fallback = true`:
+Assume `BROADNESS_THRESHOLD = 200`, `sandbox.allow_full_fallback = true`:
 
 Algorithm execution:
 
 * Step 5: Broadness guard detects 201 patterns exceeds threshold
-* Since `policy.allow_full_fallback = true`: escalate to full sparse mode
+* Since `sandbox.allow_full_fallback = true`: escalate to full sparse mode
 * Recreate sandbox with `sparse_mode=full`, return empty `include_patterns`
 
 ##### Pattern breadth limits and escalation
@@ -496,14 +496,15 @@ Expansion action (v1):
 
 The runner MUST NOT automatically remove patterns during a run.
 
-### 9.3 Copy/full fallback (enabled by default; guarded)
+### 9.3 Copy/full fallback (guarded; opt-in)
 
 Some repos/tools require more files than sparse heuristics capture. The system
 supports a guarded fallback path to reduce user friction.
 
 Config:
 
-* `[sandbox].copy_fallback = true` by default (Core Infrastructure §11.4)
+* `[sandbox].allow_full_fallback = false` by default (Core Infrastructure §11.4)
+* Per-run override: `workflowctl run <workflow> --allow-full-fallback`
 
 #### 9.3.1 When fallback triggers (normative)
 

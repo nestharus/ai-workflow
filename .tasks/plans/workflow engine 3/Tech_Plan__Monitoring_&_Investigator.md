@@ -167,6 +167,8 @@ The investigator MUST produce both:
 - `incident_type` (cause category), and
 - `classification` (recommended next action category)
 
+**User-facing playbooks**: For detailed user-facing recovery instructions for each error code, see `Tech_Plan__Error_Recovery_Playbooks.md`. The playbooks provide exact commands, escalation criteria, and evidence collection guidance.
+
 ##### A) Incident type (cause category)
 
 Choose one of:
@@ -382,3 +384,7 @@ All commands must print evidence refs and never hide the underlying artifacts.
 | False positives from time-based triggers | Medium | treat time as signal; require progress evidence analysis |
 | Repair causes regressions | Medium | sandbox validation required; provenance + evidence; capability gating |
 | Investigation loops | Low | novelty requirement + repeated signature → explicit give-up |
+
+## 9) Notifications
+
+When emitting notifications for error conditions, producers SHOULD include a reference to the relevant playbook section in the notification message, e.g., "See Error Recovery Playbooks: E_EXPECTED_REV_MISMATCH for recovery steps."

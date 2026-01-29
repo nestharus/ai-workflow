@@ -17,6 +17,13 @@ Validations:
 - queue directory invariants (no duplicates, no stranded tmp)
 - journal invariants (prepare/commit pairs)
 
+Options (v1):
+- `workflowctl fsck` — run the standard integrity suite (fast, safe defaults).
+- `workflowctl fsck --full` — run all checks including the most expensive validations.
+- `workflowctl fsck --check-ownership` — validate ownership map invariants used for multi-writer correctness.
+- `workflowctl fsck --check-ulids` — validate ULID invariants (format, uniqueness expectations, and any detected collisions).
+- `workflowctl fsck --check-schema` — validate schema versions across durable documents and report unsupported versions.
+
 Outputs:
 - durable report artifact + notification if corruption is detected
 
@@ -30,3 +37,7 @@ Recovery actions:
 
 All recovery actions are logged and bundled as evidence.
 
+Options (v1):
+- `workflowctl recover` — run deterministic recovery across journals/queues/tmp debris (bounded by policy).
+- `workflowctl recover --op <op_id>` — inspect and recover a specific journaled operation by `op_id` (decision tree output is mandatory).
+- `workflowctl recover --clear-ownership <resource_id>` — clear a stale ownership record when `fsck --check-ownership` indicates it is safe.

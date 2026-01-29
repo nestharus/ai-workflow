@@ -92,3 +92,4 @@ This document is an **index**. The authoritative library specs live under:
   - logs flushed to safe boundaries, and
   - durable acknowledgements via control actions queue.
 
+- **Error recovery playbooks** provide user-facing operational guidance for all error codes defined in Logs Store §8.2.5. See `Tech_Plan__Error_Recovery_Playbooks.md`.

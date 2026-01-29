@@ -76,8 +76,13 @@ Sensitive keys include:
 mode = "sandbox"                  # sandbox (default)
 max_concurrent = 4
 default_sparse = "copy"            # copy|full|empty (jj workspace add behavior)
-copy_fallback = true               # allow fallback when sparse/sandbox is insufficient
+allow_full_fallback = false        # allow full checkout fallback when sparse derivation fails
 ttl_minutes = 120
+
+[sandbox.resource_limits]
+# Optional resource limits applied to sandbox tool execution.
+cpu_cores = 4
+memory_mb = 8192
 
 [policy]
 # Debug hook: when true, sandboxes MAY be retained on failure (Integration §9.2.0)
@@ -85,9 +90,19 @@ sandbox_retain_on_failure = false
 
 [queues]
 processing_ttl_ms = 300000         # 5 minutes
+lease_ttl_ms = 120000              # 2 minutes (stale if last_heartbeat_ts older than this)
 lease_refresh_ms = 30000           # consumer heartbeat cadence
 max_requeue_attempts = 1           # bounded; avoid silent loops
 notification_dedupe_window_ms = 60000  # 60 seconds; CLI display deduplication window
+
+[timeouts]
+tool_default_ms = 600000           # default tool timeout (10 minutes)
+
+[llm]
+retry_backoff_ms = 5000            # default backoff for retryable LLM failures (5 seconds)
+
+[capabilities]
+# Capability gates are boolean flags; default is false for any unspecified capability.
 
 [retention]
 keep_runs = 50
@@ -106,6 +121,10 @@ export_scrub_default = true
 [models]
 default = "chatgpt_5_2"
 # routing can be overridden per workflow and per step
+
+[models."chatgpt_5_2"]
+# Model id → provider route used by the LLM gateway.
+provider = "openai"
 
 [models.routing]
 # Routing key → model name (see Configuration & Onboarding §5.3)
@@ -131,6 +150,12 @@ budget_usd_per_run = 5.00
 jj_min_version = "0.22.0"
 jj_recommended_version = "0.37.0"
 auto_bootstrap_jj = true
+
+[providers]
+# Provider credentials live under provider-named subtables and are always redacted on export.
+# Example:
+# [providers.openai]
+# api_key = "..."
 
 [cli]
 # Set by configuration agent (see Configuration & Onboarding §4)

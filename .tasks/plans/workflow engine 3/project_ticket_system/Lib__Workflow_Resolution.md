@@ -37,4 +37,4 @@ Selection flags:
 
 If multiple candidates exist at the same precedence level, selection MUST be deterministic:
 - prefer exact filename match `<workflow_id>.yaml`
-- else fail loudly with `WORKFLOW_AMBIGUOUS`
+- else fail loudly with `E_WORKFLOW_AMBIGUOUS`
