@@ -964,20 +964,52 @@ Test selection is **not** a silent optimization:
 1. Compute `changed_paths` as the set of files changed between `base_rev..tip_rev`.
 
 2. Derive `changed_packages`:
-   - For each changed path, walk upward toward repo root until one of these “package root markers” is found:
-     - `pyproject.toml`, `setup.cfg`, `setup.py`
-     - `package.json`
-     - `go.mod`
-     - `Cargo.toml`
-   - The nearest marker directory is the package root.
-   - If no marker is found, the package root is repo root.
+   - For each changed path:
+     - Start from the changed file’s directory.
+     - Walk upward toward repo root.
+     - Stop at the **first** (nearest) directory containing any “package root marker”.
+   - Package root markers (v1, grouped by ecosystem for maintainability):
+     - **python**: `pyproject.toml`, `setup.cfg`, `setup.py`
+     - **javascript**: `package.json`
+     - **go**: `go.mod`
+     - **rust**: `Cargo.toml`
+     - **java**: `pom.xml`, `build.gradle`, `build.gradle.kts`, `settings.gradle`, `settings.gradle.kts`
+     - **ruby**: `Gemfile`
+     - **dotnet** (glob): `*.sln`, `*.csproj`, `*.fsproj`
+     - **bazel**: `WORKSPACE`, `MODULE.bazel`, `BUILD`, `BUILD.bazel`
+   - Suggested marker configuration representation (non-normative):
+
+     ```yaml
+     package_markers:
+       python: [pyproject.toml, setup.cfg, setup.py]
+       javascript: [package.json]
+       go: [go.mod]
+       rust: [Cargo.toml]
+       java: [pom.xml, build.gradle, build.gradle.kts, settings.gradle, settings.gradle.kts]
+       ruby: [Gemfile]
+       dotnet: ["*.sln", "*.csproj", "*.fsproj"]
+       bazel: [WORKSPACE, MODULE.bazel, BUILD, BUILD.bazel]
+     ```
+   - Glob markers MUST be matched against files in the directory (e.g., any `*.sln`).
+   - If no marker is found, the package root is repo root (monorepo fallback).
+   - After deriving package roots, group changed paths by package root:
+     - `package_root → changed_files[]` (deduped; stable ordering).
+   - The rationale artifact MUST include `marker_file` per package root when present.
 
 3. Select commands:
-   - Always include commands where `'smoke' ∈ tags`.
-   - Include package-scoped commands where `'package' ∈ tags` once per `changed_package`:
+   - Always include commands where `'smoke' ∈ tags` (run once; no cwd override).
+   - Include package-scoped commands where `'package' ∈ tags` once per unique package root:
      - The runner sets `PWD` (or `cwd`) to the package root before running.
-   - If no commands are tagged, run the full validation command list (loud: emit a warning notification that selection was impossible).
-   - Selection produces an ordered list of `cmd_id` values; the rationale artifact records `cmd_id` + selection reason pairs.
+     - If a package root is repo root due to fallback, `cwd` remains repo root.
+     - The runner MUST materialize unique `cmd_id` values per `(base_cmd_id, package_root)` to avoid artifact path collisions.
+       - Rationale records the base command identifier (`name`) plus the selected `cwd`.
+   - If no commands are tagged (`smoke` or `package`), run the full validation command list:
+     - emit a warning notification that selection was impossible
+     - set `selection_warning="no_tagged_commands"` in the rationale artifact
+   - Selection returns an ordered list of command records to execute. The rationale artifact records:
+     - command identifier (`name`, which corresponds to `cmd_id` in `Lib__Validation.md`)
+     - selection reason (`tag:smoke`, `tag:package`, or fallback reason)
+     - `cwd` for package-scoped selections
 
 4. Emit rationale artifact:
    - `workspace/runs/<run_id>/artifacts/test_selection_rationale.json`
@@ -989,11 +1021,25 @@ Minimum fields:
   "schema_version": 1,
   "base_rev": "<commit>",
   "tip_rev": "<commit>",
-  "changed_paths": ["..."],
-  "changed_packages": ["..."],
+  "changed_paths": ["path/to/file1.py", "path/to/file2.java"],
+  "changed_packages": [
+    {
+      "package_root": "path/to/package1",
+      "marker_file": "pyproject.toml",
+      "changed_files": ["path/to/package1/file1.py"]
+    },
+    {
+      "package_root": "path/to/package2",
+      "marker_file": "pom.xml",
+      "changed_files": ["path/to/package2/file2.java"]
+    }
+  ],
   "selected_commands": [
-    { "cmd_id": "pytest_smoke", "reason": "tag:smoke" }
-  ]
+    { "name": "pytest_smoke", "reason": "tag:smoke" },
+    { "name": "maven_test", "reason": "tag:package", "cwd": "path/to/package2" }
+  ],
+  "fallback_to_repo_root": false,
+  "selection_warning": null
 }
 ```
 
@@ -1004,7 +1050,108 @@ Workflows may override the default by providing one of:
 - a custom validation workflow (`ticket_validate_v1` override) that implements its own selection, or
 - a tool step that writes `test_selection_rationale.json` and a filtered command list artifact.
 
-The runner MUST persist the rationale artifact regardless of selection strategy.
+CLI override flags (v1):
+- `--skip-test-selection`: run the full validation command list (bypass selection)
+- `--force-smoke-only`: run only commands where `'smoke' ∈ tags`
+
+Rationale durability invariant (normative):
+- The runner MUST persist `test_selection_rationale.json` regardless of selection strategy (default, workflow override, or CLI override).
+
+### 5.4 Examples (non-normative)
+
+These examples illustrate nearest-marker walking and per-package `cwd` overrides.
+
+#### 5.4.1 Java monorepo (multiple Maven modules)
+
+Repo layout:
+```text
+repo/
+  pom.xml
+  services/
+    billing/
+      pom.xml
+      src/main/java/...
+    catalog/
+      pom.xml
+      src/main/java/...
+```
+
+If `changed_paths=["services/billing/src/main/java/.../Foo.java"]`, the nearest marker is `services/billing/pom.xml`, so:
+- `package_root="services/billing"`
+- `marker_file="pom.xml"`
+- a `'package'` command runs with `cwd="services/billing"`
+
+#### 5.4.2 Ruby project (Gemfile)
+
+Repo layout:
+```text
+repo/
+  Gemfile
+  lib/...
+```
+
+If `changed_paths=["lib/foo.rb"]`, the nearest marker is `Gemfile` at repo root, so `package_root="."`.
+
+#### 5.4.3 .NET solution (glob markers)
+
+Repo layout:
+```text
+repo/
+  MySolution.sln
+  src/
+    App/
+      App.csproj
+      Program.cs
+```
+
+If `changed_paths=["src/App/Program.cs"]`, the nearest marker is `src/App/App.csproj` (matches `*.csproj`), so:
+- `package_root="src/App"`
+- `marker_file="App.csproj"`
+
+#### 5.4.4 Bazel workspace (WORKSPACE + BUILD)
+
+Repo layout:
+```text
+repo/
+  WORKSPACE
+  apps/
+    api/
+      BUILD
+      main.py
+```
+
+If `changed_paths=["apps/api/main.py"]`, the nearest marker is `apps/api/BUILD`, so `package_root="apps/api"`.
+
+### 5.5 Troubleshooting (non-normative)
+
+- **No markers found**: The algorithm falls back to repo root; `fallback_to_repo_root=true` in `test_selection_rationale.json`.
+  - If this happens unexpectedly, add an appropriate marker file (or use a workflow/tool override per §5.3).
+- **No tagged commands**: If no commands have `smoke` or `package` tags:
+  - all commands run
+  - a warning notification is emitted
+  - `selection_warning="no_tagged_commands"` is recorded in the rationale artifact
+- **Debugging selection**: Inspect `workspace/runs/<run_id>/artifacts/test_selection_rationale.json` to see:
+  - which marker was detected per package root
+  - which files were grouped into each package
+  - which commands were selected and why
+
+### 5.6 Migration and rollout (non-normative)
+
+For existing validation command lists:
+- Tag fast, always-safe checks as `smoke` (run once).
+- Tag package-scoped checks as `package` (run once per detected package root).
+
+Recommended rollout:
+- Start by tagging a small subset of commands (keep others untagged).
+- Confirm rationale artifacts are emitted and reasonable for representative tickets.
+- Expand tagging coverage once behavior is stable.
+
+### 5.7 Monitoring and logging (non-normative)
+
+Operators SHOULD log:
+- when `fallback_to_repo_root=true` occurs (marker coverage gaps / unusual repo layouts)
+- when `selection_warning="no_tagged_commands"` occurs (tagging not yet adopted)
+- which marker types are being detected (adoption metrics for Java/Ruby/.NET/Bazel markers)
 
 
 

@@ -10,6 +10,13 @@ inputs:
     ticket_id: { type: string }
     rev: { type: string, description: "Optional revision/bookmark to validate; defaults to ticket head." }
 steps:
+  - step_id: test_select
+    kind: tool
+    entrypoint: "tool:test_select_v1"
+    description: "Select validation commands based on changed packages; emit test selection rationale."
+    with:
+      ticket_id: "${{ inputs.ticket_id }}"
+      rev: "${{ inputs.rev }}"
   - step_id: validate
     kind: agent
     entrypoint: "agent:ticket_validator_v1"
@@ -18,3 +25,4 @@ steps:
     with:
       ticket_id: "${{ inputs.ticket_id }}"
       rev: "${{ inputs.rev }}"
+      commands: "${{ steps.test_select.output.commands }}"

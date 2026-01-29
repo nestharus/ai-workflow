@@ -48,7 +48,7 @@ Within a ticket context:
 * `plan` — run decomposition (`task_decompose_v1`) and show step plan summary
 * `step run <step_id>` — execute a single step (`step_execute_v1`)
 * `run` — execute remaining steps in order
-* `validate` — run validation (`ticket_validate_v1`)
+* `validate [--skip-test-selection|--force-smoke-only]` — run validation (`ticket_validate_v1`)
 * `close` — run validate + evaluation + mark done (if pass; transition semantics follow `project_ticket_system/Lib__Lifecycle.md` §1)
 * `pause` / `resume` — write control actions (Core Flows Flow 12)
 * `approve-deviation <deviation_id> --approve|--deny [--note "..."]` — respond to a

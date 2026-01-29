@@ -382,6 +382,7 @@ Sandbox lifecycle rules for validation are defined in Integration §9.2.0.
    - Responsibility: run workflow-defined commands (lint/tests/build) and persist outputs
    - Owner: workflow runner + sandbox runner
    - Evidence:
+     - `workspace/runs/<run_id>/artifacts/test_selection_rationale.json` (if test selection is enabled)
      - `workspace/runs/<run_id>/artifacts/sandbox/validation_summary.json`
      - stdout/stderr artifacts per command
      - log events `tool_start/tool_stop` + `progress`

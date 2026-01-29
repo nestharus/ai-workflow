@@ -74,7 +74,8 @@ A validation workflow executes an ordered list of command records.
 
 ### 3.1 Normative validation command schema (v1)
 
-Each command record MUST match this schema (all fields are required; defaults MUST be explicit in the record):
+Each command record MUST match this schema. All fields are required unless stated otherwise below.
+Defaults apply when fields are omitted.
 
 ```json
 {
@@ -85,7 +86,7 @@ Each command record MUST match this schema (all fields are required; defaults MU
   "success_exit_codes": [0],
   "optional": false,
   "fail_on_stderr": false,
-  "tags": ["smoke", "package"]
+  "tags": ["smoke"]
 }
 ```
 
@@ -98,7 +99,8 @@ Field definitions (normative):
 - `success_exit_codes` (array of ints): Default `[0]`.
 - `optional` (bool): If `true`, failures are recorded but MUST NOT block ticket completion. Default `false`.
 - `fail_on_stderr` (bool): If `true`, non-empty stderr fails the command even if exit code is successful. Default `false`.
-- `tags` (array of strings): Command classification used by selection algorithms (e.g., `["smoke"]`, `["package"]`). Default `[]`.
+- `tags` (array of strings, optional): Command classification used by selection algorithms (e.g., `["smoke"]`, `["package"]`). Default `[]`.
+  - If omitted, selection algorithms MUST treat it as `[]` (untagged).
 
 Interpretation:
 - Command **pass** if:

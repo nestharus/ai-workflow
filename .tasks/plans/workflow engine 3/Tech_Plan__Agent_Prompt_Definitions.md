@@ -67,7 +67,7 @@ Built-in workflow YAMLs pass only agent IDs. Implementation MUST expand those ID
 
 - Load WSS documents (ticket_doc, task_doc, step_spec)
 - Load step specs from step_plan.yaml
-- Load config-selected commands
+- Load workflow/config-defined commands (may be filtered by test selection before validation)
 - Load any required artifacts
 
 This avoids adding "wss_read" tooling to the gateway and keeps a single auditable tool surface.

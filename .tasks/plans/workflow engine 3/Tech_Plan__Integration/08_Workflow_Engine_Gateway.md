@@ -25,6 +25,7 @@ Tool: `workflow_engine.invoke(payload: JSON) -> JSON`
 |---|---|---|
 | `help` | schemas + examples | none |
 | `hydrate` | virtual hydration (Mode A) | `read_stack` |
+| `test_select_v1` | select validation commands + emit rationale | `read_stack` |
 | `apply_patch` | apply patch to ticket stack | `apply_patch` |
 | `sandbox_create` | create sandbox (jj workspace) | `sandbox_exec` |
 | `sandbox_run` | run tool in sandbox | `sandbox_exec` |
@@ -128,6 +129,64 @@ Large file handling:
 Caching:
 
 - The gateway MAY cache hydrated results for the duration of a run keyed by `(resolved_rev, path, slice)`.
+
+### Subcommand `test_select_v1` (validation test selection)
+
+`test_select_v1` implements the default test selection algorithm (Enhanced Rebase & Evaluation §5.2):
+- compute `changed_paths` for `base_rev..tip_rev`
+- derive package roots via nearest marker walking
+- select commands using `tags` (`smoke` always; `package` once per package root)
+- persist `workspace/runs/<run_id>/artifacts/test_selection_rationale.json`
+
+#### Request
+
+```json
+{
+  "subcommand": "test_select_v1",
+  "repo_uid": "<repo_uid>",
+  "run_id": "<run_id>",
+  "base_rev": "<commit>",
+  "tip_rev": "<commit>",
+  "commands": [
+    {
+      "cmd_id": "pytest_smoke",
+      "argv": ["uv", "run", "python", "-m", "pytest", "-q"],
+      "cwd": ".",
+      "timeout_ms": 600000,
+      "success_exit_codes": [0],
+      "optional": false,
+      "fail_on_stderr": false,
+      "tags": ["smoke"]
+    }
+  ],
+  "mode": "default|skip|smoke_only|override"
+}
+```
+
+#### Response
+
+```json
+{
+  "ok": true,
+  "commands": [
+    {
+      "cmd_id": "pytest_smoke",
+      "argv": ["uv", "run", "python", "-m", "pytest", "-q"],
+      "cwd": ".",
+      "timeout_ms": 600000,
+      "success_exit_codes": [0],
+      "optional": false,
+      "fail_on_stderr": false,
+      "tags": ["smoke"]
+    }
+  ],
+  "rationale_artifact": "workspace/runs/<run_id>/artifacts/test_selection_rationale.json"
+}
+```
+
+Notes:
+- If `mode="skip"`, the gateway returns the full command list and still writes a rationale artifact indicating the override.
+- If `mode="smoke_only"`, only `smoke`-tagged commands are returned (and still writes a rationale artifact).
 
 
 

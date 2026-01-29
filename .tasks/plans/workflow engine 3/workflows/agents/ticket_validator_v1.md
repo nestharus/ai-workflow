@@ -25,7 +25,6 @@ input_schema:
             "success_exit_codes",
             "optional",
             "fail_on_stderr",
-            "tags",
           ]
         properties:
           cmd_id: { type: string }
