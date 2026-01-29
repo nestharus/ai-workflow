@@ -65,6 +65,8 @@ Precedence (highest wins):
 4. User-global (installation)
 5. Built-in defaults
 
+Note: This precedence differs from workflow and agent precedence (Integration §7.1, Configuration §6.1). See Core Infrastructure §11.2.1 for rationale.
+
 Notes:
 - Workflow and agent file precedence are separate (see “Workflow locations and precedence” and “Agent file locations”).
 - Model routing override precedence is defined in Core Infrastructure §11.4.2.
@@ -256,16 +258,22 @@ Precedence (highest wins):
 ## Workflow locations and precedence
 
 Workflow search order (highest wins):
-1) Repo overrides (committed): `<repo_root>/.workflow/workflows/`
-2) Repo overrides (machine-local): `~/.workflow/repos/<repo_uid>/workflows/`
-3) Global personal workflows: `~/.workflow/workflows/`
-4) Built-ins: packaged with `workflowctl`
+1) CLI file override: `--workflow-file <path>`
+2) Project-scoped WSS: `workspace/projects/<project_id>/workflows/*.yaml`
+3) Repo-shared (committable): `<repo_root>/.workflow/workflows/`
+4) Repo machine-local (WSS): `workspace/workflows/*.yaml`
+5) Built-ins: packaged with `workflowctl`
+
+Note: Repo-shared (3) takes precedence over machine-local (4) because workflows are collaboration artifacts. Machine-local overrides should use `--workflow-file` (1).
 
 Agent prompt search order (highest wins):
-1) Repo overrides (committed): `<repo_root>/.workflow/agents/`
-2) Repo overrides (machine-local): `~/.workflow/repos/<repo_uid>/agents/`
-3) Global personal agents: `~/.workflow/agents/`
-4) Built-ins: packaged with `workflowctl`
+1) CLI flag: `--agent <path>`
+2) Project: `<repo>/.workflow/agents/`
+3) Repo machine-local: `~/.workflow/repos/<repo_uid>/agents/`
+4) Global personal agents: `~/.workflow/agents/`
+5) Built-ins: packaged with `workflowctl`
+
+Note: Like workflows, agents favor repo-shared (2) over machine-local (3) for collaboration.
 
 ## Workflow runner semantics (v1)
 
@@ -475,6 +483,8 @@ Agent prompts follow the same precedence as skills:
 3. **Repo machine-local**: `~/.workflow/repos/<repo_uid>/agents/<name>.md`
 4. **Installation**: `~/.workflow/agents/<name>.md`
 5. **Built-in**: packaged with `workflowctl`
+
+Note: Agent precedence follows the same collaborative-first pattern as workflows (Integration §7.1): project-level (2) takes precedence over machine-local (3). This differs from config precedence (Core Infrastructure §11.2) because agents, like workflows, are collaboration artifacts.
 
 ### 6.2 Installation agents (not in project)
 

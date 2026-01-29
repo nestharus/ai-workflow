@@ -25,6 +25,13 @@ Highest precedence first:
 4. Repo-machine-local (WSS): `workspace/workflows/*.yaml`
 5. Built-in defaults packaged with the tool
 
+### 7.1.1 Workflow Precedence Rationale
+
+- Workflow precedence favors **repo-shared** (position 3) over machine-local (position 4) because workflows are collaboration artifacts and team contracts.
+- Machine-local workflow overrides should be explicit via the `--workflow-file` flag (position 1).
+- This precedence order differs intentionally from config precedence (Core Infrastructure §11.2) because workflows are collaboration artifacts; config is environment-specific.
+- Agent precedence follows the same collaborative-first pattern (Configuration §6.1).
+
 **Flag conflict rule (normative)**:
 - If both `--workflow <id>` and `--workflow-file <path>` are provided, `--workflow-file` MUST win.
 - The runner SHOULD emit a `warn`-severity log event noting the override.

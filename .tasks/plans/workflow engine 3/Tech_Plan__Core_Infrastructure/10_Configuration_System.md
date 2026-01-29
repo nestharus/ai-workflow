@@ -24,6 +24,24 @@ Config is loaded from multiple layers; higher layers override lower layers.
 4. User-global (installation): `~/.workflow/config.toml`
 5. Built-in defaults
 
+### 11.2.1 Config vs Workflow Precedence Rationale
+
+- Config precedence favors **machine-local overrides** (position 2) over repo-shared (position 3) because configuration is environment-specific (paths, tool locations, API keys, machine capabilities).
+- Workflow and agent precedence intentionally differ (see Integration §7.1 and Configuration §6.1).
+- For workflow and agent precedence, see Integration §7.1 and Configuration §6.1.
+
+### 11.2.2 Precedence Comparison Table
+
+| Priority | Config (§11.2) | Workflow (Integration §7.1) | Agent (Configuration §6.1) |
+|----------|----------------|----------------------------|---------------------------|
+| 1 | CLI flags | CLI `--workflow-file` | CLI `--agent` |
+| 2 | Repo machine-local | Project-scoped WSS | Project |
+| 3 | Repo shared | Repo-shared | Repo machine-local |
+| 4 | User-global | Repo machine-local | Installation |
+| 5 | Built-in defaults | Built-ins | Built-in |
+
+**Key difference**: Config favors machine-local (2) > shared (3) for environment-specific settings. Workflows and agents favor shared (2-3) > machine-local (3-4) for collaboration.
+
 Notes:
 
 * This precedence applies to **config TOML** only.
