@@ -19,4 +19,5 @@ All known risks have explicit controls; none require unspecified future work.
 | RISK-LOCK-001 Lock Order Violation Detection | Medium | lock acquisition wrapper validates order before acquiring; integration tests verify lock order enforcement; runtime diagnostics log all lock acquisitions with stack traces; residual risk: developer may bypass lock wrapper, code review required |
 | Toolchain drift | Medium | env capture + tool fingerprints + workflow-defined tool commands |
 | Schema drift | Medium | explicit migrate tool + loud failure on unknown schema_version |
+| ULID cross-process ordering misuse | Low | Explicit per-process monotonicity scope in §4.1.2; anti-pattern warnings in §4.1.2a; validation checklist in 03a; log `seq` ordering enforced in §8.2.1 |
 | Notification deduplication window inappropriate | Low | default 60s window, configurable; users may need to adjust based on workflow patterns |

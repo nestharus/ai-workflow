@@ -48,6 +48,8 @@ workspace/
     overrides.json
 ```
 
+**Note**: `step_execution_id` is a ULID. For causal ordering, use explicit links (`run_id` + `step_execution_id`), not ULID comparison (see §4.1.2 for ULID monotonicity scope).
+
 ### 5.2 Required fields for every durable JSON document
 
 Every durable JSON document MUST include:

@@ -38,7 +38,23 @@ Runtime-like patterns (when scanning real artifacts/logs):
 - Find paths that look like semantic step IDs under runs: `rg -n 'workspace/runs/[0-9A-HJKMNP-TV-Z]{26}/steps/step-' workspace/`
 - Find writer shards that look semantic: `rg -n 'logs/runs/[0-9A-HJKMNP-TV-Z]{26}/writers/step-' logs/`
 
-## 4) Examples (correct vs incorrect)
+## 4) ULID ordering anti-patterns (validation rules)
+
+**Grep patterns for ULID ordering violations**:
+
+In implementation code:
+- Find ULID sorting: `rg -n 'sorted.*ulid|\\.sort.*ulid' app/ scripts/`
+- Find ULID comparison for ordering: `rg -n 'if.*_id\\s*[<>].*_id|_id\\s*[<>]=\\s*_id' app/ scripts/`
+- Find lexicographic ULID ordering: `rg -n 'lexicographic.*ulid|ulid.*lexicographic' app/ scripts/`
+
+**Code review checklist**:
+- [ ] No sorting of ULID collections for correctness (display-only sorting is acceptable with explicit comment)
+- [ ] No ULID comparison operators (`<`, `>`, `<=`, `>=`) used for ordering logic
+- [ ] All event ordering uses `seq` field from logs
+- [ ] All cross-step dependencies use explicit causal links (`run_id` + `step_execution_id`)
+- [ ] Queue processing does not assume ULID filename order has semantic meaning
+
+## 5) Examples (correct vs incorrect)
 
 Step plan YAML (semantic ID):
 

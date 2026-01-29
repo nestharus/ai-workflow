@@ -41,6 +41,8 @@ Every event MUST include:
 - `seq` (int)  
   - Monotonic per `(run_id, writer_id)` shard, starting at `1`.
 
+**Note**: The `seq` field provides ordering within a writer shard. Do NOT use ULID ordering for event sequencing (see §4.1.2 for ULID monotonicity scope).
+
 - `data` (object)  
   - Event payload. MUST be a JSON object (not an array).
 

@@ -141,4 +141,7 @@ These apply to every component and flow unless an explicit exception is document
    - stop conditions must be **evidence-based** (progress/novelty/oscillation) with explicit give-up records
 7. **User-defined workflows are first-class**
    - workflows are file-defined, schema-validated, capability-gated, and produce durable evidence
-
+8. **ULID monotonicity is per-process only**
+   - ULIDs are monotonic within a single OS process
+   - cross-process ULID ordering is best-effort (timestamp-based) and MUST NOT be used for correctness
+   - features requiring ordering MUST use log `seq` (within writer) or explicit causal links (`run_id` + `step_execution_id`)

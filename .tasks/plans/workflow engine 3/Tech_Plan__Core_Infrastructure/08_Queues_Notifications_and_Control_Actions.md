@@ -139,6 +139,8 @@ Priority mapping (normative):
 
 Queues do not reorder; consumers SHOULD display by severity and recency.
 
+**Note**: Queue filenames use ULIDs but MUST be treated as opaque identifiers. ULID lexicographic order does NOT guarantee semantic ordering across processes (see Core Infrastructure §4.1.2).
+
 ### 9.2 Delivery and routing
 
 Routing is intentionally local and file-based.

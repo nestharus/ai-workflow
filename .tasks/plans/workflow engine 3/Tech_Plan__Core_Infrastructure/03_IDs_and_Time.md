@@ -70,6 +70,80 @@ On each call:
 
 **Clock-backwards note**: clamping is required; ULIDs MUST NOT go backwards due to NTP adjustments.
 
+#### 4.1.2a Anti-patterns: ULID ordering violations (normative)
+
+The following patterns are **FORBIDDEN** and MUST be rejected in code review:
+
+**❌ Forbidden Pattern 1: Sorting ULIDs across processes for correctness**
+```python
+# WRONG: Assumes cross-process ULID ordering
+notification_ids = [n.notification_id for n in notifications]
+notification_ids.sort()  # ❌ ULID ordering is not guaranteed across processes
+```
+
+**❌ Forbidden Pattern 2: Using ULID comparison for event ordering**
+```python
+# WRONG: Assumes ULID ordering determines event sequence
+if event1.step_execution_id < event2.step_execution_id:
+    # ❌ Cannot determine which step executed first across processes
+```
+
+**❌ Forbidden Pattern 3: Relying on ULID lexicographic order for queue processing**
+```python
+# WRONG: Assumes queue items are ordered by ULID
+queue_files = sorted(os.listdir("inbox/"))  # ❌ Alphabetical ULID order is not semantic order
+```
+
+**✅ Correct Patterns**:
+
+1. **Use log `seq` for ordering within a writer**:
+   ```python
+   # Correct: Order by seq within a (run_id, writer_id) shard
+   events = sorted(events, key=lambda e: e.seq)
+   ```
+
+2. **Use causal links for cross-step ordering**:
+   ```python
+   # Correct: Track dependencies via run_id + step_execution_id
+   depends_on = {"run_id": parent_run_id, "step_execution_id": parent_step_execution_id}
+   ```
+
+3. **Use timestamps for best-effort display ordering**:
+   ```python
+   # Correct: Display by timestamp (best-effort, not for correctness)
+   notifications = sorted(notifications, key=lambda n: n.created_at)
+   ```
+
+```mermaid
+sequenceDiagram
+    participant P1 as Process 1<br/>(writer_id=W1)
+    participant P2 as Process 2<br/>(writer_id=W2)
+    participant LogStore as Logs Store
+    participant Reader as Log Reader
+
+    Note over P1,P2: Both generate ULIDs concurrently
+    
+    P1->>P1: new_ulid() → 01J...ABC (seq=1)
+    P2->>P2: new_ulid() → 01J...XYZ (seq=1)
+    
+    Note over P1,P2: ❌ Cannot compare 01J...ABC vs 01J...XYZ<br/>for ordering across processes
+    
+    P1->>LogStore: Write event (run_id, W1, seq=1)
+    P2->>LogStore: Write event (run_id, W2, seq=1)
+    P1->>LogStore: Write event (run_id, W1, seq=2)
+    P2->>LogStore: Write event (run_id, W2, seq=2)
+    
+    Note over LogStore: ✅ Each shard has monotonic seq
+    
+    Reader->>LogStore: Read shard (run_id, W1)
+    LogStore-->>Reader: Events ordered by seq: 1, 2, 3...
+    
+    Reader->>LogStore: Read shard (run_id, W2)
+    LogStore-->>Reader: Events ordered by seq: 1, 2, 3...
+    
+    Note over Reader: ✅ Ordering within each writer is guaranteed<br/>❌ Ordering across writers is NOT guaranteed
+```
+
 #### 4.1.3 ID disambiguation rules (normative)
 
 This spec defines three distinct identifiers that are often confused:
