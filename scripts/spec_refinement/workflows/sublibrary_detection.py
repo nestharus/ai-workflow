@@ -74,7 +74,12 @@ def detect_sublibraries(
     if total_sublibraries_created > 0:
         newly_created = _collect_newly_created_sublibraries(manager)
         _recursive_refinement(
-            manager, config_path, max_depth, current_depth=1, newly_created=newly_created
+            manager,
+            config_path,
+            max_depth,
+            current_depth=1,
+            newly_created=newly_created,
+            min_overlap_threshold=min_overlap_threshold,
         )
 
     phase_result = manager.state.phases[Phase.SUBLIBRARY_DETECTION.value]
@@ -210,7 +215,7 @@ def _recursive_refinement(
     next_newly_created: set[Path] = set()
     for sub_lib_dir in sublibrary_dirs:
         result = _detect_library_sublibraries(
-            manager, sub_lib_dir, config_path, max_depth, min_overlap_threshold=0.2
+            manager, sub_lib_dir, config_path, max_depth, min_overlap_threshold
         )
         if result.get("sublibraries_created", 0) > 0:
             parent_sublibraries_dir = sub_lib_dir / "sublibraries"
@@ -221,7 +226,12 @@ def _recursive_refinement(
 
     if next_newly_created:
         _recursive_refinement(
-            manager, config_path, max_depth, current_depth + 1, next_newly_created
+            manager,
+            config_path,
+            max_depth,
+            current_depth + 1,
+            next_newly_created,
+            min_overlap_threshold,
         )
 
 
