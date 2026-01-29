@@ -1,4 +1,13 @@
-"""Command-line interface for spec refinement."""
+"""Command-line interface for spec refinement.
+
+Workflow examples:
+
+# Phase 1: Summarize all files
+uv run python -m scripts.spec_refinement.cli spec summarize my_run_001
+
+# Phase 2: Synthesize libraries
+uv run python -m scripts.spec_refinement.cli spec synthesize my_run_001
+"""
 
 from __future__ import annotations
 
@@ -6,8 +15,10 @@ import argparse
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from scripts.spec_refinement.core.gap import Gap, format_gap_table
+from scripts.spec_refinement.workflows import summarize_all, synthesize_libraries
 from scripts.spec_refinement.workspace import WorkspaceManager
 
 
@@ -314,7 +325,7 @@ def cmd_gap_resolve(args: argparse.Namespace) -> int:
         print("Resolution pointer is required for integrate.")
         return 1
 
-    status_mapping = {
+    status_mapping: dict[str, Literal["integrated", "deferred", "rejected"]] = {
         "integrate": "integrated",
         "defer": "deferred",
         "reject": "rejected",
@@ -338,14 +349,107 @@ def cmd_gap_resolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _extract_intent_from_charter(content: str) -> str:
+    lines = content.splitlines()
+    for idx, line in enumerate(lines):
+        if line.strip().lower() == "## intent":
+            for follow in lines[idx + 1 :]:
+                if follow.startswith("## "):
+                    break
+                if follow.strip():
+                    return follow.strip()
+    return ""
+
+
+def cmd_spec_summarize(args: argparse.Namespace) -> int:
+    """Summarize all files in the workspace."""
+    run_id = args.run_id
+    config_path = Path(args.config)
+
+    try:
+        result = summarize_all(run_id, config_path, parallel=not args.sequential)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Summaries written: {result['summaries_written']} / {result['files_processed']}")
+    if result.get("errors"):
+        print("Errors:")
+        for error in result["errors"]:
+            print(f"  - {error.get('file_id')}: {error.get('error')}")
+    if result.get("issues"):
+        print("Issues:")
+        for issue in result["issues"]:
+            file_id = issue.get("file_id", "unknown")
+            message = issue.get("message", issue.get("type", "issue"))
+            print(f"  - {file_id}: {message}")
+    return 0
+
+
+def cmd_spec_synthesize(args: argparse.Namespace) -> int:
+    """Synthesize libraries from the summary outputs."""
+    run_id = args.run_id
+    config_path = Path(args.config)
+
+    try:
+        result = synthesize_libraries(run_id, config_path)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    if result.get("error"):
+        print(f"Synthesis failed: {result['error']}")
+        return 1
+
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    index_path = result.get("library_index")
+    if index_path and Path(index_path).exists():
+        print("Library Index:")
+        print(Path(index_path).read_text(encoding="utf-8"))
+
+    libraries_dir = manager.structure.libraries_dir
+    if libraries_dir.exists():
+        print("Library Charters:")
+        for lib_dir in sorted(libraries_dir.iterdir()):
+            if not lib_dir.is_dir():
+                continue
+            charter_path = lib_dir / "charter.md"
+            intent = ""
+            if charter_path.exists():
+                intent = _extract_intent_from_charter(charter_path.read_text(encoding="utf-8"))
+            evidence_path = lib_dir / "evidence.json"
+            evidence_count = 0
+            if evidence_path.exists():
+                import json
+
+                payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+                sources = payload.get("sources", [])
+                evidence_count = sum(len(source.get("sections", [])) for source in sources)
+            intent_display = f" - {intent}" if intent else ""
+            print(f"  - {lib_dir.name}{intent_display} (evidence: {evidence_count})")
+
+    if result.get("issues"):
+        print("Issues:")
+        for issue in result["issues"]:
+            lib_id = issue.get("lib_id", "unknown")
+            message = issue.get("message", issue.get("type", "issue"))
+            print(f"  - {lib_id}: {message}")
+
+    return 0
+
+
 def main() -> int:
     """Main entry point for spec refinement CLI."""
     parser = argparse.ArgumentParser(
         description=(
             "Spec Refinement - Refine and execute large specs\n\n"
-            "Planned commands:\n"
-            "  spec.summarize_all (agent: glm-file-what-summarizer)\n"
-            "  library.synthesize (agent: opus-library-synthesizer)"
+            "Commands:\n"
+            "  init\n"
+            "  status\n"
+            "  gaps\n"
+            "  gap\n"
+            "  spec summarize (agent: glm-file-what-summarizer)\n"
+            "  spec synthesize (agent: opus-library-synthesizer)"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -394,8 +498,51 @@ def main() -> int:
     p_gap_resolve.add_argument("--pointer", help="Resolution pointer (required for integrate)")
     p_gap_resolve.set_defaults(func=cmd_gap_resolve)
 
+    p_spec = subparsers.add_parser(
+        "spec",
+        help="Workflow commands for summarization and synthesis",
+    )
+    spec_subparsers = p_spec.add_subparsers(dest="spec_command", required=True)
+
+    p_spec_summarize = spec_subparsers.add_parser(
+        "summarize",
+        help="Summarize all files for Phase 1",
+        description=(
+            "Run Phase 1 summarization using the glm-file-what-summarizer agent.\n"
+            "Inputs: initialized workspace and config file.\n"
+            "Outputs: summaries/*.what.md and phase state updates."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_summarize.add_argument("run_id", help="Run identifier")
+    p_spec_summarize.add_argument(
+        "--config", default=".tasks.yaml", help="Path to .tasks.yaml config"
+    )
+    p_spec_summarize.add_argument(
+        "--sequential", action="store_true", help="Disable parallel execution"
+    )
+    p_spec_summarize.set_defaults(func=cmd_spec_summarize)
+
+    p_spec_synthesize = spec_subparsers.add_parser(
+        "synthesize",
+        help="Synthesize libraries for Phase 2",
+        description=(
+            "Run Phase 2 library synthesis using the opus-library-synthesizer agent.\n"
+            "Requires Phase 1 summarization to be completed.\n"
+            "Outputs: libraries/ with library_index.md and charter artifacts."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_synthesize.add_argument("run_id", help="Run identifier")
+    p_spec_synthesize.add_argument(
+        "--config", default=".tasks.yaml", help="Path to .tasks.yaml config"
+    )
+    p_spec_synthesize.set_defaults(func=cmd_spec_synthesize)
+
     args = parser.parse_args()
-    return args.func(args)
+    result = args.func(args)
+    # All handlers return int
+    return int(result)
 
 
 if __name__ == "__main__":
