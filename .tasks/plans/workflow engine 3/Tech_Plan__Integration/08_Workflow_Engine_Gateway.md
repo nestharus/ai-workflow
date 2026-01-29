@@ -30,7 +30,7 @@ Tool: `workflow_engine.invoke(payload: JSON) -> JSON`
 | `sandbox_create` | create sandbox (jj workspace) | `sandbox_exec` |
 | `sandbox_run` | run tool in sandbox | `sandbox_exec` |
 | `sandbox_destroy` | cleanup sandbox (jj workspace) | `sandbox_exec` |
-| `llm_call` | cancellable LLM call wrapper | `net_llm` |
+| `net_llm` | cancellable LLM call wrapper | `net_llm` |
 | `spawn_step` | request child step | `spawn_child` |
 | `wait_step` | wait for step completion | none |
 | `control_write` | write control actions | `control_send` |
@@ -38,6 +38,8 @@ Tool: `workflow_engine.invoke(payload: JSON) -> JSON`
 | `graph_static` | generate static graph | none |
 | `graph_run` | generate dynamic graph | none |
 | `run_python_script` | run registered script artifact | `script_exec` |
+
+Note: `llm_call` is a deprecated alias for `net_llm` accepted in v1 with a warning, and removed in v2.
 
 ### Subcommand `hydrate` (Mode A)
 
@@ -197,7 +199,7 @@ For every invocation:
 - enforce repo-relative paths (deny absolute and `..`)
 - enforce max sizes (patch, hydration, stdout chunk)
 - enforce privacy policy:
-  - for `llm_call`, secret scan + network_mode checks
+  - for `net_llm`, secret scan + network_mode checks
   - for `export_scrub`, secret scan + scrub policy
 
 ### Python execution rule (registered artifacts only)

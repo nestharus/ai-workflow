@@ -208,7 +208,7 @@ Step output storage (schema + size limits)—normative storage rules (v1):
 
 **Usage tracking**:
 
-* Each `llm_call` returns usage object (gateway contract, Integration §8):
+* Each `net_llm` returns usage object (gateway contract, Integration §8):
   * `prompt_tokens`: int
   * `completion_tokens`: int
   * `total_tokens`: int
@@ -317,6 +317,57 @@ Example dangerous capabilities:
 * Write outside sandbox
 * Git/jj push
 * File deletion outside sandbox
+
+#### §7.3.1 Capability naming conventions and deprecated aliases
+
+##### Capability naming (v1)
+
+* Canonical capability name: `net_llm`
+* Deprecated alias: `llm_call` (accepted in v1 with warning)
+* Rationale: prevents accidental execution when network/LLM is forbidden
+* Migration path: all new workflows MUST use `net_llm`
+* Runner requirements:
+  * Runner MUST emit a warning when `llm_call` is encountered
+  * Both names MUST map to the same underlying capability check
+  * `llm_call` will be removed in v2
+
+#### 7.3.2 Validation checklist (capability naming)
+
+```mermaid
+sequenceDiagram
+    participant Reviewer
+    participant WorkflowYAML as Workflow YAML Files
+    participant AgentPrompts as Agent Prompt Files
+    participant TechPlans as Tech Plan Docs
+    participant LogsEvents as Logs/Events Schema
+    
+    Reviewer->>WorkflowYAML: Verify all use "net_llm"
+    WorkflowYAML-->>Reviewer: 6 files updated
+    
+    Reviewer->>AgentPrompts: Verify all use "net_llm"
+    AgentPrompts-->>Reviewer: Already consistent
+    
+    Reviewer->>TechPlans: Verify embedded YAML uses "net_llm"
+    TechPlans-->>Reviewer: 3 docs updated
+    
+    Reviewer->>TechPlans: Verify deprecation docs added
+    TechPlans-->>Reviewer: §7.3.1 added
+    
+    Reviewer->>LogsEvents: Verify field names use "net_llm"
+    LogsEvents-->>Reviewer: Schema updated
+    
+    Reviewer->>Reviewer: Final consistency check
+```
+
+Checklist items:
+
+- [ ] All 6 workflow YAML files use `net_llm`
+- [ ] All 7 agent prompt files use `net_llm` (already consistent)
+- [ ] Tech_Plan__Built-in_Workflow_Definitions.md updated (6 locations)
+- [ ] Tech_Plan__Integration/07_Workflows__Runner_Catalog_and_Capabilities_v1.md updated
+- [ ] Deprecation policy documented in §7.3.1
+- [ ] Log/event field names updated
+- [ ] No remaining references to `llm_call` except in deprecation notes
 
 ### 7.4 Built-in workflow catalog v1
 

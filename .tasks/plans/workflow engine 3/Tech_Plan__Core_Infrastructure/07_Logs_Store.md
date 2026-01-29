@@ -105,8 +105,8 @@ Queues:
 - `queue_failed`
 
 LLM:
-- `llm_call_start`
-- `llm_call_stop`
+- `net_llm_start`
+- `net_llm_stop`
 
 Maintenance:
 - `doctor_started`

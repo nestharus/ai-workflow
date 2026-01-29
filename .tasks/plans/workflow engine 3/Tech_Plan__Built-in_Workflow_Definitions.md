@@ -65,7 +65,7 @@ steps:
     kind: agent
     entrypoint: "agent:step_executor_v1"
     description: "Execute the step; may hydrate, run sandbox commands, and apply patches."
-    capabilities_required: ["sandbox_exec", "apply_patch", "llm_call"]
+    capabilities_required: ["sandbox_exec", "apply_patch", "net_llm"]
     with:
       ticket_id: "${{ inputs.ticket_id }}"
       task_id: "${{ inputs.task_id }}"
@@ -98,7 +98,7 @@ steps:
     kind: agent
     entrypoint: "agent:ticket_validator_v1"
     description: "Execute validation commands and record results."
-    capabilities_required: ["sandbox_exec", "llm_call"]
+    capabilities_required: ["sandbox_exec", "net_llm"]
     with:
       ticket_id: "${{ inputs.ticket_id }}"
       rev: "${{ inputs.rev }}"
@@ -124,7 +124,7 @@ steps:
     kind: agent
     entrypoint: "agent:rebase_driver_v1"
     description: "Run rebase, detect conflicts, and resolve using the enhanced protocol."
-    capabilities_required: ["sandbox_exec", "apply_patch", "llm_call"]
+    capabilities_required: ["sandbox_exec", "apply_patch", "net_llm"]
     with:
       ticket_id: "${{ inputs.ticket_id }}"
       source_ref: "${{ inputs.source_ref }}"
@@ -149,7 +149,7 @@ steps:
     kind: agent
     entrypoint: "agent:ticket_evaluator_v1"
     description: "Run evaluation and record findings."
-    capabilities_required: ["sandbox_exec", "llm_call"]
+    capabilities_required: ["sandbox_exec", "net_llm"]
     with:
       ticket_id: "${{ inputs.ticket_id }}"
       rev: "${{ inputs.rev }}"
@@ -174,7 +174,7 @@ steps:
     kind: agent
     entrypoint: "agent:investigator_v1"
     description: "Gather evidence (logs, artifacts) and emit a classification + repair plan."
-    capabilities_required: ["sandbox_exec", "llm_call"]
+    capabilities_required: ["sandbox_exec", "net_llm"]
     with:
       run_id: "${{ inputs.run_id }}"
       step_execution_id: "${{ inputs.step_execution_id }}"
@@ -200,7 +200,7 @@ steps:
     kind: agent
     entrypoint: "agent:ticket_repairer_v1"
     description: "Apply repair changes, update evidence, and rerun targeted validation."
-    capabilities_required: ["apply_patch", "sandbox_exec", "llm_call"]
+    capabilities_required: ["apply_patch", "sandbox_exec", "net_llm"]
     with:
       ticket_id: "${{ inputs.ticket_id }}"
       run_id: "${{ inputs.run_id }}"
@@ -248,5 +248,6 @@ steps:
 ## 3) Notes (non-normative)
 
 - These workflows intentionally declare broad `capabilities_required` for agent steps. Implementations may later refine capability declarations as agents and gateway schemas stabilize.
+- Capability naming: `net_llm` is the canonical capability for LLM network access. `llm_call` is a deprecated alias accepted in v1 with a warning, and removed in v2.
 - Workflow IDs and filenames MUST remain stable; version by creating new IDs (e.g., `*_v2`) rather than modifying semantics in-place.
 - Agent prompt definitions referenced by these workflows are defined in `Tech_Plan__Agent_Prompt_Definitions.md`. Each workflow step with `kind: agent` and `entrypoint: agent:<agent_id>` resolves to the corresponding agent prompt definition.

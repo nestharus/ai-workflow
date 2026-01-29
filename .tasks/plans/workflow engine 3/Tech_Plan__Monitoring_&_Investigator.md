@@ -72,7 +72,7 @@ Windows notes:
 This allows investigators (and the monitor) to act on hung tools with evidence.
 
 ### 3.3 LLM calls via cancellable subprocess boundary
-LLM calls MUST be executed via a cancellable tool subprocess (`workflow_engine llm_call`) so PAUSE can stop them without relying on cooperative cancellation.
+LLM calls MUST be executed via a cancellable tool subprocess (`workflow_engine net_llm`) so PAUSE can stop them without relying on cooperative cancellation.
 
 ## 4) Anomaly detection (investigate-first)
 

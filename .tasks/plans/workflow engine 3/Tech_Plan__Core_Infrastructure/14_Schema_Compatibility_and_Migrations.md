@@ -94,3 +94,10 @@ Including:
 - `applied_at`
 - `files_modified[]` with before/after hashes
 
+### 14.3 Schema compatibility notes
+
+- `llm_call` → `net_llm` is a naming change only.
+- No data migration required (both map to the same capability).
+- Runner MUST support both names in v1 for backwards compatibility.
+- A warning MUST be emitted when the deprecated name is used.
+- Removal of `llm_call` is planned for v2.

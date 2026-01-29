@@ -15,7 +15,7 @@ steps:
     kind: agent
     entrypoint: "agent:ticket_repairer_v1"
     description: "Apply repair changes, update evidence, and rerun targeted validation."
-    capabilities_required: ["apply_patch", "sandbox_exec", "llm_call"]
+    capabilities_required: ["apply_patch", "sandbox_exec", "net_llm"]
     with:
       ticket_id: ${{ inputs.ticket_id }}
       run_id: ${{ inputs.run_id }}

@@ -14,7 +14,7 @@ steps:
     kind: agent
     entrypoint: "agent:ticket_evaluator_v1"
     description: "Run evaluation and record findings."
-    capabilities_required: ["sandbox_exec", "llm_call"]
+    capabilities_required: ["sandbox_exec", "net_llm"]
     with:
       ticket_id: ${{ inputs.ticket_id }}
       rev: ${{ inputs.rev }}

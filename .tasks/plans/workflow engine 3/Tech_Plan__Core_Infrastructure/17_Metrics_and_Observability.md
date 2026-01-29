@@ -51,7 +51,7 @@ The JSON schemas below are the **machine format** for automation. Table output i
 Field rules:
 - `total_runs`: counts per derived status bucket (`running`, `completed`, `failed`, `paused`, `investigating`).
 - `avg_step_duration_ms`: mean of step durations for steps that reached `step_completed`; null when no durations are available.
-- `total_llm_tokens`: sum of `data.tokens` from `llm_call_stop` events when present; missing token fields are ignored.
+- `total_llm_tokens`: sum of `data.tokens` from `net_llm_stop` events when present; missing token fields are ignored.
 - `time_range.start`: the effective lower bound of the query window (see §17.2.1).
 - `time_range.end`: the end of the query window (“now” at aggregation time).
 - `run_breakdown`: one entry per run that had any included event within the time range.
@@ -100,7 +100,7 @@ Export MUST include at minimum:
 - Step lifecycle events: `step_started`, `step_completed`, `step_failed`, `step_paused`, `step_resumed`
 - Any event that embeds a structured error object at `data.error`
 
-Implementations MAY include additional event types needed for offline analysis (e.g. `llm_call_stop` for token accounting), provided redaction rules are applied.
+Implementations MAY include additional event types needed for offline analysis (e.g. `net_llm_stop` for token accounting), provided redaction rules are applied.
 
 ### 17.2 Event aggregation rules
 

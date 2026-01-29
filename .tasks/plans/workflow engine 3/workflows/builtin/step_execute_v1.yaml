@@ -20,7 +20,7 @@ steps:
     kind: agent
     entrypoint: "agent:step_executor_v1"
     description: "Execute the step; may hydrate, run sandbox commands, and apply patches."
-    capabilities_required: ["sandbox_exec", "apply_patch", "llm_call"]
+    capabilities_required: ["sandbox_exec", "apply_patch", "net_llm"]
     with:
       ticket_id: "${{ inputs.ticket_id }}"
       task_id: "${{ inputs.task_id }}"

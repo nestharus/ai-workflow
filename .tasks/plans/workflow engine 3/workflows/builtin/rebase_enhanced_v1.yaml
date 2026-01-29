@@ -15,7 +15,7 @@ steps:
     kind: agent
     entrypoint: "agent:rebase_driver_v1"
     description: "Run rebase, detect conflicts, and resolve using the enhanced protocol."
-    capabilities_required: ["sandbox_exec", "apply_patch", "llm_call"]
+    capabilities_required: ["sandbox_exec", "apply_patch", "net_llm"]
     with:
       ticket_id: ${{ inputs.ticket_id }}
       source_ref: ${{ inputs.source_ref }}

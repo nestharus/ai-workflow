@@ -158,6 +158,8 @@ If any check fails, the step fails with `E_TOOL_ACCESS_DENIED`.
 | ticket_repairer_v1 | ✓ | - | ✓ | ✓ | - |
 | approval_agent_v1 | ✓ | - | - | - | - |
 
+Note: `net_llm` is the canonical capability name for LLM network access. `llm_call` is a deprecated alias accepted in v1 with a warning, and removed in v2.
+
 ## 7) Distribution
 
 Built-in agents are packaged with `workflowctl` at:
