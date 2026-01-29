@@ -42,3 +42,18 @@
 - User-facing behavior: `project_ticket_system/Lib__CLI_Shells.md`
 - Automation behavior: `project_ticket_system/Lib__Ticket_Manager.md`
 - Invariants: `project_ticket_system/Lib__Lifecycle.md`, `project_ticket_system/Lib__Task_Decomposition.md`, `project_ticket_system/Lib__Step_Execution.md`
+
+## Rollback & retry (NEW)
+
+This spec set defines explicit rollback-style operations for tickets and steps.
+
+Principles (normative):
+- Rollback operations MUST preserve evidence (no deletion/overwrite of prior artifacts).
+- Rollback operations MUST record an append-only audit trail in `ticket.json.history[]`
+  (see Core Infrastructure WSS `ticket.json` schema, §5.4.3).
+- Destructive pointer moves MUST be protected by explicit confirmation and safety bookmarks.
+
+User-facing commands (see `cli` + library details):
+- `workflowctl ticket undo-last` (see `tm` §5.1, `validate` §5)
+- `workflowctl ticket reset` (see `tm` §5.2, `validate` §5)
+- `workflowctl step rerun` (see `execute` §5, `validate` §5)

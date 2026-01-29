@@ -287,3 +287,51 @@ The user must explicitly resume the run if they want to proceed with the late ap
 
 - Evaluation uses deviations to justify unplanned changes (Enhanced Rebase §4).
 - Monitoring/investigation uses deviations as high-signal context for failures.
+
+## 5) Step rerun (NEW; normative)
+
+Step rerun re-executes a single planned step while preserving all prior evidence
+and creating a new execution instance (`step_execution_id`).
+
+### 5.1 Command interface
+
+```text
+workflowctl step rerun <ticket_id> <task_id> <step_id> [--mode A|B] [--note <string>]
+```
+
+### 5.2 Execution flow (normative)
+
+1. Acquire `locks/ticket.<ticket_id>.lock` (Core Infrastructure §6.4).
+2. Load current `workspace/tickets/<ticket_id>/ticket.json` with `expected_rev`.
+3. Load task + plan metadata for the specified `task_id`.
+4. Validate that the step exists in the durable plan:
+   - `workspace/tickets/<ticket_id>/tasks/<task_id>/steps/<step_id>.json`
+   - If missing: fail with `E_NOT_FOUND`.
+5. Determine the most recent prior execution for this step (the "original" attempt):
+   - `original_step_execution_id`
+   - `original_status`
+6. Generate a new `step_execution_id` (ULID) to distinguish this rerun attempt.
+7. Create a new run context: `workspace/runs/<run_id>/`.
+8. Execute the step using the standard pipeline (§1), respecting `--mode` if provided:
+   - Context hydration (Mode A preferred; Mode B allowed)
+   - Patch authoring → hunk-lint → patch apply to ticket stack
+   - Record deviations (if any)
+   - Emit `step_stop` with status and evidence refs
+9. Write the new step execution record:
+   - `workspace/runs/<run_id>/steps/<new_step_execution_id>.json`
+   - The record MUST include `original_step_execution_id` to link back to the prior attempt.
+10. Append rerun metadata to `ticket.json.history[]` (append-only; WSS §5.4.3):
+    - `action_type: "step_rerun"`
+    - `before_state`: `{ "original_step_execution_id": "<ulid>", "original_status": "<status>" }`
+    - `after_state`: `{ "new_step_execution_id": "<ulid>", "new_status": "<status>" }`
+    - `evidence_refs`: `["workspace/runs/<run_id>/steps/<new_step_execution_id>.json"]`
+11. Persist `ticket.json` via JSON Merge Patch (RFC 7396), incrementing `rev`.
+12. Release the ticket lock.
+
+### 5.3 Evidence preservation (normative)
+
+- The original step execution artifacts MUST remain immutable at:
+  - `workspace/runs/<original_run_id>/steps/<original_step_execution_id>.json`
+- The rerun MUST create separate artifacts at:
+  - `workspace/runs/<new_run_id>/steps/<new_step_execution_id>.json`
+- Implementations MUST NOT overwrite or delete any prior execution artifacts.

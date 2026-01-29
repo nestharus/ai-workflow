@@ -48,6 +48,12 @@ Within a ticket context:
 * `show-stack [--graph] [--limit <n>] [--refresh]` — show the ticket's Patch-Stream stack (see `project_ticket_system/Lib__Patch_Stack_Visualization.md`)
 * `diff [--patch <change_id>] [--stat] [--context <n>]` — show diff for the stack or a single patch (see `project_ticket_system/Lib__Patch_Stack_Visualization.md`)
 * `list-patches [--limit <n>] [--format table|json] [--refresh]` — list ordered patches with export status (see `project_ticket_system/Lib__Patch_Stack_Visualization.md`)
+* `undo-last [--dry-run] [--note "reason"]` — undo the most recent patch application
+  - Delegates to: `workflowctl ticket undo-last <current_ticket_id>`
+* `reset --to <rev> [--confirm] [--note "reason"]` — reset the ticket stack to a prior revision (**destructive pointer move**)
+  - Delegates to: `workflowctl ticket reset <current_ticket_id> --to <rev>`
+* `step rerun <step_id> [--mode A|B] [--note "reason"]` — rerun a specific planned step
+  - Delegates to: `workflowctl step rerun <current_ticket_id> <current_task_id> <step_id>`
 * `plan` — run decomposition (`task_decompose_v1`) and show step plan summary
 * `step run <step_id>` — execute a single step (`step_execute_v1`)
 * `run` — execute remaining steps in order
@@ -173,3 +179,36 @@ Purpose: print ordered patch ids + summaries + exported status.
 
 Required arguments:
 - `--ticket <ticket_id>`
+
+## 8) `workflowctl` rollback commands (NEW; normative)
+
+Rollback commands are **loud** operations that MUST preserve evidence and MUST
+append a history entry to `workspace/tickets/<ticket_id>/ticket.json.history[]`
+per `Tech_Plan__Core_Infrastructure/04_WSS_Workspace_State_Store.md` §5.4.3.
+
+### 8.1 `workflowctl ticket undo-last`
+
+Undo the most recent patch application on a ticket stack.
+
+```text
+workflowctl ticket undo-last <ticket_id> [--dry-run] [--note <string>]
+```
+
+### 8.2 `workflowctl ticket reset`
+
+Reset the ticket stack pointer to a prior revision (requires explicit confirmation).
+
+```text
+workflowctl ticket reset <ticket_id> --to <rev> [--confirm] [--note <string>]
+```
+
+**Safety warning (normative)**: This command MUST create a safety bookmark before
+moving the ticket pointer, and MUST refuse to run without explicit confirmation.
+
+### 8.3 `workflowctl step rerun`
+
+Re-run a specific planned step while preserving the original execution artifacts.
+
+```text
+workflowctl step rerun <ticket_id> <task_id> <step_id> [--mode A|B] [--note <string>]
+```

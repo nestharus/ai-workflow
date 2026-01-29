@@ -149,3 +149,57 @@ Supported user actions:
 
 Invariant:
 - Ticket close remains blocked until required validation passes; any unvalidated export MUST be clearly labeled and MUST NOT flip ticket to `done`.
+
+## 5) Rollback validation and safety checks (NEW; normative)
+
+Rollback operations (undo/reset/rerun) MUST be validated before and after execution.
+These rules apply to:
+- `workflowctl ticket undo-last`
+- `workflowctl ticket reset`
+- `workflowctl step rerun`
+
+### 5.1 Pre-operation validation (normative)
+
+- Ticket MUST be in `in_progress` status.
+  - Reject `done`, `abandoned`, `blocked` with `E_TICKET_NOT_IN_PROGRESS`.
+- Optimistic concurrency MUST be enforced:
+  - If `expected_rev` mismatches: fail with `E_CONCURRENT_MODIFICATION` (no retries).
+- `undo-last`:
+  - Ticket stack MUST have at least one patch (tip change present).
+  - If empty: `E_NO_PATCHES_TO_UNDO`.
+- `reset`:
+  - Target revision MUST exist and be reachable from the ticket stack history.
+  - If not found: `E_INVALID_TARGET_REV`.
+  - Reset MUST require explicit confirmation; if user declines: `E_USER_CANCELLED`.
+- `step rerun`:
+  - The step MUST exist in the durable task plan.
+  - If missing: `E_NOT_FOUND`.
+
+### 5.2 Post-operation validation (normative)
+
+After executing a rollback operation, the system MUST verify:
+- jj operation success (exit code == 0) and capture raw output for evidence.
+  - If failure: `E_JJ_OPERATION_FAILED`.
+- WSS updates persisted correctly:
+  - `ticket.json.rev` incremented by 1
+  - a new entry appended to `ticket.json.history[]` (never modified in-place)
+- Evidence artifacts created at the declared locations (see `tm` and `execute` specs).
+
+### 5.3 Error codes (normative)
+
+Rollback operations MUST use the following error codes:
+
+- `E_NO_PATCHES_TO_UNDO`: Stack is empty, nothing to undo
+- `E_INVALID_TARGET_REV`: Target revision not found in stack history
+- `E_TICKET_NOT_IN_PROGRESS`: Ticket state prevents rollback
+- `E_CONCURRENT_MODIFICATION`: Optimistic concurrency check failed
+- `E_JJ_OPERATION_FAILED`: Underlying jj command failed
+- `E_USER_CANCELLED`: User declined an explicitly-confirmed operation
+
+### 5.4 Notification requirements (normative)
+
+- On failure, the system MUST emit a notification at `error` severity with:
+  - error code
+  - a short recommended next action
+  - evidence refs (paths under `workspace/runs/<run_id>/...`)
+- Evidence preservation is mandatory even on failure (see `tm` §3).

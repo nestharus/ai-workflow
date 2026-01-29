@@ -1,7 +1,7 @@
 # Core Infrastructure — Workspace State Store (WSS)
 
 - **Doc**: Tech_Plan__Core_Infrastructure/04_WSS_Workspace_State_Store.md
-- **Updated**: 2026-01-26
+- **Updated**: 2026-01-29
 - **Library**: `workflow_engine.storage.wss`
 - **Depends on**: [`00_Foundation.md`](00_Foundation.md), [`03_IDs_and_Time.md`](03_IDs_and_Time.md), [`06_Durability_Protocol.md`](06_Durability_Protocol.md)
 - **Primary responsibility**: Define the durable hierarchical document store for mutable workflow state and non-derivable artifacts.
@@ -41,6 +41,8 @@ workspace/
       sandbox/                       # lint/test/build outputs (durable)
       investigation/                 # bounded evidence bundles
       scripts/                       # registered scripts (hash-addressed)
+      undo/                          # undo-last evidence bundles (tm §5.1)
+      reset/                         # reset evidence bundles + safety bookmarks (tm §5.2)
   conclusions/
     tools/<tool_fingerprint>/
     perf/<step_signature>/
@@ -71,7 +73,7 @@ All updates to JSON docs use **JSON Merge Patch (RFC 7396)**:
 
 RFC 7396: https://datatracker.ietf.org/doc/html/rfc7396
 
-### 5.4 `workspace/tickets/<ticket_id>/ticket.json` schema (v1)
+### 5.4 `workspace/tickets/<ticket_id>/ticket.json` schema (v2)
 
 `ticket.json` is the durable ticket document stored in WSS. It contains:
 - lifecycle state (see `project_ticket_system/Lib__Lifecycle.md` §1),
@@ -82,7 +84,7 @@ RFC 7396: https://datatracker.ietf.org/doc/html/rfc7396
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ticket_id": "<ticket_id>",
   "project_id": "<project_id>",
   "created_at": "2026-01-26T00:00:00Z",
@@ -92,6 +94,7 @@ RFC 7396: https://datatracker.ietf.org/doc/html/rfc7396
   "status": "open|in_progress|blocked|done|abandoned",
   "blocker_kind": "validation_failure|approval_required|missing_dependency|user_input_required",
   "status_history": [],
+  "history": [],
   "stack_bookmark": "ticket/<ticket_id>",
   "base_rev": "<jj commit_id>",
   "tip_rev": "<jj commit_id>",
@@ -133,3 +136,45 @@ Export fields:
 - When present, `export` MUST conform to `project_ticket_system/Lib__Export.md` and:
   - `source_tip_rev` MUST be recorded on successful export (commit ID of the ticket stack tip at export time). This enables per-patch exported markers.
   - For “no-op export” cases (`base_rev == tip_rev`), `exported_tip` MUST be omitted or absent and `no_change` MUST be `true` (do not use `null`).
+
+#### 5.4.3 Rollback `history[]` (NEW; normative)
+
+`history[]` is an **append-only** array of rollback/retry operations performed against a ticket. It exists to:
+- preserve auditability (“what was undone / reset / rerun and why”),
+- link to durable evidence artifacts,
+- support recovery via safety bookmarks (for reset operations).
+
+`history[]` MUST be present in `ticket.json` with a default value of `[]`.
+
+**Append-only rule (normative)**:
+- Existing entries in `history[]` MUST NOT be modified, reordered, or deleted.
+- Writers MUST append by rewriting the entire array with prior entries preserved + one new entry appended (RFC 7396 treats arrays as scalars).
+
+Each history entry MUST conform to the following JSON schema (normative):
+
+```json
+{
+  "schema_version": 1,
+  "history_id": "<ulid>",
+  "action_type": "undo_patch|reset_stack|step_rerun",
+  "created_at": "<rfc3339>",
+  "created_by": "<actor_id>",
+  "before_state": { },
+  "after_state": { },
+  "evidence_refs": ["<wss artifact path>", "..."],
+  "safety_bookmark": "<jj bookmark name>"
+}
+```
+
+Validation rules (normative):
+- `history_id` MUST be a ULID string per `Tech_Plan__Core_Infrastructure/03_IDs_and_Time.md` §4.1.1.
+- `action_type` MUST be one of: `undo_patch`, `reset_stack`, `step_rerun`.
+- `created_at` MUST be an RFC3339 UTC timestamp ending in `Z` (see IDs and Time §4.2).
+- `created_by` MUST be a filename-safe identifier for the actor/session initiating the operation (e.g., `workflowctl`, `tm`, or a user/session id).
+- `before_state` and `after_state` MUST be JSON objects; they MAY be empty but MUST be present.
+- `evidence_refs` MUST be a non-empty array of WSS-relative paths (strings) pointing to durable evidence artifacts.
+- `safety_bookmark` MUST be present ONLY when `action_type == "reset_stack"`.
+
+**Schema versioning note**:
+- `ticket.json.schema_version` is bumped to `2` to add `history[]`.
+- Writers MUST reject unsupported schema versions per Multi-writer correctness §6.2.

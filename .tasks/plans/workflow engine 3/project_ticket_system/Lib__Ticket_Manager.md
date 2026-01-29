@@ -137,3 +137,107 @@ graph TD
     classDef ready fill:#FFD700
     classDef blocked fill:#FFA07A
 ```
+
+## 5) Rollback & retry operations (NEW; normative)
+
+Ticket Manager MUST support rollback-style operations that leverage native jj mechanics
+while preserving evidence and auditability. These operations are **loud** (explicit
+user intent) and MUST write append-only history entries to `ticket.json.history[]`
+per `Tech_Plan__Core_Infrastructure/04_WSS_Workspace_State_Store.md` §5.4.3.
+
+### 5.1 Undo last patch (`undo_last_patch`)
+
+**CLI**:
+```text
+workflowctl ticket undo-last <ticket_id> [--dry-run] [--note <string>]
+```
+
+**Locking / concurrency**:
+- MUST acquire `locks/ticket.<ticket_id>.lock` for the full operation (Core Infrastructure §6.4).
+- MUST load `workspace/tickets/<ticket_id>/ticket.json` with `expected_rev` (Multi-writer correctness §6.2).
+
+**Preconditions**:
+- Ticket MUST be in `in_progress` status.
+  - If status is `done`, `abandoned`, or `blocked`: fail with `E_TICKET_NOT_IN_PROGRESS`.
+- Ticket stack MUST have at least one patch (a current tip change).
+  - If empty: fail with `E_NO_PATCHES_TO_UNDO`.
+
+**Dry-run** (`--dry-run`):
+- MUST NOT execute any jj mutation.
+- MUST NOT write `ticket.json.history[]`.
+- MUST print a preview including:
+  - current stack tip change id
+  - what would be abandoned
+
+**Execution flow**:
+1. Acquire `locks/ticket.<ticket_id>.lock`.
+2. Load `ticket.json` with `expected_rev`.
+3. Resolve current stack tip change id.
+4. Call the jj adapter to abandon the last change (`jj abandon <change_id>`).
+5. Create durable evidence artifacts:
+   - `workspace/runs/<run_id>/artifacts/undo/<history_id>/jj_output.txt`
+   - `workspace/runs/<run_id>/artifacts/undo/<history_id>/undo_manifest.json`
+6. Append a new history entry to `ticket.json.history[]`:
+   - `action_type: "undo_patch"`
+   - `before_state`: `{ "stack_tip_change_id": "<change_id>", "ticket_rev": <rev> }`
+   - `after_state`: `{ "new_stack_tip_change_id": "<change_id|empty>", "new_ticket_rev": <rev+1> }`
+   - `evidence_refs`: `["workspace/runs/<run_id>/artifacts/undo/<history_id>/jj_output.txt"]`
+7. Increment `ticket.json.rev` and persist using JSON Merge Patch (RFC 7396).
+8. Emit a notification at `info` severity containing the abandoned change id and the new tip.
+9. Release the ticket lock.
+
+**Failure behavior**:
+- If any step fails, TM MUST follow §3 (preserve evidence + notify + recommend next action).
+- If the jj operation fails, fail with `E_JJ_OPERATION_FAILED` and include raw jj output in evidence.
+
+### 5.2 Reset ticket stack to a prior revision (`reset_ticket_stack`)
+
+**CLI**:
+```text
+workflowctl ticket reset <ticket_id> --to <rev> [--confirm] [--note <string>]
+```
+
+**Safety confirmation protocol**:
+Before executing, TM/CLI MUST display:
+- current stack tip change id
+- target revision change id
+- the count of patches that will become unreachable from the ticket bookmark after reset
+- a warning: `This operation will move the ticket stack pointer. Continue? [y/N]`
+
+The reset MUST require either:
+- `--confirm`, OR
+- an interactive confirmation response of `y`
+
+If the user declines, fail with `E_USER_CANCELLED` (no mutations, no history entry).
+
+**Locking / concurrency**:
+- MUST acquire `locks/ticket.<ticket_id>.lock` for the full operation (Core Infrastructure §6.4).
+- MUST load `ticket.json` with `expected_rev` (Multi-writer correctness §6.2).
+
+**Preconditions**:
+- Ticket MUST be in `in_progress` status (reject `done`, `abandoned`, `blocked` with `E_TICKET_NOT_IN_PROGRESS`).
+- `--to <rev>` MUST exist in the ticket stack history (reachable from the ticket bookmark).
+  - If not found: fail with `E_INVALID_TARGET_REV`.
+
+**Execution flow**:
+1. Acquire `locks/ticket.<ticket_id>.lock`.
+2. Load `ticket.json` with `expected_rev`.
+3. Validate `--to <rev>` is reachable via `jj log` over the ticket stack.
+4. Generate a safety bookmark name: `wf/undo/<ticket_id>/<ulid>`.
+5. Create the safety bookmark at the current stack tip.
+6. Reset the ticket stack to the target revision (move working copy / stack pointer).
+7. Create durable evidence artifacts:
+   - `workspace/runs/<run_id>/artifacts/reset/<history_id>/reset_manifest.json`
+   - `workspace/runs/<run_id>/artifacts/reset/<history_id>/safety_bookmark.txt`
+8. Append a new history entry to `ticket.json.history[]`:
+   - `action_type: "reset_stack"`
+   - `before_state`: `{ "stack_tip_change_id": "<change_id>", "ticket_rev": <rev> }`
+   - `after_state`: `{ "new_stack_tip_change_id": "<change_id>", "new_ticket_rev": <rev+1> }`
+   - `safety_bookmark`: `"wf/undo/<ticket_id>/<ulid>"`
+   - `evidence_refs`: `["workspace/runs/<run_id>/artifacts/reset/<history_id>/"]`
+9. Increment `ticket.json.rev` and persist.
+10. Emit a notification at `warn` severity including the safety bookmark name.
+11. Release the ticket lock.
+
+**Recovery procedure (informative)**:
+- To return to the pre-reset state, use: `jj edit <safety_bookmark>`.
