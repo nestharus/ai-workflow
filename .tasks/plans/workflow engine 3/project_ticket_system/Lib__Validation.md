@@ -4,6 +4,9 @@
 - **Depends on**: `wss_surfaces`, `workflow_resolver`
 - **Used by**: `tm`, `export`, `lifecycle`
 
+**Locking / concurrency note (normative):** Any lock acquisition performed by validation MUST comply with
+`Tech_Plan__Core_Infrastructure/05_Multi_Writer_Correctness.md` §6.4.
+
 ## 1) Validation is required
 
 Validation is a workflow (default `ticket_validate_v1`) and MUST block ticket close on failure (see `lifecycle` and `export`).

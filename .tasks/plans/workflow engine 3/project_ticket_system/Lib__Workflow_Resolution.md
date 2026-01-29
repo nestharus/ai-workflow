@@ -4,6 +4,9 @@
 - **Depends on**: `wss_surfaces` (for on-disk locations)
 - **Used by**: `tm`, `pm`, `decompose`, `execute`, `validate`, `export`
 
+**Locking / concurrency note (normative):** Any lock acquisition performed by workflow resolution MUST comply with
+`Tech_Plan__Core_Infrastructure/05_Multi_Writer_Correctness.md` §6.4.
+
 ## 1) Workflow selection model
 
 Every major Ticket Manager action is a workflow invocation:

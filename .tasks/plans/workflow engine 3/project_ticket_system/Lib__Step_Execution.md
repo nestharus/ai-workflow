@@ -4,6 +4,9 @@
 - **Depends on**: `wss_surfaces`, `workflow_resolver`, `lifecycle`
 - **Used by**: `tm`
 
+**Locking / concurrency note (normative):** Any lock acquisition performed by step execution MUST comply with
+`Tech_Plan__Core_Infrastructure/05_Multi_Writer_Correctness.md` §6.4.
+
 ## 1) Default step execution pipeline (normative)
 
 For each step (sequential by default), the pipeline is:
