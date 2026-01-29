@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 
-def _run_command(cmd: list[str], cwd: Path) -> tuple[bool, str, str]:
-    """Run a command and return (success, stdout, stderr)."""
+def _run_command(cmd: list[str], cwd: Path) -> tuple[bool, int, str, str]:
+    """Run a command and return (success, exit_code, stdout, stderr)."""
     result = subprocess.run(
         cmd,
         cwd=cwd,
@@ -18,12 +18,12 @@ def _run_command(cmd: list[str], cwd: Path) -> tuple[bool, str, str]:
         text=True,
         check=False,
     )
-    return result.returncode == 0, result.stdout, result.stderr
+    return result.returncode == 0, result.returncode, result.stdout, result.stderr
 
 
 def _aggregate_tasks(working_dir: Path, tasks_folder: Path) -> dict[str, Any] | None:
     """Aggregate task files into a manifest."""
-    success, stdout, stderr = _run_command(
+    success, _exit_code, stdout, stderr = _run_command(
         ["uv", "run", "pr", "aggregate-tasks", "--input-dir", str(tasks_folder)],
         working_dir,
     )
@@ -33,10 +33,24 @@ def _aggregate_tasks(working_dir: Path, tasks_folder: Path) -> dict[str, Any] | 
 
     # Parse aggregated output
     try:
-        return json.loads(stdout)
+        raw: Any = json.loads(stdout)
+        if not isinstance(raw, dict):
+            print("Error parsing aggregated tasks: unexpected output type", file=sys.stderr)
+            return None
     except json.JSONDecodeError:
         print(f"Error parsing aggregated tasks: {stdout}", file=sys.stderr)
         return None
+
+    # Log aggregation details
+    tasks_by_file = raw.get("tasks_by_file", {})
+    task_count = raw.get("task_count", 0)
+    print(
+        f"  Aggregated {task_count} task(s) across {len(tasks_by_file)} target(s):", file=sys.stderr
+    )
+    for file_path, task_files in tasks_by_file.items():
+        print(f"    {file_path}: {task_files}", file=sys.stderr)
+
+    return raw
 
 
 def _build_file_handler_context(
@@ -93,6 +107,19 @@ def _spawn_file_handlers(
         context = _build_file_handler_context(file_path, task_files, tasks_folder)
         context_json = json.dumps(context)
 
+        print(
+            f"  [agent] Spawning pr-file-handler for {file_path} with "
+            f"{len(context['tasks'])} task(s)",
+            file=sys.stderr,
+        )
+        for task in context["tasks"]:
+            content_preview = (task.get("content") or "")[:120]
+            print(
+                f"    task={task['id']} type={task['type']} "
+                f"line={task.get('line')} content={content_preview!r}",
+                file=sys.stderr,
+            )
+
         proc = subprocess.Popen(
             ["uv", "run", "python", "-m", "scripts.agents", "pr-file-handler", context_json],
             cwd=working_dir,
@@ -108,35 +135,77 @@ def _spawn_file_handlers(
         if proc.returncode == 0:
             try:
                 result = json.loads(stdout)
-                if result.get("changes_made"):
+                if not isinstance(result, dict):
+                    print(
+                        f"  [agent] Warning: Could not parse handler result for {file_path} "
+                        "(not a dict)",
+                        file=sys.stderr,
+                    )
+                    continue
+                changes = result.get("changes_made", False)
+                reply_preview = (result.get("deferred_reply") or "")[:200]
+                print(f"  [agent] Result for {file_path}: changes_made={changes}", file=sys.stderr)
+                if reply_preview:
+                    print(f"    reply: {reply_preview!r}", file=sys.stderr)
+                if changes:
                     modified_files.append(file_path)
                 if result.get("deferred_reply"):
-                    # Check if it's a local task
-                    if any(tf.startswith("local_") for tf in tasks_by_file.get(file_path, [])):
-                        local_task_responses.append(
-                            {
-                                "task_id": file_path,
-                                "reply": result["deferred_reply"],
-                            }
-                        )
+                    for task_file in tasks_by_file.get(file_path, []):
+                        if task_file.startswith("local_"):
+                            local_task_responses.append(
+                                {
+                                    "task_id": task_file.replace(".json", ""),
+                                    "reply": result["deferred_reply"],
+                                }
+                            )
             except json.JSONDecodeError:
-                print(f"Warning: Could not parse handler result for {file_path}", file=sys.stderr)
+                print(
+                    f"  [agent] Warning: Could not parse handler result for {file_path}",
+                    file=sys.stderr,
+                )
+                print(f"    stdout: {stdout[:500]}", file=sys.stderr)
         else:
-            print(f"Warning: Handler failed for {file_path}: {stderr}", file=sys.stderr)
+            print(
+                f"  [agent] Warning: Handler failed for {file_path} (exit={proc.returncode})",
+                file=sys.stderr,
+            )
+            if stderr:
+                print(f"    stderr: {stderr[:500]}", file=sys.stderr)
 
+    # Capture pre-diff state before global handlers run
+    pre_diff_files: set[str] | None = None
     # Process global tasks sequentially
     global_tasks = tasks_by_file.get("__global__", [])
+    if global_tasks:
+        _ok, _ec, pre_out, _ = _run_command(["git", "diff", "--name-only"], working_dir)
+        if _ok and pre_out.strip():
+            pre_diff_files = {f.strip() for f in pre_out.strip().splitlines() if f.strip()}
+        else:
+            pre_diff_files = set()
     for task_file in global_tasks:
         context = _build_file_handler_context("__global__", [task_file], tasks_folder)
         context_json = json.dumps(context)
 
-        success, stdout, stderr = _run_command(
+        print(f"  [agent] Running global handler for {task_file}", file=sys.stderr)
+        for task in context["tasks"]:
+            content_preview = (task.get("content") or "")[:120]
+            print(f"    task={task['id']} content={content_preview!r}", file=sys.stderr)
+
+        success, exit_code, stdout, stderr = _run_command(
             ["uv", "run", "python", "-m", "scripts.agents", "pr-file-handler", context_json],
             working_dir,
         )
         if success:
             try:
                 result = json.loads(stdout)
+                changes = result.get("changes_made", False)
+                reply_preview = (result.get("deferred_reply") or "")[:200]
+                print(
+                    f"  [agent] Global result for {task_file}: changes_made={changes}",
+                    file=sys.stderr,
+                )
+                if reply_preview:
+                    print(f"    reply: {reply_preview!r}", file=sys.stderr)
                 if result.get("deferred_reply") and task_file.startswith("local_"):
                     local_task_responses.append(
                         {
@@ -145,9 +214,32 @@ def _spawn_file_handlers(
                         }
                     )
             except json.JSONDecodeError:
-                pass
+                print(
+                    f"  [agent] Warning: Could not parse global handler result for {task_file}",
+                    file=sys.stderr,
+                )
+                print(f"    stdout: {stdout[:500]}", file=sys.stderr)
         else:
-            print(f"Warning: Global handler failed for {task_file}: {stderr}", file=sys.stderr)
+            print(
+                f"  [agent] Warning: Global handler failed for {task_file} (exit={exit_code})",
+                file=sys.stderr,
+            )
+            if stderr:
+                print(f"    stderr: {stderr[:500]}", file=sys.stderr)
+
+    # Detect files modified by global handlers via pre/post git diff
+    if global_tasks and pre_diff_files is not None:
+        _ok, _ec, post_out, _ = _run_command(
+            ["git", "diff", "--name-only"],
+            working_dir,
+        )
+        if _ok and post_out.strip():
+            post_files = {f.strip() for f in post_out.strip().splitlines() if f.strip()}
+            new_files = post_files - pre_diff_files
+            for changed in sorted(new_files):
+                if changed not in modified_files:
+                    modified_files.append(changed)
+                    print(f"  [agent] Global handler modified: {changed}", file=sys.stderr)
 
     return modified_files, local_task_responses
 
@@ -187,6 +279,11 @@ def _run_tests(working_dir: Path, modified_files: list[str]) -> bool:
         else:
             continue
 
+        # Skip files with no corresponding test file
+        if not (working_dir / test_file).is_file():
+            print(f"  [test] {file_path}: no test file ({test_file}), skipping", file=sys.stderr)
+            continue
+
         context = json.dumps(
             {
                 "file_path": file_path,
@@ -207,17 +304,50 @@ def _run_tests(working_dir: Path, modified_files: list[str]) -> bool:
     # Collect results
     all_passed = True
     for file_path, proc in processes:
-        stdout, stderr = proc.communicate()
+        stdout, stderr = None, None
+        try:
+            stdout, stderr = proc.communicate(timeout=300)
+        except subprocess.TimeoutExpired:
+            print(
+                f"  [test] Warning: Test fixer timed out for {file_path}, terminating process",
+                file=sys.stderr,
+            )
+            proc.kill()
+            timeout_stdout, timeout_stderr = proc.communicate()
+            print(
+                f"  [test] {file_path}: timed out - "
+                f"stdout={timeout_stdout[:200]!r} stderr={timeout_stderr[:200]!r}",
+                file=sys.stderr,
+            )
+            all_passed = False
+            continue
+
         if proc.returncode != 0:
-            print(f"Warning: Test fixer failed for {file_path}: {stderr}", file=sys.stderr)
+            print(
+                f"  [test] Test fixer failed for {file_path} (exit={proc.returncode})",
+                file=sys.stderr,
+            )
+            if stderr:
+                print(f"    stderr: {stderr[:500]}", file=sys.stderr)
             all_passed = False
         else:
             try:
                 result = json.loads(stdout)
-                if not result.get("tests_passed", True):
+                if not isinstance(result, dict):
+                    print(
+                        f"  [test] {file_path}: could not parse result (not a dict)",
+                        file=sys.stderr,
+                    )
+                    all_passed = False
+                    continue
+                passed = result.get("tests_passed", True)
+                fixes = result.get("fixes_applied", [])
+                print(f"  [test] {file_path}: passed={passed} fixes={len(fixes)}", file=sys.stderr)
+                if not passed:
                     all_passed = False
             except json.JSONDecodeError:
-                pass
+                print(f"  [test] {file_path}: could not parse result", file=sys.stderr)
+                all_passed = False
 
     return all_passed
 
@@ -245,11 +375,15 @@ def _run_coderabbit(
         review_args = ["--base-commit", "HEAD~1"]
     else:
         # Check for uncommitted changes
-        success, stdout, _ = _run_command(["git", "status", "--porcelain"], working_dir)
+        success, _exit_code, stdout, _ = _run_command(["git", "status", "--porcelain"], working_dir)
         if success and stdout.strip():
             review_args = ["--type", "uncommitted"]
         else:
             review_args = ["--base-commit", "HEAD~1"]
+
+    print(
+        f"  [coderabbit] Running: uv run review.coderabbit {' '.join(review_args)}", file=sys.stderr
+    )
 
     output_file = review_folder / "coderabbit.out"
     result = subprocess.run(
@@ -261,6 +395,40 @@ def _run_coderabbit(
     )
     output_file.write_text(result.stdout, encoding="utf-8")
 
+    # Log coderabbit output
+    MAX_REVIEW_CHARS = 2000
+    if result.returncode != 0:
+        print(f"  [coderabbit] Exit code: {result.returncode}", file=sys.stderr)
+        if result.stderr:
+            truncated_stderr = (
+                result.stderr[:MAX_REVIEW_CHARS]
+                if len(result.stderr) > MAX_REVIEW_CHARS
+                else result.stderr
+            )
+            print(f"  [coderabbit] stderr: {truncated_stderr}", file=sys.stderr)
+            if len(result.stderr) > MAX_REVIEW_CHARS:
+                print(
+                    f"  [coderabbit] stderr: [truncated "
+                    f"{len(result.stderr) - MAX_REVIEW_CHARS} chars]",
+                    file=sys.stderr,
+                )
+    output_text = result.stdout.strip()
+    if output_text:
+        truncated_output = (
+            output_text[:MAX_REVIEW_CHARS] if len(output_text) > MAX_REVIEW_CHARS else output_text
+        )
+        print(f"  [coderabbit] Review output ({len(output_text)} chars):", file=sys.stderr)
+        # Print the review output (truncated if needed)
+        for line in truncated_output.splitlines():
+            print(f"  [coderabbit]   {line}", file=sys.stderr)
+        if len(output_text) > MAX_REVIEW_CHARS:
+            print(
+                f"  [coderabbit]   [truncated {len(output_text) - MAX_REVIEW_CHARS} chars]",
+                file=sys.stderr,
+            )
+    else:
+        print("  [coderabbit] No review output (empty)", file=sys.stderr)
+
 
 def _parse_coderabbit(
     working_dir: Path,
@@ -270,9 +438,10 @@ def _parse_coderabbit(
     """Parse coderabbit output into task files."""
     review_file = review_folder / "coderabbit.out"
     if not review_file.is_file():
+        print("  [parse] No coderabbit.out file found, skipping parse", file=sys.stderr)
         return
 
-    _run_command(
+    success, _exit_code, stdout, stderr = _run_command(
         [
             "uv",
             "run",
@@ -286,6 +455,38 @@ def _parse_coderabbit(
         working_dir,
     )
 
+    if not success:
+        print(f"  [parse] parse-coderabbit failed: {stderr}", file=sys.stderr)
+    if stdout:
+        for line in stdout.strip().splitlines():
+            print(f"  [parse] {line}", file=sys.stderr)
+
+    # Log newly created coderabbit task files
+    new_tasks = sorted(tasks_folder.glob("coderabbit_*.json"))
+    if new_tasks:
+        print(
+            f"  [parse] Created {len(new_tasks)} coderabbit task(s) for next cycle:",
+            file=sys.stderr,
+        )
+        for task_path in new_tasks:
+            try:
+                task_data = json.loads(task_path.read_text(encoding="utf-8"))
+                path = task_data.get("path", "?")
+                line = task_data.get("line", "?")
+                ctype = task_data.get("type", "?")
+                content_preview = (task_data.get("content") or "")[:120]
+                print(
+                    f"    {task_path.name}: file={path} line={line} type={ctype}", file=sys.stderr
+                )
+                print(f"      content: {content_preview!r}", file=sys.stderr)
+            except (json.JSONDecodeError, OSError):
+                print(f"    {task_path.name}: (could not read)", file=sys.stderr)
+    else:
+        print(
+            "  [parse] No coderabbit tasks created (clean review or no actionable comments)",
+            file=sys.stderr,
+        )
+
     # Cleanup raw review file
     review_file.unlink(missing_ok=True)
 
@@ -293,15 +494,18 @@ def _parse_coderabbit(
 def _commit_changes(working_dir: Path, cycle: int, tasks_processed: int) -> tuple[bool, str | None]:
     """Commit changes if any exist. Returns (committed, commit_sha)."""
     # Check for changes
-    success, stdout, _ = _run_command(["git", "status", "--porcelain"], working_dir)
+    success, _exit_code, stdout, _ = _run_command(["git", "status", "--porcelain"], working_dir)
     if not success or not stdout.strip():
         return False, None
 
     # Stage and commit
-    _run_command(["git", "add", "-A"], working_dir)
+    add_ok, _add_ec, _, add_err = _run_command(["git", "add", "-A"], working_dir)
+    if not add_ok:
+        print(f"Warning: git add failed: {add_err}", file=sys.stderr)
+        return False, None
 
     message = f"Review cycle {cycle}: applied {tasks_processed} tasks"
-    success, _, stderr = _run_command(
+    success, _exit_code, _, stderr = _run_command(
         ["git", "commit", "-m", message],
         working_dir,
     )
@@ -311,7 +515,7 @@ def _commit_changes(working_dir: Path, cycle: int, tasks_processed: int) -> tupl
         return False, None
 
     # Get commit SHA
-    success, stdout, _ = _run_command(["git", "rev-parse", "HEAD"], working_dir)
+    success, _exit_code, stdout, _ = _run_command(["git", "rev-parse", "HEAD"], working_dir)
     commit_sha = stdout.strip() if success else None
 
     return True, commit_sha
@@ -403,6 +607,17 @@ def inner_cycle_command(state_file: Path, cycle: int) -> dict[str, Any]:
     # Step 8: Commit changes
     print(f"Cycle {cycle}: Committing changes...", file=sys.stderr)
     committed, commit_sha = _commit_changes(working_dir, cycle, task_count)
+    if committed:
+        print(f"  [commit] Committed: {commit_sha}", file=sys.stderr)
+    else:
+        print("  [commit] No changes to commit", file=sys.stderr)
+
+    # Log cycle summary
+    print(
+        f"Cycle {cycle} summary: tasks={task_count} modified={len(modified_files)} "
+        f"committed={committed} tests_passed={tests_passed}",
+        file=sys.stderr,
+    )
 
     # Step 9: Update session state
     state["commits_made"] = state.get("commits_made", 0) + (1 if committed else 0)

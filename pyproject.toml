@@ -105,7 +105,7 @@ lint = "scripts.dev.linter.lint_cli:main"
 "codegen" = "scripts.codegen.client:main"
 "code-config" = "scripts.everycode.generate_code_config:main"
 # Spec refinement commands
-"spec.init" = "scripts.spec_refinement.cli:main"
+spec = "scripts.spec_refinement.cli:main"
 # Review scripts
 "review.coderabbit" = "scripts.dev.review.coderabbit_review:main"
 "review.sonar" = "scripts.dev.review.sonar_review:main"

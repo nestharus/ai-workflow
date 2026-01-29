@@ -438,7 +438,7 @@ def cmd_spec_synthesize(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """Main entry point for spec refinement CLI."""
     parser = argparse.ArgumentParser(
         description=(
@@ -539,7 +539,10 @@ def main() -> int:
     )
     p_spec_synthesize.set_defaults(func=cmd_spec_synthesize)
 
-    args = parser.parse_args()
+    if argv is None:
+        argv = sys.argv[1:]
+    args = parser.parse_args(argv)
+
     result = args.func(args)
     # All handlers return int
     return int(result)
