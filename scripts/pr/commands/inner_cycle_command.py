@@ -130,6 +130,15 @@ def _run_single_task(
             return None
         return result
     except json.JSONDecodeError:
+        # Agent may prefix text before JSON — extract last JSON object
+        brace_start = stdout.rfind("{")
+        if brace_start >= 0:
+            try:
+                result = json.loads(stdout[brace_start:])
+                if isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                pass
         print(
             f"    [agent] Warning: Could not parse result for {file_path} task={task['id']}",
             file=sys.stderr,

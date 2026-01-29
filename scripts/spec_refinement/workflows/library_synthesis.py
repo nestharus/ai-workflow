@@ -219,6 +219,11 @@ def synthesize_libraries(run_id: str, config_path: Path) -> dict[str, Any]:
     issues.extend(_validate_evidence_sources(charters, manager))
     issues.extend(_validate_overlap_resolutions(charters))
 
+    id_issues = [i for i in issues if i["type"] in ("invalid_library_id", "duplicate_library_id")]
+    if id_issues:
+        manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error="Invalid library IDs")
+        return {"libraries_created": 0, "issues": id_issues}
+
     if not charters:
         manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error="No libraries synthesized")
         return {"libraries_created": 0, "issues": issues}
