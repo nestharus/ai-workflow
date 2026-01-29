@@ -48,6 +48,9 @@ class PhaseResult:
     error: str | None = None
     outputs: dict[str, Any] = field(default_factory=dict)
     issues: list[dict[str, Any]] = field(default_factory=list)
+    gap_audit_iterations: int = 0
+    gap_audit_converged: bool = False
+    open_gaps_count: int = 0
 
 
 @dataclass
@@ -185,6 +188,9 @@ class WorkspaceState:
                     "error": result.error,
                     "outputs": result.outputs,
                     "issues": result.issues,
+                    "gap_audit_iterations": result.gap_audit_iterations,
+                    "gap_audit_converged": result.gap_audit_converged,
+                    "open_gaps_count": result.open_gaps_count,
                 }
                 for name, result in self.phases.items()
             },
@@ -275,6 +281,9 @@ class WorkspaceState:
                 error=phase_data.get("error"),
                 outputs=phase_data.get("outputs", {}),
                 issues=phase_data.get("issues", []),
+                gap_audit_iterations=phase_data.get("gap_audit_iterations", 0),
+                gap_audit_converged=phase_data.get("gap_audit_converged", False),
+                open_gaps_count=phase_data.get("open_gaps_count", 0),
             )
 
         return state

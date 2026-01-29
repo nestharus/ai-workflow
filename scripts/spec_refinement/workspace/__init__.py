@@ -4,10 +4,10 @@ from .manager import RunFolderStructure, WorkspaceManager
 from .state import Phase, PhaseResult, PhaseStatus, WorkspaceState
 
 __all__ = [
+    "Phase",
+    "PhaseResult",
+    "PhaseStatus",
     "RunFolderStructure",
     "WorkspaceManager",
     "WorkspaceState",
-    "Phase",
-    "PhaseStatus",
-    "PhaseResult",
 ]

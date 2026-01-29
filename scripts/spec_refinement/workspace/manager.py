@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.spec_refinement.core.gap import Gap, format_gap_markdown, parse_gaps_markdown
+
 from .state import Phase, WorkspaceState
 
 
@@ -210,9 +212,7 @@ class WorkspaceManager:
     ) -> None:
         """Write manifest files to disk."""
         self.structure.manifest_dir.mkdir(parents=True, exist_ok=True)
-        self.structure.files_json.write_text(
-            json.dumps(file_manifest, indent=2), encoding="utf-8"
-        )
+        self.structure.files_json.write_text(json.dumps(file_manifest, indent=2), encoding="utf-8")
         self.structure.sections_json.write_text(
             json.dumps(section_manifest, indent=2), encoding="utf-8"
         )
@@ -299,10 +299,96 @@ class WorkspaceManager:
 
     def get_all_files(self) -> dict[str, Path]:
         """Get all files as {file_id: Path} mapping."""
+        return {file_id: Path(path_str) for file_id, path_str in self.state.file_manifest.items()}
+
+    # --- Gap Management ---
+
+    def write_library_gaps(self, lib_id: str, gaps: list[Gap]) -> Path:
+        """Write gaps.md for a library."""
+        lib_dir = self.structure.libraries_dir / lib_id
+        lib_dir.mkdir(parents=True, exist_ok=True)
+        gaps_path = lib_dir / "gaps.md"
+        gaps_path.write_text(self._format_gaps_md(gaps), encoding="utf-8")
+        return gaps_path
+
+    def read_library_gaps(self, lib_id: str) -> list[Gap]:
+        """Read gaps.md for a library."""
+        gaps_path = self.structure.libraries_dir / lib_id / "gaps.md"
+        if not gaps_path.exists():
+            return []
+        return parse_gaps_markdown(gaps_path.read_text(encoding="utf-8"))
+
+    def write_task_gaps(self, task_id: str, gaps: list[Gap]) -> Path:
+        """Write gaps.md for a task."""
+        task_dir = self.structure.tasks_dir / task_id
+        task_dir.mkdir(parents=True, exist_ok=True)
+        gaps_path = task_dir / "gaps.md"
+        gaps_path.write_text(self._format_gaps_md(gaps), encoding="utf-8")
+        return gaps_path
+
+    def read_task_gaps(self, task_id: str) -> list[Gap]:
+        """Read gaps.md for a task."""
+        gaps_path = self.structure.tasks_dir / task_id / "gaps.md"
+        if not gaps_path.exists():
+            return []
+        return parse_gaps_markdown(gaps_path.read_text(encoding="utf-8"))
+
+    def get_all_gaps(self, run_id: str) -> dict[str, list[Gap]]:
+        """Aggregate gaps across all libraries and tasks."""
+        gaps: dict[str, list[Gap]] = {}
+        if self.structure.libraries_dir.exists():
+            for lib_dir in sorted(self.structure.libraries_dir.iterdir()):
+                if not lib_dir.is_dir():
+                    continue
+                gaps_path = lib_dir / "gaps.md"
+                if gaps_path.exists():
+                    gaps[lib_dir.name] = self.read_library_gaps(lib_dir.name)
+        if self.structure.tasks_dir.exists():
+            for task_dir in sorted(self.structure.tasks_dir.iterdir()):
+                if not task_dir.is_dir():
+                    continue
+                gaps_path = task_dir / "gaps.md"
+                if gaps_path.exists():
+                    gaps[task_dir.name] = self.read_task_gaps(task_dir.name)
+        return gaps
+
+    def record_gap_audit(self, phase: Phase, gaps: list[Gap], converged: bool) -> None:
+        """Record gap audit convergence stats for a phase."""
+        result = self.state.phases[phase.value]
+        result.gap_audit_iterations += 1
+        result.gap_audit_converged = converged
+        result.open_gaps_count = len([gap for gap in gaps if gap.status == "open"])
+        self._save_state()
+
+    def get_gap_audit_status(self, phase: Phase) -> dict[str, Any]:
+        """Get gap audit status for a phase."""
+        result = self.state.phases[phase.value]
         return {
-            file_id: Path(path_str)
-            for file_id, path_str in self.state.file_manifest.items()
+            "iterations": result.gap_audit_iterations,
+            "converged": result.gap_audit_converged,
+            "open_gaps_count": result.open_gaps_count,
         }
+
+    @staticmethod
+    def _format_gaps_md(gaps: list[Gap]) -> str:
+        sections = [
+            ("open", "Open Gaps"),
+            ("integrated", "Integrated Gaps"),
+            ("deferred", "Deferred Gaps"),
+            ("rejected", "Rejected Gaps"),
+        ]
+        grouped: dict[str, list[Gap]] = {key: [] for key, _ in sections}
+        for gap in gaps:
+            grouped.setdefault(gap.status, []).append(gap)
+
+        lines: list[str] = []
+        for status, title in sections:
+            lines.append(f"## {title}")
+            lines.append("")
+            for gap in grouped.get(status, []):
+                lines.append(format_gap_markdown(gap))
+                lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
 
     def _save_state(self) -> None:
         """Save current state to disk."""
