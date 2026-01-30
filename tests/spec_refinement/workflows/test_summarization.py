@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from scripts.spec_refinement.workflows.summarization import _validate_evidence_pointers
 from scripts.spec_refinement.workspace import WorkspaceManager
@@ -21,6 +22,13 @@ def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManag
     issues = manager.initialize(force=True)
     assert issues == []
     return manager
+
+
+def _stub_manager(
+    file_manifest: dict[str, str], section_manifest: dict[str, list[str]]
+) -> SimpleNamespace:
+    state = SimpleNamespace(file_manifest=file_manifest, section_manifest=section_manifest)
+    return SimpleNamespace(state=state)
 
 
 def test_validate_evidence_pointers_basename_reference(fs, monkeypatch) -> None:
@@ -57,3 +65,29 @@ def test_validate_evidence_pointers_separator_normalization(fs, monkeypatch) -> 
     issues = _validate_evidence_pointers(content, manager, "file_001")
 
     assert issues == []
+
+
+def test_validate_evidence_pointers_basename_and_normalized_section() -> None:
+    file_path = Path("/work/specs/nested/alpha.md")
+    manager = _stub_manager(
+        {"file_001": str(file_path)},
+        {"file_001": ["INTRO", "User Requirements"]},
+    )
+
+    content = "Evidence: [alpha.md::intro]\nEvidence: [alpha::user-requirements]"
+    issues = _validate_evidence_pointers(content, manager, "file_001")
+
+    assert issues == []
+
+
+def test_validate_evidence_pointers_invalid_section_reports_issue() -> None:
+    file_path = Path("/work/specs/nested/alpha.md")
+    manager = _stub_manager(
+        {"file_001": str(file_path)},
+        {"file_001": ["INTRO", "User Requirements"]},
+    )
+
+    content = "Evidence: [alpha::missing-section]"
+    issues = _validate_evidence_pointers(content, manager, "file_001")
+
+    assert any(issue["type"] == "unknown_section_reference" for issue in issues)
