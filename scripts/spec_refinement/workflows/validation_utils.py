@@ -76,18 +76,26 @@ def _add_lookup(lookup: dict[str, str], key: str, value: str) -> None:
     lookup[key] = value
 
 
-def strip_invalid_file_pointers(content: str, file_manifest: dict[str, str]) -> str:
+def strip_invalid_file_pointers(
+    content: str,
+    file_manifest: dict[str, str],
+    *,
+    allow_multi_hop: bool = False,
+) -> str:
     """Remove evidence pointers with invalid file references from content.
 
-    Also collapses redundant whitespace from removed pointers.
+    When allow_multi_hop is True, keep multi-hop pointers (e.g. library
+    citations like [lib_001::spec.md::REQS]) even if the file_ref is not
+    in the file manifest. Also collapses redundant whitespace from removed
+    pointers.
     """
     invalid_pointers: set[str] = set()
     for match in EVIDENCE_POINTER_RE.finditer(content):
         file_ref = match.group(1).strip()
         section_ref = match.group(2).strip()
-        if "::" in section_ref:
-            continue
         if file_ref not in file_manifest:
+            if allow_multi_hop and "::" in section_ref:
+                continue
             invalid_pointers.add(match.group(0))
 
     cleaned = content

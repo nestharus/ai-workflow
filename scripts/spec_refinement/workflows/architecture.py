@@ -166,7 +166,11 @@ def select_architecture(run_id: str) -> dict[str, Any]:
         return {"selected_arch_id": None, "rejected_count": 0}
 
     rationale = str(selection.get("rationale", "")).strip()
-    rationale = strip_invalid_file_pointers(rationale, manager.state.file_manifest)
+    rationale = strip_invalid_file_pointers(
+        rationale,
+        manager.state.file_manifest,
+        allow_multi_hop=True,
+    )
     selection["rationale"] = rationale
     issues = _validate_architecture_citations(rationale, manager)
 
@@ -247,7 +251,11 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
         return {"libraries_mapped": 0, "unmapped_libraries": [], "issues": []}
 
     output = normalize_compound_pointers(output)
-    output = strip_invalid_file_pointers(output, manager.state.file_manifest)
+    output = strip_invalid_file_pointers(
+        output,
+        manager.state.file_manifest,
+        allow_multi_hop=True,
+    )
 
     try:
         mapping = parse_architecture_mapping(output)
