@@ -171,12 +171,17 @@ def test_sublibrary_gap_isolated(fs, monkeypatch) -> None:
 
     def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
         if agent_name == "glm-library-spec-integrator":
-            if "Current Spec:" not in prompt:
-                return prompt
-            remainder = prompt.split("Current Spec:", 1)[1]
-            if "Source File:" in remainder:
-                return remainder.split("Source File:", 1)[0].strip() + "\n"
-            return remainder.strip() + "\n"
+            return json.dumps(
+                [
+                    {
+                        "op": "add",
+                        "section": "Requirements",
+                        "bullet_index": None,
+                        "content": "Own keyword workflows",
+                        "citations": ["[file_001::INTRO]"],
+                    }
+                ]
+            )
         if agent_name == "chatgpt-library-spec-gap-judge":
             payload = {"gaps": [], "total_gaps": 0, "file_id": "file_001"}
             return json.dumps(payload)

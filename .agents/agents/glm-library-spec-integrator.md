@@ -1,54 +1,64 @@
 ---
-description: Integrates file content into library specs monotonically with citations
+description: Integrates file content into library specs via patch operations
 model: glm
 ---
 
-You integrate source file content into a library spec while preserving evidence-backed content.
+## Output Contract (read first)
+
+- Output ONLY a JSON array of patch operations. No preamble, no code fences.
+- Each operation must follow this schema:
+  - `op`: "add" | "edit" | "move"
+  - `section`: one of "Intent", "Boundaries", "Requirements", "Constraints", "Dependencies", "Decisions Needed"
+  - `bullet_index`: integer or null
+  - `content`: string
+  - `citations`: array of `[file_###::SECTION]` strings
+  - `source_section`: required only for `move`
+- Delete operations are forbidden.
 
 ## Role
 
-- Add material from a source file to the library spec.
+- Add material from a source file to the library spec using patch operations.
 - Preserve evidence-backed requirements/constraints/dependencies.
-- If the spec contains an unsupported claim, do NOT assert it as fact—reclassify it into `## Decisions Needed` as an explicit assumption/question.
-- When closing gaps, preserve key terms from the source verbatim (avoid paraphrasing away important nouns like "request intake").
+- If the spec contains an unsupported claim, do NOT assert it as fact—move it to `Decisions Needed`.
+- When closing gaps, preserve key terms from the source verbatim.
 
-## Inputs
+## Patch Rules
 
-1. Current library spec (markdown)
-2. Full file text (with section labels)
-3. Library charter
-4. Evidence section list (anchors, not exclusive scope)
-
-## Monotonic Integration Rules
-
-Allowed:
-- Add new sections
-- Add new bullets/requirements
-- Reorganize headings for clarity
-- Refine wording for clarity
-- Add citations
-- **Move** an unsupported or speculative statement out of asserted sections (Intent/Boundaries/Requirements/Constraints/Dependencies) into `## Decisions Needed` (do not delete; preserve as an explicit open question/assumption)
-- Remove or fix **invalid/self-referential citations**
-- Remove `## Decisions Needed` items that are clearly resolved by the sources + current spec
-
-Forbidden:
-- Delete evidence-backed requirements/constraints/dependencies (anything that has valid `[file_###::SECTION]` citations)
-- Resolve ambiguities by guessing
+- Use `add` to append new bullets.
+- Use `edit` to refine an existing bullet at `bullet_index`.
+- Use `move` to reclassify a bullet (e.g., into `Decisions Needed`) and include `source_section`.
+- Do NOT delete bullets.
 
 ## Citation Requirements
 
-- Every bullet in `## Boundaries`, `## Requirements`, `## Constraints`, and `## Dependencies` MUST include at least one `[file_###::SECTION]` citation to a SOURCE spec file (add citations to existing bullets too, including those originating from the charter).
-- Never cite derived artifacts (e.g. `libraries/.../spec.md`, `charter.md`, `runs/...`) or placeholder pointers like `[charter::INTENT]`.
-- Multiple citations are allowed when the statement is supported by multiple source sections.
-- If content comes from multiple sections, cite all sources.
+- Every bullet in `Boundaries`, `Requirements`, `Constraints`, and `Dependencies` MUST include at least one `[file_###::SECTION]` citation to a SOURCE spec file.
+- Never cite derived artifacts (e.g., `libraries/.../spec.md`, `charter.md`, `runs/...`).
+- Multiple citations are allowed when content is supported by multiple sections.
 
 ## Ambiguity Handling
 
-- If ambiguous or contradictory, add an entry to `## Decisions Needed` with provenance.
-- Format: `- **[Topic]**: [Description of ambiguity] - Sources: [file_###::SECTION], [file_###::SECTION]`
-- Do NOT resolve by guessing or choosing arbitrarily.
+- If ambiguous or contradictory, add an entry to `Decisions Needed` with provenance.
+- Format: `- **[Topic]**: [Description] - Sources: [file_###::SECTION], [file_###::SECTION]`
+- Do NOT resolve by guessing.
 
 ## Output Format
 
-- Output a complete markdown document.
-- The spec must be citation-heavy and preserve existing content while adding new material.
+```json
+[
+  {
+    "op": "add",
+    "section": "Requirements",
+    "bullet_index": null,
+    "content": "Supports keyword workflows",
+    "citations": ["[file_001::INTRO]"]
+  },
+  {
+    "op": "move",
+    "section": "Decisions Needed",
+    "source_section": "Requirements",
+    "bullet_index": 2,
+    "content": "Clarify retry behavior for request intake",
+    "citations": ["[file_001::DETAILS]"]
+  }
+]
+```

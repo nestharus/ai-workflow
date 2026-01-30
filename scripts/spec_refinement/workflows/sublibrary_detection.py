@@ -20,15 +20,23 @@ from .spec_building import (
     SEVERITY_MAP,
     VALID_GAP_SEVERITIES,
     _build_gap_prompt,
-    _build_integration_prompt,
+    _build_patch_prompt,
     _gap_signature,
     _initialize_spec,
-    _is_monotonic_spec_update,
     _normalize_evidence_sources,
     _read_evidence_sources,
     _update_decisions,
-    _validate_spec_citations,
 )
+from .spec_patches import (
+    VALID_SPEC_SECTIONS,
+    SpecDocument,
+    apply_patch,
+    parse_patch_json,
+    render_spec,
+    validate_patch_citations,
+    validate_patch_operation,
+)
+from .validation_utils import build_file_id_lookup, build_section_alias_map
 
 
 def detect_sublibraries(
@@ -589,6 +597,10 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
     if not evidence_map:
         return
 
+    file_id_lookup = build_file_id_lookup(manager.state.file_manifest)
+    section_alias_map = build_section_alias_map(manager.state.section_manifest)
+    valid_file_ids = list(manager.state.file_manifest.keys())
+
     existing_gaps = _read_sublibrary_gaps(sub_lib_dir)
     gap_history: list[tuple[str, ...]] = []
 
@@ -611,7 +623,7 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
 
             file_content = file_path.read_text(encoding="utf-8")
             current_spec = spec_path.read_text(encoding="utf-8")
-            prompt = _build_integration_prompt(
+            prompt = _build_patch_prompt(
                 lib_id,
                 charter_content,
                 current_spec,
@@ -619,6 +631,7 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
                 file_content,
                 sections,
                 manager.get_section_labels(file_id),
+                valid_file_ids,
                 gaps=gap_focus,
             )
             try:
@@ -637,20 +650,122 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
                 )
                 continue
 
-            if not _is_monotonic_spec_update(current_spec, output):
-                issues.append(
+            try:
+                patch_set = parse_patch_json(output)
+            except Exception as exc:
+                errors.append(
                     {
-                        "type": "non_monotonic_integration",
                         "lib_id": lib_id,
                         "file_id": file_id,
-                        "message": "Integrator output removed existing spec content.",
+                        "error": f"Failed to parse patch output: {exc}",
                     }
                 )
-                output = current_spec
+                continue
 
-            spec_path.write_text(output, encoding="utf-8")
-            issues.extend(_validate_spec_citations(output, manager, lib_id))
-            _update_decisions(sub_lib_dir, output)
+            valid_ops = []
+            for operation in patch_set.operations:
+                op_errors = validate_patch_operation(operation, VALID_SPEC_SECTIONS)
+                if op_errors:
+                    issues.append(
+                        {
+                            "type": "invalid_patch_operation",
+                            "lib_id": lib_id,
+                            "file_id": file_id,
+                            "operation": {
+                                "op": operation.op,
+                                "section": operation.section,
+                                "bullet_index": operation.bullet_index,
+                            },
+                            "message": "; ".join(op_errors),
+                        }
+                    )
+                    continue
+                valid_ops.append(operation)
+
+            citation_issues = validate_patch_citations(
+                valid_ops,
+                file_id_lookup,
+                section_alias_map,
+                lib_id=lib_id,
+            )
+            if citation_issues:
+                issues.extend(citation_issues)
+                from .repair import ArtifactType, repair_artifact
+
+                try:
+                    repaired_output = repair_artifact(
+                        output=output,
+                        errors=citation_issues,
+                        allowlists={
+                            "file_ids": list(manager.state.file_manifest.keys()),
+                            "sections": {
+                                file_id: manager.state.section_manifest.get(file_id, [])
+                                for file_id in manager.state.file_manifest
+                            },
+                        },
+                        artifact_type=ArtifactType.SPEC_PATCHES,
+                        manager=manager,
+                    )
+                    repaired_patch_set = parse_patch_json(repaired_output)
+                    repaired_ops = []
+                    for operation in repaired_patch_set.operations:
+                        op_errors = validate_patch_operation(operation, VALID_SPEC_SECTIONS)
+                        if op_errors:
+                            issues.append(
+                                {
+                                    "type": "invalid_patch_operation",
+                                    "lib_id": lib_id,
+                                    "file_id": file_id,
+                                    "operation": {
+                                        "op": operation.op,
+                                        "section": operation.section,
+                                        "bullet_index": operation.bullet_index,
+                                    },
+                                    "message": "; ".join(op_errors),
+                                }
+                            )
+                            continue
+                        repaired_ops.append(operation)
+                    repaired_issues = validate_patch_citations(
+                        repaired_ops,
+                        file_id_lookup,
+                        section_alias_map,
+                        lib_id=lib_id,
+                    )
+                    if not repaired_issues:
+                        valid_ops = repaired_ops
+                        issues = [issue for issue in issues if issue not in citation_issues]
+                except Exception as exc:
+                    issues.append(
+                        {
+                            "type": "repair_failed",
+                            "lib_id": lib_id,
+                            "message": f"Spec patch repair failed: {exc}",
+                        }
+                    )
+
+            spec_doc = SpecDocument(current_spec)
+            for operation in valid_ops:
+                try:
+                    apply_patch(spec_doc, operation)
+                except Exception as exc:
+                    issues.append(
+                        {
+                            "type": "patch_apply_failed",
+                            "lib_id": lib_id,
+                            "file_id": file_id,
+                            "operation": {
+                                "op": operation.op,
+                                "section": operation.section,
+                                "bullet_index": operation.bullet_index,
+                            },
+                            "message": str(exc),
+                        }
+                    )
+
+            updated_spec = render_spec(spec_doc, lib_id)
+            spec_path.write_text(updated_spec, encoding="utf-8")
+            _update_decisions(sub_lib_dir, updated_spec)
 
         spec_content = spec_path.read_text(encoding="utf-8")
         evidence_list: list[GapEvidence] = []

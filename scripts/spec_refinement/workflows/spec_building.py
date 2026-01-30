@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -11,18 +12,27 @@ from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, f
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
-from .formats import EVIDENCE_POINTER_RE, normalize_compound_pointers, parse_gap_judge_output
+from .formats import EVIDENCE_POINTER_RE, parse_gap_judge_output
 from .progress import ProgressTracker
+from .spec_patches import (
+    VALID_SPEC_SECTIONS,
+    SpecDocument,
+    apply_patch,
+    parse_patch_json,
+    render_spec,
+    validate_patch_citations,
+    validate_patch_operation,
+)
 from .validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
     resolve_section_reference,
-    strip_invalid_file_pointers,
 )
 
 MAX_ITERATIONS_DEFAULT = 5
 VALID_GAP_SEVERITIES = {"must", "should", "nice-to-have"}
 SEVERITY_MAP = {"must": "error", "should": "warning", "nice-to-have": "info"}
+MAX_RELEVANT_LINES_PER_SECTION = 12
 
 
 def _extract_sections(content: str, level: int) -> dict[str, str]:
@@ -38,18 +48,6 @@ def _extract_sections(content: str, level: int) -> dict[str, str]:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
         sections[title] = content[start:end].strip()
     return sections
-
-
-def _is_monotonic_spec_update(previous: str, updated: str) -> bool:
-    if not previous.strip():
-        return True
-    prev_sections = _extract_sections(previous, level=2)
-    if not prev_sections:
-        return True
-    next_sections = _extract_sections(updated, level=2)
-    prev_titles = {title.strip().lower() for title in prev_sections}
-    next_titles = {title.strip().lower() for title in next_sections}
-    return prev_titles.issubset(next_titles)
 
 
 def _extract_list_items(section_text: str) -> list[str]:
@@ -105,7 +103,7 @@ def _initialize_spec(lib_dir: Path, charter_content: str, lib_id: str) -> Path:
     return spec_path
 
 
-def _build_integration_prompt(
+def _build_full_spec_prompt_for_metrics(
     lib_id: str,
     charter_content: str,
     spec_content: str,
@@ -156,6 +154,127 @@ def _build_integration_prompt(
         "",
         "Current Spec:",
         spec_content.strip(),
+        "",
+    ]
+    if gaps:
+        lines.extend(
+            [
+                "Focus on closing the following gaps:",
+                format_gap_table(gaps),
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "Source File:",
+            f"File ID: {file_id}",
+            file_content.strip(),
+        ]
+    )
+    return "\n".join(lines).strip() + "\n"
+
+
+def _summarize_spec_sections(spec_doc: SpecDocument) -> list[str]:
+    return [
+        f"- {section}: {spec_doc.count_bullets(section)} bullets" for section in VALID_SPEC_SECTIONS
+    ]
+
+
+def _select_relevant_spec_sections(spec_doc: SpecDocument, file_id: str) -> dict[str, list[str]]:
+    relevant: dict[str, list[str]] = {}
+    for section_name, lines in spec_doc.section_lines.items():
+        matches = []
+        for line in lines:
+            for match in EVIDENCE_POINTER_RE.finditer(line):
+                if match.group(1).strip() == file_id:
+                    matches.append(line.strip())
+                    break
+        if matches:
+            if len(matches) > MAX_RELEVANT_LINES_PER_SECTION:
+                omitted = len(matches) - MAX_RELEVANT_LINES_PER_SECTION
+                matches = matches[:MAX_RELEVANT_LINES_PER_SECTION]
+                matches.append(f"... ({omitted} more omitted)")
+            relevant[section_name] = matches
+    return relevant
+
+
+def _format_relevant_sections(
+    relevant: dict[str, list[str]], section_order: list[str]
+) -> list[str]:
+    if not relevant:
+        return ["None"]
+
+    ordered = [section for section in VALID_SPEC_SECTIONS if section in relevant]
+    for section in section_order:
+        if section in relevant and section not in ordered:
+            ordered.append(section)
+
+    lines: list[str] = []
+    for section in ordered:
+        lines.append(f"[{section}]")
+        lines.extend(relevant[section])
+        lines.append("")
+    return lines[:-1] if lines and not lines[-1] else lines
+
+
+def _build_patch_prompt(
+    lib_id: str,
+    charter_content: str,
+    spec_content: str,
+    file_id: str,
+    file_content: str,
+    evidence_sections: list[str],
+    valid_sections: list[str],
+    valid_file_ids: list[str],
+    gaps: list[Gap] | None = None,
+) -> str:
+    spec_doc = SpecDocument(spec_content)
+    summaries = _summarize_spec_sections(spec_doc)
+    relevant_sections = _select_relevant_spec_sections(spec_doc, file_id)
+    relevant_lines = _format_relevant_sections(relevant_sections, spec_doc.section_order)
+    section_list = ", ".join(evidence_sections) if evidence_sections else "None"
+    valid_list = ", ".join(valid_sections) if valid_sections else "None"
+    file_id_list = ", ".join(valid_file_ids) if valid_file_ids else "None"
+    valid_spec_sections = ", ".join(VALID_SPEC_SECTIONS)
+    lines = [
+        "Return ONLY a JSON array of patch operations.",
+        "Schema (each element):",
+        '{ "op": "add|edit|move", "section": "Spec Section", '
+        '"bullet_index": int|null, "content": "text", '
+        '"citations": ["[file_###::SECTION]"], "source_section": "Spec Section" }',
+        "Rules:",
+        "- Allowed ops: add, edit, move. Delete operations are forbidden.",
+        "- Each operation must target a valid spec section.",
+        "- Use add for new content, edit to refine an existing bullet, "
+        "move to reclassify to Decisions Needed.",
+        "- Every bullet in Boundaries/Requirements/Constraints/Dependencies "
+        "must include at least one citation.",
+        "- Do NOT cite derived artifacts (charter, libraries, runs). Only cite SOURCE files.",
+        (
+            "When closing gaps, preserve key terms from the source/gap text verbatim "
+            "(e.g., 'request intake' must appear as 'request intake')."
+        ),
+        (
+            "If the gap list indicates an unsupported claim, move it to Decisions Needed "
+            "as an explicit open question/assumption."
+        ),
+        "",
+        f"Library ID: {lib_id}",
+        f"Current File ID: {file_id}",
+        f"Valid Spec Sections: {valid_spec_sections}",
+        f"Valid File IDs for Citations: {file_id_list}",
+        "",
+        "Library Charter:",
+        charter_content.strip(),
+        "",
+        f"Evidence Sections (anchors, not exclusive): {section_list}",
+        f"Valid Section Labels For Citations in {file_id}: {valid_list}",
+        "",
+        "Current Spec Section Summaries:",
+        *summaries,
+        "",
+        "Relevant Spec Sections (citations to current file):",
+        *relevant_lines,
         "",
     ]
     if gaps:
@@ -352,6 +471,16 @@ def _gap_signature(gaps: list[Gap]) -> tuple[str, ...]:
     return tuple(sorted(gap.id for gap in gaps if gap.status == "open"))
 
 
+def _log_history_event(manager: WorkspaceManager, event: str, payload: dict[str, Any]) -> None:
+    manager.state.history.append(
+        {
+            "timestamp": datetime.now().isoformat(),
+            "event": event,
+            **payload,
+        }
+    )
+
+
 def _build_gaps_from_judge(
     lib_id: str,
     file_id: str,
@@ -432,8 +561,16 @@ def _build_library_spec(
             "failed": True,
         }
 
+    file_id_lookup = build_file_id_lookup(manager.state.file_manifest)
+    section_alias_map = build_section_alias_map(manager.state.section_manifest)
+    valid_file_ids = list(manager.state.file_manifest.keys())
+
     existing_gaps = manager.read_library_gaps(lib_id)
     gap_history: list[tuple[str, ...]] = []
+    total_patches_applied = 0
+    total_files_processed = 0
+    total_prompt_size_old = 0
+    total_prompt_size_new = 0
 
     for iteration in range(max_iterations):
         iterations += 1
@@ -456,7 +593,7 @@ def _build_library_spec(
             file_content = file_path.read_text(encoding="utf-8")
             current_spec = spec_path.read_text(encoding="utf-8")
             file_gaps = _filter_open_gaps_for_file(gap_focus, file_id) if gap_focus else None
-            prompt = _build_integration_prompt(
+            prompt = _build_patch_prompt(
                 lib_id,
                 charter_content,
                 current_spec,
@@ -464,7 +601,40 @@ def _build_library_spec(
                 file_content,
                 sections,
                 manager.get_section_labels(file_id),
+                valid_file_ids,
                 gaps=file_gaps,
+            )
+            legacy_prompt_size = len(
+                _build_full_spec_prompt_for_metrics(
+                    lib_id,
+                    charter_content,
+                    current_spec,
+                    file_id,
+                    file_content,
+                    sections,
+                    manager.get_section_labels(file_id),
+                    gaps=file_gaps,
+                )
+            )
+            new_prompt_size = len(prompt)
+            total_prompt_size_old += legacy_prompt_size
+            total_prompt_size_new += new_prompt_size
+            reduction_pct = (
+                ((legacy_prompt_size - new_prompt_size) / legacy_prompt_size) * 100
+                if legacy_prompt_size
+                else 0.0
+            )
+            total_files_processed += 1
+            _log_history_event(
+                manager,
+                "spec_patch_prompt_stats",
+                {
+                    "lib_id": lib_id,
+                    "file_id": file_id,
+                    "old_prompt_size": legacy_prompt_size,
+                    "new_prompt_size": new_prompt_size,
+                    "reduction_pct": round(reduction_pct, 2),
+                },
             )
             try:
                 output = run_agent(
@@ -482,24 +652,64 @@ def _build_library_spec(
                 )
                 continue
 
-            output = normalize_compound_pointers(output)
-            output = _extract_spec_markdown(output, lib_id)
-            output = strip_invalid_file_pointers(output, manager.state.file_manifest)
-            if not _is_monotonic_spec_update(current_spec, output):
-                issues.append(
+            try:
+                patch_set = parse_patch_json(output)
+            except Exception as exc:
+                errors.append(
                     {
-                        "type": "non_monotonic_integration",
                         "lib_id": lib_id,
                         "file_id": file_id,
-                        "message": "Integrator output removed existing spec content.",
+                        "error": f"Failed to parse patch output: {exc}",
                     }
                 )
-                output = current_spec
+                continue
 
-            spec_path.write_text(output, encoding="utf-8")
-            citation_issues = _validate_spec_citations(output, manager, lib_id)
-            issues.extend(citation_issues)
+            valid_ops = []
+            for operation in patch_set.operations:
+                op_errors = validate_patch_operation(operation, VALID_SPEC_SECTIONS)
+                if op_errors:
+                    issues.append(
+                        {
+                            "type": "invalid_patch_operation",
+                            "lib_id": lib_id,
+                            "file_id": file_id,
+                            "operation": {
+                                "op": operation.op,
+                                "section": operation.section,
+                                "bullet_index": operation.bullet_index,
+                            },
+                            "message": "; ".join(op_errors),
+                        }
+                    )
+                    _log_history_event(
+                        manager,
+                        "spec_patch_operation_invalid",
+                        {
+                            "lib_id": lib_id,
+                            "file_id": file_id,
+                            "errors": op_errors,
+                        },
+                    )
+                    continue
+                valid_ops.append(operation)
+
+            citation_issues = validate_patch_citations(
+                valid_ops,
+                file_id_lookup,
+                section_alias_map,
+                lib_id=lib_id,
+            )
             if citation_issues:
+                issues.extend(citation_issues)
+                _log_history_event(
+                    manager,
+                    "spec_patch_validation_failed",
+                    {
+                        "lib_id": lib_id,
+                        "file_id": file_id,
+                        "errors": citation_issues,
+                    },
+                )
                 from .repair import ArtifactType, repair_artifact
 
                 try:
@@ -513,23 +723,86 @@ def _build_library_spec(
                                 for file_id in manager.state.file_manifest
                             },
                         },
-                        artifact_type=ArtifactType.SPEC,
+                        artifact_type=ArtifactType.SPEC_PATCHES,
                         manager=manager,
                     )
-                    repaired_issues = _validate_spec_citations(repaired_output, manager, lib_id)
+                    repaired_patch_set = parse_patch_json(repaired_output)
+                    repaired_ops = []
+                    for operation in repaired_patch_set.operations:
+                        op_errors = validate_patch_operation(operation, VALID_SPEC_SECTIONS)
+                        if op_errors:
+                            issues.append(
+                                {
+                                    "type": "invalid_patch_operation",
+                                    "lib_id": lib_id,
+                                    "file_id": file_id,
+                                    "operation": {
+                                        "op": operation.op,
+                                        "section": operation.section,
+                                        "bullet_index": operation.bullet_index,
+                                    },
+                                    "message": "; ".join(op_errors),
+                                }
+                            )
+                            continue
+                        repaired_ops.append(operation)
+                    repaired_issues = validate_patch_citations(
+                        repaired_ops,
+                        file_id_lookup,
+                        section_alias_map,
+                        lib_id=lib_id,
+                    )
                     if not repaired_issues:
-                        output = repaired_output
+                        valid_ops = repaired_ops
                         issues = [issue for issue in issues if issue not in citation_issues]
-                        spec_path.write_text(output, encoding="utf-8")
                 except Exception as exc:
                     issues.append(
                         {
                             "type": "repair_failed",
                             "lib_id": lib_id,
-                            "message": f"Spec repair failed: {exc}",
+                            "message": f"Spec patch repair failed: {exc}",
                         }
                     )
-            _update_decisions(lib_dir, output)
+
+            spec_doc = SpecDocument(current_spec)
+            applied_ops = []
+            for operation in valid_ops:
+                try:
+                    apply_patch(spec_doc, operation)
+                    applied_ops.append(operation)
+                except Exception as exc:
+                    issues.append(
+                        {
+                            "type": "patch_apply_failed",
+                            "lib_id": lib_id,
+                            "file_id": file_id,
+                            "operation": {
+                                "op": operation.op,
+                                "section": operation.section,
+                                "bullet_index": operation.bullet_index,
+                            },
+                            "message": str(exc),
+                        }
+                    )
+
+            updated_spec = render_spec(spec_doc, lib_id)
+            spec_path.write_text(updated_spec, encoding="utf-8")
+            _update_decisions(lib_dir, updated_spec)
+
+            patch_counts = {"add": 0, "edit": 0, "move": 0}
+            for operation in applied_ops:
+                if operation.op in patch_counts:
+                    patch_counts[operation.op] += 1
+            total_patches_applied += len(applied_ops)
+            _log_history_event(
+                manager,
+                "spec_patch_counts",
+                {
+                    "lib_id": lib_id,
+                    "file_id": file_id,
+                    "counts": patch_counts,
+                },
+            )
 
         spec_content = spec_path.read_text(encoding="utf-8")
         evidence_list: list[GapEvidence] = []
@@ -602,6 +875,15 @@ def _build_library_spec(
         "iterations": iterations,
         "converged": converged,
         "failed": not converged and bool(existing_gaps),
+        "patches_applied": total_patches_applied,
+        "files_processed": total_files_processed,
+        "prompt_size_old": total_prompt_size_old,
+        "prompt_size_new": total_prompt_size_new,
+        "context_reduction_pct": (
+            ((total_prompt_size_old - total_prompt_size_new) / total_prompt_size_old) * 100
+            if total_prompt_size_old
+            else 0.0
+        ),
     }
 
 
@@ -629,6 +911,10 @@ def build_specs(run_id: str, max_iterations: int = MAX_ITERATIONS_DEFAULT) -> di
     libraries_built = 0
     total_iterations = 0
     converged_count = 0
+    total_patches_applied = 0
+    total_files_processed = 0
+    total_prompt_size_old = 0
+    total_prompt_size_new = 0
     errors: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
     failed_libraries = 0
@@ -636,6 +922,10 @@ def build_specs(run_id: str, max_iterations: int = MAX_ITERATIONS_DEFAULT) -> di
     for lib_dir in lib_dirs:
         result = _build_library_spec(manager, lib_dir, max_iterations)
         total_iterations += result.get("iterations", 0)
+        total_patches_applied += result.get("patches_applied", 0)
+        total_files_processed += result.get("files_processed", 0)
+        total_prompt_size_old += result.get("prompt_size_old", 0)
+        total_prompt_size_new += result.get("prompt_size_new", 0)
         errors.extend(result.get("errors", []))
         issues.extend(result.get("issues", []))
         if result.get("failed"):
@@ -653,10 +943,21 @@ def build_specs(run_id: str, max_iterations: int = MAX_ITERATIONS_DEFAULT) -> di
 
     total_libs = len(lib_dirs)
     failure_ratio = (failed_libraries / total_libs) if total_libs else 0
+    avg_patches_per_file = (
+        total_patches_applied / total_files_processed if total_files_processed else 0.0
+    )
+    context_reduction_pct = (
+        ((total_prompt_size_old - total_prompt_size_new) / total_prompt_size_old) * 100
+        if total_prompt_size_old
+        else 0.0
+    )
     outputs = {
         "libraries_built": libraries_built,
         "total_iterations": total_iterations,
         "converged_count": converged_count,
+        "total_patches_applied": total_patches_applied,
+        "avg_patches_per_file": round(avg_patches_per_file, 2),
+        "context_reduction_pct": round(context_reduction_pct, 2),
     }
 
     if total_libs > 0 and failure_ratio > 0.5:

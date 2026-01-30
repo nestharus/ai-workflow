@@ -18,6 +18,7 @@ class ArtifactType(str, Enum):
     CHARTER = "charter"
     LIBRARY_LABELS = "library_labels"
     SPEC = "spec"
+    SPEC_PATCHES = "spec_patches"
     EVIDENCE_JSON = "evidence_json"
     ARCHITECTURE_SELECTION = "architecture_selection"
     ARCHITECTURE_MAPPING = "architecture_mapping"
@@ -86,6 +87,7 @@ def _select_repair_agent(artifact_type: ArtifactType) -> str:
         ArtifactType.CHARTER: "repair-charter",
         ArtifactType.LIBRARY_LABELS: "repair-library-labels",
         ArtifactType.SPEC: "repair-spec",
+        ArtifactType.SPEC_PATCHES: "repair-spec-patches",
         ArtifactType.EVIDENCE_JSON: "repair-evidence-json",
         ArtifactType.ARCHITECTURE_SELECTION: "repair-architecture-selection",
         ArtifactType.ARCHITECTURE_MAPPING: "repair-architecture-mapping",
@@ -119,7 +121,7 @@ def _format_error_context(error: dict[str, Any]) -> str:
     return "; ".join(parts) if parts else "none"
 
 
-def _format_context_value(value: Any) -> str:
+def _format_context_value(value: dict[str, object] | list[object]) -> str:
     if isinstance(value, (list, dict)):
         return json.dumps(value, sort_keys=True, ensure_ascii=True)
     return str(value)
@@ -140,14 +142,19 @@ def _format_allowlists(allowlists: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _format_allowlist_value(value: Any) -> str:
+def _format_allowlist_value(
+    value: dict[str, object] | list[object] | tuple[object, ...] | set[object],
+) -> str:
     if isinstance(value, dict):
         if not value:
             return "None"
         lines = []
         for subkey in sorted(value.keys()):
             items = value[subkey]
-            items_text = _format_allowlist_value(items)
+            if isinstance(items, (dict, list, tuple, set)):
+                items_text = _format_allowlist_value(items)
+            else:
+                items_text = str(items)
             lines.append(f"- {subkey}: {items_text}")
         return "\n".join(lines)
     if isinstance(value, (list, tuple, set)):

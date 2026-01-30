@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -48,18 +47,16 @@ def _setup_workspace(fs, monkeypatch) -> Path:
     return input_dir
 
 
-class IntegrationRunner:
-    def __init__(self, mode: str) -> None:
-        self.mode = mode
+def _patch_output(operations: list[dict[str, object]]) -> str:
+    return json.dumps(operations)
+
+
+class PatchRunner:
+    def __init__(self, operations: list[dict[str, object]]) -> None:
+        self.operations = operations
 
     def run(self, prompt: str) -> str:
-        if self.mode == "strip":
-            return "# Library Spec: lib_001\n\n## Requirements\n- Missing\n"
-        match = re.search(r"Current Spec:\n(.*?)\n\nSource File:", prompt, re.S)
-        current_spec = match.group(1).strip() if match else ""
-        if self.mode == "append":
-            return f"{current_spec}\n\n## Requirements\n- Own keyword workflows [file_001::INTRO]\n"
-        return current_spec
+        return _patch_output(self.operations)
 
 
 class GapJudgeRunner:
@@ -72,31 +69,19 @@ class GapJudgeRunner:
         return self.outputs.pop(0)
 
 
-def test_monotonic_integration_no_deletions(fs, monkeypatch) -> None:
-    _setup_workspace(fs, monkeypatch)
-    integrator = IntegrationRunner("strip")
-    gap_judge = GapJudgeRunner([json.dumps({"gaps": [], "total_gaps": 0, "file_id": "file_001"})])
-
-    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
-        if agent_name == "glm-library-spec-integrator":
-            return integrator.run(prompt)
-        return gap_judge.run(prompt)
-
-    with patch(
-        "scripts.spec_refinement.workflows.spec_building.run_agent",
-        side_effect=_run_agent,
-    ):
-        result = build_specs("run1", max_iterations=1)
-
-    spec_path = Path("/repo/runs/run1/libraries/lib_001/spec.md")
-    content = spec_path.read_text(encoding="utf-8")
-    assert "## Intent" in content
-    assert any(issue["type"] == "non_monotonic_integration" for issue in result["issues"])
-
-
 def test_gap_detection_and_clustering(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
-    integrator = IntegrationRunner("append")
+    integrator = PatchRunner(
+        [
+            {
+                "op": "add",
+                "section": "Requirements",
+                "bullet_index": None,
+                "content": "Own keyword workflows",
+                "citations": ["[file_001::INTRO]"],
+            }
+        ]
+    )
     gap_judge_output = json.dumps(
         {
             "gaps": [
@@ -137,7 +122,17 @@ def test_gap_detection_and_clustering(fs, monkeypatch) -> None:
 
 def test_gap_closure_converges(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
-    integrator = IntegrationRunner("append")
+    integrator = PatchRunner(
+        [
+            {
+                "op": "add",
+                "section": "Requirements",
+                "bullet_index": None,
+                "content": "Own keyword workflows",
+                "citations": ["[file_001::INTRO]"],
+            }
+        ]
+    )
     gap_outputs = [
         json.dumps(
             {
@@ -173,7 +168,17 @@ def test_gap_closure_converges(fs, monkeypatch) -> None:
 
 def test_max_iteration_limit(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
-    integrator = IntegrationRunner("append")
+    integrator = PatchRunner(
+        [
+            {
+                "op": "add",
+                "section": "Requirements",
+                "bullet_index": None,
+                "content": "Own keyword workflows",
+                "citations": ["[file_001::INTRO]"],
+            }
+        ]
+    )
     gap_outputs = [
         json.dumps(
             {
@@ -222,7 +227,17 @@ def test_max_iteration_limit(fs, monkeypatch) -> None:
 
 def test_citation_validation(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
-    integrator = IntegrationRunner("strip")
+    integrator = PatchRunner(
+        [
+            {
+                "op": "add",
+                "section": "Requirements",
+                "bullet_index": None,
+                "content": "Missing citation",
+                "citations": [],
+            }
+        ]
+    )
     gap_judge = GapJudgeRunner([json.dumps({"gaps": [], "total_gaps": 0, "file_id": "file_001"})])
 
     def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
@@ -230,10 +245,66 @@ def test_citation_validation(fs, monkeypatch) -> None:
             return integrator.run(prompt)
         return gap_judge.run(prompt)
 
-    with patch(
-        "scripts.spec_refinement.workflows.spec_building.run_agent",
-        side_effect=_run_agent,
+    with (
+        patch(
+            "scripts.spec_refinement.workflows.spec_building.run_agent",
+            side_effect=_run_agent,
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.repair.run_agent",
+            return_value=integrator.run(""),
+        ),
     ):
         result = build_specs("run1", max_iterations=1)
 
-    assert any(issue["type"] == "missing_evidence_pointers" for issue in result["issues"])
+    issue_types = {issue["type"] for issue in result["issues"]}
+    assert "missing_citation" in issue_types or "missing_evidence_pointers" in issue_types
+
+
+def test_repair_invalid_patch_citations(fs, monkeypatch) -> None:
+    _setup_workspace(fs, monkeypatch)
+    integrator = PatchRunner(
+        [
+            {
+                "op": "add",
+                "section": "Requirements",
+                "bullet_index": None,
+                "content": "Own keyword workflows",
+                "citations": ["[file_001::MISSING]"],
+            }
+        ]
+    )
+    repaired_patch = _patch_output(
+        [
+            {
+                "op": "add",
+                "section": "Requirements",
+                "bullet_index": None,
+                "content": "Own keyword workflows",
+                "citations": ["[file_001::INTRO]"],
+            }
+        ]
+    )
+    gap_judge = GapJudgeRunner([json.dumps({"gaps": [], "total_gaps": 0, "file_id": "file_001"})])
+
+    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+        if agent_name == "glm-library-spec-integrator":
+            return integrator.run(prompt)
+        return gap_judge.run(prompt)
+
+    with (
+        patch(
+            "scripts.spec_refinement.workflows.spec_building.run_agent",
+            side_effect=_run_agent,
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.repair.run_agent",
+            return_value=repaired_patch,
+        ),
+    ):
+        result = build_specs("run1", max_iterations=1)
+
+    spec_path = Path("/repo/runs/run1/libraries/lib_001/spec.md")
+    content = spec_path.read_text(encoding="utf-8")
+    assert "[file_001::INTRO]" in content
+    assert not any(issue["type"] == "unknown_section_reference" for issue in result["issues"])

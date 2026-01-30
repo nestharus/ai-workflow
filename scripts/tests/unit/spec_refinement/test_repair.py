@@ -24,6 +24,7 @@ def test_select_repair_agent_mapping() -> None:
     assert _select_repair_agent(ArtifactType.CHARTER) == "repair-charter"
     assert _select_repair_agent(ArtifactType.LIBRARY_LABELS) == "repair-library-labels"
     assert _select_repair_agent(ArtifactType.SPEC) == "repair-spec"
+    assert _select_repair_agent(ArtifactType.SPEC_PATCHES) == "repair-spec-patches"
     assert _select_repair_agent(ArtifactType.EVIDENCE_JSON) == "repair-evidence-json"
     assert (
         _select_repair_agent(ArtifactType.ARCHITECTURE_SELECTION) == "repair-architecture-selection"
@@ -81,10 +82,13 @@ def test_repair_artifact_skips_when_no_errors() -> None:
 def test_repair_artifact_propagates_exception() -> None:
     manager = _DummyManager(Path("/workspace"))
 
-    with patch(
-        "scripts.spec_refinement.workflows.repair.run_agent",
-        side_effect=RuntimeError("boom"),
-    ), pytest.raises(RuntimeError, match="boom"):
+    with (
+        patch(
+            "scripts.spec_refinement.workflows.repair.run_agent",
+            side_effect=RuntimeError("boom"),
+        ),
+        pytest.raises(RuntimeError, match="boom"),
+    ):
         repair_artifact(
             output="bad",
             errors=[{"type": "bad", "message": "oops"}],
