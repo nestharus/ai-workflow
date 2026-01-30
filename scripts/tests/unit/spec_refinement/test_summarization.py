@@ -27,19 +27,19 @@ def _make_summary_output(file_id: str, section: str) -> str:
     )
 
 
-class DummyRunner:
-    def __init__(self, outputs: dict[str, str], failures: set[str] | None = None) -> None:
-        self.outputs = outputs
-        self.failures = failures or set()
+def _fake_run_agent(outputs: dict[str, str], failures: set[str] | None = None):
+    failures = failures or set()
 
-    def run(self, prompt: str) -> str:
+    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
         match = re.search(r"File ID: (file_\d{3})", prompt)
         if not match:
             raise RuntimeError("Missing file id in prompt")
         file_id = match.group(1)
-        if file_id in self.failures:
+        if file_id in failures:
             raise RuntimeError("Agent error")
-        return self.outputs[file_id]
+        return outputs[file_id]
+
+    return _run_agent
 
 
 def _setup_workspace(fs, monkeypatch) -> Path:
@@ -64,10 +64,10 @@ def test_summarize_all_success(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.summarization.AgentRunner.from_agent_name",
-        side_effect=lambda *args, **kwargs: DummyRunner(outputs),
+        "scripts.spec_refinement.workflows.summarization.run_agent",
+        side_effect=_fake_run_agent(outputs),
     ):
-        result = summarize_all("run1", Path("/repo/.tasks.yaml"), parallel=False)
+        result = summarize_all("run1", parallel=False)
 
     summary_dir = Path("/repo/runs/run1/summaries")
     assert (summary_dir / "file_001.what.md").exists()
@@ -88,10 +88,10 @@ def test_summarize_all_parallel(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.summarization.AgentRunner.from_agent_name",
-        side_effect=lambda *args, **kwargs: DummyRunner(outputs),
+        "scripts.spec_refinement.workflows.summarization.run_agent",
+        side_effect=_fake_run_agent(outputs),
     ):
-        result = summarize_all("run1", Path("/repo/.tasks.yaml"), parallel=True)
+        result = summarize_all("run1", parallel=True)
 
     assert result["summaries_written"] == 2
     assert result["files_processed"] == 2
@@ -106,10 +106,10 @@ def test_summarize_all_partial_failure(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.summarization.AgentRunner.from_agent_name",
-        side_effect=lambda *args, **kwargs: DummyRunner(outputs, failures={"file_002"}),
+        "scripts.spec_refinement.workflows.summarization.run_agent",
+        side_effect=_fake_run_agent(outputs, failures={"file_002"}),
     ):
-        result = summarize_all("run1", Path("/repo/.tasks.yaml"), parallel=False)
+        result = summarize_all("run1", parallel=False)
 
     assert result["summaries_written"] == 1
     assert result["files_processed"] == 2
@@ -128,10 +128,10 @@ def test_summarize_all_phase_tracking(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.summarization.AgentRunner.from_agent_name",
-        side_effect=lambda *args, **kwargs: DummyRunner(outputs),
+        "scripts.spec_refinement.workflows.summarization.run_agent",
+        side_effect=_fake_run_agent(outputs),
     ):
-        summarize_all("run1", Path("/repo/.tasks.yaml"), parallel=False)
+        summarize_all("run1", parallel=False)
 
     manager = WorkspaceManager(run_id="run1", input_folder=Path("."))
     phase = manager.state.phases[Phase.SUMMARIZATION.value]

@@ -25,6 +25,7 @@ from typing import Literal
 
 from scripts.spec_refinement.core.gap import Gap, format_gap_table
 from scripts.spec_refinement.workflows import summarize_all, synthesize_libraries
+from scripts.spec_refinement.workflows.agent_utils import run_agent
 from scripts.spec_refinement.workspace import WorkspaceManager
 
 
@@ -285,21 +286,17 @@ def cmd_gap_investigate(args: argparse.Namespace) -> int:
     print(f"Context written to: {context_path}")
 
     if args.propose_resolution:
-        from scripts.dev.agent_runner import AgentRunner
-
         prompt = (
             "Analyze this gap and propose a resolution. Specify whether to: "
             "(1) integrate (update artifact), (2) defer (record decision), "
             "(3) reject (mark irrelevant with evidence).\n\n"
             f"{stitched}"
         )
-        runner = AgentRunner.from_agent_name(
-            "implementor",
-            Path(".tasks.yaml"),
-            model="factory/gpt-5.1-codex-max-xhigh",
-            provider="opencode",
+        proposal = run_agent(
+            agent_name="implementor",
+            prompt=prompt,
+            workspace=manager.workspace_path,
         )
-        proposal = runner.run(prompt)
         proposal_path = audits_dir / f"gap_{gap.id}_proposal.md"
         proposal_path.write_text(proposal, encoding="utf-8")
         print(f"Proposal written to: {proposal_path}")
@@ -370,10 +367,9 @@ def _extract_intent_from_charter(content: str) -> str:
 def cmd_spec_summarize(args: argparse.Namespace) -> int:
     """Summarize all files in the workspace."""
     run_id = args.run_id
-    config_path = Path(args.config)
 
     try:
-        result = summarize_all(run_id, config_path, parallel=not args.sequential)
+        result = summarize_all(run_id, parallel=not args.sequential)
     except RuntimeError as exc:
         print(str(exc))
         return 1
@@ -395,10 +391,9 @@ def cmd_spec_summarize(args: argparse.Namespace) -> int:
 def cmd_spec_synthesize(args: argparse.Namespace) -> int:
     """Synthesize libraries from the summary outputs."""
     run_id = args.run_id
-    config_path = Path(args.config)
 
     try:
-        result = synthesize_libraries(run_id, config_path)
+        result = synthesize_libraries(run_id)
     except RuntimeError as exc:
         print(str(exc))
         return 1
@@ -447,12 +442,11 @@ def cmd_spec_synthesize(args: argparse.Namespace) -> int:
 def cmd_spec_expand_evidence(args: argparse.Namespace) -> int:
     """Expand evidence sources for Phase 3."""
     run_id = args.run_id
-    config_path = Path(args.config)
 
     from scripts.spec_refinement.workflows import expand_evidence
 
     try:
-        result = expand_evidence(run_id, config_path)
+        result = expand_evidence(run_id)
     except RuntimeError as exc:
         print(str(exc))
         return 1
@@ -477,13 +471,12 @@ def cmd_spec_expand_evidence(args: argparse.Namespace) -> int:
 def cmd_spec_spotcheck_evidence(args: argparse.Namespace) -> int:
     """Spot-check evidence coverage for Phase 3."""
     run_id = args.run_id
-    config_path = Path(args.config)
     lib_ids = args.lib_ids
 
     from scripts.spec_refinement.workflows import spotcheck_evidence
 
     try:
-        result = spotcheck_evidence(run_id, config_path, lib_ids)
+        result = spotcheck_evidence(run_id, lib_ids)
     except RuntimeError as exc:
         print(str(exc))
         return 1
@@ -508,12 +501,11 @@ def cmd_spec_spotcheck_evidence(args: argparse.Namespace) -> int:
 def cmd_spec_build_specs(args: argparse.Namespace) -> int:
     """Build library specs for Phase 4."""
     run_id = args.run_id
-    config_path = Path(args.config)
 
     from scripts.spec_refinement.workflows import build_specs
 
     try:
-        result = build_specs(run_id, config_path, max_iterations=args.max_iterations)
+        result = build_specs(run_id, max_iterations=args.max_iterations)
     except RuntimeError as exc:
         print(str(exc))
         return 1
@@ -535,12 +527,11 @@ def cmd_spec_build_specs(args: argparse.Namespace) -> int:
 def cmd_spec_detect_sublibraries(args: argparse.Namespace) -> int:
     """Detect sub-libraries for Phase 5."""
     run_id = args.run_id
-    config_path = Path(args.config)
 
     from scripts.spec_refinement.workflows import detect_sublibraries
 
     try:
-        result = detect_sublibraries(run_id, config_path, max_depth=args.max_depth)
+        result = detect_sublibraries(run_id, max_depth=args.max_depth)
     except RuntimeError as exc:
         print(str(exc))
         return 1
@@ -554,6 +545,57 @@ def cmd_spec_detect_sublibraries(args: argparse.Namespace) -> int:
             lib_id = error.get("lib_id", "unknown")
             message = error.get("error", "error")
             print(f"  - {lib_id}: {message}")
+    return 0
+
+
+def cmd_arch_propose(args: argparse.Namespace) -> int:
+    """Propose architecture candidates for Phase 6."""
+    run_id = args.run_id
+
+    from scripts.spec_refinement.workflows import propose_architectures
+
+    try:
+        result = propose_architectures(run_id)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Architecture candidates created: {result['candidates_created']}")
+    return 0
+
+
+def cmd_arch_select(args: argparse.Namespace) -> int:
+    """Select best architecture for Phase 6."""
+    run_id = args.run_id
+
+    from scripts.spec_refinement.workflows import select_architecture
+
+    try:
+        result = select_architecture(run_id)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Selected architecture: {result['selected_arch_id']}")
+    print(f"Rejected candidates: {result['rejected_count']}")
+    return 0
+
+
+def cmd_arch_map(args: argparse.Namespace) -> int:
+    """Map libraries to architecture components for Phase 6."""
+    run_id = args.run_id
+
+    from scripts.spec_refinement.workflows import map_libraries_to_architecture
+
+    try:
+        result = map_libraries_to_architecture(run_id)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Libraries mapped: {result['libraries_mapped']}")
+    if result.get("unmapped_libraries"):
+        print(f"Unmapped libraries: {result['unmapped_libraries']}")
     return 0
 
 
@@ -571,7 +613,10 @@ def main(argv: list[str] | None = None) -> int:
             "  spec synthesize (agent: opus-library-synthesizer)\n"
             "  spec expand-evidence (agent: glm-library-evidence-mapper)\n"
             "  spec spotcheck-evidence (agent: chatgpt-evidence-gap-judge)\n"
-            "  spec build-specs (agent: glm-library-spec-integrator)"
+            "  spec build-specs (agent: glm-library-spec-integrator)\n"
+            "  spec propose-architectures (agent: opus-architecture-proposer)\n"
+            "  spec select-architecture (agent: chatgpt-architecture-tradeoff-judge)\n"
+            "  spec map-libraries (agent: glm-architecture-mapper)"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -631,15 +676,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Summarize all files for Phase 1",
         description=(
             "Run Phase 1 summarization using the glm-file-what-summarizer agent.\n"
-            "Inputs: initialized workspace and config file.\n"
+            "Inputs: initialized workspace.\n"
             "Outputs: summaries/*.what.md and phase state updates."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_spec_summarize.add_argument("run_id", help="Run identifier")
-    p_spec_summarize.add_argument(
-        "--config", default=".tasks.yaml", help="Path to .tasks.yaml config"
-    )
     p_spec_summarize.add_argument(
         "--sequential", action="store_true", help="Disable parallel execution"
     )
@@ -656,9 +698,6 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_spec_synthesize.add_argument("run_id", help="Run identifier")
-    p_spec_synthesize.add_argument(
-        "--config", default=".tasks.yaml", help="Path to .tasks.yaml config"
-    )
     p_spec_synthesize.set_defaults(func=cmd_spec_synthesize)
 
     p_spec_expand = spec_subparsers.add_parser(
@@ -672,7 +711,6 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_spec_expand.add_argument("run_id", help="Run identifier")
-    p_spec_expand.add_argument("--config", default=".tasks.yaml", help="Path to .tasks.yaml config")
     p_spec_expand.set_defaults(func=cmd_spec_expand_evidence)
 
     p_spec_spotcheck = spec_subparsers.add_parser(
@@ -685,9 +723,6 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_spec_spotcheck.add_argument("run_id", help="Run identifier")
-    p_spec_spotcheck.add_argument(
-        "--config", default=".tasks.yaml", help="Path to .tasks.yaml config"
-    )
     p_spec_spotcheck.add_argument(
         "--lib-ids",
         nargs="+",
@@ -708,7 +743,6 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_spec_build.add_argument("run_id", help="Run identifier")
-    p_spec_build.add_argument("--config", default=".tasks.yaml", help="Path to .tasks.yaml config")
     p_spec_build.add_argument(
         "--max-iterations", type=int, default=5, help="Max gap closure iterations"
     )
@@ -725,9 +759,47 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_spec_detect.add_argument("run_id", help="Run identifier")
-    p_spec_detect.add_argument("--config", default=".tasks.yaml", help="Path to .tasks.yaml config")
     p_spec_detect.add_argument("--max-depth", type=int, default=3, help="Max recursion depth")
     p_spec_detect.set_defaults(func=cmd_spec_detect_sublibraries)
+
+    p_arch_propose = spec_subparsers.add_parser(
+        "propose-architectures",
+        help="Propose architecture candidates for Phase 6",
+        description=(
+            "Run Phase 6a architecture proposal using opus-architecture-proposer.\n"
+            "Requires Phase 5 sublibrary detection to be completed.\n"
+            "Outputs: architecture/candidates/arch_*.md"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_arch_propose.add_argument("run_id", help="Run identifier")
+    p_arch_propose.set_defaults(func=cmd_arch_propose)
+
+    p_arch_select = spec_subparsers.add_parser(
+        "select-architecture",
+        help="Select best architecture for Phase 6",
+        description=(
+            "Run Phase 6b architecture selection using chatgpt-architecture-tradeoff-judge.\n"
+            "Requires architecture proposal to be completed.\n"
+            "Outputs: architecture/selected.md, architecture/rejected.md"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_arch_select.add_argument("run_id", help="Run identifier")
+    p_arch_select.set_defaults(func=cmd_arch_select)
+
+    p_arch_map = spec_subparsers.add_parser(
+        "map-libraries",
+        help="Map libraries to architecture for Phase 6",
+        description=(
+            "Run Phase 6c library mapping using glm-architecture-mapper.\n"
+            "Requires architecture selection to be completed.\n"
+            "Outputs: architecture/mapping.md"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_arch_map.add_argument("run_id", help="Run identifier")
+    p_arch_map.set_defaults(func=cmd_arch_map)
 
     if argv is None:
         argv = sys.argv[1:]

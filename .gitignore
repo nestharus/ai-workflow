@@ -51,6 +51,7 @@ openapi/
 .audit/
 out/
 **/surgeon_logs/
+runs/
 
 # Local config / secrets
 .env

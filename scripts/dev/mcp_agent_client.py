@@ -46,10 +46,10 @@ Usage:
     uv run agent.mcp --socket-path /tmp/mcp-sockets/mcp-bridge.sock list
 
     # Start a job and return immediately with job_id
-    uv run agent.mcp start --command "uv run agent.tasks --agent planner --prompt '...'"
+    uv run agent.mcp start --command "uv run agents planner '...'"
 
     # Start a job and wait for completion
-    uv run agent.mcp wait --command "uv run agent.tasks ..." --max-seconds 600
+    uv run agent.mcp wait --command "uv run agents planner '...'" --max-seconds 600
 
     # Wait on existing job
     uv run agent.mcp wait --job-id <job_id> --max-seconds 600

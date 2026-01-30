@@ -36,9 +36,82 @@ re-run the phase once corrected.
 ## Python API
 
 ```python
-from pathlib import Path
 from scripts.spec_refinement.workflows import summarize_all, synthesize_libraries
 
-summarize_all("my_run_001", Path(".tasks.yaml"))
-synthesize_libraries("my_run_001", Path(".tasks.yaml"))
+summarize_all("my_run_001")
+synthesize_libraries("my_run_001")
+```
+
+## Phase 6: Architecture Proposal, Selection & Mapping
+
+### Commands
+
+- `uv run spec spec propose-architectures <run_id>`: Generate 3-5 architecture candidates
+- `uv run spec spec select-architecture <run_id>`: Select best architecture via tradeoff analysis
+- `uv run spec spec map-libraries <run_id>`: Map libraries to architecture components
+
+### Agents
+
+- **opus-architecture-proposer**: Generates architecture candidates with citations
+- **chatgpt-architecture-tradeoff-judge**: Evaluates candidates against library specs
+- **glm-architecture-mapper**: Distributes libraries across components
+
+### Outputs
+
+- `architecture/candidates/arch_*.md`: Architecture candidate descriptions
+- `architecture/selected.md`: Selected architecture with rationale
+- `architecture/rejected.md`: Rejected architectures with reasons
+- `architecture/mapping.md`: Library-to-component mapping with citations
+
+### Validation
+
+- All architecture decisions must cite library constraints
+- All libraries must be mapped to components
+- Cross-component dependencies must be documented
+
+## Workflow Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Propose as propose_architectures
+    participant OpusAgent as opus-architecture-proposer
+    participant Select as select_architecture
+    participant JudgeAgent as chatgpt-architecture-tradeoff-judge
+    participant Map as map_libraries_to_architecture
+    participant MapperAgent as glm-architecture-mapper
+    participant Manager as WorkspaceManager
+
+    User->>Propose: spec propose-architectures run_001
+    Propose->>Manager: Validate Phase 5 completed
+    Propose->>Manager: Load library charters + specs
+    Propose->>Propose: Extract constraints from specs
+    Propose->>OpusAgent: Generate 3-5 candidates with citations
+    OpusAgent-->>Propose: JSON array of candidates
+    Propose->>Propose: Validate candidate structure
+    Propose->>Manager: Write architecture/candidates/arch_*.md
+    Propose->>Manager: Complete phase
+    Propose-->>User: Candidates created: 4
+
+    User->>Select: spec select-architecture run_001
+    Select->>Manager: Validate proposal phase completed
+    Select->>Manager: Load candidates + library specs
+    Select->>JudgeAgent: Evaluate candidates against specs
+    JudgeAgent-->>Select: Selected arch_id + rationale
+    Select->>Select: Validate selection citations
+    Select->>Manager: Write architecture/selected.md
+    Select->>Manager: Write architecture/rejected.md
+    Select->>Manager: Complete phase
+    Select-->>User: Selected: arch_002
+
+    User->>Map: spec map-libraries run_001
+    Map->>Manager: Validate selection phase completed
+    Map->>Manager: Load selected architecture + library specs
+    Map->>MapperAgent: Map libraries to components
+    MapperAgent-->>Map: Markdown mapping with citations
+    Map->>Map: Validate all libraries mapped
+    Map->>Map: Validate citations
+    Map->>Manager: Write architecture/mapping.md
+    Map->>Manager: Complete phase
+    Map-->>User: Libraries mapped: 12
 ```

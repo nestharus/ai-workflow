@@ -7,9 +7,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-from scripts.dev.agent_runner import AgentRunner
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
+from .agent_utils import run_agent
 from .formats import LibraryCharter, parse_library_synthesis
 from .progress import ProgressTracker
 
@@ -179,7 +179,7 @@ def _write_library_artifacts(manager: WorkspaceManager, charter: LibraryCharter)
     (lib_dir / "decisions.md").write_text("", encoding="utf-8")
 
 
-def synthesize_libraries(run_id: str, config_path: Path) -> dict[str, Any]:
+def synthesize_libraries(run_id: str) -> dict[str, Any]:
     """Synthesize libraries from Phase 1 summaries."""
     manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
     if not manager.is_initialized:
@@ -198,12 +198,12 @@ def synthesize_libraries(run_id: str, config_path: Path) -> dict[str, Any]:
         summary_bundle[file_id] = summary_path.read_text(encoding="utf-8")
 
     prompt = _build_synthesis_prompt(summary_bundle)
-    runner = AgentRunner.from_agent_name(
-        "opus-library-synthesizer", config_path, prompt_chars=len(prompt)
-    )
-
     try:
-        output = runner.run(prompt)
+        output = run_agent(
+            agent_name="opus-library-synthesizer",
+            prompt=prompt,
+            workspace=manager.workspace_path,
+        )
     except RuntimeError as exc:
         manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error=f"Agent execution failed: {exc}")
         return {"libraries_created": 0, "error": str(exc)}

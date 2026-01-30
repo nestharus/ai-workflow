@@ -30,7 +30,9 @@ class Phase(Enum):
     EVIDENCE_EXPANSION = "evidence_expansion"
     SPEC_BUILDING = "spec_building"
     SUBLIBRARY_DETECTION = "sublibrary_detection"
-    ARCHITECTURE = "architecture"
+    ARCHITECTURE_PROPOSAL = "architecture_proposal"
+    ARCHITECTURE_SELECTION = "architecture_selection"
+    ARCHITECTURE_MAPPING = "architecture_mapping"
     INTERFACES = "interfaces"
     TASKS = "tasks"
     IMPLEMENTATION = "implementation"
@@ -74,7 +76,8 @@ class WorkspaceState:
             return None
         try:
             data = json.loads(state_path.read_text(encoding="utf-8"))
-            return data.get("schema_version")
+            schema_version = data.get("schema_version")
+            return schema_version if isinstance(schema_version, str) else None
         except (json.JSONDecodeError, OSError):
             return None
 
@@ -141,7 +144,9 @@ class WorkspaceState:
             Phase.EVIDENCE_EXPANSION,
             Phase.SPEC_BUILDING,
             Phase.SUBLIBRARY_DETECTION,
-            Phase.ARCHITECTURE,
+            Phase.ARCHITECTURE_PROPOSAL,
+            Phase.ARCHITECTURE_SELECTION,
+            Phase.ARCHITECTURE_MAPPING,
             Phase.INTERFACES,
             Phase.TASKS,
             Phase.IMPLEMENTATION,

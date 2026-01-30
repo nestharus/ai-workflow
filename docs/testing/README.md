@@ -279,28 +279,3 @@ read directly from this database and support filtering by tier and file path.
 * Analyzing coverage quality before code review
 * Reviewing detailed coverage metrics for specific files
 * Investigating test failures and coverage gaps
-
-### Automated Test Workflow
-
-**File:** `testing-workflow.md` (section: Automated Test Workflow)
-
-The `test-workflow` CLI provides an automated test generation workflow that orchestrates strategy
-creation, planning, writing, debugging, and coverage validation. The state machine and contracts
-are defined by `scripts/tasks/workflows/test_automation.py` (orchestrator) and the agent prompts
-in `.tasks/agents/test-strategy.md`, `.tasks/agents/test-planner.md`, `.tasks/agents/test-writer-nodebug.md`,
-and `.tasks/agents/test-debugger.md`.
-
-```bash
-uv run test-workflow app/services/user_service.py app/api/endpoints/users.py
-```
-
-The workflow operates as a loop: **strategy → plan → strategy-review → writer → debugger →
-plan-review → coverage**. It continues iterating until coverage thresholds are met or maximum
-iterations are exceeded.
-
-**Apply when:**
-
-* Generating tests for new or modified source files
-* Automating the test creation process for implementation plans
-* Ensuring coverage thresholds are met through iterative feedback
-* Orchestrating multiple testing agents in a structured workflow

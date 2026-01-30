@@ -8,11 +8,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, cast
 
-from scripts.dev.agent_runner import AgentRunner
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, parse_gaps_markdown
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from . import evidence_expansion as evidence_utils
+from .agent_utils import run_agent
 from .formats import parse_file_summary, parse_gap_judge_output
 from .progress import ProgressTracker
 from .spec_building import (
@@ -23,6 +23,7 @@ from .spec_building import (
     _build_integration_prompt,
     _gap_signature,
     _initialize_spec,
+    _is_monotonic_spec_update,
     _normalize_evidence_sources,
     _read_evidence_sources,
     _update_decisions,
@@ -32,7 +33,6 @@ from .spec_building import (
 
 def detect_sublibraries(
     run_id: str,
-    config_path: Path,
     max_depth: int = 3,
     min_overlap_threshold: float = 0.2,
 ) -> dict[str, Any]:
@@ -61,9 +61,7 @@ def detect_sublibraries(
     issues: list[dict[str, Any]] = []
 
     for lib_dir in lib_dirs:
-        result = _detect_library_sublibraries(
-            manager, lib_dir, config_path, max_depth, min_overlap_threshold
-        )
+        result = _detect_library_sublibraries(manager, lib_dir, max_depth, min_overlap_threshold)
         total_sublibraries_created += result.get("sublibraries_created", 0)
         errors.extend(result.get("errors", []))
         issues.extend(result.get("issues", []))
@@ -75,7 +73,6 @@ def detect_sublibraries(
         newly_created = _collect_newly_created_sublibraries(manager)
         _recursive_refinement(
             manager,
-            config_path,
             max_depth,
             current_depth=1,
             newly_created=newly_created,
@@ -99,7 +96,6 @@ def detect_sublibraries(
 def _detect_library_sublibraries(
     manager: WorkspaceManager,
     lib_dir: Path,
-    config_path: Path,
     max_depth: int,
     min_overlap_threshold: float,
 ) -> dict[str, Any]:
@@ -122,12 +118,12 @@ def _detect_library_sublibraries(
 
     prompt = _build_sublibrary_prompt(lib_id, spec_content, charter_content, evidence_content)
 
-    runner = AgentRunner.from_agent_name(
-        "opus-sublibrary-planner", config_path, prompt_chars=len(prompt)
-    )
-
     try:
-        output = runner.run(prompt)
+        output = run_agent(
+            agent_name="opus-sublibrary-planner",
+            prompt=prompt,
+            workspace=manager.workspace_path,
+        )
     except RuntimeError as exc:
         errors.append({"lib_id": lib_id, "error": f"Agent execution failed: {exc}"})
         return {"lib_id": lib_id, "errors": errors, "sublibraries_created": 0}
@@ -189,7 +185,6 @@ def _collect_newly_created_sublibraries(manager: WorkspaceManager) -> set[Path]:
 
 def _recursive_refinement(
     manager: WorkspaceManager,
-    config_path: Path,
     max_depth: int,
     current_depth: int,
     newly_created: set[Path] | None = None,
@@ -209,13 +204,13 @@ def _recursive_refinement(
         return
 
     for sub_lib_dir in sublibrary_dirs:
-        _expand_sublibrary_evidence(manager, sub_lib_dir, config_path)
-        _build_sublibrary_spec(manager, sub_lib_dir, config_path)
+        _expand_sublibrary_evidence(manager, sub_lib_dir)
+        _build_sublibrary_spec(manager, sub_lib_dir)
 
     next_newly_created: set[Path] = set()
     for sub_lib_dir in sublibrary_dirs:
         result = _detect_library_sublibraries(
-            manager, sub_lib_dir, config_path, max_depth, min_overlap_threshold
+            manager, sub_lib_dir, max_depth, min_overlap_threshold
         )
         if result.get("sublibraries_created", 0) > 0:
             parent_sublibraries_dir = sub_lib_dir / "sublibraries"
@@ -227,7 +222,6 @@ def _recursive_refinement(
     if next_newly_created:
         _recursive_refinement(
             manager,
-            config_path,
             max_depth,
             current_depth + 1,
             next_newly_created,
@@ -491,9 +485,7 @@ def _find_sublibraries_at_depth(manager: WorkspaceManager, depth: int) -> list[P
     return sublibrary_dirs
 
 
-def _expand_sublibrary_evidence(
-    manager: WorkspaceManager, sub_lib_dir: Path, config_path: Path
-) -> None:
+def _expand_sublibrary_evidence(manager: WorkspaceManager, sub_lib_dir: Path) -> None:
     """Run evidence expansion for a sub-library (Phase 3)."""
     charter_path = sub_lib_dir / "charter.md"
     if not charter_path.exists():
@@ -530,7 +522,12 @@ def _expand_sublibrary_evidence(
     with ThreadPoolExecutor(max_workers=evidence_utils.MAX_WORKERS) as executor:
         futures = [
             executor.submit(
-                evidence_utils._process_pair, lib_id, charter, file_id, summary, config_path
+                evidence_utils._process_pair,
+                lib_id,
+                charter,
+                file_id,
+                summary,
+                manager.workspace_path,
             )
             for lib_id, charter, file_id, summary in pairs
         ]
@@ -574,7 +571,7 @@ def _expand_sublibrary_evidence(
         evidence_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path, config_path: Path) -> None:
+def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None:
     """Run spec building for a sub-library (Phase 4)."""
     lib_id = sub_lib_dir.name
     errors: list[dict[str, Any]] = []
@@ -623,12 +620,12 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path, config_
                 sections,
                 gaps=gap_focus,
             )
-            runner = AgentRunner.from_agent_name(
-                "glm-library-spec-integrator", config_path, prompt_chars=len(prompt)
-            )
-
             try:
-                output = runner.run(prompt)
+                output = run_agent(
+                    agent_name="glm-library-spec-integrator",
+                    prompt=prompt,
+                    workspace=manager.workspace_path,
+                )
             except RuntimeError as exc:
                 errors.append(
                     {
@@ -639,7 +636,7 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path, config_
                 )
                 continue
 
-            if current_spec.strip() and current_spec.strip() not in output:
+            if not _is_monotonic_spec_update(current_spec, output):
                 issues.append(
                     {
                         "type": "non_monotonic_integration",
@@ -663,11 +660,12 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path, config_
                 continue
             file_content = file_path.read_text(encoding="utf-8")
             prompt = _build_gap_prompt(spec_content, file_id, file_content)
-            runner = AgentRunner.from_agent_name(
-                "chatgpt-library-spec-gap-judge", config_path, prompt_chars=len(prompt)
-            )
             try:
-                output = runner.run(prompt)
+                output = run_agent(
+                    agent_name="chatgpt-library-spec-gap-judge",
+                    prompt=prompt,
+                    workspace=manager.workspace_path,
+                )
             except RuntimeError as exc:
                 errors.append(
                     {

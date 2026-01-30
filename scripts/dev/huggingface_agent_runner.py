@@ -2,8 +2,6 @@
 
 Parses YAML frontmatter from an agent markdown file and invokes transformers
 models directly for inference.
-
-The HuggingfaceRunner class is available for programmatic use via the AgentRunner interface.
 """
 
 from __future__ import annotations
@@ -19,7 +17,6 @@ import yaml
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from scripts.dev.agent_runner import AgentRunner
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -196,38 +193,6 @@ def build_prompt(system_prompt: str, user_prompt: str) -> str:
         Combined prompt string suitable for instruction-following models.
     """
     return f"{system_prompt}\n\nUser: {user_prompt}\n\nAssistant:"
-
-
-def _get_agent_runner_base() -> type[AgentRunner]:
-    """Import AgentRunner base class lazily to avoid circular imports."""
-    from scripts.dev.agent_runner import AgentRunner
-
-    return AgentRunner
-
-
-class HuggingfaceRunner(_get_agent_runner_base()):  # type: ignore[misc]
-    """HuggingFace provider runner implementation."""
-
-    def run(self, prompt: str) -> str:
-        """Execute HuggingFace agent with the given prompt.
-
-        Args:
-            prompt: User prompt to send to the agent.
-
-        Returns:
-            Generated text output from the HuggingFace model.
-
-        Raises:
-            RuntimeError: If HuggingFace agent execution fails.
-        """
-        try:
-            model_name = self.agent_config["model"]
-            generation_config = self.agent_config.get("generation_config", {})
-            model, tokenizer = load_model(model_name)
-            full_prompt = build_prompt(self.system_prompt, prompt)
-            return run_inference(model, tokenizer, full_prompt, generation_config)
-        except Exception as e:
-            raise RuntimeError(f"HuggingFace agent execution failed: {e}") from e
 
 
 def main() -> int:

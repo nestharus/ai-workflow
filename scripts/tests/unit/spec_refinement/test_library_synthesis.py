@@ -27,12 +27,11 @@ def _library_output(evidence_section: str = "INTRO") -> str:
     )
 
 
-class DummyRunner:
-    def __init__(self, output: str) -> None:
-        self.output = output
+def _fake_run_agent(output: str):
+    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+        return output
 
-    def run(self, prompt: str) -> str:
-        return self.output
+    return _run_agent
 
 
 def _setup_workspace(fs, monkeypatch, summarize: bool = True) -> WorkspaceManager:
@@ -57,10 +56,10 @@ def test_synthesize_libraries_success(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
     with patch(
-        "scripts.spec_refinement.workflows.library_synthesis.AgentRunner.from_agent_name",
-        return_value=DummyRunner(_library_output()),
+        "scripts.spec_refinement.workflows.library_synthesis.run_agent",
+        side_effect=_fake_run_agent(_library_output()),
     ):
-        result = synthesize_libraries("run1", Path("/repo/.tasks.yaml"))
+        result = synthesize_libraries("run1")
 
     libraries_dir = Path("/repo/runs/run1/libraries")
     assert (libraries_dir / "library_index.md").exists()
@@ -78,10 +77,10 @@ def test_synthesize_libraries_overlap_resolution(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
     with patch(
-        "scripts.spec_refinement.workflows.library_synthesis.AgentRunner.from_agent_name",
-        return_value=DummyRunner(_library_output()),
+        "scripts.spec_refinement.workflows.library_synthesis.run_agent",
+        side_effect=_fake_run_agent(_library_output()),
     ):
-        synthesize_libraries("run1", Path("/repo/.tasks.yaml"))
+        synthesize_libraries("run1")
 
     charter_path = Path("/repo/runs/run1/libraries/lib_001/charter.md")
     charter = charter_path.read_text(encoding="utf-8")
@@ -93,10 +92,10 @@ def test_synthesize_libraries_evidence_validation(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
     with patch(
-        "scripts.spec_refinement.workflows.library_synthesis.AgentRunner.from_agent_name",
-        return_value=DummyRunner(_library_output("UNKNOWN")),
+        "scripts.spec_refinement.workflows.library_synthesis.run_agent",
+        side_effect=_fake_run_agent(_library_output("UNKNOWN")),
     ):
-        result = synthesize_libraries("run1", Path("/repo/.tasks.yaml"))
+        result = synthesize_libraries("run1")
 
     assert any(issue["type"] == "unknown_section_reference" for issue in result["issues"])
 
@@ -105,7 +104,7 @@ def test_synthesize_libraries_phase_dependency(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch, summarize=False)
 
     try:
-        synthesize_libraries("run1", Path("/repo/.tasks.yaml"))
+        synthesize_libraries("run1")
     except RuntimeError as exc:
         assert "Summarization phase" in str(exc)
     else:

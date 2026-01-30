@@ -96,7 +96,6 @@ lint = "scripts.dev.linter.lint_cli:main"
 "agent.claude" = "scripts.dev.claude_agent_runner:main"
 "agent.huggingface" = "scripts.dev.huggingface_agent_runner:main"
 "agent.opencode" = "scripts.dev.opencode_agent_runner:main"
-"agent.tasks" = "scripts.dev.tasks_agent_runner:main"
 "agent.mcp" = "scripts.dev.mcp_agent_client:main"
 agents = "scripts.agents.__main__:main"
 # AI workflow commands
@@ -126,7 +125,6 @@ prd-chunker = "scripts.prd.chunker:main"
 test-coverage = "scripts.dev.test_runner.test_coverage:main"
 test-files = "scripts.dev.test_runner.test_files:main"
 # Test workflow orchestration
-test-workflow = "scripts.tasks.workflows.test_automation:main"
 # Test analysis scripts (LLM-friendly coverage querying)
 coverage-summary = "scripts.dev.test_analysis.coverage_summary:main"
 coverage-files = "scripts.dev.test_analysis.coverage_files:main"

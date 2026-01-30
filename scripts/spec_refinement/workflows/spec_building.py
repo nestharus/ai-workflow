@@ -7,10 +7,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from scripts.dev.agent_runner import AgentRunner
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, format_gap_table
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
+from .agent_utils import run_agent
 from .formats import EVIDENCE_POINTER_RE, parse_gap_judge_output
 from .progress import ProgressTracker
 
@@ -32,6 +32,18 @@ def _extract_sections(content: str, level: int) -> dict[str, str]:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
         sections[title] = content[start:end].strip()
     return sections
+
+
+def _is_monotonic_spec_update(previous: str, updated: str) -> bool:
+    if not previous.strip():
+        return True
+    prev_sections = _extract_sections(previous, level=2)
+    if not prev_sections:
+        return True
+    next_sections = _extract_sections(updated, level=2)
+    prev_titles = {title.strip().lower() for title in prev_sections}
+    next_titles = {title.strip().lower() for title in next_sections}
+    return prev_titles.issubset(next_titles)
 
 
 def _extract_list_items(section_text: str) -> list[str]:
@@ -302,7 +314,6 @@ def _build_gaps_from_judge(
 def _build_library_spec(
     manager: WorkspaceManager,
     lib_dir: Path,
-    config_path: Path,
     max_iterations: int,
 ) -> dict[str, Any]:
     lib_id = lib_dir.name
@@ -367,12 +378,12 @@ def _build_library_spec(
                 sections,
                 gaps=gap_focus,
             )
-            runner = AgentRunner.from_agent_name(
-                "glm-library-spec-integrator", config_path, prompt_chars=len(prompt)
-            )
-
             try:
-                output = runner.run(prompt)
+                output = run_agent(
+                    agent_name="glm-library-spec-integrator",
+                    prompt=prompt,
+                    workspace=manager.workspace_path,
+                )
             except RuntimeError as exc:
                 errors.append(
                     {
@@ -383,7 +394,7 @@ def _build_library_spec(
                 )
                 continue
 
-            if current_spec.strip() and current_spec.strip() not in output:
+            if not _is_monotonic_spec_update(current_spec, output):
                 issues.append(
                     {
                         "type": "non_monotonic_integration",
@@ -407,11 +418,12 @@ def _build_library_spec(
                 continue
             file_content = file_path.read_text(encoding="utf-8")
             prompt = _build_gap_prompt(spec_content, file_id, file_content)
-            runner = AgentRunner.from_agent_name(
-                "chatgpt-library-spec-gap-judge", config_path, prompt_chars=len(prompt)
-            )
             try:
-                output = runner.run(prompt)
+                output = run_agent(
+                    agent_name="chatgpt-library-spec-gap-judge",
+                    prompt=prompt,
+                    workspace=manager.workspace_path,
+                )
             except RuntimeError as exc:
                 errors.append(
                     {
@@ -465,9 +477,7 @@ def _build_library_spec(
     }
 
 
-def build_specs(
-    run_id: str, config_path: Path, max_iterations: int = MAX_ITERATIONS_DEFAULT
-) -> dict[str, Any]:
+def build_specs(run_id: str, max_iterations: int = MAX_ITERATIONS_DEFAULT) -> dict[str, Any]:
     """Build library specs with audit-driven gap closure (Phase 4)."""
     manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
     if not manager.is_initialized:
@@ -496,7 +506,7 @@ def build_specs(
     failed_libraries = 0
 
     for lib_dir in lib_dirs:
-        result = _build_library_spec(manager, lib_dir, config_path, max_iterations)
+        result = _build_library_spec(manager, lib_dir, max_iterations)
         total_iterations += result.get("iterations", 0)
         errors.extend(result.get("errors", []))
         issues.extend(result.get("issues", []))

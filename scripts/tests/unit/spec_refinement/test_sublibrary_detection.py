@@ -12,22 +12,11 @@ from scripts.spec_refinement.workflows.sublibrary_detection import (
 from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 
 
-class DummyRunner:
-    def __init__(self, output: str) -> None:
-        self.output = output
+def _fake_run_agent(output: str):
+    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+        return output
 
-    def run(self, prompt: str) -> str:
-        return self.output
-
-
-class SpecEchoRunner:
-    def run(self, prompt: str) -> str:
-        if "Current Spec:" not in prompt:
-            return prompt
-        remainder = prompt.split("Current Spec:", 1)[1]
-        if "Source File:" in remainder:
-            return remainder.split("Source File:", 1)[0].strip() + "\n"
-        return remainder.strip() + "\n"
+    return _run_agent
 
 
 def _setup_workspace(fs, monkeypatch, complete_spec: bool = True) -> tuple[WorkspaceManager, Path]:
@@ -106,10 +95,10 @@ def test_detect_sublibraries_creates_subdir(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
     with patch(
-        "scripts.spec_refinement.workflows.sublibrary_detection.AgentRunner.from_agent_name",
-        return_value=DummyRunner(_sublibrary_output()),
+        "scripts.spec_refinement.workflows.sublibrary_detection.run_agent",
+        side_effect=_fake_run_agent(_sublibrary_output()),
     ):
-        result = detect_sublibraries("run1", Path("/repo/.tasks.yaml"), max_depth=1)
+        result = detect_sublibraries("run1", max_depth=1)
 
     sub_dir = Path("/repo/runs/run1/libraries/lib_001/sublibraries/sub_001")
     assert sub_dir.exists()
@@ -123,7 +112,7 @@ def test_detect_sublibraries_requires_spec_building(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch, complete_spec=False)
 
     try:
-        detect_sublibraries("run1", Path("/repo/.tasks.yaml"), max_depth=1)
+        detect_sublibraries("run1", max_depth=1)
     except RuntimeError as exc:
         assert "Spec building must be completed" in str(exc)
     else:
@@ -134,10 +123,10 @@ def test_sublibrary_overlap_validation_skips_creation(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
     with patch(
-        "scripts.spec_refinement.workflows.sublibrary_detection.AgentRunner.from_agent_name",
-        return_value=DummyRunner(_sublibrary_output(overlap=True)),
+        "scripts.spec_refinement.workflows.sublibrary_detection.run_agent",
+        side_effect=_fake_run_agent(_sublibrary_output(overlap=True)),
     ):
-        result = detect_sublibraries("run1", Path("/repo/.tasks.yaml"), max_depth=1)
+        result = detect_sublibraries("run1", max_depth=1)
 
     assert result["sublibraries_created"] == 0
     assert any(issue["type"] == "evidence_overlap" for issue in result["issues"])
@@ -153,7 +142,7 @@ def test_recursive_refinement_respects_max_depth(fs, monkeypatch) -> None:
         "scripts.spec_refinement.workflows.sublibrary_detection._find_sublibraries_at_depth",
         side_effect=AssertionError("Should not be called at max depth"),
     ):
-        _recursive_refinement(manager, Path("/repo/.tasks.yaml"), max_depth=1, current_depth=1)
+        _recursive_refinement(manager, max_depth=1, current_depth=1)
 
 
 def test_sublibrary_gap_isolated(fs, monkeypatch) -> None:
@@ -180,19 +169,24 @@ def test_sublibrary_gap_isolated(fs, monkeypatch) -> None:
         json.dumps(evidence_payload, indent=2), encoding="utf-8"
     )
 
-    def _runner_for_agent(name: str, *_args, **_kwargs):
-        if name == "glm-library-spec-integrator":
-            return SpecEchoRunner()
-        if name == "chatgpt-library-spec-gap-judge":
+    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+        if agent_name == "glm-library-spec-integrator":
+            if "Current Spec:" not in prompt:
+                return prompt
+            remainder = prompt.split("Current Spec:", 1)[1]
+            if "Source File:" in remainder:
+                return remainder.split("Source File:", 1)[0].strip() + "\n"
+            return remainder.strip() + "\n"
+        if agent_name == "chatgpt-library-spec-gap-judge":
             payload = {"gaps": [], "total_gaps": 0, "file_id": "file_001"}
-            return DummyRunner(json.dumps(payload))
-        raise AssertionError(f"Unexpected agent: {name}")
+            return json.dumps(payload)
+        raise AssertionError(f"Unexpected agent: {agent_name}")
 
     with patch(
-        "scripts.spec_refinement.workflows.sublibrary_detection.AgentRunner.from_agent_name",
-        side_effect=_runner_for_agent,
+        "scripts.spec_refinement.workflows.sublibrary_detection.run_agent",
+        side_effect=_run_agent,
     ):
-        _build_sublibrary_spec(manager, sub_lib_dir, Path("/repo/.tasks.yaml"))
+        _build_sublibrary_spec(manager, sub_lib_dir)
 
     assert (sub_lib_dir / "gaps.md").exists()
     assert not (Path("/repo/runs/run1/libraries/sub_001") / "gaps.md").exists()

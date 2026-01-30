@@ -35,16 +35,15 @@ def _make_summary_output(file_id: str, section: str, keyword: str) -> str:
     )
 
 
-class DummyRunner:
-    def __init__(self, outputs: dict[str, str]) -> None:
-        self.outputs = outputs
-
-    def run(self, prompt: str) -> str:
+def _fake_run_agent(outputs: dict[str, str]):
+    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
         match = re.search(r"File ID: (file_\d{3})", prompt)
         if not match:
             raise RuntimeError("Missing file id in prompt")
         file_id = match.group(1)
-        return self.outputs[file_id]
+        return outputs[file_id]
+
+    return _run_agent
 
 
 def _setup_workspace(fs, monkeypatch) -> WorkspaceManager:
@@ -108,10 +107,10 @@ def test_expand_evidence_validates_sections(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.evidence_expansion.AgentRunner.from_agent_name",
-        side_effect=lambda *args, **kwargs: DummyRunner(outputs),
+        "scripts.spec_refinement.workflows.evidence_expansion.run_agent",
+        side_effect=_fake_run_agent(outputs),
     ):
-        result = expand_evidence("run1", Path("/repo/.tasks.yaml"))
+        result = expand_evidence("run1")
 
     assert any(issue["type"] == "unknown_section_reference" for issue in result["issues"])
 
@@ -168,10 +167,10 @@ def test_expand_evidence_parallel_processing(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.evidence_expansion.AgentRunner.from_agent_name",
-        side_effect=lambda *args, **kwargs: DummyRunner(outputs),
+        "scripts.spec_refinement.workflows.evidence_expansion.run_agent",
+        side_effect=_fake_run_agent(outputs),
     ):
-        result = expand_evidence("run1", Path("/repo/.tasks.yaml"))
+        result = expand_evidence("run1")
 
     assert result["libraries_expanded"] == 1
     assert result["evidence_sources_added"] > 0
@@ -204,15 +203,16 @@ def test_spotcheck_evidence_adds_missing_sections(fs, monkeypatch) -> None:
         }
     )
 
-    class SpotcheckRunner:
-        def run(self, prompt: str) -> str:
-            return spotcheck_output
+    def _run_spotcheck(
+        *, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2
+    ) -> str:
+        return spotcheck_output
 
     with patch(
-        "scripts.spec_refinement.workflows.evidence_expansion.AgentRunner.from_agent_name",
-        return_value=SpotcheckRunner(),
+        "scripts.spec_refinement.workflows.evidence_expansion.run_agent",
+        side_effect=_run_spotcheck,
     ):
-        result = spotcheck_evidence("run1", Path("/repo/.tasks.yaml"))
+        result = spotcheck_evidence("run1")
 
     assert result["missing_sections_added"] > 0
     payload = json.loads(evidence_path.read_text(encoding="utf-8"))

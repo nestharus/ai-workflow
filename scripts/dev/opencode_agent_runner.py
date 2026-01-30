@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Run an OpenCode sub-agent via `opencode run --agent <name> "<prompt>"`.
-
-The OpencodeRunner class is available for programmatic use via the AgentRunner interface.
-"""
+"""Run an OpenCode sub-agent via `opencode run --agent <name> "<prompt>"`."""
 
 from __future__ import annotations
 
@@ -10,10 +7,6 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from scripts.dev.agent_runner import AgentRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -46,35 +39,6 @@ def run_agent(agent: str, prompt: str, *, stream_output: bool = True) -> tuple[i
         sys.stderr.write(result.stderr)
 
     return result.returncode, result.stdout or ""
-
-
-def _get_agent_runner_base() -> type[AgentRunner]:
-    """Import AgentRunner base class lazily to avoid circular imports."""
-    from scripts.dev.agent_runner import AgentRunner
-
-    return AgentRunner
-
-
-class OpencodeRunner(_get_agent_runner_base()):  # type: ignore[misc]
-    """OpenCode provider runner implementation."""
-
-    def run(self, prompt: str) -> str:
-        """Execute OpenCode agent with the given prompt.
-
-        Args:
-            prompt: User prompt to send to the agent.
-
-        Returns:
-            Captured stdout output from the OpenCode CLI.
-
-        Raises:
-            RuntimeError: If OpenCode agent fails with non-zero exit code.
-        """
-        agent_name = self.agent_config.get("name", "")
-        exit_code, output = run_agent(agent_name, prompt, stream_output=False)
-        if exit_code != 0:
-            raise RuntimeError(f"OpenCode agent failed with exit code {exit_code}")
-        return output
 
 
 def main() -> int:

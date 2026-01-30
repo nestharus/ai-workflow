@@ -6,9 +6,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from scripts.dev.agent_runner import AgentRunner
 from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 
+from .agent_utils import run_agent
 from .formats import EVIDENCE_POINTER_RE, FileSummary, parse_file_summary
 from .progress import ProgressTracker
 
@@ -121,22 +121,21 @@ def _validate_evidence_pointers(
     return issues
 
 
-def _process_file(
-    file_id: str, file_path: Path, manager: WorkspaceManager, config_path: Path
-) -> dict[str, Any]:
+def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> dict[str, Any]:
     try:
         content = file_path.read_text(encoding="utf-8")
     except OSError as exc:
         return {"file_id": file_id, "error": f"Failed to read file: {exc}"}
 
-    runner = AgentRunner.from_agent_name(
-        "glm-file-what-summarizer", config_path, prompt_chars=len(content)
-    )
     sections = manager.get_section_labels(file_id)
     prompt = _build_summary_prompt(file_id, file_path, sections, content)
 
     try:
-        output = runner.run(prompt)
+        output = run_agent(
+            agent_name="glm-file-what-summarizer",
+            prompt=prompt,
+            workspace=manager.workspace_path,
+        )
     except RuntimeError as exc:
         return {"file_id": file_id, "error": f"Agent execution failed: {exc}"}
 
@@ -162,7 +161,7 @@ def _process_file(
     }
 
 
-def summarize_all(run_id: str, config_path: Path, parallel: bool = True) -> dict[str, Any]:
+def summarize_all(run_id: str, parallel: bool = True) -> dict[str, Any]:
     """Summarize all workspace files with the file summarization agent."""
     manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
     if not manager.is_initialized:
@@ -185,7 +184,7 @@ def summarize_all(run_id: str, config_path: Path, parallel: bool = True) -> dict
     if parallel and total_files > 0:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = {
-                executor.submit(_process_file, file_id, file_path, manager, config_path): file_id
+                executor.submit(_process_file, file_id, file_path, manager): file_id
                 for file_id, file_path in files.items()
             }
             for future in as_completed(futures):
@@ -198,7 +197,7 @@ def summarize_all(run_id: str, config_path: Path, parallel: bool = True) -> dict
                 tracker.update(status=result.get("file_id", ""))
     else:
         for file_id, file_path in files.items():
-            result = _process_file(file_id, file_path, manager, config_path)
+            result = _process_file(file_id, file_path, manager)
             if "error" in result:
                 errors.append(result)
             else:

@@ -77,14 +77,16 @@ def test_monotonic_integration_no_deletions(fs, monkeypatch) -> None:
     integrator = IntegrationRunner("strip")
     gap_judge = GapJudgeRunner([json.dumps({"gaps": [], "total_gaps": 0, "file_id": "file_001"})])
 
-    def fake_from_agent_name(name: str, *args, **kwargs):
-        return integrator if name == "glm-library-spec-integrator" else gap_judge
+    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+        if agent_name == "glm-library-spec-integrator":
+            return integrator.run(prompt)
+        return gap_judge.run(prompt)
 
     with patch(
-        "scripts.spec_refinement.workflows.spec_building.AgentRunner.from_agent_name",
-        side_effect=fake_from_agent_name,
+        "scripts.spec_refinement.workflows.spec_building.run_agent",
+        side_effect=_run_agent,
     ):
-        result = build_specs("run1", Path("/repo/.tasks.yaml"), max_iterations=1)
+        result = build_specs("run1", max_iterations=1)
 
     spec_path = Path("/repo/runs/run1/libraries/lib_001/spec.md")
     content = spec_path.read_text(encoding="utf-8")
@@ -117,14 +119,16 @@ def test_gap_detection_and_clustering(fs, monkeypatch) -> None:
     )
     gap_judge = GapJudgeRunner([gap_judge_output])
 
-    def fake_from_agent_name(name: str, *args, **kwargs):
-        return integrator if name == "glm-library-spec-integrator" else gap_judge
+    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+        if agent_name == "glm-library-spec-integrator":
+            return integrator.run(prompt)
+        return gap_judge.run(prompt)
 
     with patch(
-        "scripts.spec_refinement.workflows.spec_building.AgentRunner.from_agent_name",
-        side_effect=fake_from_agent_name,
+        "scripts.spec_refinement.workflows.spec_building.run_agent",
+        side_effect=_run_agent,
     ):
-        build_specs("run1", Path("/repo/.tasks.yaml"), max_iterations=1)
+        build_specs("run1", max_iterations=1)
 
     gaps_path = Path("/repo/runs/run1/libraries/lib_001/gaps.md")
     gaps_content = gaps_path.read_text(encoding="utf-8")
@@ -153,14 +157,16 @@ def test_gap_closure_converges(fs, monkeypatch) -> None:
     ]
     gap_judge = GapJudgeRunner(gap_outputs)
 
-    def fake_from_agent_name(name: str, *args, **kwargs):
-        return integrator if name == "glm-library-spec-integrator" else gap_judge
+    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+        if agent_name == "glm-library-spec-integrator":
+            return integrator.run(prompt)
+        return gap_judge.run(prompt)
 
     with patch(
-        "scripts.spec_refinement.workflows.spec_building.AgentRunner.from_agent_name",
-        side_effect=fake_from_agent_name,
+        "scripts.spec_refinement.workflows.spec_building.run_agent",
+        side_effect=_run_agent,
     ):
-        result = build_specs("run1", Path("/repo/.tasks.yaml"), max_iterations=2)
+        result = build_specs("run1", max_iterations=2)
 
     assert result["converged_count"] == 1
 
@@ -200,14 +206,16 @@ def test_max_iteration_limit(fs, monkeypatch) -> None:
     ]
     gap_judge = GapJudgeRunner(gap_outputs)
 
-    def fake_from_agent_name(name: str, *args, **kwargs):
-        return integrator if name == "glm-library-spec-integrator" else gap_judge
+    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+        if agent_name == "glm-library-spec-integrator":
+            return integrator.run(prompt)
+        return gap_judge.run(prompt)
 
     with patch(
-        "scripts.spec_refinement.workflows.spec_building.AgentRunner.from_agent_name",
-        side_effect=fake_from_agent_name,
+        "scripts.spec_refinement.workflows.spec_building.run_agent",
+        side_effect=_run_agent,
     ):
-        result = build_specs("run1", Path("/repo/.tasks.yaml"), max_iterations=2)
+        result = build_specs("run1", max_iterations=2)
 
     assert result["total_iterations"] == 2
 
@@ -217,13 +225,15 @@ def test_citation_validation(fs, monkeypatch) -> None:
     integrator = IntegrationRunner("strip")
     gap_judge = GapJudgeRunner([json.dumps({"gaps": [], "total_gaps": 0, "file_id": "file_001"})])
 
-    def fake_from_agent_name(name: str, *args, **kwargs):
-        return integrator if name == "glm-library-spec-integrator" else gap_judge
+    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+        if agent_name == "glm-library-spec-integrator":
+            return integrator.run(prompt)
+        return gap_judge.run(prompt)
 
     with patch(
-        "scripts.spec_refinement.workflows.spec_building.AgentRunner.from_agent_name",
-        side_effect=fake_from_agent_name,
+        "scripts.spec_refinement.workflows.spec_building.run_agent",
+        side_effect=_run_agent,
     ):
-        result = build_specs("run1", Path("/repo/.tasks.yaml"), max_iterations=1)
+        result = build_specs("run1", max_iterations=1)
 
     assert any(issue["type"] == "missing_evidence_pointers" for issue in result["issues"])

@@ -11,6 +11,8 @@ EVIDENCE_POINTER_RE = re.compile(r"\[([^\[\]]+?)::([^\[\]]+?)\]")
 
 @dataclass(frozen=True)
 class FileSummary:
+    """Summary of a file's algorithms, components, workflows, and responsibilities."""
+
     file_id: str
     algorithms: list[dict[str, Any]]
     components: list[dict[str, Any]]
@@ -20,11 +22,10 @@ class FileSummary:
     evidence_map: dict[str, list[str]]
 
 
-FileSummary.__doc__ = "Summary of a file's algorithms, components, workflows, and responsibilities."
-
-
 @dataclass(frozen=True)
 class LibraryCharter:
+    """Charter defining a library's intent, boundaries, and responsibilities."""
+
     lib_id: str
     intent: str
     boundaries: str
@@ -33,7 +34,18 @@ class LibraryCharter:
     overlap_resolutions: list[dict[str, str]]
 
 
-LibraryCharter.__doc__ = "Charter defining a library's intent, boundaries, and responsibilities."
+@dataclass(frozen=True)
+class ArchitectureCandidate:
+    """Architecture candidate proposal with components and tradeoffs."""
+
+    arch_id: str
+    pattern: str
+    description: str
+    components: list[dict[str, Any]]
+    communication: str
+    deployment: str
+    citations: list[str]
+    tradeoffs: dict[str, list[str]]
 
 
 def _extract_sections(content: str, level: int) -> dict[str, str]:
@@ -291,7 +303,9 @@ def parse_evidence_mapper_output(json_str: str) -> dict[str, Any]:
     """Parse glm-library-evidence-mapper JSON output."""
     import json
 
-    data = json.loads(json_str)
+    data = json.loads(_extract_json_payload(json_str))
+    if not isinstance(data, dict):
+        raise ValueError("Expected JSON object.")
     required_fields = ["file_id", "relevant_sections", "confidence", "rationale"]
     for field in required_fields:
         if field not in data:
@@ -303,7 +317,9 @@ def parse_gap_judge_output(json_str: str) -> dict[str, Any]:
     """Parse chatgpt-library-spec-gap-judge JSON output."""
     import json
 
-    data = json.loads(json_str)
+    data = json.loads(_extract_json_payload(json_str))
+    if not isinstance(data, dict):
+        raise ValueError("Expected JSON object.")
     required_fields = ["gaps", "total_gaps", "file_id"]
     for field in required_fields:
         if field not in data:
@@ -315,9 +331,205 @@ def parse_evidence_spotcheck_output(json_str: str) -> dict[str, Any]:
     """Parse chatgpt-evidence-gap-judge JSON output."""
     import json
 
-    data = json.loads(json_str)
+    data = json.loads(_extract_json_payload(json_str))
+    if not isinstance(data, dict):
+        raise ValueError("Expected JSON object.")
     required_fields = ["missing_sections", "scan_complete"]
     for field in required_fields:
         if field not in data:
             raise ValueError(f"Missing required field: {field}")
     return data
+
+
+def _extract_json_payload(output: str) -> str:
+    cleaned = output.strip()
+    if not cleaned:
+        return cleaned
+    lines = [line for line in cleaned.splitlines() if not line.startswith("[agent-exec]")]
+    cleaned = "\n".join(lines).strip()
+    if cleaned.startswith("```"):
+        fence_end = cleaned.rfind("```")
+        if fence_end > 0:
+            cleaned = cleaned[cleaned.find("\n") + 1 : fence_end].strip()
+    list_start = cleaned.find("[")
+    obj_start = cleaned.find("{")
+    if list_start == -1 and obj_start == -1:
+        return cleaned
+    if list_start != -1 and (obj_start == -1 or list_start < obj_start):
+        end = cleaned.rfind("]")
+        return cleaned[list_start : end + 1] if end != -1 else cleaned[list_start:]
+    end = cleaned.rfind("}")
+    return cleaned[obj_start : end + 1] if end != -1 else cleaned[obj_start:]
+
+
+def _validate_architecture_candidate(candidate: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    required_fields = [
+        "arch_id",
+        "pattern",
+        "description",
+        "components",
+        "communication",
+        "deployment",
+        "citations",
+        "tradeoffs",
+    ]
+    for field in required_fields:
+        if field not in candidate:
+            issues.append(f"missing_{field}")
+    if not isinstance(candidate.get("components", []), list):
+        issues.append("components_not_list")
+    if not isinstance(candidate.get("citations", []), list):
+        issues.append("citations_not_list")
+    tradeoffs = candidate.get("tradeoffs")
+    if not isinstance(tradeoffs, dict):
+        issues.append("tradeoffs_not_object")
+    else:
+        if not isinstance(tradeoffs.get("advantages", []), list):
+            issues.append("tradeoffs_advantages_not_list")
+        if not isinstance(tradeoffs.get("disadvantages", []), list):
+            issues.append("tradeoffs_disadvantages_not_list")
+    return issues
+
+
+def parse_architecture_proposal(json_str: str) -> list[ArchitectureCandidate]:
+    """Parse opus-architecture-proposer JSON output."""
+    import json
+
+    data = json.loads(json_str)
+    if not isinstance(data, list):
+        raise TypeError("Architecture proposal must be a JSON array.")
+
+    candidates: list[ArchitectureCandidate] = []
+    errors: list[str] = []
+    for index, item in enumerate(data):
+        if not isinstance(item, dict):
+            errors.append(f"candidate_{index}_not_object")
+            continue
+        issues = _validate_architecture_candidate(item)
+        if issues:
+            errors.extend([f"candidate_{index}:{issue}" for issue in issues])
+            continue
+        candidates.append(
+            ArchitectureCandidate(
+                arch_id=str(item.get("arch_id", "")).strip(),
+                pattern=str(item.get("pattern", "")).strip(),
+                description=str(item.get("description", "")).strip(),
+                components=item.get("components", []),
+                communication=str(item.get("communication", "")).strip(),
+                deployment=str(item.get("deployment", "")).strip(),
+                citations=item.get("citations", []),
+                tradeoffs=item.get("tradeoffs", {}),
+            )
+        )
+
+    if errors:
+        raise ValueError("; ".join(errors))
+    return candidates
+
+
+def parse_architecture_selection(json_str: str) -> dict[str, Any]:
+    """Parse chatgpt-architecture-tradeoff-judge JSON output."""
+    import json
+
+    data = json.loads(json_str)
+    if not isinstance(data, dict):
+        raise TypeError("Expected JSON object.")
+    required_fields = [
+        "selected_arch_id",
+        "rationale",
+        "rejected_architectures",
+        "implementation_risks",
+        "evolution_notes",
+    ]
+    for field in required_fields:
+        if field not in data:
+            raise ValueError(f"Missing required field: {field}")
+    return data
+
+
+def _extract_component_mappings(content: str) -> dict[str, list[str]]:
+    component_map: dict[str, list[str]] = {}
+    current_component: str | None = None
+    in_libraries = False
+
+    for line in content.splitlines():
+        component_match = re.match(r"^###\s+Component:\s*(.+)$", line.strip())
+        if component_match:
+            component_name = component_match.group(1).strip()
+            current_component = component_name
+            component_map.setdefault(component_name, [])
+            in_libraries = False
+            continue
+
+        if line.strip().startswith("## "):
+            current_component = None
+            in_libraries = False
+            continue
+
+        if current_component is None:
+            continue
+
+        if line.strip().lower().startswith("**libraries**"):
+            in_libraries = True
+            continue
+
+        if in_libraries and line.strip().startswith(("-", "*")):
+            raw = line.strip().lstrip("-* ").strip()
+            lib_id = raw.split(":", 1)[0].strip()
+            if lib_id and lib_id.lower() not in {"none", "n/a"} and current_component is not None:
+                component_map[current_component].append(lib_id)
+
+    return component_map
+
+
+def parse_architecture_mapping(content: str) -> dict[str, Any]:
+    """Parse glm-architecture-mapper markdown output."""
+    component_map = _extract_component_mappings(content)
+
+    component_lines: dict[str, list[str]] = {name: [] for name in component_map}
+    current_component: str | None = None
+    in_libraries = False
+    for line in content.splitlines():
+        component_match = re.match(r"^###\s+Component:\s*(.+)$", line.strip())
+        if component_match:
+            component_name = component_match.group(1).strip()
+            current_component = component_name
+            component_lines.setdefault(component_name, [])
+            in_libraries = False
+            continue
+
+        if line.strip().startswith("## "):
+            current_component = None
+            in_libraries = False
+            continue
+
+        if current_component is None:
+            continue
+
+        if line.strip().lower().startswith("**libraries**"):
+            in_libraries = True
+            continue
+
+        if in_libraries and line.strip().startswith(("-", "*")) and current_component is not None:
+            component_lines[current_component].append(line.strip())
+
+    sections = _extract_sections(content, level=2)
+    dependencies = _parse_dependencies(sections.get("Cross-Component Dependencies", ""))
+    unmapped_lines = sections.get("Unmapped Libraries", "").splitlines()
+    unmapped: list[str] = []
+    for line in unmapped_lines:
+        stripped = line.strip()
+        if stripped.startswith(("-", "*")):
+            item = stripped.lstrip("-* ").strip()
+            if item and item.lower() not in {"none", "n/a"}:
+                unmapped.append(item)
+        elif stripped and stripped.lower() not in {"none", "n/a"}:
+            unmapped.append(stripped)
+
+    return {
+        "component_mappings": component_map,
+        "component_lines": component_lines,
+        "dependencies": dependencies,
+        "unmapped_libraries": unmapped,
+    }

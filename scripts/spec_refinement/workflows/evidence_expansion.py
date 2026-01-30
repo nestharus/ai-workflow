@@ -8,9 +8,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from scripts.dev.agent_runner import AgentRunner
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
+from .agent_utils import run_agent
 from .formats import (
     FileSummary,
     parse_evidence_mapper_output,
@@ -274,7 +274,7 @@ def _validate_evidence_entry(
             )
             confidence_value = None
         else:
-            if not 0.0 <= confidence_value <= 1.0:
+            if confidence_value is not None and not 0.0 <= confidence_value <= 1.0:
                 issues.append(
                     {
                         "type": "invalid_confidence",
@@ -297,15 +297,16 @@ def _process_pair(
     charter_content: str,
     file_id: str,
     summary_content: str,
-    config_path: Path,
+    workspace: Path,
 ) -> dict[str, Any]:
     prompt = _build_evidence_prompt(lib_id, charter_content, file_id, summary_content)
-    runner = AgentRunner.from_agent_name(
-        "glm-library-evidence-mapper", config_path, prompt_chars=len(prompt)
-    )
 
     try:
-        output = runner.run(prompt)
+        output = run_agent(
+            agent_name="glm-library-evidence-mapper",
+            prompt=prompt,
+            workspace=workspace,
+        )
     except RuntimeError as exc:
         return {"lib_id": lib_id, "file_id": file_id, "error": f"Agent execution failed: {exc}"}
 
@@ -321,7 +322,7 @@ def _process_pair(
     return {"lib_id": lib_id, "file_id": file_id, "data": data}
 
 
-def expand_evidence(run_id: str, config_path: Path) -> dict[str, Any]:
+def expand_evidence(run_id: str) -> dict[str, Any]:
     """Expand evidence sources for all libraries (Phase 3)."""
     manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
     if not manager.is_initialized:
@@ -386,7 +387,14 @@ def expand_evidence(run_id: str, config_path: Path) -> dict[str, Any]:
     if pairs:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = [
-                executor.submit(_process_pair, lib_id, charter, file_id, summary, config_path)
+                executor.submit(
+                    _process_pair,
+                    lib_id,
+                    charter,
+                    file_id,
+                    summary,
+                    manager.workspace_path,
+                )
                 for lib_id, charter, file_id, summary in pairs
             ]
             for future in as_completed(futures):
@@ -465,9 +473,7 @@ def expand_evidence(run_id: str, config_path: Path) -> dict[str, Any]:
     }
 
 
-def spotcheck_evidence(
-    run_id: str, config_path: Path, lib_ids: list[str] | None = None
-) -> dict[str, Any]:
+def spotcheck_evidence(run_id: str, lib_ids: list[str] | None = None) -> dict[str, Any]:
     """Spot-check evidence coverage using ChatGPT XHigh (optional)."""
     manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
     if not manager.is_initialized:
@@ -550,12 +556,13 @@ def spotcheck_evidence(
             prompt = _build_spotcheck_prompt(
                 lib_id, charter_content, file_id, existing_sections, file_content
             )
-            runner = AgentRunner.from_agent_name(
-                "chatgpt-evidence-gap-judge", config_path, prompt_chars=len(prompt)
-            )
 
             try:
-                output = runner.run(prompt)
+                output = run_agent(
+                    agent_name="chatgpt-evidence-gap-judge",
+                    prompt=prompt,
+                    workspace=manager.workspace_path,
+                )
             except RuntimeError as exc:
                 errors.append(
                     {

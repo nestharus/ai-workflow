@@ -6,6 +6,11 @@ state transitions while keeping each phase resumable and auditable.
 
 from scripts.spec_refinement.workspace import Phase
 
+from .architecture import (
+    map_libraries_to_architecture,
+    propose_architectures,
+    select_architecture,
+)
 from .evidence_expansion import expand_evidence, spotcheck_evidence
 from .library_synthesis import synthesize_libraries
 from .spec_building import build_specs
@@ -17,6 +22,9 @@ __all__ = [
     "build_specs",
     "detect_sublibraries",
     "expand_evidence",
+    "map_libraries_to_architecture",
+    "propose_architectures",
+    "select_architecture",
     "spotcheck_evidence",
     "summarize_all",
     "synthesize_libraries",

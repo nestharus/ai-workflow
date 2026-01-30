@@ -2,8 +2,6 @@
 
 Parses YAML frontmatter from an agent markdown file and invokes the local
 `./claude` wrapper with the appropriate flags.
-
-The ClaudeRunner class is available for programmatic use via the AgentRunner interface.
 """
 
 from __future__ import annotations
@@ -12,12 +10,9 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import yaml
-
-if TYPE_CHECKING:
-    from scripts.dev.agent_runner import AgentRunner
 
 
 def parse_args() -> argparse.Namespace:
@@ -164,35 +159,6 @@ def run_command(
         return result.returncode, result.stdout or ""
 
     return 0, result.stdout or ""
-
-
-def _get_agent_runner_base() -> type[AgentRunner]:
-    """Import AgentRunner base class lazily to avoid circular imports."""
-    from scripts.dev.agent_runner import AgentRunner
-
-    return AgentRunner
-
-
-class ClaudeRunner(_get_agent_runner_base()):  # type: ignore[misc]
-    """Claude provider runner implementation."""
-
-    def run(self, prompt: str) -> str:
-        """Execute Claude agent with the given prompt.
-
-        Args:
-            prompt: User prompt to send to the agent.
-
-        Returns:
-            Captured stdout output from the Claude CLI.
-
-        Raises:
-            RuntimeError: If Claude agent fails with non-zero exit code.
-        """
-        command = build_command(self.agent_config, self.system_prompt)
-        exit_code, output = run_command(command, stream_output=False, stdin_input=prompt)
-        if exit_code != 0:
-            raise RuntimeError(f"Claude agent failed with exit code {exit_code}")
-        return output
 
 
 def main() -> int:
