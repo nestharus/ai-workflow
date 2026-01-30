@@ -108,8 +108,6 @@ def _compute_pair_priority(
 
     if confidence >= 0.7:
         return confidence, "high_confidence_from_labeler"
-    if confidence < 0.4:
-        return confidence, "low_confidence_skip"
 
     prompt = (
         "\n".join(
@@ -310,13 +308,13 @@ def _validate_evidence_entry(
         # Prefer exact matches, but tolerate common formatting differences.
         candidate = raw
         if candidate not in valid_sections:
-            normalized = candidate.upper().replace(" ", "_")
-            if normalized in valid_sections:
-                candidate = normalized
+            normalized_candidate = candidate.upper().replace(" ", "_")
+            if normalized_candidate in valid_sections:
+                candidate = normalized_candidate
             else:
-                normalized = candidate.upper()
-                if normalized in valid_sections:
-                    candidate = normalized
+                normalized_candidate = candidate.upper()
+                if normalized_candidate in valid_sections:
+                    candidate = normalized_candidate
 
         if candidate not in valid_sections:
             issues.append(
@@ -522,9 +520,9 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                 manager=manager,
             )
 
-            # Only skip if priority is very low AND there's a fallback audit path
-            # (spotcheck_evidence provides the fallback)
-            if priority < 0.3:
+            # Only skip if the classifier rejected the pair; spotcheck_evidence
+            # remains the fallback audit path for skipped pairs.
+            if rationale == "classifier_rejected":
                 continue
 
             pairs.append(
