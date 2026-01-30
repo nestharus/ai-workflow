@@ -16,6 +16,11 @@ from .formats import (
     parse_file_summary,
 )
 from .progress import ProgressTracker
+from .validation_utils import (
+    build_file_id_lookup,
+    build_section_alias_map,
+    resolve_section_reference,
+)
 
 MAX_WORKERS = 4
 
@@ -75,14 +80,8 @@ def _validate_evidence_pointers(
         )
         return issues
 
-    file_id_lookup: dict[str, str] = {}
-    for file_id, path_str in manager.state.file_manifest.items():
-        file_id_lookup[file_id] = file_id
-        file_id_lookup[path_str] = file_id
-        try:
-            file_id_lookup[str(Path(path_str).resolve())] = file_id
-        except OSError:
-            continue
+    file_id_lookup = build_file_id_lookup(manager.state.file_manifest)
+    section_alias_map = build_section_alias_map(manager.state.section_manifest)
 
     for match in pointer_matches:
         file_ref = match.group(1).strip()
@@ -98,14 +97,20 @@ def _validate_evidence_pointers(
                 }
             )
             continue
-        valid_sections = manager.state.section_manifest.get(resolved_file_id, [])
-        if section_ref not in valid_sections:
+        canonical_section = resolve_section_reference(
+            section_ref,
+            resolved_file_id,
+            section_alias_map,
+        )
+        if canonical_section is None:
             issues.append(
                 {
                     "type": "unknown_section_reference",
                     "file_id": file_id,
                     "pointer": match.group(0),
-                    "message": f"Unknown section reference: {section_ref}",
+                    "message": (
+                        f"Unknown section reference: {section_ref} (file: {resolved_file_id})"
+                    ),
                 }
             )
 
