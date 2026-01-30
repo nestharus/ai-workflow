@@ -33,6 +33,27 @@ Phase errors and issues are recorded in `runs/<run_id>/state.json`. Investigate
 invalid evidence pointers or parsing issues in the recorded `issues` list, then
 re-run the phase once corrected.
 
+## Repair gate
+
+Workflows use a validate -> repair -> revalidate gate to resolve compliance-only
+issues automatically. The repair layer lives in
+`scripts/spec_refinement/workflows/repair.py` and uses repair agents in
+`.agents/agents/repair-*.md`. If repair succeeds, the corrected artifact is
+written; if it fails, the original issues remain and a `repair_failed` issue is
+added.
+
+### Repair module API
+
+- `repair_artifact(output, errors, allowlists, artifact_type, manager) -> str`
+- `ArtifactType` enum maps to agent names via `_select_repair_agent`
+
+### Adding a new artifact type
+
+- Add the enum entry in `scripts/spec_refinement/workflows/repair.py`
+- Map it to a new agent name in `_select_repair_agent`
+- Create the agent definition in `.agents/agents/`
+- Wire a validate -> repair -> revalidate gate in the workflow phase
+
 ## Python API
 
 ```python

@@ -498,6 +498,36 @@ def _build_library_spec(
 
             spec_path.write_text(output, encoding="utf-8")
             issues.extend(_validate_spec_citations(output, manager, lib_id))
+            if issues:
+                from .repair import ArtifactType, repair_artifact
+
+                try:
+                    repaired_output = repair_artifact(
+                        output=output,
+                        errors=issues,
+                        allowlists={
+                            "file_ids": list(manager.state.file_manifest.keys()),
+                            "sections": {
+                                file_id: manager.state.section_manifest.get(file_id, [])
+                                for file_id in manager.state.file_manifest
+                            },
+                        },
+                        artifact_type=ArtifactType.SPEC,
+                        manager=manager,
+                    )
+                    repaired_issues = _validate_spec_citations(repaired_output, manager, lib_id)
+                    if not repaired_issues:
+                        output = repaired_output
+                        issues = []
+                        spec_path.write_text(output, encoding="utf-8")
+                except Exception as exc:
+                    issues.append(
+                        {
+                            "type": "repair_failed",
+                            "lib_id": lib_id,
+                            "message": f"Spec repair failed: {exc}",
+                        }
+                    )
             _update_decisions(lib_dir, output)
 
         spec_content = spec_path.read_text(encoding="utf-8")

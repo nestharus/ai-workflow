@@ -526,6 +526,41 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
             }
             entry_issues, normalized = _validate_evidence_entry(candidate_entry, manager, lib_id)
             issues.extend(entry_issues)
+            if entry_issues and normalized is None:
+                from .repair import ArtifactType, repair_artifact
+
+                try:
+                    entry_json = json.dumps(candidate_entry, indent=2)
+                    repaired_json = repair_artifact(
+                        output=entry_json,
+                        errors=entry_issues,
+                        allowlists={
+                            "file_ids": list(manager.state.file_manifest.keys()),
+                            "sections": manager.state.section_manifest.get(
+                                candidate_entry.get("file_id") or "", []
+                            ),
+                        },
+                        artifact_type=ArtifactType.EVIDENCE_JSON,
+                        manager=manager,
+                    )
+                    repaired_entry = json.loads(repaired_json)
+                    repaired_issues, repaired_normalized = _validate_evidence_entry(
+                        repaired_entry,
+                        manager,
+                        lib_id,
+                    )
+                    if not repaired_issues and repaired_normalized is not None:
+                        normalized = repaired_normalized
+                        issues = [i for i in issues if i not in entry_issues]
+                except Exception as exc:
+                    issues.append(
+                        {
+                            "type": "repair_failed",
+                            "lib_id": lib_id,
+                            "file_id": candidate_entry.get("file_id"),
+                            "message": f"Evidence entry repair failed: {exc}",
+                        }
+                    )
             if normalized is None:
                 continue
             confidence_value = normalized.get("confidence")

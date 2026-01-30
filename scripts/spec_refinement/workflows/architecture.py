@@ -173,6 +173,33 @@ def select_architecture(run_id: str) -> dict[str, Any]:
     )
     selection["rationale"] = rationale
     issues = _validate_architecture_citations(rationale, manager)
+    if issues:
+        from .repair import ArtifactType, repair_artifact
+
+        libraries = manager.get_all_libraries_recursive()
+        try:
+            repaired_rationale = repair_artifact(
+                output=rationale,
+                errors=issues,
+                allowlists={
+                    "library_ids": list(libraries.keys()),
+                    "file_names": ["charter.md", "spec.md"],
+                },
+                artifact_type=ArtifactType.ARCHITECTURE_SELECTION,
+                manager=manager,
+            )
+            repaired_issues = _validate_architecture_citations(repaired_rationale, manager)
+            if not repaired_issues:
+                rationale = repaired_rationale
+                selection["rationale"] = rationale
+                issues = []
+        except Exception as exc:
+            issues.append(
+                {
+                    "type": "repair_failed",
+                    "message": f"Architecture selection repair failed: {exc}",
+                }
+            )
 
     phase_result = manager.state.phases[Phase.ARCHITECTURE_SELECTION.value]
     phase_result.issues = issues
@@ -298,6 +325,32 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
 
     citation_issues = _validate_architecture_citations(output, manager)
     issues.extend(citation_issues)
+    if citation_issues:
+        from .repair import ArtifactType, repair_artifact
+
+        libraries = manager.get_all_libraries_recursive()
+        try:
+            repaired_output = repair_artifact(
+                output=output,
+                errors=citation_issues,
+                allowlists={
+                    "library_ids": list(libraries.keys()),
+                    "file_names": ["charter.md", "spec.md"],
+                },
+                artifact_type=ArtifactType.ARCHITECTURE_MAPPING,
+                manager=manager,
+            )
+            repaired_citation_issues = _validate_architecture_citations(repaired_output, manager)
+            if not repaired_citation_issues:
+                output = repaired_output
+                issues = [i for i in issues if i not in citation_issues]
+        except Exception as exc:
+            issues.append(
+                {
+                    "type": "repair_failed",
+                    "message": f"Architecture mapping repair failed: {exc}",
+                }
+            )
 
     phase_result = manager.state.phases[Phase.ARCHITECTURE_MAPPING.value]
     phase_result.issues = issues

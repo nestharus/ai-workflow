@@ -238,6 +238,37 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
     issues.extend(_validate_library_ids(charters))
     issues.extend(_validate_evidence_sources(charters, manager))
     issues.extend(_validate_overlap_resolutions(charters))
+    if issues:
+        from .repair import ArtifactType, repair_artifact
+
+        try:
+            repaired_output = repair_artifact(
+                output=output,
+                errors=issues,
+                allowlists={
+                    "file_ids": list(manager.state.file_manifest.keys()),
+                    "library_ids": [charter.lib_id for charter in charters],
+                },
+                artifact_type=ArtifactType.CHARTER,
+                manager=manager,
+            )
+            repaired_charters, repaired_index = parse_library_synthesis(repaired_output)
+            repaired_issues: list[dict[str, Any]] = []
+            repaired_issues.extend(_validate_library_ids(repaired_charters))
+            repaired_issues.extend(_validate_evidence_sources(repaired_charters, manager))
+            repaired_issues.extend(_validate_overlap_resolutions(repaired_charters))
+
+            if not repaired_issues:
+                charters = repaired_charters
+                index_content = repaired_index
+                issues = []
+        except Exception as exc:
+            issues.append(
+                {
+                    "type": "repair_failed",
+                    "message": f"Charter repair failed: {exc}",
+                }
+            )
 
     id_issues = [i for i in issues if i["type"] in ("invalid_library_id", "duplicate_library_id")]
     if id_issues:

@@ -172,6 +172,33 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
         }
 
     issues = _validate_evidence_pointers(output, manager, file_id)
+    if issues:
+        from .repair import ArtifactType, repair_artifact
+
+        try:
+            repaired_output = repair_artifact(
+                output=output,
+                errors=issues,
+                allowlists={
+                    "file_ids": list(manager.state.file_manifest.keys()),
+                    "sections": manager.state.section_manifest.get(file_id, []),
+                },
+                artifact_type=ArtifactType.SUMMARY,
+                manager=manager,
+            )
+            repaired_issues = _validate_evidence_pointers(repaired_output, manager, file_id)
+            if not repaired_issues:
+                output = repaired_output
+                issues = []
+                summary_path.write_text(output, encoding="utf-8")
+        except Exception as exc:
+            issues.append(
+                {
+                    "type": "repair_failed",
+                    "file_id": file_id,
+                    "message": f"Repair attempt failed: {exc}",
+                }
+            )
 
     return {
         "file_id": file_id,
