@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 from dataclasses import asdict
@@ -166,6 +167,25 @@ def select_architecture(run_id: str) -> dict[str, Any]:
     rationale = str(selection.get("rationale", "")).strip()
     issues = _validate_architecture_citations(rationale, manager)
 
+    phase_result = manager.state.phases[Phase.ARCHITECTURE_SELECTION.value]
+    phase_result.issues = issues
+
+    if issues:
+        # Do not leave behind non-compliant artifacts from a failed validation.
+        selected_path = manager.structure.architecture_dir / "selected.md"
+        rejected_path = manager.structure.architecture_dir / "rejected.md"
+        with contextlib.suppress(OSError):
+            selected_path.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            rejected_path.unlink(missing_ok=True)
+
+        manager.fail_phase(
+            Phase.ARCHITECTURE_SELECTION,
+            error=f"Architecture selection citation validation failed ({len(issues)} issue(s)).",
+        )
+        rejected = selection.get("rejected_architectures", [])
+        return {"selected_arch_id": selected_arch_id, "rejected_count": len(rejected)}
+
     selected_path = manager.structure.architecture_dir / "selected.md"
     selected_path.write_text(
         _format_architecture_selection(selected_arch_id, selection, candidates[selected_arch_id]),
@@ -174,9 +194,6 @@ def select_architecture(run_id: str) -> dict[str, Any]:
 
     rejected_path = manager.structure.architecture_dir / "rejected.md"
     rejected_path.write_text(_format_architecture_rejections(selection), encoding="utf-8")
-
-    phase_result = manager.state.phases[Phase.ARCHITECTURE_SELECTION.value]
-    phase_result.issues = issues
 
     outputs = {"selected_arch_id": selected_arch_id}
     manager.complete_phase(Phase.ARCHITECTURE_SELECTION, outputs=outputs)
@@ -270,11 +287,27 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
     citation_issues = _validate_architecture_citations(output, manager)
     issues.extend(citation_issues)
 
-    mapping_path = manager.structure.architecture_dir / "mapping.md"
-    mapping_path.write_text(output.strip() + "\n", encoding="utf-8")
-
     phase_result = manager.state.phases[Phase.ARCHITECTURE_MAPPING.value]
     phase_result.issues = issues
+
+    if issues:
+        # Do not leave behind non-compliant artifacts from a failed validation.
+        mapping_path = manager.structure.architecture_dir / "mapping.md"
+        with contextlib.suppress(OSError):
+            mapping_path.unlink(missing_ok=True)
+
+        manager.fail_phase(
+            Phase.ARCHITECTURE_MAPPING,
+            error=f"Architecture mapping validation failed ({len(issues)} issue(s)).",
+        )
+        return {
+            "libraries_mapped": len(mapped_libs),
+            "unmapped_libraries": unmapped,
+            "issues": issues,
+        }
+
+    mapping_path = manager.structure.architecture_dir / "mapping.md"
+    mapping_path.write_text(output.strip() + "\n", encoding="utf-8")
 
     outputs = {
         "libraries_mapped": len(mapped_libs),

@@ -38,7 +38,7 @@ Forbidden:
 ## Citation Requirements
 
 - Every bullet in `## Boundaries`, `## Requirements`, `## Constraints`, and `## Dependencies` MUST include at least one `[file_###::SECTION]` citation to a SOURCE spec file (add citations to existing bullets too, including those originating from the charter).
-- Never cite derived artifacts (e.g. `libraries/.../spec.md`, `charter.md`, `runs/...`).
+- Never cite derived artifacts (e.g. `libraries/.../spec.md`, `charter.md`, `runs/...`) or placeholder pointers like `[charter::INTENT]`.
 - Multiple citations are allowed when the statement is supported by multiple source sections.
 - If content comes from multiple sections, cite all sources.
 
