@@ -497,14 +497,15 @@ def _build_library_spec(
                 output = current_spec
 
             spec_path.write_text(output, encoding="utf-8")
-            issues.extend(_validate_spec_citations(output, manager, lib_id))
-            if issues:
+            citation_issues = _validate_spec_citations(output, manager, lib_id)
+            issues.extend(citation_issues)
+            if citation_issues:
                 from .repair import ArtifactType, repair_artifact
 
                 try:
                     repaired_output = repair_artifact(
                         output=output,
-                        errors=issues,
+                        errors=citation_issues,
                         allowlists={
                             "file_ids": list(manager.state.file_manifest.keys()),
                             "sections": {
@@ -518,7 +519,7 @@ def _build_library_spec(
                     repaired_issues = _validate_spec_citations(repaired_output, manager, lib_id)
                     if not repaired_issues:
                         output = repaired_output
-                        issues = []
+                        issues = [issue for issue in issues if issue not in citation_issues]
                         spec_path.write_text(output, encoding="utf-8")
                 except Exception as exc:
                     issues.append(
