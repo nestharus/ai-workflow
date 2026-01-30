@@ -27,6 +27,8 @@ CITATION_REQUIRED_SECTIONS = {"Boundaries", "Requirements", "Constraints", "Depe
 
 @dataclass
 class PatchOperation:
+    """A single patch operation for modifying a spec document."""
+
     op: Literal["add", "move", "edit"]
     section: str
     bullet_index: int | None
@@ -37,6 +39,8 @@ class PatchOperation:
 
 @dataclass
 class SpecPatchSet:
+    """A set of patch operations for a library specification."""
+
     lib_id: str
     file_id: str
     operations: list[PatchOperation]
@@ -46,25 +50,31 @@ class SpecDocument:
     """Parsed spec document sections with bullet-aware helpers."""
 
     def __init__(self, content: str) -> None:
+        """Initialize a parsed spec document.
+
+        Args:
+            content: The full spec document content as markdown.
+        """
         from . import spec_building
 
         sections = spec_building._extract_sections(content, level=2)
         self.section_order = list(sections.keys())
-        self.section_lines = {
-            name: self._split_lines(text) for name, text in sections.items()
-        }
+        self.section_lines = {name: self._split_lines(text) for name, text in sections.items()}
 
     def get_lines(self, section: str) -> list[str]:
-        return self.section_lines.setdefault(section, [])
+        """Return all lines for a given section, or empty list if section doesn't exist."""
+        if section in self.section_lines:
+            return self.section_lines[section]
+        return []
 
     def count_bullets(self, section: str) -> int:
+        """Count the number of bullet lines in a section."""
         return sum(1 for line in self.get_lines(section) if _is_bullet_line(line))
 
     def bullet_line_indices(self, section: str) -> list[int]:
+        """Return the list indices of all bullet lines in a section."""
         return [
-            index
-            for index, line in enumerate(self.get_lines(section))
-            if _is_bullet_line(line)
+            index for index, line in enumerate(self.get_lines(section)) if _is_bullet_line(line)
         ]
 
     @staticmethod
@@ -75,6 +85,15 @@ class SpecDocument:
 
 
 def validate_patch_operation(op: PatchOperation, valid_sections: list[str]) -> list[str]:
+    """Validate a patch operation.
+
+    Args:
+        op: The patch operation to validate.
+        valid_sections: List of valid section names.
+
+    Returns:
+        List of validation error messages (empty if valid).
+    """
     errors: list[str] = []
     if op.op not in {"add", "move", "edit"}:
         errors.append(f"Invalid op '{op.op}'.")
@@ -91,6 +110,11 @@ def validate_patch_operation(op: PatchOperation, valid_sections: list[str]) -> l
             errors.append("move operations require bullet_index.")
         if op.source_section is not None and op.source_section not in valid_sections:
             errors.append(f"Invalid source_section '{op.source_section}'.")
+    content_stripped = op.content.strip()
+    if op.op in {"add", "edit"} and not content_stripped:
+        errors.append("content must be non-empty for add/edit operations.")
+    if op.op == "move" and op.content != "" and not content_stripped:
+        errors.append("content must be non-empty when provided for move operations.")
     for citation in op.citations:
         if not EVIDENCE_POINTER_RE.fullmatch(citation.strip()):
             errors.append(f"Invalid citation '{citation}'.")
@@ -98,6 +122,14 @@ def validate_patch_operation(op: PatchOperation, valid_sections: list[str]) -> l
 
 
 def parse_patch_json(json_str: str) -> SpecPatchSet:
+    """Parse patch JSON into a structured SpecPatchSet.
+
+    Args:
+        json_str: JSON string containing patch operations.
+
+    Returns:
+        Parsed SpecPatchSet with lib_id, file_id, and operations.
+    """
     data = json.loads(_extract_json_payload(json_str))
     if isinstance(data, dict):
         operations_data = data.get("operations")
@@ -149,6 +181,15 @@ def parse_patch_json(json_str: str) -> SpecPatchSet:
 
 
 def apply_patch(spec_doc: SpecDocument, operation: PatchOperation) -> None:
+    """Apply a patch operation to a spec document.
+
+    Args:
+        spec_doc: The spec document to modify.
+        operation: The patch operation to apply.
+
+    Raises:
+        ValueError: If the operation is invalid or requires missing fields.
+    """
     if operation.op == "add":
         lines = list(spec_doc.get_lines(operation.section))
         _append_bullet_line(lines, _compose_bullet_line(operation))
@@ -173,10 +214,7 @@ def apply_patch(spec_doc: SpecDocument, operation: PatchOperation) -> None:
         dest_lines = list(spec_doc.get_lines(operation.section))
         line_index = _resolve_bullet_line_index(source_lines, operation.bullet_index)
         moved_line = source_lines.pop(line_index)
-        if operation.content.strip():
-            bullet_line = _compose_bullet_line(operation)
-        else:
-            bullet_line = moved_line
+        bullet_line = _compose_bullet_line(operation) if operation.content.strip() else moved_line
         _append_bullet_line(dest_lines, bullet_line)
         spec_doc.section_lines[operation.source_section] = source_lines
         spec_doc.section_lines[operation.section] = dest_lines
@@ -190,6 +228,15 @@ def apply_patch(spec_doc: SpecDocument, operation: PatchOperation) -> None:
 
 
 def render_spec(spec_doc: SpecDocument, lib_id: str) -> str:
+    """Render a spec document to markdown.
+
+    Args:
+        spec_doc: The spec document to render.
+        lib_id: The library ID for the header.
+
+    Returns:
+        Markdown representation of the spec document.
+    """
     lines = [f"# Library Spec: {lib_id}", ""]
     remaining_sections = set(spec_doc.section_lines.keys())
     for section in VALID_SPEC_SECTIONS:
@@ -220,12 +267,30 @@ def validate_patch_citations(
     *,
     lib_id: str,
 ) -> list[dict[str, Any]]:
+    """Validate evidence pointers in patch operations.
+
+    Args:
+        operations: List of patch operations to validate.
+        file_id_lookup: Mapping from file references to canonical file IDs.
+        section_alias_map: Mapping from file IDs to section alias dictionaries.
+        lib_id: Library ID for error reporting.
+
+    Returns:
+        List of validation issues (empty if valid).
+    """
     file_id_lookup = _ensure_file_id_lookup(file_id_lookup)
     section_alias_map = _ensure_section_alias_map(section_alias_map)
     issues: list[dict[str, Any]] = []
     pointer_seen = False
+    requires_evidence_pointers = False
 
     for operation in operations:
+        if (
+            operation.op in {"add", "edit", "move"}
+            and operation.section in CITATION_REQUIRED_SECTIONS
+            and not (operation.op == "move" and not operation.content.strip())
+        ):
+            requires_evidence_pointers = True
         if (
             operation.op in {"add", "edit", "move"}
             and operation.section in CITATION_REQUIRED_SECTIONS
@@ -286,7 +351,7 @@ def validate_patch_citations(
                     }
                 )
 
-    if not pointer_seen:
+    if not pointer_seen and requires_evidence_pointers:
         issues.append(
             {
                 "type": "missing_evidence_pointers",
@@ -298,7 +363,7 @@ def validate_patch_citations(
     return issues
 
 
-def _coerce_bullet_index(value: Any) -> int | None:
+def _coerce_bullet_index(value: int | str | None) -> int | None:
     if isinstance(value, int):
         return value
     if isinstance(value, str):
@@ -317,7 +382,7 @@ def _ensure_file_id_lookup(file_id_lookup: dict[str, str]) -> dict[str, str]:
 
 
 def _ensure_section_alias_map(
-    section_alias_map: dict[str, dict[str, str]] | dict[str, list[str]]
+    section_alias_map: dict[str, dict[str, str]] | dict[str, list[str]],
 ) -> dict[str, dict[str, str]]:
     if not section_alias_map:
         return {}
@@ -327,7 +392,7 @@ def _ensure_section_alias_map(
     return section_alias_map  # type: ignore[return-value]
 
 
-def _coerce_citations(value: Any) -> list[str]:
+def _coerce_citations(value: str | list[str] | list[object] | None) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if str(item).strip()]
     if isinstance(value, str):
@@ -344,9 +409,7 @@ def _is_bullet_line(line: str) -> bool:
 def _resolve_bullet_line_index(lines: list[str], bullet_index: int | None) -> int:
     if bullet_index is None:
         raise ValueError("bullet_index is required for this operation.")
-    bullet_lines = [
-        index for index, line in enumerate(lines) if _is_bullet_line(line)
-    ]
+    bullet_lines = [index for index, line in enumerate(lines) if _is_bullet_line(line)]
     if bullet_index < 0 or bullet_index >= len(bullet_lines):
         raise ValueError("bullet_index is out of range.")
     return bullet_lines[bullet_index]
