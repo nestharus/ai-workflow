@@ -9,47 +9,18 @@ from typing import Any
 
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
-from .agent_utils import run_agent
-from .formats import LibraryCharter, normalize_compound_pointers, parse_library_synthesis
+from .formats import LibraryCharter
+from .library_labeling import (
+    CharterResults,
+    aggregate_labels,
+    generate_all_charters,
+    label_all_files,
+    refine_library_labels,
+    resolve_all_overlaps,
+)
 from .progress import ProgressTracker
 
 LIB_ID_RE = re.compile(r"^lib_\d{3}$")
-
-
-def _build_synthesis_prompt(summary_bundle: dict[str, str]) -> str:
-    sections = ["Synthesize libraries for Phase 2 using the summaries below."]
-    sections.append("Use the exact markdown structure below with headings and bullet lists.")
-    sections.append("Library IDs must follow lib_001, lib_002, etc.")
-    sections.append("Evidence pointers must use [FILE_ID::SECTION].")
-    sections.append("")
-    sections.append("## Library Index")
-    sections.append("- lib_001: <intent>")
-    sections.append("")
-    sections.append("## Library Charters")
-    sections.append("### lib_001")
-    sections.append("#### Intent")
-    sections.append("<intent text>")
-    sections.append("")
-    sections.append("#### Boundaries")
-    sections.append("<boundaries text>")
-    sections.append("")
-    sections.append("#### Responsibilities")
-    sections.append("- <responsibility>")
-    sections.append("")
-    sections.append("#### Evidence")
-    sections.append("- [FILE_ID::SECTION]")
-    sections.append("")
-    sections.append("#### Overlap Resolutions")
-    sections.append("- <overlap description> -> <decision>")
-    sections.append("")
-    sections.append("---")
-    sections.append("")
-    sections.append("# Summaries")
-    for file_id, summary in summary_bundle.items():
-        sections.append(f"## {file_id}")
-        sections.append(summary)
-        sections.append("")
-    return "\n".join(sections)
 
 
 def _validate_library_ids(charters: list[LibraryCharter]) -> list[dict[str, Any]]:
@@ -183,6 +154,14 @@ def _format_charter(charter: LibraryCharter) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _build_library_index(charters: list[LibraryCharter]) -> str:
+    lines = ["# Library Index", ""]
+    for charter in charters:
+        intent = charter.intent or "Intent not provided"
+        lines.append(f"- {charter.lib_id}: {intent}")
+    return "\n".join(lines).strip() + "\n"
+
+
 def _write_library_artifacts(manager: WorkspaceManager, charter: LibraryCharter) -> None:
     lib_dir = manager.structure.libraries_dir / charter.lib_id
     lib_dir.mkdir(parents=True, exist_ok=True)
@@ -210,76 +189,60 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
 
     manager.start_phase(Phase.LIBRARY_SYNTHESIS)
 
-    summary_files = sorted(manager.structure.summaries_dir.glob("*.what.md"))
-    summary_bundle: dict[str, str] = {}
-    for summary_path in summary_files:
-        file_id = summary_path.stem.replace(".what", "")
-        summary_bundle[file_id] = summary_path.read_text(encoding="utf-8")
-
-    prompt = _build_synthesis_prompt(summary_bundle)
-    try:
-        output = run_agent(
-            agent_name="opus-library-synthesizer",
-            prompt=prompt,
-            workspace=manager.workspace_path,
-        )
-    except RuntimeError as exc:
-        manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error=f"Agent execution failed: {exc}")
-        return {"libraries_created": 0, "error": str(exc)}
-
-    output = normalize_compound_pointers(output)
-    try:
-        charters, index_content = parse_library_synthesis(output)
-    except Exception as exc:  # pragma: no cover - defensive logging
-        manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error=f"Failed to parse output: {exc}")
-        return {"libraries_created": 0, "error": str(exc)}
-
     issues: list[dict[str, Any]] = []
+
+    label_results = label_all_files(manager)
+    file_labels = label_results.get("file_labels", {})
+    issues.extend(label_results.get("issues", []))
+
+    label_clusters = aggregate_labels(file_labels)
+    manager.structure.libraries_dir.mkdir(parents=True, exist_ok=True)
+    clusters_path = manager.structure.libraries_dir / "label_clusters.json"
+    clusters_path.write_text(json.dumps(label_clusters, indent=2), encoding="utf-8")
+
+    try:
+        refined_labels = refine_library_labels(label_clusters, manager)
+    except Exception as exc:
+        manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error=f"Label refinement failed: {exc}")
+        return {
+            "libraries_created": 0,
+            "issues": [{"type": "label_refinement_failed", "message": str(exc)}],
+        }
+
+    if not refined_labels:
+        manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error="No refined labels returned")
+        return {"libraries_created": 0, "issues": issues}
+
+    charter_results = generate_all_charters(refined_labels, file_labels, manager)
+    charters = list(charter_results)
+    if isinstance(charter_results, CharterResults):
+        issues.extend(charter_results.issues)
+
+    if not charters:
+        manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error="No libraries synthesized")
+        return {"libraries_created": 0, "issues": issues}
+
     issues.extend(_validate_library_ids(charters))
     issues.extend(_validate_evidence_sources(charters, manager))
     issues.extend(_validate_overlap_resolutions(charters))
-    if issues:
-        from .repair import ArtifactType, repair_artifact
-
-        try:
-            repaired_output = repair_artifact(
-                output=output,
-                errors=issues,
-                allowlists={
-                    "file_ids": list(manager.state.file_manifest.keys()),
-                    "library_ids": [charter.lib_id for charter in charters],
-                },
-                artifact_type=ArtifactType.CHARTER,
-                manager=manager,
-            )
-            repaired_charters, repaired_index = parse_library_synthesis(repaired_output)
-            repaired_issues: list[dict[str, Any]] = []
-            repaired_issues.extend(_validate_library_ids(repaired_charters))
-            repaired_issues.extend(_validate_evidence_sources(repaired_charters, manager))
-            repaired_issues.extend(_validate_overlap_resolutions(repaired_charters))
-
-            if not repaired_issues:
-                charters = repaired_charters
-                index_content = repaired_index
-                issues = []
-        except Exception as exc:
-            issues.append(
-                {
-                    "type": "repair_failed",
-                    "message": f"Charter repair failed: {exc}",
-                }
-            )
 
     id_issues = [i for i in issues if i["type"] in ("invalid_library_id", "duplicate_library_id")]
     if id_issues:
         manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error="Invalid library IDs")
         return {"libraries_created": 0, "issues": id_issues}
 
-    if not charters:
-        manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error="No libraries synthesized")
-        return {"libraries_created": 0, "issues": issues}
+    try:
+        overlap_decisions = resolve_all_overlaps(charters, manager)
+    except Exception as exc:
+        issues.append(
+            {
+                "type": "overlap_resolution_failed",
+                "message": f"Overlap resolution failed: {exc}",
+            }
+        )
+        overlap_decisions = []
 
-    manager.structure.libraries_dir.mkdir(parents=True, exist_ok=True)
+    index_content = _build_library_index(charters)
     index_path = manager.structure.libraries_dir / "library_index.md"
     index_path.write_text(index_content, encoding="utf-8")
 
@@ -313,6 +276,9 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
         "libraries_count": len(charters),
         "overlap_resolutions": overlap_resolutions,
     }
+    if overlap_decisions:
+        outputs["overlap_decisions"] = overlap_decisions
+
     manager.complete_phase(Phase.LIBRARY_SYNTHESIS, outputs=outputs)
 
     return {

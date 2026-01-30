@@ -12,8 +12,11 @@ from .agent_utils import run_agent
 
 
 class ArtifactType(str, Enum):
+    """Valid artifact types for compliance validation and repair."""
+
     SUMMARY = "summary"
     CHARTER = "charter"
+    LIBRARY_LABELS = "library_labels"
     SPEC = "spec"
     EVIDENCE_JSON = "evidence_json"
     ARCHITECTURE_SELECTION = "architecture_selection"
@@ -56,7 +59,8 @@ def _build_repair_prompt(
     allowlist_text = _format_allowlists(allowlists)
     lines = [
         "You are a compliance repair agent.",
-        "Fix ONLY compliance issues. Do NOT add new content, change semantics, or invent information.",
+        "Fix ONLY compliance issues. Do NOT add new content,",
+        "change semantics, or invent information.",
         "",
         f"Artifact Type: {artifact_type.value}",
         "",
@@ -80,6 +84,7 @@ def _select_repair_agent(artifact_type: ArtifactType) -> str:
     mapping = {
         ArtifactType.SUMMARY: "repair-summary",
         ArtifactType.CHARTER: "repair-charter",
+        ArtifactType.LIBRARY_LABELS: "repair-library-labels",
         ArtifactType.SPEC: "repair-spec",
         ArtifactType.EVIDENCE_JSON: "repair-evidence-json",
         ArtifactType.ARCHITECTURE_SELECTION: "repair-architecture-selection",

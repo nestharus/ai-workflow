@@ -3,35 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from scripts.spec_refinement.workflows.formats import LibraryCharter
 from scripts.spec_refinement.workflows.library_synthesis import synthesize_libraries
 from scripts.spec_refinement.workspace import Phase, WorkspaceManager
-
-
-def _library_output(evidence_section: str = "INTRO") -> str:
-    return (
-        "## Library Index\n"
-        "- lib_001: Core Workflow Library\n\n"
-        "## Library Charters\n"
-        "### lib_001\n"
-        "#### Intent\n"
-        "Own core workflow responsibilities.\n\n"
-        "#### Boundaries\n"
-        "Includes orchestrator and runner coordination.\n\n"
-        "#### Responsibilities\n"
-        "- Handle phase transitions\n"
-        "- Coordinate summaries\n\n"
-        "#### Evidence\n"
-        f"- [file_001::{evidence_section}]\n\n"
-        "#### Overlap Resolutions\n"
-        "- Workflow vs orchestration -> Assign to lib_001\n"
-    )
-
-
-def _fake_run_agent(output: str):
-    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
-        return output
-
-    return _run_agent
 
 
 def _setup_workspace(fs, monkeypatch, summarize: bool = True) -> WorkspaceManager:
@@ -52,12 +26,43 @@ def _setup_workspace(fs, monkeypatch, summarize: bool = True) -> WorkspaceManage
     return manager
 
 
+def _charter(evidence_section: str = "INTRO") -> LibraryCharter:
+    return LibraryCharter(
+        lib_id="lib_001",
+        intent="Core Workflow Library",
+        boundaries="Includes orchestrator and runner coordination.",
+        responsibilities=["Handle phase transitions", "Coordinate summaries"],
+        evidence_sources=[{"file_id": "file_001", "sections": [evidence_section]}],
+        overlap_resolutions=[{"description": "Workflow vs orchestration", "decision": "Assign"}],
+    )
+
+
 def test_synthesize_libraries_success(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
-    with patch(
-        "scripts.spec_refinement.workflows.library_synthesis.run_agent",
-        side_effect=_fake_run_agent(_library_output()),
+    with (
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.label_all_files",
+            return_value={
+                "file_labels": {"file_001": {"candidate_labels": [], "uncertain_labels": []}}
+            },
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.aggregate_labels",
+            return_value={"label_clusters": [], "singleton_labels": [], "metadata": {}},
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.refine_library_labels",
+            return_value=[{"lib_id": "lib_001", "final_label": "Core", "merged_from": []}],
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.generate_all_charters",
+            return_value=[_charter()],
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.resolve_all_overlaps",
+            return_value=[],
+        ),
     ):
         result = synthesize_libraries("run1")
 
@@ -73,27 +78,75 @@ def test_synthesize_libraries_success(fs, monkeypatch) -> None:
     assert result["libraries_created"] == 1
 
 
-def test_synthesize_libraries_overlap_resolution(fs, monkeypatch) -> None:
+def test_synthesize_libraries_overlap_resolution_outputs(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
-    with patch(
-        "scripts.spec_refinement.workflows.library_synthesis.run_agent",
-        side_effect=_fake_run_agent(_library_output()),
+    with (
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.label_all_files",
+            return_value={
+                "file_labels": {"file_001": {"candidate_labels": [], "uncertain_labels": []}}
+            },
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.aggregate_labels",
+            return_value={"label_clusters": [], "singleton_labels": [], "metadata": {}},
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.refine_library_labels",
+            return_value=[{"lib_id": "lib_001", "final_label": "Core", "merged_from": []}],
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.generate_all_charters",
+            return_value=[_charter()],
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.resolve_all_overlaps",
+            return_value=[
+                {
+                    "lib_id_a": "lib_001",
+                    "lib_id_b": "lib_002",
+                    "decision": "assign_to_lib_A",
+                    "rationale": "Overlap belongs to lib_001",
+                    "affected_files": ["file_001"],
+                    "overlap_score": 0.5,
+                }
+            ],
+        ),
     ):
-        synthesize_libraries("run1")
+        result = synthesize_libraries("run1")
 
-    charter_path = Path("/repo/runs/run1/libraries/lib_001/charter.md")
-    charter = charter_path.read_text(encoding="utf-8")
-    assert "Overlap Resolutions" in charter
-    assert "->" in charter
+    outputs = result.get("outputs", {})
+    assert "overlap_decisions" in outputs
+    assert outputs["overlap_decisions"][0]["decision"] == "assign_to_lib_A"
 
 
 def test_synthesize_libraries_evidence_validation(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
-    with patch(
-        "scripts.spec_refinement.workflows.library_synthesis.run_agent",
-        side_effect=_fake_run_agent(_library_output("UNKNOWN")),
+    with (
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.label_all_files",
+            return_value={
+                "file_labels": {"file_001": {"candidate_labels": [], "uncertain_labels": []}}
+            },
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.aggregate_labels",
+            return_value={"label_clusters": [], "singleton_labels": [], "metadata": {}},
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.refine_library_labels",
+            return_value=[{"lib_id": "lib_001", "final_label": "Core", "merged_from": []}],
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.generate_all_charters",
+            return_value=[_charter("UNKNOWN")],
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_synthesis.resolve_all_overlaps",
+            return_value=[],
+        ),
     ):
         result = synthesize_libraries("run1")
 

@@ -5,6 +5,13 @@
 - `glm-library-evidence-mapper`: Maps library charters to relevant file sections
 - `chatgpt-evidence-gap-judge`: Spot-checks for missed relevant sections
 
+## Library Synthesis Agents
+
+- `glm-file-library-labeler`: Classifies file summaries into candidate library labels
+- `opus-library-label-refiner`: Merges/splits labels into stable library definitions
+- `glm-library-overlap-resolver`: Resolves overlaps between library charters
+- `repair-library-labels`: Repairs invalid library label JSON outputs
+
 ## Spec Integration Agents
 
 - `glm-library-spec-integrator`: Monotonically integrates file content into specs

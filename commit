@@ -1,4 +1,2 @@
 #!/bin/bash
-git add -A
-exec opencode run -m cerebras/zai-glm-4.7 "Look at the staged git changes and create a commit with an appropriate message."
-git push
+aicommit2 --all --auto-select --confirm && git push

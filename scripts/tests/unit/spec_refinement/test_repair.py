@@ -22,16 +22,13 @@ class _DummyManager:
 def test_select_repair_agent_mapping() -> None:
     assert _select_repair_agent(ArtifactType.SUMMARY) == "repair-summary"
     assert _select_repair_agent(ArtifactType.CHARTER) == "repair-charter"
+    assert _select_repair_agent(ArtifactType.LIBRARY_LABELS) == "repair-library-labels"
     assert _select_repair_agent(ArtifactType.SPEC) == "repair-spec"
     assert _select_repair_agent(ArtifactType.EVIDENCE_JSON) == "repair-evidence-json"
     assert (
-        _select_repair_agent(ArtifactType.ARCHITECTURE_SELECTION)
-        == "repair-architecture-selection"
+        _select_repair_agent(ArtifactType.ARCHITECTURE_SELECTION) == "repair-architecture-selection"
     )
-    assert (
-        _select_repair_agent(ArtifactType.ARCHITECTURE_MAPPING)
-        == "repair-architecture-mapping"
-    )
+    assert _select_repair_agent(ArtifactType.ARCHITECTURE_MAPPING) == "repair-architecture-mapping"
 
 
 def test_repair_artifact_calls_agent_with_prompt() -> None:
@@ -87,15 +84,14 @@ def test_repair_artifact_propagates_exception() -> None:
     with patch(
         "scripts.spec_refinement.workflows.repair.run_agent",
         side_effect=RuntimeError("boom"),
-    ):
-        with pytest.raises(RuntimeError, match="boom"):
-            repair_artifact(
-                output="bad",
-                errors=[{"type": "bad", "message": "oops"}],
-                allowlists={},
-                artifact_type=ArtifactType.SUMMARY,
-                manager=manager,
-            )
+    ), pytest.raises(RuntimeError, match="boom"):
+        repair_artifact(
+            output="bad",
+            errors=[{"type": "bad", "message": "oops"}],
+            allowlists={},
+            artifact_type=ArtifactType.SUMMARY,
+            manager=manager,
+        )
 
 
 def test_build_repair_prompt_formats_errors_and_allowlists() -> None:
@@ -122,8 +118,8 @@ def test_build_repair_prompt_formats_errors_and_allowlists() -> None:
 
     assert "1. [invalid_pointer] Pointer invalid." in prompt
     assert "file_id=file_001" in prompt
-    assert "context={\"section\": \"INTRO\"}" in prompt
-    assert "lines=[\"line1\", \"line2\"]" in prompt
+    assert 'context={"section": "INTRO"}' in prompt
+    assert 'lines=["line1", "line2"]' in prompt
     assert "file_ids: file_001, file_002" in prompt
     assert "- file_001: INTRO, DETAILS" in prompt
 
