@@ -3,19 +3,27 @@
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from scripts.spec_refinement.workspace import WorkspaceManager
 
 from .agent_utils import run_agent
-from .formats import EVIDENCE_POINTER_RE, LibraryCharter, normalize_compound_pointers, parse_library_synthesis
+from .formats import (
+    EVIDENCE_POINTER_RE,
+    LibraryCharter,
+    normalize_compound_pointers,
+    parse_library_synthesis,
+)
 from .progress import ProgressTracker
 from .repair import ArtifactType, repair_artifact
 
 MAX_WORKERS = 4
+LIB_ID_PATTERN = re.compile(r"^lib_(\d{3})$")
 
 
 def _build_label_prompt(file_id: str, summary: str) -> str:
@@ -28,18 +36,18 @@ def _build_label_prompt(file_id: str, summary: str) -> str:
         "",
         "JSON Schema:",
         "{",
-        "  \"candidate_labels\": [",
+        '  "candidate_labels": [',
         "    {",
-        "      \"label\": \"string\",",
-        "      \"sections\": [\"[FILE_ID::SECTION]\"],",
-        "      \"confidence\": 0.8,",
-        "      \"rationale\": \"string\"",
+        '      "label": "string",',
+        '      "sections": ["[FILE_ID::SECTION]"],',
+        '      "confidence": 0.8,',
+        '      "rationale": "string"',
         "    }",
         "  ],",
-        "  \"uncertain_labels\": [",
+        '  "uncertain_labels": [',
         "    {",
-        "      \"label\": \"string\",",
-        "      \"rationale\": \"string\"",
+        '      "label": "string",',
+        '      "rationale": "string"',
         "    }",
         "  ]",
         "}",
@@ -260,7 +268,7 @@ def _collect_label_graph(file_labels: dict[str, Any]) -> dict[str, dict[str, Any
             else:
                 node["files"].add(file_id)
 
-    for label, node in label_graph.items():
+    for _, node in label_graph.items():
         node["count"] = len(node["files"])
     return label_graph
 
@@ -378,7 +386,8 @@ def refine_library_labels(
     lines = [
         "Refine aggregated label clusters into stable libraries.",
         "Return ONLY valid JSON array. No preamble, no code fences.",
-        "Each item must include: lib_id, final_label, merged_from, split_notes, stable_internal_id.",
+        "Each item must include: lib_id, final_label, merged_from, split_notes, "
+        "stable_internal_id.",
         "Use lib_001, lib_002, etc. for stable_internal_id and lib_id.",
         "",
         "Clusters:",
@@ -419,16 +428,16 @@ def refine_library_labels(
         raise ValueError(f"Failed to parse refined labels: {exc}") from exc
 
     if not isinstance(data, list):
-        raise ValueError("Refined labels output must be a JSON array.")
+        raise TypeError("Refined labels output must be a JSON array.")
 
     from .library_synthesis import LIB_ID_RE
 
     for index, item in enumerate(data):
         if not isinstance(item, dict):
-            raise ValueError(f"Refined label entry {index} is not an object.")
+            raise TypeError(f"Refined label entry {index} is not an object.")
         for field in ("lib_id", "final_label", "stable_internal_id"):
             if field not in item:
-                raise ValueError(f"Refined label missing required field: {field}")
+                raise TypeError(f"Refined label missing required field: {field}")
         lib_id = str(item.get("lib_id", "")).strip()
         if not LIB_ID_RE.match(lib_id):
             raise ValueError(f"Invalid library id format: {lib_id}")
@@ -654,6 +663,12 @@ class CharterResults(list):
     """List of generated charters with associated issues."""
 
     def __init__(self, charters: list[LibraryCharter], issues: list[dict[str, Any]]) -> None:
+        """Initialize charters list and attach issues.
+
+        Args:
+            charters: List of library charters.
+            issues: List of issues from charter generation.
+        """
         super().__init__(charters)
         self.issues = issues
 
@@ -756,14 +771,22 @@ def resolve_overlap(
             f"Intent: {charter_a.intent}",
             f"Boundaries: {charter_a.boundaries}",
             "Evidence:",
-            *[f"- [{src.get('file_id')}::{section}]" for src in charter_a.evidence_sources for section in src.get("sections", [])],
+            *[
+                f"- [{src.get('file_id')}::{section}]"
+                for src in charter_a.evidence_sources
+                for section in src.get("sections", [])
+            ],
             "",
             "Library B:",
             f"ID: {charter_b.lib_id}",
             f"Intent: {charter_b.intent}",
             f"Boundaries: {charter_b.boundaries}",
             "Evidence:",
-            *[f"- [{src.get('file_id')}::{section}]" for src in charter_b.evidence_sources for section in src.get("sections", [])],
+            *[
+                f"- [{src.get('file_id')}::{section}]"
+                for src in charter_b.evidence_sources
+                for section in src.get("sections", [])
+            ],
         ]
     )
 
@@ -779,7 +802,7 @@ def resolve_overlap(
         raise ValueError(f"Failed to parse overlap resolution: {exc}") from exc
 
     if not isinstance(data, dict):
-        raise ValueError("Overlap resolution output must be a JSON object.")
+        raise TypeError("Overlap resolution output must be a JSON object.")
 
     decision = data.get("decision")
     if decision not in {
@@ -791,6 +814,94 @@ def resolve_overlap(
         raise ValueError(f"Invalid overlap decision: {decision}")
 
     return data
+
+
+def _collect_evidence_file_ids(charter: LibraryCharter) -> set[str]:
+    return {source.get("file_id") for source in charter.evidence_sources if source.get("file_id")}
+
+
+def _collect_sections_by_file(charter: LibraryCharter) -> dict[str, set[str]]:
+    grouped: dict[str, set[str]] = {}
+    for source in charter.evidence_sources:
+        file_id = source.get("file_id")
+        if not file_id:
+            continue
+        sections = source.get("sections", [])
+        if not isinstance(sections, list):
+            continue
+        cleaned_sections = {str(section).strip() for section in sections if str(section).strip()}
+        if not cleaned_sections:
+            continue
+        grouped.setdefault(file_id, set()).update(cleaned_sections)
+    return grouped
+
+
+def _resolve_overlap_files(
+    resolution: dict[str, Any], charter_a: LibraryCharter, charter_b: LibraryCharter
+) -> list[str]:
+    files_a = _collect_evidence_file_ids(charter_a)
+    files_b = _collect_evidence_file_ids(charter_b)
+    shared_files = files_a & files_b
+
+    affected_files = resolution.get("affected_files")
+    if isinstance(affected_files, list):
+        normalized = [str(item).strip() for item in affected_files if str(item).strip()]
+        if normalized:
+            return sorted(set(normalized))
+
+    return sorted(shared_files)
+
+
+def _build_overlap_evidence_sources(
+    charter_a: LibraryCharter,
+    charter_b: LibraryCharter,
+    overlap_files: list[str],
+) -> list[dict[str, Any]]:
+    if not overlap_files:
+        return []
+
+    sections_a = _collect_sections_by_file(charter_a)
+    sections_b = _collect_sections_by_file(charter_b)
+    sources: list[dict[str, Any]] = []
+    for file_id in overlap_files:
+        sections = sorted(sections_a.get(file_id, set()) | sections_b.get(file_id, set()))
+        if sections:
+            sources.append({"file_id": file_id, "sections": sections})
+    return sources
+
+
+def _remove_overlap_evidence_sources(
+    charter: LibraryCharter, overlap_files: list[str]
+) -> list[dict[str, Any]]:
+    if not overlap_files:
+        return list(charter.evidence_sources)
+    overlap_set = {file_id for file_id in overlap_files if file_id}
+    if not overlap_set:
+        return list(charter.evidence_sources)
+    return [
+        source for source in charter.evidence_sources if source.get("file_id") not in overlap_set
+    ]
+
+
+def _append_overlap_resolution(
+    charter: LibraryCharter,
+    description: str,
+    decision: str,
+    *,
+    evidence_sources: list[dict[str, Any]] | None = None,
+) -> LibraryCharter:
+    updated_resolutions = list(charter.overlap_resolutions)
+    updated_resolutions.append({"description": description, "decision": decision})
+    return LibraryCharter(
+        lib_id=charter.lib_id,
+        intent=charter.intent,
+        boundaries=charter.boundaries,
+        responsibilities=charter.responsibilities,
+        evidence_sources=evidence_sources
+        if evidence_sources is not None
+        else charter.evidence_sources,
+        overlap_resolutions=updated_resolutions,
+    )
 
 
 def resolve_all_overlaps(
@@ -808,46 +919,94 @@ def resolve_all_overlaps(
     )
 
     charter_map = {charter.lib_id: charter for charter in charters}
+    original_ids = [charter.lib_id for charter in charters]
+    max_lib_number = 0
+    for lib_id in charter_map:
+        match = LIB_ID_PATTERN.match(lib_id)
+        if match:
+            max_lib_number = max(max_lib_number, int(match.group(1)))
+    next_lib_number = max_lib_number + 1
+    new_charters: list[LibraryCharter] = []
     decisions: list[dict[str, Any]] = []
 
     for lib_id_a, lib_id_b, score in overlap_pairs:
         resolution = resolve_overlap(lib_id_a, lib_id_b, charter_map, manager, score)
-        decisions.append(
-            {
-                "lib_id_a": lib_id_a,
-                "lib_id_b": lib_id_b,
-                "decision": resolution.get("decision"),
-                "rationale": resolution.get("rationale", ""),
-                "affected_files": resolution.get("affected_files", []),
-                "overlap_score": score,
-            }
-        )
+        decision = str(resolution.get("decision", "")).strip()
+        rationale = str(resolution.get("rationale", "")).strip()
+        charter_a = charter_map[lib_id_a]
+        charter_b = charter_map[lib_id_b]
+        overlap_files = _resolve_overlap_files(resolution, charter_a, charter_b)
 
-        for lib_id in (lib_id_a, lib_id_b):
-            charter = charter_map[lib_id]
-            description = (
-                f"Overlap with {lib_id_b if lib_id == lib_id_a else lib_id_a}: "
-                f"{resolution.get('rationale', '').strip()}"
-            ).strip()
-            updated_resolutions = list(charter.overlap_resolutions)
-            updated_resolutions.append(
-                {
-                    "description": description,
-                    "decision": resolution.get("decision", ""),
-                }
+        decision_entry = {
+            "lib_id_a": lib_id_a,
+            "lib_id_b": lib_id_b,
+            "decision": decision,
+            "rationale": rationale,
+            "affected_files": overlap_files,
+            "overlap_score": score,
+        }
+
+        updated_evidence_a = charter_a.evidence_sources
+        updated_evidence_b = charter_b.evidence_sources
+
+        if decision == "assign_to_lib_A":
+            updated_evidence_b = _remove_overlap_evidence_sources(charter_b, overlap_files)
+        elif decision == "assign_to_lib_B":
+            updated_evidence_a = _remove_overlap_evidence_sources(charter_a, overlap_files)
+        elif decision == "create_cross_cutting":
+            overlap_sources = _build_overlap_evidence_sources(charter_a, charter_b, overlap_files)
+            while True:
+                if next_lib_number > 999:
+                    raise ValueError("Unable to allocate lib_### id for cross-cutting overlap.")
+                new_lib_id = f"lib_{next_lib_number:03d}"
+                next_lib_number += 1
+                if new_lib_id not in charter_map:
+                    break
+            cross_cutting_description = f"Created from overlap between {lib_id_a} and {lib_id_b}"
+            if rationale:
+                cross_cutting_description = f"{cross_cutting_description}: {rationale}"
+            new_charter = LibraryCharter(
+                lib_id=new_lib_id,
+                intent=f"TBD: cross-cutting concern between {lib_id_a} and {lib_id_b}.",
+                boundaries=f"TBD: shared boundary across {lib_id_a} and {lib_id_b}.",
+                responsibilities=[],
+                evidence_sources=overlap_sources,
+                overlap_resolutions=[
+                    {
+                        "description": cross_cutting_description,
+                        "decision": decision,
+                    }
+                ],
             )
-            charter_map[lib_id] = LibraryCharter(
-                lib_id=charter.lib_id,
-                intent=charter.intent,
-                boundaries=charter.boundaries,
-                responsibilities=charter.responsibilities,
-                evidence_sources=charter.evidence_sources,
-                overlap_resolutions=updated_resolutions,
+            charter_map[new_lib_id] = new_charter
+            new_charters.append(new_charter)
+            decision_entry["created_lib_id"] = new_lib_id
+        elif decision == "mark_shared_boundary":
+            pass
+        else:
+            raise ValueError(f"Unsupported overlap decision: {decision}")
+
+        decisions.append(decision_entry)
+
+        for lib_id, updated_evidence in (
+            (lib_id_a, updated_evidence_a),
+            (lib_id_b, updated_evidence_b),
+        ):
+            charter = charter_map[lib_id]
+            other_id = lib_id_b if lib_id == lib_id_a else lib_id_a
+            description = f"Overlap with {other_id}"
+            if rationale:
+                description = f"{description}: {rationale}"
+            charter_map[lib_id] = _append_overlap_resolution(
+                charter,
+                description,
+                decision,
+                evidence_sources=updated_evidence,
             )
 
         tracker.update(status=f"{lib_id_a} vs {lib_id_b}")
 
     tracker.finish()
 
-    charters[:] = [charter_map[charter.lib_id] for charter in charters]
+    charters[:] = [charter_map[lib_id] for lib_id in original_ids] + new_charters
     return decisions
