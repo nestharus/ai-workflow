@@ -11,7 +11,7 @@ from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, f
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
-from .formats import EVIDENCE_POINTER_RE, parse_gap_judge_output
+from .formats import EVIDENCE_POINTER_RE, normalize_compound_pointers, parse_gap_judge_output
 from .progress import ProgressTracker
 
 MAX_ITERATIONS_DEFAULT = 5
@@ -106,19 +106,45 @@ def _build_integration_prompt(
     file_id: str,
     file_content: str,
     evidence_sections: list[str],
+    valid_sections: list[str],
     gaps: list[Gap] | None = None,
 ) -> str:
     section_list = ", ".join(evidence_sections) if evidence_sections else "None"
+    valid_list = ", ".join(valid_sections) if valid_sections else "None"
     lines = [
         "Integrate the source file into the library spec.",
-        "Preserve existing content; add missing details with citations [FILE_ID::SECTION].",
+        "Preserve evidence-backed content; add missing details with citations [file_###::SECTION].",
+        (
+            "Every bullet in Boundaries/Requirements/Constraints/Dependencies MUST include "
+            "at least one valid evidence pointer. Add missing citations to existing bullets too "
+            "(including those originating from the charter)."
+        ),
+        (
+            "When closing gaps, preserve key terms from the source/gap text verbatim "
+            "(e.g., if the source says 'request intake', include 'request intake' explicitly "
+            "in the spec)."
+        ),
+        (
+            "If the gap list indicates an unsupported claim in the spec, do NOT assert it as "
+            "fact: move it to Decisions Needed as an explicit open question/assumption."
+        ),
+        (
+            "Never cite derived artifacts (e.g. libraries/.../spec.md). Only cite SOURCE spec "
+            "files via [file_###::SECTION]."
+        ),
+        (
+            "When integrating this file, any NEW citations MUST reference the current File ID and "
+            "one of the valid section labels listed below."
+        ),
+        "Output ONLY the updated spec markdown (no preamble, no commentary).",
         "",
         f"Library ID: {lib_id}",
         "",
         "Library Charter:",
         charter_content.strip(),
         "",
-        f"Evidence Sections: {section_list}",
+        f"Evidence Sections (anchors, not exclusive): {section_list}",
+        f"Valid Section Labels For Citations in {file_id}: {valid_list}",
         "",
         "Current Spec:",
         spec_content.strip(),
@@ -142,10 +168,60 @@ def _build_integration_prompt(
     return "\n".join(lines).strip() + "\n"
 
 
-def _build_gap_prompt(spec_content: str, file_id: str, file_content: str) -> str:
+def _filter_open_gaps_for_file(gaps: list[Gap], file_id: str) -> list[Gap]:
+    needle = f"[{file_id}::"
+    return [
+        gap
+        for gap in gaps
+        if gap.status == "open"
+        and any(isinstance(src, str) and src.startswith(needle) for src in gap.source)
+    ]
+
+
+def _extract_spec_markdown(output: str, lib_id: str) -> str:
+    """Strip agent chatter and return the spec markdown document.
+
+    Some models occasionally prepend short natural-language commentary.
+    Keep extraction deterministic by anchoring on the required title.
+    """
+    needle = f"# Library Spec: {lib_id}"
+    idx = output.find(needle)
+    if idx == -1:
+        return output
+    doc = output[idx:].lstrip()
+    # Strip a stray trailing code fence (some models occasionally append one).
+    stripped = doc.rstrip()
+    lines = stripped.splitlines()
+    if lines and lines[-1].strip() == "```":
+        doc = "\n".join(lines[:-1]).rstrip() + "\n"
+    return doc
+
+
+def _build_gap_prompt(
+    spec_content: str,
+    file_id: str,
+    file_content: str,
+    evidence_sections: list[str],
+    valid_sections: list[str],
+) -> str:
+    section_list = ", ".join(evidence_sections) if evidence_sections else "None"
+    valid_list = ", ".join(valid_sections) if valid_sections else "None"
     lines = [
         "Review the spec against the source file and report gaps.",
         "Return JSON with keys: gaps, total_gaps, file_id.",
+        "Only report gaps for statements explicitly present in the source (within Scope).",
+        (
+            "Do NOT infer or invent new requirements/behaviors "
+            "(e.g., error semantics) that are not stated."
+        ),
+        (
+            "If the spec already captures the source detail anywhere "
+            "(including Decisions Needed), it is NOT a gap."
+        ),
+        "",
+        f"Scope: Only consider gaps from these source sections for {file_id}: {section_list}",
+        f"Valid Section Labels For Citations in {file_id}: {valid_list}",
+        "If Scope is None/empty, return gaps=[] and total_gaps=0.",
         "",
         "Spec:",
         spec_content.strip(),
@@ -207,7 +283,7 @@ def _validate_spec_citations(
             )
 
     sections = _extract_sections(content, level=2)
-    for section_name in ("Requirements", "Constraints", "Dependencies"):
+    for section_name in ("Boundaries", "Requirements", "Constraints", "Dependencies"):
         section_text = sections.get(section_name, "")
         for line in section_text.splitlines():
             stripped = line.strip()
@@ -353,7 +429,9 @@ def _build_library_spec(
 
     for iteration in range(max_iterations):
         iterations += 1
-        gap_focus = existing_gaps if iteration > 0 else None
+        gap_focus = (
+            [gap for gap in existing_gaps if gap.status == "open"] if iteration > 0 else None
+        )
 
         for file_id, sections in evidence_map.items():
             file_path = manager.get_file_path(file_id)
@@ -369,6 +447,7 @@ def _build_library_spec(
 
             file_content = file_path.read_text(encoding="utf-8")
             current_spec = spec_path.read_text(encoding="utf-8")
+            file_gaps = _filter_open_gaps_for_file(gap_focus, file_id) if gap_focus else None
             prompt = _build_integration_prompt(
                 lib_id,
                 charter_content,
@@ -376,7 +455,8 @@ def _build_library_spec(
                 file_id,
                 file_content,
                 sections,
-                gaps=gap_focus,
+                manager.get_section_labels(file_id),
+                gaps=file_gaps,
             )
             try:
                 output = run_agent(
@@ -394,6 +474,8 @@ def _build_library_spec(
                 )
                 continue
 
+            output = normalize_compound_pointers(output)
+            output = _extract_spec_markdown(output, lib_id)
             if not _is_monotonic_spec_update(current_spec, output):
                 issues.append(
                     {
@@ -412,12 +494,18 @@ def _build_library_spec(
         spec_content = spec_path.read_text(encoding="utf-8")
         evidence_list: list[GapEvidence] = []
 
-        for file_id in evidence_map:
+        for file_id, evidence_sections in evidence_map.items():
             file_path = manager.get_file_path(file_id)
             if file_path is None or not file_path.exists():
                 continue
             file_content = file_path.read_text(encoding="utf-8")
-            prompt = _build_gap_prompt(spec_content, file_id, file_content)
+            prompt = _build_gap_prompt(
+                spec_content,
+                file_id,
+                file_content,
+                evidence_sections,
+                manager.get_section_labels(file_id),
+            )
             try:
                 output = run_agent(
                     agent_name="chatgpt-library-spec-gap-judge",

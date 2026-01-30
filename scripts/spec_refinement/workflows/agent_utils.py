@@ -2,11 +2,48 @@
 
 from __future__ import annotations
 
+import contextlib
+import re
 import subprocess
 import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+_FILE_OUTPUT_RE = re.compile(r"see `([^`]+)` for details\\.?$", re.IGNORECASE)
+
+
+def _maybe_read_file_output(stdout: str) -> str | None:
+    """Some model runners write long output to a file and print a short pointer.
+
+    Example: "Architecture mapping complete. See `ARCHITECTURE-MAPPING.md` for details."
+    """
+    match = _FILE_OUTPUT_RE.search(stdout.strip())
+    if not match:
+        return None
+    rel_path = match.group(1).strip()
+    if not rel_path:
+        return None
+
+    path = (PROJECT_ROOT / rel_path).resolve()
+    try:
+        path.relative_to(PROJECT_ROOT.resolve())
+    except ValueError:
+        return None
+
+    if not path.exists() or not path.is_file():
+        return None
+
+    content = path.read_text(encoding="utf-8").strip()
+    if not content:
+        return None
+
+    # Cleanup the known temporary artifact to avoid polluting the repo root.
+    if path.name.upper() == "ARCHITECTURE-MAPPING.MD":
+        with contextlib.suppress(OSError):
+            path.unlink()
+
+    return content
 
 
 def run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
@@ -49,7 +86,8 @@ def run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int
 
         output = (result.stdout or "").strip()
         if output:
-            return output
+            file_output = _maybe_read_file_output(output)
+            return file_output if file_output is not None else output
 
         last_error = RuntimeError(f"Agent returned empty output (agent={agent_name}).")
         time.sleep(2**attempt)

@@ -9,7 +9,12 @@ from typing import Any
 from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 
 from .agent_utils import run_agent
-from .formats import EVIDENCE_POINTER_RE, FileSummary, parse_file_summary
+from .formats import (
+    EVIDENCE_POINTER_RE,
+    FileSummary,
+    normalize_compound_pointers,
+    parse_file_summary,
+)
 from .progress import ProgressTracker
 
 MAX_WORKERS = 4
@@ -108,7 +113,13 @@ def _validate_evidence_pointers(
         stripped = line.strip()
         if stripped.startswith("#"):
             continue
-        if "evidence" in stripped.lower() and not EVIDENCE_POINTER_RE.search(stripped):
+        lowered = stripped.lower()
+        if "evidence" in lowered and not EVIDENCE_POINTER_RE.search(stripped):
+            # Allow explicit "none specified" placeholders without pointers.
+            if "evidence: n/a" in lowered or "evidence: none" in lowered:
+                continue
+            if lowered.startswith("- none specified"):
+                continue
             issues.append(
                 {
                     "type": "malformed_evidence_pointer",
@@ -138,6 +149,8 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
         )
     except RuntimeError as exc:
         return {"file_id": file_id, "error": f"Agent execution failed: {exc}"}
+
+    output = normalize_compound_pointers(output)
 
     summary_path = manager.structure.summaries_dir / f"{file_id}.what.md"
     summary_path.write_text(output, encoding="utf-8")

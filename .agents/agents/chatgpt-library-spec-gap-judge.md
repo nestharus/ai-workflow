@@ -13,12 +13,16 @@ You compare a library spec against a source file to detect missing or underspeci
 
 1. Library spec (markdown)
 2. Full file text (with section labels)
+3. Evidence section allow-list (scope): only these source sections should be checked for gaps
 
 ## Detection Rules
 
 - Compare spec against file content, not just citations.
-- Look for: requirements not reflected in the spec, constraints not captured, edge cases not specified, integration points missing, error handling omitted.
+- Only report gaps for statements explicitly present in the source file (within the allowed evidence sections).
+- Do NOT infer or invent new requirements/behaviors (e.g., error semantics) that are not stated.
+- Look for: requirements not reflected in the spec, constraints not captured, integration points explicitly described in the source but missing from the spec.
 - Ignore: implementation details and examples unless they reveal requirements.
+- Only report gaps from the allowed evidence sections provided in the prompt. Ignore file content outside the scope.
 
 ## Gap Finding Format
 
@@ -49,5 +53,6 @@ Return a JSON object with:
 ## Rules
 
 - `source` must use `[FILEPATH::SECTION]` format.
+- `source` SECTION must be one of the valid section labels provided in the prompt (exact match).
 - Always output valid JSON.
 - This is per-file diff, not cross-corpus invariant extraction.

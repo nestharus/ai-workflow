@@ -196,22 +196,42 @@ class WorkspaceManager:
         return files
 
     def _extract_section_labels(self, file_path: Path) -> list[str]:
-        """Extract section labels from a file."""
+        """Extract stable section labels from a file.
+
+        Preference order:
+        1) Explicit bracket labels like `[INTRO]` (assumed to be stable anchors).
+        2) Markdown headings (as a fallback) normalized to `UPPER_SNAKE_CASE`.
+
+        Returned labels are de-duplicated while preserving first-seen order.
+        """
         import re
 
         content = file_path.read_text(encoding="utf-8")
-        section_pattern = r"\[([A-Z_]+)\]|^##\s+(.+)$"
-        sections: list[str] = []
 
-        for match in re.finditer(section_pattern, content, re.MULTILINE):
-            if match.group(1):
-                sections.append(match.group(1))
-            elif match.group(2):
-                section_name = match.group(2).strip()
-                section_id = section_name.upper().replace(" ", "_")
-                sections.append(section_id)
+        def _dedupe_keep_order(items: list[str]) -> list[str]:
+            seen: set[str] = set()
+            out: list[str] = []
+            for item in items:
+                if item in seen:
+                    continue
+                seen.add(item)
+                out.append(item)
+            return out
 
-        return sections
+        explicit = [match.group(1) for match in re.finditer(r"\[([A-Z_]+)\]", content)]
+        explicit = [item.strip() for item in explicit if item and item.strip()]
+        explicit = _dedupe_keep_order(explicit)
+        if explicit:
+            return explicit
+
+        headings: list[str] = []
+        for match in re.finditer(r"^##\s+(.+)$", content, re.MULTILINE):
+            heading = match.group(1).strip()
+            if not heading:
+                continue
+            headings.append(heading.upper().replace(" ", "_"))
+
+        return _dedupe_keep_order(headings)
 
     def _write_manifest_files(
         self, file_manifest: dict[str, str], section_manifest: dict[str, list[str]]

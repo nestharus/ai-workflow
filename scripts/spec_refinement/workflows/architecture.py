@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import asdict
 from pathlib import Path
@@ -11,13 +12,15 @@ from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManag
 
 from .agent_utils import run_agent
 from .formats import (
+    normalize_compound_pointers,
     parse_architecture_mapping,
     parse_architecture_proposal,
     parse_architecture_selection,
 )
 from .progress import ProgressTracker
 
-ARCH_CITATION_RE = re.compile(r"\[([^\[\]]+?)\]")
+# Only treat bracketed text containing a `::` segment separator as a citation.
+ARCH_CITATION_RE = re.compile(r"\[([^\[\]]*?::[^\[\]]*?)\]")
 
 
 def propose_architectures(run_id: str) -> dict[str, Any]:
@@ -48,7 +51,7 @@ def propose_architectures(run_id: str) -> dict[str, Any]:
             lib_specs[lib_id] = spec_path.read_text(encoding="utf-8")
 
     constraints = _extract_constraints_from_specs(lib_specs)
-    prompt = _build_architecture_proposal_prompt(lib_charters, constraints)
+    prompt = _build_architecture_proposal_prompt(lib_charters, lib_specs, constraints)
 
     try:
         output = run_agent(
@@ -222,6 +225,8 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
     except RuntimeError as exc:
         manager.fail_phase(Phase.ARCHITECTURE_MAPPING, error=f"Agent execution failed: {exc}")
         return {"libraries_mapped": 0, "unmapped_libraries": [], "issues": []}
+
+    output = normalize_compound_pointers(output)
 
     try:
         mapping = parse_architecture_mapping(output)
@@ -454,14 +459,26 @@ def _format_architecture_candidate(candidate: dict[str, Any]) -> str:
 
 
 def _build_architecture_proposal_prompt(
-    lib_charters: dict[str, str], constraints: list[str]
+    lib_charters: dict[str, str], lib_specs: dict[str, str], constraints: list[str]
 ) -> str:
     lines = [
         "Generate 3-5 architecture candidates for Phase 6.",
         "Return a JSON array of objects.",
-        "Each object must include: arch_id, pattern, description, components, communication, deployment, citations, tradeoffs.",
+        (
+            "Each object must include: arch_id, pattern, description, components, "
+            "communication, deployment, citations, tradeoffs."
+        ),
         "Components should be a list of objects with name and responsibilities.",
-        "Citations must use [lib_id::charter.md] or [lib_id::spec.md::SECTION].",
+        "Citations MUST use library pointers only:",
+        "- [lib_###::charter.md]",
+        (
+            "- [lib_###::spec.md::SECTION] where SECTION is taken from the "
+            "allow-list below (exact match)."
+        ),
+        (
+            "Do NOT cite source files like [file_001::REQS] in the output "
+            "(even if you see them inside specs)."
+        ),
         "Tradeoffs must be concrete and measurable.",
         "",
         f"Libraries provided: {len(lib_charters)}",
@@ -479,6 +496,16 @@ def _build_architecture_proposal_prompt(
         for constraint in constraints:
             lines.append(f"- {constraint}")
 
+    if lib_specs:
+        lines.append("")
+        lines.append("## Valid Spec Section Labels (for citations)")
+        for lib_id in sorted(lib_specs):
+            sections = _section_allowlist_from_content(lib_specs[lib_id])
+            if sections:
+                lines.append(f"- {lib_id} spec.md: {', '.join(sections)}")
+            else:
+                lines.append(f"- {lib_id} spec.md: (no sections detected)")
+
     return "\n".join(lines).strip() + "\n"
 
 
@@ -487,8 +514,21 @@ def _build_architecture_selection_prompt(
 ) -> str:
     lines = [
         "Select the best architecture candidate.",
-        "Return JSON with selected_arch_id, rationale, rejected_architectures, implementation_risks, evolution_notes.",
-        "Use citations from library specs in the rationale.",
+        (
+            "Return JSON with selected_arch_id, rationale, rejected_architectures, "
+            "implementation_risks, evolution_notes."
+        ),
+        "Citations MUST use library pointers only:",
+        "- [lib_###::charter.md]",
+        (
+            "- [lib_###::spec.md::SECTION] where SECTION is taken from the "
+            "allow-list below (exact match)."
+        ),
+        (
+            "Do NOT cite source files like [file_001::REQS] in the output "
+            "(even if you see them inside specs)."
+        ),
+        "Use citations from library specs/charters in the rationale (not file-level citations).",
         "",
         "## Candidates",
     ]
@@ -504,6 +544,14 @@ def _build_architecture_selection_prompt(
             lines.append(f"### {lib_id}")
             lines.append(_summarize_spec_for_prompt(spec))
             lines.append("")
+        lines.append("## Valid Spec Section Labels (for citations)")
+        for lib_id in sorted(lib_specs):
+            sections = _section_allowlist_from_content(lib_specs[lib_id])
+            if sections:
+                lines.append(f"- {lib_id} spec.md: {', '.join(sections)}")
+            else:
+                lines.append(f"- {lib_id} spec.md: (no sections detected)")
+        lines.append("")
 
     return "\n".join(lines).strip() + "\n"
 
@@ -517,6 +565,16 @@ def _build_architecture_mapping_prompt(
         "Map libraries to architecture components.",
         "Follow the output format exactly.",
         "Every library must be mapped with citations.",
+        "Citations MUST use library pointers only:",
+        "- [lib_###::charter.md]",
+        (
+            "- [lib_###::spec.md::SECTION] where SECTION is taken from the "
+            "allow-list below (exact match)."
+        ),
+        (
+            "Do NOT cite source files like [file_001::REQS] in the output "
+            "(even if you see them inside specs)."
+        ),
         "",
         "## Selected Architecture",
         selected_architecture.strip(),
@@ -535,6 +593,14 @@ def _build_architecture_mapping_prompt(
             lines.append(f"### {lib_id}")
             lines.append(_summarize_spec_for_prompt(spec))
             lines.append("")
+        lines.append("## Valid Spec Section Labels (for citations)")
+        for lib_id in sorted(lib_specs):
+            sections = _section_allowlist_from_content(lib_specs[lib_id])
+            if sections:
+                lines.append(f"- {lib_id} spec.md: {', '.join(sections)}")
+            else:
+                lines.append(f"- {lib_id} spec.md: (no sections detected)")
+        lines.append("")
 
     lines.append("## Mapping Format")
     lines.append(
@@ -552,7 +618,7 @@ def _build_architecture_mapping_prompt(
 
 **Libraries**:
 - lib_001: {intent} [lib_001::charter.md]
-- lib_002: {intent} [lib_002::spec.md::CORE_FUNCTIONALITY]
+- lib_002: {intent} [lib_002::spec.md::REQUIREMENTS]
 
 ### Component: {component_name}
 
@@ -560,7 +626,7 @@ def _build_architecture_mapping_prompt(
 
 ## Cross-Component Dependencies
 
-- {component_A} -> {component_B}: {reason} [lib_003::spec.md::INTEGRATION]
+- {component_A} -> {component_B}: {reason} [lib_003::spec.md::DEPENDENCIES]
 
 ## Unmapped Libraries
 
@@ -574,7 +640,7 @@ def _build_architecture_mapping_prompt(
 def _summarize_spec_for_prompt(spec: str) -> str:
     sections = _extract_markdown_sections(spec)
     if not sections:
-        return spec.strip()[:1500]
+        return _strip_file_citations(spec.strip())[:1500]
 
     wanted = [
         "intent",
@@ -589,13 +655,13 @@ def _summarize_spec_for_prompt(spec: str) -> str:
     for title, body in sections.items():
         if any(key in title.lower() for key in wanted):
             lines.append(f"## {title}")
-            lines.append(body.strip())
+            lines.append(_strip_file_citations(body.strip()))
             lines.append("")
 
     if lines:
         return "\n".join(lines).strip()[:2000]
 
-    return spec.strip()[:2000]
+    return _strip_file_citations(spec.strip())[:2000]
 
 
 def _summarize_charter_for_prompt(charter: str) -> str:
@@ -649,21 +715,60 @@ def _extract_section_labels(content: str) -> set[str]:
     return labels
 
 
+def _section_allowlist_from_content(content: str) -> list[str]:
+    """Return a stable citation allow-list derived from section headings/labels."""
+    labels = _extract_section_labels(content)
+    (
+        # Prefer the machine-stable labels (UPPER_SNAKE_CASE) to avoid duplicates like
+        # "Intent"/"INTENT".
+        stable
+    ) = {label for label in labels if re.fullmatch(r"[A-Z0-9_]+", label)}
+    return sorted(stable)
+
+
+def _strip_file_citations(text: str) -> str:
+    """Remove `[file_###::SECTION]` citations to reduce chance of file-level citation drift."""
+    return re.sub(r"\[file_\d+::[^\]]+?\]", "", text)
+
+
 def _extract_json_payload(output: str) -> str:
+    """Extract the first valid JSON object/array from an agent output string.
+
+    Tolerant of fenced code blocks and trailing commentary containing brackets.
+    """
     text = output.strip()
-    if text.startswith("```"):
-        fence_end = text.rfind("```")
-        if fence_end > 0:
-            text = text[text.find("\n") + 1 : fence_end].strip()
-    list_start = text.find("[")
-    obj_start = text.find("{")
-    if list_start == -1 and obj_start == -1:
+    if not text:
         return text
-    if list_start != -1 and (obj_start == -1 or list_start < obj_start):
-        end = text.rfind("]")
-        return text[list_start : end + 1] if end != -1 else text[list_start:]
-    end = text.rfind("}")
-    return text[obj_start : end + 1] if end != -1 else text[obj_start:]
+
+    if text.startswith("```"):
+        first_newline = text.find("\n")
+        if first_newline != -1:
+            fence_end = text.find("```", first_newline + 1)
+            if fence_end != -1:
+                text = text[first_newline + 1 : fence_end].strip()
+
+    decoder = json.JSONDecoder()
+
+    first_obj = text.find("{")
+    first_list = text.find("[")
+    starts = [idx for idx in (first_obj, first_list) if idx != -1]
+    if not starts:
+        return text
+
+    for start in sorted(starts):
+        idx = start
+        while idx < len(text):
+            if text[idx] not in "{[":
+                idx += 1
+                continue
+            try:
+                _, end = decoder.raw_decode(text[idx:])
+            except json.JSONDecodeError:
+                idx += 1
+                continue
+            return text[idx : idx + end]
+
+    return text[min(starts) :]
 
 
 def _collapse_whitespace(text: str) -> str:

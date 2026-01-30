@@ -41,7 +41,7 @@ Structured markdown with:
 
 **Libraries**:
 - lib_001: {intent} [lib_001::charter.md]
-- lib_002: {intent} [lib_002::spec.md::CORE_FUNCTIONALITY]
+- lib_002: {intent} [lib_002::spec.md::REQUIREMENTS]
 
 ### Component: {component_name}
 
@@ -49,7 +49,7 @@ Structured markdown with:
 
 ## Cross-Component Dependencies
 
-- {component_A} -> {component_B}: {reason} [lib_003::spec.md::INTEGRATION]
+- {component_A} -> {component_B}: {reason} [lib_003::spec.md::DEPENDENCIES]
 
 ## Unmapped Libraries
 
@@ -60,3 +60,7 @@ Structured markdown with:
 - Every library must be mapped to at least one component
 - All mappings must include citations to library charters or specs
 - Cross-component dependencies must cite the library requirement driving the dependency
+- Citations MUST use library pointers only:
+  - `[lib_###::charter.md]`
+  - `[lib_###::spec.md::SECTION]` where SECTION is taken from the allow-list provided in the prompt (exact match).
+- Do NOT use source-file citations like `[file_001::REQS]` in the output (even if you see them inside specs).

@@ -2,11 +2,48 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
 
 EVIDENCE_POINTER_RE = re.compile(r"\[([^\[\]]+?)::([^\[\]]+?)\]")
+
+
+def normalize_compound_pointers(text: str) -> str:
+    """Normalize accidental comma-separated pointers inside a single bracket.
+
+    Some agents occasionally emit pointers like:
+      [file_001::INTRO, file_001::REQS]
+    which break the `[FILE_ID::SECTION]` parser/validator. We normalize these into:
+      [file_001::INTRO] [file_001::REQS]
+    """
+
+    def _rewrite(match: re.Match[str]) -> str:
+        inner = match.group(1)
+        if "," not in inner or "::" not in inner:
+            return match.group(0)
+        parts = [part.strip() for part in inner.split(",") if part.strip()]
+        if len(parts) < 2:
+            return match.group(0)
+
+        inferred_prefix: str | None = None
+        if "::" in parts[0]:
+            inferred_prefix = parts[0].split("::", 1)[0].strip()
+
+        pointers: list[str] = []
+        for part in parts:
+            if "::" in part:
+                pointers.append(part)
+                continue
+            if inferred_prefix is None:
+                return match.group(0)
+            pointers.append(f"{inferred_prefix}::{part}")
+
+        return " ".join(f"[{pointer}]" for pointer in pointers)
+
+    # This targets bracketed constructs containing at least one `::` and a comma.
+    return re.sub(r"\[([^\[\]]*?::[^\[\]]*?)\]", _rewrite, text)
 
 
 @dataclass(frozen=True)
@@ -205,6 +242,9 @@ def _parse_overlap_resolutions(section_text: str) -> list[dict[str, str]]:
         if not stripped.startswith(("-", "*")):
             continue
         raw = stripped.lstrip("-* ").strip()
+        if not raw:
+            # Ignore empty bullets (common LLM formatting artifact).
+            continue
         if raw.lower() in {"none", "n/a", "no overlaps"}:
             continue
         if "->" in raw:
@@ -305,7 +345,7 @@ def parse_evidence_mapper_output(json_str: str) -> dict[str, Any]:
 
     data = json.loads(_extract_json_payload(json_str))
     if not isinstance(data, dict):
-        raise ValueError("Expected JSON object.")
+        raise TypeError("Expected JSON object.")
     required_fields = ["file_id", "relevant_sections", "confidence", "rationale"]
     for field in required_fields:
         if field not in data:
@@ -319,7 +359,7 @@ def parse_gap_judge_output(json_str: str) -> dict[str, Any]:
 
     data = json.loads(_extract_json_payload(json_str))
     if not isinstance(data, dict):
-        raise ValueError("Expected JSON object.")
+        raise TypeError("Expected JSON object.")
     required_fields = ["gaps", "total_gaps", "file_id"]
     for field in required_fields:
         if field not in data:
@@ -333,7 +373,7 @@ def parse_evidence_spotcheck_output(json_str: str) -> dict[str, Any]:
 
     data = json.loads(_extract_json_payload(json_str))
     if not isinstance(data, dict):
-        raise ValueError("Expected JSON object.")
+        raise TypeError("Expected JSON object.")
     required_fields = ["missing_sections", "scan_complete"]
     for field in required_fields:
         if field not in data:
@@ -342,24 +382,55 @@ def parse_evidence_spotcheck_output(json_str: str) -> dict[str, Any]:
 
 
 def _extract_json_payload(output: str) -> str:
+    """Extract the first valid JSON object/array from an agent output string.
+
+    This is intentionally tolerant of:
+    - leading/trailing commentary
+    - fenced code blocks
+    - bracket characters appearing *after* the JSON payload
+    """
     cleaned = output.strip()
     if not cleaned:
         return cleaned
+
+    # Drop agent-exec noise lines (if any).
     lines = [line for line in cleaned.splitlines() if not line.startswith("[agent-exec]")]
     cleaned = "\n".join(lines).strip()
+
+    # If the output is a fenced block, prefer the first fenced payload.
     if cleaned.startswith("```"):
-        fence_end = cleaned.rfind("```")
-        if fence_end > 0:
-            cleaned = cleaned[cleaned.find("\n") + 1 : fence_end].strip()
-    list_start = cleaned.find("[")
-    obj_start = cleaned.find("{")
-    if list_start == -1 and obj_start == -1:
+        first_newline = cleaned.find("\n")
+        if first_newline != -1:
+            fence_end = cleaned.find("```", first_newline + 1)
+            if fence_end != -1:
+                cleaned = cleaned[first_newline + 1 : fence_end].strip()
+
+    decoder = json.JSONDecoder()
+
+    # Find the first plausible JSON start and attempt raw_decode from there.
+    first_obj = cleaned.find("{")
+    first_list = cleaned.find("[")
+    starts = [idx for idx in (first_obj, first_list) if idx != -1]
+    if not starts:
         return cleaned
-    if list_start != -1 and (obj_start == -1 or list_start < obj_start):
-        end = cleaned.rfind("]")
-        return cleaned[list_start : end + 1] if end != -1 else cleaned[list_start:]
-    end = cleaned.rfind("}")
-    return cleaned[obj_start : end + 1] if end != -1 else cleaned[obj_start:]
+
+    for start in sorted(starts):
+        # Scan forward to the next '{' or '[' and try to decode.
+        idx = start
+        while idx < len(cleaned):
+            ch = cleaned[idx]
+            if ch not in "{[":
+                idx += 1
+                continue
+            try:
+                _, end = decoder.raw_decode(cleaned[idx:])
+            except json.JSONDecodeError:
+                idx += 1
+                continue
+            return cleaned[idx : idx + end]
+
+    # Fallback: return from earliest start if we cannot decode (caller will raise).
+    return cleaned[min(starts) :]
 
 
 def _validate_architecture_candidate(candidate: dict[str, Any]) -> list[str]:
@@ -476,9 +547,19 @@ def _extract_component_mappings(content: str) -> dict[str, list[str]]:
 
         if in_libraries and line.strip().startswith(("-", "*")):
             raw = line.strip().lstrip("-* ").strip()
+
+            # Only accept `- lib_###: ...` lines; ignore freeform bullets like `- None (...)`.
+            if ":" not in raw:
+                continue
             lib_id = raw.split(":", 1)[0].strip()
-            if lib_id and lib_id.lower() not in {"none", "n/a"} and current_component is not None:
-                component_map[current_component].append(lib_id)
+            if not lib_id:
+                continue
+            lowered = lib_id.lower()
+            if lowered in {"none", "n/a"} or lowered.startswith("none"):
+                continue
+            if not lowered.startswith("lib_"):
+                continue
+            component_map[current_component].append(lib_id)
 
     return component_map
 
@@ -512,6 +593,12 @@ def parse_architecture_mapping(content: str) -> dict[str, Any]:
             continue
 
         if in_libraries and line.strip().startswith(("-", "*")) and current_component is not None:
+            raw = line.strip().lstrip("-* ").strip()
+            if ":" not in raw:
+                continue
+            lib_id = raw.split(":", 1)[0].strip()
+            if not lib_id or not lib_id.lower().startswith("lib_"):
+                continue
             component_lines[current_component].append(line.strip())
 
     sections = _extract_sections(content, level=2)
@@ -522,9 +609,13 @@ def parse_architecture_mapping(content: str) -> dict[str, Any]:
         stripped = line.strip()
         if stripped.startswith(("-", "*")):
             item = stripped.lstrip("-* ").strip()
-            if item and item.lower() not in {"none", "n/a"}:
+            lowered = item.lower()
+            if item and lowered not in {"none", "n/a"} and not lowered.startswith("none"):
                 unmapped.append(item)
-        elif stripped and stripped.lower() not in {"none", "n/a"}:
+        elif stripped:
+            lowered = stripped.lower()
+            if lowered in {"none", "n/a"} or lowered.startswith("none"):
+                continue
             unmapped.append(stripped)
 
     return {

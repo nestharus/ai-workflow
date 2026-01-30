@@ -26,6 +26,7 @@ Return a JSON object with:
 ## Rules
 
 - Focus on relevance to the library charter, not exhaustive coverage.
+- You will be given an explicit allow-list of valid section labels for the file. `relevant_sections` MUST be chosen from that list (exact match).
 - Include sections that contain:
   - algorithms/components/workflows mentioned in the charter
   - dependencies the library needs
@@ -44,8 +45,8 @@ Return a JSON object with:
 ```json
 {
   "file_id": "file_001",
-  "relevant_sections": ["requirements", "workflow", "constraints"],
+  "relevant_sections": ["REQS", "CONSTRAINTS", "BOUNDARIES"],
   "confidence": 0.8,
-  "rationale": "Relevant to charter boundaries based on workflow and constraints. [file_001::workflow] [file_001::constraints]"
+  "rationale": "Relevant to charter boundaries based on workflow and constraints. [file_001::BOUNDARIES] [file_001::CONSTRAINTS]"
 }
 ```

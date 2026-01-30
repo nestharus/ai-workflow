@@ -129,12 +129,36 @@ def _summary_mentions_charter(
 
 
 def _build_evidence_prompt(
-    lib_id: str, charter_content: str, file_id: str, summary_content: str
+    lib_id: str,
+    charter_content: str,
+    file_id: str,
+    summary_content: str,
+    valid_sections: list[str],
 ) -> str:
+    """Build prompt for evidence mapping.
+
+    IMPORTANT: The model must choose section labels from `valid_sections` (exact match).
+    """
+    section_list = ", ".join(valid_sections) if valid_sections else "None"
     lines = [
-        "Map the library charter to relevant sections in the file summary.",
+        "You are mapping a library charter to relevant SOURCE FILE sections.",
         "Return JSON with keys: file_id, relevant_sections, confidence, rationale.",
-        "Use section identifiers from the source file.",
+        "",
+        "Hard rules:",
+        (
+            f"- relevant_sections MUST be chosen from this exact allow-list "
+            f"for {file_id}: {section_list}"
+        ),
+        "- Do NOT return file-summary headings like 'Components' or 'Workflows'.",
+        (
+            "- Prefer the minimal set of sections needed. Include a section only "
+            "if it directly supports the charter or explicitly mentions the library "
+            "(e.g., in dependencies/integration notes)."
+        ),
+        (
+            "- If nothing is relevant, return an empty relevant_sections list and "
+            "set confidence <= 0.4."
+        ),
         "",
         f"Library ID: {lib_id}",
         "",
@@ -142,7 +166,7 @@ def _build_evidence_prompt(
         charter_content.strip(),
         "",
         f"File ID: {file_id}",
-        "File Summary:",
+        "File Summary (contains evidence pointers and an Evidence Map):",
         summary_content.strip(),
     ]
     return "\n".join(lines).strip() + "\n"
@@ -244,20 +268,43 @@ def _validate_evidence_entry(
         sections = []
 
     valid_sections = set(manager.state.section_manifest.get(file_id, []))
-    filtered_sections = []
+    filtered_sections: list[str] = []
+    seen_sections: set[str] = set()
+
     for section in sections:
-        if section in valid_sections:
-            filtered_sections.append(section)
+        if not isinstance(section, str):
             continue
-        issues.append(
-            {
-                "type": "unknown_section_reference",
-                "lib_id": lib_id,
-                "file_id": file_id,
-                "section": section,
-                "message": "Evidence references unknown section.",
-            }
-        )
+        raw = section.strip()
+        if not raw:
+            continue
+
+        # Prefer exact matches, but tolerate common formatting differences.
+        candidate = raw
+        if candidate not in valid_sections:
+            normalized = candidate.upper().replace(" ", "_")
+            if normalized in valid_sections:
+                candidate = normalized
+            else:
+                normalized = candidate.upper()
+                if normalized in valid_sections:
+                    candidate = normalized
+
+        if candidate not in valid_sections:
+            issues.append(
+                {
+                    "type": "unknown_section_reference",
+                    "lib_id": lib_id,
+                    "file_id": file_id,
+                    "section": raw,
+                    "message": "Evidence references unknown section.",
+                }
+            )
+            continue
+
+        if candidate in seen_sections:
+            continue
+        seen_sections.add(candidate)
+        filtered_sections.append(candidate)
 
     confidence = entry.get("confidence")
     if confidence is not None:
@@ -287,6 +334,46 @@ def _validate_evidence_entry(
         entry["confidence"] = confidence_value
 
     entry["sections"] = filtered_sections
+
+    # Guard against over-broad cross-file evidence. If the file appears to primarily
+    # describe a different library, only keep sections that explicitly mention the
+    # target library ID. This prevents importing unrelated requirements/constraints
+    # from other libraries into the evidence set.
+    file_path = manager.get_file_path(file_id)
+    if file_path is not None and file_path.exists() and filtered_sections:
+        import re
+        from collections import Counter
+
+        content = file_path.read_text(encoding="utf-8")
+
+        # Heuristic: infer the "primary" library a file describes from (lib_###) mentions.
+        mentions = re.findall(r"\((lib_[0-9]+)\)", content[:8000])
+        primary_lib_id = None
+        if mentions:
+            counts = Counter(mentions)
+            primary_lib_id = counts.most_common(1)[0][0]
+
+        # Extract section blocks keyed by bracket label markers like [INTRO].
+        section_blocks: dict[str, str] = {}
+        matches = list(re.finditer(r"^\[([A-Z_]+)\] *$", content, re.MULTILINE))
+        for idx, match in enumerate(matches):
+            label = match.group(1).strip()
+            start = match.end()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
+            section_blocks[label] = content[start:end]
+
+        if primary_lib_id is None or primary_lib_id != lib_id:
+            mention_filtered: list[str] = []
+            for section in filtered_sections:
+                section_text = section_blocks.get(section, "")
+                if lib_id in section_text:
+                    mention_filtered.append(section)
+                    continue
+                # Silent normalization: the mapper sometimes over-selects sections in
+                # cross-file contexts. Dropping non-mentioning sections is expected.
+            filtered_sections = mention_filtered
+            entry["sections"] = filtered_sections
+
     if not filtered_sections:
         return issues, None
     return issues, entry
@@ -297,9 +384,12 @@ def _process_pair(
     charter_content: str,
     file_id: str,
     summary_content: str,
+    valid_sections: list[str],
     workspace: Path,
 ) -> dict[str, Any]:
-    prompt = _build_evidence_prompt(lib_id, charter_content, file_id, summary_content)
+    prompt = _build_evidence_prompt(
+        lib_id, charter_content, file_id, summary_content, valid_sections
+    )
 
     try:
         output = run_agent(
@@ -349,7 +439,7 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
             parsed = None
         summaries[file_id] = {"content": content, "parsed": parsed}
 
-    pairs: list[tuple[str, str, str, str]] = []
+    pairs: list[tuple[str, str, str, str, list[str]]] = []
     errors: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
     per_lib_errors: dict[str, int] = {}
@@ -374,7 +464,9 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
             raw_summary = summary_info["content"]
             if not _summary_mentions_charter(parsed, raw_summary, charter, lib_id):
                 continue
-            pairs.append((lib_id, charter_content, file_id, raw_summary))
+            pairs.append(
+                (lib_id, charter_content, file_id, raw_summary, manager.get_section_labels(file_id))
+            )
 
     tracker = ProgressTracker(
         total=len(pairs),
@@ -393,9 +485,10 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                     charter,
                     file_id,
                     summary,
+                    valid_sections,
                     manager.workspace_path,
                 )
-                for lib_id, charter, file_id, summary in pairs
+                for lib_id, charter, file_id, summary, valid_sections in pairs
             ]
             for future in as_completed(futures):
                 result = future.result()

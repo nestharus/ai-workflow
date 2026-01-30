@@ -10,7 +10,7 @@ from typing import Any
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
-from .formats import LibraryCharter, parse_library_synthesis
+from .formats import LibraryCharter, normalize_compound_pointers, parse_library_synthesis
 from .progress import ProgressTracker
 
 LIB_ID_RE = re.compile(r"^lib_\d{3}$")
@@ -113,7 +113,11 @@ def _validate_overlap_resolutions(charters: list[LibraryCharter]) -> list[dict[s
     issues: list[dict[str, Any]] = []
     for charter in charters:
         for resolution in charter.overlap_resolutions:
-            if not resolution.get("decision"):
+            description = (resolution.get("description") or "").strip()
+            decision = (resolution.get("decision") or "").strip()
+            if decision:
+                continue
+            if not description:
                 issues.append(
                     {
                         "type": "overlap_resolution_missing_decision",
@@ -122,6 +126,21 @@ def _validate_overlap_resolutions(charters: list[LibraryCharter]) -> list[dict[s
                         "message": "Overlap resolution missing decision.",
                     }
                 )
+                continue
+            # "No overlaps"/"none identified" are themselves valid resolution statements.
+            lowered = description.lower()
+            if "none identified" in lowered or re.search(
+                r"\\bno\\b[^\\n\\.]{0,40}\\boverlap\\b", lowered
+            ):
+                continue
+            issues.append(
+                {
+                    "type": "overlap_resolution_missing_decision",
+                    "lib_id": charter.lib_id,
+                    "description": description,
+                    "message": "Overlap resolution missing decision.",
+                }
+            )
     return issues
 
 
@@ -208,6 +227,7 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
         manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error=f"Agent execution failed: {exc}")
         return {"libraries_created": 0, "error": str(exc)}
 
+    output = normalize_compound_pointers(output)
     try:
         charters, index_content = parse_library_synthesis(output)
     except Exception as exc:  # pragma: no cover - defensive logging

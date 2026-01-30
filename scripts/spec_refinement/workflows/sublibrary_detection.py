@@ -618,6 +618,7 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
                 file_id,
                 file_content,
                 sections,
+                manager.get_section_labels(file_id),
                 gaps=gap_focus,
             )
             try:
@@ -654,12 +655,18 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
         spec_content = spec_path.read_text(encoding="utf-8")
         evidence_list: list[GapEvidence] = []
 
-        for file_id in evidence_map:
+        for file_id, evidence_sections in evidence_map.items():
             file_path = manager.get_file_path(file_id)
             if file_path is None or not file_path.exists():
                 continue
             file_content = file_path.read_text(encoding="utf-8")
-            prompt = _build_gap_prompt(spec_content, file_id, file_content)
+            prompt = _build_gap_prompt(
+                spec_content,
+                file_id,
+                file_content,
+                evidence_sections,
+                manager.get_section_labels(file_id),
+            )
             try:
                 output = run_agent(
                     agent_name="chatgpt-library-spec-gap-judge",

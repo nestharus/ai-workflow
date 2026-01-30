@@ -572,7 +572,7 @@ class TestParseLibrarySynthesis:
     def test_multiple_libraries(self) -> None:
         """Multiple libraries should each produce a separate charter."""
         content = _make_synthesis_content(lib_count=3)
-        charters, index_content = parse_library_synthesis(content)
+        charters, _index_content = parse_library_synthesis(content)
         assert len(charters) == 3
         lib_ids = [c.lib_id for c in charters]
         assert lib_ids == ["lib_001", "lib_002", "lib_003"]
@@ -1072,8 +1072,7 @@ class TestParseArchitectureMapping:
     def test_none_unmapped(self) -> None:
         """'None' in unmapped section should produce empty list."""
         content = _make_mapping_content(unmapped=[])
-        # Also add a "None" text line by hand
-        content += ""
+        content += "## Unmapped Libraries\n- None (all libraries are mapped)\n"
         result = parse_architecture_mapping(content)
         assert result["unmapped_libraries"] == []
 
@@ -1092,6 +1091,30 @@ class TestParseArchitectureMapping:
         result = parse_architecture_mapping(content)
         assert "Engine" in result["component_lines"]
         assert len(result["component_lines"]["Engine"]) == 1
+
+    def test_component_none_bullet_ignored(self) -> None:
+        """Freeform bullets like '- None (...)' under Libraries should be ignored."""
+        content = textwrap.dedent(
+            """
+            ## Component Mappings
+
+            ### Component: API Contract (shared)
+
+            **Libraries**:
+            - None (this component defines the interface between lib_001 and lib_002)
+            - lib_001: assigned
+
+            ## Cross-Component Dependencies
+            - A -> B: reason
+
+            ## Unmapped Libraries
+            - None (all libraries are mapped)
+            """
+        )
+        result = parse_architecture_mapping(content)
+        assert result["component_mappings"]["API Contract (shared)"] == ["lib_001"]
+        assert result["component_lines"]["API Contract (shared)"] == ["- lib_001: assigned"]
+        assert result["unmapped_libraries"] == []
 
     def test_na_unmapped_filtered(self) -> None:
         """'N/A' entries in unmapped section should be filtered out."""
