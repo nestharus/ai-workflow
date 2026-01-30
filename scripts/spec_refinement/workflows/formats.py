@@ -350,6 +350,7 @@ def parse_evidence_mapper_output(json_str: str) -> dict[str, Any]:
     for field in required_fields:
         if field not in data:
             raise ValueError(f"Missing required field: {field}")
+    # priority and priority_rationale are optional fields added by the workflow
     return data
 
 

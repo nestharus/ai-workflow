@@ -12,52 +12,13 @@ from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManag
 
 from .agent_utils import run_agent
 from .formats import (
-    FileSummary,
+    _extract_json_payload,
     parse_evidence_mapper_output,
     parse_evidence_spotcheck_output,
-    parse_file_summary,
 )
 from .progress import ProgressTracker
 
 MAX_WORKERS = 4
-STOPWORDS = {
-    "the",
-    "and",
-    "with",
-    "from",
-    "into",
-    "that",
-    "this",
-    "for",
-    "of",
-    "to",
-    "in",
-    "on",
-    "by",
-    "or",
-    "is",
-    "are",
-    "be",
-    "as",
-    "at",
-    "an",
-    "a",
-    "it",
-    "its",
-    "their",
-    "these",
-    "those",
-    "not",
-    "no",
-    "yes",
-    "via",
-    "per",
-    "but",
-    "if",
-    "when",
-    "then",
-    "also",
-}
 
 
 def _extract_sections(content: str, level: int) -> dict[str, str]:
@@ -93,39 +54,107 @@ def _parse_charter(content: str) -> dict[str, Any]:
     }
 
 
-def _tokenize(text: str) -> set[str]:
-    tokens = {token.lower() for token in re.findall(r"[A-Za-z0-9_]+", text)}
-    return {token for token in tokens if len(token) >= 4 and token not in STOPWORDS}
+def _compute_pair_priority(
+    file_id: str,
+    lib_id: str,
+    file_labels: dict[str, Any],
+    charter_content: str,
+    summary_content: str,
+    manager: WorkspaceManager,
+) -> tuple[float, str]:
+    """Compute priority score for a file-library pair.
 
+    Returns:
+        (priority_score, rationale) where priority_score is 0.0-1.0
+    """
+    file_entry = file_labels.get(file_id)
+    if not isinstance(file_entry, dict):
+        return 0.3, "not_in_labeler_output"
 
-def _charter_tokens(charter: dict[str, Any], lib_id: str) -> set[str]:
-    parts = [charter.get("intent", ""), charter.get("boundaries", "")]
-    parts.extend(charter.get("responsibilities", []))
-    parts.append(lib_id)
-    return _tokenize(" ".join(part for part in parts if part))
+    candidate_labels = file_entry.get("candidate_labels", [])
+    if not isinstance(candidate_labels, list):
+        candidate_labels = []
 
+    charter = _parse_charter(charter_content)
+    intent = charter.get("intent", "")
+    boundaries = charter.get("boundaries", "")
+    charter_text = f"{intent}\n{boundaries}".lower()
 
-def _summary_tokens(parsed: FileSummary | None, raw_summary: str) -> set[str]:
-    if parsed is None:
-        return _tokenize(raw_summary)
-    parts: list[str] = []
-    for item in parsed.algorithms + parsed.components + parsed.workflows:
-        parts.append(item.get("name", ""))
-        parts.append(item.get("intent", ""))
-    for item in parsed.candidate_responsibilities:
-        parts.append(item.get("description", ""))
-    parts.extend(parsed.dependencies)
-    return _tokenize(" ".join(part for part in parts if part))
+    matched_entry: dict[str, Any] | None = None
+    matched_confidence = -1.0
+    for entry in candidate_labels:
+        if not isinstance(entry, dict):
+            continue
+        label = str(entry.get("label", "")).strip()
+        if not label:
+            continue
+        if label.lower() not in charter_text:
+            continue
+        try:
+            confidence_value = float(entry.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence_value = 0.0
+        if confidence_value > matched_confidence:
+            matched_confidence = confidence_value
+            matched_entry = entry
 
+    if matched_entry is None:
+        return 0.3, "not_in_labeler_output"
 
-def _summary_mentions_charter(
-    parsed: FileSummary | None, raw_summary: str, charter: dict[str, Any], lib_id: str
-) -> bool:
-    charter_token_set = _charter_tokens(charter, lib_id)
-    if not charter_token_set:
-        return True
-    summary_token_set = _summary_tokens(parsed, raw_summary)
-    return bool(charter_token_set & summary_token_set)
+    try:
+        confidence = float(matched_entry.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        return 0.3, "not_in_labeler_output"
+
+    if confidence >= 0.7:
+        return confidence, "high_confidence_from_labeler"
+    if confidence < 0.4:
+        return confidence, "low_confidence_skip"
+
+    prompt = (
+        "\n".join(
+            [
+                "Determine if the file is relevant to the library based on semantic "
+                "overlap, not keyword matching.",
+                "Return JSON with keys: relevant (yes/no/uncertain), rationale, "
+                "confidence (0.0-1.0).",
+                "",
+                f"Library ID: {lib_id}",
+                "Library Intent:",
+                intent.strip() or "None",
+                "",
+                "Library Boundaries:",
+                boundaries.strip() or "None",
+                "",
+                f"Labeler Confidence: {confidence:.2f}",
+                "",
+                "File Summary:",
+                summary_content.strip(),
+            ]
+        ).strip()
+        + "\n"
+    )
+
+    try:
+        output = run_agent(
+            agent_name="glm-library-relevance-classifier",
+            prompt=prompt,
+            workspace=manager.workspace_path,
+        )
+    except RuntimeError:
+        return 0.5, "classifier_uncertain"
+
+    try:
+        data = json.loads(_extract_json_payload(output))
+    except Exception:
+        return 0.5, "classifier_uncertain"
+
+    relevant = str(data.get("relevant", "")).strip().lower()
+    if relevant == "yes":
+        return 0.7, "classifier_confirmed"
+    if relevant == "no":
+        return 0.2, "classifier_rejected"
+    return 0.5, "classifier_uncertain"
 
 
 def _build_evidence_prompt(
@@ -376,7 +405,14 @@ def _validate_evidence_entry(
 
     if not filtered_sections:
         return issues, None
-    return issues, entry
+
+    normalized = entry
+    if "priority" in entry:
+        normalized["priority"] = entry["priority"]
+    if "priority_rationale" in entry:
+        normalized["priority_rationale"] = entry["priority_rationale"]
+
+    return issues, normalized
 
 
 def _process_pair(
@@ -386,6 +422,8 @@ def _process_pair(
     summary_content: str,
     valid_sections: list[str],
     workspace: Path,
+    priority: float,
+    rationale: str,
 ) -> dict[str, Any]:
     prompt = _build_evidence_prompt(
         lib_id, charter_content, file_id, summary_content, valid_sections
@@ -409,7 +447,13 @@ def _process_pair(
             "error": f"Failed to parse evidence output: {exc}",
         }
 
-    return {"lib_id": lib_id, "file_id": file_id, "data": data}
+    return {
+        "lib_id": lib_id,
+        "file_id": file_id,
+        "data": data,
+        "priority": priority,
+        "rationale": rationale,
+    }
 
 
 def expand_evidence(run_id: str) -> dict[str, Any]:
@@ -432,17 +476,26 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
     for summary_path in sorted(summary_dir.glob("*.what.md")):
         file_id = summary_path.stem.replace(".what", "")
         content = summary_path.read_text(encoding="utf-8")
-        parsed: FileSummary | None = None
-        try:
-            parsed = parse_file_summary(content)
-        except Exception:
-            parsed = None
-        summaries[file_id] = {"content": content, "parsed": parsed}
+        summaries[file_id] = {"content": content}
 
-    pairs: list[tuple[str, str, str, str, list[str]]] = []
+    pairs: list[tuple[str, str, str, str, list[str], float, str]] = []
     errors: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
     per_lib_errors: dict[str, int] = {}
+
+    # Load Phase 2A labeler output for priority ranking
+    file_labels_path = manager.structure.libraries_dir / "file_labels.json"
+    file_labels: dict[str, Any] = {}
+    if file_labels_path.exists():
+        try:
+            file_labels = json.loads(file_labels_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            issues.append(
+                {
+                    "type": "file_labels_load_failed",
+                    "message": "Failed to load file_labels.json for priority ranking",
+                }
+            )
 
     for lib_dir in lib_dirs:
         lib_id = lib_dir.name
@@ -457,15 +510,33 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
             per_lib_errors[lib_id] = per_lib_errors.get(lib_id, 0) + 1
             continue
         charter_content = charter_path.read_text(encoding="utf-8")
-        charter = _parse_charter(charter_content)
 
         for file_id, summary_info in summaries.items():
-            parsed = summary_info["parsed"]
             raw_summary = summary_info["content"]
-            if not _summary_mentions_charter(parsed, raw_summary, charter, lib_id):
+            priority, rationale = _compute_pair_priority(
+                file_id=file_id,
+                lib_id=lib_id,
+                file_labels=file_labels,
+                charter_content=charter_content,
+                summary_content=raw_summary,
+                manager=manager,
+            )
+
+            # Only skip if priority is very low AND there's a fallback audit path
+            # (spotcheck_evidence provides the fallback)
+            if priority < 0.3:
                 continue
+
             pairs.append(
-                (lib_id, charter_content, file_id, raw_summary, manager.get_section_labels(file_id))
+                (
+                    lib_id,
+                    charter_content,
+                    file_id,
+                    raw_summary,
+                    manager.get_section_labels(file_id),
+                    priority,
+                    rationale,
+                )
             )
 
     tracker = ProgressTracker(
@@ -487,8 +558,10 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                     summary,
                     valid_sections,
                     manager.workspace_path,
+                    priority,
+                    rationale,
                 )
-                for lib_id, charter, file_id, summary, valid_sections in pairs
+                for lib_id, charter, file_id, summary, valid_sections, priority, rationale in pairs
             ]
             for future in as_completed(futures):
                 result = future.result()
@@ -497,7 +570,7 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                     errors.append(result)
                     per_lib_errors[lib_id] = per_lib_errors.get(lib_id, 0) + 1
                 else:
-                    results_by_lib.setdefault(lib_id, []).append(result["data"])
+                    results_by_lib.setdefault(lib_id, []).append(result)
                 tracker.update(status=result.get("file_id", ""))
     tracker.finish()
 
@@ -506,8 +579,8 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
 
     for lib_dir in lib_dirs:
         lib_id = lib_dir.name
-        entries = results_by_lib.get(lib_id, [])
-        if not entries:
+        results = results_by_lib.get(lib_id, [])
+        if not results:
             continue
         evidence_path = lib_dir / "evidence.json"
         payload = _load_evidence_payload(evidence_path)
@@ -517,12 +590,15 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
             payload["sources"] = sources
 
         lib_added = False
-        for entry in entries:
+        for result in results:
+            entry = result.get("data", {})
             candidate_entry = {
                 "file_id": entry.get("file_id"),
                 "sections": entry.get("relevant_sections", []),
                 "confidence": entry.get("confidence"),
                 "rationale": entry.get("rationale", ""),
+                "priority": result.get("priority", 0.5),
+                "priority_rationale": result.get("rationale", ""),
             }
             entry_issues, normalized = _validate_evidence_entry(candidate_entry, manager, lib_id)
             issues.extend(entry_issues)
@@ -653,16 +729,26 @@ def spotcheck_evidence(run_id: str, lib_ids: list[str] | None = None) -> dict[st
                     if current is None or confidence_value < current:
                         entry["confidence"] = confidence_value
 
-        uncertain_files: list[tuple[str, float]] = []
+        # Prioritize files with low priority scores from evidence expansion
+        uncertain_files: list[tuple[str, float, float]] = []
         for file_id in manager.state.file_manifest:
-            confidence = evidence_by_file.get(file_id, {}).get("confidence")
-            if confidence is None:
-                confidence = 0.0
-            if confidence < 0.7 or file_id not in evidence_by_file:
-                uncertain_files.append((file_id, confidence))
+            evidence_entry = evidence_by_file.get(file_id, {})
+            confidence = evidence_entry.get("confidence") or 0.0
 
-        uncertain_files.sort(key=lambda item: item[1])
-        selected_files = [file_id for file_id, _ in uncertain_files[:5]]
+            # Load priority from evidence.json if available
+            priority = 0.5  # default
+            for source in sources:
+                if source.get("file_id") == file_id and "priority" in source:
+                    priority = source["priority"]
+                    break
+
+            # Select files with low confidence OR low priority
+            if confidence < 0.7 or priority < 0.5 or file_id not in evidence_by_file:
+                uncertain_files.append((file_id, confidence, priority))
+
+        # Sort by priority (ascending) then confidence (ascending)
+        uncertain_files.sort(key=lambda item: (item[2], item[1]))
+        selected_files = [file_id for file_id, _, _ in uncertain_files[:5]]
         if not selected_files:
             continue
 
