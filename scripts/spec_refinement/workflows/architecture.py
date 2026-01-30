@@ -19,6 +19,7 @@ from .formats import (
     parse_architecture_selection,
 )
 from .progress import ProgressTracker
+from .validation_utils import strip_invalid_file_pointers
 
 # Only treat bracketed text containing a `::` segment separator as a citation.
 ARCH_CITATION_RE = re.compile(r"\[([^\[\]]*?::[^\[\]]*?)\]")
@@ -165,6 +166,8 @@ def select_architecture(run_id: str) -> dict[str, Any]:
         return {"selected_arch_id": None, "rejected_count": 0}
 
     rationale = str(selection.get("rationale", "")).strip()
+    rationale = strip_invalid_file_pointers(rationale, manager.state.file_manifest)
+    selection["rationale"] = rationale
     issues = _validate_architecture_citations(rationale, manager)
 
     phase_result = manager.state.phases[Phase.ARCHITECTURE_SELECTION.value]
@@ -244,6 +247,7 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
         return {"libraries_mapped": 0, "unmapped_libraries": [], "issues": []}
 
     output = normalize_compound_pointers(output)
+    output = strip_invalid_file_pointers(output, manager.state.file_manifest)
 
     try:
         mapping = parse_architecture_mapping(output)

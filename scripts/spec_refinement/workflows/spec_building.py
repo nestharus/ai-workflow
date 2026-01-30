@@ -17,27 +17,12 @@ from .validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
     resolve_section_reference,
+    strip_invalid_file_pointers,
 )
 
 MAX_ITERATIONS_DEFAULT = 5
 VALID_GAP_SEVERITIES = {"must", "should", "nice-to-have"}
 SEVERITY_MAP = {"must": "error", "should": "warning", "nice-to-have": "info"}
-
-# Some agents sometimes emit citations to derived artifacts like `[charter::INTENT]` or
-# `[libraries/lib_001/spec.md::...]`. These are never valid evidence pointers because Phase 4
-# only allows citations to SOURCE files from the run manifest (`[file_###::SECTION]`).
-DERIVED_POINTER_RE = re.compile(
-    r"\[(?:charter|charter\.md|(?:libraries|runs)[\\/][^\[\]]+?)::[^\[\]]+?\]",
-    re.IGNORECASE,
-)
-
-
-def _strip_derived_pointers(content: str) -> str:
-    cleaned = DERIVED_POINTER_RE.sub("", content)
-    # Preserve newlines; only collapse extra horizontal whitespace introduced by stripping.
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    cleaned = re.sub(r" \n", "\n", cleaned)
-    return cleaned
 
 
 def _extract_sections(content: str, level: int) -> dict[str, str]:
@@ -153,7 +138,8 @@ def _build_integration_prompt(
             "Never cite derived artifacts (e.g. libraries/.../spec.md). Only cite SOURCE spec "
             "files via [file_###::SECTION]."
         ),
-        "Do NOT output placeholder pointers like [charter::INTENT].",
+        "Do NOT cite derived artifacts (charter, libraries, runs). Only cite SOURCE files via "
+        "[file_###::SECTION].",
         (
             "When integrating this file, any NEW citations MUST reference the current File ID and "
             "one of the valid section labels listed below."
@@ -498,7 +484,7 @@ def _build_library_spec(
 
             output = normalize_compound_pointers(output)
             output = _extract_spec_markdown(output, lib_id)
-            output = _strip_derived_pointers(output)
+            output = strip_invalid_file_pointers(output, manager.state.file_manifest)
             if not _is_monotonic_spec_update(current_spec, output):
                 issues.append(
                     {

@@ -20,6 +20,7 @@ from .validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
     resolve_section_reference,
+    strip_invalid_file_pointers,
 )
 
 MAX_WORKERS = 4
@@ -156,6 +157,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
         return {"file_id": file_id, "error": f"Agent execution failed: {exc}"}
 
     output = normalize_compound_pointers(output)
+    output = strip_invalid_file_pointers(output, manager.state.file_manifest)
 
     summary_path = manager.structure.summaries_dir / f"{file_id}.what.md"
     summary_path.write_text(output, encoding="utf-8")

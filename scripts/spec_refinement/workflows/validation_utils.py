@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+from .formats import EVIDENCE_POINTER_RE
 
 
 def build_file_id_lookup(file_manifest: dict[str, str]) -> dict[str, str]:
+    """Build a lookup mapping various file identifiers to canonical file_id.
+
+    Maps: file_id, path_str, resolved absolute path, filename, and stem.
+    """
     lookup: dict[str, str] = {}
     for file_id, path_str in file_manifest.items():
         _add_lookup(lookup, file_id, file_id)
@@ -27,6 +34,10 @@ def build_file_id_lookup(file_manifest: dict[str, str]) -> dict[str, str]:
 def build_section_alias_map(
     section_manifest: dict[str, list[str]],
 ) -> dict[str, dict[str, str]]:
+    """Build a normalized section label alias map for each file.
+
+    Normalizes labels to lowercase, underscores, and removes duplicates.
+    """
     alias_map: dict[str, dict[str, str]] = {}
     for file_id, section_labels in section_manifest.items():
         normalized_map: dict[str, str] = {}
@@ -46,6 +57,7 @@ def resolve_section_reference(
     file_id: str,
     alias_map: dict[str, dict[str, str]],
 ) -> str | None:
+    """Resolve a section reference to its original label using the alias map."""
     normalized = _normalize_section_label(section_ref)
     if not normalized:
         return None
@@ -62,3 +74,26 @@ def _add_lookup(lookup: dict[str, str], key: str, value: str) -> None:
     if key in lookup:
         return
     lookup[key] = value
+
+
+def strip_invalid_file_pointers(content: str, file_manifest: dict[str, str]) -> str:
+    """Remove evidence pointers with invalid file references from content.
+
+    Also collapses redundant whitespace from removed pointers.
+    """
+    invalid_pointers: set[str] = set()
+    for match in EVIDENCE_POINTER_RE.finditer(content):
+        file_ref = match.group(1).strip()
+        section_ref = match.group(2).strip()
+        if "::" in section_ref:
+            continue
+        if file_ref not in file_manifest:
+            invalid_pointers.add(match.group(0))
+
+    cleaned = content
+    for pointer in invalid_pointers:
+        cleaned = cleaned.replace(pointer, "")
+
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r" \n", "\n", cleaned)
+    return cleaned

@@ -6,6 +6,7 @@ from scripts.spec_refinement.workflows.validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
     resolve_section_reference,
+    strip_invalid_file_pointers,
 )
 
 
@@ -78,8 +79,7 @@ def test_resolve_section_reference_separator_normalization() -> None:
     alias_map = build_section_alias_map({"file_001": ["USER_REQUIREMENTS"]})
 
     assert (
-        resolve_section_reference("user-requirements", "file_001", alias_map)
-        == "USER_REQUIREMENTS"
+        resolve_section_reference("user-requirements", "file_001", alias_map) == "USER_REQUIREMENTS"
     )
 
 
@@ -87,3 +87,52 @@ def test_resolve_section_reference_unknown() -> None:
     alias_map = build_section_alias_map({"file_001": ["INTRO"]})
 
     assert resolve_section_reference("unknown", "file_001", alias_map) is None
+
+
+def test_strip_invalid_file_pointers_preserves_valid() -> None:
+    content = "See [file_001::INTRO] for details."
+    file_manifest = {"file_001": "docs/intro.md"}
+
+    assert strip_invalid_file_pointers(content, file_manifest) == content
+
+
+def test_strip_invalid_file_pointers_removes_unknown() -> None:
+    content = "See [file_999::INTRO] for details."
+    file_manifest = {"file_001": "docs/intro.md"}
+
+    assert strip_invalid_file_pointers(content, file_manifest) == "See for details."
+
+
+def test_strip_invalid_file_pointers_removes_derived() -> None:
+    content = "A [charter::INTENT] B [libraries/lib_001/spec.md::REQS] C"
+    file_manifest = {"file_001": "docs/intro.md"}
+
+    assert strip_invalid_file_pointers(content, file_manifest) == "A B C"
+
+
+def test_strip_invalid_file_pointers_collapses_whitespace() -> None:
+    content = "Alpha  [file_999::INTRO]   beta"
+    file_manifest = {"file_001": "docs/intro.md"}
+
+    assert strip_invalid_file_pointers(content, file_manifest) == "Alpha beta"
+
+
+def test_strip_invalid_file_pointers_preserves_newlines() -> None:
+    content = "Alpha [file_999::INTRO] \nBeta"
+    file_manifest = {"file_001": "docs/intro.md"}
+
+    assert strip_invalid_file_pointers(content, file_manifest) == "Alpha\nBeta"
+
+
+def test_strip_invalid_file_pointers_mixed_valid_invalid() -> None:
+    content = "A [file_001::INTRO] B [file_999::INTRO] C"
+    file_manifest = {"file_001": "docs/intro.md"}
+
+    assert strip_invalid_file_pointers(content, file_manifest) == "A [file_001::INTRO] B C"
+
+
+def test_strip_invalid_file_pointers_handles_empty_and_none() -> None:
+    file_manifest = {"file_001": "docs/intro.md"}
+
+    assert strip_invalid_file_pointers("", file_manifest) == ""
+    assert strip_invalid_file_pointers("No pointers here.", file_manifest) == "No pointers here."
