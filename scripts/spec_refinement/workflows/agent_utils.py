@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import re
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 _FILE_OUTPUT_RE = re.compile(r"see `([^`]+)` for details\\.?$", re.IGNORECASE)
+
+logger = logging.getLogger(__name__)
 
 
 def _maybe_read_file_output(stdout: str) -> str | None:
@@ -49,6 +53,31 @@ def _maybe_read_file_output(stdout: str) -> str | None:
     return content
 
 
+def _analyze_prompt_structure(prompt: str) -> dict[str, Any]:
+    """Analyze prompt structure for Cerebras best practices compliance."""
+    lines = prompt.splitlines()
+    contract_section_start = None
+    content_section_start = None
+    output_format_start = None
+
+    for idx, line in enumerate(lines):
+        upper = line.upper()
+        if ("OUTPUT CONTRACT" in upper or "REQUIRED" in upper) and contract_section_start is None:
+            contract_section_start = idx
+        elif ("INPUT DATA" in upper or "CONTENT" in upper) and content_section_start is None:
+            content_section_start = idx
+        elif "OUTPUT FORMAT" in upper and output_format_start is None:
+            output_format_start = idx
+
+    return {
+        "total_lines": len(lines),
+        "contract_starts_at_line": contract_section_start,
+        "content_starts_at_line": content_section_start,
+        "output_format_starts_at_line": output_format_start,
+        "contract_first": contract_section_start is not None and contract_section_start < 10,
+    }
+
+
 def run_agent(
     *,
     agent_name: str,
@@ -75,6 +104,15 @@ def run_agent(
     prompts_dir.mkdir(parents=True, exist_ok=True)
     prompt_file = prompts_dir / f"{agent_name}_{int(time.time() * 1000)}.txt"
     prompt_file.write_text(prompt, encoding="utf-8")
+    if agent_name.startswith("glm-"):
+        structure_metrics = _analyze_prompt_structure(prompt)
+        if not structure_metrics["contract_first"]:
+            logger.warning(
+                "GLM prompt does not front-load contract rules "
+                "(agent=%s, contract_starts_at_line=%s)",
+                agent_name,
+                structure_metrics["contract_starts_at_line"],
+            )
 
     cmd = [
         "uv",

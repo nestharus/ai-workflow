@@ -161,33 +161,28 @@ def _build_full_spec_prompt_for_metrics(
     section_list = ", ".join(evidence_sections) if evidence_sections else "None"
     valid_list = ", ".join(valid_sections) if valid_sections else "None"
     lines = [
-        "Integrate the source file into the library spec.",
-        "Preserve evidence-backed content; add missing details with citations [file_###::SECTION].",
-        (
-            "Every bullet in Boundaries/Requirements/Constraints/Dependencies MUST include "
-            "at least one valid evidence pointer. Add missing citations to existing bullets too "
-            "(including those originating from the charter)."
-        ),
-        (
-            "When closing gaps, preserve key terms from the source/gap text verbatim "
-            "(e.g., if the source says 'request intake', include 'request intake' explicitly "
-            "in the spec)."
-        ),
-        (
-            "If the gap list indicates an unsupported claim in the spec, do NOT assert it as "
-            "fact: move it to Decisions Needed as an explicit open question/assumption."
-        ),
-        (
-            "Never cite derived artifacts (e.g. libraries/.../spec.md). Only cite SOURCE spec "
-            "files via [file_###::SECTION]."
-        ),
-        "Do NOT cite derived artifacts (charter, libraries, runs). Only cite SOURCE files via "
-        "[file_###::SECTION].",
-        (
-            "When integrating this file, any NEW citations MUST reference the current File ID and "
-            "one of the valid section labels listed below."
-        ),
-        "Output ONLY the updated spec markdown (no preamble, no commentary).",
+        "## OUTPUT CONTRACT (REQUIRED)",
+        "",
+        "Return ONLY the updated spec markdown. No preamble, no code fences.",
+        "",
+        "REQUIRED RULES:",
+        "- Preserve evidence-backed content; add missing details with "
+        " citations [file_###::SECTION].",
+        "- Boundaries/Requirements/Constraints/Dependencies bullets MUST include at least "
+        " one valid evidence pointer. Add missing citations to existing bullets too (including "
+        " those originating from the charter).",
+        "- When closing gaps, preserve key terms from the source/gap text verbatim.",
+        "- If the gap list indicates an unsupported claim, move it to Decisions Needed as an "
+        " explicit open question/assumption.",
+        "- Never cite derived artifacts (charter, libraries, runs). Only cite SOURCE files via "
+        " [file_###::SECTION].",
+        f"- Valid section labels for citations in {file_id}: {valid_list}",
+        "",
+        "FORBIDDEN:",
+        "- Citing derived artifacts (charter, libraries, runs).",
+        "- Paraphrasing key terms from gaps.",
+        "",
+        "## INPUT DATA",
         "",
         f"Library ID: {lib_id}",
         "",
@@ -214,6 +209,14 @@ def _build_full_spec_prompt_for_metrics(
             "Source File:",
             f"File ID: {file_id}",
             file_content.strip(),
+        ]
+    )
+    lines.extend(
+        [
+            "",
+            "## OUTPUT FORMAT",
+            "",
+            f"# Library Spec: {lib_id}",
         ]
     )
     return "\n".join(lines).strip() + "\n"
@@ -282,32 +285,39 @@ def _build_patch_prompt(
     file_id_list = ", ".join(valid_file_ids) if valid_file_ids else "None"
     valid_spec_sections = ", ".join(VALID_SPEC_SECTIONS)
     lines = [
-        "Return ONLY a JSON array of patch operations.",
-        "Schema (each element):",
+        "## OUTPUT CONTRACT (REQUIRED)",
+        "",
+        "Return ONLY a JSON array of patch operations. No preamble, no code fences.",
+        "",
+        "REQUIRED SCHEMA (each element):",
         '{ "op": "add|edit|move", "section": "Spec Section", '
         '"bullet_index": int|null, "content": "text", '
         '"citations": ["[file_###::SECTION]"], "source_section": "Spec Section" }',
-        "Rules:",
-        "- Allowed ops: add, edit, move. Delete operations are forbidden.",
-        "- Each operation must target a valid spec section.",
-        "- Use add for new content, edit to refine an existing bullet, "
-        "move to reclassify to Decisions Needed.",
-        "- Every bullet in Boundaries/Requirements/Constraints/Dependencies "
-        "must include at least one citation.",
-        "- Do NOT cite derived artifacts (charter, libraries, runs). Only cite SOURCE files.",
-        (
-            "When closing gaps, preserve key terms from the source/gap text verbatim "
-            "(e.g., 'request intake' must appear as 'request intake')."
-        ),
-        (
-            "If the gap list indicates an unsupported claim, move it to Decisions Needed "
-            "as an explicit open question/assumption."
-        ),
+        "",
+        "REQUIRED RULES:",
+        "- Allowed ops: add, edit, move. Delete operations are FORBIDDEN",
+        f"- Valid spec sections: {valid_spec_sections}",
+        "- Each operation MUST target a valid spec section",
+        "- Use add for new content, edit to refine an existing bullet, move to reclassify "
+        "to Decisions Needed",
+        "- Every bullet in Boundaries/Requirements/Constraints/Dependencies MUST include at "
+        "least one citation",
+        "- Citations MUST reference SOURCE files only (file_###::SECTION format)",
+        f"- Valid file IDs for citations: {file_id_list}",
+        f"- Valid section labels for {file_id}: {valid_list}",
+        "- When closing gaps, preserve key terms from source/gap text verbatim",
+        "- If gap indicates unsupported claim, move to Decisions Needed",
+        "",
+        "FORBIDDEN:",
+        "- Delete operations",
+        "- Citing derived artifacts (charter, libraries, runs)",
+        "- Inventing section labels not in allowlist",
+        "- Paraphrasing key terms from gaps",
+        "",
+        "## INPUT DATA",
         "",
         f"Library ID: {lib_id}",
         f"Current File ID: {file_id}",
-        f"Valid Spec Sections: {valid_spec_sections}",
-        f"Valid File IDs for Citations: {file_id_list}",
         "",
         "Library Charter:",
         charter_content.strip(),
@@ -335,6 +345,12 @@ def _build_patch_prompt(
             "Source File:",
             f"File ID: {file_id}",
             file_content.strip(),
+            "",
+            "## OUTPUT FORMAT",
+            "",
+            "Example:",
+            '[{"op": "add", "section": "Requirements", "bullet_index": null, '
+            '"content": "...", "citations": ["[file_001::INTRO]"]}]',
         ]
     )
     return "\n".join(lines).strip() + "\n"
@@ -417,21 +433,28 @@ def _build_gap_prompt(
     section_list = ", ".join(evidence_sections) if evidence_sections else "None"
     valid_list = ", ".join(valid_sections) if valid_sections else "None"
     lines = [
-        "Review the spec against the source file and report gaps.",
-        "Return JSON with keys: gaps, total_gaps, file_id.",
-        "Only report gaps for statements explicitly present in the source (within Scope).",
-        (
-            "Do NOT infer or invent new requirements/behaviors "
-            "(e.g., error semantics) that are not stated."
-        ),
-        (
-            "If the spec already captures the source detail anywhere "
-            "(including Decisions Needed), it is NOT a gap."
-        ),
+        "## OUTPUT CONTRACT (REQUIRED)",
         "",
-        f"Scope: Only consider gaps from these source sections for {file_id}: {section_list}",
-        f"Valid Section Labels For Citations in {file_id}: {valid_list}",
-        "If Scope is None/empty, return gaps=[] and total_gaps=0.",
+        "Return ONLY valid JSON. No preamble, no code fences.",
+        "",
+        "REQUIRED SCHEMA:",
+        '{"gaps": [{"source": "string", "missing_content": "string", "where_in_spec": "string", '
+        '"severity": "must|should|nice-to-have"}], "total_gaps": int, "file_id": "string"}',
+        "",
+        "REQUIRED RULES:",
+        "- Only report gaps for statements explicitly present in the source (within Scope)",
+        "- Do NOT infer or invent new requirements/behaviors not stated in the source",
+        "- If the spec already captures the detail anywhere (including Decisions Needed), "
+        "it is NOT a gap",
+        f"- Scope: only consider gaps from these source sections for {file_id}: {section_list}",
+        f"- Valid section labels for citations in {file_id}: {valid_list}",
+        "- If Scope is None/empty, return gaps=[] and total_gaps=0",
+        "",
+        "FORBIDDEN:",
+        "- Gaps outside the scope sections",
+        "- Invented requirements or behaviors",
+        "",
+        "## INPUT DATA",
         "",
         "Spec:",
         spec_content.strip(),
@@ -439,6 +462,11 @@ def _build_gap_prompt(
         "Source File:",
         f"File ID: {file_id}",
         file_content.strip(),
+        "",
+        "## OUTPUT FORMAT",
+        "",
+        "Example:",
+        '{"gaps": [], "total_gaps": 0, "file_id": "file_001"}',
     ]
     return "\n".join(lines).strip() + "\n"
 

@@ -4,43 +4,39 @@ model: glm
 output_format: json
 ---
 
-## Output Contract (read first)
+## Output Contract (REQUIRED - Read First)
 
-- Output ONLY a JSON array of patch operations. No preamble, no code fences.
-- Each operation must follow this schema:
-  - `op`: "add" | "edit" | "move"
-  - `section`: one of "Intent", "Boundaries", "Requirements", "Constraints", "Dependencies", "Decisions Needed"
-  - `bullet_index`: integer or null
-  - `content`: string
-  - `citations`: array of `[file_###::SECTION]` strings
-  - `source_section`: required only for `move`
-- Delete operations are forbidden.
+- Return ONLY a JSON array of patch operations. No preamble, no code fences.
+- REQUIRED SCHEMA (each element):
+  {"op": "add|edit|move", "section": "Spec Section", "bullet_index": int|null,
+  "content": "text", "citations": ["[file_###::SECTION]"], "source_section": "Spec Section"}
+- Allowed ops: add, edit, move. Delete operations are FORBIDDEN.
+- Each operation MUST target a valid spec section from the allowlist in the prompt.
+- For op=move, source_section is REQUIRED.
+- Every bullet in Boundaries/Requirements/Constraints/Dependencies MUST include at least one
+  [file_###::SECTION] citation to a SOURCE spec file.
+- Citations MUST reference SOURCE files only. Never cite derived artifacts (charter, libraries, runs).
+- When closing gaps, preserve key terms from the source/gap text verbatim.
+- If a gap indicates an unsupported claim, move it to Decisions Needed as an explicit question.
+- If ambiguous or contradictory, add a Decisions Needed entry in the format:
+  - **[Topic]**: [Description] - Sources: [file_###::SECTION], [file_###::SECTION]
+
+FORBIDDEN:
+- Delete operations.
+- Citations to derived artifacts.
+- Paraphrasing key terms from gaps.
 
 ## Role
 
-- Add material from a source file to the library spec using patch operations.
-- Preserve evidence-backed requirements/constraints/dependencies.
-- If the spec contains an unsupported claim, do NOT assert it as fact—move it to `Decisions Needed`.
-- When closing gaps, preserve key terms from the source verbatim.
+Add material from a source file to the library spec using patch operations.
 
-## Patch Rules
+## Inputs
 
-- Use `add` to append new bullets.
-- Use `edit` to refine an existing bullet at `bullet_index`.
-- Use `move` to reclassify a bullet (e.g., into `Decisions Needed`) and include `source_section`.
-- Do NOT delete bullets.
-
-## Citation Requirements
-
-- Every bullet in `Boundaries`, `Requirements`, `Constraints`, and `Dependencies` MUST include at least one `[file_###::SECTION]` citation to a SOURCE spec file.
-- Never cite derived artifacts (e.g., `libraries/.../spec.md`, `charter.md`, `runs/...`).
-- Multiple citations are allowed when content is supported by multiple sections.
-
-## Ambiguity Handling
-
-- If ambiguous or contradictory, add an entry to `Decisions Needed` with provenance.
-- Format: `- **[Topic]**: [Description] - Sources: [file_###::SECTION], [file_###::SECTION]`
-- Do NOT resolve by guessing.
+- Library charter
+- Current library spec
+- Source file content
+- Evidence section allowlist and valid file IDs
+- Gap list (if provided)
 
 ## Output Format
 

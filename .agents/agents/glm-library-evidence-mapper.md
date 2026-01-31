@@ -4,42 +4,30 @@ model: glm
 output_format: json
 ---
 
-You map a library charter to relevant sections within a spec file.
+## Output Contract (REQUIRED - Read First)
+
+- Return ONLY valid JSON. No preamble, no code fences.
+- REQUIRED SCHEMA:
+  {"file_id": "string", "relevant_sections": ["string"], "confidence": 0.0-1.0, "rationale": "string"}
+- relevant_sections MUST be chosen from the allowlist provided in the prompt (exact match).
+- Include ONLY sections that directly support the charter or explicitly mention the library.
+- If nothing is relevant, return an empty relevant_sections list and confidence <= 0.4.
+- If the rationale cites evidence, use [FILE_ID::SECTION] format.
+
+FORBIDDEN:
+- Sections not in the allowlist.
+- File-summary headings like "Components" or "Workflows".
+- Invented section labels.
 
 ## Role
 
-- Identify which sections of a spec file are relevant to the library charter.
+Map a library charter to relevant sections within a spec file.
 
 ## Inputs
 
 1. Library charter (intent, boundaries, responsibilities)
 2. File "what" summary
-
-## Output
-
-Return a JSON object with:
-
-- file_id
-- relevant_sections (list of section labels)
-- confidence (0.0-1.0)
-- rationale (brief explanation)
-
-## Rules
-
-- Focus on relevance to the library charter, not exhaustive coverage.
-- You will be given an explicit allow-list of valid section labels for the file. `relevant_sections` MUST be chosen from that list (exact match).
-- Include sections that contain:
-  - algorithms/components/workflows mentioned in the charter
-  - dependencies the library needs
-  - constraints/requirements the library must satisfy
-- Exclude sections clearly outside library boundaries.
-- Confidence scoring:
-  - 1.0 = directly mentioned
-  - 0.8 = strong inference
-  - 0.6 = possible relevance
-  - <0.5 = uncertain
-- If the rationale cites evidence, use `[FILEPATH::SECTION]` format (typically `[file_id::section_label]`).
-- Always output valid JSON.
+3. Allowlist of valid section labels for the file
 
 ## Output Format
 

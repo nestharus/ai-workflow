@@ -32,32 +32,38 @@ LIB_ID_PATTERN = re.compile(r"^lib_(\d{3})$")
 
 def _build_label_prompt(file_id: str, summary: str) -> str:
     lines = [
-        "Classify the following file summary into candidate library labels.",
-        "Return ONLY valid JSON matching the schema. No preamble, no code fences.",
-        "Labels must be capability-based (what the system does).",
-        "Use evidence pointers from the summary in [FILE_ID::SECTION] format.",
-        "Confidence scoring: 1.0 direct match, 0.8 strong inference, 0.6 possible, <0.5 uncertain.",
+        "## OUTPUT CONTRACT (REQUIRED)",
         "",
-        "JSON Schema:",
-        "{",
-        '  "candidate_labels": [',
-        "    {",
-        '      "label": "string",',
-        '      "sections": ["[FILE_ID::SECTION]"],',
-        '      "confidence": 0.8,',
-        '      "rationale": "string"',
-        "    }",
-        "  ],",
-        '  "uncertain_labels": [',
-        "    {",
-        '      "label": "string",',
-        '      "rationale": "string"',
-        "    }",
-        "  ]",
+        "Return ONLY valid JSON. No preamble, no code fences.",
+        "",
+        "REQUIRED SCHEMA:",
+        "{"
+        '  "candidate_labels": ['
+        '    {"label": "string", "sections": ["string"], "confidence": 0.0}'
+        "  ],"
+        '  "uncertain_labels": ["string"]'
         "}",
         "",
-        f"# File Summary: {file_id}",
+        "REQUIRED RULES:",
+        "- Classify file into 0-N candidate library labels",
+        "- Each label MUST include sections that justify it",
+        "- Sections MUST use [file_###::SECTION] format",
+        "- Confidence MUST be between 0.0 and 1.0",
+        "",
+        "FORBIDDEN:",
+        "- Labels without justifying sections",
+        "- Invalid confidence values",
+        "",
+        "## INPUT DATA",
+        "",
+        f"File ID: {file_id}",
+        "",
+        "File Summary:",
         summary,
+        "",
+        "## OUTPUT FORMAT",
+        "",
+        "See schema above.",
     ]
     return "\n".join(lines)
 

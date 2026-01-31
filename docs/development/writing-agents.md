@@ -73,3 +73,8 @@ You are an implementor agent. Your job is to...
 
 Keep prompts within the context limits of the chosen model. If a prompt exceeds the
 model's context window, choose a larger-capacity model in the agent frontmatter.
+
+## GLM-Specific Prompt Engineering
+
+GLM agents MUST use contract-first prompts. Follow the structure documented in
+docs/development/glm-prompt-guidelines.md.

@@ -4,42 +4,35 @@ model: glm
 output_format: json
 ---
 
-You classify a single file summary into candidate library labels.
+## Output Contract (REQUIRED - Read First)
 
-## Input
-- One `summaries/*.what.md` file content.
-
-## Output Schema (JSON)
-```json
-{
-  "candidate_labels": [
-    {
-      "label": "string",
-      "sections": ["[FILE_ID::SECTION]"],
-      "confidence": 0.8,
-      "rationale": "string"
-    }
-  ],
-  "uncertain_labels": [
-    {
-      "label": "string",
-      "rationale": "string"
-    }
-  ]
-}
-```
-
-## Rules
-- Labels must be capability-based (what the system does), not type-based (e.g., "Auth & Access" not "Services").
-- Confidence scoring:
-  - 1.0 = direct match
-  - 0.8 = strong inference
-  - 0.6 = possible
-  - < 0.5 = uncertain (place in `uncertain_labels`)
-- `sections` must cite evidence pointers from the summary in `[FILE_ID::SECTION]` format.
 - Return ONLY valid JSON. No preamble, no code fences.
+- REQUIRED SCHEMA:
+  {"candidate_labels": [{"label": "string", "sections": ["[FILE_ID::SECTION]"],
+  "confidence": 0.0-1.0, "rationale": "string"}],
+  "uncertain_labels": [{"label": "string", "rationale": "string"}]}
+- Labels MUST be capability-based (what the system does), not type-based.
+- Each candidate label MUST include sections that justify it.
+- Sections MUST use [FILE_ID::SECTION] pointers from the summary.
+- Confidence MUST be between 0.0 and 1.0.
+- Place labels with confidence < 0.5 in uncertain_labels.
 
-## Output Example
+FORBIDDEN:
+- Labels without justifying sections.
+- Invalid confidence values.
+- Non-JSON output.
+
+## Role
+
+Classify a single file summary into candidate library labels.
+
+## Inputs
+
+- One summaries/*.what.md file content
+
+## Output Format
+
+```json
 {
   "candidate_labels": [
     {
@@ -56,3 +49,4 @@ You classify a single file summary into candidate library labels.
     }
   ]
 }
+```

@@ -5,6 +5,20 @@ temperature: 0.3
 max_tokens: 500
 ---
 
+## Output Contract (REQUIRED - Read First)
+
+- Return ONLY valid JSON. No preamble, no code fences.
+- REQUIRED SCHEMA:
+  {"relevant": "yes|no|uncertain", "rationale": "string", "confidence": 0.0-1.0}
+- relevant MUST be one of: "yes", "no", "uncertain".
+- confidence MUST be between 0.0 and 1.0.
+
+FORBIDDEN:
+- Any output that is not valid JSON.
+- Values outside the allowed relevant set.
+
+## Role
+
 Determine whether a file summary is relevant to a library charter.
 
 ## Inputs
@@ -12,22 +26,6 @@ Determine whether a file summary is relevant to a library charter.
 1. Library charter intent and boundaries
 2. File summary
 3. Labeler confidence score
-
-## Output
-
-Return JSON with:
-
-- relevant: "yes" | "no" | "uncertain"
-- rationale: string
-- confidence: number (0.0-1.0)
-
-## Instructions
-
-- Determine if the file is relevant to the library based on semantic overlap, not keyword matching.
-- Return "yes" if the file contributes to the library's responsibilities.
-- Return "no" if the file is clearly unrelated.
-- Return "uncertain" if the relationship is ambiguous.
-- Always return valid JSON.
 
 ## Output Format
 

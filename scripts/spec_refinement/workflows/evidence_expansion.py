@@ -171,24 +171,28 @@ def _build_evidence_prompt(
     """
     section_list = ", ".join(valid_sections) if valid_sections else "None"
     lines = [
-        "You are mapping a library charter to relevant SOURCE FILE sections.",
-        "Return JSON with keys: file_id, relevant_sections, confidence, rationale.",
+        "## OUTPUT CONTRACT (REQUIRED)",
         "",
-        "Hard rules:",
-        (
-            f"- relevant_sections MUST be chosen from this exact allow-list "
-            f"for {file_id}: {section_list}"
-        ),
-        "- Do NOT return file-summary headings like 'Components' or 'Workflows'.",
-        (
-            "- Prefer the minimal set of sections needed. Include a section only "
-            "if it directly supports the charter or explicitly mentions the library "
-            "(e.g., in dependencies/integration notes)."
-        ),
-        (
-            "- If nothing is relevant, return an empty relevant_sections list and "
-            "set confidence <= 0.4."
-        ),
+        "Return ONLY valid JSON. No preamble, no code fences.",
+        "",
+        "REQUIRED SCHEMA:",
+        '{"file_id": "string", "relevant_sections": ["string"], "confidence": 0.0-1.0, '
+        '"rationale": "string"}',
+        "",
+        "REQUIRED RULES:",
+        f"- relevant_sections MUST be chosen from this exact allowlist for {file_id}: "
+        f"{section_list}",
+        "- Do NOT return file-summary headings like 'Components' or 'Workflows'",
+        "- Include ONLY sections that directly support the charter or explicitly mention "
+        "the library",
+        "- If nothing is relevant, return empty relevant_sections list and confidence <= 0.4",
+        "",
+        "FORBIDDEN:",
+        "- Sections not in the allowlist",
+        "- File-summary meta-headings",
+        "- Invented section labels",
+        "",
+        "## INPUT DATA",
         "",
         f"Library ID: {lib_id}",
         "",
@@ -198,6 +202,12 @@ def _build_evidence_prompt(
         f"File ID: {file_id}",
         "File Summary (contains evidence pointers and an Evidence Map):",
         summary_content.strip(),
+        "",
+        "## OUTPUT FORMAT",
+        "",
+        "Example:",
+        '{"file_id": "file_001", "relevant_sections": ["REQS", "CONSTRAINTS"], '
+        '"confidence": 0.8, "rationale": "..."}',
     ]
     return "\n".join(lines).strip() + "\n"
 
@@ -211,8 +221,22 @@ def _build_spotcheck_prompt(
 ) -> str:
     section_list = ", ".join(evidence_sections) if evidence_sections else "None"
     lines = [
-        "Audit evidence coverage for the library charter against the source file.",
-        "Return JSON with keys: missing_sections, scan_complete.",
+        "## OUTPUT CONTRACT (REQUIRED)",
+        "",
+        "Return ONLY valid JSON. No preamble, no code fences.",
+        "",
+        "REQUIRED SCHEMA:",
+        '{"missing_sections": ["string"], "scan_complete": true|false}',
+        "",
+        "REQUIRED RULES:",
+        "- missing_sections MUST be chosen from the allowlist provided below",
+        "- scan_complete MUST be true or false",
+        "",
+        "FORBIDDEN:",
+        "- Sections not in the allowlist",
+        "- Non-JSON output",
+        "",
+        "## INPUT DATA",
         "",
         f"Library ID: {lib_id}",
         "",
@@ -224,6 +248,11 @@ def _build_spotcheck_prompt(
         "",
         "Source File:",
         file_content.strip(),
+        "",
+        "## OUTPUT FORMAT",
+        "",
+        "Example:",
+        '{"missing_sections": ["INTRO"], "scan_complete": true}',
     ]
     return "\n".join(lines).strip() + "\n"
 

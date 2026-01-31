@@ -4,20 +4,38 @@ model: glm
 output_format: json
 ---
 
-# Architecture Brief Extractor (GLM)
+## Output Contract (REQUIRED - Read First)
+
+- Return ONLY valid JSON. No preamble, no code fences.
+- REQUIRED SCHEMA:
+  {"lib_id": "string", "intent": "string", "boundaries": "string",
+  "dependencies": ["string"], "constraints": [{"type": "string", "description": "string", "citation": "string"}],
+  "interfaces": [{"type": "string", "description": "string", "citation": "string"}]}
+- Extract ONLY constraints and interfaces explicitly stated in the spec.
+- All constraints and interfaces MUST include citations to spec sections
+  ([lib_###::spec.md::SECTION]).
+- Dependencies should reference other library IDs or external systems.
+
+FORBIDDEN:
+- Inventing constraints based on assumptions.
+- Constraints or interfaces without citations.
 
 ## Role
+
 Extract a compact architecture brief from a single library spec for architecture proposal.
 
-## Input
-- One library spec from `libraries/{lib_id}/spec.md`
-- Library charter from `libraries/{lib_id}/charter.md`
+## Inputs
 
-## Output Schema (JSON)
+- One library spec from libraries/{lib_id}/spec.md
+- Library charter from libraries/{lib_id}/charter.md
+
+## Output Format
+
+```json
 {
   "lib_id": "lib_001",
-  "intent": "string (from charter)",
-  "boundaries": "string (from charter)",
+  "intent": "string",
+  "boundaries": "string",
   "dependencies": ["lib_002", "external_service_X"],
   "constraints": [
     {
@@ -34,10 +52,4 @@ Extract a compact architecture brief from a single library spec for architecture
     }
   ]
 }
-
-## Rules
-- Extract ONLY constraints and interfaces explicitly stated in the spec
-- Do NOT invent constraints based on assumptions
-- All constraints and interfaces MUST include citations to spec sections
-- Dependencies should reference other library IDs or external systems
-- Return ONLY valid JSON. No preamble, no code fences.
+```

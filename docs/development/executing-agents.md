@@ -45,6 +45,12 @@ cat prompt.txt | uv run agents my-agent
 *Either `agent` or `--model` is required.
 **Prompt must be provided via argument, `--file`, or stdin.
 
+## GLM Prompt Structure Validation
+
+The spec refinement agent runner logs prompt structure metrics for GLM agents. If a
+GLM prompt does not front-load contract rules, a warning is emitted to help enforce
+contract-first prompt structure.
+
 ## Listing Available Models
 
 ```bash

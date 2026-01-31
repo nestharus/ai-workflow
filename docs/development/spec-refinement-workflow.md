@@ -5,6 +5,9 @@ avoid monolithic prompts and improve scalability on large codebases.
 
 ## Phase 2 Steps
 
+GLM agents in this workflow use contract-first prompts. See
+docs/development/glm-prompt-guidelines.md for the required structure.
+
 ### 2A. Per-file library labeling (GLM)
 - Input: a single `summaries/*.what.md` file
 - Output: `libraries/file_labels.json`

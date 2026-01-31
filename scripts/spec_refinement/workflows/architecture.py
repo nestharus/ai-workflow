@@ -428,15 +428,39 @@ def _extract_architecture_briefs(
 
 def _build_brief_extraction_prompt(lib_id: str, charter: str, spec: str) -> str:
     lines = [
-        f"Extract architecture brief for library: {lib_id}",
-        "Return JSON with: lib_id, intent, boundaries, dependencies, constraints, interfaces",
-        "All constraints and interfaces MUST include citations to spec sections.",
+        "## OUTPUT CONTRACT (REQUIRED)",
         "",
-        "## Charter",
+        "Return ONLY valid JSON. No preamble, no code fences.",
+        "",
+        "REQUIRED SCHEMA:",
+        '{"lib_id": "string", "intent": "string", "boundaries": "string", '
+        '"dependencies": ["string"], "constraints": [{"type": "string", "description": "string", '
+        '"citation": "string"}], "interfaces": [{"type": "string", "description": "string", '
+        '"citation": "string"}]}',
+        "",
+        "REQUIRED RULES:",
+        "- Extract ONLY constraints and interfaces explicitly stated in the spec",
+        "- All constraints and interfaces MUST include citations to spec sections "
+        "([lib_###::spec.md::SECTION])",
+        "- Dependencies should reference other library IDs or external systems",
+        "",
+        "FORBIDDEN:",
+        "- Inventing constraints based on assumptions",
+        "- Constraints/interfaces without citations",
+        "",
+        "## INPUT DATA",
+        "",
+        f"Library ID: {lib_id}",
+        "",
+        "Charter:",
         charter.strip(),
         "",
-        "## Spec",
+        "Spec:",
         spec.strip(),
+        "",
+        "## OUTPUT FORMAT",
+        "",
+        "See schema above.",
     ]
     return "\n".join(lines)
 
@@ -661,24 +685,29 @@ def _build_architecture_proposal_prompt(
     briefs: dict[str, dict[str, Any]],
 ) -> str:
     lines = [
-        "Generate 3-5 architecture candidates for Phase 6.",
-        "Return a JSON array of objects.",
-        (
-            "Each object must include: arch_id, pattern, description, components, "
-            "communication, deployment, citations, tradeoffs."
-        ),
-        "Components should be a list of objects with name and responsibilities.",
-        "Citations MUST use library pointers only:",
-        "- [lib_###::charter.md]",
-        (
-            "- [lib_###::spec.md::SECTION] where SECTION is taken from the "
-            "allow-list below (exact match)."
-        ),
-        (
-            "Do NOT cite source files like [file_001::REQS] in the output "
-            "(even if you see them inside specs)."
-        ),
-        "Tradeoffs must be concrete and measurable.",
+        "## OUTPUT CONTRACT (REQUIRED)",
+        "",
+        "Return ONLY a JSON array of architecture candidates. No preamble, no code fences.",
+        "",
+        "REQUIRED SCHEMA (each candidate):",
+        '{"arch_id": "string", "pattern": "string", "description": "string", '
+        '"components": [{"name": "string", "responsibilities": ["string"]}], '
+        '"communication": "string", "deployment": "string", "citations": ["string"], '
+        '"tradeoffs": {"advantages": ["string"], "disadvantages": ["string"]}}',
+        "",
+        "REQUIRED RULES:",
+        "- Generate 3-5 architecture candidates",
+        "- Citations MUST use library pointers only:",
+        "  - [lib_###::charter.md]",
+        "  - [lib_###::spec.md::SECTION] (SECTION from allowlist below)",
+        "- Tradeoffs MUST be concrete and measurable",
+        "",
+        "FORBIDDEN:",
+        "- Citing source files like [file_001::REQS]",
+        "- Abstract/vague tradeoffs",
+        "- Invented section labels",
+        "",
+        "## INPUT DATA",
         "",
         f"Libraries provided: {len(lib_charters)}",
         "",
@@ -746,7 +775,14 @@ def _build_architecture_proposal_prompt(
                 lines.append(f"- {lib_id} spec.md: {', '.join(sections)}")
             else:
                 lines.append(f"- {lib_id} spec.md: (no sections detected)")
-
+    lines.extend(
+        [
+            "",
+            "## OUTPUT FORMAT",
+            "",
+            "See schema above.",
+        ]
+    )
     return "\n".join(lines).strip() + "\n"
 
 
@@ -754,22 +790,26 @@ def _build_architecture_selection_prompt(
     candidates: dict[str, str], lib_specs: dict[str, str]
 ) -> str:
     lines = [
-        "Select the best architecture candidate.",
-        (
-            "Return JSON with selected_arch_id, rationale, rejected_architectures, "
-            "implementation_risks, evolution_notes."
-        ),
-        "Citations MUST use library pointers only:",
-        "- [lib_###::charter.md]",
-        (
-            "- [lib_###::spec.md::SECTION] where SECTION is taken from the "
-            "allow-list below (exact match)."
-        ),
-        (
-            "Do NOT cite source files like [file_001::REQS] in the output "
-            "(even if you see them inside specs)."
-        ),
-        "Use citations from library specs/charters in the rationale (not file-level citations).",
+        "## OUTPUT CONTRACT (REQUIRED)",
+        "",
+        "Return ONLY valid JSON. No preamble, no code fences.",
+        "",
+        "REQUIRED SCHEMA:",
+        '{"selected_arch_id": "string", "rationale": "string", '
+        '"rejected_architectures": [{"arch_id": "string", "rationale": "string"}], '
+        '"implementation_risks": ["string"], "evolution_notes": ["string"]}',
+        "",
+        "REQUIRED RULES:",
+        "- Citations MUST use library pointers only:",
+        "  - [lib_###::charter.md]",
+        "  - [lib_###::spec.md::SECTION] (SECTION from allowlist below)",
+        "- Do NOT cite source files like [file_001::REQS]",
+        "- Use citations from library specs/charters in the rationale",
+        "",
+        "FORBIDDEN:",
+        "- File-level citations",
+        "",
+        "## INPUT DATA",
         "",
         "## Candidates",
     ]
@@ -794,6 +834,13 @@ def _build_architecture_selection_prompt(
                 lines.append(f"- {lib_id} spec.md: (no sections detected)")
         lines.append("")
 
+    lines.extend(
+        [
+            "## OUTPUT FORMAT",
+            "",
+            "See schema above.",
+        ]
+    )
     return "\n".join(lines).strip() + "\n"
 
 
@@ -930,11 +977,27 @@ def _build_library_mapping_prompt(
     spec: str,
 ) -> str:
     lines = [
-        f"Map library {lib_id} to the appropriate architecture component.",
-        "Return JSON with: lib_id, component, rationale, citations, cross_component_dependencies",
-        "Citations MUST use library pointers only: [lib_###::charter.md] or "
+        "## OUTPUT CONTRACT (REQUIRED)",
+        "",
+        "Return ONLY valid JSON. No preamble, no code fences.",
+        "",
+        "REQUIRED SCHEMA:",
+        '{"lib_id": "lib_###", "component": "string", "rationale": "string", '
+        '"citations": ["string"], "cross_component_dependencies": '
+        '[{"target_component": "string", "reason": "string", "citation": "string"}]}',
+        "",
+        "REQUIRED RULES:",
+        "- Every mapping MUST include at least one citation",
+        "- Citations MUST use library pointers only: [lib_###::charter.md] or "
         "[lib_###::spec.md::SECTION]",
-        "Do NOT cite source files like [file_001::REQS]",
+        "- Component name MUST match one of the components in the selected architecture",
+        "- Do NOT cite source files like [file_001::REQS]",
+        "",
+        "FORBIDDEN:",
+        "- Missing citations",
+        "- File-level citations",
+        "",
+        "## INPUT DATA",
         "",
         "## Selected Architecture",
         selected_architecture.strip(),
@@ -944,6 +1007,10 @@ def _build_library_mapping_prompt(
         "",
         f"## Library {lib_id} Spec",
         _summarize_spec_for_prompt(spec),
+        "",
+        "## OUTPUT FORMAT",
+        "",
+        "See schema above.",
     ]
     return "\n".join(lines)
 
