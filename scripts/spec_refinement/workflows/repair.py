@@ -5,16 +5,45 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from scripts.spec_refinement.workspace import WorkspaceManager
 
 from .agent_utils import run_agent
 
-DEFAULT_REPAIR_MODEL = "gpt-5.2-low"
+_FALLBACK_REPAIR_MODEL = "gpt-5.2-low"
+_REPAIR_MODEL_SELECTION_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "scripts/spec_refinement/evaluation/results/REPAIR_MODEL_SELECTION.md"
+)
+_REPAIR_MODEL_RECOMMENDATION_PATTERN = re.compile(
+    r"recommend\s+\*\*(?P<model>[^*]+)\*\*",
+    re.IGNORECASE,
+)
+_REPAIR_MODEL_DEFAULT_PATTERN = re.compile(
+    r"Current default:\s*\*\*(?P<model>[^*]+)\*\*",
+    re.IGNORECASE,
+)
+
+
+def _load_selected_repair_model() -> str:
+    try:
+        content = _REPAIR_MODEL_SELECTION_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return _FALLBACK_REPAIR_MODEL
+    for pattern in (_REPAIR_MODEL_RECOMMENDATION_PATTERN, _REPAIR_MODEL_DEFAULT_PATTERN):
+        match = pattern.search(content)
+        if match:
+            return match.group("model").strip()
+    return _FALLBACK_REPAIR_MODEL
+
+
+DEFAULT_REPAIR_MODEL = _load_selected_repair_model()
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +104,8 @@ def repair_artifact(
             workspace=manager.workspace_path,
             extra_env={"REPAIR_MODEL": selection.model_name},
         )
+        if not isinstance(repaired, str):
+            raise TypeError(f"Expected str from repair agent, got {type(repaired).__name__}")
     except Exception:
         logger.exception(
             "Repair failed (artifact_type=%s, agent=%s, model=%s).",

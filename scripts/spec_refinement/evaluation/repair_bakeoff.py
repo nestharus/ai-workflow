@@ -9,10 +9,11 @@ import re
 import statistics
 import tempfile
 import time
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from scripts.spec_refinement.evaluation.fixtures import FixtureCategory, RepairFixture
 from scripts.spec_refinement.workflows.architecture import _validate_architecture_citations
@@ -23,7 +24,11 @@ from scripts.spec_refinement.workflows.library_synthesis import (
     _validate_library_ids,
     _validate_overlap_resolutions,
 )
-from scripts.spec_refinement.workflows.repair import ArtifactType, _build_repair_prompt, repair_artifact
+from scripts.spec_refinement.workflows.repair import (
+    ArtifactType,
+    _build_repair_prompt,
+    repair_artifact,
+)
 from scripts.spec_refinement.workflows.spec_building import _validate_spec_citations
 from scripts.spec_refinement.workflows.summarization import _validate_evidence_pointers
 from scripts.spec_refinement.workspace import RunFolderStructure, WorkspaceManager, WorkspaceState
@@ -57,6 +62,15 @@ _FIXTURE_CATEGORY_BY_ID: dict[str, set[FixtureCategory]] = {}
 
 @dataclass(frozen=True)
 class ModelConfig:
+    """Configuration for an AI model used in repair evaluation.
+
+    Attributes:
+        name: Human-readable model name.
+        provider: Name of the model provider (e.g., "openai", "anthropic").
+        model_id: Model identifier for API calls.
+        cost_per_1k_tokens: Tuple of (input_cost, output_cost) per 1000 tokens.
+    """
+
     name: str
     provider: str
     model_id: str
@@ -65,6 +79,20 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class RepairResult:
+    """Result of running repair on a single fixture with a model.
+
+    Attributes:
+        fixture_id: Identifier of the fixture that was repaired.
+        model_name: Name of the model used for repair.
+        success: Whether the repair produced valid output.
+        validation_errors: List of validation errors found in repaired output.
+        edit_distance: Levenshtein distance between original and repaired output.
+        latency_ms: Repair execution time in milliseconds.
+        input_tokens: Estimated input tokens for the repair request.
+        output_tokens: Estimated output tokens in the repair response.
+        cost_usd: Estimated cost in USD for this repair attempt.
+    """
+
     fixture_id: str
     model_name: str
     success: bool
@@ -81,25 +109,25 @@ CANDIDATE_MODELS: list[ModelConfig] = [
         name="gpt-5.2-none",
         provider="openai",
         model_id="gpt-5.2-none",
-        cost_per_1k_tokens=(0.0, 0.0),
+        cost_per_1k_tokens=(0.00175, 0.014),
     ),
     ModelConfig(
         name="gpt-5.2-low",
         provider="openai",
         model_id="gpt-5.2-low",
-        cost_per_1k_tokens=(0.0, 0.0),
+        cost_per_1k_tokens=(0.00175, 0.014),
     ),
     ModelConfig(
         name="claude-haiku",
         provider="anthropic",
         model_id="claude-haiku",
-        cost_per_1k_tokens=(0.0, 0.0),
+        cost_per_1k_tokens=(0.001, 0.005),
     ),
     ModelConfig(
         name="gemini-3-flash",
         provider="gemini",
         model_id="gemini-3-flash-low",
-        cost_per_1k_tokens=(0.0, 0.0),
+        cost_per_1k_tokens=(0.0005, 0.003),
     ),
 ]
 
@@ -197,6 +225,16 @@ def _estimate_tokens(text: str) -> int:
 
 
 def compute_edit_distance(original: str, repaired: str) -> int:
+    """Calculate Levenshtein edit distance between two strings.
+
+    Args:
+        original: The original string.
+        repaired: The repaired string.
+
+    Returns:
+        int: The minimum number of insertions, deletions, or substitutions
+            required to transform original into repaired.
+    """
     if original == repaired:
         return 0
     if not original:
@@ -217,6 +255,19 @@ def compute_edit_distance(original: str, repaired: str) -> int:
 
 
 def is_repair_minimal(original: str, repaired: str, errors: list[dict[str, Any]]) -> bool:
+    """Check if repair is minimal given the expected errors.
+
+    A minimal repair should only modify lines directly related to the error
+    types expected. Changes outside those scopes are considered non-minimal.
+
+    Args:
+        original: The original output text.
+        repaired: The repaired output text.
+        errors: List of error dictionaries with type information.
+
+    Returns:
+        bool: True if repair is minimal, False otherwise.
+    """
     if original == repaired:
         return True
 
@@ -234,7 +285,7 @@ def is_repair_minimal(original: str, repaired: str, errors: list[dict[str, Any]]
     from difflib import SequenceMatcher
 
     matcher = SequenceMatcher(a=original_lines, b=repaired_lines)
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             continue
         changed_lines = repaired_lines[j1:j2]
@@ -242,9 +293,12 @@ def is_repair_minimal(original: str, repaired: str, errors: list[dict[str, Any]]
             continue
         if "trailing_fence" in error_types and j2 >= max(len(repaired_lines) - 2, 0):
             continue
-        if "compound_pointer" in error_types and allowed_snippets:
-            if any(snippet in line for snippet in allowed_snippets for line in changed_lines):
-                continue
+        if (
+            "compound_pointer" in error_types
+            and allowed_snippets
+            and any(snippet in line for snippet in allowed_snippets for line in changed_lines)
+        ):
+            continue
         if allowed_snippets and any(
             snippet in line for snippet in allowed_snippets for line in changed_lines
         ):
@@ -368,15 +422,15 @@ def _build_validation_manager(allowlists: dict[str, Any], root: Path) -> Workspa
     if isinstance(raw_file_ids, list):
         file_ids = [str(item) for item in raw_file_ids if item]
     if not file_ids:
-        raw_sections = allowlists.get("sections", {})
-        if isinstance(raw_sections, dict):
-            file_ids = list(raw_sections.keys())
+        sections_for_file_ids = allowlists.get("sections", {})
+        if isinstance(sections_for_file_ids, dict):
+            file_ids = list(sections_for_file_ids.keys())
 
     file_manifest = {file_id: str(root / "inputs" / f"{file_id}.md") for file_id in file_ids}
     manager.state.file_manifest = file_manifest
 
     section_manifest: dict[str, list[str]] = {}
-    raw_sections = allowlists.get("sections", {})
+    raw_sections: dict[str, list[str] | str] = allowlists.get("sections", {})
     if isinstance(raw_sections, dict):
         for file_id, sections in raw_sections.items():
             if isinstance(sections, list):
@@ -398,7 +452,7 @@ def _build_validation_manager(allowlists: dict[str, Any], root: Path) -> Workspa
     return manager
 
 
-def _render_library_file(filename: str, sections: Any) -> str:
+def _render_library_file(filename: str, sections: list[str] | object) -> str:
     title = filename.replace(".md", "").replace("_", " ").title()
     lines = [f"# {title}", ""]
     if isinstance(sections, list) and sections:
@@ -417,6 +471,16 @@ def _render_library_file(filename: str, sections: Any) -> str:
 def validate_repaired_output(
     output: str, artifact_type: ArtifactType, allowlists: dict[str, Any]
 ) -> list[dict[str, Any]]:
+    """Validate repaired output against artifact-specific rules.
+
+    Args:
+        output: The repaired text output to validate.
+        artifact_type: Type of artifact being validated.
+        allowlists: Validation allowlists containing valid file IDs, sections, etc.
+
+    Returns:
+        List of validation error dictionaries.
+    """
     issues: list[dict[str, Any]] = []
 
     anchors: tuple[str, ...]
@@ -487,6 +551,16 @@ def _validate_charter_evidence_lines(content: str) -> list[dict[str, Any]]:
 def _validate_evidence_json(
     output: str, manager: WorkspaceManager, allowlists: dict[str, Any]
 ) -> list[dict[str, Any]]:
+    """Validate evidence JSON output structure and citations.
+
+    Args:
+        output: JSON string to validate.
+        manager: Workspace manager for file lookups.
+        allowlists: Validation allowlists.
+
+    Returns:
+        List of validation error dictionaries.
+    """
     issues: list[dict[str, Any]] = []
     lib_id = str(allowlists.get("lib_id") or "lib_000")
     try:
@@ -544,6 +618,16 @@ def _validate_evidence_json(
 def run_repair_with_model(
     fixture: RepairFixture, model: ModelConfig, workspace: Path
 ) -> RepairResult:
+    """Run repair on a single fixture using the specified model.
+
+    Args:
+        fixture: The fixture containing invalid output and expected errors.
+        model: The model configuration to use for repair.
+        workspace: Path to the workspace directory for temporary files.
+
+    Returns:
+        RepairResult containing success status and metrics.
+    """
     fixture_id = _FIXTURE_ID_BY_OBJECT.get(id(fixture), "unknown")
 
     errors = validate_repaired_output(
@@ -635,6 +719,16 @@ def run_bakeoff(
     models: list[ModelConfig],
     workspace: Path,
 ) -> list[RepairResult]:
+    """Run repair bakeoff across all fixtures and models concurrently.
+
+    Args:
+        fixtures: List of fixtures to repair.
+        models: List of model configurations to evaluate.
+        workspace: Path to workspace for temporary files.
+
+    Returns:
+        List of repair results for all fixture/model combinations.
+    """
     results: list[RepairResult] = []
     tasks = [(fixture, model) for fixture in fixtures for model in models]
 
@@ -649,6 +743,24 @@ def run_bakeoff(
 
 
 def aggregate_results(results: list[RepairResult]) -> dict[str, Any]:
+    """Aggregate repair results into statistics by model.
+
+    Args:
+        results: List of repair results to aggregate.
+
+    Returns:
+        Dictionary mapping model names to their computed statistics including
+        pass rate, average edit distance, latency, cost, and failure breakdown.
+    """
+    """Aggregate repair results into statistics by model.
+
+    Args:
+        results: List of repair results to aggregate.
+
+    Returns:
+        Dictionary mapping model names to their computed statistics including
+        pass rate, average edit distance, latency, cost, and failure breakdown.
+    """
     stats: dict[str, Any] = {}
     by_model: dict[str, list[RepairResult]] = {}
 
@@ -713,6 +825,12 @@ def _format_percentage(value: float) -> str:
 
 
 def generate_report(results: list[RepairResult], output_path: Path) -> None:
+    """Generate a markdown report for repair bakeoff results.
+
+    Args:
+        results: List of repair results to report on.
+        output_path: Path where the report should be written.
+    """
     stats = aggregate_results(results)
     breakdown = _category_breakdown(results)
     timestamp = time.strftime("%Y-%m-%d")
@@ -756,7 +874,9 @@ def generate_report(results: list[RepairResult], output_path: Path) -> None:
     lines.extend(["", "## Failure Analysis", ""])
     for model in models:
         lines.append(f"### {model}")
-        failures = [result for result in results if result.model_name == model and not result.success]
+        failures = [
+            result for result in results if result.model_name == model and not result.success
+        ]
         if not failures:
             lines.append("- No failures")
             lines.append("")
@@ -779,9 +899,9 @@ def generate_report(results: list[RepairResult], output_path: Path) -> None:
             "",
             "```mermaid",
             "xychart-beta",
-            "  title \"Pass Rate by Model\"",
-            "  x-axis [" + ", ".join(f"\"{model}\"" for model in models) + "]",
-            "  y-axis \"Pass Rate\" 0 --> 1",
+            '  title "Pass Rate by Model"',
+            "  x-axis [" + ", ".join(f'"{model}"' for model in models) + "]",
+            '  y-axis "Pass Rate" 0 --> 1',
             "  bar [" + ", ".join(f"{stats[model]['pass_rate']:.2f}" for model in models) + "]",
             "```",
             "",
@@ -817,6 +937,11 @@ def _recommend_model(stats: dict[str, Any]) -> str:
 
 
 def main() -> None:
+    """Run the repair model bakeoff evaluation.
+
+    Parses command-line arguments to select models and fixture categories,
+    runs repair tasks, generates a markdown report, and prints a recommendation.
+    """
     parser = argparse.ArgumentParser(description="Run repair model bakeoff")
     parser.add_argument(
         "--models",
