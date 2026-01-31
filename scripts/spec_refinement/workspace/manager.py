@@ -8,6 +8,7 @@ Agent Integration:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from dataclasses import dataclass, field
@@ -126,13 +127,6 @@ class WorkspaceManager:
         if not self.input_folder.exists():
             return [f"Input folder does not exist: {self.input_folder}"]
 
-        if self.structure.spec_snapshot_dir.exists() and not force:
-            issues.append(
-                "Spec snapshot already exists. Use --force to reinitialize or "
-                "resume with existing snapshot."
-            )
-            return issues
-
         if self.structure.root.exists() and force:
             shutil.rmtree(self.structure.root)
 
@@ -147,24 +141,22 @@ class WorkspaceManager:
         ]:
             subdir.mkdir(parents=True, exist_ok=True)
 
-        try:
-            shutil.copytree(self.input_folder, self.structure.spec_snapshot_dir)
-        except OSError as exc:
-            issues.append(f"Failed to create spec snapshot: {exc}")
+        snapshot_issues: list[str] = []
+        snapshot_verified = False
+
+        if self.structure.spec_snapshot_dir.exists() and not force:
+            snapshot_issues.extend(self._validate_spec_snapshot_immutability())
+            snapshot_verified = not snapshot_issues
         else:
-            try:
-                expected_count = sum(1 for path in self.input_folder.rglob("*") if path.is_file())
-                actual_count = sum(
-                    1 for path in self.structure.spec_snapshot_dir.rglob("*") if path.is_file()
-                )
-            except OSError as exc:
-                issues.append(f"Snapshot verification failed: {exc}")
-            else:
-                if expected_count != actual_count:
-                    issues.append(
-                        "Snapshot verification failed: expected "
-                        f"{expected_count} files, found {actual_count}"
-                    )
+            snapshot_issues.extend(self._create_spec_snapshot())
+            snapshot_verified = not snapshot_issues
+
+        if snapshot_issues:
+            issues.extend(snapshot_issues)
+            return issues
+
+        if not snapshot_verified or not self.structure.spec_snapshot_dir.exists():
+            return issues
 
         file_manifest = self._enumerate_files()
         if not file_manifest:
@@ -242,6 +234,125 @@ class WorkspaceManager:
             file_id = f"file_{index:03d}"
             files[file_id] = str(md_file.resolve())
         return files
+
+    def _create_spec_snapshot(self) -> list[str]:
+        """Create a spec snapshot and record its baseline."""
+        issues: list[str] = []
+
+        try:
+            shutil.copytree(self.input_folder, self.structure.spec_snapshot_dir)
+        except OSError as exc:
+            issues.append(f"Failed to create spec snapshot: {exc}")
+            return issues
+
+        try:
+            expected_count = sum(1 for path in self.input_folder.rglob("*") if path.is_file())
+            actual_count = sum(
+                1 for path in self.structure.spec_snapshot_dir.rglob("*") if path.is_file()
+            )
+        except OSError as exc:
+            issues.append(f"Snapshot verification failed: {exc}")
+            return issues
+
+        if expected_count != actual_count:
+            issues.append(
+                "Snapshot verification failed: expected "
+                f"{expected_count} files, found {actual_count}"
+            )
+            return issues
+
+        baseline, baseline_issues = self._build_spec_snapshot_baseline()
+        if baseline_issues:
+            issues.extend(baseline_issues)
+            return issues
+
+        self.state.spec_snapshot_baseline = baseline
+        return issues
+
+    def _validate_spec_snapshot_immutability(self) -> list[str]:
+        """Validate that the spec snapshot has not been modified."""
+        issues: list[str] = []
+        baseline = self.state.spec_snapshot_baseline
+        if baseline is None:
+            issues.append("Spec snapshot baseline missing. Use --force to recreate the snapshot.")
+            return issues
+
+        current, baseline_issues = self._build_spec_snapshot_baseline()
+        if baseline_issues:
+            issues.extend(baseline_issues)
+            return issues
+
+        drift = self._describe_spec_snapshot_drift(baseline, current)
+        if drift:
+            issues.append(drift)
+
+        return issues
+
+    def _build_spec_snapshot_baseline(self) -> tuple[dict[str, str], list[str]]:
+        """Build a content hash baseline for the spec snapshot."""
+        issues: list[str] = []
+        baseline: dict[str, str] = {}
+
+        snapshot_dir = self.structure.spec_snapshot_dir
+        if not snapshot_dir.exists():
+            issues.append(f"Spec snapshot directory missing: {snapshot_dir}")
+            return baseline, issues
+
+        for path in sorted(snapshot_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            rel_path = path.relative_to(snapshot_dir).as_posix()
+            try:
+                baseline[rel_path] = self._hash_snapshot_file(path)
+            except OSError as exc:
+                issues.append(f"Failed to hash snapshot file {rel_path}: {exc}")
+
+        return baseline, issues
+
+    @staticmethod
+    def _hash_snapshot_file(path: Path) -> str:
+        """Compute a stable hash for a snapshot file."""
+        hasher = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    @staticmethod
+    def _describe_spec_snapshot_drift(
+        baseline: dict[str, str], current: dict[str, str]
+    ) -> str | None:
+        """Describe snapshot drift between baseline and current hashes."""
+        missing = sorted(set(baseline) - set(current))
+        added = sorted(set(current) - set(baseline))
+        modified = sorted(
+            path for path in baseline.keys() & current.keys() if baseline[path] != current[path]
+        )
+
+        if not missing and not added and not modified:
+            return None
+
+        parts: list[str] = []
+        if missing:
+            parts.append(f"{len(missing)} missing")
+        if added:
+            parts.append(f"{len(added)} added")
+        if modified:
+            parts.append(f"{len(modified)} modified")
+
+        samples: list[str] = []
+        if missing:
+            samples.append(f"missing: {', '.join(missing[:3])}")
+        if added:
+            samples.append(f"added: {', '.join(added[:3])}")
+        if modified:
+            samples.append(f"modified: {', '.join(modified[:3])}")
+
+        message = "Spec snapshot has changed since creation (" + ", ".join(parts) + ")."
+        if samples:
+            message += f" Examples: {'; '.join(samples)}."
+        message += " Use --force to recreate the snapshot."
+        return message
 
     def _extract_section_labels(self, file_path: Path) -> list[str]:
         """Extract stable section labels from a file.

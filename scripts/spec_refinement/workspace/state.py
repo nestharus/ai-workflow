@@ -68,6 +68,7 @@ class WorkspaceState:
     phases: dict[str, PhaseResult] = field(default_factory=dict)
     file_manifest: dict[str, str] = field(default_factory=dict)
     section_manifest: dict[str, list[str]] = field(default_factory=dict)
+    spec_snapshot_baseline: dict[str, str] | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
 
     @staticmethod
@@ -206,6 +207,7 @@ class WorkspaceState:
             },
             "file_manifest": self.file_manifest,
             "section_manifest": self.section_manifest,
+            "spec_snapshot_baseline": self.spec_snapshot_baseline,
             "history": self.history,
         }
 
@@ -253,6 +255,10 @@ class WorkspaceState:
                 f"Invalid phase value '{raw_phase}'. Valid values are: {[p.value for p in Phase]}"
             ) from e
 
+        baseline = data.get("spec_snapshot_baseline")
+        if not isinstance(baseline, dict):
+            baseline = None
+
         state = cls(
             run_id=data["run_id"],
             input_folder=data["input_folder"],
@@ -261,6 +267,7 @@ class WorkspaceState:
             current_phase=current_phase,
             file_manifest=data.get("file_manifest", {}),
             section_manifest=data.get("section_manifest", {}),
+            spec_snapshot_baseline=baseline,
             history=data.get("history", []),
         )
 
