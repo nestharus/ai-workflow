@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, format_gap_table
+from scripts.spec_refinement.core.gap_queue import GapQueue
 from scripts.spec_refinement.schemas import GapJudgeOutput, SpecPatchOutput
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
@@ -308,6 +309,44 @@ def _filter_open_gaps_for_file(gaps: list[Gap], file_id: str) -> list[Gap]:
     ]
 
 
+def _detect_remainder_content(
+    spec_content: str,
+    file_id: str,
+    file_content: str,
+    evidence_sections: list[str],
+    manager: WorkspaceManager,
+) -> list[GapEvidence]:
+    _ = file_content
+    _ = manager
+    pointers = EVIDENCE_POINTER_RE.findall(spec_content)
+    cited_sections = {section for file_ref, section in pointers if file_ref == file_id}
+    uncited = set(evidence_sections) - cited_sections
+
+    lib_id = "unknown"
+    for line in spec_content.splitlines():
+        if line.startswith("# Library Spec:"):
+            lib_id = line.split(":", 1)[1].strip() or "unknown"
+            break
+
+    evidence_list: list[GapEvidence] = []
+    for section in sorted(uncited):
+        evidence_list.append(
+            GapEvidence(
+                invariant_family="coverage",
+                description=f"Section {section} not cited in spec",
+                details={
+                    "source": f"[{file_id}::{section}]",
+                    "derived_artifact_target": f"libraries/{lib_id}/spec.md",
+                    "severity": "warning",
+                    "gap_type": "coverage_failure",
+                },
+                confidence=1.0,
+                detector="spec-remainder-detector",
+            )
+        )
+    return evidence_list
+
+
 def _extract_spec_markdown(output: str, lib_id: str) -> str:
     """Strip agent chatter and return the spec markdown document.
 
@@ -547,6 +586,7 @@ def _build_library_spec(
             "iterations": 0,
             "converged": False,
             "failed": True,
+            "coverage_metrics": {},
         }
 
     charter_content = charter_path.read_text(encoding="utf-8")
@@ -562,6 +602,7 @@ def _build_library_spec(
             "iterations": 0,
             "converged": False,
             "failed": True,
+            "coverage_metrics": {},
         }
 
     file_id_lookup = build_file_id_lookup(manager.state.file_manifest)
@@ -569,11 +610,15 @@ def _build_library_spec(
     valid_file_ids = list(manager.state.file_manifest.keys())
 
     existing_gaps = manager.read_library_gaps(lib_id)
+    gap_queue = manager.get_library_gap_queue(lib_id)
+    if not (lib_dir / "gap_queue.json").exists():
+        gap_queue = GapQueue(gaps=existing_gaps)
     gap_history: list[tuple[str, ...]] = []
     total_patches_applied = 0
     total_files_processed = 0
     total_prompt_size_old = 0
     total_prompt_size_new = 0
+    coverage_metrics: dict[str, Any] = {}
 
     for iteration in range(max_iterations):
         iterations += 1
@@ -871,21 +916,53 @@ def _build_library_spec(
 
             raw_gaps = data.get("gaps", [])
             evidence_list.extend(_build_gaps_from_judge(lib_id, file_id, raw_gaps, issues))
+            remainder_evidence = _detect_remainder_content(
+                spec_content,
+                file_id,
+                file_content,
+                evidence_sections,
+                manager,
+            )
+            evidence_list.extend(remainder_evidence)
 
         synthesizer = GapSynthesizer()
         new_gaps = synthesizer.cluster_evidence(evidence_list) if evidence_list else []
         existing_gaps = synthesizer.merge_gaps(existing_gaps, new_gaps)
 
-        manager.write_library_gaps(lib_id, existing_gaps)
-
         if not new_gaps:
             existing_gaps = []
-            manager.write_library_gaps(lib_id, existing_gaps)
-            manager.record_gap_audit(Phase.SPEC_BUILDING, gaps=existing_gaps, converged=True)
+
+        gap_queue.update(existing_gaps)
+        coverage_metrics = gap_queue.get_coverage_metrics()
+        _log_history_event(
+            manager,
+            "gap_coverage_metrics",
+            {
+                "lib_id": lib_id,
+                **coverage_metrics,
+            },
+        )
+
+        manager.write_library_gaps(lib_id, existing_gaps)
+
+        if not new_gaps or gap_queue.is_stagnant:
+            gap_queue.mark_progress()
+            manager.write_library_gap_queue(lib_id, gap_queue)
+            manager.record_gap_audit(
+                Phase.SPEC_BUILDING,
+                gaps=existing_gaps,
+                converged=True,
+                coverage_metrics=coverage_metrics,
+            )
             converged = True
             break
 
-        manager.record_gap_audit(Phase.SPEC_BUILDING, gaps=existing_gaps, converged=False)
+        manager.record_gap_audit(
+            Phase.SPEC_BUILDING,
+            gaps=existing_gaps,
+            converged=False,
+            coverage_metrics=coverage_metrics,
+        )
 
         signature = _gap_signature(existing_gaps)
         gap_history.append(signature)
@@ -906,6 +983,7 @@ def _build_library_spec(
             if total_prompt_size_old
             else 0.0
         ),
+        "coverage_metrics": coverage_metrics,
     }
 
 
@@ -940,6 +1018,8 @@ def build_specs(run_id: str, max_iterations: int = MAX_ITERATIONS_DEFAULT) -> di
     errors: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
     failed_libraries = 0
+    coverage_ratios: list[float] = []
+    coverage_by_library: dict[str, dict[str, Any]] = {}
 
     for lib_dir in lib_dirs:
         result = _build_library_spec(manager, lib_dir, max_iterations)
@@ -950,6 +1030,12 @@ def build_specs(run_id: str, max_iterations: int = MAX_ITERATIONS_DEFAULT) -> di
         total_prompt_size_new += result.get("prompt_size_new", 0)
         errors.extend(result.get("errors", []))
         issues.extend(result.get("issues", []))
+        metrics = result.get("coverage_metrics")
+        if isinstance(metrics, dict) and metrics:
+            coverage_by_library[lib_dir.name] = metrics
+            ratio = metrics.get("convergence_ratio")
+            if isinstance(ratio, (int, float)):
+                coverage_ratios.append(float(ratio))
         if result.get("failed"):
             failed_libraries += 1
         else:
@@ -973,6 +1059,11 @@ def build_specs(run_id: str, max_iterations: int = MAX_ITERATIONS_DEFAULT) -> di
         if total_prompt_size_old
         else 0.0
     )
+    avg_convergence_ratio = sum(coverage_ratios) / len(coverage_ratios) if coverage_ratios else 1.0
+    coverage_payload = {
+        "total_coverage_ratio": avg_convergence_ratio,
+        "libraries": coverage_by_library,
+    }
     outputs = {
         "libraries_built": libraries_built,
         "total_iterations": total_iterations,
@@ -980,6 +1071,8 @@ def build_specs(run_id: str, max_iterations: int = MAX_ITERATIONS_DEFAULT) -> di
         "total_patches_applied": total_patches_applied,
         "avg_patches_per_file": round(avg_patches_per_file, 2),
         "context_reduction_pct": round(context_reduction_pct, 2),
+        "total_coverage_ratio": round(avg_convergence_ratio, 2),
+        "coverage_metrics": coverage_payload,
     }
 
     if total_libs > 0 and failure_ratio > 0.5:
@@ -994,4 +1087,6 @@ def build_specs(run_id: str, max_iterations: int = MAX_ITERATIONS_DEFAULT) -> di
         "errors": errors,
         "issues": issues,
         "outputs": outputs,
+        "coverage_metrics": coverage_by_library,
+        "total_coverage_ratio": avg_convergence_ratio,
     }

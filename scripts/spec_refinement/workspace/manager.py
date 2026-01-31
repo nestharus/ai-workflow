@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.spec_refinement.core.gap import Gap, format_gap_markdown, parse_gaps_markdown
+from scripts.spec_refinement.core.gap_queue import GapQueue
 
 from .state import Phase, WorkspaceState
 
@@ -366,8 +367,12 @@ class WorkspaceManager:
         """Write gaps.md for a library."""
         lib_dir = self.structure.libraries_dir / lib_id
         lib_dir.mkdir(parents=True, exist_ok=True)
+        gap_queue = self.get_library_gap_queue(lib_id)
+        gap_queue.update(gaps)
+        self.write_library_gap_queue(lib_id, gap_queue)
+        metrics = gap_queue.get_coverage_metrics()
         gaps_path = lib_dir / "gaps.md"
-        gaps_path.write_text(self.format_gaps_md(gaps), encoding="utf-8")
+        gaps_path.write_text(self.format_gaps_md(gaps, metrics), encoding="utf-8")
         return gaps_path
 
     def read_library_gaps(self, lib_id: str) -> list[Gap]:
@@ -382,7 +387,7 @@ class WorkspaceManager:
         task_dir = self.structure.tasks_dir / task_id
         task_dir.mkdir(parents=True, exist_ok=True)
         gaps_path = task_dir / "gaps.md"
-        gaps_path.write_text(self.format_gaps_md(gaps), encoding="utf-8")
+        gaps_path.write_text(self.format_gaps_md(gaps, None), encoding="utf-8")
         return gaps_path
 
     def read_task_gaps(self, task_id: str) -> list[Gap]:
@@ -411,12 +416,20 @@ class WorkspaceManager:
                     gaps[task_dir.name] = self.read_task_gaps(task_dir.name)
         return gaps
 
-    def record_gap_audit(self, phase: Phase, gaps: list[Gap], converged: bool) -> None:
+    def record_gap_audit(
+        self,
+        phase: Phase,
+        gaps: list[Gap],
+        converged: bool,
+        coverage_metrics: dict[str, Any] | None = None,
+    ) -> None:
         """Record gap audit convergence stats for a phase."""
         result = self.state.phases[phase.value]
         result.gap_audit_iterations += 1
         result.gap_audit_converged = converged
         result.open_gaps_count = len([gap for gap in gaps if gap.status == "open"])
+        if coverage_metrics is not None:
+            result.coverage_metrics = coverage_metrics
         self._save_state()
 
     def get_gap_audit_status(self, phase: Phase) -> dict[str, Any]:
@@ -429,7 +442,7 @@ class WorkspaceManager:
         }
 
     @staticmethod
-    def format_gaps_md(gaps: list[Gap]) -> str:
+    def format_gaps_md(gaps: list[Gap], metrics: dict[str, Any] | None = None) -> str:
         """Format a list of gaps into markdown sections."""
         sections = [
             ("open", "Open Gaps"),
@@ -442,6 +455,27 @@ class WorkspaceManager:
             grouped.setdefault(gap.status, []).append(gap)
 
         lines: list[str] = []
+        if metrics is not None:
+            total_gaps = metrics.get("total_gaps", len(gaps))
+            open_gaps = metrics.get("open_gaps", len([gap for gap in gaps if gap.status == "open"]))
+            closed_gaps = metrics.get(
+                "closed_gaps", len([gap for gap in gaps if gap.status == "integrated"])
+            )
+            convergence_ratio = metrics.get(
+                "convergence_ratio",
+                (closed_gaps / total_gaps if total_gaps > 0 else 1.0),
+            )
+            lines.extend(
+                [
+                    "## Coverage Metrics",
+                    "",
+                    f"- **Total Gaps**: {total_gaps}",
+                    f"- **Open Gaps**: {open_gaps}",
+                    f"- **Closed Gaps**: {closed_gaps}",
+                    f"- **Convergence Ratio**: {convergence_ratio:.2%}",
+                    "",
+                ]
+            )
         for status, title in sections:
             lines.append(f"## {title}")
             lines.append("")
@@ -449,6 +483,27 @@ class WorkspaceManager:
                 lines.append(format_gap_markdown(gap))
                 lines.append("")
         return "\n".join(lines).rstrip() + "\n"
+
+    def get_library_gap_queue(self, lib_id: str) -> GapQueue:
+        """Get gap queue for a library."""
+        queue_path = self.structure.libraries_dir / lib_id / "gap_queue.json"
+        if queue_path.exists():
+            data = json.loads(queue_path.read_text(encoding="utf-8"))
+            return GapQueue.from_dict(data)
+        return GapQueue(gaps=self.read_library_gaps(lib_id))
+
+    def write_library_gap_queue(self, lib_id: str, queue: GapQueue) -> Path:
+        """Write gap queue for a library."""
+        lib_dir = self.structure.libraries_dir / lib_id
+        lib_dir.mkdir(parents=True, exist_ok=True)
+        queue_path = lib_dir / "gap_queue.json"
+        queue_path.write_text(json.dumps(queue.to_dict(), indent=2), encoding="utf-8")
+        return queue_path
+
+    def get_gap_coverage_metrics(self, lib_id: str) -> dict[str, Any]:
+        """Get gap coverage metrics for a library."""
+        queue = self.get_library_gap_queue(lib_id)
+        return queue.get_coverage_metrics()
 
     def _save_state(self) -> None:
         """Save current state to disk."""

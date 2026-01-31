@@ -137,7 +137,7 @@ def _detect_library_sublibraries(
         return {"lib_id": lib_id, "errors": errors, "sublibraries_created": 0}
 
     try:
-        data = parse_sublibrary_output(output)
+        data = parse_sublibrary_output(str(output))
     except Exception as exc:
         errors.append({"lib_id": lib_id, "error": f"Failed to parse output: {exc}"})
         return {"lib_id": lib_id, "errors": errors, "sublibraries_created": 0}
@@ -499,7 +499,6 @@ def _expand_sublibrary_evidence(manager: WorkspaceManager, sub_lib_dir: Path) ->
     if not charter_path.exists():
         return
     charter_content = charter_path.read_text(encoding="utf-8")
-    charter = evidence_utils._parse_charter(charter_content)
 
     summary_dir = manager.structure.summaries_dir
     summaries: dict[str, dict[str, Any]] = {}
@@ -513,15 +512,24 @@ def _expand_sublibrary_evidence(manager: WorkspaceManager, sub_lib_dir: Path) ->
             parsed = None
         summaries[file_id] = {"content": content, "parsed": parsed}
 
-    pairs: list[tuple[str, str, str, str]] = []
+    pairs: list[tuple[str, str, str, str, list[str], float, str]] = []
     for file_id, summary_info in summaries.items():
         parsed = summary_info["parsed"]
         raw_summary = summary_info["content"]
-        if not evidence_utils._summary_mentions_charter(
-            parsed, raw_summary, charter, sub_lib_dir.name
-        ):
+        if parsed is None:
             continue
-        pairs.append((sub_lib_dir.name, charter_content, file_id, raw_summary))
+        valid_sections = manager.get_section_labels(file_id)
+        pairs.append(
+            (
+                sub_lib_dir.name,
+                charter_content,
+                file_id,
+                raw_summary,
+                valid_sections,
+                0.5,
+                "sublibrary_expansion",
+            )
+        )
 
     if not pairs:
         return
@@ -535,9 +543,12 @@ def _expand_sublibrary_evidence(manager: WorkspaceManager, sub_lib_dir: Path) ->
                 charter,
                 file_id,
                 summary,
+                valid_sections,
                 manager.workspace_path,
+                priority,
+                rationale,
             )
-            for lib_id, charter, file_id, summary in pairs
+            for lib_id, charter, file_id, summary, valid_sections, priority, rationale in pairs
         ]
         for future in as_completed(futures):
             result = future.result()
@@ -651,7 +662,7 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
                 continue
 
             try:
-                patch_set = parse_patch_json(output)
+                patch_set = parse_patch_json(str(output))
             except Exception as exc:
                 errors.append(
                     {
@@ -694,7 +705,7 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
 
                 try:
                     repaired_output = repair_artifact(
-                        output=output,
+                        output=str(output),
                         errors=citation_issues,
                         allowlists={
                             "file_ids": list(manager.state.file_manifest.keys()),
@@ -800,7 +811,7 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
                 continue
 
             try:
-                data = parse_gap_judge_output(output)
+                data = parse_gap_judge_output(str(output))
             except Exception as exc:
                 errors.append(
                     {
@@ -852,7 +863,7 @@ def _read_sublibrary_gaps(sub_lib_dir: Path) -> list[Gap]:
 def _write_sublibrary_gaps(manager: WorkspaceManager, sub_lib_dir: Path, gaps: list[Gap]) -> None:
     """Write gaps.md for a sub-library."""
     gaps_path = sub_lib_dir / "gaps.md"
-    gaps_path.write_text(manager.format_gaps_md(gaps), encoding="utf-8")
+    gaps_path.write_text(manager.format_gaps_md(gaps, None), encoding="utf-8")
 
 
 def _sublibrary_target_path(manager: WorkspaceManager, sub_lib_dir: Path) -> str:

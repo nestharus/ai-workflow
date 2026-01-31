@@ -53,6 +53,7 @@ class PhaseResult:
     gap_audit_iterations: int = 0
     gap_audit_converged: bool = False
     open_gaps_count: int = 0
+    coverage_metrics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -125,6 +126,9 @@ class WorkspaceState:
         result.completed_at = datetime.now().isoformat()
         if outputs:
             result.outputs = outputs
+            coverage_metrics = outputs.get("coverage_metrics")
+            if isinstance(coverage_metrics, dict):
+                result.coverage_metrics = coverage_metrics
         self._log_event("phase_completed", {"phase": phase.value})
 
     def fail_phase(self, phase: Phase, error: str) -> None:
@@ -196,6 +200,7 @@ class WorkspaceState:
                     "gap_audit_iterations": result.gap_audit_iterations,
                     "gap_audit_converged": result.gap_audit_converged,
                     "open_gaps_count": result.open_gaps_count,
+                    "coverage_metrics": result.coverage_metrics,
                 }
                 for name, result in self.phases.items()
             },
@@ -289,6 +294,7 @@ class WorkspaceState:
                 gap_audit_iterations=phase_data.get("gap_audit_iterations", 0),
                 gap_audit_converged=phase_data.get("gap_audit_converged", False),
                 open_gaps_count=phase_data.get("open_gaps_count", 0),
+                coverage_metrics=phase_data.get("coverage_metrics", {}),
             )
 
         return state

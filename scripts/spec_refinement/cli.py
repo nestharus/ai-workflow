@@ -298,7 +298,7 @@ def cmd_gap_investigate(args: argparse.Namespace) -> int:
             workspace=manager.workspace_path,
         )
         proposal_path = audits_dir / f"gap_{gap.id}_proposal.md"
-        proposal_path.write_text(proposal, encoding="utf-8")
+        proposal_path.write_text(str(proposal), encoding="utf-8")
         print(f"Proposal written to: {proposal_path}")
 
     return 0
@@ -513,6 +513,18 @@ def cmd_spec_build_specs(args: argparse.Namespace) -> int:
     print(f"Libraries built: {result['libraries_built']}")
     print(f"Converged: {result['converged_count']}/{result['libraries_built']}")
     print(f"Total iterations: {result['total_iterations']}")
+    coverage_metrics = result.get("coverage_metrics", {})
+    if coverage_metrics:
+        print("Coverage metrics:")
+        for lib_id, metrics in sorted(coverage_metrics.items()):
+            ratio = metrics.get("convergence_ratio", 1.0)
+            total = metrics.get("total_gaps", 0)
+            closed = metrics.get("closed_gaps", 0)
+            low_flag = " ⚠️" if ratio < 0.8 else ""
+            print(f"  - {lib_id}: {ratio:.2%} ({closed}/{total} closed){low_flag}")
+        total_ratio = result.get("total_coverage_ratio")
+        if isinstance(total_ratio, (int, float)):
+            print(f"Total coverage ratio: {total_ratio:.2%}")
     if result.get("issues"):
         print(f"Issues: {len(result['issues'])}")
     if result.get("errors"):
