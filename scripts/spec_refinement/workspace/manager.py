@@ -14,7 +14,7 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from scripts.spec_manager.spec_manager.core.gaps import Severity
 from scripts.spec_refinement.core.gap import (
@@ -82,6 +82,21 @@ class RunFolderStructure:
         """Path to the sections manifest."""
         return self.manifest_dir / "sections.json"
 
+    @property
+    def manifest_sections_dir(self) -> Path:
+        """Path to the per-file sections directory (Phase 1)."""
+        return self.manifest_dir / "sections"
+
+    @property
+    def manifest_atoms_dir(self) -> Path:
+        """Path to the per-file atoms directory (Phase 1)."""
+        return self.manifest_dir / "atoms"
+
+    @property
+    def manifest_terms_dir(self) -> Path:
+        """Path to the per-file terms directory (Phase 1)."""
+        return self.manifest_dir / "terms"
+
     def validate(self) -> list[str]:
         """Validate run folder structure."""
         issues = []
@@ -141,6 +156,9 @@ class WorkspaceManager:
         self.structure.root.mkdir(parents=True, exist_ok=True)
         for subdir in [
             self.structure.manifest_dir,
+            self.structure.manifest_sections_dir,
+            self.structure.manifest_atoms_dir,
+            self.structure.manifest_terms_dir,
             self.structure.summaries_dir,
             self.structure.libraries_dir,
             self.structure.architecture_dir,
@@ -188,17 +206,29 @@ class WorkspaceManager:
         else:
             self.state.mode = detected_mode
 
-        section_manifest: dict[str, list[str]] = {}
-        for file_id, file_data in file_manifest.items():
-            relpath = file_data["relpath"]
-            file_path = self.structure.spec_snapshot_dir / relpath
-            if file_path.suffix.lower() == ".md":
-                sections = self._extract_section_labels(file_path)
-            else:
-                sections = []
-            section_manifest[file_id] = sections
+        section_manifest: dict[str, list[str]] = {file_id: [] for file_id in file_manifest}
+        section_files = sorted(self.structure.manifest_sections_dir.glob("*.sections.json"))
+        for section_file in section_files:
+            file_id = section_file.stem.replace(".sections", "")
+            if file_id not in section_manifest:
+                continue
+            try:
+                sections_data = json.loads(section_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as exc:
+                issues.append(f"Failed to read sections manifest {section_file}: {exc}")
+                continue
+            if not isinstance(sections_data, dict) or "sections" not in sections_data:
+                issues.append(f"Invalid sections manifest format in {section_file}")
+                continue
+            try:
+                section_manifest[file_id] = [
+                    section["section_id"] for section in sections_data["sections"]
+                ]
+            except (KeyError, TypeError) as exc:
+                issues.append(f"Invalid section entries in {section_file}: {exc}")
+                continue
 
-        self._write_manifest_files(file_manifest, section_manifest)
+        self._write_manifest_files(file_manifest)
 
         self.state.run_id = self.run_id
         self.state.input_folder = str(self.input_folder)
@@ -228,10 +258,27 @@ class WorkspaceManager:
             self.state.file_manifest = json.loads(
                 self.structure.files_json.read_text(encoding="utf-8")
             )
-        if self.structure.sections_json.exists():
-            self.state.section_manifest = json.loads(
-                self.structure.sections_json.read_text(encoding="utf-8")
-            )
+        section_manifest: dict[str, list[str]] = {
+            file_id: [] for file_id in self.state.file_manifest
+        }
+        if self.structure.manifest_sections_dir.exists():
+            for section_file in self.structure.manifest_sections_dir.glob("*.sections.json"):
+                file_id = section_file.stem.replace(".sections", "")
+                if file_id not in section_manifest:
+                    continue
+                try:
+                    sections_data = json.loads(section_file.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    continue
+                if not isinstance(sections_data, dict) or "sections" not in sections_data:
+                    continue
+                try:
+                    section_manifest[file_id] = [
+                        section["section_id"] for section in sections_data["sections"]
+                    ]
+                except (KeyError, TypeError):
+                    continue
+        self.state.section_manifest = section_manifest
         self._save_state()
 
     def finalize(self) -> Path:
@@ -500,44 +547,6 @@ class WorkspaceManager:
         self._record_run_gap(gap)
         return gap
 
-    def _extract_section_labels(self, file_path: Path) -> list[str]:
-        """Extract stable section labels from a file.
-
-        Preference order:
-        1) Explicit bracket labels like `[INTRO]` (assumed to be stable anchors).
-        2) Markdown headings (as a fallback) normalized to `UPPER_SNAKE_CASE`.
-
-        Returned labels are de-duplicated while preserving first-seen order.
-        """
-        import re
-
-        content = file_path.read_text(encoding="utf-8")
-
-        def _dedupe_keep_order(items: list[str]) -> list[str]:
-            seen: set[str] = set()
-            out: list[str] = []
-            for item in items:
-                if item in seen:
-                    continue
-                seen.add(item)
-                out.append(item)
-            return out
-
-        explicit = [match.group(1) for match in re.finditer(r"\[([A-Z_]+)\]", content)]
-        explicit = [item.strip() for item in explicit if item and item.strip()]
-        explicit = _dedupe_keep_order(explicit)
-        if explicit:
-            return explicit
-
-        headings: list[str] = []
-        for match in re.finditer(r"^##\s+(.+)$", content, re.MULTILINE):
-            heading = match.group(1).strip()
-            if not heading:
-                continue
-            headings.append(heading.upper().replace(" ", "_"))
-
-        return _dedupe_keep_order(headings)
-
     def _detect_mode_from_paths(self, paths: list[str]) -> str:
         """Detect workspace mode based on snapshot paths."""
         for path in paths:
@@ -549,15 +558,10 @@ class WorkspaceManager:
                 return "patch_stream"
         return "snapshot"
 
-    def _write_manifest_files(
-        self, file_manifest: dict[str, dict[str, str]], section_manifest: dict[str, list[str]]
-    ) -> None:
+    def _write_manifest_files(self, file_manifest: dict[str, dict[str, str]]) -> None:
         """Write manifest files to disk."""
         self.structure.manifest_dir.mkdir(parents=True, exist_ok=True)
         self.structure.files_json.write_text(json.dumps(file_manifest, indent=2), encoding="utf-8")
-        self.structure.sections_json.write_text(
-            json.dumps(section_manifest, indent=2), encoding="utf-8"
-        )
 
     # --- Agent Interface ---
 
@@ -660,7 +664,84 @@ class WorkspaceManager:
 
     def get_section_labels(self, file_id: str) -> list[str]:
         """Get section labels for a file ID."""
-        return self.state.section_manifest.get(file_id, [])
+        cached = self.state.section_manifest.get(file_id)
+        if cached:
+            return cached
+        sections_data = self.read_file_sections(file_id)
+        if not sections_data:
+            return cached or []
+        section_ids = [section["section_id"] for section in sections_data.get("sections", [])]
+        self.state.section_manifest[file_id] = section_ids
+        return section_ids
+
+    def write_file_sections(self, file_id: str, sections: dict[str, Any]) -> Path:
+        """Write Phase 1 sections manifest for a file."""
+        from scripts.spec_refinement.schemas.sections import FileSections
+
+        validated = FileSections.model_validate(sections)
+        payload = validated.model_dump()
+
+        self.structure.manifest_sections_dir.mkdir(parents=True, exist_ok=True)
+        section_file = self.structure.manifest_sections_dir / f"{file_id}.sections.json"
+        section_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self.state.section_manifest[file_id] = [
+            section["section_id"] for section in payload.get("sections", [])
+        ]
+        return section_file
+
+    def write_file_atoms(self, file_id: str, atoms: list[dict[str, Any]]) -> Path:
+        """Write Phase 1 atoms JSONL for a file."""
+        from scripts.spec_refinement.schemas.atoms import LineAtom
+
+        validated_atoms = [LineAtom.model_validate(atom).model_dump() for atom in atoms]
+
+        self.structure.manifest_atoms_dir.mkdir(parents=True, exist_ok=True)
+        atoms_file = self.structure.manifest_atoms_dir / f"{file_id}.atoms.jsonl"
+
+        with atoms_file.open("w", encoding="utf-8") as handle:
+            for atom in validated_atoms:
+                handle.write(json.dumps(atom) + "\n")
+
+        return atoms_file
+
+    def write_file_terms(self, file_id: str, terms: dict[str, Any]) -> Path:
+        """Write Phase 1 terms manifest for a file."""
+        from scripts.spec_refinement.schemas.terms import FileTerms
+
+        validated = FileTerms.model_validate(terms)
+        payload = validated.model_dump()
+
+        self.structure.manifest_terms_dir.mkdir(parents=True, exist_ok=True)
+        terms_file = self.structure.manifest_terms_dir / f"{file_id}.terms.json"
+        terms_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return terms_file
+
+    def read_file_sections(self, file_id: str) -> dict[str, Any] | None:
+        """Read Phase 1 sections manifest for a file."""
+        section_file = self.structure.manifest_sections_dir / f"{file_id}.sections.json"
+        if not section_file.exists():
+            return None
+        return cast("dict[str, Any]", json.loads(section_file.read_text(encoding="utf-8")))
+
+    def read_file_atoms(self, file_id: str) -> list[dict[str, Any]]:
+        """Read Phase 1 atoms JSONL for a file."""
+        atoms_file = self.structure.manifest_atoms_dir / f"{file_id}.atoms.jsonl"
+        if not atoms_file.exists():
+            return []
+
+        atoms: list[dict[str, Any]] = []
+        with atoms_file.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    atoms.append(json.loads(line))
+        return atoms
+
+    def read_file_terms(self, file_id: str) -> dict[str, Any] | None:
+        """Read Phase 1 terms manifest for a file."""
+        terms_file = self.structure.manifest_terms_dir / f"{file_id}.terms.json"
+        if not terms_file.exists():
+            return None
+        return cast("dict[str, Any]", json.loads(terms_file.read_text(encoding="utf-8")))
 
     def get_all_files(self) -> dict[str, Path]:
         """Get all files as {file_id: Path} mapping."""
