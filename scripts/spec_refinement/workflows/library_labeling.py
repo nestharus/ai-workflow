@@ -38,17 +38,25 @@ def _build_label_prompt(file_id: str, summary: str) -> str:
         "",
         "REQUIRED SCHEMA:",
         "{"
+        '  "file_id": "file_###",'
         '  "candidate_labels": ['
-        '    {"label": "string", "sections": ["string"], "confidence": 0.0}'
+        '    {"label": "string", "sections": ["string"], "confidence": 0.0, "rationale": "string"}'
         "  ],"
-        '  "uncertain_labels": ["string"]'
+        '  "uncertain_labels": ['
+        '    {"label": "string", "rationale": "string"}'
+        "  ]"
         "}",
         "",
         "REQUIRED RULES:",
         "- Classify file into 0-N candidate library labels",
+        "- file_id MUST match the input file ID",
+        "- Labels MUST be capability-based (what the system does), not type-based",
         "- Each label MUST include sections that justify it",
         "- Sections MUST use [file_###::SECTION] format",
         "- Confidence MUST be between 0.0 and 1.0",
+        "- Each candidate label MUST include a rationale",
+        "- Uncertain labels MUST include label and rationale",
+        "- Place labels with confidence < 0.5 in uncertain_labels",
         "",
         "FORBIDDEN:",
         "- Labels without justifying sections",
@@ -63,7 +71,24 @@ def _build_label_prompt(file_id: str, summary: str) -> str:
         "",
         "## OUTPUT FORMAT",
         "",
-        "See schema above.",
+        "Example payload:",
+        "{",
+        '  "file_id": "file_001",',
+        '  "candidate_labels": [',
+        "    {",
+        '      "label": "Request Intake",',
+        '      "sections": ["[file_001::INTRO]"],',
+        '      "confidence": 0.82,',
+        '      "rationale": "Summary describes request ingestion responsibilities."',
+        "    }",
+        "  ],",
+        '  "uncertain_labels": [',
+        "    {",
+        '      "label": "Rate Limiting",',
+        '      "rationale": "Only indirect references; unclear ownership."',
+        "    }",
+        "  ]",
+        "}",
     ]
     return "\n".join(lines)
 
@@ -88,7 +113,8 @@ def _parse_label_output(payload: str) -> tuple[dict[str, Any], list[dict[str, An
             }
         ]
 
-    for field in ("candidate_labels", "uncertain_labels"):
+    required_fields = ("file_id", "candidate_labels", "uncertain_labels")
+    for field in required_fields:
         if field not in data:
             issues.append(
                 {
@@ -97,6 +123,16 @@ def _parse_label_output(payload: str) -> tuple[dict[str, Any], list[dict[str, An
                     "message": f"Missing required field: {field}",
                 }
             )
+            continue
+        if field == "file_id":
+            if not isinstance(data.get(field), str):
+                issues.append(
+                    {
+                        "type": "invalid_field_type",
+                        "field": field,
+                        "message": "Field file_id must be a string.",
+                    }
+                )
             continue
         if not isinstance(data.get(field), list):
             issues.append(

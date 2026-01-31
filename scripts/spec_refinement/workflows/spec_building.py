@@ -217,6 +217,12 @@ def _build_full_spec_prompt_for_metrics(
             "## OUTPUT FORMAT",
             "",
             f"# Library Spec: {lib_id}",
+            "## Boundaries",
+            "- Handles request intake and routing. [file_001::INTRO]",
+            "## Requirements",
+            "- Validate payloads before processing. [file_001::REQS]",
+            "## Decisions Needed",
+            "- Confirm retention policy for incoming requests. [file_001::OPEN_QUESTIONS]",
         ]
     )
     return "\n".join(lines).strip() + "\n"

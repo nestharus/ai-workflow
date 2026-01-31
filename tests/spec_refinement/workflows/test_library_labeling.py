@@ -59,6 +59,7 @@ def test_label_file_to_libraries_parses_json(fs, monkeypatch) -> None:
     summary_path = manager.structure.summaries_dir / "file_001.what.md"
 
     payload = {
+        "file_id": "file_001",
         "candidate_labels": [
             {
                 "label": "Request Intake",
@@ -85,17 +86,21 @@ def test_label_file_to_libraries_repairs_invalid_json(fs, monkeypatch) -> None:
     summary_path = manager.structure.summaries_dir / "file_001.what.md"
 
     repaired_payload = {
+        "file_id": "file_001",
         "candidate_labels": [],
         "uncertain_labels": [{"label": "Rate Limiting", "rationale": "Unclear."}],
     }
 
-    with patch(
-        "scripts.spec_refinement.workflows.library_labeling.run_agent",
-        return_value="not-json",
-    ), patch(
-        "scripts.spec_refinement.workflows.library_labeling.repair_artifact",
-        return_value=json.dumps(repaired_payload),
-    ) as mock_repair:
+    with (
+        patch(
+            "scripts.spec_refinement.workflows.library_labeling.run_agent",
+            return_value="not-json",
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_labeling.repair_artifact",
+            return_value=json.dumps(repaired_payload),
+        ) as mock_repair,
+    ):
         result = label_file_to_libraries("file_001", summary_path, manager)
 
     assert mock_repair.called
@@ -112,9 +117,7 @@ def test_aggregate_labels_clusters_by_similarity() -> None:
             "uncertain_labels": [],
         },
         "file_002": {
-            "candidate_labels": [
-                {"label": "Workflow", "sections": ["[file_002::INTRO]"]}
-            ],
+            "candidate_labels": [{"label": "Workflow", "sections": ["[file_002::INTRO]"]}],
             "uncertain_labels": [],
         },
     }
@@ -157,21 +160,22 @@ def test_generate_library_charter_uses_repair_gate(fs, monkeypatch) -> None:
     lib_def = {"lib_id": "lib_001", "final_label": "Core", "merged_from": ["Core"]}
     file_labels = {
         "file_001": {
-            "candidate_labels": [
-                {"label": "Core", "sections": ["[file_001::INTRO]"]}
-            ],
+            "candidate_labels": [{"label": "Core", "sections": ["[file_001::INTRO]"]}],
             "uncertain_labels": [],
         }
     }
     summaries = {"file_001": "# Summary"}
 
-    with patch(
-        "scripts.spec_refinement.workflows.library_labeling.run_agent",
-        return_value=_library_output("UNKNOWN"),
-    ), patch(
-        "scripts.spec_refinement.workflows.library_labeling.repair_artifact",
-        return_value=_library_output("INTRO"),
-    ) as mock_repair:
+    with (
+        patch(
+            "scripts.spec_refinement.workflows.library_labeling.run_agent",
+            return_value=_library_output("UNKNOWN"),
+        ),
+        patch(
+            "scripts.spec_refinement.workflows.library_labeling.repair_artifact",
+            return_value=_library_output("INTRO"),
+        ) as mock_repair,
+    ):
         result = generate_library_charter(lib_def, file_labels, summaries, manager)
 
     assert mock_repair.called
