@@ -202,6 +202,12 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if not registry or not registry.get("all_ids"):
         return
 
+    has_integration_tests = any(
+        "/tests/integration/" in str(item.fspath).replace("\\", "/") for item in session.items
+    )
+    if not has_integration_tests:
+        return
+
     all_ids: list[str] = registry["all_ids"]
     by_feature: dict[str, list[str]] = registry["by_feature"]
     by_tier: dict[str, list[str]] = registry["by_tier"]

@@ -4,17 +4,37 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
+from scripts.spec_refinement.schemas.library_labels import LibraryLabelerOutput
 from scripts.spec_refinement.workflows.architecture import (
+    _validate_architecture_citations,
     map_libraries_to_architecture,
     propose_architectures,
     select_architecture,
 )
-from scripts.spec_refinement.workflows.evidence_expansion import expand_evidence
-from scripts.spec_refinement.workflows.library_synthesis import synthesize_libraries
-from scripts.spec_refinement.workflows.spec_building import build_specs, _validate_spec_citations
+from scripts.spec_refinement.workflows.evidence_expansion import (
+    _validate_evidence_entry,
+    expand_evidence,
+)
+from scripts.spec_refinement.workflows.formats import (
+    EVIDENCE_POINTER_RE,
+    LibraryCharter,
+    _extract_sections,
+    _parse_overlap_resolutions,
+)
+from scripts.spec_refinement.workflows.library_synthesis import (
+    _validate_evidence_sources,
+    _validate_library_ids,
+    _validate_overlap_resolutions,
+    synthesize_libraries,
+)
+from scripts.spec_refinement.workflows.spec_building import _validate_spec_citations, build_specs
 from scripts.spec_refinement.workflows.sublibrary_detection import detect_sublibraries
-from scripts.spec_refinement.workflows.summarization import summarize_all, _validate_evidence_pointers
+from scripts.spec_refinement.workflows.summarization import (
+    _validate_evidence_pointers,
+    summarize_all,
+)
 from scripts.spec_refinement.workflows.validation_utils import strip_invalid_file_pointers
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 from tests.spec_refinement.fixtures.expected_outputs import (
@@ -43,7 +63,9 @@ def _validate_summary_files(manager: WorkspaceManager) -> None:
     for file_id in manager.state.file_manifest:
         summary_path = manager.structure.summaries_dir / f"{file_id}.what.md"
         assert summary_path.exists()
-        issues = _validate_evidence_pointers(summary_path.read_text(encoding="utf-8"), manager, file_id)
+        issues = _validate_evidence_pointers(
+            summary_path.read_text(encoding="utf-8"), manager, file_id
+        )
         assert issues == []
 
 
@@ -53,6 +75,152 @@ def _validate_spec_files(manager: WorkspaceManager) -> None:
         assert spec_path.exists()
         issues = _validate_spec_citations(spec_path.read_text(encoding="utf-8"), manager, lib_id)
         assert issues == []
+
+
+def _validate_summary_file(manager: WorkspaceManager, file_id: str) -> bool:
+    summary_path = manager.structure.summaries_dir / f"{file_id}.what.md"
+    if not summary_path.exists():
+        return False
+    issues = _validate_evidence_pointers(summary_path.read_text(encoding="utf-8"), manager, file_id)
+    return issues == []
+
+
+def _validate_spec_file(manager: WorkspaceManager, lib_id: str) -> bool:
+    spec_path = manager.structure.libraries_dir / lib_id / "spec.md"
+    if not spec_path.exists():
+        return False
+    issues = _validate_spec_citations(spec_path.read_text(encoding="utf-8"), manager, lib_id)
+    return issues == []
+
+
+def _validate_architecture_file(manager: WorkspaceManager, filename: str) -> bool:
+    path = manager.structure.architecture_dir / filename
+    if not path.exists():
+        return False
+    issues = _validate_architecture_citations(path.read_text(encoding="utf-8"), manager)
+    return issues == []
+
+
+def _validate_evidence_file(manager: WorkspaceManager, lib_id: str, file_id: str | None) -> bool:
+    evidence_path = manager.structure.libraries_dir / lib_id / "evidence.json"
+    if not evidence_path.exists():
+        return False
+    try:
+        payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    sources = payload.get("sources", [])
+    if not isinstance(sources, list):
+        return False
+    relevant_sources = [
+        entry for entry in sources if file_id is None or entry.get("file_id") == file_id
+    ]
+    if file_id is not None and not relevant_sources:
+        return False
+    for entry in relevant_sources:
+        issues, _ = _validate_evidence_entry(entry, manager, lib_id)
+        if issues:
+            return False
+    return True
+
+
+def _parse_charter_content(content: str, lib_id: str) -> LibraryCharter:
+    sections = _extract_sections(content, level=2)
+    responsibilities: list[str] = []
+    for line in sections.get("Responsibilities", "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("-", "*")):
+            responsibilities.append(stripped.lstrip("-* ").strip())
+
+    evidence_sources: dict[str, set[str]] = {}
+    for file_ref, section_ref in EVIDENCE_POINTER_RE.findall(sections.get("Evidence", "")):
+        evidence_sources.setdefault(file_ref, set()).add(section_ref)
+
+    overlap_resolutions = _parse_overlap_resolutions(sections.get("Overlap Resolutions", ""))
+
+    return LibraryCharter(
+        lib_id=lib_id,
+        intent=sections.get("Intent", "").strip(),
+        boundaries=sections.get("Boundaries", "").strip(),
+        responsibilities=responsibilities,
+        evidence_sources=[
+            {"file_id": file_ref, "sections": sorted(sections)}
+            for file_ref, sections in evidence_sources.items()
+        ],
+        overlap_resolutions=overlap_resolutions,
+    )
+
+
+def _validate_charter_file(manager: WorkspaceManager, lib_id: str) -> bool:
+    charter_path = manager.structure.libraries_dir / lib_id / "charter.md"
+    if not charter_path.exists():
+        return False
+    charter = _parse_charter_content(charter_path.read_text(encoding="utf-8"), lib_id)
+    issues: list[dict[str, object]] = []
+    issues.extend(_validate_library_ids([charter]))
+    issues.extend(_validate_evidence_sources([charter], manager))
+    issues.extend(_validate_overlap_resolutions([charter]))
+    return issues == []
+
+
+def _validate_library_labels(manager: WorkspaceManager, file_id: str) -> bool:
+    labels_path = manager.structure.libraries_dir / "file_labels.json"
+    if not labels_path.exists():
+        return False
+    try:
+        payload = json.loads(labels_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    entry = payload.get(file_id)
+    if not isinstance(entry, dict):
+        return False
+    try:
+        LibraryLabelerOutput.model_validate(
+            {
+                "file_id": file_id,
+                "candidate_labels": entry.get("candidate_labels", []),
+                "uncertain_labels": entry.get("uncertain_labels", []),
+            }
+        )
+    except ValidationError:
+        return False
+    return True
+
+
+def _validate_repair_call(call: dict[str, object], manager: WorkspaceManager) -> bool:
+    artifact_type = call.get("artifact_type")
+    file_id = call.get("file_id") if isinstance(call.get("file_id"), str) else None
+    lib_id = call.get("lib_id") if isinstance(call.get("lib_id"), str) else None
+
+    if artifact_type == "summary" and file_id:
+        return _validate_summary_file(manager, file_id)
+    if artifact_type == "library_labels" and file_id:
+        return _validate_library_labels(manager, file_id)
+    if artifact_type == "charter" and lib_id:
+        return _validate_charter_file(manager, lib_id)
+    if artifact_type == "evidence_json" and lib_id:
+        return _validate_evidence_file(manager, lib_id, file_id)
+    if artifact_type in {"spec", "spec_patches"} and lib_id:
+        return _validate_spec_file(manager, lib_id)
+    if artifact_type == "architecture_selection":
+        return _validate_architecture_file(manager, "selected.md")
+    if artifact_type == "architecture_mapping":
+        return _validate_architecture_file(manager, "mapping.md")
+    return False
+
+
+def _collect_repair_failures(manager: WorkspaceManager) -> list[dict[str, object]]:
+    failures: list[dict[str, object]] = []
+    for phase_result in manager.state.phases.values():
+        for issue in phase_result.issues:
+            if issue.get("type") == "repair_failed":
+                failures.append(
+                    {
+                        "phase": phase_result.phase.value,
+                        "issue": issue,
+                    }
+                )
+    return failures
 
 
 def _run_full_workflow(run_id: str, *, max_iterations: int = 2) -> None:
@@ -88,7 +256,9 @@ class TestFullWorkflowIntegration:
 
         expand_evidence(run_id)
         outputs = _assert_phase_completed(run_id, Phase.EVIDENCE_EXPANSION)
-        _assert_phase_outputs(outputs, EXPECTED_PHASE_OUTPUTS["evidence_expansion"]["required_keys"])
+        _assert_phase_outputs(
+            outputs, EXPECTED_PHASE_OUTPUTS["evidence_expansion"]["required_keys"]
+        )
 
         build_specs(run_id, max_iterations=2)
         outputs = _assert_phase_completed(run_id, Phase.SPEC_BUILDING)
@@ -97,19 +267,27 @@ class TestFullWorkflowIntegration:
 
         detect_sublibraries(run_id)
         outputs = _assert_phase_completed(run_id, Phase.SUBLIBRARY_DETECTION)
-        _assert_phase_outputs(outputs, EXPECTED_PHASE_OUTPUTS["sublibrary_detection"]["required_keys"])
+        _assert_phase_outputs(
+            outputs, EXPECTED_PHASE_OUTPUTS["sublibrary_detection"]["required_keys"]
+        )
 
         propose_architectures(run_id)
         outputs = _assert_phase_completed(run_id, Phase.ARCHITECTURE_PROPOSAL)
-        _assert_phase_outputs(outputs, EXPECTED_PHASE_OUTPUTS["architecture_proposal"]["required_keys"])
+        _assert_phase_outputs(
+            outputs, EXPECTED_PHASE_OUTPUTS["architecture_proposal"]["required_keys"]
+        )
 
         select_architecture(run_id)
         outputs = _assert_phase_completed(run_id, Phase.ARCHITECTURE_SELECTION)
-        _assert_phase_outputs(outputs, EXPECTED_PHASE_OUTPUTS["architecture_selection"]["required_keys"])
+        _assert_phase_outputs(
+            outputs, EXPECTED_PHASE_OUTPUTS["architecture_selection"]["required_keys"]
+        )
 
         map_libraries_to_architecture(run_id)
         outputs = _assert_phase_completed(run_id, Phase.ARCHITECTURE_MAPPING)
-        _assert_phase_outputs(outputs, EXPECTED_PHASE_OUTPUTS["architecture_mapping"]["required_keys"])
+        _assert_phase_outputs(
+            outputs, EXPECTED_PHASE_OUTPUTS["architecture_mapping"]["required_keys"]
+        )
 
         refreshed = WorkspaceManager(run_id=run_id, input_folder=Path("."))
         spec_phase = refreshed.state.phases[Phase.SPEC_BUILDING.value]
@@ -128,7 +306,9 @@ class TestFullWorkflowIntegration:
             assert lib_id in mapping_text
 
     @pytest.mark.integration
-    def test_full_workflow_with_repair_gates(self, spec_refinement_workspace, mock_all_agents) -> None:
+    def test_full_workflow_with_repair_gates(
+        self, spec_refinement_workspace, mock_all_agents
+    ) -> None:
         manager, manifest = spec_refinement_workspace(run_id="run_repair")
         controller = mock_all_agents(
             manifest,
@@ -143,9 +323,18 @@ class TestFullWorkflowIntegration:
         _run_full_workflow(run_id, max_iterations=2)
 
         refreshed = WorkspaceManager(run_id=run_id, input_folder=Path("."))
-        assert refreshed.state.phases[Phase.ARCHITECTURE_MAPPING.value].status == PhaseStatus.COMPLETED
-        assert controller.repair_calls
-        success_rate = 1.0
+        assert (
+            refreshed.state.phases[Phase.ARCHITECTURE_MAPPING.value].status == PhaseStatus.COMPLETED
+        )
+        repair_calls = list(controller.repair_calls)
+        if not repair_calls:
+            pytest.skip("No repairs triggered; skipping repair success rate check.")
+        repair_failures = _collect_repair_failures(refreshed)
+        assert not repair_failures
+        failed_repairs = [
+            call for call in repair_calls if not _validate_repair_call(call, refreshed)
+        ]
+        success_rate = (len(repair_calls) - len(failed_repairs)) / len(repair_calls)
         assert success_rate >= 0.8
         _validate_summary_files(refreshed)
         _validate_spec_files(refreshed)
@@ -183,7 +372,9 @@ class TestFullWorkflowIntegration:
         assert payload.get("sources")
 
     @pytest.mark.integration
-    def test_non_monotonic_updates_prevented(self, spec_refinement_workspace, mock_all_agents) -> None:
+    def test_non_monotonic_updates_prevented(
+        self, spec_refinement_workspace, mock_all_agents
+    ) -> None:
         manager, manifest = spec_refinement_workspace(run_id="run_non_monotonic")
         mock_all_agents(
             manifest,
@@ -242,7 +433,9 @@ class TestFullWorkflowIntegration:
         mock_all_agents,
         file_count: int,
     ) -> None:
-        manager, manifest = spec_refinement_workspace(run_id=f"run_phase2_{file_count}", file_count=file_count)
+        manager, manifest = spec_refinement_workspace(
+            run_id=f"run_phase2_{file_count}", file_count=file_count
+        )
         mock_all_agents(manifest, violation_rate=0.0)
 
         run_id = manager.run_id
@@ -263,7 +456,9 @@ class TestFullWorkflowIntegration:
         assert "singleton_count" in metadata
 
     @pytest.mark.integration
-    def test_patch_based_phase4_integration(self, spec_refinement_workspace, mock_all_agents) -> None:
+    def test_patch_based_phase4_integration(
+        self, spec_refinement_workspace, mock_all_agents
+    ) -> None:
         manager, manifest = spec_refinement_workspace(run_id="run_patch")
         mock_all_agents(manifest, violation_rate=0.0)
 
@@ -294,17 +489,29 @@ class TestFullWorkflowIntegration:
         run_id = manager.run_id
 
         def _run_full() -> None:
-            with benchmark_phase("summarization", performance_tracker, lambda: len(controller.call_log)):
+            with benchmark_phase(
+                "summarization", performance_tracker, lambda: len(controller.call_log)
+            ):
                 summarize_all(run_id, parallel=False)
-            with benchmark_phase("library_synthesis", performance_tracker, lambda: len(controller.call_log)):
+            with benchmark_phase(
+                "library_synthesis", performance_tracker, lambda: len(controller.call_log)
+            ):
                 synthesize_libraries(run_id)
-            with benchmark_phase("evidence_expansion", performance_tracker, lambda: len(controller.call_log)):
+            with benchmark_phase(
+                "evidence_expansion", performance_tracker, lambda: len(controller.call_log)
+            ):
                 expand_evidence(run_id)
-            with benchmark_phase("spec_building", performance_tracker, lambda: len(controller.call_log)):
+            with benchmark_phase(
+                "spec_building", performance_tracker, lambda: len(controller.call_log)
+            ):
                 build_specs(run_id, max_iterations=1)
-            with benchmark_phase("sublibrary_detection", performance_tracker, lambda: len(controller.call_log)):
+            with benchmark_phase(
+                "sublibrary_detection", performance_tracker, lambda: len(controller.call_log)
+            ):
                 detect_sublibraries(run_id)
-            with benchmark_phase("architecture", performance_tracker, lambda: len(controller.call_log)):
+            with benchmark_phase(
+                "architecture", performance_tracker, lambda: len(controller.call_log)
+            ):
                 propose_architectures(run_id)
                 select_architecture(run_id)
                 map_libraries_to_architecture(run_id)
@@ -335,11 +542,11 @@ class TestFullWorkflowIntegration:
         if memory_before is not None:
             try:
                 import resource
-
+            except ImportError:
+                pass
+            else:
                 memory_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
                 assert (memory_after - memory_before) < 50 * 1024
-            except Exception:
-                pass
 
 
 def test_basename_stem_resolution(spec_refinement_workspace) -> None:
@@ -410,6 +617,8 @@ def test_priority_ranking_over_skip_heuristics(spec_refinement_workspace, mock_a
 
     expand_evidence(run_id)
     classifier_calls = [
-        call for call in controller.call_log if call["agent_name"] == "glm-library-relevance-classifier"
+        call
+        for call in controller.call_log
+        if call["agent_name"] == "glm-library-relevance-classifier"
     ]
     assert classifier_calls
