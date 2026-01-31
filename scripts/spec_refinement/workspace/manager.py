@@ -29,6 +29,11 @@ class RunFolderStructure:
     root: Path
 
     @property
+    def spec_snapshot_dir(self) -> Path:
+        """Path to the spec snapshot directory."""
+        return self.root / "spec_snapshot"
+
+    @property
     def manifest_dir(self) -> Path:
         """Path to the manifest directory."""
         return self.root / "manifest"
@@ -73,12 +78,20 @@ class RunFolderStructure:
         issues = []
         if not self.root.exists():
             issues.append(f"Run folder does not exist: {self.root}")
+        if not self.spec_snapshot_dir.exists():
+            issues.append(f"Spec snapshot directory missing: {self.spec_snapshot_dir}")
+        elif not any(self.spec_snapshot_dir.rglob("*")):
+            issues.append("Spec snapshot directory is empty")
         return issues
 
 
 @dataclass
 class WorkspaceManager:
-    """Manages the workspace for spec refinement."""
+    """Manages the workspace for spec refinement.
+
+    Phase 0 creates an immutable spec snapshot, and all file operations
+    reference the snapshot rather than the original input folder.
+    """
 
     run_id: str
     input_folder: Path
@@ -101,11 +114,24 @@ class WorkspaceManager:
     # --- Workspace Lifecycle ---
 
     def initialize(self, force: bool = False) -> list[str]:
-        """Initialize the workspace."""
+        """Initialize the workspace.
+
+        Creates an immutable spec snapshot in `spec_snapshot/`. Setting
+        `force=True` deletes and recreates the entire run directory,
+        including the snapshot. Subsequent phases must not modify the
+        snapshot.
+        """
         issues: list[str] = []
 
         if not self.input_folder.exists():
             return [f"Input folder does not exist: {self.input_folder}"]
+
+        if self.structure.spec_snapshot_dir.exists() and not force:
+            issues.append(
+                "Spec snapshot already exists. Use --force to reinitialize or "
+                "resume with existing snapshot."
+            )
+            return issues
 
         if self.structure.root.exists() and force:
             shutil.rmtree(self.structure.root)
@@ -121,9 +147,28 @@ class WorkspaceManager:
         ]:
             subdir.mkdir(parents=True, exist_ok=True)
 
+        try:
+            shutil.copytree(self.input_folder, self.structure.spec_snapshot_dir)
+        except OSError as exc:
+            issues.append(f"Failed to create spec snapshot: {exc}")
+        else:
+            try:
+                expected_count = sum(1 for path in self.input_folder.rglob("*") if path.is_file())
+                actual_count = sum(
+                    1 for path in self.structure.spec_snapshot_dir.rglob("*") if path.is_file()
+                )
+            except OSError as exc:
+                issues.append(f"Snapshot verification failed: {exc}")
+            else:
+                if expected_count != actual_count:
+                    issues.append(
+                        "Snapshot verification failed: expected "
+                        f"{expected_count} files, found {actual_count}"
+                    )
+
         file_manifest = self._enumerate_files()
         if not file_manifest:
-            issues.append(f"No markdown files found in: {self.input_folder}")
+            issues.append(f"No markdown files found in: {self.structure.spec_snapshot_dir}")
 
         section_manifest: dict[str, list[str]] = {}
         for file_id, file_path in file_manifest.items():
@@ -189,11 +234,13 @@ class WorkspaceManager:
     # --- Manifest Management ---
 
     def _enumerate_files(self) -> dict[str, str]:
-        """Enumerate files in input folder and assign stable IDs."""
+        """Enumerate files in the spec snapshot and assign stable IDs."""
         files: dict[str, str] = {}
-        for index, md_file in enumerate(sorted(self.input_folder.glob("*.md")), start=1):
+        for index, md_file in enumerate(
+            sorted(self.structure.spec_snapshot_dir.glob("*.md")), start=1
+        ):
             file_id = f"file_{index:03d}"
-            files[file_id] = str(md_file)
+            files[file_id] = str(md_file.resolve())
         return files
 
     def _extract_section_labels(self, file_path: Path) -> list[str]:
