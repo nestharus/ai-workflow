@@ -3,12 +3,28 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import time
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
 from scripts.spec_refinement.workspace import WorkspaceManager
 
 from .agent_utils import run_agent
+
+DEFAULT_REPAIR_MODEL = "gpt-5.2-low"
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RepairAgentSelection:
+    """Agent and model configuration for artifact repair operations."""
+
+    agent_name: str
+    model_name: str
 
 
 class ArtifactType(str, Enum):
@@ -30,10 +46,12 @@ def repair_artifact(
     errors: list[dict[str, Any]],
     allowlists: dict[str, Any],
     artifact_type: ArtifactType,
+    model_override: str,
     manager: WorkspaceManager,
 ) -> str:
     """Attempt to repair a non-compliant artifact using a specialized repair agent."""
     if not errors:
+        logger.info("Repair skipped; no validation errors (artifact_type=%s).", artifact_type.value)
         return output
     prompt = _build_repair_prompt(
         output=output,
@@ -41,12 +59,45 @@ def repair_artifact(
         allowlists=allowlists,
         artifact_type=artifact_type,
     )
-    agent_name = _select_repair_agent(artifact_type)
-    return run_agent(
-        agent_name=agent_name,
-        prompt=prompt,
-        workspace=manager.workspace_path,
+    selection = _select_repair_agent(artifact_type, model_override=model_override)
+    logger.info(
+        "Repair attempt (artifact_type=%s, agent=%s, model=%s, errors=%d).",
+        artifact_type.value,
+        selection.agent_name,
+        selection.model_name,
+        len(errors),
     )
+    start = time.perf_counter()
+    try:
+        repaired = run_agent(
+            agent_name=selection.agent_name,
+            prompt=prompt,
+            workspace=manager.workspace_path,
+            extra_env={"REPAIR_MODEL": selection.model_name},
+        )
+    except Exception:
+        logger.exception(
+            "Repair failed (artifact_type=%s, agent=%s, model=%s).",
+            artifact_type.value,
+            selection.agent_name,
+            selection.model_name,
+        )
+        raise
+    latency_ms = (time.perf_counter() - start) * 1000
+    logger.info(
+        "Repair completed (artifact_type=%s, agent=%s, model=%s, latency_ms=%.2f).",
+        artifact_type.value,
+        selection.agent_name,
+        selection.model_name,
+        latency_ms,
+    )
+    return repaired
+
+
+def get_repair_model() -> str:
+    """Get the repair model from environment or use default."""
+    override = (os.getenv("REPAIR_MODEL") or "").strip()
+    return override or DEFAULT_REPAIR_MODEL
 
 
 def _build_repair_prompt(
@@ -81,7 +132,11 @@ def _build_repair_prompt(
     return "\n".join(lines)
 
 
-def _select_repair_agent(artifact_type: ArtifactType) -> str:
+def _select_repair_agent(
+    artifact_type: ArtifactType,
+    *,
+    model_override: str | None = None,
+) -> RepairAgentSelection:
     mapping = {
         ArtifactType.SUMMARY: "repair-summary",
         ArtifactType.CHARTER: "repair-charter",
@@ -94,7 +149,10 @@ def _select_repair_agent(artifact_type: ArtifactType) -> str:
     }
     if artifact_type not in mapping:
         raise ValueError(f"Unsupported artifact type: {artifact_type}")
-    return mapping[artifact_type]
+    model_name = model_override or get_repair_model()
+    if not model_name:
+        raise ValueError("Repair model override is empty.")
+    return RepairAgentSelection(agent_name=mapping[artifact_type], model_name=model_name)
 
 
 def _format_error_list(errors: list[dict[str, Any]]) -> str:

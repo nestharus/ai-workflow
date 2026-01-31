@@ -44,7 +44,7 @@ added.
 
 ### Repair module API
 
-- `repair_artifact(output, errors, allowlists, artifact_type, manager) -> str`
+- `repair_artifact(output, errors, allowlists, artifact_type, model_override, manager) -> str`
 - `ArtifactType` enum maps to agent names via `_select_repair_agent`
 
 ### Adding a new artifact type

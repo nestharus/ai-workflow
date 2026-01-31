@@ -690,7 +690,7 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
             )
             if citation_issues:
                 issues.extend(citation_issues)
-                from .repair import ArtifactType, repair_artifact
+                from .repair import ArtifactType, get_repair_model, repair_artifact
 
                 try:
                     repaired_output = repair_artifact(
@@ -704,6 +704,7 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
                             },
                         },
                         artifact_type=ArtifactType.SPEC_PATCHES,
+                        model_override=get_repair_model(),
                         manager=manager,
                     )
                     repaired_patch_set = parse_patch_json(repaired_output)

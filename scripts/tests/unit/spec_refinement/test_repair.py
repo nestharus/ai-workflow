@@ -10,6 +10,7 @@ from scripts.spec_refinement.workflows.repair import (
     _build_repair_prompt,
     _format_allowlists,
     _select_repair_agent,
+    get_repair_model,
     repair_artifact,
 )
 
@@ -20,16 +21,34 @@ class _DummyManager:
 
 
 def test_select_repair_agent_mapping() -> None:
-    assert _select_repair_agent(ArtifactType.SUMMARY) == "repair-summary"
-    assert _select_repair_agent(ArtifactType.CHARTER) == "repair-charter"
-    assert _select_repair_agent(ArtifactType.LIBRARY_LABELS) == "repair-library-labels"
-    assert _select_repair_agent(ArtifactType.SPEC) == "repair-spec"
-    assert _select_repair_agent(ArtifactType.SPEC_PATCHES) == "repair-spec-patches"
-    assert _select_repair_agent(ArtifactType.EVIDENCE_JSON) == "repair-evidence-json"
-    assert (
-        _select_repair_agent(ArtifactType.ARCHITECTURE_SELECTION) == "repair-architecture-selection"
+    selection = _select_repair_agent(ArtifactType.SUMMARY, model_override="gpt-5.2-none")
+    assert selection.agent_name == "repair-summary"
+    assert selection.model_name == "gpt-5.2-none"
+
+    selection = _select_repair_agent(ArtifactType.CHARTER, model_override="gpt-5.2-none")
+    assert selection.agent_name == "repair-charter"
+
+    selection = _select_repair_agent(ArtifactType.LIBRARY_LABELS, model_override="gpt-5.2-none")
+    assert selection.agent_name == "repair-library-labels"
+
+    selection = _select_repair_agent(ArtifactType.SPEC, model_override="gpt-5.2-none")
+    assert selection.agent_name == "repair-spec"
+
+    selection = _select_repair_agent(ArtifactType.SPEC_PATCHES, model_override="gpt-5.2-none")
+    assert selection.agent_name == "repair-spec-patches"
+
+    selection = _select_repair_agent(ArtifactType.EVIDENCE_JSON, model_override="gpt-5.2-none")
+    assert selection.agent_name == "repair-evidence-json"
+
+    selection = _select_repair_agent(
+        ArtifactType.ARCHITECTURE_SELECTION, model_override="gpt-5.2-none"
     )
-    assert _select_repair_agent(ArtifactType.ARCHITECTURE_MAPPING) == "repair-architecture-mapping"
+    assert selection.agent_name == "repair-architecture-selection"
+
+    selection = _select_repair_agent(
+        ArtifactType.ARCHITECTURE_MAPPING, model_override="gpt-5.2-none"
+    )
+    assert selection.agent_name == "repair-architecture-mapping"
 
 
 def test_repair_artifact_calls_agent_with_prompt() -> None:
@@ -51,11 +70,13 @@ def test_repair_artifact_calls_agent_with_prompt() -> None:
             errors=errors,
             allowlists={"file_ids": ["file_001"]},
             artifact_type=ArtifactType.SUMMARY,
+            model_override=get_repair_model(),
             manager=manager,
         )
 
     assert result == "fixed"
     assert mock_run.call_args.kwargs["agent_name"] == "repair-summary"
+    assert mock_run.call_args.kwargs["extra_env"]["REPAIR_MODEL"] == get_repair_model()
     prompt = mock_run.call_args.kwargs["prompt"]
     assert "INVALID OUTPUT" in prompt
     assert "bad output" in prompt
@@ -72,6 +93,7 @@ def test_repair_artifact_skips_when_no_errors() -> None:
             errors=[],
             allowlists={},
             artifact_type=ArtifactType.SUMMARY,
+            model_override=get_repair_model(),
             manager=manager,
         )
 
@@ -94,6 +116,7 @@ def test_repair_artifact_propagates_exception() -> None:
             errors=[{"type": "bad", "message": "oops"}],
             allowlists={},
             artifact_type=ArtifactType.SUMMARY,
+            model_override=get_repair_model(),
             manager=manager,
         )
 

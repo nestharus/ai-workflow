@@ -115,6 +115,7 @@ agents = "scripts.agents.__main__:main"
 spec-decompose = "scripts.spec_decomposition.cli:main"
 # Spec refinement commands
 spec = "scripts.spec_refinement.cli:main"
+"spec.repair-bakeoff" = "scripts.spec_refinement.evaluation.repair_bakeoff:main"
 # Spec manager commands
 spec-manager = "scripts.spec_manager.spec_manager.cli:main"
 # PRD commands

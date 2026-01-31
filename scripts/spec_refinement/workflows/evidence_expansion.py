@@ -610,7 +610,7 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
             entry_issues, normalized = _validate_evidence_entry(candidate_entry, manager, lib_id)
             issues.extend(entry_issues)
             if entry_issues and normalized is None:
-                from .repair import ArtifactType, repair_artifact
+                from .repair import ArtifactType, get_repair_model, repair_artifact
 
                 try:
                     entry_json = json.dumps(candidate_entry, indent=2)
@@ -624,6 +624,7 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                             ),
                         },
                         artifact_type=ArtifactType.EVIDENCE_JSON,
+                        model_override=get_repair_model(),
                         manager=manager,
                     )
                     repaired_entry = json.loads(repaired_json)

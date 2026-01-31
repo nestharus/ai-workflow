@@ -173,7 +173,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
 
     issues = _validate_evidence_pointers(output, manager, file_id)
     if issues:
-        from .repair import ArtifactType, repair_artifact
+        from .repair import ArtifactType, get_repair_model, repair_artifact
 
         try:
             repaired_output = repair_artifact(
@@ -184,6 +184,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
                     "sections": manager.state.section_manifest.get(file_id, []),
                 },
                 artifact_type=ArtifactType.SUMMARY,
+                model_override=get_repair_model(),
                 manager=manager,
             )
             repaired_issues = _validate_evidence_pointers(repaired_output, manager, file_id)

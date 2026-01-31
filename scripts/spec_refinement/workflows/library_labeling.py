@@ -24,7 +24,7 @@ from .formats import (
     parse_library_synthesis,
 )
 from .progress import ProgressTracker
-from .repair import ArtifactType, repair_artifact
+from .repair import ArtifactType, get_repair_model, repair_artifact
 
 MAX_WORKERS = 4
 LIB_ID_PATTERN = re.compile(r"^lib_(\d{3})$")
@@ -150,6 +150,7 @@ def label_file_to_libraries(
                     "sections": manager.state.section_manifest,
                 },
                 artifact_type=ArtifactType.LIBRARY_LABELS,
+                model_override=get_repair_model(),
                 manager=manager,
             )
             repaired_data = parse_library_labeler_output(repaired)
@@ -645,6 +646,7 @@ def generate_library_charter(
                     "library_ids": [lib_id],
                 },
                 artifact_type=ArtifactType.CHARTER,
+                model_override=get_repair_model(),
                 manager=manager,
             )
             repaired_charters, _ = parse_library_synthesis(repaired_output)

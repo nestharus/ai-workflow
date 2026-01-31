@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import re
 import subprocess
 import time
@@ -55,12 +56,15 @@ def run_agent(
     workspace: Path,
     max_retries: int = 2,
     structured_schema: type[BaseModel] | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> BaseModel | str:
     """Run an agent via `uv run agents`.
 
     Uses a prompt file to avoid command-line length limits.
     """
     if structured_schema is not None:
+        if extra_env:
+            raise ValueError("extra_env is not supported for structured agents.")
         return run_structured_agent(
             agent_name=agent_name,
             prompt=prompt,
@@ -84,6 +88,10 @@ def run_agent(
     ]
 
     last_error: RuntimeError | None = None
+    env = None
+    if extra_env:
+        env = {**os.environ, **extra_env}
+
     for attempt in range(max_retries):
         result = subprocess.run(
             cmd,
@@ -91,6 +99,7 @@ def run_agent(
             capture_output=True,
             text=True,
             check=False,
+            env=env,
         )
         if result.returncode != 0:
             last_error = RuntimeError(

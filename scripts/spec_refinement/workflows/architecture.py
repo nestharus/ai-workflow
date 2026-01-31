@@ -183,7 +183,7 @@ def select_architecture(run_id: str) -> dict[str, Any]:
     selection["rationale"] = rationale
     issues = _validate_architecture_citations(rationale, manager)
     if issues:
-        from .repair import ArtifactType, repair_artifact
+        from .repair import ArtifactType, get_repair_model, repair_artifact
 
         libraries = manager.get_all_libraries_recursive()
         try:
@@ -195,6 +195,7 @@ def select_architecture(run_id: str) -> dict[str, Any]:
                     "file_names": ["charter.md", "spec.md"],
                 },
                 artifact_type=ArtifactType.ARCHITECTURE_SELECTION,
+                model_override=get_repair_model(),
                 manager=manager,
             )
             repaired_issues = _validate_architecture_citations(repaired_rationale, manager)
@@ -311,7 +312,7 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
     citation_issues = _validate_architecture_citations(formatted_output, manager)
     issues.extend(citation_issues)
     if citation_issues:
-        from .repair import ArtifactType, repair_artifact
+        from .repair import ArtifactType, get_repair_model, repair_artifact
 
         libraries = manager.get_all_libraries_recursive()
         try:
@@ -323,6 +324,7 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
                     "file_names": ["charter.md", "spec.md"],
                 },
                 artifact_type=ArtifactType.ARCHITECTURE_MAPPING,
+                model_override=get_repair_model(),
                 manager=manager,
             )
             repaired_citation_issues = _validate_architecture_citations(repaired_output, manager)

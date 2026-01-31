@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -72,10 +73,15 @@ def load_agents(agents_dir: Path) -> dict[str, AgentConfig]:
 
         frontmatter = yaml.safe_load(frontmatter_str) or {}
 
+        model = frontmatter.get("model", "")
+        repair_model = os.getenv("REPAIR_MODEL")
+        if repair_model and agent_name.startswith("repair-"):
+            model = repair_model
+
         agents[agent_name] = AgentConfig(
             name=agent_name,
             description=frontmatter.get("description", ""),
-            model=frontmatter.get("model", ""),
+            model=model,
             output_format=frontmatter.get("output_format", ""),
             instructions=instructions,
         )
