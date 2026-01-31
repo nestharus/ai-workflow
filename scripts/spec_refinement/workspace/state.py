@@ -65,6 +65,7 @@ class WorkspaceState:
     schema_version: str = "1.0"
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     current_phase: Phase = Phase.INIT
+    mode: str = "snapshot"  # Valid values: "snapshot", "patch_stream"
     phases: dict[str, PhaseResult] = field(default_factory=dict)
     file_manifest: dict[str, dict[str, str]] = field(default_factory=dict)
     section_manifest: dict[str, list[str]] = field(default_factory=dict)
@@ -189,6 +190,7 @@ class WorkspaceState:
             "schema_version": self.schema_version,
             "created_at": self.created_at,
             "current_phase": self.current_phase.value,
+            "mode": self.mode,
             "phases": {
                 name: {
                     "phase": result.phase.value,
@@ -259,12 +261,19 @@ class WorkspaceState:
         if not isinstance(baseline, dict):
             baseline = None
 
+        mode = data.get("mode", "snapshot")
+        if mode not in {"snapshot", "patch_stream"}:
+            raise ValueError(
+                f"Invalid mode value '{mode}'. Valid values are: snapshot, patch_stream"
+            )
+
         state = cls(
             run_id=data["run_id"],
             input_folder=data["input_folder"],
             schema_version=schema_version,
             created_at=data.get("created_at", datetime.now().isoformat()),
             current_phase=current_phase,
+            mode=mode,
             file_manifest=data.get("file_manifest", {}),
             section_manifest=data.get("section_manifest", {}),
             spec_snapshot_baseline=baseline,

@@ -164,6 +164,22 @@ class WorkspaceManager:
         if not file_manifest:
             issues.append(f"No files found in: {self.structure.spec_snapshot_dir}")
 
+        rel_paths = [file_data["relpath"] for file_data in file_manifest.values()]
+        detected_mode = self._detect_mode_from_paths(rel_paths)
+
+        manifest_conflict = self._check_manifest_resume_safety(file_manifest)
+        if manifest_conflict is not None and not force:
+            issues.append(manifest_conflict)
+            return issues
+
+        if self.is_initialized and self.state.mode != detected_mode:
+            issues.append(
+                f"Warning: Detected mode '{detected_mode}' differs from existing mode "
+                f"'{self.state.mode}'. Using existing mode."
+            )
+        else:
+            self.state.mode = detected_mode
+
         section_manifest: dict[str, list[str]] = {}
         for file_id, file_data in file_manifest.items():
             relpath = file_data["relpath"]
@@ -380,6 +396,37 @@ class WorkspaceManager:
         message += " Use --force to recreate the snapshot."
         return message
 
+    def _check_manifest_resume_safety(self, new_manifest: dict[str, dict[str, str]]) -> str | None:
+        """Check for manifest differences when resuming a workspace."""
+        if not self.structure.files_json.exists():
+            return None
+
+        existing_manifest = json.loads(self.structure.files_json.read_text(encoding="utf-8"))
+
+        existing_ids = set(existing_manifest.keys())
+        new_ids = set(new_manifest.keys())
+
+        added = new_ids - existing_ids
+        removed = existing_ids - new_ids
+
+        modified: list[str] = []
+        for file_id in new_ids & existing_ids:
+            existing_entry = existing_manifest[file_id]
+            new_entry = new_manifest[file_id]
+            if existing_entry.get("relpath") != new_entry.get("relpath") or existing_entry.get(
+                "sha256"
+            ) != new_entry.get("sha256"):
+                modified.append(file_id)
+
+        if not added and not removed and not modified:
+            return None
+
+        return (
+            "Manifest conflict detected: "
+            f"{len(added)} files added, {len(removed)} removed, {len(modified)} modified. "
+            "Use --force to recreate."
+        )
+
     def _extract_section_labels(self, file_path: Path) -> list[str]:
         """Extract stable section labels from a file.
 
@@ -417,6 +464,17 @@ class WorkspaceManager:
             headings.append(heading.upper().replace(" ", "_"))
 
         return _dedupe_keep_order(headings)
+
+    def _detect_mode_from_paths(self, paths: list[str]) -> str:
+        """Detect workspace mode based on snapshot paths."""
+        for path in paths:
+            if path.endswith(".patch") or path.endswith(".diff"):
+                return "patch_stream"
+            if path.startswith("patches/") or "/patches/" in path:
+                return "patch_stream"
+            if "_patch_" in path or "-patch-" in path:
+                return "patch_stream"
+        return "snapshot"
 
     def _write_manifest_files(
         self, file_manifest: dict[str, dict[str, str]], section_manifest: dict[str, list[str]]

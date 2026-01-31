@@ -42,12 +42,18 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     issues = manager.initialize(force=args.force)
     if issues:
+        if any("Manifest conflict" in issue for issue in issues):
+            print("⚠️  RESUME CONFLICT DETECTED")
+            print("The workspace already exists with different inputs.")
+            print("Use --force to recreate the workspace from scratch.")
+            print()
         print("Validation issues:")
         for issue in issues:
             print(f"  - {issue}")
         return 1
 
     print(f"Workspace initialized: {manager.workspace_path}")
+    print(f"Mode: {manager.state.mode}")
     print(f"Files found: {len(manager.state.file_manifest)}")
     for file_id, file_path in manager.get_all_files().items():
         sections = manager.get_section_labels(file_id)
