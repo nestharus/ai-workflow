@@ -419,11 +419,23 @@ def _run_prepared_case(
     case_dir.mkdir(parents=True, exist_ok=True)
 
     prompt_path = case_dir / "agent_prompt.txt"
-    agent_exec = _run_agent_capture(
-        agent_name=prepared.agent_name,
-        prompt=prepared.prompt,
-        prompt_path=prompt_path,
-    )
+    if prepared.agent_name == "none":
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text(prepared.prompt, encoding="utf-8")
+        agent_exec = AgentExecResult(
+            agent_name=prepared.agent_name,
+            prompt_path=prompt_path,
+            stdout=prepared.prompt,
+            stderr="",
+            exit_code=0,
+            duration_s=0.0,
+        )
+    else:
+        agent_exec = _run_agent_capture(
+            agent_name=prepared.agent_name,
+            prompt=prepared.prompt,
+            prompt_path=prompt_path,
+        )
 
     _write_json(case_dir / "agent_exec.json", asdict(agent_exec))
     (case_dir / "agent_stdout.txt").write_text(agent_exec.stdout + "\n", encoding="utf-8")
@@ -452,33 +464,39 @@ def _run_prepared_case(
         deterministic_issues.extend(signature_issues)
     _write_json(case_dir / "deterministic_issues.json", deterministic_issues)
 
-    judge_prompt = _build_judge_prompt(
-        prepared=prepared,
-        agent_exec=agent_exec,
-        raw_output=raw_output,
-        processed_output=processed_output,
-        deterministic_issues=deterministic_issues,
-    )
+    if prepared.agent_name == "none":
+        judge_data = None
+        _write_json(case_dir / "judge.json", {"skipped": "non_agent_case"})
+        passed = len(deterministic_issues) == 0
+        score = None
+    else:
+        judge_prompt = _build_judge_prompt(
+            prepared=prepared,
+            agent_exec=agent_exec,
+            raw_output=raw_output,
+            processed_output=processed_output,
+            deterministic_issues=deterministic_issues,
+        )
 
-    judge_exec = _run_agent_capture(
-        agent_name=judge_agent,
-        prompt=judge_prompt,
-        prompt_path=case_dir / "judge_prompt.txt",
-    )
-    (case_dir / "judge_stdout.txt").write_text(judge_exec.stdout + "\n", encoding="utf-8")
-    (case_dir / "judge_stderr.txt").write_text(judge_exec.stderr + "\n", encoding="utf-8")
+        judge_exec = _run_agent_capture(
+            agent_name=judge_agent,
+            prompt=judge_prompt,
+            prompt_path=case_dir / "judge_prompt.txt",
+        )
+        (case_dir / "judge_stdout.txt").write_text(judge_exec.stdout + "\n", encoding="utf-8")
+        (case_dir / "judge_stderr.txt").write_text(judge_exec.stderr + "\n", encoding="utf-8")
 
-    judge_data: dict[str, Any] | None = None
-    if judge_exec.exit_code == 0 and judge_exec.stdout.strip():
-        try:
-            judge_data = json.loads(judge_exec.stdout)
-        except json.JSONDecodeError:
-            judge_data = None
+        judge_data: dict[str, Any] | None = None
+        if judge_exec.exit_code == 0 and judge_exec.stdout.strip():
+            try:
+                judge_data = json.loads(judge_exec.stdout)
+            except json.JSONDecodeError:
+                judge_data = None
 
-    _write_json(case_dir / "judge.json", judge_data or {"error": "judge_parse_failed"})
+        _write_json(case_dir / "judge.json", judge_data or {"error": "judge_parse_failed"})
 
-    passed = bool(judge_data.get("passed")) if judge_data else False
-    score = judge_data.get("score") if judge_data else None
+        passed = bool(judge_data.get("passed")) if judge_data else False
+        score = judge_data.get("score") if judge_data else None
 
     report = _render_case_report(
         prepared=prepared,
@@ -496,7 +514,7 @@ def _run_prepared_case(
         "git_sha": _read_git_sha(),
         "case_id": prepared.case_id,
         "agent_name": prepared.agent_name,
-        "judge_agent": judge_agent,
+        "judge_agent": None if prepared.agent_name == "none" else judge_agent,
         "passed": passed,
         "score": score,
         "exit_code": agent_exec.exit_code,

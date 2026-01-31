@@ -24,7 +24,7 @@ from scripts.spec_refinement.workflows.validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
 )
-from scripts.spec_refinement.workspace import WorkspaceManager
+from scripts.spec_refinement.workspace import WorkspaceManager, WorkspaceState
 
 FORBIDDEN_DERIVED_POINTER_RE = re.compile(
     r"\[(?:charter|charter\\.md|(?:libraries|runs)[\\/][^\\]]+?)::[^\\]]+?\\]",
@@ -409,6 +409,193 @@ def validate_architecture_library_mapping_output(
                     _issue(
                         "file_pointer_in_dependency",
                         "Dependency citation must not cite [F####::...].",
+                    )
+                )
+
+    return issues
+
+
+def validate_phase0_determinism(
+    *,
+    first_manifest: dict[str, dict[str, str]],
+    second_manifest: dict[str, dict[str, str]],
+    first_state: WorkspaceState,
+    second_state: WorkspaceState,
+    allowlists: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Validate Phase 0 determinism and safety invariants."""
+    issues: list[dict[str, Any]] = []
+
+    def _expected_ids(manifest: dict[str, dict[str, str]]) -> list[str]:
+        return [f"F{index:04d}" for index in range(1, len(manifest) + 1)]
+
+    def _check_manifest_sequence(label: str, manifest: dict[str, dict[str, str]]) -> None:
+        expected = _expected_ids(manifest)
+        actual = list(manifest.keys())
+        if actual != expected:
+            issues.append(
+                _issue(
+                    "file_id_sequence",
+                    f"{label} manifest file IDs must be sequential and ordered.",
+                    expected=expected[:5],
+                    got=actual[:5],
+                )
+            )
+
+    _check_manifest_sequence("first", first_manifest)
+    _check_manifest_sequence("second", second_manifest)
+
+    if list(first_manifest.items()) != list(second_manifest.items()):
+        issues.append(
+            _issue(
+                "manifest_mismatch",
+                "Manifest entries differ across runs (file IDs, paths, hashes, or ordering).",
+            )
+        )
+
+    manifest_raw = allowlists.get("manifest_raw")
+    if isinstance(manifest_raw, dict):
+        first_raw = manifest_raw.get("first")
+        second_raw = manifest_raw.get("second")
+        if isinstance(first_raw, str) and isinstance(second_raw, str) and first_raw != second_raw:
+            issues.append(
+                _issue(
+                    "manifest_raw_mismatch",
+                    "Manifest files.json contents are not byte-identical across runs.",
+                )
+            )
+
+    if first_state.mode != second_state.mode:
+        issues.append(
+            _issue(
+                "mode_mismatch",
+                "Detected modes differ across runs.",
+                first=first_state.mode,
+                second=second_state.mode,
+            )
+        )
+
+    expected_mode = allowlists.get("expected_mode")
+    if isinstance(expected_mode, str) and first_state.mode != expected_mode:
+        issues.append(
+            _issue(
+                "mode_unexpected",
+                "Detected mode does not match expected value.",
+                expected=expected_mode,
+                got=first_state.mode,
+            )
+        )
+
+    if first_state.spec_snapshot_baseline != second_state.spec_snapshot_baseline:
+        issues.append(
+            _issue(
+                "spec_snapshot_baseline_mismatch",
+                "Spec snapshot baseline differs across runs.",
+            )
+        )
+    if first_state.spec_snapshot_baseline is None:
+        issues.append(
+            _issue(
+                "spec_snapshot_baseline_missing",
+                "Spec snapshot baseline is missing from the first run.",
+            )
+        )
+    if second_state.spec_snapshot_baseline is None:
+        issues.append(
+            _issue(
+                "spec_snapshot_baseline_missing",
+                "Spec snapshot baseline is missing from the second run.",
+            )
+        )
+
+    init_issues = allowlists.get("init_issues")
+    if isinstance(init_issues, dict):
+        for label in ("first", "second"):
+            issue_list = init_issues.get(label)
+            if isinstance(issue_list, list) and issue_list:
+                issues.append(
+                    _issue(
+                        "init_issues",
+                        f"{label} initialization returned issues: {issue_list}",
+                    )
+                )
+
+    resume_payload = allowlists.get("resume")
+    if isinstance(resume_payload, dict):
+        resume_init_issues = resume_payload.get("init_issues")
+        if isinstance(resume_init_issues, list) and resume_init_issues:
+            issues.append(
+                _issue(
+                    "resume_init_issues",
+                    f"Resume setup initialization returned issues: {resume_init_issues}",
+                )
+            )
+        resume_issues = resume_payload.get("issues")
+        if not isinstance(resume_issues, list) or not resume_issues:
+            issues.append(
+                _issue(
+                    "resume_safety_missing",
+                    "Resume safety test did not produce a manifest conflict error.",
+                )
+            )
+        else:
+            resume_text = " ".join(str(item) for item in resume_issues)
+            if "Manifest conflict detected" not in resume_text:
+                issues.append(
+                    _issue(
+                        "resume_safety_message",
+                        "Resume safety error did not mention manifest conflict.",
+                    )
+                )
+            if "--force" not in resume_text:
+                issues.append(
+                    _issue(
+                        "resume_safety_force_hint_missing",
+                        "Resume safety error did not mention --force.",
+                    )
+                )
+
+        baseline_issues = resume_payload.get("baseline_issues")
+        if isinstance(baseline_issues, list) and baseline_issues:
+            issues.append(
+                _issue(
+                    "resume_baseline_issues",
+                    f"Resume baseline update returned issues: {baseline_issues}",
+                )
+            )
+
+    immutability_payload = allowlists.get("immutability")
+    if isinstance(immutability_payload, dict):
+        immut_init_issues = immutability_payload.get("init_issues")
+        if isinstance(immut_init_issues, list) and immut_init_issues:
+            issues.append(
+                _issue(
+                    "immutability_init_issues",
+                    f"Immutability setup initialization returned issues: {immut_init_issues}",
+                )
+            )
+        immutability_issues = immutability_payload.get("issues")
+        if not isinstance(immutability_issues, list) or not immutability_issues:
+            issues.append(
+                _issue(
+                    "immutability_missing",
+                    "Spec snapshot immutability test did not detect modifications.",
+                )
+            )
+        else:
+            immut_text = " ".join(str(item) for item in immutability_issues)
+            if "Spec snapshot has changed since creation" not in immut_text:
+                issues.append(
+                    _issue(
+                        "immutability_message",
+                        "Spec snapshot immutability error did not mention drift.",
+                    )
+                )
+            if "--force" not in immut_text:
+                issues.append(
+                    _issue(
+                        "immutability_force_hint_missing",
+                        "Spec snapshot immutability error did not mention --force.",
                     )
                 )
 

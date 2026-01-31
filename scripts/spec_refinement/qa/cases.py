@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +16,7 @@ from scripts.spec_refinement.qa.validators import (
     validate_architecture_proposal_output,
     validate_architecture_selection_output,
     validate_evidence_mapper_output,
+    validate_phase0_determinism,
     validate_spec_integrator_output,
 )
 from scripts.spec_refinement.workflows.architecture import (
@@ -23,7 +26,7 @@ from scripts.spec_refinement.workflows.architecture import (
 )
 from scripts.spec_refinement.workflows.evidence_expansion import _build_evidence_prompt
 from scripts.spec_refinement.workflows.spec_building import _build_patch_prompt
-from scripts.spec_refinement.workspace import WorkspaceManager
+from scripts.spec_refinement.workspace import WorkspaceManager, WorkspaceState
 
 
 @dataclass(frozen=True)
@@ -55,10 +58,256 @@ class QaCase:
 
 
 _FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "system_medium_v1"
+_PATCH_STREAM_FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "patch_stream_v1"
 
 
 def _identity(text: str) -> str:
     return text
+
+
+def _qa_issue(issue_type: str, message: str, **extra: Any) -> dict[str, Any]:
+    issue: dict[str, Any] = {"type": issue_type, "message": message}
+    issue.update(extra)
+    return issue
+
+
+def _phase0_run_id(base_run_id: str, suffix: str) -> str:
+    token = uuid.uuid4().hex[:8]
+    return f"{base_run_id}_{suffix}_{token}"
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_manifest(path: Path) -> tuple[str, dict[str, Any]]:
+    raw = path.read_text(encoding="utf-8")
+    return raw, json.loads(raw)
+
+
+def _pick_snapshot_file(snapshot_dir: Path) -> Path:
+    for path in sorted(snapshot_dir.rglob("*")):
+        if path.is_file():
+            return path
+    raise RuntimeError(f"No snapshot files found in {snapshot_dir}.")
+
+
+def _append_byte(path: Path) -> None:
+    with path.open("ab") as handle:
+        handle.write(b"\n")
+
+
+def _phase0_determinism_validator(
+    output: str, manager: WorkspaceManager, allowlists: dict[str, Any]
+) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as exc:
+        return [_qa_issue("parse_error", f"Failed to parse phase0 payload: {exc}")]
+
+    first_state_data = payload.get("first_state")
+    second_state_data = payload.get("second_state")
+    if not isinstance(first_state_data, dict) or not isinstance(second_state_data, dict):
+        return [_qa_issue("invalid_state", "Phase0 payload missing state dictionaries.")]
+
+    try:
+        first_state = WorkspaceState.from_dict(first_state_data)
+        second_state = WorkspaceState.from_dict(second_state_data)
+    except Exception as exc:
+        return [_qa_issue("invalid_state", f"Failed to hydrate workspace state: {exc}")]
+
+    merged_allowlists = dict(allowlists or {})
+    for key in ("manifest_raw", "init_issues", "resume", "immutability"):
+        if key in payload:
+            merged_allowlists[key] = payload[key]
+
+    return validate_phase0_determinism(
+        first_manifest=payload.get("first_manifest", {}),
+        second_manifest=payload.get("second_manifest", {}),
+        first_state=first_state,
+        second_state=second_state,
+        allowlists=merged_allowlists,
+    )
+
+
+def _phase0_mode_detection_validator(
+    output: str, manager: WorkspaceManager, allowlists: dict[str, Any]
+) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as exc:
+        return [_qa_issue("parse_error", f"Failed to parse phase0 payload: {exc}")]
+
+    issues: list[dict[str, Any]] = []
+
+    snapshot = payload.get("snapshot", {})
+    patch = payload.get("patch_stream", {})
+    resume = payload.get("resume", {})
+
+    expected_snapshot = allowlists.get("snapshot_mode", "snapshot")
+    expected_patch = allowlists.get("patch_mode", "patch_stream")
+
+    snapshot_mode = snapshot.get("mode") or (snapshot.get("state") or {}).get("mode")
+    if snapshot_mode != expected_snapshot:
+        issues.append(
+            _qa_issue(
+                "snapshot_mode_mismatch",
+                "Snapshot fixture mode detection mismatch.",
+                expected=expected_snapshot,
+                got=snapshot_mode,
+            )
+        )
+
+    patch_mode = patch.get("mode") or (patch.get("state") or {}).get("mode")
+    if patch_mode != expected_patch:
+        issues.append(
+            _qa_issue(
+                "patch_mode_mismatch",
+                "Patch-stream fixture mode detection mismatch.",
+                expected=expected_patch,
+                got=patch_mode,
+            )
+        )
+
+    snapshot_state = snapshot.get("state")
+    if isinstance(snapshot_state, dict) and snapshot_state.get("mode") != snapshot_mode:
+        issues.append(
+            _qa_issue(
+                "snapshot_mode_not_persisted",
+                "Snapshot mode not persisted in state.json.",
+                mode=snapshot_mode,
+                state_mode=snapshot_state.get("mode"),
+            )
+        )
+
+    patch_state = patch.get("state")
+    if isinstance(patch_state, dict) and patch_state.get("mode") != patch_mode:
+        issues.append(
+            _qa_issue(
+                "patch_mode_not_persisted",
+                "Patch-stream mode not persisted in state.json.",
+                mode=patch_mode,
+                state_mode=patch_state.get("mode"),
+            )
+        )
+
+    resume_issues = resume.get("issues")
+    warning_text = ""
+    if isinstance(resume_issues, list):
+        warning_text = " ".join(str(item) for item in resume_issues)
+    if "Warning: Detected mode" not in warning_text:
+        issues.append(
+            _qa_issue(
+                "resume_warning_missing",
+                "Mode mismatch warning not emitted on resume.",
+            )
+        )
+
+    existing_mode = resume.get("existing_mode")
+    mode_after = resume.get("mode_after")
+    if existing_mode and mode_after and existing_mode != mode_after:
+        issues.append(
+            _qa_issue(
+                "resume_mode_changed",
+                "Mode changed on resume despite mismatch.",
+                existing=existing_mode,
+                after=mode_after,
+            )
+        )
+
+    return issues
+
+
+def _run_phase0_determinism_test(*, base_run_id: str, fixture_dir: Path) -> dict[str, Any]:
+    first_run_id = _phase0_run_id(base_run_id, "phase0_det_a")
+    second_run_id = _phase0_run_id(base_run_id, "phase0_det_b")
+
+    first_manager = WorkspaceManager(run_id=first_run_id, input_folder=fixture_dir)
+    first_init_issues = first_manager.initialize(force=True)
+    second_manager = WorkspaceManager(run_id=second_run_id, input_folder=fixture_dir)
+    second_init_issues = second_manager.initialize(force=True)
+
+    first_manifest_raw, first_manifest = _read_manifest(first_manager.structure.files_json)
+    second_manifest_raw, second_manifest = _read_manifest(second_manager.structure.files_json)
+    first_state = _read_json(first_manager.structure.root / "state.json")
+    second_state = _read_json(second_manager.structure.root / "state.json")
+
+    resume_run_id = _phase0_run_id(base_run_id, "phase0_resume")
+    resume_manager = WorkspaceManager(run_id=resume_run_id, input_folder=fixture_dir)
+    resume_init_issues = resume_manager.initialize(force=True)
+    resume_target = _pick_snapshot_file(resume_manager.structure.spec_snapshot_dir)
+    _append_byte(resume_target)
+    # Refresh baseline to bypass immutability so manifest conflict triggers on resume.
+    resume_baseline, resume_baseline_issues = resume_manager._build_spec_snapshot_baseline()
+    resume_manager.state.spec_snapshot_baseline = resume_baseline
+    resume_manager._save_state()
+    resume_issues = resume_manager.initialize(force=False)
+
+    immut_run_id = _phase0_run_id(base_run_id, "phase0_immut")
+    immut_manager = WorkspaceManager(run_id=immut_run_id, input_folder=fixture_dir)
+    immut_init_issues = immut_manager.initialize(force=True)
+    immut_target = _pick_snapshot_file(immut_manager.structure.spec_snapshot_dir)
+    _append_byte(immut_target)
+    immut_issues = immut_manager.initialize(force=False)
+
+    return {
+        "first_manifest": first_manifest,
+        "second_manifest": second_manifest,
+        "first_state": first_state,
+        "second_state": second_state,
+        "manifest_raw": {"first": first_manifest_raw, "second": second_manifest_raw},
+        "init_issues": {"first": first_init_issues, "second": second_init_issues},
+        "resume": {
+            "init_issues": resume_init_issues,
+            "baseline_issues": resume_baseline_issues,
+            "issues": resume_issues,
+        },
+        "immutability": {
+            "init_issues": immut_init_issues,
+            "issues": immut_issues,
+        },
+    }
+
+
+def _run_phase0_mode_detection_test(
+    *, base_run_id: str, snapshot_fixture: Path, patch_fixture: Path
+) -> dict[str, Any]:
+    snapshot_run_id = _phase0_run_id(base_run_id, "phase0_mode_snapshot")
+    snapshot_manager = WorkspaceManager(run_id=snapshot_run_id, input_folder=snapshot_fixture)
+    snapshot_init_issues = snapshot_manager.initialize(force=True)
+    snapshot_state = _read_json(snapshot_manager.structure.root / "state.json")
+
+    patch_run_id = _phase0_run_id(base_run_id, "phase0_mode_patch")
+    patch_manager = WorkspaceManager(run_id=patch_run_id, input_folder=patch_fixture)
+    patch_init_issues = patch_manager.initialize(force=True)
+    patch_state = _read_json(patch_manager.structure.root / "state.json")
+
+    detected_mode = patch_manager.state.mode
+    existing_mode = "snapshot" if detected_mode == "patch_stream" else "patch_stream"
+    # Force a mismatch to confirm resume warnings and mode stability.
+    patch_manager.state.mode = existing_mode
+    patch_manager._save_state()
+    resume_issues = patch_manager.initialize(force=False)
+    resume_state = _read_json(patch_manager.structure.root / "state.json")
+
+    return {
+        "snapshot": {
+            "init_issues": snapshot_init_issues,
+            "mode": snapshot_state.get("mode"),
+            "state": snapshot_state,
+        },
+        "patch_stream": {
+            "init_issues": patch_init_issues,
+            "mode": patch_state.get("mode"),
+            "state": patch_state,
+        },
+        "resume": {
+            "existing_mode": existing_mode,
+            "detected_mode": detected_mode,
+            "issues": resume_issues,
+            "mode_after": resume_state.get("mode"),
+        },
+    }
 
 
 def _write_library(manager: WorkspaceManager, lib_id: str, charter: str, spec: str) -> None:
@@ -143,6 +392,70 @@ def _extract_constraints_for_arch_prompt(lib_specs: dict[str, str]) -> list[str]
         for bullet in bullets:
             constraints.append(f"{lib_id}::Constraints: {bullet}")
     return constraints
+
+
+class Phase0DeterminismCase(QaCase):
+    """Phase 0 determinism validation test case."""
+
+    def prepare(self, manager: WorkspaceManager) -> PreparedQaCase:
+        """Prepare the Phase 0 determinism test case."""
+        payload = _run_phase0_determinism_test(
+            base_run_id=manager.run_id,
+            fixture_dir=_FIXTURE_DIR,
+        )
+        prompt = json.dumps(payload, indent=2, sort_keys=True)
+
+        acceptance = [
+            "Initializing the same input twice produces byte-identical manifest/files.json.",
+            "File IDs are sequential (F0001, F0002, ...) and stable across runs.",
+            "SHA256 hashes are deterministic for identical file content.",
+            "Mode detection correctly identifies 'snapshot' mode for standard fixtures.",
+            "Resume safety check detects manifest conflicts and requires --force.",
+            "Spec snapshot immutability validation detects modifications.",
+        ]
+
+        return PreparedQaCase(
+            case_id=self.case_id,
+            agent_name=self.agent_name,
+            description=self.description,
+            prompt=prompt,
+            acceptance_criteria=acceptance,
+            allowlists={"expected_mode": "snapshot"},
+            postprocess=_identity,
+            validator=_phase0_determinism_validator,
+        )
+
+
+class Phase0ModeDetectionCase(QaCase):
+    """Phase 0 mode detection validation test case."""
+
+    def prepare(self, manager: WorkspaceManager) -> PreparedQaCase:
+        """Prepare the Phase 0 mode detection test case."""
+        payload = _run_phase0_mode_detection_test(
+            base_run_id=manager.run_id,
+            snapshot_fixture=_FIXTURE_DIR,
+            patch_fixture=_PATCH_STREAM_FIXTURE_DIR,
+        )
+        prompt = json.dumps(payload, indent=2, sort_keys=True)
+
+        acceptance = [
+            "Mode detection identifies 'snapshot' for standard markdown files.",
+            "Mode detection identifies 'patch_stream' for .patch/.diff files "
+            "or patches/ directories.",
+            "Mode is persisted in state.json.",
+            "Mode remains stable across resume operations.",
+        ]
+
+        return PreparedQaCase(
+            case_id=self.case_id,
+            agent_name=self.agent_name,
+            description=self.description,
+            prompt=prompt,
+            acceptance_criteria=acceptance,
+            allowlists={"snapshot_mode": "snapshot", "patch_mode": "patch_stream"},
+            postprocess=_identity,
+            validator=_phase0_mode_detection_validator,
+        )
 
 
 class EvidenceMapperAllowlistCase(QaCase):
@@ -667,6 +980,16 @@ class ArchitectureLibraryMappingCase(QaCase):
 
 
 QA_CASES: dict[str, QaCase] = {
+    "phase0_determinism": Phase0DeterminismCase(
+        case_id="phase0_determinism",
+        agent_name="none",
+        description="Phase 0 initialization must be deterministic and enforce immutability.",
+    ),
+    "phase0_mode_detection": Phase0ModeDetectionCase(
+        case_id="phase0_mode_detection",
+        agent_name="none",
+        description="Phase 0 mode detection must classify snapshot vs patch stream correctly.",
+    ),
     "phase3_evidence_mapper_allowlist": EvidenceMapperAllowlistCase(
         case_id="phase3_evidence_mapper_allowlist",
         agent_name="glm-library-evidence-mapper",

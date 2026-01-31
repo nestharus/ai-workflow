@@ -25,10 +25,30 @@ Run all cases:
 uv run spec qa run-all <run_id> --force
 ```
 
+## Phase 0 QA Cases
+
+Phase 0 QA cases are workspace-level validations. They do not invoke LLM agents; instead they
+call `WorkspaceManager.initialize()` directly to verify determinism, resume safety, spec snapshot
+immutability, and mode detection.
+
+Example (Phase 0 determinism):
+
+```bash
+uv run spec qa run phase0_determinism
+```
+
+Example (Phase 0 mode detection):
+
+```bash
+uv run spec qa run phase0_mode_detection
+```
+
+Agent-based QA cases still execute external agents and rely on a judge; Phase 0 cases rely only
+on deterministic validators.
+
 ## Outputs
 
 - Per-case reports:
   - `runs/<run_id>/audits/qa/<session_id>/cases/<case_id>/report.md`
 - Global scoreboard (JSONL, append-only):
   - `runs/_qa_scoreboard.jsonl`
-
