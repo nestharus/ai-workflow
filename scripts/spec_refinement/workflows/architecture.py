@@ -459,12 +459,48 @@ def _validate_architecture_brief(brief: dict[str, Any], lib_id: str) -> None:
         raise TypeError("Architecture brief dependencies must be a list of strings.")
 
     constraints = brief.get("constraints")
-    if not isinstance(constraints, list) or not all(isinstance(item, str) for item in constraints):
-        raise TypeError("Architecture brief constraints must be a list of strings.")
+    _validate_brief_entries(constraints, label="constraints")
 
     interfaces = brief.get("interfaces")
-    if not isinstance(interfaces, list) or not all(isinstance(item, str) for item in interfaces):
-        raise TypeError("Architecture brief interfaces must be a list of strings.")
+    _validate_brief_entries(interfaces, label="interfaces")
+
+
+def _validate_brief_entries(entries: list[dict[str, Any]], *, label: str) -> None:
+    if not isinstance(entries, list):
+        raise TypeError(f"Architecture brief {label} must be a list of objects.")
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise TypeError(f"Architecture brief {label} entries must be objects.")
+
+        entry_type = entry.get("type")
+        description = entry.get("description")
+        citation = entry.get("citation")
+        if not isinstance(entry_type, str):
+            raise TypeError(f"Architecture brief {label} entries must include string field: type.")
+        if not isinstance(description, str):
+            raise TypeError(
+                f"Architecture brief {label} entries must include string field: description."
+            )
+        if not isinstance(citation, str):
+            raise TypeError(
+                f"Architecture brief {label} entries must include string field: citation."
+            )
+
+
+def _format_brief_entry(entry: dict[str, Any]) -> str:
+    entry_type = _collapse_whitespace(str(entry.get("type", ""))).strip()
+    description = _collapse_whitespace(str(entry.get("description", ""))).strip()
+    citation = _collapse_whitespace(str(entry.get("citation", ""))).strip()
+
+    if entry_type and description:
+        content = f"{entry_type}: {description}"
+    else:
+        content = entry_type or description
+
+    if citation:
+        content = f"{content} {citation}".strip() if content else citation
+    return content.strip()
 
 
 def _parse_architecture_candidates(output: BaseModel | str) -> list[dict[str, Any]]:
@@ -677,7 +713,9 @@ def _build_architecture_proposal_prompt(
             lines.append("Constraints:")
             if isinstance(constraints, list) and constraints:
                 for item in constraints:
-                    item_text = _collapse_whitespace(str(item)).strip()
+                    if not isinstance(item, dict):
+                        raise TypeError("Architecture brief constraint entries must be objects.")
+                    item_text = _format_brief_entry(item)
                     if item_text:
                         lines.append(f"- {item_text}")
             else:
@@ -686,7 +724,9 @@ def _build_architecture_proposal_prompt(
             lines.append("Interfaces:")
             if isinstance(interfaces, list) and interfaces:
                 for item in interfaces:
-                    item_text = _collapse_whitespace(str(item)).strip()
+                    if not isinstance(item, dict):
+                        raise TypeError("Architecture brief interface entries must be objects.")
+                    item_text = _format_brief_entry(item)
                     if item_text:
                         lines.append(f"- {item_text}")
             else:
