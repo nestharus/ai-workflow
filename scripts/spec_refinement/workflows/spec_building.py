@@ -293,12 +293,14 @@ def _build_patch_prompt(
     lines = [
         "## OUTPUT CONTRACT (REQUIRED)",
         "",
-        "Return ONLY a JSON array of patch operations. No preamble, no code fences.",
+        "Return ONLY a JSON object with keys: file_id, lib_id, patches. "
+        "No preamble, no code fences.",
         "",
-        "REQUIRED SCHEMA (each element):",
-        '{ "op": "add|edit|move", "section": "Spec Section", '
-        '"bullet_index": int|null, "content": "text", '
-        '"citations": ["[file_###::SECTION]"], "source_section": "Spec Section" }',
+        "REQUIRED SCHEMA:",
+        '{ "file_id": "file_###", "lib_id": "lib_###", "patches": [ {'
+        '"op": "add|edit|move", "section": "Spec Section", '
+        '"bullet_index": int|null, "source_section": "Spec Section|null", '
+        '"content": "text", "citations": ["[file_###::SECTION]"] } ] }',
         "",
         "REQUIRED RULES:",
         "- Allowed ops: add, edit, move. Delete operations are FORBIDDEN",
@@ -355,8 +357,10 @@ def _build_patch_prompt(
             "## OUTPUT FORMAT",
             "",
             "Example:",
-            '[{"op": "add", "section": "Requirements", "bullet_index": null, '
-            '"content": "...", "citations": ["[file_001::INTRO]"]}]',
+            '{ "file_id": "file_001", "lib_id": "lib_001", "patches": ['
+            '{"op": "add", "section": "Requirements", "bullet_index": null, '
+            '"source_section": null, "content": "...", "citations": ["[file_001::INTRO]"]}'
+            "] }",
         ]
     )
     return "\n".join(lines).strip() + "\n"

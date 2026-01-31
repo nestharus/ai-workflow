@@ -611,6 +611,60 @@ def cmd_arch_map(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_qa_list(_: argparse.Namespace) -> int:
+    """List available manual QA cases."""
+    from scripts.spec_refinement.qa import QA_CASES
+
+    print("Available QA cases:")
+    for case_id, case in sorted(QA_CASES.items()):
+        print(f"  - {case_id}: {case.description}")
+    return 0
+
+
+def cmd_qa_run(args: argparse.Namespace) -> int:
+    """Run a single manual QA case (one agent step + judge)."""
+    from scripts.spec_refinement.qa import run_qa_case
+
+    try:
+        result = run_qa_case(
+            run_id=args.run_id,
+            case_id=args.case_id,
+            force_init=args.force,
+        )
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    status = "PASS" if result.get("passed") else "FAIL"
+    print(f"{args.case_id}: {status} (score={result.get('score')})")
+    if result.get("session_id"):
+        print(f"Session: {result['session_id']}")
+    print(f"Report: {result.get('report_path')}")
+    return 0
+
+
+def cmd_qa_run_all(args: argparse.Namespace) -> int:
+    """Run all manual QA cases (one agent step each + judge)."""
+    from scripts.spec_refinement.qa import run_qa_suite
+
+    case_ids = args.case_ids or None
+    try:
+        result = run_qa_suite(
+            run_id=args.run_id,
+            case_ids=case_ids,
+            force_init=args.force,
+        )
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(
+        f"QA suite complete: {result['cases_passed']}/{result['cases_total']} passed "
+        f"(session={result['session_id']})"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main entry point for spec refinement CLI."""
     parser = argparse.ArgumentParser(
@@ -628,7 +682,10 @@ def main(argv: list[str] | None = None) -> int:
             "  spec build-specs (agent: glm-library-spec-integrator)\n"
             "  spec propose-architectures (agent: opus-architecture-proposer)\n"
             "  spec select-architecture (agent: chatgpt-architecture-tradeoff-judge)\n"
-            "  spec map-libraries (agent: glm-architecture-mapper)"
+            "  spec map-libraries (agent: glm-architecture-mapper)\n"
+            "  qa list\n"
+            "  qa run\n"
+            "  qa run-all"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -676,6 +733,38 @@ def main(argv: list[str] | None = None) -> int:
     p_gap_resolve.add_argument("--notes", help="Resolution notes")
     p_gap_resolve.add_argument("--pointer", help="Resolution pointer (required for integrate)")
     p_gap_resolve.set_defaults(func=cmd_gap_resolve)
+
+    p_qa = subparsers.add_parser(
+        "qa",
+        help="Manual QA cases for agent steps (runs external LLMs; not part of pytest)",
+    )
+    qa_subparsers = p_qa.add_subparsers(dest="qa_command", required=True)
+
+    p_qa_list = qa_subparsers.add_parser("list", help="List available QA cases")
+    p_qa_list.set_defaults(func=cmd_qa_list)
+
+    p_qa_run = qa_subparsers.add_parser("run", help="Run a single QA case")
+    p_qa_run.add_argument(
+        "run_id", help="Run identifier used for storing QA artifacts under runs/<run_id>/"
+    )
+    p_qa_run.add_argument("case_id", help="QA case identifier (see: qa list)")
+    p_qa_run.add_argument("--force", action="store_true", help="Recreate workspace before running")
+    p_qa_run.set_defaults(func=cmd_qa_run)
+
+    p_qa_run_all = qa_subparsers.add_parser("run-all", help="Run all QA cases")
+    p_qa_run_all.add_argument(
+        "run_id", help="Run identifier used for storing QA artifacts under runs/<run_id>/"
+    )
+    p_qa_run_all.add_argument(
+        "--case-ids",
+        nargs="+",
+        default=None,
+        help="Optional subset of QA case IDs to run",
+    )
+    p_qa_run_all.add_argument(
+        "--force", action="store_true", help="Recreate workspace before running"
+    )
+    p_qa_run_all.set_defaults(func=cmd_qa_run_all)
 
     p_spec = subparsers.add_parser(
         "spec",

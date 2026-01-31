@@ -31,6 +31,7 @@ from scripts.spec_refinement.schemas import (
     EvidenceMapperOutput,
     GapJudgeOutput,
     LibraryLabelerOutput,
+    QaJudgeOutput,
     SpecPatchOutput,
 )
 
@@ -42,6 +43,7 @@ AGENT_SCHEMAS: dict[str, _SchemaType] = {
     "chatgpt-library-spec-gap-judge": GapJudgeOutput,
     "opus-architecture-proposer": ArchitectureProposal,
     "chatgpt-architecture-tradeoff-judge": ArchitectureSelection,
+    "chatgpt-qa-judge": QaJudgeOutput,
     "glm-file-library-labeler": LibraryLabelerOutput,
     "glm-library-spec-integrator": SpecPatchOutput,
     "glm-architecture-brief-extractor": ArchitectureBrief,

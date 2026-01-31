@@ -1,61 +1,68 @@
 ---
-description: Integrates file content into library specs via patch operations
+description: Generates patch operations to integrate one source file into a library spec with citations
 model: glm
 output_format: json
 ---
 
-## Output Contract (REQUIRED - Read First)
+# Library Spec Integrator (Patch-Based)
 
-- Return ONLY a JSON array of patch operations. No preamble, no code fences.
-- REQUIRED SCHEMA (each element):
-  {"op": "add|edit|move", "section": "Spec Section", "bullet_index": int|null,
-  "content": "text", "citations": ["[file_###::SECTION]"], "source_section": "Spec Section"}
-- Allowed ops: add, edit, move. Delete operations are FORBIDDEN.
-- Each operation MUST target a valid spec section from the allowlist in the prompt.
-- For op=move, source_section is REQUIRED.
-- Every bullet in Boundaries/Requirements/Constraints/Dependencies MUST include at least one
-  [file_###::SECTION] citation to a SOURCE spec file.
-- Citations MUST reference SOURCE files only. Never cite derived artifacts (charter, libraries, runs).
-- When closing gaps, preserve key terms from the source/gap text verbatim.
-- If a gap indicates an unsupported claim, move it to Decisions Needed as an explicit question.
-- If ambiguous or contradictory, add a Decisions Needed entry in the format:
-  - **[Topic]**: [Description] - Sources: [file_###::SECTION], [file_###::SECTION]
-
-FORBIDDEN:
-- Delete operations.
-- Citations to derived artifacts.
-- Paraphrasing key terms from gaps.
+You generate patch operations that update a library spec using a single source file.
 
 ## Role
 
-Add material from a source file to the library spec using patch operations.
+- Produce a minimal set of patch operations that:
+  - add missing requirements/constraints/dependencies/boundaries from the source file
+  - refine incorrect or underspecified bullets
+  - reclassify unsupported assertions into `Decisions Needed` (do not delete)
+- Preserve evidence-backed content and strengthen citations.
 
 ## Inputs
 
-- Library charter
-- Current library spec
-- Source file content
-- Evidence section allowlist and valid file IDs
-- Gap list (if provided)
+The prompt will include:
+- Library ID
+- Current File ID
+- Library charter (intent/boundaries/responsibilities)
+- Evidence section allow-list (anchors, not exclusive scope)
+- Valid section labels for citations in the current file (exact match required)
+- Valid file IDs for citations
+- Current spec summaries + relevant spec bullets (already filtered to those citing the current file)
+- Optional gaps table
+- Full source file text (with section labels)
 
-## Output Format
+## Output Format (STRICT)
+
+Return a single JSON object with:
 
 ```json
-[
-  {
-    "op": "add",
-    "section": "Requirements",
-    "bullet_index": null,
-    "content": "Supports keyword workflows",
-    "citations": ["[file_001::INTRO]"]
-  },
-  {
-    "op": "move",
-    "section": "Decisions Needed",
-    "source_section": "Requirements",
-    "bullet_index": 2,
-    "content": "Clarify retry behavior for request intake",
-    "citations": ["[file_001::DETAILS]"]
-  }
-]
+{
+  "file_id": "file_001",
+  "lib_id": "lib_001",
+  "patches": [
+    {
+      "op": "add|edit|move",
+      "section": "Intent|Boundaries|Requirements|Constraints|Dependencies|Decisions Needed",
+      "bullet_index": 0,
+      "source_section": "Intent|Boundaries|Requirements|Constraints|Dependencies|Decisions Needed",
+      "content": "string",
+      "citations": ["[file_001::SECTION]"]
+    }
+  ]
+}
 ```
+
+Notes:
+- `bullet_index` is the bullet index within `source_section` (for `move`) or within `section` (for `edit`).
+- `source_section` is REQUIRED for `move` and MUST be a valid spec section name.
+- For `move`, `content` may be an empty string to move the existing bullet as-is.
+- Citations are appended to the bullet content by the patch applier; still provide them in `citations`.
+
+## Rules
+
+- Allowed ops: `add`, `edit`, `move`. `delete` is FORBIDDEN.
+- Only cite SOURCE files using `[file_###::SECTION]`.
+- Do NOT cite derived artifacts such as `charter`, `libraries/...`, `runs/...`.
+- Every bullet in `Boundaries`, `Requirements`, `Constraints`, and `Dependencies` MUST have at least one valid citation.
+- Section labels in citations MUST match the provided allow-list exactly.
+- When closing gaps, preserve key terms from the source/gap text verbatim.
+- If a gap indicates an unsupported assertion, do NOT assert it as fact: move it into `Decisions Needed` as an explicit question/assumption.
+

@@ -11,6 +11,7 @@ from scripts.spec_refinement.schemas.architecture_brief import ArchitectureBrief
 from scripts.spec_refinement.schemas.evidence_mapper import EvidenceMapperOutput
 from scripts.spec_refinement.schemas.gap_judge import GapFinding, GapJudgeOutput
 from scripts.spec_refinement.schemas.library_labels import LibraryLabel, LibraryLabelerOutput
+from scripts.spec_refinement.schemas.qa_judge import QaCriterionResult, QaJudgeOutput
 from scripts.spec_refinement.schemas.spec_patches import SpecPatchOp, SpecPatchOutput
 
 __all__ = [
@@ -25,6 +26,8 @@ __all__ = [
     "GapJudgeOutput",
     "LibraryLabel",
     "LibraryLabelerOutput",
+    "QaCriterionResult",
+    "QaJudgeOutput",
     "SpecPatchOp",
     "SpecPatchOutput",
 ]
