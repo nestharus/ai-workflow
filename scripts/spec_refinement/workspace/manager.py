@@ -16,7 +16,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from scripts.spec_refinement.core.gap import Gap, format_gap_markdown, parse_gaps_markdown
+from scripts.spec_manager.spec_manager.core.gaps import Severity
+from scripts.spec_refinement.core.gap import (
+    Gap,
+    GapEvidence,
+    GapType,
+    compute_evidence_signature,
+    format_gap_markdown,
+    parse_gaps_markdown,
+)
 from scripts.spec_refinement.core.gap_queue import GapQueue
 
 from .state import Phase, WorkspaceState
@@ -421,11 +429,76 @@ class WorkspaceManager:
         if not added and not removed and not modified:
             return None
 
+        self._record_manifest_conflict_gap(
+            existing_manifest=existing_manifest,
+            new_manifest=new_manifest,
+            added_ids=sorted(added),
+            removed_ids=sorted(removed),
+            modified_ids=sorted(modified),
+        )
+
         return (
             "Manifest conflict detected: "
             f"{len(added)} files added, {len(removed)} removed, {len(modified)} modified. "
             "Use --force to recreate."
         )
+
+    def _record_manifest_conflict_gap(
+        self,
+        *,
+        existing_manifest: dict[str, dict[str, str]],
+        new_manifest: dict[str, dict[str, str]],
+        added_ids: list[str],
+        removed_ids: list[str],
+        modified_ids: list[str],
+    ) -> Gap:
+        modified_entries: list[dict[str, str | None]] = []
+        for file_id in modified_ids:
+            existing_entry = existing_manifest.get(file_id, {})
+            new_entry = new_manifest.get(file_id, {})
+            modified_entries.append(
+                {
+                    "file_id": file_id,
+                    "existing_relpath": existing_entry.get("relpath"),
+                    "new_relpath": new_entry.get("relpath"),
+                    "existing_sha256": existing_entry.get("sha256"),
+                    "new_sha256": new_entry.get("sha256"),
+                }
+            )
+
+        evidence = [
+            GapEvidence(
+                invariant_family="content",
+                description="Run manifest differs from current snapshot enumeration.",
+                details={
+                    "added_file_ids": added_ids,
+                    "removed_file_ids": removed_ids,
+                    "modified_file_ids": modified_ids,
+                    "modified_entries": modified_entries,
+                    "existing_manifest_path": str(self.structure.files_json),
+                    "spec_snapshot_dir": str(self.structure.spec_snapshot_dir),
+                },
+                confidence=1.0,
+                location="manifest/files.json",
+                detector="workspace-manager",
+            )
+        ]
+        gap_id = f"GAP-{compute_evidence_signature(evidence)}"
+        gap = Gap(
+            id=gap_id,
+            gap_type=GapType.content_mismatch,
+            severity=Severity.ERROR,
+            source=["manifest/files.json", "spec_snapshot"],
+            derived_artifact_target="manifest/files.json",
+            description=(
+                "Manifest mismatch detected between the existing run manifest and current "
+                f"snapshot ({len(added_ids)} added, {len(removed_ids)} removed, "
+                f"{len(modified_ids)} modified). Resume requires --force to recreate."
+            ),
+            evidence=evidence,
+        )
+        self._record_run_gap(gap)
+        return gap
 
     def _extract_section_labels(self, file_path: Path) -> list[str]:
         """Extract stable section labels from a file.
@@ -690,6 +763,19 @@ class WorkspaceManager:
                 if gaps_path.exists():
                     gaps[task_dir.name] = self.read_task_gaps(task_dir.name)
         return gaps
+
+    def _record_run_gap(self, gap: Gap) -> Path:
+        """Persist a run-level gap in the audits directory."""
+        audits_dir = self.structure.audits_dir
+        audits_dir.mkdir(parents=True, exist_ok=True)
+        run_gaps_path = audits_dir / "run_gaps.md"
+        existing_gaps: list[Gap] = []
+        if run_gaps_path.exists():
+            existing_gaps = parse_gaps_markdown(run_gaps_path.read_text(encoding="utf-8"))
+        if all(existing.id != gap.id for existing in existing_gaps):
+            existing_gaps.append(gap)
+        run_gaps_path.write_text(self.format_gaps_md(existing_gaps, None), encoding="utf-8")
+        return run_gaps_path
 
     def record_gap_audit(
         self,
