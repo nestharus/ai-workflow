@@ -14,7 +14,6 @@ from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManag
 from .agent_utils import run_agent
 from .formats import (
     normalize_compound_pointers,
-    parse_architecture_mapping,
     parse_architecture_proposal,
     parse_architecture_selection,
 )
@@ -52,8 +51,8 @@ def propose_architectures(run_id: str) -> dict[str, Any]:
         if spec_path.exists():
             lib_specs[lib_id] = spec_path.read_text(encoding="utf-8")
 
-    constraints = _extract_constraints_from_specs(lib_specs)
-    prompt = _build_architecture_proposal_prompt(lib_charters, lib_specs, constraints)
+    briefs = _extract_architecture_briefs(libraries, manager)
+    prompt = _build_architecture_proposal_prompt(lib_charters, lib_specs, briefs)
 
     try:
         output = run_agent(
@@ -256,48 +255,17 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
     selected_content = selected_path.read_text(encoding="utf-8")
 
     libraries = manager.get_all_libraries_recursive()
-    lib_specs: dict[str, str] = {}
-    lib_charters: dict[str, str] = {}
-    for lib_id, lib_dir in libraries.items():
-        spec_path = lib_dir / "spec.md"
-        charter_path = lib_dir / "charter.md"
-        if spec_path.exists():
-            lib_specs[lib_id] = spec_path.read_text(encoding="utf-8")
-        if charter_path.exists():
-            lib_charters[lib_id] = charter_path.read_text(encoding="utf-8")
-
-    prompt = _build_architecture_mapping_prompt(selected_content, lib_charters, lib_specs)
-    try:
-        output = run_agent(
-            agent_name="glm-architecture-mapper",
-            prompt=prompt,
-            workspace=manager.workspace_path,
-        )
-    except RuntimeError as exc:
-        manager.fail_phase(Phase.ARCHITECTURE_MAPPING, error=f"Agent execution failed: {exc}")
-        return {"libraries_mapped": 0, "unmapped_libraries": [], "issues": []}
-
-    output = normalize_compound_pointers(output)
-    output = strip_invalid_file_pointers(
-        output,
-        manager.state.file_manifest,
-        allow_multi_hop=True,
-    )
-
-    try:
-        mapping = parse_architecture_mapping(output)
-    except Exception as exc:
-        manager.fail_phase(Phase.ARCHITECTURE_MAPPING, error=f"Failed to parse output: {exc}")
-        return {"libraries_mapped": 0, "unmapped_libraries": [], "issues": []}
+    mapping_fragments = _map_libraries_distributed(selected_content, libraries, manager)
+    mapping = _aggregate_mapping_fragments(mapping_fragments, libraries)
 
     component_mappings: dict[str, list[str]] = mapping.get("component_mappings", {})
     component_lines: dict[str, list[str]] = mapping.get("component_lines", {})
+    dependencies: list[str] = mapping.get("dependencies", [])
+    unmapped: list[str] = mapping.get("unmapped_libraries", [])
 
-    all_lib_ids = set(libraries.keys())
     mapped_libs: set[str] = set()
     for libs in component_mappings.values():
         mapped_libs.update(libs)
-    unmapped = sorted(all_lib_ids - mapped_libs)
 
     issues: list[dict[str, Any]] = []
 
@@ -314,7 +282,6 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
     if missing_citations:
         issues.extend(missing_citations)
 
-    dependencies = mapping.get("dependencies", [])
     if not dependencies:
         issues.append(
             {
@@ -323,7 +290,15 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
             }
         )
 
-    citation_issues = _validate_architecture_citations(output, manager)
+    formatted_output = _format_architecture_mapping(mapping, selected_content)
+    formatted_output = normalize_compound_pointers(formatted_output)
+    formatted_output = strip_invalid_file_pointers(
+        formatted_output,
+        manager.state.file_manifest,
+        allow_multi_hop=True,
+    )
+
+    citation_issues = _validate_architecture_citations(formatted_output, manager)
     issues.extend(citation_issues)
     if citation_issues:
         from .repair import ArtifactType, repair_artifact
@@ -331,7 +306,7 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
         libraries = manager.get_all_libraries_recursive()
         try:
             repaired_output = repair_artifact(
-                output=output,
+                output=formatted_output,
                 errors=citation_issues,
                 allowlists={
                     "library_ids": list(libraries.keys()),
@@ -342,7 +317,7 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
             )
             repaired_citation_issues = _validate_architecture_citations(repaired_output, manager)
             if not repaired_citation_issues:
-                output = repaired_output
+                formatted_output = repaired_output
                 issues = [i for i in issues if i not in citation_issues]
         except Exception as exc:
             issues.append(
@@ -372,7 +347,7 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
         }
 
     mapping_path = manager.structure.architecture_dir / "mapping.md"
-    mapping_path.write_text(output.strip() + "\n", encoding="utf-8")
+    mapping_path.write_text(formatted_output.strip() + "\n", encoding="utf-8")
 
     outputs = {
         "libraries_mapped": len(mapped_libs),
@@ -387,29 +362,107 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
     }
 
 
-def _extract_constraints_from_specs(lib_specs: dict[str, str]) -> list[str]:
-    """Extract constraint-related sections from library specs."""
-    keywords = (
-        "constraint",
-        "requirement",
-        "performance",
-        "latency",
-        "throughput",
-        "security",
-        "compliance",
-        "availability",
-        "scalability",
+def _extract_architecture_briefs(
+    libraries: dict[str, Path], manager: WorkspaceManager
+) -> dict[str, dict[str, Any]]:
+    """Extract architecture briefs from all libraries in parallel."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    briefs: dict[str, dict[str, Any]] = {}
+    tracker = ProgressTracker(
+        total=len(libraries),
+        description="Extracting architecture briefs",
+        manager=manager,
     )
-    constraints: list[str] = []
-    for lib_id, content in lib_specs.items():
-        sections = _extract_markdown_sections(content)
-        for title, body in sections.items():
-            title_lower = title.lower()
-            if any(key in title_lower for key in keywords):
-                snippet = _collapse_whitespace(body)
-                if snippet:
-                    constraints.append(f"{lib_id}::{title}: {snippet[:500]}")
-    return constraints
+
+    def _extract_brief(lib_id: str, lib_dir: Path) -> tuple[str, dict[str, Any]]:
+        charter_path = lib_dir / "charter.md"
+        spec_path = lib_dir / "spec.md"
+        charter = charter_path.read_text(encoding="utf-8") if charter_path.exists() else ""
+        spec = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
+
+        prompt = _build_brief_extraction_prompt(lib_id, charter, spec)
+        output = run_agent(
+            agent_name="glm-architecture-brief-extractor",
+            prompt=prompt,
+            workspace=manager.workspace_path,
+        )
+        brief = json.loads(_extract_json_payload(output))
+        _validate_architecture_brief(brief, lib_id)
+        return lib_id, brief
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {
+            executor.submit(_extract_brief, lib_id, lib_dir): lib_id
+            for lib_id, lib_dir in libraries.items()
+        }
+        for future in as_completed(futures):
+            lib_id = futures[future]
+            try:
+                lib_id, brief = future.result()
+                briefs[lib_id] = brief
+                tracker.update(status=lib_id)
+            except Exception:
+                tracker.update(status=f"{lib_id} (failed)")
+                # Continue with other libraries
+
+    tracker.finish()
+    return briefs
+
+
+def _build_brief_extraction_prompt(lib_id: str, charter: str, spec: str) -> str:
+    lines = [
+        f"Extract architecture brief for library: {lib_id}",
+        "Return JSON with: lib_id, intent, boundaries, dependencies, constraints, interfaces",
+        "All constraints and interfaces MUST include citations to spec sections.",
+        "",
+        "## Charter",
+        charter.strip(),
+        "",
+        "## Spec",
+        spec.strip(),
+    ]
+    return "\n".join(lines)
+
+
+def _validate_architecture_brief(brief: dict[str, Any], lib_id: str) -> None:
+    if not isinstance(brief, dict):
+        raise TypeError("Architecture brief must be a JSON object.")
+
+    brief_lib_id = brief.get("lib_id")
+    if not isinstance(brief_lib_id, str) or brief_lib_id != lib_id:
+        raise TypeError("Architecture brief lib_id mismatch.")
+
+    required_str = ("intent", "boundaries")
+    for key in required_str:
+        if not isinstance(brief.get(key), str):
+            raise TypeError(f"Architecture brief missing string field: {key}")
+
+    dependencies = brief.get("dependencies")
+    if not isinstance(dependencies, list) or not all(
+        isinstance(item, str) for item in dependencies
+    ):
+        raise TypeError("Architecture brief dependencies must be a list of strings.")
+
+    constraints = brief.get("constraints")
+    if not isinstance(constraints, list):
+        raise TypeError("Architecture brief constraints must be a list.")
+    for item in constraints:
+        if not isinstance(item, dict):
+            raise TypeError("Architecture brief constraint entries must be objects.")
+        for key in ("type", "description", "citation"):
+            if not isinstance(item.get(key), str):
+                raise TypeError(f"Architecture brief constraint missing field: {key}")
+
+    interfaces = brief.get("interfaces")
+    if not isinstance(interfaces, list):
+        raise TypeError("Architecture brief interfaces must be a list.")
+    for item in interfaces:
+        if not isinstance(item, dict):
+            raise TypeError("Architecture brief interface entries must be objects.")
+        for key in ("type", "description", "citation"):
+            if not isinstance(item.get(key), str):
+                raise TypeError(f"Architecture brief interface missing field: {key}")
 
 
 def _parse_architecture_candidates(output: str) -> list[dict[str, Any]]:
@@ -557,7 +610,9 @@ def _format_architecture_candidate(candidate: dict[str, Any]) -> str:
 
 
 def _build_architecture_proposal_prompt(
-    lib_charters: dict[str, str], lib_specs: dict[str, str], constraints: list[str]
+    lib_charters: dict[str, str],
+    lib_specs: dict[str, str],
+    briefs: dict[str, dict[str, Any]],
 ) -> str:
     lines = [
         "Generate 3-5 architecture candidates for Phase 6.",
@@ -588,11 +643,35 @@ def _build_architecture_proposal_prompt(
         intent = _extract_charter_intent(charter)
         lines.append(f"- {lib_id}: {intent}")
 
-    if constraints:
-        lines.append("")
-        lines.append("## Key Constraints")
-        for constraint in constraints:
-            lines.append(f"- {constraint}")
+    lines.append("")
+    lines.append("## Library Architecture Briefs")
+    if briefs:
+        for lib_id in sorted(briefs.keys()):
+            brief = briefs[lib_id]
+            intent = _collapse_whitespace(str(brief.get("intent", ""))).strip()
+            if len(intent) > 160:
+                intent = intent[:157] + "..."
+            constraints_count = brief.get("constraints", [])
+            interface_count = brief.get("interfaces", [])
+            dependencies = brief.get("dependencies", [])
+            constraints_total = len(constraints_count) if isinstance(constraints_count, list) else 0
+            interfaces_total = len(interface_count) if isinstance(interface_count, list) else 0
+            if isinstance(dependencies, list):
+                deps_text = ", ".join(str(dep) for dep in dependencies if dep)
+            else:
+                deps_text = ""
+            if not deps_text:
+                deps_text = "None"
+            if not intent:
+                intent = "None"
+            lines.append(
+                f"- {lib_id}: intent={intent}; "
+                f"constraints={constraints_total}; "
+                f"interfaces={interfaces_total}; "
+                f"dependencies={deps_text}"
+            )
+    else:
+        lines.append("- None")
 
     if lib_specs:
         lines.append("")
@@ -654,85 +733,202 @@ def _build_architecture_selection_prompt(
     return "\n".join(lines).strip() + "\n"
 
 
-def _build_architecture_mapping_prompt(
+def _map_libraries_distributed(
     selected_architecture: str,
-    lib_charters: dict[str, str],
-    lib_specs: dict[str, str],
+    libraries: dict[str, Path],
+    manager: WorkspaceManager,
+) -> list[dict[str, Any]]:
+    """Map each library to architecture components in parallel."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    fragments: list[dict[str, Any]] = []
+    tracker = ProgressTracker(
+        total=len(libraries),
+        description="Mapping libraries to architecture",
+        manager=manager,
+    )
+
+    def _map_library(lib_id: str, lib_dir: Path) -> dict[str, Any]:
+        charter_path = lib_dir / "charter.md"
+        spec_path = lib_dir / "spec.md"
+        charter = charter_path.read_text(encoding="utf-8") if charter_path.exists() else ""
+        spec = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
+
+        prompt = _build_library_mapping_prompt(lib_id, selected_architecture, charter, spec)
+        output = run_agent(
+            agent_name="glm-architecture-library-mapper",
+            prompt=prompt,
+            workspace=manager.workspace_path,
+        )
+        fragment = json.loads(_extract_json_payload(output))
+        _validate_mapping_fragment(fragment, lib_id)
+        return fragment
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {
+            executor.submit(_map_library, lib_id, lib_dir): lib_id
+            for lib_id, lib_dir in libraries.items()
+        }
+        for future in as_completed(futures):
+            lib_id = futures[future]
+            try:
+                fragment = future.result()
+                fragments.append(fragment)
+                tracker.update(status=lib_id)
+            except Exception:
+                tracker.update(status=f"{lib_id} (failed)")
+                # Continue with other libraries
+
+    tracker.finish()
+    return fragments
+
+
+def _validate_mapping_fragment(fragment: dict[str, Any], lib_id: str) -> None:
+    if not isinstance(fragment, dict):
+        raise TypeError("Architecture mapping fragment must be a JSON object.")
+
+    fragment_lib_id = fragment.get("lib_id")
+    if not isinstance(fragment_lib_id, str) or fragment_lib_id != lib_id:
+        raise TypeError("Architecture mapping fragment lib_id mismatch.")
+
+    for key in ("component", "rationale"):
+        if not isinstance(fragment.get(key), str):
+            raise TypeError(f"Architecture mapping fragment missing field: {key}")
+
+    citations = fragment.get("citations")
+    if not isinstance(citations, list) or not all(isinstance(item, str) for item in citations):
+        raise TypeError("Architecture mapping fragment citations must be a list of strings.")
+
+    dependencies = fragment.get("cross_component_dependencies")
+    if not isinstance(dependencies, list):
+        raise TypeError("Architecture mapping fragment dependencies must be a list.")
+    for item in dependencies:
+        if not isinstance(item, dict):
+            raise TypeError("Architecture mapping dependency entries must be objects.")
+        for key in ("target_component", "reason", "citation"):
+            if not isinstance(item.get(key), str):
+                raise TypeError(f"Architecture mapping dependency missing field: {key}")
+
+
+def _aggregate_mapping_fragments(
+    fragments: list[dict[str, Any]],
+    libraries: dict[str, Path],
+) -> dict[str, Any]:
+    """Aggregate per-library mapping fragments into final mapping structure."""
+    component_mappings: dict[str, list[str]] = {}
+    component_lines: dict[str, list[str]] = {}
+    dependencies: list[str] = []
+
+    for fragment in fragments:
+        lib_id = fragment.get("lib_id", "unknown")
+        component = fragment.get("component", "Unknown")
+        rationale = fragment.get("rationale", "")
+        citations = fragment.get("citations", [])
+
+        component_mappings.setdefault(component, []).append(lib_id)
+
+        citation_str = " ".join(citations) if citations else ""
+        line = f"- {lib_id}: {rationale}".strip()
+        if citation_str:
+            line = f"{line} {citation_str}".strip()
+        component_lines.setdefault(component, []).append(line)
+
+        for dep in fragment.get("cross_component_dependencies", []):
+            target = dep.get("target_component", "")
+            reason = dep.get("reason", "")
+            citation = dep.get("citation", "")
+            if target and reason:
+                if citation:
+                    dependencies.append(f"{component} -> {target}: {reason} {citation}")
+                else:
+                    dependencies.append(f"{component} -> {target}: {reason}")
+
+    all_lib_ids = set(libraries.keys())
+    mapped_libs: set[str] = set()
+    for libs in component_mappings.values():
+        mapped_libs.update(libs)
+    unmapped = sorted(all_lib_ids - mapped_libs)
+
+    return {
+        "component_mappings": component_mappings,
+        "component_lines": component_lines,
+        "dependencies": dependencies,
+        "unmapped_libraries": unmapped,
+    }
+
+
+def _build_library_mapping_prompt(
+    lib_id: str,
+    selected_architecture: str,
+    charter: str,
+    spec: str,
 ) -> str:
     lines = [
-        "Map libraries to architecture components.",
-        "Follow the output format exactly.",
-        "Every library must be mapped with citations.",
-        "Citations MUST use library pointers only:",
-        "- [lib_###::charter.md]",
-        (
-            "- [lib_###::spec.md::SECTION] where SECTION is taken from the "
-            "allow-list below (exact match)."
-        ),
-        (
-            "Do NOT cite source files like [file_001::REQS] in the output "
-            "(even if you see them inside specs)."
-        ),
+        f"Map library {lib_id} to the appropriate architecture component.",
+        "Return JSON with: lib_id, component, rationale, citations, cross_component_dependencies",
+        "Citations MUST use library pointers only: [lib_###::charter.md] or "
+        "[lib_###::spec.md::SECTION]",
+        "Do NOT cite source files like [file_001::REQS]",
         "",
         "## Selected Architecture",
         selected_architecture.strip(),
         "",
-        "## Library Charters",
+        f"## Library {lib_id} Charter",
+        charter.strip(),
+        "",
+        f"## Library {lib_id} Spec",
+        _summarize_spec_for_prompt(spec),
+    ]
+    return "\n".join(lines)
+
+
+def _format_architecture_mapping(
+    mapping: dict[str, Any],
+    selected_architecture: str,
+) -> str:
+    """Format aggregated mapping fragments into final mapping.md."""
+    lines = [
+        "# Architecture Mapping",
+        "",
+        "## Architecture",
+        selected_architecture.strip(),
+        "",
+        "## Component Mappings",
+        "",
     ]
 
-    for lib_id, charter in lib_charters.items():
-        lines.append(f"### {lib_id}")
-        lines.append(_summarize_charter_for_prompt(charter))
+    component_mappings = mapping.get("component_mappings", {})
+    component_lines = mapping.get("component_lines", {})
+
+    for component in sorted(component_mappings.keys()):
+        lines.append(f"### Component: {component}")
+        lines.append("")
+        lines.append("**Libraries**:")
+        for line in component_lines.get(component, []):
+            lines.append(line)
         lines.append("")
 
-    if lib_specs:
-        lines.append("## Library Specs")
-        for lib_id, spec in lib_specs.items():
-            lines.append(f"### {lib_id}")
-            lines.append(_summarize_spec_for_prompt(spec))
-            lines.append("")
-        lines.append("## Valid Spec Section Labels (for citations)")
-        for lib_id in sorted(lib_specs):
-            sections = _section_allowlist_from_content(lib_specs[lib_id])
-            if sections:
-                lines.append(f"- {lib_id} spec.md: {', '.join(sections)}")
-            else:
-                lines.append(f"- {lib_id} spec.md: (no sections detected)")
-        lines.append("")
+    lines.append("## Cross-Component Dependencies")
+    lines.append("")
+    dependencies = mapping.get("dependencies", [])
+    if dependencies:
+        for dep in dependencies:
+            lines.append(f"- {dep}")
+    else:
+        lines.append("- None")
+    lines.append("")
 
-    lines.append("## Mapping Format")
-    lines.append(
-        """# Architecture Mapping
+    lines.append("## Unmapped Libraries")
+    lines.append("")
+    unmapped = mapping.get("unmapped_libraries", [])
+    if unmapped:
+        for lib_id in unmapped:
+            lines.append(f"- {lib_id}")
+    else:
+        lines.append("- None")
+    lines.append("")
 
-## Architecture: {arch_id}
-
-{architecture description}
-
-## Component Mappings
-
-### Component: {component_name}
-
-**Responsibilities**: {component responsibilities}
-
-**Libraries**:
-- lib_001: {intent} [lib_001::charter.md]
-- lib_002: {intent} [lib_002::spec.md::REQUIREMENTS]
-
-### Component: {component_name}
-
-...
-
-## Cross-Component Dependencies
-
-- {component_A} -> {component_B}: {reason} [lib_003::spec.md::DEPENDENCIES]
-
-## Unmapped Libraries
-
-- None (or list with reasons)
-"""
-    )
-
-    return "\n".join(lines).strip() + "\n"
+    return "\n".join(lines)
 
 
 def _summarize_spec_for_prompt(spec: str) -> str:
@@ -760,22 +956,6 @@ def _summarize_spec_for_prompt(spec: str) -> str:
         return "\n".join(lines).strip()[:2000]
 
     return _strip_file_citations(spec.strip())[:2000]
-
-
-def _summarize_charter_for_prompt(charter: str) -> str:
-    sections = _extract_markdown_sections(charter)
-    if not sections:
-        return charter.strip()[:800]
-    wanted = ["intent", "boundaries", "responsibilities"]
-    lines: list[str] = []
-    for title, body in sections.items():
-        if any(key in title.lower() for key in wanted):
-            lines.append(f"## {title}")
-            lines.append(body.strip())
-            lines.append("")
-    if lines:
-        return "\n".join(lines).strip()[:1200]
-    return charter.strip()[:1200]
 
 
 def _extract_charter_intent(charter: str) -> str:
