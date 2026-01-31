@@ -11,8 +11,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
-
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 _FILE_OUTPUT_RE = re.compile(r"see `([^`]+)` for details\\.?$", re.IGNORECASE)
@@ -84,22 +82,12 @@ def run_agent(
     prompt: str,
     workspace: Path,
     max_retries: int = 2,
-    structured_schema: type[BaseModel] | None = None,
     extra_env: dict[str, str] | None = None,
-) -> BaseModel | str:
+) -> str:
     """Run an agent via `uv run agents`.
 
     Uses a prompt file to avoid command-line length limits.
     """
-    if structured_schema is not None:
-        if extra_env:
-            raise ValueError("extra_env is not supported for structured agents.")
-        return run_structured_agent(
-            agent_name=agent_name,
-            prompt=prompt,
-            schema=structured_schema,
-            workspace=workspace,
-        )
     prompts_dir = workspace / "agent_prompts"
     prompts_dir.mkdir(parents=True, exist_ok=True)
     prompt_file = prompts_dir / f"{agent_name}_{int(time.time() * 1000)}.txt"
@@ -156,15 +144,3 @@ def run_agent(
         time.sleep(2**attempt)
 
     raise last_error or RuntimeError(f"Agent failed (agent={agent_name}).")
-
-
-def run_structured_agent(
-    agent_name: str,
-    prompt: str,
-    schema: type[BaseModel],
-    workspace: Path,
-) -> BaseModel:
-    """Run agent with structured output support."""
-    from scripts.agents.structured_output import run_structured_agent as _run
-
-    return _run(agent_name, prompt, schema, workspace)

@@ -8,9 +8,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
-
-from scripts.spec_refinement.schemas import EvidenceMapperOutput
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
@@ -464,18 +461,14 @@ def _process_pair(
             agent_name="glm-library-evidence-mapper",
             prompt=prompt,
             workspace=workspace,
-            structured_schema=EvidenceMapperOutput,
         )
     except RuntimeError as exc:
         return {"lib_id": lib_id, "file_id": file_id, "error": f"Agent execution failed: {exc}"}
 
     try:
-        if isinstance(output, BaseModel):
-            data = output.model_dump()
-        else:
-            from .formats import parse_evidence_mapper_output
+        from .formats import parse_evidence_mapper_output
 
-            data = parse_evidence_mapper_output(output)
+        data = parse_evidence_mapper_output(output)
     except Exception as exc:  # pragma: no cover - defensive logging
         return {
             "lib_id": lib_id,
@@ -825,8 +818,7 @@ def spotcheck_evidence(run_id: str, lib_ids: list[str] | None = None) -> dict[st
                 continue
 
             try:
-                output_str = str(output) if isinstance(output, BaseModel) else output
-                data = parse_evidence_spotcheck_output(output_str)
+                data = parse_evidence_spotcheck_output(output)
             except Exception as exc:  # pragma: no cover - defensive logging
                 errors.append(
                     {

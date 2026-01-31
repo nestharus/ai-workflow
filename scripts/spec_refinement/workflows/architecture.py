@@ -9,13 +9,6 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
 
-from pydantic import BaseModel
-
-from scripts.spec_refinement.schemas import (
-    ArchitectureBrief,
-    ArchitectureProposal,
-    ArchitectureSelection,
-)
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
@@ -67,7 +60,6 @@ def propose_architectures(run_id: str) -> dict[str, Any]:
             agent_name="opus-architecture-proposer",
             prompt=prompt,
             workspace=manager.workspace_path,
-            structured_schema=ArchitectureProposal,
         )
     except RuntimeError as exc:
         manager.fail_phase(Phase.ARCHITECTURE_PROPOSAL, error=f"Agent execution failed: {exc}")
@@ -150,7 +142,6 @@ def select_architecture(run_id: str) -> dict[str, Any]:
             agent_name="chatgpt-architecture-tradeoff-judge",
             prompt=prompt,
             workspace=manager.workspace_path,
-            structured_schema=ArchitectureSelection,
         )
     except RuntimeError as exc:
         manager.fail_phase(Phase.ARCHITECTURE_SELECTION, error=f"Agent execution failed: {exc}")
@@ -398,12 +389,8 @@ def _extract_architecture_briefs(
             agent_name="glm-architecture-brief-extractor",
             prompt=prompt,
             workspace=manager.workspace_path,
-            structured_schema=ArchitectureBrief,
         )
-        if isinstance(output, BaseModel):
-            brief = output.model_dump()
-        else:
-            brief = parse_architecture_brief_output(output)
+        brief = parse_architecture_brief_output(output)
         _validate_architecture_brief(brief, lib_id)
         return lib_id, brief
 
@@ -549,20 +536,14 @@ def _format_brief_entry(entry: dict[str, Any]) -> str:
     return content.strip()
 
 
-def _parse_architecture_candidates(output: BaseModel | str) -> list[dict[str, Any]]:
-    if isinstance(output, BaseModel):
-        payload = output.model_dump_json()
-    else:
-        payload = _extract_json_payload(output)
+def _parse_architecture_candidates(output: str) -> list[dict[str, Any]]:
+    payload = _extract_json_payload(output)
     candidates = parse_architecture_proposal(payload)
     return [asdict(candidate) for candidate in candidates]
 
 
-def _parse_architecture_selection(output: BaseModel | str) -> dict[str, Any]:
-    if isinstance(output, BaseModel):
-        payload = output.model_dump_json()
-    else:
-        payload = _extract_json_payload(output)
+def _parse_architecture_selection(output: str) -> dict[str, Any]:
+    payload = _extract_json_payload(output)
     return parse_architecture_selection(payload)
 
 
@@ -924,8 +905,6 @@ def _map_libraries_distributed(
             prompt=prompt,
             workspace=manager.workspace_path,
         )
-        if isinstance(output, BaseModel):
-            output = output.model_dump_json()
         fragment = json.loads(_extract_json_payload(output))
         _validate_mapping_fragment(fragment, lib_id)
         return cast("dict[str, Any]", fragment)

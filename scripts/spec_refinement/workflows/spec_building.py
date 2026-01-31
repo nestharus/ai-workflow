@@ -8,11 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
-
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, format_gap_table
 from scripts.spec_refinement.core.gap_queue import GapQueue
-from scripts.spec_refinement.schemas import GapJudgeOutput, SpecPatchOutput
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
@@ -841,7 +838,6 @@ def _build_library_spec(
                     agent_name="glm-library-spec-integrator",
                     prompt=prompt,
                     workspace=manager.workspace_path,
-                    structured_schema=SpecPatchOutput,
                 )
             except RuntimeError as exc:
                 errors.append(
@@ -853,13 +849,10 @@ def _build_library_spec(
                 )
                 continue
 
-            output_text = output.model_dump_json() if isinstance(output, BaseModel) else output
+            output_text = output
 
             try:
-                if isinstance(output, BaseModel):
-                    patch_payload = output.model_dump()
-                else:
-                    patch_payload = parse_spec_patch_output(output)
+                patch_payload = parse_spec_patch_output(output)
                 patch_json = json.dumps(
                     {
                         "operations": patch_payload.get("patches", []),
@@ -1039,7 +1032,6 @@ def _build_library_spec(
                     agent_name="chatgpt-library-spec-gap-judge",
                     prompt=prompt,
                     workspace=manager.workspace_path,
-                    structured_schema=GapJudgeOutput,
                 )
             except RuntimeError as exc:
                 errors.append(
@@ -1052,10 +1044,7 @@ def _build_library_spec(
                 continue
 
             try:
-                if isinstance(output, BaseModel):
-                    data = output.model_dump()
-                else:
-                    data = parse_gap_judge_output(output)
+                data = parse_gap_judge_output(output)
             except Exception as exc:  # pragma: no cover - defensive logging
                 errors.append(
                     {
@@ -1089,7 +1078,6 @@ def _build_library_spec(
                 agent_name="chatgpt-library-spec-gap-judge",
                 prompt=audit_prompt,
                 workspace=manager.workspace_path,
-                structured_schema=GapJudgeOutput,
             )
         except RuntimeError as exc:
             errors.append(
@@ -1101,10 +1089,7 @@ def _build_library_spec(
             )
         else:
             try:
-                if isinstance(audit_output, BaseModel):
-                    audit_data = audit_output.model_dump()
-                else:
-                    audit_data = parse_gap_judge_output(audit_output)
+                audit_data = parse_gap_judge_output(audit_output)
             except Exception as exc:  # pragma: no cover - defensive logging
                 errors.append(
                     {

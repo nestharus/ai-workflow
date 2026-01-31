@@ -12,7 +12,6 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from scripts.spec_refinement.schemas import LibraryLabelerOutput
 from scripts.spec_refinement.workspace import WorkspaceManager
 
 from .agent_utils import run_agent
@@ -158,7 +157,6 @@ def label_file_to_libraries(
             agent_name="glm-file-library-labeler",
             prompt=prompt,
             workspace=manager.workspace_path,
-            structured_schema=LibraryLabelerOutput,
         )
     except RuntimeError as exc:
         return {
@@ -174,15 +172,10 @@ def label_file_to_libraries(
             ],
         }
 
-    if isinstance(output, BaseModel):
-        data = output.model_dump()
-        issues: list[dict[str, Any]] = []
-        output_text = output.model_dump_json()
-    else:
-        data, issues = _parse_label_output(output)
-        output_text = output
+    data, issues = _parse_label_output(output)
+    output_text = output
 
-    if not isinstance(output, BaseModel) and issues:
+    if issues:
         try:
             repaired = repair_artifact(
                 output=output_text,
