@@ -17,6 +17,12 @@
 - `glm-library-spec-integrator`: Monotonically integrates file content into specs
 - `chatgpt-library-spec-gap-judge`: Detects dropped details via content-diff
 
+## Phase 1 Sectionization Agents
+
+- `glm-section-span-lister`: LLM-only section span extraction with stable IDs
+- `glm-section-map-builder`: Human-readable section navigation map
+- `glm-terms-per-section`: Domain term extraction for context indexing
+
 ## Usage Pattern
 
 - Evidence expansion: Run mapper for all (library, file) pairs, then spot-check uncertain files with the judge.
