@@ -20,7 +20,9 @@ def validate_section_id_format(section_id: str, file_id: str) -> bool:
 def validate_atom_id_format(atom_id: str, file_id: str, line_no: int) -> bool:
     """Return True when atom_id matches ATOM-{file_id}-L{line_no:04d}."""
     match = ATOM_ID_PATTERN.fullmatch(atom_id)
-    return bool(match and match.group("file_id") == file_id and int(match.group("line_no")) == line_no)
+    return bool(
+        match and match.group("file_id") == file_id and int(match.group("line_no")) == line_no
+    )
 
 
 def validate_section_coverage(sections: list[SectionSpan], total_lines: int) -> list[str]:
@@ -44,10 +46,13 @@ def validate_section_coverage(sections: list[SectionSpan], total_lines: int) -> 
     for index, section in enumerate(sections, start=1):
         if section.start_line != expected_start:
             issues.append(
-                f"section {index} start_line {section.start_line} does not match expected {expected_start}"
+                f"section {index} start_line {section.start_line} does not "
+                f"match expected {expected_start}"
             )
         if section.end_line < section.start_line:
-            issues.append(f"section {index} end_line {section.end_line} < start_line {section.start_line}")
+            issues.append(
+                f"section {index} end_line {section.end_line} < start_line {section.start_line}"
+            )
         if section.end_line > total_lines:
             issues.append(
                 f"section {index} end_line {section.end_line} exceeds total_lines {total_lines}"
@@ -56,18 +61,29 @@ def validate_section_coverage(sections: list[SectionSpan], total_lines: int) -> 
 
     if expected_start != total_lines + 1:
         issues.append(
-            f"sections do not cover all lines: expected end_line {total_lines}, got {expected_start - 1}"
+            f"sections do not cover all lines: expected end_line {total_lines}, "
+            f"got {expected_start - 1}"
         )
 
     return issues
 
 
-def validate_atom_sequence(atoms: list[LineAtom]) -> list[str]:
+def validate_atom_sequence(atoms: list[LineAtom], total_lines: int | None = None) -> list[str]:
     """Return sequencing issues for line atoms."""
     issues: list[str] = []
 
+    if total_lines is not None and total_lines < 0:
+        issues.append("total_lines must be >= 0")
+        return issues
+
     if not atoms:
+        if total_lines == 0:
+            return issues
         issues.append("atoms must not be empty")
+        return issues
+
+    if total_lines == 0:
+        issues.append("atoms must be empty when total_lines is 0")
         return issues
 
     expected_line = 1
@@ -83,7 +99,8 @@ def validate_atom_sequence(atoms: list[LineAtom]) -> list[str]:
                 file_id = parsed_file_id
             elif parsed_file_id != file_id:
                 issues.append(
-                    f"atom {index} file_id {parsed_file_id} does not match previous file_id {file_id}"
+                    f"atom {index} file_id {parsed_file_id} does not match "
+                    f"previous file_id {file_id}"
                 )
             if parsed_line_no != atom.line_no:
                 issues.append(
