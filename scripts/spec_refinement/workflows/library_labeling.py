@@ -37,7 +37,7 @@ def _build_label_prompt(file_id: str, summary: str) -> str:
         "",
         "REQUIRED SCHEMA:",
         "{"
-        '  "file_id": "file_###",'
+        '  "file_id": "F####",'
         '  "candidate_labels": ['
         '    {"label": "string", "sections": ["string"], "confidence": 0.0, "rationale": "string"}'
         "  ],"
@@ -51,7 +51,7 @@ def _build_label_prompt(file_id: str, summary: str) -> str:
         "- file_id MUST match the input file ID",
         "- Labels MUST be capability-based (what the system does), not type-based",
         "- Each label MUST include sections that justify it",
-        "- Sections MUST use [file_###::SECTION] format",
+        "- Sections MUST use [F####::SECTION] format",
         "- Confidence MUST be between 0.0 and 1.0",
         "- Each candidate label MUST include a rationale",
         "- Uncertain labels MUST include label and rationale",
@@ -72,11 +72,11 @@ def _build_label_prompt(file_id: str, summary: str) -> str:
         "",
         "Example payload:",
         "{",
-        '  "file_id": "file_001",',
+        '  "file_id": "F0001",',
         '  "candidate_labels": [',
         "    {",
         '      "label": "Request Intake",',
-        '      "sections": ["[file_001::INTRO]"],',
+        '      "sections": ["[F0001::INTRO]"],',
         '      "confidence": 0.82,',
         '      "rationale": "Summary describes request ingestion responsibilities."',
         "    }",

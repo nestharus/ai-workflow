@@ -44,9 +44,9 @@ class TestEvidencePointerRegex:
 
     def test_matches_simple_pointer(self) -> None:
         """A standard evidence pointer should produce two capture groups."""
-        match = EVIDENCE_POINTER_RE.search("[file_001::INTRO]")
+        match = EVIDENCE_POINTER_RE.search("[F0001::INTRO]")
         assert match is not None
-        assert match.group(1) == "file_001"
+        assert match.group(1) == "F0001"
         assert match.group(2) == "INTRO"
 
     def test_matches_pointer_with_hyphens(self) -> None:
@@ -232,8 +232,8 @@ class TestExtractFileId:
 
     def test_extracts_from_file_id_line(self) -> None:
         """A 'File ID: <value>' line should return the value."""
-        content = "# Summary\nFile ID: file_042\n## Algorithms\n"
-        assert _extract_file_id(content) == "file_042"
+        content = "# Summary\nFile ID: F0042\n## Algorithms\n"
+        assert _extract_file_id(content) == "F0042"
 
     def test_extracts_from_title_line(self) -> None:
         """Fallback to 'File Summary: <file_id>' pattern."""
@@ -409,7 +409,7 @@ class TestParseNamedItems:
 # ---------------------------------------------------------------------------
 
 
-def _make_full_summary(file_id: str = "file_001", section: str = "INTRO") -> str:
+def _make_full_summary(file_id: str = "F0001", section: str = "INTRO") -> str:
     """Build a realistic file summary markdown string for testing."""
     return (
         f"# File Summary: {file_id}\n"
@@ -437,7 +437,7 @@ class TestParseFileSummary:
         """A complete summary should populate all FileSummary fields."""
         result = parse_file_summary(_make_full_summary())
         assert isinstance(result, FileSummary)
-        assert result.file_id == "file_001"
+        assert result.file_id == "F0001"
         assert len(result.algorithms) == 1
         assert result.algorithms[0]["name"] == "Algo"
         assert len(result.components) == 1
@@ -451,7 +451,7 @@ class TestParseFileSummary:
     def test_evidence_pointers_extracted(self) -> None:
         """Evidence pointers in items should be properly captured."""
         result = parse_file_summary(_make_full_summary())
-        assert result.algorithms[0]["evidence"] == ["[file_001::INTRO]"]
+        assert result.algorithms[0]["evidence"] == ["[F0001::INTRO]"]
 
     def test_empty_content(self) -> None:
         """Empty input should produce a FileSummary with defaults."""
@@ -466,15 +466,15 @@ class TestParseFileSummary:
 
     def test_missing_sections(self) -> None:
         """Content with only a file ID and no sections should not raise."""
-        content = "File ID: file_099\n\nNo sections here.\n"
+        content = "File ID: F0099\n\nNo sections here.\n"
         result = parse_file_summary(content)
-        assert result.file_id == "file_099"
+        assert result.file_id == "F0099"
         assert result.algorithms == []
 
     def test_uppercase_section_names(self) -> None:
         """Uppercase section names (ALGORITHMS, COMPONENTS, etc.) should work."""
         content = (
-            "File ID: file_010\n\n"
+            "File ID: F0010\n\n"
             "## ALGORITHMS\n"
             "- Sorter | sorts data\n\n"
             "## COMPONENTS\n"
@@ -486,10 +486,10 @@ class TestParseFileSummary:
             "## DEPENDENCIES\n"
             "- numpy\n\n"
             "## EVIDENCE MAP\n"
-            "- CONFIG: [file_010::CONFIG]\n"
+            "- CONFIG: [F0010::CONFIG]\n"
         )
         result = parse_file_summary(content)
-        assert result.file_id == "file_010"
+        assert result.file_id == "F0010"
         assert len(result.algorithms) == 1
         assert result.algorithms[0]["name"] == "Sorter"
         assert len(result.components) == 1
@@ -501,11 +501,7 @@ class TestParseFileSummary:
     def test_multiple_algorithms(self) -> None:
         """Multiple bullet items under Algorithms should all be parsed."""
         content = (
-            "File ID: file_020\n\n"
-            "## Algorithms\n"
-            "- Algo1 | first\n"
-            "- Algo2 | second\n"
-            "- Algo3 | third\n"
+            "File ID: F0020\n\n## Algorithms\n- Algo1 | first\n- Algo2 | second\n- Algo3 | third\n"
         )
         result = parse_file_summary(content)
         assert len(result.algorithms) == 3
@@ -514,7 +510,7 @@ class TestParseFileSummary:
 
     def test_comma_separated_dependencies(self) -> None:
         """Dependencies as a comma-separated line (no bullets) should be split."""
-        content = "File ID: file_030\n\n## Dependencies\nnumpy, pandas, requests\n"
+        content = "File ID: F0030\n\n## Dependencies\nnumpy, pandas, requests\n"
         result = parse_file_summary(content)
         assert result.dependencies == ["numpy", "pandas", "requests"]
 
@@ -548,8 +544,8 @@ def _make_synthesis_content(
         parts.append(f"- Handle task {i}\n")
         parts.append(f"- Coordinate action {i}\n\n")
         parts.append("#### Evidence\n")
-        parts.append(f"- [file_{i:03d}::INTRO]\n")
-        parts.append(f"- [file_{i:03d}::DETAILS]\n\n")
+        parts.append(f"- [F{i:04d}::INTRO]\n")
+        parts.append(f"- [F{i:04d}::DETAILS]\n\n")
         parts.append("#### Overlap Resolutions\n")
         parts.append(f"- {overlap}\n\n")
 
@@ -591,7 +587,7 @@ class TestParseLibrarySynthesis:
         charters, _ = parse_library_synthesis(content)
         sources = charters[0].evidence_sources
         assert len(sources) == 1
-        assert sources[0]["file_id"] == "file_001"
+        assert sources[0]["file_id"] == "F0001"
         assert sorted(sources[0]["sections"]) == ["DETAILS", "INTRO"]
 
     def test_overlap_resolutions_parsed(self) -> None:
@@ -648,13 +644,13 @@ class TestParseEvidenceMapperOutput:
     def test_valid_output(self) -> None:
         """All required fields present should return the parsed dict."""
         payload = {
-            "file_id": "file_001",
+            "file_id": "F0001",
             "relevant_sections": ["INTRO", "DETAILS"],
             "confidence": 0.95,
             "rationale": "Strong match on algorithms.",
         }
         result = parse_evidence_mapper_output(json.dumps(payload))
-        assert result["file_id"] == "file_001"
+        assert result["file_id"] == "F0001"
         assert result["confidence"] == 0.95
         assert len(result["relevant_sections"]) == 2
 
@@ -725,16 +721,16 @@ class TestParseGapJudgeOutput:
         payload = {
             "gaps": [{"description": "Missing retry logic"}],
             "total_gaps": 1,
-            "file_id": "file_001",
+            "file_id": "F0001",
         }
         result = parse_gap_judge_output(json.dumps(payload))
         assert result["total_gaps"] == 1
         assert len(result["gaps"]) == 1
-        assert result["file_id"] == "file_001"
+        assert result["file_id"] == "F0001"
 
     def test_zero_gaps(self) -> None:
         """Zero gaps should be valid and parseable."""
-        payload = {"gaps": [], "total_gaps": 0, "file_id": "file_001"}
+        payload = {"gaps": [], "total_gaps": 0, "file_id": "F0001"}
         result = parse_gap_judge_output(json.dumps(payload))
         assert result["total_gaps"] == 0
         assert result["gaps"] == []

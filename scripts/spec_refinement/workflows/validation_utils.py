@@ -8,16 +8,22 @@ from pathlib import Path
 from .formats import EVIDENCE_POINTER_RE
 
 
-def build_file_id_lookup(file_manifest: dict[str, str]) -> dict[str, str]:
+def build_file_id_lookup(
+    file_manifest: dict[str, dict[str, str]], spec_snapshot_dir: Path | None = None
+) -> dict[str, str]:
     """Build a lookup mapping various file identifiers to canonical file_id.
 
-    Maps: file_id, path_str, resolved absolute path, filename, and stem.
+    Maps: file_id, relpath, resolved absolute path, filename, and stem.
     """
     lookup: dict[str, str] = {}
-    for file_id, path_str in file_manifest.items():
+    spec_snapshot_dir = spec_snapshot_dir or Path.cwd()
+    for file_id, file_data in file_manifest.items():
         _add_lookup(lookup, file_id, file_id)
-        _add_lookup(lookup, path_str, file_id)
-        path = Path(path_str)
+        relpath = file_data["relpath"]
+        _add_lookup(lookup, relpath, file_id)
+        path = Path(relpath)
+        if not path.is_absolute():
+            path = spec_snapshot_dir / path
         try:
             resolved = str(path.resolve())
         except OSError:
@@ -78,7 +84,7 @@ def _add_lookup(lookup: dict[str, str], key: str, value: str) -> None:
 
 def strip_invalid_file_pointers(
     content: str,
-    file_manifest: dict[str, str],
+    file_manifest: dict[str, dict[str, str]],
     *,
     allow_multi_hop: bool = False,
 ) -> str:

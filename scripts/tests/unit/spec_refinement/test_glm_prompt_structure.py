@@ -29,12 +29,12 @@ def _assert_contract_first(prompt: str, agent_name: str) -> None:
     content_start_line = None
 
     for idx, line in enumerate(lines):
-        if any(kw in line.upper() for kw in contract_keywords):
-            if contract_end_line is None or idx > contract_end_line:
-                contract_end_line = idx
-        if any(kw in line for kw in content_keywords):
-            if content_start_line is None:
-                content_start_line = idx
+        if any(kw in line.upper() for kw in contract_keywords) and (
+            contract_end_line is None or idx > contract_end_line
+        ):
+            contract_end_line = idx
+        if any(kw in line for kw in content_keywords) and content_start_line is None:
+            content_start_line = idx
 
     if content_start_line is not None and contract_end_line is not None:
         assert contract_end_line < content_start_line, (
@@ -44,13 +44,13 @@ def _assert_contract_first(prompt: str, agent_name: str) -> None:
 
 class TestSummarizationPromptStructure:
     def test_summary_prompt_contract_first(self):
-        prompt = _build_summary_prompt("file_001", Path("test.md"), ["INTRO", "REQS"], "content")
+        prompt = _build_summary_prompt("F0001", Path("test.md"), ["INTRO", "REQS"], "content")
         _assert_contract_first(prompt, "glm-file-what-summarizer")
 
 
 class TestEvidenceExpansionPromptStructure:
     def test_evidence_prompt_contract_first(self):
-        prompt = _build_evidence_prompt("lib_001", "charter", "file_001", "summary", ["INTRO"])
+        prompt = _build_evidence_prompt("lib_001", "charter", "F0001", "summary", ["INTRO"])
         _assert_contract_first(prompt, "glm-library-evidence-mapper")
 
 
@@ -60,17 +60,17 @@ class TestSpecBuildingPromptStructure:
             "lib_001",
             "charter",
             "spec",
-            "file_001",
+            "F0001",
             "content",
             ["INTRO"],
             ["INTRO"],
-            ["file_001"],
+            ["F0001"],
             None,
         )
         _assert_contract_first(prompt, "glm-library-spec-integrator")
 
     def test_gap_prompt_contract_first(self):
-        prompt = _build_gap_prompt("spec", "file_001", "content", ["INTRO"], ["INTRO"])
+        prompt = _build_gap_prompt("spec", "F0001", "content", ["INTRO"], ["INTRO"])
         _assert_contract_first(prompt, "chatgpt-evidence-gap-judge")
 
 
@@ -80,11 +80,13 @@ class TestArchitecturePromptStructure:
         _assert_contract_first(prompt, "glm-architecture-brief-extractor")
 
     def test_architecture_proposal_prompt_contract_first(self):
-        prompt = _build_architecture_proposal_prompt({"lib_001": "charter"}, {"lib_001": "spec"}, {})
+        prompt = _build_architecture_proposal_prompt(
+            {"lib_001": "charter"}, {"lib_001": "spec"}, {}
+        )
         _assert_contract_first(prompt, "opus-architecture-proposer")
 
 
 class TestLibraryLabelingPromptStructure:
     def test_label_prompt_contract_first(self):
-        prompt = _build_label_prompt("file_001", "summary")
+        prompt = _build_label_prompt("F0001", "summary")
         _assert_contract_first(prompt, "glm-file-library-labeler")

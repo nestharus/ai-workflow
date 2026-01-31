@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
 from scripts.spec_refinement.workflows.library_synthesis import synthesize_libraries
 from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 
@@ -22,11 +23,11 @@ def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManag
     manager.start_phase(Phase.SUMMARIZATION)
     manager.complete_phase(Phase.SUMMARIZATION, outputs={"summaries_count": 2})
 
-    (manager.structure.summaries_dir / "file_001.what.md").write_text(
-        "# Summary\nEvidence: [file_001::INTRO]\n", encoding="utf-8"
+    (manager.structure.summaries_dir / "F0001.what.md").write_text(
+        "# Summary\nEvidence: [F0001::INTRO]\n", encoding="utf-8"
     )
-    (manager.structure.summaries_dir / "file_002.what.md").write_text(
-        "# Summary\nEvidence: [file_002::INTRO]\n", encoding="utf-8"
+    (manager.structure.summaries_dir / "F0002.what.md").write_text(
+        "# Summary\nEvidence: [F0002::INTRO]\n", encoding="utf-8"
     )
 
     return manager
@@ -51,15 +52,17 @@ def _library_output(lib_id: str, evidence_file: str) -> str:
     )
 
 
-def _run_agent_success(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+def _run_agent_success(
+    *, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2
+) -> str:
     if agent_name == "glm-file-library-labeler":
-        label = "Alpha" if "file_001" in prompt else "Beta"
+        label = "Alpha" if "F0001" in prompt else "Beta"
         return json.dumps(
             {
                 "candidate_labels": [
                     {
                         "label": label,
-                        "sections": ["[file_001::INTRO]"] if label == "Alpha" else ["[file_002::INTRO]"],
+                        "sections": ["[F0001::INTRO]"] if label == "Alpha" else ["[F0002::INTRO]"],
                         "confidence": 0.8,
                         "rationale": "Matches the summary.",
                     }
@@ -88,14 +91,14 @@ def _run_agent_success(*, agent_name: str, prompt: str, workspace: Path, max_ret
         )
     if agent_name == "opus-library-synthesizer":
         lib_id = "lib_002" if "lib_002" in prompt else "lib_001"
-        evidence_file = "file_001" if lib_id == "lib_001" else "file_001"
+        evidence_file = "F0001"
         return _library_output(lib_id, evidence_file)
     if agent_name == "glm-library-overlap-resolver":
         return json.dumps(
             {
                 "decision": "assign_to_lib_A",
                 "rationale": "Overlap belongs to library A.",
-                "affected_files": ["file_001"],
+                "affected_files": ["F0001"],
             }
         )
     raise AssertionError(f"Unexpected agent: {agent_name}")
@@ -128,14 +131,16 @@ def test_synthesize_libraries_end_to_end_success(fs, monkeypatch) -> None:
 def test_synthesize_libraries_invalid_labels(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
-    def _run_agent_invalid_labels(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+    def _run_agent_invalid_labels(
+        *, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2
+    ) -> str:
         if agent_name == "glm-file-library-labeler":
             return json.dumps(
                 {
                     "candidate_labels": [
                         {
                             "label": "Alpha",
-                            "sections": ["[file_001::INTRO]"],
+                            "sections": ["[F0001::INTRO]"],
                             "confidence": 0.8,
                             "rationale": "Matches.",
                         }
@@ -156,13 +161,13 @@ def test_synthesize_libraries_invalid_labels(fs, monkeypatch) -> None:
                 ]
             )
         if agent_name == "opus-library-synthesizer":
-            return _library_output("lib_001", "file_001")
+            return _library_output("lib_001", "F0001")
         if agent_name == "glm-library-overlap-resolver":
             return json.dumps(
                 {
                     "decision": "assign_to_lib_A",
                     "rationale": "Overlap belongs to library A.",
-                    "affected_files": ["file_001"],
+                    "affected_files": ["F0001"],
                 }
             )
         raise AssertionError(f"Unexpected agent: {agent_name}")
@@ -181,14 +186,16 @@ def test_synthesize_libraries_invalid_labels(fs, monkeypatch) -> None:
 def test_synthesize_libraries_overlap_resolution_failure(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
-    def _run_agent_overlap_failure(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+    def _run_agent_overlap_failure(
+        *, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2
+    ) -> str:
         if agent_name == "glm-file-library-labeler":
             return json.dumps(
                 {
                     "candidate_labels": [
                         {
                             "label": "Alpha",
-                            "sections": ["[file_001::INTRO]"],
+                            "sections": ["[F0001::INTRO]"],
                             "confidence": 0.8,
                             "rationale": "Matches.",
                         }
@@ -217,7 +224,7 @@ def test_synthesize_libraries_overlap_resolution_failure(fs, monkeypatch) -> Non
             )
         if agent_name == "opus-library-synthesizer":
             lib_id = "lib_002" if "lib_002" in prompt else "lib_001"
-            return _library_output(lib_id, "file_001")
+            return _library_output(lib_id, "F0001")
         if agent_name == "glm-library-overlap-resolver":
             return "not-json"
         raise AssertionError(f"Unexpected agent: {agent_name}")
@@ -235,14 +242,16 @@ def test_synthesize_libraries_overlap_resolution_failure(fs, monkeypatch) -> Non
 def test_synthesize_libraries_charter_generation_error(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
-    def _run_agent_bad_charter(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+    def _run_agent_bad_charter(
+        *, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2
+    ) -> str:
         if agent_name == "glm-file-library-labeler":
             return json.dumps(
                 {
                     "candidate_labels": [
                         {
                             "label": "Alpha",
-                            "sections": ["[file_001::INTRO]"],
+                            "sections": ["[F0001::INTRO]"],
                             "confidence": 0.8,
                             "rationale": "Matches.",
                         }
@@ -269,7 +278,7 @@ def test_synthesize_libraries_charter_generation_error(fs, monkeypatch) -> None:
                 {
                     "decision": "assign_to_lib_A",
                     "rationale": "Overlap belongs to library A.",
-                    "affected_files": ["file_001"],
+                    "affected_files": ["F0001"],
                 }
             )
         raise AssertionError(f"Unexpected agent: {agent_name}")

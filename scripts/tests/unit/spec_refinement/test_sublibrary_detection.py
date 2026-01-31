@@ -55,7 +55,7 @@ def _sublibrary_output(overlap: bool = False) -> str:
                         "boundaries": "A",
                         "responsibilities": ["Alpha"],
                     },
-                    "evidence_partition": ["file_001::INTRO", "file_001::DETAILS"],
+                    "evidence_partition": ["F0001::INTRO", "F0001::DETAILS"],
                     "interface_impact": "Calls B",
                     "justification": "Separates capability A",
                 },
@@ -66,7 +66,7 @@ def _sublibrary_output(overlap: bool = False) -> str:
                         "boundaries": "B",
                         "responsibilities": ["Beta"],
                     },
-                    "evidence_partition": ["file_001::INTRO"],
+                    "evidence_partition": ["F0001::INTRO"],
                     "interface_impact": "Consumes A",
                     "justification": "Separates capability B",
                 },
@@ -82,7 +82,7 @@ def _sublibrary_output(overlap: bool = False) -> str:
                         "boundaries": "Isolated workflow",
                         "responsibilities": ["Do thing"],
                     },
-                    "evidence_partition": ["file_001::INTRO"],
+                    "evidence_partition": ["F0001::INTRO"],
                     "interface_impact": "Exposes a clean API",
                     "justification": "Improves maintainability",
                 }
@@ -158,7 +158,7 @@ def test_sublibrary_gap_isolated(fs, monkeypatch) -> None:
     evidence_payload = {
         "sources": [
             {
-                "file_id": "file_001",
+                "file_id": "F0001",
                 "sections": ["INTRO"],
                 "confidence": 1.0,
                 "rationale": "Seed",
@@ -178,12 +178,12 @@ def test_sublibrary_gap_isolated(fs, monkeypatch) -> None:
                         "section": "Requirements",
                         "bullet_index": None,
                         "content": "Own keyword workflows",
-                        "citations": ["[file_001::INTRO]"],
+                        "citations": ["[F0001::INTRO]"],
                     }
                 ]
             )
         if agent_name == "chatgpt-library-spec-gap-judge":
-            payload = {"gaps": [], "total_gaps": 0, "file_id": "file_001"}
+            payload = {"gaps": [], "total_gaps": 0, "file_id": "F0001"}
             return json.dumps(payload)
         raise AssertionError(f"Unexpected agent: {agent_name}")
 

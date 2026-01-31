@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from scripts.spec_refinement.workflows.spec_patches import (
+    VALID_SPEC_SECTIONS,
     PatchOperation,
     SpecDocument,
-    VALID_SPEC_SECTIONS,
     apply_patch,
     parse_patch_json,
     render_spec,
@@ -19,16 +21,17 @@ from scripts.spec_refinement.workflows.validation_utils import (
 def test_parse_patch_json_extracts_operations() -> None:
     output = (
         "Note:\n```json\n"
-        "[{\"op\": \"add\", \"section\": \"Requirements\", "
-        "\"bullet_index\": null, \"content\": \"Add thing\", "
-        "\"citations\": [\"[file_001::INTRO]\"]}]\n```")
+        '[{"op": "add", "section": "Requirements", '
+        '"bullet_index": null, "content": "Add thing", '
+        '"citations": ["[F0001::INTRO]"]}]\n```'
+    )
     patch_set = parse_patch_json(output)
 
     assert patch_set.operations
     operation = patch_set.operations[0]
     assert operation.op == "add"
     assert operation.section == "Requirements"
-    assert operation.citations == ["[file_001::INTRO]"]
+    assert operation.citations == ["[F0001::INTRO]"]
 
 
 def test_apply_patch_add_edit_move() -> None:
@@ -36,10 +39,10 @@ def test_apply_patch_add_edit_move() -> None:
         "# Library Spec: lib_001\n\n"
         "## Intent\nOwn keyword behaviors.\n\n"
         "## Requirements\n"
-        "- First requirement [file_001::INTRO]\n"
-        "- Second requirement [file_001::INTRO]\n\n"
+        "- First requirement [F0001::INTRO]\n"
+        "- Second requirement [F0001::INTRO]\n\n"
         "## Decisions Needed\n"
-        "- Pending question [file_001::INTRO]\n"
+        "- Pending question [F0001::INTRO]\n"
     )
     spec_doc = SpecDocument(content)
 
@@ -50,7 +53,7 @@ def test_apply_patch_add_edit_move() -> None:
             section="Requirements",
             bullet_index=None,
             content="Third requirement",
-            citations=["[file_001::INTRO]"],
+            citations=["[F0001::INTRO]"],
         ),
     )
     apply_patch(
@@ -60,7 +63,7 @@ def test_apply_patch_add_edit_move() -> None:
             section="Requirements",
             bullet_index=0,
             content="Updated requirement",
-            citations=["[file_001::INTRO]"],
+            citations=["[F0001::INTRO]"],
         ),
     )
     apply_patch(
@@ -76,16 +79,16 @@ def test_apply_patch_add_edit_move() -> None:
     )
 
     rendered = render_spec(spec_doc, "lib_001")
-    assert "- Updated requirement [file_001::INTRO]" in rendered
-    assert "- Third requirement [file_001::INTRO]" in rendered
+    assert "- Updated requirement [F0001::INTRO]" in rendered
+    assert "- Third requirement [F0001::INTRO]" in rendered
     decisions_block = rendered.split("## Decisions Needed", 1)[1]
     assert "Second requirement" in decisions_block
 
 
 def test_validate_patch_citations() -> None:
-    file_manifest = {"file_001": "/work/specs/alpha.md"}
-    section_manifest = {"file_001": ["INTRO", "DETAILS"]}
-    file_id_lookup = build_file_id_lookup(file_manifest)
+    file_manifest = {"F0001": {"relpath": "alpha.md", "sha256": "0" * 64}}
+    section_manifest = {"F0001": ["INTRO", "DETAILS"]}
+    file_id_lookup = build_file_id_lookup(file_manifest, Path("/work/specs"))
     section_alias_map = build_section_alias_map(section_manifest)
 
     operations = [
@@ -94,7 +97,7 @@ def test_validate_patch_citations() -> None:
             section="Requirements",
             bullet_index=None,
             content="New requirement",
-            citations=["[file_001::INTRO]"],
+            citations=["[F0001::INTRO]"],
         )
     ]
     issues = validate_patch_citations(
@@ -111,7 +114,7 @@ def test_validate_patch_citations() -> None:
             section="Requirements",
             bullet_index=None,
             content="Bad requirement",
-            citations=["[file_999::INTRO]", "[file_001::MISSING]"],
+            citations=["[F0999::INTRO]", "[F0001::MISSING]"],
         )
     ]
     issues = validate_patch_citations(

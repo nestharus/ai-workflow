@@ -8,10 +8,10 @@ from scripts.spec_refinement.workflows.repair import ArtifactType
 
 def _allowlists() -> dict[str, object]:
     return {
-        "file_ids": ["file_001", "file_002"],
+        "file_ids": ["F0001", "F0002"],
         "sections": {
-            "file_001": ["INTRO", "REQS"],
-            "file_002": ["OVERVIEW"],
+            "F0001": ["INTRO", "REQS"],
+            "F0002": ["OVERVIEW"],
         },
     }
 
@@ -53,7 +53,7 @@ FIXTURES: list[RepairFixture] = [
             "#### Responsibilities\n"
             "- Own service A\n\n"
             "#### Evidence\n"
-            "- [file_001::MISSING]\n\n"
+            "- [F0001::MISSING]\n\n"
             "#### Overlap Resolutions\n"
             "- None\n"
         ),
@@ -106,7 +106,7 @@ FIXTURES: list[RepairFixture] = [
             "#### Intent\n"
             "Provide core services.\n\n"
             "#### Evidence\n"
-            "- [file_001::INTRO]\n\n"
+            "- [F0001::INTRO]\n\n"
             "```\n"
         ),
         expected_errors=[{"type": "trailing_fence"}],
@@ -122,7 +122,7 @@ FIXTURES: list[RepairFixture] = [
             "#### Intent\n"
             "Provide core services.\n\n"
             "#### Evidence\n"
-            "- [file_001::INTRO, file_001::REQS]\n\n"
+            "- [F0001::INTRO, F0001::REQS]\n\n"
             "#### Overlap Resolutions\n"
             "- None\n"
         ),

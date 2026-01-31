@@ -9,10 +9,10 @@ from scripts.spec_refinement.workflows.repair import ArtifactType
 def _allowlists() -> dict[str, object]:
     return {
         "lib_id": "lib_001",
-        "file_ids": ["file_001", "file_002"],
+        "file_ids": ["F0001", "F0002"],
         "sections": {
-            "file_001": ["INTRO", "REQS"],
-            "file_002": ["OVERVIEW"],
+            "F0001": ["INTRO", "REQS"],
+            "F0002": ["OVERVIEW"],
         },
     }
 
@@ -25,11 +25,11 @@ FIXTURES: list[RepairFixture] = [
             "## Boundaries\n"
             "- Covers core [alpha::INTRO]\n\n"
             "## Requirements\n"
-            "- Must do X [file_001::REQS]\n\n"
+            "- Must do X [F0001::REQS]\n\n"
             "## Constraints\n"
-            "- Keep simple [file_002::OVERVIEW]\n\n"
+            "- Keep simple [F0002::OVERVIEW]\n\n"
             "## Dependencies\n"
-            "- Depends on Y [file_001::INTRO]\n"
+            "- Depends on Y [F0001::INTRO]\n"
         ),
         expected_errors=[{"type": "unknown_file_reference"}],
         allowlists=_allowlists(),
@@ -40,13 +40,13 @@ FIXTURES: list[RepairFixture] = [
         invalid_output=(
             "# Library Spec: lib_001\n\n"
             "## Boundaries\n"
-            "- Covers core [file_001::MISSING]\n\n"
+            "- Covers core [F0001::MISSING]\n\n"
             "## Requirements\n"
-            "- Must do X [file_001::REQS]\n\n"
+            "- Must do X [F0001::REQS]\n\n"
             "## Constraints\n"
-            "- Keep simple [file_002::OVERVIEW]\n\n"
+            "- Keep simple [F0002::OVERVIEW]\n\n"
             "## Dependencies\n"
-            "- Depends on Y [file_001::INTRO]\n"
+            "- Depends on Y [F0001::INTRO]\n"
         ),
         expected_errors=[{"type": "unknown_section_reference"}],
         allowlists=_allowlists(),
@@ -57,13 +57,13 @@ FIXTURES: list[RepairFixture] = [
         invalid_output=(
             "# Library Spec: lib_001\n\n"
             "## Boundaries\n"
-            "- Covers core [file_001::INTRO]\n\n"
+            "- Covers core [F0001::INTRO]\n\n"
             "## Requirements\n"
             "- Must do X\n\n"
             "## Constraints\n"
-            "- Keep simple [file_002::OVERVIEW]\n\n"
+            "- Keep simple [F0002::OVERVIEW]\n\n"
             "## Dependencies\n"
-            "- Depends on Y [file_001::INTRO]\n"
+            "- Depends on Y [F0001::INTRO]\n"
         ),
         expected_errors=[{"type": "missing_citation"}],
         allowlists=_allowlists(),
@@ -75,7 +75,7 @@ FIXTURES: list[RepairFixture] = [
             "Here is the updated spec:\n\n"
             "# Library Spec: lib_001\n\n"
             "## Boundaries\n"
-            "- Covers core [file_001::INTRO]\n"
+            "- Covers core [F0001::INTRO]\n"
         ),
         expected_errors=[{"type": "stray_preamble"}],
         allowlists=_allowlists(),
@@ -86,9 +86,9 @@ FIXTURES: list[RepairFixture] = [
         invalid_output=(
             "# Library Spec: lib_001\n\n"
             "## Boundaries\n"
-            "- Covers core [file_001::INTRO]\n\n"
+            "- Covers core [F0001::INTRO]\n\n"
             "## Requirements\n"
-            "- Must do X [file_001::REQS]\n\n"
+            "- Must do X [F0001::REQS]\n\n"
             "```\n"
         ),
         expected_errors=[{"type": "trailing_fence"}],
@@ -100,9 +100,9 @@ FIXTURES: list[RepairFixture] = [
         invalid_output=(
             "# Library Spec: lib_001\n\n"
             "## Boundaries\n"
-            "- Covers core [file_001::INTRO, file_001::REQS]\n\n"
+            "- Covers core [F0001::INTRO, F0001::REQS]\n\n"
             "## Requirements\n"
-            "- Must do X [file_001::REQS]\n"
+            "- Must do X [F0001::REQS]\n"
         ),
         expected_errors=[{"type": "compound_pointer"}],
         allowlists=_allowlists(),

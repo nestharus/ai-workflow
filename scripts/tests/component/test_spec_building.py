@@ -34,7 +34,7 @@ def _setup_workspace(fs, monkeypatch) -> Path:
             {
                 "sources": [
                     {
-                        "file_id": "file_001",
+                        "file_id": "F0001",
                         "sections": ["INTRO"],
                         "confidence": 0.9,
                         "rationale": "Test",
@@ -65,7 +65,7 @@ class GapJudgeRunner:
 
     def run(self, prompt: str) -> str:
         if not self.outputs:
-            return json.dumps({"gaps": [], "total_gaps": 0, "file_id": "file_001"})
+            return json.dumps({"gaps": [], "total_gaps": 0, "file_id": "F0001"})
         return self.outputs.pop(0)
 
 
@@ -78,7 +78,7 @@ def test_gap_detection_and_clustering(fs, monkeypatch) -> None:
                 "section": "Requirements",
                 "bullet_index": None,
                 "content": "Own keyword workflows",
-                "citations": ["[file_001::INTRO]"],
+                "citations": ["[F0001::INTRO]"],
             }
         ]
     )
@@ -86,20 +86,20 @@ def test_gap_detection_and_clustering(fs, monkeypatch) -> None:
         {
             "gaps": [
                 {
-                    "source": "file_001::INTRO",
+                    "source": "F0001::INTRO",
                     "missing_content": "Missing detail A",
                     "where_in_spec": "Requirements",
                     "severity": "must",
                 },
                 {
-                    "source": "file_001::INTRO",
+                    "source": "F0001::INTRO",
                     "missing_content": "Missing detail B",
                     "where_in_spec": "Constraints",
                     "severity": "should",
                 },
             ],
             "total_gaps": 2,
-            "file_id": "file_001",
+            "file_id": "F0001",
         }
     )
     gap_judge = GapJudgeRunner([gap_judge_output])
@@ -137,7 +137,7 @@ def test_gap_closure_converges(fs, monkeypatch) -> None:
                 "section": "Requirements",
                 "bullet_index": None,
                 "content": "Own keyword workflows",
-                "citations": ["[file_001::INTRO]"],
+                "citations": ["[F0001::INTRO]"],
             }
         ]
     )
@@ -146,17 +146,17 @@ def test_gap_closure_converges(fs, monkeypatch) -> None:
             {
                 "gaps": [
                     {
-                        "source": "file_001::INTRO",
+                        "source": "F0001::INTRO",
                         "missing_content": "Missing detail A",
                         "where_in_spec": "Requirements",
                         "severity": "must",
                     }
                 ],
                 "total_gaps": 1,
-                "file_id": "file_001",
+                "file_id": "F0001",
             }
         ),
-        json.dumps({"gaps": [], "total_gaps": 0, "file_id": "file_001"}),
+        json.dumps({"gaps": [], "total_gaps": 0, "file_id": "F0001"}),
     ]
     gap_judge = GapJudgeRunner(gap_outputs)
 
@@ -191,7 +191,7 @@ def test_max_iteration_limit(fs, monkeypatch) -> None:
                 "section": "Requirements",
                 "bullet_index": None,
                 "content": "Own keyword workflows",
-                "citations": ["[file_001::INTRO]"],
+                "citations": ["[F0001::INTRO]"],
             }
         ]
     )
@@ -200,28 +200,28 @@ def test_max_iteration_limit(fs, monkeypatch) -> None:
             {
                 "gaps": [
                     {
-                        "source": "file_001::INTRO",
+                        "source": "F0001::INTRO",
                         "missing_content": "Missing detail A",
                         "where_in_spec": "Requirements",
                         "severity": "must",
                     }
                 ],
                 "total_gaps": 1,
-                "file_id": "file_001",
+                "file_id": "F0001",
             }
         ),
         json.dumps(
             {
                 "gaps": [
                     {
-                        "source": "file_001::INTRO",
+                        "source": "F0001::INTRO",
                         "missing_content": "Missing detail A",
                         "where_in_spec": "Requirements",
                         "severity": "must",
                     }
                 ],
                 "total_gaps": 1,
-                "file_id": "file_001",
+                "file_id": "F0001",
             }
         ),
     ]
@@ -262,7 +262,7 @@ def test_citation_validation(fs, monkeypatch) -> None:
             }
         ]
     )
-    gap_judge = GapJudgeRunner([json.dumps({"gaps": [], "total_gaps": 0, "file_id": "file_001"})])
+    gap_judge = GapJudgeRunner([json.dumps({"gaps": [], "total_gaps": 0, "file_id": "F0001"})])
 
     def _run_agent(
         *,
@@ -302,7 +302,7 @@ def test_repair_invalid_patch_citations(fs, monkeypatch) -> None:
                 "section": "Requirements",
                 "bullet_index": None,
                 "content": "Own keyword workflows",
-                "citations": ["[file_001::MISSING]"],
+                "citations": ["[F0001::MISSING]"],
             }
         ]
     )
@@ -313,11 +313,11 @@ def test_repair_invalid_patch_citations(fs, monkeypatch) -> None:
                 "section": "Requirements",
                 "bullet_index": None,
                 "content": "Own keyword workflows",
-                "citations": ["[file_001::INTRO]"],
+                "citations": ["[F0001::INTRO]"],
             }
         ]
     )
-    gap_judge = GapJudgeRunner([json.dumps({"gaps": [], "total_gaps": 0, "file_id": "file_001"})])
+    gap_judge = GapJudgeRunner([json.dumps({"gaps": [], "total_gaps": 0, "file_id": "F0001"})])
 
     def _run_agent(
         *,
@@ -346,5 +346,5 @@ def test_repair_invalid_patch_citations(fs, monkeypatch) -> None:
 
     spec_path = Path("/repo/runs/run1/libraries/lib_001/spec.md")
     content = spec_path.read_text(encoding="utf-8")
-    assert "[file_001::INTRO]" in content
+    assert "[F0001::INTRO]" in content
     assert not any(issue["type"] == "unknown_section_reference" for issue in result["issues"])

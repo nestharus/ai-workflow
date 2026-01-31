@@ -77,8 +77,8 @@ Use sub-tasks within a single agent when:
 
 Always provide explicit allowlists for IDs and labels.
 
-- File IDs: "Valid file IDs for citations: file_001, file_002"
-- Section labels: "Valid section labels for file_001: INTRO, REQS, CONSTRAINTS"
+- File IDs: "Valid file IDs for citations: F0001, F0002"
+- Section labels: "Valid section labels for F0001: INTRO, REQS, CONSTRAINTS"
 - Spec sections: "Valid spec sections: Intent, Boundaries, Requirements, Constraints"
 
 Place allowlists in the Contract Section as REQUIRED RULES.
@@ -97,7 +97,7 @@ Place allowlists in the Contract Section as REQUIRED RULES.
 ```text
 Summarize the file.
 
-File ID: file_001
+File ID: F0001
 Known Sections: INTRO, REQS
 
 Rules:
@@ -125,7 +125,7 @@ FORBIDDEN:
 
 ## INPUT DATA
 
-File ID: file_001
+File ID: F0001
 Known Sections: INTRO, REQS
 
 FILE CONTENT:
@@ -133,7 +133,7 @@ FILE CONTENT:
 
 ## OUTPUT FORMAT
 
-# File Summary: file_001
+# File Summary: F0001
 ## Algorithms
 - <name> | <intent> | Evidence: [FILE_ID::SECTION]
 ```

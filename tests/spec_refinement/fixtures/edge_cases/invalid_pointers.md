@@ -2,7 +2,7 @@
 
 [INTRO]
 ## Intro
-Evidence reference to invalid pointer [file_999::MISSING] should trigger repair.
+Evidence reference to invalid pointer [F0999::MISSING] should trigger repair.
 
 [REQS]
 ## Requirements

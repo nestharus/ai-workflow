@@ -608,7 +608,9 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
     if not evidence_map:
         return
 
-    file_id_lookup = build_file_id_lookup(manager.state.file_manifest)
+    file_id_lookup = build_file_id_lookup(
+        manager.state.file_manifest, manager.structure.spec_snapshot_dir
+    )
     section_alias_map = build_section_alias_map(manager.state.section_manifest)
     valid_file_ids = list(manager.state.file_manifest.keys())
 

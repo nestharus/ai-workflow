@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 LABEL_BY_LIB = {
     "lib_001": "Core Workflow",
     "lib_002": "Integration Ops",
@@ -16,7 +15,7 @@ LABEL_BY_LIB = {
 
 
 def _stable_bucket(key: str) -> float:
-    digest = hashlib.md5(key.encode("utf-8")).hexdigest()[:8]
+    digest = hashlib.md5(key.encode("utf-8")).hexdigest()[:8]  # noqa: S324
     return int(digest, 16) / 0xFFFFFFFF
 
 
@@ -34,13 +33,13 @@ def _extract_first(pattern: str, text: str) -> str | None:
 
 
 def _extract_file_id(prompt: str) -> str | None:
-    labeled = _extract_first(r"Current File ID:\s*(file_\d{3})", prompt)
+    labeled = _extract_first(r"Current File ID:\s*(F\d{4})", prompt)
     if labeled:
         return labeled
-    labeled = _extract_first(r"File ID:\s*(file_\d{3})", prompt)
+    labeled = _extract_first(r"File ID:\s*(F\d{4})", prompt)
     if labeled:
         return labeled
-    return _extract_first(r"\bfile_\d{3}\b", prompt)
+    return _extract_first(r"\bF\d{4}\b", prompt)
 
 
 def _extract_lib_id(prompt: str) -> str | None:
@@ -70,7 +69,7 @@ def _make_summary(file_id: str, sections: list[str], *, violation: str | None = 
     evidence_tertiary = f"[{file_id}::{tertiary}]"
 
     if violation == "invalid_file":
-        evidence_primary = "[file_999::INTRO]"
+        evidence_primary = "[F0999::INTRO]"
     elif violation == "invented_section":
         evidence_secondary = f"[{file_id}::INVENTED]"
     elif violation == "compound_pointer":
@@ -130,7 +129,9 @@ def mock_summarization_agent(
     ]
     key = f"summary:{file_id}"
     if _should_violate(key, violation_rate):
-        mode = violation_modes[int(_stable_bucket(key) * len(violation_modes)) % len(violation_modes)]
+        mode = violation_modes[
+            int(_stable_bucket(key) * len(violation_modes)) % len(violation_modes)
+        ]
         return _make_summary(file_id, sections, violation=mode)
     return _make_summary(file_id, sections)
 
@@ -147,9 +148,7 @@ def mock_library_labeling_agent(
         # Missing candidate_labels field to trigger repair.
         payload = {
             "file_id": file_id,
-            "uncertain_labels": [
-                {"label": label, "rationale": "Insufficient evidence."}
-            ],
+            "uncertain_labels": [{"label": label, "rationale": "Insufficient evidence."}],
         }
         return json.dumps(payload)
 
@@ -198,7 +197,7 @@ def mock_charter_generator_agent(
     evidence_lines = [f"- [{file_id}::{section}]" for file_id, section in evidence]
 
     if _should_violate(key, violation_rate) and evidence_lines:
-        evidence_lines[0] = "- [file_999::MISSING]"
+        evidence_lines[0] = "- [F0999::MISSING]"
 
     lines = [
         "## Library Index",
@@ -256,7 +255,7 @@ def mock_evidence_mapper_agent(
     if _should_violate(key, violation_rate):
         return json.dumps(
             {
-                "file_id": "file_999",
+                "file_id": "F0999",
                 "relevant_sections": ["INVENTED"],
                 "confidence": 1.2,
                 "rationale": "Invalid evidence",
@@ -329,7 +328,7 @@ def mock_spec_integrator_agent(
                         "section": "Requirements",
                         "bullet_index": None,
                         "content": "Missing citation case.",
-                        "citations": [f"[file_999::{valid_sections[0]}]"],
+                        "citations": [f"[F0999::{valid_sections[0]}]"],
                     }
                 ],
             }
@@ -428,7 +427,7 @@ def mock_architecture_proposer_agent(
         )
 
     if _should_violate("arch_proposer", violation_rate) and candidates:
-        candidates[0]["citations"] = ["[file_001::INTRO]"]
+        candidates[0]["citations"] = ["[F0001::INTRO]"]
 
     return json.dumps(candidates)
 
@@ -441,7 +440,7 @@ def mock_architecture_selector_agent(
     selected = candidates[0] if candidates else "arch_001"
     payload = {
         "selected_arch_id": selected,
-        "rationale": f"Best balance of modularity. [lib_001::charter.md]",
+        "rationale": "Best balance of modularity. [lib_001::charter.md]",
         "rejected_architectures": [],
         "implementation_risks": ["Boundary drift"],
         "evolution_notes": "Review after scale testing.",
@@ -475,7 +474,7 @@ def mock_architecture_mapper_agent(
         if violation_mode == "missing_citations":
             payload.pop("citations")
         else:
-            payload["citations"] = ["[file_001::INTRO]"]
+            payload["citations"] = ["[F0001::INTRO]"]
     return json.dumps(payload)
 
 
@@ -485,7 +484,7 @@ def mock_repair_agent(
     lib_id: str | None,
     sections: list[str],
 ) -> str:
-    target_file = file_id or "file_001"
+    target_file = file_id or "F0001"
     target_section = _pick_first(sections)
     target_lib = lib_id or "lib_001"
 
@@ -690,7 +689,7 @@ class MockAgentController:
             )
 
         if agent_name == "chatgpt-library-spec-gap-judge":
-            file_id = _extract_file_id(prompt) or "file_001"
+            file_id = _extract_file_id(prompt) or "F0001"
             if self.gap_mode == "persistent":
                 return json.dumps(
                     {
@@ -716,7 +715,9 @@ class MockAgentController:
             return mock_architecture_brief_extractor_agent(lib_id, violation_rate=effective_rate)
 
         if agent_name == "opus-architecture-proposer":
-            return mock_architecture_proposer_agent(self._libraries(), violation_rate=effective_rate)
+            return mock_architecture_proposer_agent(
+                self._libraries(), violation_rate=effective_rate
+            )
 
         if agent_name == "chatgpt-architecture-tradeoff-judge":
             candidates = re.findall(r"arch_\d{3}", prompt)
@@ -740,10 +741,16 @@ class MockAgentController:
                 file_id = _pick_first(self._file_ids())
             if lib_id not in self._libraries():
                 lib_id = _pick_first(self._libraries())
-            sections = self._sections(file_id) if file_id else self._sections(_pick_first(self._file_ids()))
+            sections = (
+                self._sections(file_id)
+                if file_id
+                else self._sections(_pick_first(self._file_ids()))
+            )
             if not sections:
                 sections = self._sections(_pick_first(self._file_ids()))
-            self.repair_calls.append({"artifact_type": artifact_type, "file_id": file_id, "lib_id": lib_id})
+            self.repair_calls.append(
+                {"artifact_type": artifact_type, "file_id": file_id, "lib_id": lib_id}
+            )
             return mock_repair_agent(artifact_type, file_id, lib_id, sections)
 
         raise AssertionError(f"Unexpected agent name: {agent_name}")

@@ -158,16 +158,21 @@ class WorkspaceManager:
         if not snapshot_verified or not self.structure.spec_snapshot_dir.exists():
             return issues
 
-        file_manifest = self._enumerate_files()
+        file_manifest, enumeration_issues = self._enumerate_files_with_hashes()
+        if enumeration_issues:
+            issues.extend(enumeration_issues)
         if not file_manifest:
-            issues.append(f"No markdown files found in: {self.structure.spec_snapshot_dir}")
+            issues.append(f"No files found in: {self.structure.spec_snapshot_dir}")
 
         section_manifest: dict[str, list[str]] = {}
-        for file_id, file_path in file_manifest.items():
-            sections = self._extract_section_labels(Path(file_path))
+        for file_id, file_data in file_manifest.items():
+            relpath = file_data["relpath"]
+            file_path = self.structure.spec_snapshot_dir / relpath
+            if file_path.suffix.lower() == ".md":
+                sections = self._extract_section_labels(file_path)
+            else:
+                sections = []
             section_manifest[file_id] = sections
-            if not sections:
-                issues.append(f"No section labels found in: {file_path}")
 
         self._write_manifest_files(file_manifest, section_manifest)
 
@@ -215,8 +220,8 @@ class WorkspaceManager:
         archive_dir = self.structure.root / "archive"
         archive_dir.mkdir(exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        for file_id, path_str in self.state.file_manifest.items():
-            src = Path(path_str)
+        for file_id, file_data in self.state.file_manifest.items():
+            src = self.structure.spec_snapshot_dir / file_data["relpath"]
             if src.exists():
                 dst = archive_dir / f"{timestamp}_{file_id}_{src.name}"
                 shutil.copy2(src, dst)
@@ -225,15 +230,36 @@ class WorkspaceManager:
 
     # --- Manifest Management ---
 
-    def _enumerate_files(self) -> dict[str, str]:
-        """Enumerate files in the spec snapshot and assign stable IDs."""
-        files: dict[str, str] = {}
-        for index, md_file in enumerate(
-            sorted(self.structure.spec_snapshot_dir.glob("*.md")), start=1
-        ):
-            file_id = f"file_{index:03d}"
-            files[file_id] = str(md_file.resolve())
-        return files
+    def _enumerate_files_with_hashes(self) -> tuple[dict[str, dict[str, str]], list[str]]:
+        """Enumerate files in the spec snapshot with stable IDs and hashes."""
+        files: dict[str, dict[str, str]] = {}
+        issues: list[str] = []
+
+        snapshot_dir = self.structure.spec_snapshot_dir
+        if not snapshot_dir.exists():
+            issues.append(f"Spec snapshot directory missing: {snapshot_dir}")
+            return files, issues
+
+        rel_paths: list[str] = []
+        for path in snapshot_dir.rglob("*"):
+            if path.is_symlink() or not path.is_file():
+                continue
+            rel_paths.append(path.relative_to(snapshot_dir).as_posix())
+
+        for index, relpath in enumerate(sorted(rel_paths), start=1):
+            file_id = f"F{index:04d}"
+            abs_path = snapshot_dir / relpath
+            hasher = hashlib.sha256()
+            try:
+                with abs_path.open("rb") as handle:
+                    while chunk := handle.read(65536):
+                        hasher.update(chunk)
+            except OSError as exc:
+                issues.append(f"Failed to hash snapshot file {relpath}: {exc}")
+                continue
+            files[file_id] = {"relpath": relpath, "sha256": hasher.hexdigest()}
+
+        return files, issues
 
     def _create_spec_snapshot(self) -> list[str]:
         """Create a spec snapshot and record its baseline."""
@@ -393,7 +419,7 @@ class WorkspaceManager:
         return _dedupe_keep_order(headings)
 
     def _write_manifest_files(
-        self, file_manifest: dict[str, str], section_manifest: dict[str, list[str]]
+        self, file_manifest: dict[str, dict[str, str]], section_manifest: dict[str, list[str]]
     ) -> None:
         """Write manifest files to disk."""
         self.structure.manifest_dir.mkdir(parents=True, exist_ok=True)
@@ -477,8 +503,9 @@ class WorkspaceManager:
 
     def get_file_path(self, file_id: str) -> Path | None:
         """Get file path for a file ID."""
-        path_str = self.state.file_manifest.get(file_id)
-        return Path(path_str) if path_str else None
+        file_data = self.state.file_manifest.get(file_id)
+        relpath = file_data["relpath"] if file_data else None
+        return self.structure.spec_snapshot_dir / relpath if relpath else None
 
     def get_section_labels(self, file_id: str) -> list[str]:
         """Get section labels for a file ID."""
@@ -486,7 +513,10 @@ class WorkspaceManager:
 
     def get_all_files(self) -> dict[str, Path]:
         """Get all files as {file_id: Path} mapping."""
-        return {file_id: Path(path_str) for file_id, path_str in self.state.file_manifest.items()}
+        return {
+            file_id: self.structure.spec_snapshot_dir / file_data["relpath"]
+            for file_id, file_data in self.state.file_manifest.items()
+        }
 
     def get_sublibrary_path(self, parent_lib_id: str, sub_lib_id: str) -> Path:
         """Get path to a sub-library directory."""
@@ -709,8 +739,10 @@ class WorkspaceManager:
 
         lines.append("## Files")
         lines.append("")
-        for file_id, file_path in self.state.file_manifest.items():
-            lines.append(f"- `{file_id}`: `{file_path}`")
+        for file_id, file_data in self.state.file_manifest.items():
+            relpath = file_data["relpath"]
+            sha256 = file_data["sha256"]
+            lines.append(f"- `{file_id}`: `{relpath}` (sha256: `{sha256[:8]}...`)")
         if not self.state.file_manifest:
             lines.append("- *No files recorded*")
 

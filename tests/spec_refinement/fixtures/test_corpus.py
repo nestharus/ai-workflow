@@ -108,7 +108,7 @@ EDGE_CASE_CONTENT = {
 
 [INTRO]
 ## Intro
-Evidence reference to invalid pointer [file_999::MISSING] should trigger repair.
+Evidence reference to invalid pointer [F0999::MISSING] should trigger repair.
 
 [REQS]
 ## Requirements
@@ -118,7 +118,7 @@ Evidence reference to invalid pointer [file_999::MISSING] should trigger repair.
 
 [INTRO]
 ## Intro
-Evidence: [file_001::INTRO, file_001::REQS]
+Evidence: [F0001::INTRO, F0001::REQS]
 """,
 }
 
@@ -200,7 +200,7 @@ def create_test_corpus(
 
     manifest: dict[str, dict[str, Any]] = {}
     for index, path in enumerate(sorted(base_path.glob("*.md")), start=1):
-        file_id = f"file_{index:03d}"
+        file_id = f"F{index:04d}"
         content = path.read_text(encoding="utf-8")
         sections = _extract_section_labels(content)
         expected_libraries = library_map.get(path.name, ["lib_001"])

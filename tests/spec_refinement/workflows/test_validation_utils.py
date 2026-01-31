@@ -15,13 +15,14 @@ def test_build_file_id_lookup_basic(tmp_path) -> None:
     alpha_path.parent.mkdir(parents=True, exist_ok=True)
     alpha_path.write_text("# Alpha\n", encoding="utf-8")
 
-    file_manifest = {"file_001": str(alpha_path)}
-    lookup = build_file_id_lookup(file_manifest)
+    file_manifest = {"F0001": {"relpath": "specs/alpha.md", "sha256": "0" * 64}}
+    lookup = build_file_id_lookup(file_manifest, tmp_path)
 
-    assert lookup["file_001"] == "file_001"
-    assert lookup[str(alpha_path)] == "file_001"
-    assert lookup[alpha_path.name] == "file_001"
-    assert lookup[alpha_path.stem] == "file_001"
+    assert lookup["F0001"] == "F0001"
+    assert lookup["specs/alpha.md"] == "F0001"
+    assert lookup[str(alpha_path.resolve())] == "F0001"
+    assert lookup[alpha_path.name] == "F0001"
+    assert lookup[alpha_path.stem] == "F0001"
 
 
 def test_build_file_id_lookup_collision(tmp_path) -> None:
@@ -33,113 +34,111 @@ def test_build_file_id_lookup_collision(tmp_path) -> None:
     alpha_two.write_text("# Alpha Two\n", encoding="utf-8")
 
     file_manifest = {
-        "file_001": str(alpha_one),
-        "file_002": str(alpha_two),
+        "F0001": {"relpath": "specs/alpha.md", "sha256": "0" * 64},
+        "F0002": {"relpath": "docs/alpha.md", "sha256": "0" * 64},
     }
-    lookup = build_file_id_lookup(file_manifest)
+    lookup = build_file_id_lookup(file_manifest, tmp_path)
 
-    assert lookup[alpha_one.name] == "file_001"
-    assert lookup[alpha_one.stem] == "file_001"
-    assert lookup["file_002"] == "file_002"
-    assert lookup[str(alpha_two)] == "file_002"
+    assert lookup[alpha_one.name] == "F0001"
+    assert lookup[alpha_one.stem] == "F0001"
+    assert lookup["F0002"] == "F0002"
+    assert lookup[str(alpha_two.resolve())] == "F0002"
 
 
 def test_build_section_alias_map_normalization() -> None:
     section_manifest = {
-        "file_001": ["INTRO", "User Requirements"],
-        "file_002": ["User-Requirements"],
+        "F0001": ["INTRO", "User Requirements"],
+        "F0002": ["User-Requirements"],
     }
     alias_map = build_section_alias_map(section_manifest)
 
-    assert alias_map["file_001"]["intro"] == "INTRO"
-    assert alias_map["file_001"]["user_requirements"] == "User Requirements"
-    assert alias_map["file_002"]["user_requirements"] == "User-Requirements"
+    assert alias_map["F0001"]["intro"] == "INTRO"
+    assert alias_map["F0001"]["user_requirements"] == "User Requirements"
+    assert alias_map["F0002"]["user_requirements"] == "User-Requirements"
 
 
 def test_build_section_alias_map_collision() -> None:
-    section_manifest = {"file_001": ["USER_REQUIREMENTS", "User Requirements"]}
+    section_manifest = {"F0001": ["USER_REQUIREMENTS", "User Requirements"]}
     alias_map = build_section_alias_map(section_manifest)
 
-    assert alias_map["file_001"]["user_requirements"] == "USER_REQUIREMENTS"
+    assert alias_map["F0001"]["user_requirements"] == "USER_REQUIREMENTS"
 
 
 def test_resolve_section_reference_exact_match() -> None:
-    alias_map = build_section_alias_map({"file_001": ["INTRO"]})
+    alias_map = build_section_alias_map({"F0001": ["INTRO"]})
 
-    assert resolve_section_reference("INTRO", "file_001", alias_map) == "INTRO"
+    assert resolve_section_reference("INTRO", "F0001", alias_map) == "INTRO"
 
 
 def test_resolve_section_reference_case_insensitive() -> None:
-    alias_map = build_section_alias_map({"file_001": ["INTRO"]})
+    alias_map = build_section_alias_map({"F0001": ["INTRO"]})
 
-    assert resolve_section_reference("intro", "file_001", alias_map) == "INTRO"
+    assert resolve_section_reference("intro", "F0001", alias_map) == "INTRO"
 
 
 def test_resolve_section_reference_separator_normalization() -> None:
-    alias_map = build_section_alias_map({"file_001": ["USER_REQUIREMENTS"]})
+    alias_map = build_section_alias_map({"F0001": ["USER_REQUIREMENTS"]})
 
-    assert (
-        resolve_section_reference("user-requirements", "file_001", alias_map) == "USER_REQUIREMENTS"
-    )
+    assert resolve_section_reference("user-requirements", "F0001", alias_map) == "USER_REQUIREMENTS"
 
 
 def test_resolve_section_reference_unknown() -> None:
-    alias_map = build_section_alias_map({"file_001": ["INTRO"]})
+    alias_map = build_section_alias_map({"F0001": ["INTRO"]})
 
-    assert resolve_section_reference("unknown", "file_001", alias_map) is None
+    assert resolve_section_reference("unknown", "F0001", alias_map) is None
 
 
 def test_strip_invalid_file_pointers_preserves_valid() -> None:
-    content = "See [file_001::INTRO] for details."
-    file_manifest = {"file_001": "docs/intro.md"}
+    content = "See [F0001::INTRO] for details."
+    file_manifest = {"F0001": {"relpath": "docs/intro.md", "sha256": "0" * 64}}
 
     assert strip_invalid_file_pointers(content, file_manifest) == content
 
 
 def test_strip_invalid_file_pointers_removes_unknown() -> None:
-    content = "See [file_999::INTRO] for details."
-    file_manifest = {"file_001": "docs/intro.md"}
+    content = "See [F0999::INTRO] for details."
+    file_manifest = {"F0001": {"relpath": "docs/intro.md", "sha256": "0" * 64}}
 
     assert strip_invalid_file_pointers(content, file_manifest) == "See for details."
 
 
 def test_strip_invalid_file_pointers_removes_multi_hop_without_manifest() -> None:
     content = "See [lib_001::spec.md::REQS] for details."
-    file_manifest = {"file_001": "docs/intro.md"}
+    file_manifest = {"F0001": {"relpath": "docs/intro.md", "sha256": "0" * 64}}
 
     assert strip_invalid_file_pointers(content, file_manifest) == "See for details."
 
 
 def test_strip_invalid_file_pointers_removes_derived() -> None:
     content = "A [charter::INTENT] B [libraries/lib_001/spec.md::REQS] C"
-    file_manifest = {"file_001": "docs/intro.md"}
+    file_manifest = {"F0001": {"relpath": "docs/intro.md", "sha256": "0" * 64}}
 
     assert strip_invalid_file_pointers(content, file_manifest) == "A B C"
 
 
 def test_strip_invalid_file_pointers_collapses_whitespace() -> None:
-    content = "Alpha  [file_999::INTRO]   beta"
-    file_manifest = {"file_001": "docs/intro.md"}
+    content = "Alpha  [F0999::INTRO]   beta"
+    file_manifest = {"F0001": {"relpath": "docs/intro.md", "sha256": "0" * 64}}
 
     assert strip_invalid_file_pointers(content, file_manifest) == "Alpha beta"
 
 
 def test_strip_invalid_file_pointers_preserves_newlines() -> None:
-    content = "Alpha [file_999::INTRO] \nBeta"
-    file_manifest = {"file_001": "docs/intro.md"}
+    content = "Alpha [F0999::INTRO] \nBeta"
+    file_manifest = {"F0001": {"relpath": "docs/intro.md", "sha256": "0" * 64}}
 
     assert strip_invalid_file_pointers(content, file_manifest) == "Alpha\nBeta"
 
 
 def test_strip_invalid_file_pointers_mixed_valid_invalid() -> None:
-    content = "A [file_001::INTRO] B [file_999::INTRO] C"
-    file_manifest = {"file_001": "docs/intro.md"}
+    content = "A [F0001::INTRO] B [F0999::INTRO] C"
+    file_manifest = {"F0001": {"relpath": "docs/intro.md", "sha256": "0" * 64}}
 
-    assert strip_invalid_file_pointers(content, file_manifest) == "A [file_001::INTRO] B C"
+    assert strip_invalid_file_pointers(content, file_manifest) == "A [F0001::INTRO] B C"
 
 
 def test_strip_invalid_file_pointers_handles_empty_and_none() -> None:
-    file_manifest = {"file_001": "docs/intro.md"}
+    file_manifest = {"F0001": {"relpath": "docs/intro.md", "sha256": "0" * 64}}
 
     assert strip_invalid_file_pointers("", file_manifest) == ""
     assert strip_invalid_file_pointers("No pointers here.", file_manifest) == "No pointers here."

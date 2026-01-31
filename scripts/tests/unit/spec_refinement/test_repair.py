@@ -57,7 +57,7 @@ def test_repair_artifact_calls_agent_with_prompt() -> None:
         {
             "type": "missing_evidence_pointers",
             "message": "No evidence pointers found.",
-            "file_id": "file_001",
+            "file_id": "F0001",
         }
     ]
 
@@ -68,7 +68,7 @@ def test_repair_artifact_calls_agent_with_prompt() -> None:
         result = repair_artifact(
             output="bad output",
             errors=errors,
-            allowlists={"file_ids": ["file_001"]},
+            allowlists={"file_ids": ["F0001"]},
             artifact_type=ArtifactType.SUMMARY,
             model_override=get_repair_model(),
             manager=manager,
@@ -81,7 +81,7 @@ def test_repair_artifact_calls_agent_with_prompt() -> None:
     assert "INVALID OUTPUT" in prompt
     assert "bad output" in prompt
     assert "1. [missing_evidence_pointers] No evidence pointers found." in prompt
-    assert "file_ids: file_001" in prompt
+    assert "file_ids: F0001" in prompt
 
 
 def test_repair_artifact_skips_when_no_errors() -> None:
@@ -126,14 +126,14 @@ def test_build_repair_prompt_formats_errors_and_allowlists() -> None:
         {
             "type": "invalid_pointer",
             "message": "Pointer invalid.",
-            "file_id": "file_001",
+            "file_id": "F0001",
             "context": {"section": "INTRO"},
             "lines": ["line1", "line2"],
         }
     ]
     allowlists = {
-        "file_ids": ["file_001", "file_002"],
-        "sections": {"file_001": ["INTRO", "DETAILS"]},
+        "file_ids": ["F0001", "F0002"],
+        "sections": {"F0001": ["INTRO", "DETAILS"]},
     }
 
     prompt = _build_repair_prompt(
@@ -144,22 +144,22 @@ def test_build_repair_prompt_formats_errors_and_allowlists() -> None:
     )
 
     assert "1. [invalid_pointer] Pointer invalid." in prompt
-    assert "file_id=file_001" in prompt
+    assert "file_id=F0001" in prompt
     assert 'context={"section": "INTRO"}' in prompt
     assert 'lines=["line1", "line2"]' in prompt
-    assert "file_ids: file_001, file_002" in prompt
-    assert "- file_001: INTRO, DETAILS" in prompt
+    assert "file_ids: F0001, F0002" in prompt
+    assert "- F0001: INTRO, DETAILS" in prompt
 
 
 def test_format_allowlists_handles_nested_and_empty() -> None:
     allowlists = {
         "library_ids": [],
-        "sections": {"file_001": ["INTRO"], "file_002": []},
+        "sections": {"F0001": ["INTRO"], "F0002": []},
     }
 
     formatted = _format_allowlists(allowlists)
 
     assert "library_ids: None" in formatted
     assert "sections:" in formatted
-    assert "- file_001: INTRO" in formatted
-    assert "- file_002: None" in formatted
+    assert "- F0001: INTRO" in formatted
+    assert "- F0002: None" in formatted

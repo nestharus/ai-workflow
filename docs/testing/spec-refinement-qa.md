@@ -71,7 +71,7 @@ uv run spec spec map-libraries <run_id>
 ls runs/<run_id>/summaries/*.what.md | wc -l
 
 # Verify evidence pointers exist in summaries
-grep -c '\[file_' runs/<run_id>/summaries/*.what.md
+grep -c '\[F' runs/<run_id>/summaries/*.what.md
 
 # Check state
 uv run spec status <run_id>
@@ -178,7 +178,7 @@ for f in runs/<run_id>/libraries/lib_*/spec.md; do
 done
 
 # Check for evidence pointers in specs
-grep -c '\[file_' runs/<run_id>/libraries/lib_*/spec.md
+grep -c '\[F' runs/<run_id>/libraries/lib_*/spec.md
 
 # Check gap status
 for f in runs/<run_id>/libraries/lib_*/gaps.md; do
@@ -351,7 +351,7 @@ from unittest.mock import patch
 
 def _fake_run_agent(outputs: dict[str, str]):
     def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
-        match = re.search(r"File ID: (file_\d{3})", prompt)
+        match = re.search(r"File ID: (F\d{4})", prompt)
         file_id = match.group(1) if match else "unknown"
         return outputs[file_id]
     return _run_agent

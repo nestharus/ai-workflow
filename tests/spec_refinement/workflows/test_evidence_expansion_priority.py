@@ -117,10 +117,12 @@ def test_evidence_expansion_priority_flow(fs, monkeypatch) -> None:
         with lock:
             calls.setdefault(agent_name, []).append(file_id)
 
-    def _fake_run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
-        match = re.search(r"File ID: (file_\d+)", prompt)
+    def _fake_run_agent(
+        *, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2
+    ) -> str:
+        match = re.search(r"File ID: (F\d{4})", prompt)
         if not match:
-            match = re.search(r"File Summary: (file_\d+)", prompt)
+            match = re.search(r"File Summary: (F\d{4})", prompt)
         file_id = match.group(1) if match else "unknown"
         _record_call(agent_name, file_id)
 

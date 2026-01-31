@@ -12,7 +12,7 @@ def _make_gap(gap_id: str, status: str = "open") -> Gap:
         invariant_family="coverage",
         description="Missing section",
         details={
-            "source": "file_001::INTRO",
+            "source": "F0001::INTRO",
             "derived_artifact_target": "libraries/lib_001/spec.md",
             "severity": "warning",
             "gap_type": "coverage_failure",
@@ -22,7 +22,7 @@ def _make_gap(gap_id: str, status: str = "open") -> Gap:
         id=gap_id,
         gap_type=GapType.coverage_failure,
         severity=Severity.WARNING,
-        source=["file_001::INTRO"],
+        source=["F0001::INTRO"],
         derived_artifact_target="libraries/lib_001/spec.md",
         description="Missing section",
         evidence=[evidence],
@@ -110,7 +110,9 @@ def test_gap_queue_convergence_ratio_empty():
 def test_gap_queue_serialization_round_trip():
     """Verify serialization and deserialization."""
     gaps = [_make_gap("GAP-1"), _make_gap("GAP-2", "integrated")]
-    queue = GapQueue(gaps=gaps, stagnation_count=1, stagnation_threshold=4, last_content_hash="abcd")
+    queue = GapQueue(
+        gaps=gaps, stagnation_count=1, stagnation_threshold=4, last_content_hash="abcd"
+    )
     data = queue.to_dict()
     restored = GapQueue.from_dict(data)
 

@@ -27,7 +27,7 @@ def _make_evidence(
 ) -> GapEvidence:
     evidence_details = details or {
         "derived_artifact_target": "libs/lib-a/spec.md",
-        "source": ["file_001::INTRO"],
+        "source": ["F0001::INTRO"],
         "gap_type": "coverage_failure",
         "severity": "warning",
     }
@@ -36,7 +36,7 @@ def _make_evidence(
         description=description,
         details=evidence_details,
         confidence=confidence,
-        location="file_001.md:12",
+        location="F0001.md:12",
         detector="coverage_detector",
     )
 
@@ -74,7 +74,7 @@ def test_gap_serialization():
         id="GAP-abc12345",
         gap_type=GapType.coverage_failure,
         severity=Severity.WARNING,
-        source=["file_001::INTRO"],
+        source=["F0001::INTRO"],
         derived_artifact_target="libs/lib-a/spec.md",
         description="Missing coverage for requirement",
         evidence=[evidence],
@@ -118,7 +118,7 @@ def test_gap_synthesizer_clustering():
     gap = gaps[0]
     assert gap.derived_artifact_target == "libs/lib-a/spec.md"
     assert gap.gap_type == GapType.coverage_failure
-    assert gap.source == ["file_001::INTRO"]
+    assert gap.source == ["F0001::INTRO"]
 
 
 def test_gap_synthesizer_merge():
@@ -128,7 +128,7 @@ def test_gap_synthesizer_merge():
         id="GAP-merge",
         gap_type=GapType.coverage_failure,
         severity=Severity.WARNING,
-        source=["file_001::INTRO"],
+        source=["F0001::INTRO"],
         derived_artifact_target="libs/lib-a/spec.md",
         description="Missing coverage",
         evidence=[evidence],
@@ -142,7 +142,7 @@ def test_gap_synthesizer_merge():
         id="GAP-new",
         gap_type=GapType.coverage_failure,
         severity=Severity.ERROR,
-        source=["file_001::INTRO"],
+        source=["F0001::INTRO"],
         derived_artifact_target="libs/lib-a/spec.md",
         description="Missing coverage",
         evidence=[evidence],
@@ -169,7 +169,7 @@ def test_format_gap_table():
         id="GAP-table",
         gap_type=GapType.coverage_failure,
         severity=Severity.WARNING,
-        source=["file_001::INTRO"],
+        source=["F0001::INTRO"],
         derived_artifact_target="lib-a",
         description="This description is too long",
         evidence=[evidence],
@@ -192,7 +192,7 @@ def test_parse_gaps_markdown():
         id="GAP-open",
         gap_type=GapType.coverage_failure,
         severity=Severity.WARNING,
-        source=["file_001::INTRO"],
+        source=["F0001::INTRO"],
         derived_artifact_target="libs/lib-a/spec.md",
         description="Missing coverage",
         evidence=[evidence],
@@ -206,7 +206,7 @@ def test_parse_gaps_markdown():
         id="GAP-int",
         gap_type=GapType.content_mismatch,
         severity=Severity.ERROR,
-        source=["file_002::DETAILS"],
+        source=["F0002::DETAILS"],
         derived_artifact_target="libs/lib-b/spec.md",
         description="Content mismatch",
         evidence=[evidence],

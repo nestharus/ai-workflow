@@ -20,7 +20,7 @@ def _setup_workspace(fs, monkeypatch, summarize: bool = True) -> WorkspaceManage
     if summarize:
         manager.start_phase(Phase.SUMMARIZATION)
         manager.complete_phase(Phase.SUMMARIZATION, outputs={"summaries_count": 1})
-        summary_path = manager.structure.summaries_dir / "file_001.what.md"
+        summary_path = manager.structure.summaries_dir / "F0001.what.md"
         summary_path.write_text("# Summary\n", encoding="utf-8")
 
     return manager
@@ -32,7 +32,7 @@ def _charter(evidence_section: str = "INTRO") -> LibraryCharter:
         intent="Core Workflow Library",
         boundaries="Includes orchestrator and runner coordination.",
         responsibilities=["Handle phase transitions", "Coordinate summaries"],
-        evidence_sources=[{"file_id": "file_001", "sections": [evidence_section]}],
+        evidence_sources=[{"file_id": "F0001", "sections": [evidence_section]}],
         overlap_resolutions=[{"description": "Workflow vs orchestration", "decision": "Assign"}],
     )
 
@@ -44,7 +44,7 @@ def test_synthesize_libraries_success(fs, monkeypatch) -> None:
         patch(
             "scripts.spec_refinement.workflows.library_synthesis.label_all_files",
             return_value={
-                "file_labels": {"file_001": {"candidate_labels": [], "uncertain_labels": []}}
+                "file_labels": {"F0001": {"candidate_labels": [], "uncertain_labels": []}}
             },
         ),
         patch(
@@ -85,7 +85,7 @@ def test_synthesize_libraries_overlap_resolution_outputs(fs, monkeypatch) -> Non
         patch(
             "scripts.spec_refinement.workflows.library_synthesis.label_all_files",
             return_value={
-                "file_labels": {"file_001": {"candidate_labels": [], "uncertain_labels": []}}
+                "file_labels": {"F0001": {"candidate_labels": [], "uncertain_labels": []}}
             },
         ),
         patch(
@@ -108,7 +108,7 @@ def test_synthesize_libraries_overlap_resolution_outputs(fs, monkeypatch) -> Non
                     "lib_id_b": "lib_002",
                     "decision": "assign_to_lib_A",
                     "rationale": "Overlap belongs to lib_001",
-                    "affected_files": ["file_001"],
+                    "affected_files": ["F0001"],
                     "overlap_score": 0.5,
                 }
             ],
@@ -128,7 +128,7 @@ def test_synthesize_libraries_evidence_validation(fs, monkeypatch) -> None:
         patch(
             "scripts.spec_refinement.workflows.library_synthesis.label_all_files",
             return_value={
-                "file_labels": {"file_001": {"candidate_labels": [], "uncertain_labels": []}}
+                "file_labels": {"F0001": {"candidate_labels": [], "uncertain_labels": []}}
             },
         ),
         patch(

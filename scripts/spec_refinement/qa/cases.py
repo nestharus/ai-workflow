@@ -176,44 +176,44 @@ class EvidenceMapperAllowlistCase(QaCase):
         )
         _write_library(manager, lib_id, charter, spec)
 
-        file_id = "file_001"
+        file_id = "F0001"
         valid_sections = manager.get_section_labels(file_id)
 
         # Summary includes headings like "Components"/"Workflows"
         # which must NOT be used as section IDs.
         summary = (
-            "# File Summary: file_001\n"
-            "File ID: file_001\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n"
             "\n"
             "## Algorithms\n"
             "- Request routing | Map path+method to internal handler | "
-            "Evidence: [file_001::BOUNDARIES] [file_001::REQUIREMENTS]\n"
+            "Evidence: [F0001::BOUNDARIES] [F0001::REQUIREMENTS]\n"
             "- Correlation propagation | Attach and forward correlation_id | "
-            "Evidence: [file_001::REQUIREMENTS]\n"
+            "Evidence: [F0001::REQUIREMENTS]\n"
             "\n"
             "## Components\n"
             "- Gateway | Validate + route inbound requests | "
-            "Evidence: [file_001::INTRO] [file_001::BOUNDARIES]\n"
+            "Evidence: [F0001::INTRO] [F0001::BOUNDARIES]\n"
             "\n"
             "## Workflows\n"
             "- Inbound request | validate -> route -> persist metadata -> publish audit event | "
-            "Evidence: [file_001::REQUIREMENTS] [file_001::INTEGRATION]\n"
+            "Evidence: [F0001::REQUIREMENTS] [F0001::INTEGRATION]\n"
             "\n"
             "## Candidate Responsibilities\n"
             "- Own input validation and request routing for external traffic | "
-            "Evidence: [file_001::BOUNDARIES]\n"
-            "- Persist request/response metadata via Storage | Evidence: [file_001::INTEGRATION]\n"
+            "Evidence: [F0001::BOUNDARIES]\n"
+            "- Persist request/response metadata via Storage | Evidence: [F0001::INTEGRATION]\n"
             "\n"
             "## Dependencies\n"
             "- Storage\n"
             "- Event Bus\n"
             "\n"
             "## Evidence Map\n"
-            "- INTRO: [file_001::INTRO]\n"
-            "- BOUNDARIES: [file_001::BOUNDARIES]\n"
-            "- REQUIREMENTS: [file_001::REQUIREMENTS]\n"
-            "- CONSTRAINTS: [file_001::CONSTRAINTS]\n"
-            "- INTEGRATION: [file_001::INTEGRATION]\n"
+            "- INTRO: [F0001::INTRO]\n"
+            "- BOUNDARIES: [F0001::BOUNDARIES]\n"
+            "- REQUIREMENTS: [F0001::REQUIREMENTS]\n"
+            "- CONSTRAINTS: [F0001::CONSTRAINTS]\n"
+            "- INTEGRATION: [F0001::INTEGRATION]\n"
         )
 
         prompt = _build_evidence_prompt(
@@ -226,7 +226,7 @@ class EvidenceMapperAllowlistCase(QaCase):
 
         acceptance = [
             "Output is valid JSON with keys: file_id, relevant_sections, confidence, rationale.",
-            "file_id equals file_001.",
+            "file_id equals F0001.",
             "relevant_sections is a list and every entry is an exact match from the allow-list.",
             "relevant_sections MUST NOT contain summary headings like 'Components' or 'Workflows'.",
             "Because the Gateway integrates with Storage, relevant_sections should include "
@@ -271,28 +271,28 @@ class SpecIntegratorUnsupportedAssertionCase(QaCase):
         current_spec = """# Library Spec: lib_002
 
 ## Intent
-Provide durable persistence APIs. [file_002::INTRO]
+Provide durable persistence APIs. [F0002::INTRO]
 
 ## Boundaries
-- Owns record storage and retrieval operations. [file_002::BOUNDARIES]
-- Does NOT own request validation or request routing. [file_002::BOUNDARIES]
-- Does NOT own throughput management. [file_002::BOUNDARIES]
+- Owns record storage and retrieval operations. [F0002::BOUNDARIES]
+- Does NOT own request validation or request routing. [F0002::BOUNDARIES]
+- Does NOT own throughput management. [F0002::BOUNDARIES]
 
 ## Requirements
-- Store records reliably with an idempotency key. [file_002::REQUIREMENTS]
-- Support lookup by ID. [file_002::REQUIREMENTS]
+- Store records reliably with an idempotency key. [F0002::REQUIREMENTS]
+- Support lookup by ID. [F0002::REQUIREMENTS]
 
 ## Constraints
-- Data must be encrypted at rest. [file_002::CONSTRAINTS]
+- Data must be encrypted at rest. [F0002::CONSTRAINTS]
 
 ## Dependencies
-- Called by Gateway for persistence. [file_002::INTEGRATION]
+- Called by Gateway for persistence. [F0002::INTEGRATION]
 
 ## Decisions Needed
 - None
 """
 
-        file_id = "file_002"
+        file_id = "F0002"
         file_path = manager.get_file_path(file_id)
         if file_path is None:
             raise RuntimeError(f"Missing fixture source file for {file_id}.")
@@ -340,7 +340,7 @@ Provide durable persistence APIs. [file_002::INTRO]
         acceptance = [
             "Output is valid JSON matching SpecPatchOutput (file_id, lib_id, patches).",
             "All patch operations are add/edit/move (no delete).",
-            "Citations use only [file_###::SECTION] and section labels are from the allow-list.",
+            "Citations use only [F####::SECTION] and section labels are from the allow-list.",
             "The unsupported claim about throughput management is moved from Boundaries into "
             "Decisions Needed (not asserted in Boundaries after applying patches).",
         ]
@@ -476,7 +476,7 @@ class ArchitectureProposalCase(QaCase):
             "Each candidate has arch_id, pattern, description, components, communication, "
             "deployment, citations, tradeoffs.",
             "Citations use ONLY [lib_###::charter.md] or [lib_###::spec.md::SECTION] "
-            "pointers (no [file_###::...]).",
+            "pointers (no [F####::...]).",
             "Tradeoffs are concrete and measurable (not vague).",
         ]
 
@@ -574,8 +574,7 @@ class ArchitectureSelectionCase(QaCase):
             "Output is valid JSON with selected_arch_id and rationale.",
             "selected_arch_id is one of the provided candidates (arch_001 or arch_002) or null "
             "with explanation.",
-            "rationale includes library-pointer citations only ([lib_###::...]); "
-            "no [file_###::...].",
+            "rationale includes library-pointer citations only ([lib_###::...]); no [F####::...].",
             "Rejected architectures include concrete reasons.",
         ]
 
@@ -652,7 +651,7 @@ class ArchitectureLibraryMappingCase(QaCase):
             "lib_id matches the requested library (lib_002).",
             "component matches one of the components listed in the selected architecture.",
             "citations contains at least one library-pointer citation ([lib_###::...]).",
-            "No source-file citations like [file_###::...] appear in citations or dependencies.",
+            "No source-file citations like [F####::...] appear in citations or dependencies.",
         ]
 
         return PreparedQaCase(
@@ -681,7 +680,7 @@ QA_CASES: dict[str, QaCase] = {
         agent_name="glm-library-spec-integrator",
         description=(
             "Spec integrator must produce valid patch ops (no delete), "
-            "keep citations within the [file_###::SECTION] allowlists, "
+            "keep citations within the [F####::SECTION] allowlists, "
             "and reclassify unsupported assertions into Decisions Needed."
         ),
     ),

@@ -16,8 +16,8 @@ _SIGNATURES: list[tuple[str, re.Pattern[str], str]] = [
     ),
     (
         "arch_file_pointer",
-        re.compile(r"\[file_\d+::", re.IGNORECASE),
-        "Contains a [file_###::...] citation where a library-pointer citation is expected.",
+        re.compile(r"\[F\d{4}::", re.IGNORECASE),
+        "Contains a [F####::...] citation where a library-pointer citation is expected.",
     ),
     (
         "runner_file_pointer",

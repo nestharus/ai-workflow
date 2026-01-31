@@ -66,7 +66,7 @@ class WorkspaceState:
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     current_phase: Phase = Phase.INIT
     phases: dict[str, PhaseResult] = field(default_factory=dict)
-    file_manifest: dict[str, str] = field(default_factory=dict)
+    file_manifest: dict[str, dict[str, str]] = field(default_factory=dict)
     section_manifest: dict[str, list[str]] = field(default_factory=dict)
     spec_snapshot_baseline: dict[str, str] | None = None
     history: list[dict[str, Any]] = field(default_factory=list)

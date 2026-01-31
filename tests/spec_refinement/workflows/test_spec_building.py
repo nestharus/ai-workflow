@@ -25,10 +25,13 @@ def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManag
 
 
 def _stub_manager(
-    file_manifest: dict[str, str], section_manifest: dict[str, list[str]]
+    file_manifest: dict[str, dict[str, str]],
+    section_manifest: dict[str, list[str]],
+    spec_snapshot_dir: Path,
 ) -> SimpleNamespace:
     state = SimpleNamespace(file_manifest=file_manifest, section_manifest=section_manifest)
-    return SimpleNamespace(state=state)
+    structure = SimpleNamespace(spec_snapshot_dir=spec_snapshot_dir)
+    return SimpleNamespace(state=state, structure=structure)
 
 
 def test_validate_spec_citations_basename_reference(fs, monkeypatch) -> None:
@@ -52,7 +55,7 @@ def test_validate_spec_citations_stem_reference(fs, monkeypatch) -> None:
 def test_validate_spec_citations_case_insensitive_section(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
 
-    content = "Evidence: [file_001::intro]"
+    content = "Evidence: [F0001::intro]"
     issues = _validate_spec_citations(content, manager, "lib_001")
 
     assert issues == []
@@ -61,7 +64,7 @@ def test_validate_spec_citations_case_insensitive_section(fs, monkeypatch) -> No
 def test_validate_spec_citations_separator_normalization(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
 
-    content = "Evidence: [file_001::user-requirements]"
+    content = "Evidence: [F0001::user-requirements]"
     issues = _validate_spec_citations(content, manager, "lib_001")
 
     assert issues == []
@@ -69,9 +72,12 @@ def test_validate_spec_citations_separator_normalization(fs, monkeypatch) -> Non
 
 def test_validate_spec_citations_basename_and_normalized_section() -> None:
     file_path = Path("/work/specs/nested/alpha.md")
+    spec_snapshot_dir = file_path.parents[1]
+    relpath = file_path.relative_to(spec_snapshot_dir).as_posix()
     manager = _stub_manager(
-        {"file_001": str(file_path)},
-        {"file_001": ["INTRO", "User Requirements"]},
+        {"F0001": {"relpath": relpath, "sha256": "0" * 64}},
+        {"F0001": ["INTRO", "User Requirements"]},
+        spec_snapshot_dir,
     )
 
     content = "Evidence: [alpha.md::intro]\nEvidence: [alpha::user-requirements]"
@@ -82,9 +88,12 @@ def test_validate_spec_citations_basename_and_normalized_section() -> None:
 
 def test_validate_spec_citations_invalid_section_reports_issue() -> None:
     file_path = Path("/work/specs/nested/alpha.md")
+    spec_snapshot_dir = file_path.parents[1]
+    relpath = file_path.relative_to(spec_snapshot_dir).as_posix()
     manager = _stub_manager(
-        {"file_001": str(file_path)},
-        {"file_001": ["INTRO", "User Requirements"]},
+        {"F0001": {"relpath": relpath, "sha256": "0" * 64}},
+        {"F0001": ["INTRO", "User Requirements"]},
+        spec_snapshot_dir,
     )
 
     content = "Evidence: [alpha::missing-section]"

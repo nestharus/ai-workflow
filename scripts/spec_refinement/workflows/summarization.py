@@ -102,7 +102,9 @@ def _validate_evidence_pointers(
         )
         return issues
 
-    file_id_lookup = build_file_id_lookup(manager.state.file_manifest)
+    file_id_lookup = build_file_id_lookup(
+        manager.state.file_manifest, manager.structure.spec_snapshot_dir
+    )
     section_alias_map = build_section_alias_map(manager.state.section_manifest)
 
     for match in pointer_matches:

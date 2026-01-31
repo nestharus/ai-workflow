@@ -9,7 +9,7 @@ slipping through.
 ## Pointer Formats
 
 Source file pointers (Phase 1 + Phase 4 allowed, Phase 6 stripped if present):
-- `[file_###::SECTION]`
+- `[F####::SECTION]`
 
 Library pointers (Phase 6 allowed and validated separately):
 - `[lib_###::charter.md]`
@@ -29,7 +29,7 @@ Library pointers (Phase 6 allowed and validated separately):
 
 ## Examples
 Valid in Phase 1/4:
-- `Built on request intake [file_001::INTRO]`
+- `Built on request intake [F0001::INTRO]`
 
 Invalid in Phase 1/4 (stripped):
 - `Derived reference [charter::INTENT]`
@@ -39,4 +39,4 @@ Valid in Phase 6:
 - `Component defined in spec [lib_001::spec.md::Requirements]`
 
 Invalid in Phase 6 (stripped if present):
-- `Source file reference [file_002::REQS]`
+- `Source file reference [F0002::REQS]`

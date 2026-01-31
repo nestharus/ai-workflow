@@ -10,7 +10,7 @@ These are intended to be used by the manual QA harness (see `scripts/spec_refine
 - Examples: `[charter::INTENT]`, `[libraries/lib_001/spec.md::...]`, `[runs/...::...]`
 
 2) Architecture artifacts citing source files instead of libraries
-- Example: `[file_001::REQS]` appearing in architecture proposal/selection/mapping output.
+- Example: `[F0001::REQS]` appearing in architecture proposal/selection/mapping output.
 
 3) Runner file-pointer output instead of real content
 - Example: `See \`ARCHITECTURE-MAPPING.md\` for details.`

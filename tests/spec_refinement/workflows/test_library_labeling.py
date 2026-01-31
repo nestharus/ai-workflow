@@ -30,7 +30,7 @@ def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManag
     manager = WorkspaceManager(run_id=run_id, input_folder=Path("specs"))
     issues = manager.initialize(force=True)
     assert issues == []
-    summary_path = manager.structure.summaries_dir / "file_001.what.md"
+    summary_path = manager.structure.summaries_dir / "F0001.what.md"
     summary_path.write_text("# Summary\n", encoding="utf-8")
     return manager
 
@@ -48,7 +48,7 @@ def _library_output(evidence_section: str = "INTRO") -> str:
         "#### Responsibilities\n"
         "- Handle phase transitions\n\n"
         "#### Evidence\n"
-        f"- [file_001::{evidence_section}]\n\n"
+        f"- [F0001::{evidence_section}]\n\n"
         "#### Overlap Resolutions\n"
         "- Workflow vs orchestration -> Assign to lib_001\n"
     )
@@ -56,14 +56,14 @@ def _library_output(evidence_section: str = "INTRO") -> str:
 
 def test_label_file_to_libraries_parses_json(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
-    summary_path = manager.structure.summaries_dir / "file_001.what.md"
+    summary_path = manager.structure.summaries_dir / "F0001.what.md"
 
     payload = {
-        "file_id": "file_001",
+        "file_id": "F0001",
         "candidate_labels": [
             {
                 "label": "Request Intake",
-                "sections": ["[file_001::INTRO]"],
+                "sections": ["[F0001::INTRO]"],
                 "confidence": 0.8,
                 "rationale": "Direct mention of intake responsibilities.",
             }
@@ -75,7 +75,7 @@ def test_label_file_to_libraries_parses_json(fs, monkeypatch) -> None:
         "scripts.spec_refinement.workflows.library_labeling.run_agent",
         return_value=json.dumps(payload),
     ):
-        result = label_file_to_libraries("file_001", summary_path, manager)
+        result = label_file_to_libraries("F0001", summary_path, manager)
 
     assert result["candidate_labels"][0]["label"] == "Request Intake"
     assert result["uncertain_labels"] == []
@@ -83,10 +83,10 @@ def test_label_file_to_libraries_parses_json(fs, monkeypatch) -> None:
 
 def test_label_file_to_libraries_repairs_invalid_json(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
-    summary_path = manager.structure.summaries_dir / "file_001.what.md"
+    summary_path = manager.structure.summaries_dir / "F0001.what.md"
 
     repaired_payload = {
-        "file_id": "file_001",
+        "file_id": "F0001",
         "candidate_labels": [],
         "uncertain_labels": [{"label": "Rate Limiting", "rationale": "Unclear."}],
     }
@@ -101,7 +101,7 @@ def test_label_file_to_libraries_repairs_invalid_json(fs, monkeypatch) -> None:
             return_value=json.dumps(repaired_payload),
         ) as mock_repair,
     ):
-        result = label_file_to_libraries("file_001", summary_path, manager)
+        result = label_file_to_libraries("F0001", summary_path, manager)
 
     assert mock_repair.called
     assert result["uncertain_labels"][0]["label"] == "Rate Limiting"
@@ -109,15 +109,15 @@ def test_label_file_to_libraries_repairs_invalid_json(fs, monkeypatch) -> None:
 
 def test_aggregate_labels_clusters_by_similarity() -> None:
     file_labels = {
-        "file_001": {
+        "F0001": {
             "candidate_labels": [
-                {"label": "Core", "sections": ["[file_001::INTRO]"]},
-                {"label": "Workflow", "sections": ["[file_001::INTRO]"]},
+                {"label": "Core", "sections": ["[F0001::INTRO]"]},
+                {"label": "Workflow", "sections": ["[F0001::INTRO]"]},
             ],
             "uncertain_labels": [],
         },
-        "file_002": {
-            "candidate_labels": [{"label": "Workflow", "sections": ["[file_002::INTRO]"]}],
+        "F0002": {
+            "candidate_labels": [{"label": "Workflow", "sections": ["[F0002::INTRO]"]}],
             "uncertain_labels": [],
         },
     }
@@ -159,12 +159,12 @@ def test_generate_library_charter_uses_repair_gate(fs, monkeypatch) -> None:
 
     lib_def = {"lib_id": "lib_001", "final_label": "Core", "merged_from": ["Core"]}
     file_labels = {
-        "file_001": {
-            "candidate_labels": [{"label": "Core", "sections": ["[file_001::INTRO]"]}],
+        "F0001": {
+            "candidate_labels": [{"label": "Core", "sections": ["[F0001::INTRO]"]}],
             "uncertain_labels": [],
         }
     }
-    summaries = {"file_001": "# Summary"}
+    summaries = {"F0001": "# Summary"}
 
     with (
         patch(
@@ -191,7 +191,7 @@ def test_detect_overlaps_scores_pairs() -> None:
             intent="A",
             boundaries="",
             responsibilities=[],
-            evidence_sources=[{"file_id": "file_001", "sections": ["INTRO"]}],
+            evidence_sources=[{"file_id": "F0001", "sections": ["INTRO"]}],
             overlap_resolutions=[],
         ),
         LibraryCharter(
@@ -199,7 +199,7 @@ def test_detect_overlaps_scores_pairs() -> None:
             intent="B",
             boundaries="",
             responsibilities=[],
-            evidence_sources=[{"file_id": "file_001", "sections": ["INTRO"]}],
+            evidence_sources=[{"file_id": "F0001", "sections": ["INTRO"]}],
             overlap_resolutions=[],
         ),
     ]
@@ -219,7 +219,7 @@ def test_resolve_overlap_parses_output(fs, monkeypatch) -> None:
             intent="A",
             boundaries="",
             responsibilities=[],
-            evidence_sources=[{"file_id": "file_001", "sections": ["INTRO"]}],
+            evidence_sources=[{"file_id": "F0001", "sections": ["INTRO"]}],
             overlap_resolutions=[],
         ),
         "lib_002": LibraryCharter(
@@ -227,7 +227,7 @@ def test_resolve_overlap_parses_output(fs, monkeypatch) -> None:
             intent="B",
             boundaries="",
             responsibilities=[],
-            evidence_sources=[{"file_id": "file_001", "sections": ["INTRO"]}],
+            evidence_sources=[{"file_id": "F0001", "sections": ["INTRO"]}],
             overlap_resolutions=[],
         ),
     }
@@ -238,7 +238,7 @@ def test_resolve_overlap_parses_output(fs, monkeypatch) -> None:
             {
                 "decision": "assign_to_lib_A",
                 "rationale": "A owns the shared files.",
-                "affected_files": ["file_001"],
+                "affected_files": ["F0001"],
             }
         ),
     ):

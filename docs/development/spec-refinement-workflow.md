@@ -63,11 +63,11 @@ when the concern is truly shared and cannot be cleanly assigned.
 ### file_labels.json
 ```json
 {
-  "file_001": {
+  "F0001": {
     "candidate_labels": [
       {
         "label": "Request Intake",
-        "sections": ["[file_001::INTRO]"],
+        "sections": ["[F0001::INTRO]"],
         "confidence": 0.8,
         "rationale": "Matches intake responsibilities."
       }
@@ -83,13 +83,13 @@ when the concern is truly shared and cannot be cleanly assigned.
   "label_clusters": [
     {
       "labels": ["Request Intake", "Inbound Routing"],
-      "files": ["file_001", "file_004"],
-      "file_sections": [["file_001", "INTRO"], ["file_004", "ROUTING"]],
+      "files": ["F0001", "F0004"],
+      "file_sections": [["F0001", "INTRO"], ["F0004", "ROUTING"]],
       "similarity_score": 0.5
     }
   ],
   "singleton_labels": [
-    {"label": "Rate Limiting", "files": ["file_007"]}
+    {"label": "Rate Limiting", "files": ["F0007"]}
   ],
   "metadata": {
     "total_clusters": 1,

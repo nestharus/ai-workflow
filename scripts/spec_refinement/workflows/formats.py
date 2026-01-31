@@ -17,9 +17,9 @@ def normalize_compound_pointers(text: str) -> str:
     """Normalize accidental comma-separated pointers inside a single bracket.
 
     Some agents occasionally emit pointers like:
-      [file_001::INTRO, file_001::REQS]
+      [F0001::INTRO, F0001::REQS]
     which break the `[FILE_ID::SECTION]` parser/validator. We normalize these into:
-      [file_001::INTRO] [file_001::REQS]
+      [F0001::INTRO] [F0001::REQS]
     """
 
     def _rewrite(match: re.Match[str]) -> str:

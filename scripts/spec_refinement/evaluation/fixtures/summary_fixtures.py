@@ -8,11 +8,11 @@ from scripts.spec_refinement.workflows.repair import ArtifactType
 
 def _allowlists() -> dict[str, object]:
     return {
-        "file_id": "file_001",
-        "file_ids": ["file_001", "file_002"],
+        "file_id": "F0001",
+        "file_ids": ["F0001", "F0002"],
         "sections": {
-            "file_001": ["INTRO", "REQS", "OVERVIEW"],
-            "file_002": ["SETUP", "CONFIG"],
+            "F0001": ["INTRO", "REQS", "OVERVIEW"],
+            "F0002": ["SETUP", "CONFIG"],
         },
     }
 
@@ -21,21 +21,21 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SUMMARY,
         invalid_output=(
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Algorithms\n"
             "- Algo A | Does X | Evidence: [alpha::INTRO]\n\n"
             "## Components\n"
-            "- Component A | Does Y | Evidence: [file_001::REQS]\n\n"
+            "- Component A | Does Y | Evidence: [F0001::REQS]\n\n"
             "## Workflows\n"
-            "- Flow A | Does Z | Evidence: [file_001::OVERVIEW]\n\n"
+            "- Flow A | Does Z | Evidence: [F0001::OVERVIEW]\n\n"
             "## Candidate Responsibilities\n"
-            "- Own intake | Evidence: [file_001::INTRO]\n\n"
+            "- Own intake | Evidence: [F0001::INTRO]\n\n"
             "## Dependencies\n"
             "- None\n\n"
             "## Evidence Map\n"
-            "- INTRO: [file_001::INTRO]\n"
-            "- REQS: [file_001::REQS]\n"
+            "- INTRO: [F0001::INTRO]\n"
+            "- REQS: [F0001::REQS]\n"
         ),
         expected_errors=[{"type": "unknown_file_reference"}],
         allowlists=_allowlists(),
@@ -44,21 +44,21 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SUMMARY,
         invalid_output=(
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Algorithms\n"
-            "- Algo A | Does X | Evidence: [file_001::INTRO]\n\n"
+            "- Algo A | Does X | Evidence: [F0001::INTRO]\n\n"
             "## Components\n"
-            "- Component A | Does Y | Evidence: [file_001::SECURITY]\n\n"
+            "- Component A | Does Y | Evidence: [F0001::SECURITY]\n\n"
             "## Workflows\n"
-            "- Flow A | Does Z | Evidence: [file_001::OVERVIEW]\n\n"
+            "- Flow A | Does Z | Evidence: [F0001::OVERVIEW]\n\n"
             "## Candidate Responsibilities\n"
-            "- Own intake | Evidence: [file_001::INTRO]\n\n"
+            "- Own intake | Evidence: [F0001::INTRO]\n\n"
             "## Dependencies\n"
             "- None\n\n"
             "## Evidence Map\n"
-            "- INTRO: [file_001::INTRO]\n"
-            "- REQS: [file_001::REQS]\n"
+            "- INTRO: [F0001::INTRO]\n"
+            "- REQS: [F0001::REQS]\n"
         ),
         expected_errors=[{"type": "unknown_section_reference"}],
         allowlists=_allowlists(),
@@ -67,21 +67,21 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SUMMARY,
         invalid_output=(
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Algorithms\n"
             "- Algo A | Does X | Evidence:\n\n"
             "## Components\n"
-            "- Component A | Does Y | Evidence: [file_001::REQS]\n\n"
+            "- Component A | Does Y | Evidence: [F0001::REQS]\n\n"
             "## Workflows\n"
-            "- Flow A | Does Z | Evidence: [file_001::OVERVIEW]\n\n"
+            "- Flow A | Does Z | Evidence: [F0001::OVERVIEW]\n\n"
             "## Candidate Responsibilities\n"
-            "- Own intake | Evidence: [file_001::INTRO]\n\n"
+            "- Own intake | Evidence: [F0001::INTRO]\n\n"
             "## Dependencies\n"
             "- None\n\n"
             "## Evidence Map\n"
-            "- INTRO: [file_001::INTRO]\n"
-            "- REQS: [file_001::REQS]\n"
+            "- INTRO: [F0001::INTRO]\n"
+            "- REQS: [F0001::REQS]\n"
         ),
         expected_errors=[{"type": "malformed_evidence_pointer"}],
         allowlists=_allowlists(),
@@ -91,10 +91,10 @@ FIXTURES: list[RepairFixture] = [
         artifact_type=ArtifactType.SUMMARY,
         invalid_output=(
             "Here is the corrected summary:\n\n"
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Algorithms\n"
-            "- Algo A | Does X | Evidence: [file_001::INTRO]\n"
+            "- Algo A | Does X | Evidence: [F0001::INTRO]\n"
         ),
         expected_errors=[{"type": "stray_preamble"}],
         allowlists=_allowlists(),
@@ -103,21 +103,21 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SUMMARY,
         invalid_output=(
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Algorithms\n"
-            "- Algo A | Does X | Evidence: [file_001::INTRO]\n\n"
+            "- Algo A | Does X | Evidence: [F0001::INTRO]\n\n"
             "## Components\n"
-            "- Component A | Does Y | Evidence: [file_001::REQS]\n\n"
+            "- Component A | Does Y | Evidence: [F0001::REQS]\n\n"
             "## Workflows\n"
-            "- Flow A | Does Z | Evidence: [file_001::OVERVIEW]\n\n"
+            "- Flow A | Does Z | Evidence: [F0001::OVERVIEW]\n\n"
             "## Candidate Responsibilities\n"
-            "- Own intake | Evidence: [file_001::INTRO]\n\n"
+            "- Own intake | Evidence: [F0001::INTRO]\n\n"
             "## Dependencies\n"
             "- None\n\n"
             "## Evidence Map\n"
-            "- INTRO: [file_001::INTRO]\n"
-            "- REQS: [file_001::REQS]\n"
+            "- INTRO: [F0001::INTRO]\n"
+            "- REQS: [F0001::REQS]\n"
             "```\n"
         ),
         expected_errors=[{"type": "trailing_fence"}],
@@ -127,12 +127,12 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SUMMARY,
         invalid_output=(
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Algorithms\n"
-            "- Algo A | Does X | Evidence: [file_001::INTRO, file_001::REQS]\n\n"
+            "- Algo A | Does X | Evidence: [F0001::INTRO, F0001::REQS]\n\n"
             "## Components\n"
-            "- Component A | Does Y | Evidence: [file_001::REQS]\n"
+            "- Component A | Does Y | Evidence: [F0001::REQS]\n"
         ),
         expected_errors=[{"type": "compound_pointer"}],
         allowlists=_allowlists(),
@@ -141,21 +141,21 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SUMMARY,
         invalid_output=(
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Algorithms\n"
-            "- Algo A | Does X | Evidence: [file_001::INTRO]\n\n"
+            "- Algo A | Does X | Evidence: [F0001::INTRO]\n\n"
             "## Components\n"
-            "- Component A | Does Y | Evidence: [file_001::REQS]\n\n"
+            "- Component A | Does Y | Evidence: [F0001::REQS]\n\n"
             "## Workflows\n"
-            "- Flow A | Does Z | Evidence: [file_001::OVERVIEW]\n\n"
+            "- Flow A | Does Z | Evidence: [F0001::OVERVIEW]\n\n"
             "## Candidate Responsibilities\n"
-            "- Own intake | Evidence: [file_001::INTRO]\n\n"
+            "- Own intake | Evidence: [F0001::INTRO]\n\n"
             "## Dependencies\n"
             "- None\n\n"
             "## Evidence Map\n"
-            "- INTRO: [file_999::INTRO]\n"
-            "- REQS: [file_001::REQS]\n"
+            "- INTRO: [F0999::INTRO]\n"
+            "- REQS: [F0001::REQS]\n"
         ),
         expected_errors=[{"type": "unknown_file_reference"}],
         allowlists=_allowlists(),
@@ -164,21 +164,21 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SUMMARY,
         invalid_output=(
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Algorithms\n"
-            "- Algo A | Does X | Evidence: [file_001::INTRO]\n\n"
+            "- Algo A | Does X | Evidence: [F0001::INTRO]\n\n"
             "## Components\n"
-            "- Component A | Does Y | Evidence: [file_001::REQS]\n\n"
+            "- Component A | Does Y | Evidence: [F0001::REQS]\n\n"
             "## Workflows\n"
-            "- Flow A | Does Z | Evidence: [file_001::OVERVIEW]\n\n"
+            "- Flow A | Does Z | Evidence: [F0001::OVERVIEW]\n\n"
             "## Candidate Responsibilities\n"
-            "- Own intake | Evidence: [file_001::INTRO]\n\n"
+            "- Own intake | Evidence: [F0001::INTRO]\n\n"
             "## Dependencies\n"
             "- None\n\n"
             "## Evidence Map\n"
-            "- INTRO: [file_001::INTRO]\n"
-            "- MISSING: [file_001::MISSING]\n"
+            "- INTRO: [F0001::INTRO]\n"
+            "- MISSING: [F0001::MISSING]\n"
         ),
         expected_errors=[{"type": "unknown_section_reference"}],
         allowlists=_allowlists(),
@@ -187,21 +187,21 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SUMMARY,
         invalid_output=(
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Algorithms\n"
-            "- Algo A | Does X | Evidence: [file_001::INTRO]\n\n"
+            "- Algo A | Does X | Evidence: [F0001::INTRO]\n\n"
             "## Components\n"
-            "- Component A | Does Y | Evidence: [file_001::REQS]\n\n"
+            "- Component A | Does Y | Evidence: [F0001::REQS]\n\n"
             "## Workflows\n"
-            "- Flow A | Does Z | Evidence: [file_001::OVERVIEW]\n\n"
+            "- Flow A | Does Z | Evidence: [F0001::OVERVIEW]\n\n"
             "## Candidate Responsibilities\n"
             "- Own intake | Evidence:\n\n"
             "## Dependencies\n"
             "- None\n\n"
             "## Evidence Map\n"
-            "- INTRO: [file_001::INTRO]\n"
-            "- REQS: [file_001::REQS]\n"
+            "- INTRO: [F0001::INTRO]\n"
+            "- REQS: [F0001::REQS]\n"
         ),
         expected_errors=[{"type": "malformed_evidence_pointer"}],
         allowlists=_allowlists(),
@@ -211,10 +211,10 @@ FIXTURES: list[RepairFixture] = [
         artifact_type=ArtifactType.SUMMARY,
         invalid_output=(
             "Note: corrected output follows.\n\n"
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Algorithms\n"
-            "- Algo A | Does X | Evidence: [file_001::INTRO]\n"
+            "- Algo A | Does X | Evidence: [F0001::INTRO]\n"
         ),
         expected_errors=[{"type": "stray_preamble"}],
         allowlists=_allowlists(),
@@ -223,10 +223,10 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SUMMARY,
         invalid_output=(
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Algorithms\n"
-            "- Algo A | Does X | Evidence: [file_001::INTRO]\n\n"
+            "- Algo A | Does X | Evidence: [F0001::INTRO]\n\n"
             "```\n"
         ),
         expected_errors=[{"type": "trailing_fence"}],
@@ -236,10 +236,10 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SUMMARY,
         invalid_output=(
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Evidence Map\n"
-            "- INTRO: [file_001::INTRO, file_001::REQS]\n"
+            "- INTRO: [F0001::INTRO, F0001::REQS]\n"
         ),
         expected_errors=[{"type": "compound_pointer"}],
         allowlists=_allowlists(),

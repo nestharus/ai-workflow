@@ -472,7 +472,7 @@ class TestFullWorkflowIntegration:
         spec_path = manager.structure.libraries_dir / "lib_001" / "spec.md"
         spec_text = spec_path.read_text(encoding="utf-8")
         assert "# Library Spec" in spec_text
-        assert "[file_" in spec_text
+        assert "[F" in spec_text
 
     @pytest.mark.integration
     @pytest.mark.slow
@@ -552,21 +552,21 @@ class TestFullWorkflowIntegration:
 def test_basename_stem_resolution(spec_refinement_workspace) -> None:
     manager, _ = spec_refinement_workspace(run_id="run_basename")
     content = "Evidence: [alpha.md::INTRO]\nEvidence: [alpha::INTRO]"
-    issues = _validate_evidence_pointers(content, manager, "file_001")
+    issues = _validate_evidence_pointers(content, manager, "F0001")
     assert issues == []
 
 
 def test_case_insensitive_section_matching(spec_refinement_workspace) -> None:
     manager, _ = spec_refinement_workspace(run_id="run_case")
-    content = "Evidence: [file_001::intro] Evidence: [file_001::INTRO] Evidence: [file_001::Intro]"
-    issues = _validate_evidence_pointers(content, manager, "file_001")
+    content = "Evidence: [F0001::intro] Evidence: [F0001::INTRO] Evidence: [F0001::Intro]"
+    issues = _validate_evidence_pointers(content, manager, "F0001")
     assert issues == []
 
 
 def test_separator_normalization(spec_refinement_workspace) -> None:
     manager, _ = spec_refinement_workspace(run_id="run_separator")
-    content = "Evidence: [file_001::user-requirements]"
-    issues = _validate_evidence_pointers(content, manager, "file_001")
+    content = "Evidence: [F0001::user-requirements]"
+    issues = _validate_evidence_pointers(content, manager, "F0001")
     assert issues == []
 
 
@@ -574,7 +574,7 @@ def test_derived_pointer_scrubbing(spec_refinement_workspace) -> None:
     manager, _ = spec_refinement_workspace(run_id="run_derived")
     content = (
         "Evidence: [charter::INTENT] [libraries/lib_001/spec.md::OVERVIEW] "
-        "[runs/run_001/summaries/file_001.what.md::SUMMARY]"
+        "[runs/run_001/summaries/F0001.what.md::SUMMARY]"
     )
     cleaned = strip_invalid_file_pointers(content, manager.state.file_manifest)
     assert "charter::INTENT" not in cleaned

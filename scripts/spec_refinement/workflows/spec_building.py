@@ -163,8 +163,7 @@ def _build_full_spec_prompt_for_metrics(
         "Return ONLY the updated spec markdown. No preamble, no code fences.",
         "",
         "REQUIRED RULES:",
-        "- Preserve evidence-backed content; add missing details with "
-        " citations [file_###::SECTION].",
+        "- Preserve evidence-backed content; add missing details with  citations [F####::SECTION].",
         "- Boundaries/Requirements/Constraints/Dependencies bullets MUST include at least "
         " one valid evidence pointer. Add missing citations to existing bullets too (including "
         " those originating from the charter).",
@@ -172,7 +171,7 @@ def _build_full_spec_prompt_for_metrics(
         "- If the gap list indicates an unsupported claim, move it to Decisions Needed as an "
         " explicit open question/assumption.",
         "- Never cite derived artifacts (charter, libraries, runs). Only cite SOURCE files via "
-        " [file_###::SECTION].",
+        " [F####::SECTION].",
         f"- Valid section labels for citations in {file_id}: {valid_list}",
         "",
         "FORBIDDEN:",
@@ -215,11 +214,11 @@ def _build_full_spec_prompt_for_metrics(
             "",
             f"# Library Spec: {lib_id}",
             "## Boundaries",
-            "- Handles request intake and routing. [file_001::INTRO]",
+            "- Handles request intake and routing. [F0001::INTRO]",
             "## Requirements",
-            "- Validate payloads before processing. [file_001::REQS]",
+            "- Validate payloads before processing. [F0001::REQS]",
             "## Decisions Needed",
-            "- Confirm retention policy for incoming requests. [file_001::OPEN_QUESTIONS]",
+            "- Confirm retention policy for incoming requests. [F0001::OPEN_QUESTIONS]",
         ]
     )
     return "\n".join(lines).strip() + "\n"
@@ -294,10 +293,10 @@ def _build_patch_prompt(
         "No preamble, no code fences.",
         "",
         "REQUIRED SCHEMA:",
-        '{ "file_id": "file_###", "lib_id": "lib_###", "patches": [ {'
+        '{ "file_id": "F####", "lib_id": "lib_###", "patches": [ {'
         '"op": "add|edit|move", "section": "Spec Section", '
         '"bullet_index": int|null, "source_section": "Spec Section|null", '
-        '"content": "text", "citations": ["[file_###::SECTION]"] } ] }',
+        '"content": "text", "citations": ["[F####::SECTION]"] } ] }',
         "",
         "REQUIRED RULES:",
         "- Allowed ops: add, edit, move. Delete operations are FORBIDDEN",
@@ -307,7 +306,7 @@ def _build_patch_prompt(
         "to Decisions Needed",
         "- Every bullet in Boundaries/Requirements/Constraints/Dependencies MUST include at "
         "least one citation",
-        "- Citations MUST reference SOURCE files only (file_###::SECTION format)",
+        "- Citations MUST reference SOURCE files only (F####::SECTION format)",
         f"- Valid file IDs for citations: {file_id_list}",
         f"- Valid section labels for {file_id}: {valid_list}",
         "- When closing gaps, preserve key terms from source/gap text verbatim",
@@ -354,9 +353,9 @@ def _build_patch_prompt(
             "## OUTPUT FORMAT",
             "",
             "Example:",
-            '{ "file_id": "file_001", "lib_id": "lib_001", "patches": ['
+            '{ "file_id": "F0001", "lib_id": "lib_001", "patches": ['
             '{"op": "add", "section": "Requirements", "bullet_index": null, '
-            '"source_section": null, "content": "...", "citations": ["[file_001::INTRO]"]}'
+            '"source_section": null, "content": "...", "citations": ["[F0001::INTRO]"]}'
             "] }",
         ]
     )
@@ -473,7 +472,7 @@ def _build_gap_prompt(
         "## OUTPUT FORMAT",
         "",
         "Example:",
-        '{"gaps": [], "total_gaps": 0, "file_id": "file_001"}',
+        '{"gaps": [], "total_gaps": 0, "file_id": "F0001"}',
     ]
     return "\n".join(lines).strip() + "\n"
 
@@ -535,7 +534,7 @@ def _build_gap_audit_prompt(
         "Do NOT infer or invent new requirements/behaviors that are not stated.",
         "If the spec already captures the detail anywhere (including Decisions"
         " Needed), it is NOT a gap.",
-        "Use source pointers in [file_###::SECTION] format.",
+        "Use source pointers in [F####::SECTION] format.",
         "Source must match one of the Evidence Union Sources listed below.",
         f'Set file_id to "{GAP_AUDIT_FILE_ID}".',
         "",
@@ -565,7 +564,9 @@ def _validate_spec_citations(
         )
         return issues
 
-    file_id_lookup = build_file_id_lookup(manager.state.file_manifest)
+    file_id_lookup = build_file_id_lookup(
+        manager.state.file_manifest, manager.structure.spec_snapshot_dir
+    )
     section_alias_map = build_section_alias_map(manager.state.section_manifest)
 
     for match in pointer_matches:
@@ -754,7 +755,9 @@ def _build_library_spec(
             "coverage_metrics": {},
         }
 
-    file_id_lookup = build_file_id_lookup(manager.state.file_manifest)
+    file_id_lookup = build_file_id_lookup(
+        manager.state.file_manifest, manager.structure.spec_snapshot_dir
+    )
     section_alias_map = build_section_alias_map(manager.state.section_manifest)
     valid_file_ids = list(manager.state.file_manifest.keys())
 

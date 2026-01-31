@@ -24,9 +24,7 @@ def test_validation_helpers() -> None:
         fixture.invalid_output, fixture.artifact_type, fixture.allowlists
     )
     assert errors
-    assert any(
-        error.get("type") == fixture.expected_errors[0]["type"] for error in errors
-    )
+    assert any(error.get("type") == fixture.expected_errors[0]["type"] for error in errors)
 
 
 def test_edit_distance_calculation() -> None:
@@ -39,16 +37,16 @@ def test_model_runner(monkeypatch, tmp_path: Path) -> None:
     fixture = RepairFixture(
         artifact_type=ArtifactType.SUMMARY,
         invalid_output=(
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Algorithms\n"
             "- Algo A | Does X | Evidence: [alpha::INTRO]\n"
         ),
         expected_errors=[{"type": "unknown_file_reference"}],
         allowlists={
-            "file_id": "file_001",
-            "file_ids": ["file_001"],
-            "sections": {"file_001": ["INTRO"]},
+            "file_id": "F0001",
+            "file_ids": ["F0001"],
+            "sections": {"F0001": ["INTRO"]},
         },
         description="Invalid file id",
     )
@@ -56,10 +54,10 @@ def test_model_runner(monkeypatch, tmp_path: Path) -> None:
 
     def _fake_repair_artifact(**_kwargs: object) -> str:
         return (
-            "# File Summary: file_001\n"
-            "File ID: file_001\n\n"
+            "# File Summary: F0001\n"
+            "File ID: F0001\n\n"
             "## Algorithms\n"
-            "- Algo A | Does X | Evidence: [file_001::INTRO]\n"
+            "- Algo A | Does X | Evidence: [F0001::INTRO]\n"
         )
 
     monkeypatch.setattr(bakeoff, "repair_artifact", _fake_repair_artifact)
@@ -80,12 +78,12 @@ def test_model_runner(monkeypatch, tmp_path: Path) -> None:
 def test_report_generation(tmp_path: Path) -> None:
     fixture = RepairFixture(
         artifact_type=ArtifactType.SUMMARY,
-        invalid_output="# File Summary: file_001\n",
+        invalid_output="# File Summary: F0001\n",
         expected_errors=[{"type": "missing_citation"}],
         allowlists={
-            "file_id": "file_001",
-            "file_ids": ["file_001"],
-            "sections": {"file_001": ["INTRO"]},
+            "file_id": "F0001",
+            "file_ids": ["F0001"],
+            "sections": {"F0001": ["INTRO"]},
         },
         description="Missing citation",
     )

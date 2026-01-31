@@ -704,7 +704,7 @@ def _build_architecture_proposal_prompt(
         "- Tradeoffs MUST be concrete and measurable",
         "",
         "FORBIDDEN:",
-        "- Citing source files like [file_001::REQS]",
+        "- Citing source files like [F0001::REQS]",
         "- Abstract/vague tradeoffs",
         "- Invented section labels",
         "",
@@ -824,7 +824,7 @@ def _build_architecture_selection_prompt(
         "- Citations MUST use library pointers only:",
         "  - [lib_###::charter.md]",
         "  - [lib_###::spec.md::SECTION] (SECTION from allowlist below)",
-        "- Do NOT cite source files like [file_001::REQS]",
+        "- Do NOT cite source files like [F0001::REQS]",
         "- Use citations from library specs/charters in the rationale",
         "",
         "FORBIDDEN:",
@@ -1023,7 +1023,7 @@ def _build_library_mapping_prompt(
         "- Citations MUST use library pointers only: [lib_###::charter.md] or "
         "[lib_###::spec.md::SECTION]",
         "- Component name MUST match one of the components in the selected architecture",
-        "- Do NOT cite source files like [file_001::REQS]",
+        "- Do NOT cite source files like [F0001::REQS]",
         "",
         "FORBIDDEN:",
         "- Missing citations",
@@ -1183,8 +1183,8 @@ def _section_allowlist_from_content(content: str) -> list[str]:
 
 
 def _strip_file_citations(text: str) -> str:
-    """Remove `[file_###::SECTION]` citations to reduce chance of file-level citation drift."""
-    return re.sub(r"\[file_\d+::[^\]]+?\]", "", text)
+    """Remove `[F####::SECTION]` citations to reduce chance of file-level citation drift."""
+    return re.sub(r"\[F\d{4}::[^\]]+?\]", "", text)
 
 
 def _extract_json_payload(output: str) -> str:

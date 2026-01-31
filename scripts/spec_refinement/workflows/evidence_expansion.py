@@ -203,7 +203,7 @@ def _build_evidence_prompt(
         "## OUTPUT FORMAT",
         "",
         "Example:",
-        '{"file_id": "file_001", "relevant_sections": ["REQS", "CONSTRAINTS"], '
+        '{"file_id": "F0001", "relevant_sections": ["REQS", "CONSTRAINTS"], '
         '"confidence": 0.8, "rationale": "..."}',
     ]
     return "\n".join(lines).strip() + "\n"

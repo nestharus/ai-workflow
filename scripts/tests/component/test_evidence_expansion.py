@@ -37,7 +37,7 @@ def _make_summary_output(file_id: str, section: str, keyword: str) -> str:
 
 def _fake_run_agent(outputs: dict[str, str]):
     def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
-        match = re.search(r"File ID: (file_\d{3})", prompt)
+        match = re.search(r"File ID: (F\d{4})", prompt)
         if not match:
             raise RuntimeError("Missing file id in prompt")
         file_id = match.group(1)
@@ -71,13 +71,13 @@ def _setup_workspace(fs, monkeypatch) -> WorkspaceManager:
 
 def test_parse_evidence_mapper_output() -> None:
     payload = {
-        "file_id": "file_001",
+        "file_id": "F0001",
         "relevant_sections": ["INTRO"],
         "confidence": 0.8,
         "rationale": "Matches charter responsibilities.",
     }
     result = parse_evidence_mapper_output(json.dumps(payload))
-    assert result["file_id"] == "file_001"
+    assert result["file_id"] == "F0001"
     assert result["confidence"] == 0.8
 
 
@@ -92,13 +92,13 @@ def test_parse_evidence_spotcheck_output() -> None:
 
 def test_expand_evidence_validates_sections(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
-    summary_path = manager.structure.summaries_dir / "file_001.what.md"
-    summary_path.write_text(_make_summary_output("file_001", "INTRO", "keyword"), encoding="utf-8")
+    summary_path = manager.structure.summaries_dir / "F0001.what.md"
+    summary_path.write_text(_make_summary_output("F0001", "INTRO", "keyword"), encoding="utf-8")
 
     outputs = {
-        "file_001": json.dumps(
+        "F0001": json.dumps(
             {
-                "file_id": "file_001",
+                "file_id": "F0001",
                 "relevant_sections": ["UNKNOWN"],
                 "confidence": 0.9,
                 "rationale": "Test",
@@ -138,27 +138,27 @@ def test_expand_evidence_parallel_processing(fs, monkeypatch) -> None:
     (lib_dir / "evidence.json").write_text(json.dumps({"sources": []}), encoding="utf-8")
 
     summary_dir = manager.structure.summaries_dir
-    (summary_dir / "file_001.what.md").write_text(
-        _make_summary_output("file_001", "INTRO", "keyword"),
+    (summary_dir / "F0001.what.md").write_text(
+        _make_summary_output("F0001", "INTRO", "keyword"),
         encoding="utf-8",
     )
-    (summary_dir / "file_002.what.md").write_text(
-        _make_summary_output("file_002", "DETAILS", "keyword"),
+    (summary_dir / "F0002.what.md").write_text(
+        _make_summary_output("F0002", "DETAILS", "keyword"),
         encoding="utf-8",
     )
 
     outputs = {
-        "file_001": json.dumps(
+        "F0001": json.dumps(
             {
-                "file_id": "file_001",
+                "file_id": "F0001",
                 "relevant_sections": ["INTRO"],
                 "confidence": 0.8,
                 "rationale": "Maps intent.",
             }
         ),
-        "file_002": json.dumps(
+        "F0002": json.dumps(
             {
-                "file_id": "file_002",
+                "file_id": "F0002",
                 "relevant_sections": ["DETAILS"],
                 "confidence": 0.9,
                 "rationale": "Maps boundaries.",
@@ -178,18 +178,14 @@ def test_expand_evidence_parallel_processing(fs, monkeypatch) -> None:
 
 def test_spotcheck_evidence_adds_missing_sections(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
-    summary_path = manager.structure.summaries_dir / "file_001.what.md"
-    summary_path.write_text(_make_summary_output("file_001", "INTRO", "keyword"), encoding="utf-8")
+    summary_path = manager.structure.summaries_dir / "F0001.what.md"
+    summary_path.write_text(_make_summary_output("F0001", "INTRO", "keyword"), encoding="utf-8")
 
     lib_dir = manager.structure.libraries_dir / "lib_001"
     evidence_path = lib_dir / "evidence.json"
     evidence_path.write_text(
         json.dumps(
-            {
-                "sources": [
-                    {"file_id": "file_001", "sections": [], "confidence": 0.4, "rationale": ""}
-                ]
-            }
+            {"sources": [{"file_id": "F0001", "sections": [], "confidence": 0.4, "rationale": ""}]}
         ),
         encoding="utf-8",
     )

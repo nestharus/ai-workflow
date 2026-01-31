@@ -194,7 +194,9 @@ def validate_spec_integrator_output(
                 )
             )
 
-    file_id_lookup = build_file_id_lookup(manager.state.file_manifest)
+    file_id_lookup = build_file_id_lookup(
+        manager.state.file_manifest, manager.structure.spec_snapshot_dir
+    )
     section_alias_map = build_section_alias_map(manager.state.section_manifest)
     citation_issues = validate_patch_citations(
         patch_set.operations,
@@ -291,11 +293,11 @@ def validate_architecture_proposal_output(
     issues.extend(_validate_architecture_citations(as_text, manager))
 
     # Forbid file-level pointers in Phase 6 artifacts.
-    if re.search(r"\[file_\d+::", as_text):
+    if re.search(r"\[F\d{4}::", as_text):
         issues.append(
             _issue(
                 "file_pointer_in_arch_output",
-                "Architecture proposal must not cite [file_###::...].",
+                "Architecture proposal must not cite [F####::...].",
             )
         )
 
@@ -325,11 +327,9 @@ def validate_architecture_selection_output(
 
     rationale = str(data.get("rationale", ""))
     issues.extend(_validate_architecture_citations(rationale, manager))
-    if re.search(r"\[file_\d+::", rationale):
+    if re.search(r"\[F\d{4}::", rationale):
         issues.append(
-            _issue(
-                "file_pointer_in_rationale", "Selection rationale must not cite [file_###::...]."
-            )
+            _issue("file_pointer_in_rationale", "Selection rationale must not cite [F####::...].")
         )
 
     return issues
@@ -386,9 +386,9 @@ def validate_architecture_library_mapping_output(
 
     # Validate citations exist and are in library-pointer space.
     issues.extend(_validate_architecture_citations(json.dumps(data), manager))
-    if re.search(r"\[file_\d+::", json.dumps(data)):
+    if re.search(r"\[F\d{4}::", json.dumps(data)):
         issues.append(
-            _issue("file_pointer_in_mapping", "Architecture mapping must not cite [file_###::...].")
+            _issue("file_pointer_in_mapping", "Architecture mapping must not cite [F####::...].")
         )
 
     dependencies = data.get("cross_component_dependencies", [])
@@ -404,11 +404,11 @@ def validate_architecture_library_mapping_output(
                 )
                 continue
             citation = dep.get("citation", "")
-            if isinstance(citation, str) and "[file_" in citation:
+            if isinstance(citation, str) and re.search(r"\[F\d{4}::", citation):
                 issues.append(
                     _issue(
                         "file_pointer_in_dependency",
-                        "Dependency citation must not cite [file_###::...].",
+                        "Dependency citation must not cite [F####::...].",
                     )
                 )
 

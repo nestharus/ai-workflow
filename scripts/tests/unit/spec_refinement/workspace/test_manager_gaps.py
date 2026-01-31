@@ -18,7 +18,7 @@ def _make_gap(gap_id: str, artifact: str) -> Gap:
         description="Missing requirement",
         details={
             "derived_artifact_target": artifact,
-            "source": ["file_001::INTRO"],
+            "source": ["F0001::INTRO"],
             "gap_type": "coverage_failure",
             "severity": "warning",
         },
@@ -30,7 +30,7 @@ def _make_gap(gap_id: str, artifact: str) -> Gap:
         id=gap_id,
         gap_type=GapType.coverage_failure,
         severity=Severity.WARNING,
-        source=["file_001::INTRO"],
+        source=["F0001::INTRO"],
         derived_artifact_target=artifact,
         description="Missing requirement",
         evidence=[evidence],

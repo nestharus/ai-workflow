@@ -426,7 +426,9 @@ def _build_validation_manager(allowlists: dict[str, Any], root: Path) -> Workspa
         if isinstance(sections_for_file_ids, dict):
             file_ids = list(sections_for_file_ids.keys())
 
-    file_manifest = {file_id: str(root / "inputs" / f"{file_id}.md") for file_id in file_ids}
+    file_manifest = {
+        file_id: {"relpath": f"inputs/{file_id}.md", "sha256": "0" * 64} for file_id in file_ids
+    }
     manager.state.file_manifest = file_manifest
 
     section_manifest: dict[str, list[str]] = {}

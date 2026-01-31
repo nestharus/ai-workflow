@@ -31,7 +31,7 @@ def _fake_run_agent(outputs: dict[str, str], failures: set[str] | None = None):
     failures = failures or set()
 
     def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
-        match = re.search(r"File ID: (file_\d{3})", prompt)
+        match = re.search(r"File ID: (F\d{4})", prompt)
         if not match:
             raise RuntimeError("Missing file id in prompt")
         file_id = match.group(1)
@@ -59,8 +59,8 @@ def test_summarize_all_success(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
     outputs = {
-        "file_001": _make_summary_output("file_001", "INTRO"),
-        "file_002": _make_summary_output("file_002", "DETAILS"),
+        "F0001": _make_summary_output("F0001", "INTRO"),
+        "F0002": _make_summary_output("F0002", "DETAILS"),
     }
 
     with patch(
@@ -70,8 +70,8 @@ def test_summarize_all_success(fs, monkeypatch) -> None:
         result = summarize_all("run1", parallel=False)
 
     summary_dir = Path("/repo/runs/run1/summaries")
-    assert (summary_dir / "file_001.what.md").exists()
-    assert (summary_dir / "file_002.what.md").exists()
+    assert (summary_dir / "F0001.what.md").exists()
+    assert (summary_dir / "F0002.what.md").exists()
     assert result["summaries_written"] == 2
     assert result["files_processed"] == 2
 
@@ -83,8 +83,8 @@ def test_summarize_all_parallel(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
     outputs = {
-        "file_001": _make_summary_output("file_001", "INTRO"),
-        "file_002": _make_summary_output("file_002", "DETAILS"),
+        "F0001": _make_summary_output("F0001", "INTRO"),
+        "F0002": _make_summary_output("F0002", "DETAILS"),
     }
 
     with patch(
@@ -101,13 +101,13 @@ def test_summarize_all_partial_failure(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
     outputs = {
-        "file_001": _make_summary_output("file_001", "INTRO"),
-        "file_002": _make_summary_output("file_002", "DETAILS"),
+        "F0001": _make_summary_output("F0001", "INTRO"),
+        "F0002": _make_summary_output("F0002", "DETAILS"),
     }
 
     with patch(
         "scripts.spec_refinement.workflows.summarization.run_agent",
-        side_effect=_fake_run_agent(outputs, failures={"file_002"}),
+        side_effect=_fake_run_agent(outputs, failures={"F0002"}),
     ):
         result = summarize_all("run1", parallel=False)
 
@@ -123,8 +123,8 @@ def test_summarize_all_phase_tracking(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
     outputs = {
-        "file_001": _make_summary_output("file_001", "INTRO"),
-        "file_002": _make_summary_output("file_002", "DETAILS"),
+        "F0001": _make_summary_output("F0001", "INTRO"),
+        "F0002": _make_summary_output("F0002", "DETAILS"),
     }
 
     with patch(
