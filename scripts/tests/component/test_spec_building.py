@@ -104,7 +104,15 @@ def test_gap_detection_and_clustering(fs, monkeypatch) -> None:
     )
     gap_judge = GapJudgeRunner([gap_judge_output])
 
-    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+    def _run_agent(
+        *,
+        agent_name: str,
+        prompt: str,
+        workspace: Path,
+        max_retries: int = 2,
+        structured_schema: object | None = None,
+        **_: object,
+    ) -> str:
         if agent_name == "glm-library-spec-integrator":
             return integrator.run(prompt)
         return gap_judge.run(prompt)
@@ -152,7 +160,15 @@ def test_gap_closure_converges(fs, monkeypatch) -> None:
     ]
     gap_judge = GapJudgeRunner(gap_outputs)
 
-    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+    def _run_agent(
+        *,
+        agent_name: str,
+        prompt: str,
+        workspace: Path,
+        max_retries: int = 2,
+        structured_schema: object | None = None,
+        **_: object,
+    ) -> str:
         if agent_name == "glm-library-spec-integrator":
             return integrator.run(prompt)
         return gap_judge.run(prompt)
@@ -211,7 +227,15 @@ def test_max_iteration_limit(fs, monkeypatch) -> None:
     ]
     gap_judge = GapJudgeRunner(gap_outputs)
 
-    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+    def _run_agent(
+        *,
+        agent_name: str,
+        prompt: str,
+        workspace: Path,
+        max_retries: int = 2,
+        structured_schema: object | None = None,
+        **_: object,
+    ) -> str:
         if agent_name == "glm-library-spec-integrator":
             return integrator.run(prompt)
         return gap_judge.run(prompt)
@@ -240,7 +264,15 @@ def test_citation_validation(fs, monkeypatch) -> None:
     )
     gap_judge = GapJudgeRunner([json.dumps({"gaps": [], "total_gaps": 0, "file_id": "file_001"})])
 
-    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+    def _run_agent(
+        *,
+        agent_name: str,
+        prompt: str,
+        workspace: Path,
+        max_retries: int = 2,
+        structured_schema: object | None = None,
+        **_: object,
+    ) -> str:
         if agent_name == "glm-library-spec-integrator":
             return integrator.run(prompt)
         return gap_judge.run(prompt)
@@ -287,7 +319,15 @@ def test_repair_invalid_patch_citations(fs, monkeypatch) -> None:
     )
     gap_judge = GapJudgeRunner([json.dumps({"gaps": [], "total_gaps": 0, "file_id": "file_001"})])
 
-    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
+    def _run_agent(
+        *,
+        agent_name: str,
+        prompt: str,
+        workspace: Path,
+        max_retries: int = 2,
+        structured_schema: object | None = None,
+        **_: object,
+    ) -> str:
         if agent_name == "glm-library-spec-integrator":
             return integrator.run(prompt)
         return gap_judge.run(prompt)

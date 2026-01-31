@@ -37,6 +37,7 @@ MAX_ITERATIONS_DEFAULT = 5
 VALID_GAP_SEVERITIES = {"must", "should", "nice-to-have"}
 SEVERITY_MAP = {"must": "error", "should": "warning", "nice-to-have": "info"}
 MAX_RELEVANT_LINES_PER_SECTION = 12
+GAP_AUDIT_FILE_ID = "evidence_union"
 
 
 def _extract_sections(content: str, level: int) -> dict[str, str]:
@@ -52,6 +53,46 @@ def _extract_sections(content: str, level: int) -> dict[str, str]:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
         sections[title] = content[start:end].strip()
     return sections
+
+
+def _extract_evidence_section_blocks(content: str) -> dict[str, str]:
+    explicit_matches = list(re.finditer(r"\[([A-Z_]+)\]", content))
+    if explicit_matches:
+        blocks: dict[str, str] = {}
+        for index, match in enumerate(explicit_matches):
+            label = match.group(1).strip()
+            start = match.end()
+            end = (
+                explicit_matches[index + 1].start()
+                if index + 1 < len(explicit_matches)
+                else len(content)
+            )
+            text = content[start:end].strip()
+            if label in blocks and text:
+                blocks[label] = f"{blocks[label].rstrip()}\n{text}"
+            else:
+                blocks[label] = text
+        return blocks
+
+    heading_matches = list(re.finditer(r"^##\s+(.+)$", content, re.MULTILINE))
+    if not heading_matches:
+        return {}
+    blocks = {}
+    for index, match in enumerate(heading_matches):
+        heading = match.group(1).strip()
+        if not heading:
+            continue
+        label = heading.upper().replace(" ", "_")
+        start = match.end()
+        end = (
+            heading_matches[index + 1].start() if index + 1 < len(heading_matches) else len(content)
+        )
+        text = content[start:end].strip()
+        if label in blocks and text:
+            blocks[label] = f"{blocks[label].rstrip()}\n{text}"
+        else:
+            blocks[label] = text
+    return blocks
 
 
 def _extract_list_items(section_text: str) -> list[str]:
@@ -402,6 +443,78 @@ def _build_gap_prompt(
     return "\n".join(lines).strip() + "\n"
 
 
+def _build_evidence_union(
+    lib_id: str,
+    manager: WorkspaceManager,
+    evidence_map: dict[str, list[str]],
+    issues: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    union_lines: list[str] = []
+    union_sources: list[str] = []
+
+    for file_id, evidence_sections in evidence_map.items():
+        if not evidence_sections:
+            continue
+        file_path = manager.get_file_path(file_id)
+        if file_path is None or not file_path.exists():
+            continue
+        file_content = file_path.read_text(encoding="utf-8")
+        section_blocks = _extract_evidence_section_blocks(file_content)
+        for section in evidence_sections:
+            pointer = f"[{file_id}::{section}]"
+            union_sources.append(pointer)
+            union_lines.append(pointer)
+            section_text = section_blocks.get(section)
+            if section_text:
+                union_lines.append(section_text.strip())
+            else:
+                issues.append(
+                    {
+                        "type": "evidence_section_missing",
+                        "lib_id": lib_id,
+                        "file_id": file_id,
+                        "section": section,
+                        "message": "Evidence section content not found for gap audit.",
+                    }
+                )
+                union_lines.append("(Section content not found.)")
+            union_lines.append("")
+
+    if union_lines and not union_lines[-1].strip():
+        union_lines = union_lines[:-1]
+
+    return union_lines, union_sources
+
+
+def _build_gap_audit_prompt(
+    spec_content: str,
+    evidence_union: list[str],
+    evidence_sources: list[str],
+) -> str:
+    source_list = ", ".join(evidence_sources) if evidence_sources else "None"
+    union_block = evidence_union if evidence_union else ["None"]
+    lines = [
+        "Review the spec against the evidence union and report gaps.",
+        "Return JSON with keys: gaps, total_gaps, file_id.",
+        "Only report gaps for statements explicitly present in the evidence union below.",
+        "Do NOT infer or invent new requirements/behaviors that are not stated.",
+        "If the spec already captures the detail anywhere (including Decisions"
+        " Needed), it is NOT a gap.",
+        "Use source pointers in [file_###::SECTION] format.",
+        "Source must match one of the Evidence Union Sources listed below.",
+        f'Set file_id to "{GAP_AUDIT_FILE_ID}".',
+        "",
+        f"Evidence Union Sources: {source_list}",
+        "",
+        "Spec:",
+        spec_content.strip(),
+        "",
+        "Evidence Union:",
+        *union_block,
+    ]
+    return "\n".join(lines).strip() + "\n"
+
+
 def _validate_spec_citations(
     content: str, manager: WorkspaceManager, lib_id: str
 ) -> list[dict[str, Any]]:
@@ -528,6 +641,7 @@ def _build_gaps_from_judge(
     file_id: str,
     raw_gaps: list[dict[str, Any]],
     issues: list[dict[str, Any]],
+    detector: str = "chatgpt-library-spec-gap-judge",
 ) -> list[GapEvidence]:
     evidence_list: list[GapEvidence] = []
     for gap_finding in raw_gaps:
@@ -560,7 +674,7 @@ def _build_gaps_from_judge(
                 },
                 confidence=1.0,
                 location=gap_finding.get("source", file_id),
-                detector="chatgpt-library-spec-gap-judge",
+                detector=detector,
             )
         )
     return evidence_list
@@ -925,6 +1039,54 @@ def _build_library_spec(
             )
             evidence_list.extend(remainder_evidence)
 
+        audit_union, audit_sources = _build_evidence_union(
+            lib_id,
+            manager,
+            evidence_map,
+            issues,
+        )
+        audit_prompt = _build_gap_audit_prompt(spec_content, audit_union, audit_sources)
+        try:
+            audit_output = run_agent(
+                agent_name="chatgpt-library-spec-gap-judge",
+                prompt=audit_prompt,
+                workspace=manager.workspace_path,
+                structured_schema=GapJudgeOutput,
+            )
+        except RuntimeError as exc:
+            errors.append(
+                {
+                    "lib_id": lib_id,
+                    "file_id": GAP_AUDIT_FILE_ID,
+                    "error": f"Gap audit failed: {exc}",
+                }
+            )
+        else:
+            try:
+                if isinstance(audit_output, BaseModel):
+                    audit_data = audit_output.model_dump()
+                else:
+                    audit_data = parse_gap_judge_output(audit_output)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                errors.append(
+                    {
+                        "lib_id": lib_id,
+                        "file_id": GAP_AUDIT_FILE_ID,
+                        "error": f"Failed to parse gap audit output: {exc}",
+                    }
+                )
+            else:
+                raw_gaps = audit_data.get("gaps", [])
+                evidence_list.extend(
+                    _build_gaps_from_judge(
+                        lib_id,
+                        GAP_AUDIT_FILE_ID,
+                        raw_gaps,
+                        issues,
+                        detector="gpt-5.2-xhigh-gap-audit",
+                    )
+                )
+
         synthesizer = GapSynthesizer()
         new_gaps = synthesizer.cluster_evidence(evidence_list) if evidence_list else []
         existing_gaps = synthesizer.merge_gaps(existing_gaps, new_gaps)
@@ -943,7 +1105,12 @@ def _build_library_spec(
             },
         )
 
-        manager.write_library_gaps(lib_id, existing_gaps)
+        manager.write_library_gaps(
+            lib_id,
+            existing_gaps,
+            gap_queue=gap_queue,
+            update_queue=False,
+        )
 
         if not new_gaps or gap_queue.is_stagnant:
             gap_queue.mark_progress()

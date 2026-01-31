@@ -363,12 +363,20 @@ class WorkspaceManager:
 
     # --- Gap Management ---
 
-    def write_library_gaps(self, lib_id: str, gaps: list[Gap]) -> Path:
+    def write_library_gaps(
+        self,
+        lib_id: str,
+        gaps: list[Gap],
+        *,
+        gap_queue: GapQueue | None = None,
+        update_queue: bool = True,
+    ) -> Path:
         """Write gaps.md for a library."""
         lib_dir = self.structure.libraries_dir / lib_id
         lib_dir.mkdir(parents=True, exist_ok=True)
-        gap_queue = self.get_library_gap_queue(lib_id)
-        gap_queue.update(gaps)
+        gap_queue = gap_queue or self.get_library_gap_queue(lib_id)
+        if update_queue:
+            gap_queue.update(gaps)
         self.write_library_gap_queue(lib_id, gap_queue)
         metrics = gap_queue.get_coverage_metrics()
         gaps_path = lib_dir / "gaps.md"

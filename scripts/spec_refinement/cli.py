@@ -342,7 +342,7 @@ def cmd_gap_resolve(args: argparse.Namespace) -> int:
     if artifact_kind == "library":
         gaps = manager.read_library_gaps(artifact_id)
         gaps = [gap if item.id == gap.id else item for item in gaps]
-        manager.write_library_gaps(artifact_id, gaps)
+        manager.write_library_gaps(artifact_id, gaps, update_queue=True)
     else:
         gaps = manager.read_task_gaps(artifact_id)
         gaps = [gap if item.id == gap.id else item for item in gaps]

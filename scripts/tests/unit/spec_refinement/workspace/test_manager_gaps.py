@@ -57,7 +57,7 @@ def manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WorkspaceManager
 def test_write_read_library_gaps(manager: WorkspaceManager) -> None:
     """Verify library gaps persist round-trip."""
     gap = _make_gap("GAP-lib", "libs/lib-a/spec.md")
-    manager.write_library_gaps("lib-a", [gap])
+    manager.write_library_gaps("lib-a", [gap], update_queue=True)
 
     loaded = manager.read_library_gaps("lib-a")
     assert len(loaded) == 1
@@ -77,7 +77,11 @@ def test_write_read_task_gaps(manager: WorkspaceManager) -> None:
 
 def test_get_all_gaps(manager: WorkspaceManager) -> None:
     """Verify aggregation across libraries and tasks."""
-    manager.write_library_gaps("lib-a", [_make_gap("GAP-lib", "libs/lib-a/spec.md")])
+    manager.write_library_gaps(
+        "lib-a",
+        [_make_gap("GAP-lib", "libs/lib-a/spec.md")],
+        update_queue=True,
+    )
     manager.write_task_gaps("task-a", [_make_gap("GAP-task", "tasks/task-a/spec.md")])
 
     all_gaps = manager.get_all_gaps("run1")
