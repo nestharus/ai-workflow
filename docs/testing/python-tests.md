@@ -48,3 +48,16 @@ uv run pytest --cov --cov-report=html
 which contains per-function coverage statistics, use-case coverage, test results, and
 detailed missing line/branch information. Analysis tools (`coverage-summary`,
 `coverage-files`, `coverage-file`, `coverage-functions`) read from this database.
+
+## Spec Refinement Integration Tests
+
+Location: `tests/spec_refinement/test_full_workflow.py`
+
+These tests validate the complete 6-phase workflow end-to-end with:
+* Filesystem isolation (pyfakefs)
+* Agent mocking (monkeypatch)
+* Performance benchmarks (pytest-benchmark)
+* Gap convergence tracking
+* Repair gate validation
+
+Run with: `uv run pytest tests/spec_refinement/test_full_workflow.py -v`

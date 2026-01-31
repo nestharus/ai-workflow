@@ -42,9 +42,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install runtime dependencies (curl for healthcheck; unpinned for timely security fixes) and create user
+# Apply security updates, install runtime dependencies, and create user
 # hadolint ignore=DL3008
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends curl ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd -g 10000 appuser && \

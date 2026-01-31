@@ -16,7 +16,8 @@ import json
 import subprocess
 import sys
 from argparse import Namespace
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor
+from concurrent.futures import wait as futures_wait
 from pathlib import Path
 from typing import cast
 
@@ -169,20 +170,46 @@ def get_file_hashes(files: list[str], worktree: Path) -> dict[str, str]:
 def _extract_yaml_block(output: str) -> str | None:
     """Extract the YAML errors block from mixed output.
 
-    The lint output may contain progress messages before the YAML block.
-    This function finds the `errors:` line and extracts from there to the end.
+    The lint output may contain progress messages before the YAML block and
+    non-YAML content (e.g. Docker build logs from stderr) after it. This
+    function finds the ``errors:`` line and returns only the indented YAML
+    content that follows it.
 
     Args:
         output: Full lint output with potential mixed content.
 
     Returns:
-        The YAML block starting from `errors:`, or None if not found.
+        The YAML block starting from ``errors:``, or None if not found.
     """
     lines = output.splitlines()
+    start = None
     for i, line in enumerate(lines):
         if line.strip() == "errors:" or line.strip() == "errors: []":
-            return "\n".join(lines[i:])
-    return None
+            start = i
+            break
+    if start is None:
+        return None
+
+    # "errors: []" is a complete single-line block
+    if lines[start].strip() == "errors: []":
+        return "errors: []"
+
+    # Collect indented continuation lines that belong to the YAML block
+    end = start + 1
+    while end < len(lines):
+        line = lines[end]
+        # Blank lines within the block are fine
+        if not line.strip():
+            end += 1
+            continue
+        # Indented lines are part of the YAML error entries
+        if line[0] in (" ", "\t"):
+            end += 1
+            continue
+        # Non-indented, non-empty line marks the end of the YAML block
+        break
+
+    return "\n".join(lines[start:end])
 
 
 def extract_files_from_lint_output(lint_output: str) -> list[str]:
@@ -567,6 +594,33 @@ def orchestrate(args: Namespace) -> int:
     # Track errors per linter: {linter: set of files with errors}
     errors_by_linter = extract_errors_by_linter(output)
 
+    if not errors_by_linter:
+        _log("Linter failed but found no actionable lint errors.")
+        _log("Lint output:\n" + output)
+        print_report(0, False, "", None)
+        return 1
+
+    # Filter out errors whose targets are not files on disk (e.g. Docker image
+    # SHAs from Trivy).  These cannot be fixed by editing source files.
+    unfixable_targets: set[str] = set()
+    for linter, linter_files in list(errors_by_linter.items()):
+        non_existent = {f for f in linter_files if not (worktree / f).exists()}
+        if non_existent:
+            unfixable_targets.update(non_existent)
+            linter_files -= non_existent
+            if not linter_files:
+                del errors_by_linter[linter]
+
+    if unfixable_targets:
+        _log(f"Found {len(unfixable_targets)} error target(s) that are not fixable files:")
+        for f in sorted(unfixable_targets):
+            _log(f"  {f}")
+
+    if not errors_by_linter:
+        _log("No fixable file errors to resolve.")
+        print_report(0, False, output, None)
+        return 1
+
     # Track which linters each file has passed (don't re-run on unchanged files)
     passed_linters: dict[str, set[str]] = {}  # file -> set of linters that passed
 
@@ -574,6 +628,7 @@ def orchestrate(args: Namespace) -> int:
     iteration = 0
     last_agent_report = ""
     investigation_futures: list[tuple[Future[tuple[bool, str]], set[str], dict[str, str]]] = []
+    files_under_investigation: set[str] = set()
     executor = ThreadPoolExecutor(max_workers=1)  # Queue investigations sequentially
 
     try:
@@ -597,6 +652,7 @@ def orchestrate(args: Namespace) -> int:
             investigation_futures = pending_investigations
 
             for future, inv_files, inv_hashes in completed_investigations:
+                files_under_investigation -= inv_files
                 try:
                     _inv_success, inv_output = future.result(timeout=1)
                     # Check if investigator changed any files
@@ -643,9 +699,26 @@ def orchestrate(args: Namespace) -> int:
             if not all_error_files:
                 if investigation_futures:
                     _log("Waiting for pending investigations...")
+                    futures_wait(
+                        [f for f, _, _ in investigation_futures],
+                        return_when=FIRST_COMPLETED,
+                    )
                     continue
                 _log("No files with errors remaining.")
                 success = True
+                break
+
+            # Skip agent if all error files are already under investigation
+            files_needing_fix = all_error_files - files_under_investigation
+            if not files_needing_fix:
+                if investigation_futures:
+                    _log("All error files under investigation. Waiting...")
+                    futures_wait(
+                        [f for f, _, _ in investigation_futures],
+                        return_when=FIRST_COMPLETED,
+                    )
+                    continue
+                _log("No fixable files remaining. Stopping.")
                 break
 
             # Hash files before agent runs
@@ -666,7 +739,7 @@ def orchestrate(args: Namespace) -> int:
             }
 
             # Dispatch stuck files (unchanged) to investigator before checking progress
-            stuck_files = all_error_files - changed_files
+            stuck_files = all_error_files - changed_files - files_under_investigation
             if stuck_files:
                 stuck_errors = filter_lint_output_for_files(output, list(stuck_files))
                 if stuck_errors and stuck_errors.strip() != "errors: []":
@@ -676,10 +749,15 @@ def orchestrate(args: Namespace) -> int:
                     investigation_input = format_agent_input(stuck_errors, worktree)
                     future = executor.submit(invoke_investigator, investigation_input, worktree)
                     investigation_futures.append((future, stuck_files, stuck_hashes))
+                    files_under_investigation.update(stuck_files)
 
             if not changed_files:
                 if investigation_futures:
                     _log("No files changed. Waiting for investigations...")
+                    futures_wait(
+                        [f for f, _, _ in investigation_futures],
+                        return_when=FIRST_COMPLETED,
+                    )
                     continue
                 _log("No files changed. Agent couldn't fix anything. Stopping.")
                 break

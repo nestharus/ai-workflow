@@ -7,8 +7,13 @@ severity:
 
 exit-code: 1
 
-scanners:
-  - vuln
+scan:
+  scanners:
+    - vuln
+
+vulnerability:
+  # Skip vulnerabilities with no available fix — nothing actionable
+  ignore-unfixed: true
 
 # Do not include dev dependencies by default for security scanning
 # Run with --include-dev-deps flag for comprehensive checks

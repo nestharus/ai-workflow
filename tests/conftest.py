@@ -27,6 +27,10 @@ from fastapi.testclient import TestClient
 
 from app.core.factory import create_app
 from app.core.settings import Settings
+from scripts.spec_refinement.workspace import WorkspaceManager
+from tests.spec_refinement.fixtures.agent_mocks import MockAgentController
+from tests.spec_refinement.fixtures.test_corpus import create_test_corpus
+from tests.spec_refinement.test_performance import PerformanceBenchmark
 
 # --- Patch thinc's fix_random_seed to handle seeds >= 2**32 ---
 # pytest-randomly may pass seeds that exceed numpy's 32-bit limit.
@@ -325,3 +329,82 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         for failure in threshold_failures:
             write_line(f"  - {failure}")
         session.exitstatus = 1
+
+
+# --- Spec Refinement Integration Fixtures ---
+
+
+@pytest.fixture
+def spec_refinement_workspace(fs, monkeypatch):
+    def _factory(*, run_id: str = "run_001", file_count: int | None = None):
+        base = Path("/work")
+        fs.create_dir(base)
+        input_dir = base / "specs"
+        manifest = create_test_corpus(fs, input_dir, file_count=file_count)
+        monkeypatch.chdir(base)
+        manager = WorkspaceManager(run_id=run_id, input_folder=input_dir)
+        issues = manager.initialize(force=True)
+        assert issues == []
+        return manager, manifest
+
+    return _factory
+
+
+@pytest.fixture
+def mock_all_agents(monkeypatch):
+    def _apply(
+        manifest: dict[str, dict[str, object]],
+        *,
+        violation_rate: float = 0.15,
+        spec_patch_violation: str = "invalid_citation",
+        mapping_violation_mode: str = "invalid_citation",
+        gap_mode: str = "empty",
+        overrides: dict[str, float] | None = None,
+    ) -> MockAgentController:
+        controller = MockAgentController(
+            manifest=manifest,
+            violation_rate=violation_rate,
+            spec_patch_violation=spec_patch_violation,
+            mapping_violation_mode=mapping_violation_mode,
+            gap_mode=gap_mode,
+        )
+        if overrides:
+            controller.violation_overrides.update(overrides)
+
+        monkeypatch.setattr(
+            "scripts.spec_refinement.workflows.summarization.run_agent",
+            controller.dispatch,
+        )
+        monkeypatch.setattr(
+            "scripts.spec_refinement.workflows.library_labeling.run_agent",
+            controller.dispatch,
+        )
+        monkeypatch.setattr(
+            "scripts.spec_refinement.workflows.evidence_expansion.run_agent",
+            controller.dispatch,
+        )
+        monkeypatch.setattr(
+            "scripts.spec_refinement.workflows.spec_building.run_agent",
+            controller.dispatch,
+        )
+        monkeypatch.setattr(
+            "scripts.spec_refinement.workflows.sublibrary_detection.run_agent",
+            controller.dispatch,
+        )
+        monkeypatch.setattr(
+            "scripts.spec_refinement.workflows.architecture.run_agent",
+            controller.dispatch,
+        )
+        monkeypatch.setattr(
+            "scripts.spec_refinement.workflows.repair.run_agent",
+            controller.dispatch,
+        )
+
+        return controller
+
+    return _apply
+
+
+@pytest.fixture
+def performance_tracker() -> PerformanceBenchmark:
+    return PerformanceBenchmark()
