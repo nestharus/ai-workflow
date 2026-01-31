@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
@@ -278,7 +278,7 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
             }
         )
 
-    missing_citations = _find_missing_mapping_citations(component_lines)
+    missing_citations = _find_missing_mapping_citations(component_lines, dependencies)
     if missing_citations:
         issues.extend(missing_citations)
 
@@ -648,28 +648,60 @@ def _build_architecture_proposal_prompt(
     if briefs:
         for lib_id in sorted(briefs.keys()):
             brief = briefs[lib_id]
-            intent = _collapse_whitespace(str(brief.get("intent", ""))).strip()
-            if len(intent) > 160:
-                intent = intent[:157] + "..."
-            constraints_count = brief.get("constraints", [])
-            interface_count = brief.get("interfaces", [])
+            intent = _collapse_whitespace(str(brief.get("intent", ""))).strip() or "None"
+            boundaries = _collapse_whitespace(str(brief.get("boundaries", ""))).strip() or "None"
             dependencies = brief.get("dependencies", [])
-            constraints_total = len(constraints_count) if isinstance(constraints_count, list) else 0
-            interfaces_total = len(interface_count) if isinstance(interface_count, list) else 0
-            if isinstance(dependencies, list):
-                deps_text = ", ".join(str(dep) for dep in dependencies if dep)
+            constraints = brief.get("constraints", [])
+            interfaces = brief.get("interfaces", [])
+
+            lines.append(f"### {lib_id}")
+            lines.append(f"Intent: {intent}")
+            lines.append(f"Boundaries: {boundaries}")
+            lines.append("Dependencies:")
+            if isinstance(dependencies, list) and dependencies:
+                for dep in dependencies:
+                    dep_text = _collapse_whitespace(str(dep)).strip()
+                    if dep_text:
+                        lines.append(f"- {dep_text}")
             else:
-                deps_text = ""
-            if not deps_text:
-                deps_text = "None"
-            if not intent:
-                intent = "None"
-            lines.append(
-                f"- {lib_id}: intent={intent}; "
-                f"constraints={constraints_total}; "
-                f"interfaces={interfaces_total}; "
-                f"dependencies={deps_text}"
-            )
+                lines.append("- None")
+
+            lines.append("Constraints:")
+            if isinstance(constraints, list) and constraints:
+                for item in constraints:
+                    if not isinstance(item, dict):
+                        continue
+                    ctype = _collapse_whitespace(str(item.get("type", ""))).strip()
+                    desc = _collapse_whitespace(str(item.get("description", ""))).strip()
+                    citation = _collapse_whitespace(str(item.get("citation", ""))).strip()
+                    if not ctype:
+                        ctype = "Unknown"
+                    if not desc:
+                        desc = "None"
+                    if not citation:
+                        citation = "None"
+                    lines.append(f"- type={ctype}; description={desc}; citation={citation}")
+            else:
+                lines.append("- None")
+
+            lines.append("Interfaces:")
+            if isinstance(interfaces, list) and interfaces:
+                for item in interfaces:
+                    if not isinstance(item, dict):
+                        continue
+                    itype = _collapse_whitespace(str(item.get("type", ""))).strip()
+                    desc = _collapse_whitespace(str(item.get("description", ""))).strip()
+                    citation = _collapse_whitespace(str(item.get("citation", ""))).strip()
+                    if not itype:
+                        itype = "Unknown"
+                    if not desc:
+                        desc = "None"
+                    if not citation:
+                        citation = "None"
+                    lines.append(f"- type={itype}; description={desc}; citation={citation}")
+            else:
+                lines.append("- None")
+            lines.append("")
     else:
         lines.append("- None")
 
@@ -762,7 +794,7 @@ def _map_libraries_distributed(
         )
         fragment = json.loads(_extract_json_payload(output))
         _validate_mapping_fragment(fragment, lib_id)
-        return fragment
+        return cast("dict[str, Any]", fragment)
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {
@@ -1060,7 +1092,10 @@ def _candidate_filename(arch_id: str) -> str:
     return f"arch_{arch_id}.md"
 
 
-def _find_missing_mapping_citations(component_lines: dict[str, list[str]]) -> list[dict[str, Any]]:
+def _find_missing_mapping_citations(
+    component_lines: dict[str, list[str]],
+    dependencies: list[str],
+) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     for component, lines in component_lines.items():
         for line in lines:
@@ -1073,6 +1108,18 @@ def _find_missing_mapping_citations(component_lines: dict[str, list[str]]) -> li
                         "message": "Library mapping missing citation.",
                     }
                 )
+    for dependency in dependencies:
+        dep_text = str(dependency).strip()
+        if not dep_text:
+            continue
+        if not ARCH_CITATION_RE.search(dep_text):
+            issues.append(
+                {
+                    "type": "missing_dependency_citation",
+                    "dependency": dep_text,
+                    "message": "Cross-component dependency missing citation.",
+                }
+            )
     return issues
 
 
