@@ -501,9 +501,29 @@ class WorkspaceManager:
 
     # --- Manifest Access ---
 
+    def _normalize_file_manifest(self) -> dict[str, dict[str, str]]:
+        if not self.state.file_manifest:
+            return {}
+        if all(isinstance(value, dict) for value in self.state.file_manifest.values()):
+            return self.state.file_manifest
+        normalized: dict[str, dict[str, str]] = {}
+        for file_id, file_data in self.state.file_manifest.items():
+            if isinstance(file_data, dict):
+                relpath = file_data.get("relpath")
+                sha256 = file_data.get("sha256", "")
+                if not isinstance(relpath, str) or not relpath:
+                    continue
+                normalized[file_id] = {
+                    "relpath": relpath,
+                    "sha256": sha256 if isinstance(sha256, str) else "",
+                }
+            elif isinstance(file_data, str):
+                normalized[file_id] = {"relpath": file_data, "sha256": ""}
+        return normalized
+
     def get_file_path(self, file_id: str) -> Path | None:
         """Get file path for a file ID."""
-        file_data = self.state.file_manifest.get(file_id)
+        file_data = self._normalize_file_manifest().get(file_id)
         relpath = file_data["relpath"] if file_data else None
         return self.structure.spec_snapshot_dir / relpath if relpath else None
 
@@ -513,9 +533,10 @@ class WorkspaceManager:
 
     def get_all_files(self) -> dict[str, Path]:
         """Get all files as {file_id: Path} mapping."""
+        file_manifest = self._normalize_file_manifest()
         return {
             file_id: self.structure.spec_snapshot_dir / file_data["relpath"]
-            for file_id, file_data in self.state.file_manifest.items()
+            for file_id, file_data in file_manifest.items()
         }
 
     def get_sublibrary_path(self, parent_lib_id: str, sub_lib_id: str) -> Path:

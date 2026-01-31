@@ -135,8 +135,10 @@ def parse_patch_json(json_str: str) -> SpecPatchSet:
         operations_data = data.get("operations")
         if operations_data is None:
             raise ValueError("Missing 'operations' in patch JSON.")
-        lib_id = data.get("lib_id") if isinstance(data.get("lib_id"), str) else "unknown"
-        file_id = data.get("file_id") if isinstance(data.get("file_id"), str) else "unknown"
+        lib_id_value = data.get("lib_id")
+        lib_id = lib_id_value if isinstance(lib_id_value, str) else "unknown"
+        file_id_value = data.get("file_id")
+        file_id = file_id_value if isinstance(file_id_value, str) else "unknown"
     elif isinstance(data, list):
         operations_data = data
         lib_id = "unknown"
@@ -373,12 +375,35 @@ def _coerce_bullet_index(value: int | str | None) -> int | None:
     return None
 
 
-def _ensure_file_id_lookup(file_id_lookup: dict[str, str]) -> dict[str, str]:
+def _ensure_file_id_lookup(
+    file_id_lookup: dict[str, str] | dict[str, dict[str, str]],
+) -> dict[str, str]:
     if not file_id_lookup:
-        return file_id_lookup
-    if any("/" in value or "\\" in value or "." in value for value in file_id_lookup.values()):
-        return build_file_id_lookup(file_id_lookup)
-    return file_id_lookup
+        return {}
+    values = list(file_id_lookup.values())
+    if values and all(isinstance(value, dict) for value in values):
+        return build_file_id_lookup(file_id_lookup)  # type: ignore[arg-type]
+    if values and all(
+        isinstance(value, str) and value.startswith("F") and value[1:].isdigit() for value in values
+    ):
+        return file_id_lookup  # type: ignore[return-value]
+    legacy_manifest: dict[str, dict[str, str]] = {}
+    for file_id, value in file_id_lookup.items():
+        if isinstance(value, str):
+            relpath = value
+            sha256 = ""
+        elif isinstance(value, dict):
+            relpath = value.get("relpath", "")
+            sha256 = value.get("sha256", "")
+        else:
+            continue
+        if not isinstance(relpath, str) or not relpath:
+            continue
+        legacy_manifest[file_id] = {
+            "relpath": relpath,
+            "sha256": sha256 if isinstance(sha256, str) else "",
+        }
+    return build_file_id_lookup(legacy_manifest)
 
 
 def _ensure_section_alias_map(
