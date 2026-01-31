@@ -1,6 +1,5 @@
-"""
-Newline Handling:
------------------
+r"""Newline handling.
+
 All input files are normalized to LF (\n) newlines before processing to ensure
 deterministic line-atom generation across platforms. This means:
 
@@ -29,6 +28,7 @@ def emit_atoms(
     file_path: Path,
     sections: FileSections,
     output_path: Path,
+    evidence_output: Path,
 ) -> int:
     """Emit deterministic line-atoms for a file.
 
@@ -45,8 +45,6 @@ def emit_atoms(
 
     section_ids = {section.section_id for section in sections.sections}
     issues: list[str] = []
-    evidence_output = output_path.parent / "evidence.jsonl"
-
     section_index = 0
     atoms_emitted = 0
     for line_no, text in enumerate(lines, start=1):
@@ -77,9 +75,7 @@ def emit_atoms(
         atoms_emitted += 1
 
     if atoms_emitted != len(lines):
-        issues.append(
-            f"atom count {atoms_emitted} does not match line count {len(lines)}"
-        )
+        issues.append(f"atom count {atoms_emitted} does not match line count {len(lines)}")
 
     if issues:
         evidence = GapEvidence(
