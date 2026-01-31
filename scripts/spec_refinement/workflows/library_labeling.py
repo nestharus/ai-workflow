@@ -10,6 +10,9 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
+from scripts.spec_refinement.schemas import LibraryLabelerOutput
 from scripts.spec_refinement.workspace import WorkspaceManager
 
 from .agent_utils import run_agent
@@ -17,6 +20,7 @@ from .formats import (
     EVIDENCE_POINTER_RE,
     LibraryCharter,
     normalize_compound_pointers,
+    parse_library_labeler_output,
     parse_library_synthesis,
 )
 from .progress import ProgressTracker
@@ -112,6 +116,7 @@ def label_file_to_libraries(
             agent_name="glm-file-library-labeler",
             prompt=prompt,
             workspace=manager.workspace_path,
+            structured_schema=LibraryLabelerOutput,
         )
     except RuntimeError as exc:
         return {
@@ -127,12 +132,18 @@ def label_file_to_libraries(
             ],
         }
 
-    data, issues = _parse_label_output(output)
+    if isinstance(output, BaseModel):
+        data = output.model_dump()
+        issues: list[dict[str, Any]] = []
+        output_text = output.model_dump_json()
+    else:
+        data, issues = _parse_label_output(output)
+        output_text = output
 
-    if issues:
+    if not isinstance(output, BaseModel) and issues:
         try:
             repaired = repair_artifact(
-                output=output,
+                output=output_text,
                 errors=issues,
                 allowlists={
                     "file_ids": list(manager.state.file_manifest.keys()),
@@ -141,11 +152,10 @@ def label_file_to_libraries(
                 artifact_type=ArtifactType.LIBRARY_LABELS,
                 manager=manager,
             )
-            repaired_data, repaired_issues = _parse_label_output(repaired)
-            if not repaired_issues:
-                output = repaired
-                data = repaired_data
-                issues = []
+            repaired_data = parse_library_labeler_output(repaired)
+            output_text = repaired
+            data = repaired_data
+            issues = []
         except Exception as exc:
             issues.append(
                 {
@@ -166,7 +176,7 @@ def label_file_to_libraries(
         "file_id": file_id,
         "candidate_labels": candidate_labels,
         "uncertain_labels": uncertain_labels,
-        "raw_output": output,
+        "raw_output": output_text,
         "issues": issues,
     }
 
@@ -422,6 +432,9 @@ def refine_library_labels(
         workspace=manager.workspace_path,
     )
 
+    if isinstance(output, BaseModel):
+        output = output.model_dump_json()
+
     try:
         data = json.loads(output)
     except json.JSONDecodeError as exc:
@@ -578,6 +591,9 @@ def generate_library_charter(
             ],
         }
 
+    if isinstance(output, BaseModel):
+        output = output.model_dump_json()
+
     output = normalize_compound_pointers(output)
 
     try:
@@ -659,7 +675,7 @@ def generate_library_charter(
     }
 
 
-class CharterResults(list):
+class CharterResults(list[LibraryCharter]):
     """List of generated charters with associated issues."""
 
     def __init__(self, charters: list[LibraryCharter], issues: list[dict[str, Any]]) -> None:
@@ -796,6 +812,9 @@ def resolve_overlap(
         workspace=manager.workspace_path,
     )
 
+    if isinstance(output, BaseModel):
+        output = output.model_dump_json()
+
     try:
         data = json.loads(output)
     except json.JSONDecodeError as exc:
@@ -817,7 +836,9 @@ def resolve_overlap(
 
 
 def _collect_evidence_file_ids(charter: LibraryCharter) -> set[str]:
-    return {source.get("file_id") for source in charter.evidence_sources if source.get("file_id")}
+    return {
+        str(file_id) for source in charter.evidence_sources if (file_id := source.get("file_id"))
+    }
 
 
 def _collect_sections_by_file(charter: LibraryCharter) -> dict[str, set[str]]:

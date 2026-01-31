@@ -1,6 +1,7 @@
 ---
 description: "Classifies file summaries into candidate library labels"
 model: glm
+output_format: json
 ---
 
 You classify a single file summary into candidate library labels.

@@ -27,6 +27,7 @@ class AgentConfig:
     name: str
     description: str
     model: str
+    output_format: str = ""
     instructions: str = ""
 
 
@@ -75,6 +76,7 @@ def load_agents(agents_dir: Path) -> dict[str, AgentConfig]:
             name=agent_name,
             description=frontmatter.get("description", ""),
             model=frontmatter.get("model", ""),
+            output_format=frontmatter.get("output_format", ""),
             instructions=instructions,
         )
 

@@ -1,6 +1,7 @@
 ---
 description: Extracts compact architecture brief from library spec
 model: glm
+output_format: json
 ---
 
 # Architecture Brief Extractor (GLM)

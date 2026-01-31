@@ -1,6 +1,7 @@
 ---
 description: Selects best architecture by analyzing tradeoffs against library specs
 model: gpt-5.2-xhigh
+output_format: json
 ---
 
 # Architecture Tradeoff Judge (ChatGPT)

@@ -1,6 +1,7 @@
 ---
 description: Maps library charters to relevant file sections for evidence expansion
 model: glm
+output_format: json
 ---
 
 You map a library charter to relevant sections within a spec file.

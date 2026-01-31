@@ -8,12 +8,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
+from scripts.spec_refinement.schemas import EvidenceMapperOutput
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
 from .formats import (
     _extract_json_payload,
-    parse_evidence_mapper_output,
     parse_evidence_spotcheck_output,
 )
 from .progress import ProgressTracker
@@ -143,7 +145,8 @@ def _compute_pair_priority(
         return 0.5, "classifier_uncertain"
 
     try:
-        data = json.loads(_extract_json_payload(output))
+        json_payload = _extract_json_payload(str(output))
+        data = json.loads(json_payload)
     except Exception:
         return 0.5, "classifier_uncertain"
 
@@ -432,12 +435,18 @@ def _process_pair(
             agent_name="glm-library-evidence-mapper",
             prompt=prompt,
             workspace=workspace,
+            structured_schema=EvidenceMapperOutput,
         )
     except RuntimeError as exc:
         return {"lib_id": lib_id, "file_id": file_id, "error": f"Agent execution failed: {exc}"}
 
     try:
-        data = parse_evidence_mapper_output(output)
+        if isinstance(output, BaseModel):
+            data = output.model_dump()
+        else:
+            from .formats import parse_evidence_mapper_output
+
+            data = parse_evidence_mapper_output(output)
     except Exception as exc:  # pragma: no cover - defensive logging
         return {
             "lib_id": lib_id,
@@ -786,7 +795,8 @@ def spotcheck_evidence(run_id: str, lib_ids: list[str] | None = None) -> dict[st
                 continue
 
             try:
-                data = parse_evidence_spotcheck_output(output)
+                output_str = str(output) if isinstance(output, BaseModel) else output
+                data = parse_evidence_spotcheck_output(output_str)
             except Exception as exc:  # pragma: no cover - defensive logging
                 errors.append(
                     {

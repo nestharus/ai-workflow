@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
 
 EVIDENCE_POINTER_RE = re.compile(r"\[([^\[\]]+?)::([^\[\]]+?)\]")
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_compound_pointers(text: str) -> str:
@@ -341,7 +344,17 @@ def parse_library_synthesis(content: str) -> tuple[list[LibraryCharter], str]:
 
 def parse_evidence_mapper_output(json_str: str) -> dict[str, Any]:
     """Parse glm-library-evidence-mapper JSON output."""
-    import json
+    from pydantic import ValidationError
+
+    from scripts.spec_refinement.schemas import EvidenceMapperOutput
+
+    try:
+        return EvidenceMapperOutput.model_validate_json(json_str).model_dump()
+    except (ValidationError, ValueError) as exc:
+        logger.warning(
+            "Structured parsing failed for evidence mapper output; falling back: %s",
+            exc,
+        )
 
     data = json.loads(_extract_json_payload(json_str))
     if not isinstance(data, dict):
@@ -356,7 +369,17 @@ def parse_evidence_mapper_output(json_str: str) -> dict[str, Any]:
 
 def parse_gap_judge_output(json_str: str) -> dict[str, Any]:
     """Parse chatgpt-library-spec-gap-judge JSON output."""
-    import json
+    from pydantic import ValidationError
+
+    from scripts.spec_refinement.schemas import GapJudgeOutput
+
+    try:
+        return GapJudgeOutput.model_validate_json(json_str).model_dump()
+    except (ValidationError, ValueError) as exc:
+        logger.warning(
+            "Structured parsing failed for gap judge output; falling back: %s",
+            exc,
+        )
 
     data = json.loads(_extract_json_payload(json_str))
     if not isinstance(data, dict):
@@ -466,9 +489,22 @@ def _validate_architecture_candidate(candidate: dict[str, Any]) -> list[str]:
 
 def parse_architecture_proposal(json_str: str) -> list[ArchitectureCandidate]:
     """Parse opus-architecture-proposer JSON output."""
-    import json
+    from pydantic import ValidationError
 
-    data = json.loads(json_str)
+    from scripts.spec_refinement.schemas import ArchitectureProposal as ArchitectureProposalSchema
+
+    try:
+        proposal = ArchitectureProposalSchema.model_validate_json(json_str)
+        return [
+            ArchitectureCandidate(**candidate.model_dump()) for candidate in proposal.candidates
+        ]
+    except (ValidationError, ValueError) as exc:
+        logger.warning(
+            "Structured parsing failed for architecture proposal; falling back: %s",
+            exc,
+        )
+
+    data = json.loads(_extract_json_payload(json_str))
     if not isinstance(data, list):
         raise TypeError("Architecture proposal must be a JSON array.")
 
@@ -502,9 +538,19 @@ def parse_architecture_proposal(json_str: str) -> list[ArchitectureCandidate]:
 
 def parse_architecture_selection(json_str: str) -> dict[str, Any]:
     """Parse chatgpt-architecture-tradeoff-judge JSON output."""
-    import json
+    from pydantic import ValidationError
 
-    data = json.loads(json_str)
+    from scripts.spec_refinement.schemas import ArchitectureSelection
+
+    try:
+        return ArchitectureSelection.model_validate_json(json_str).model_dump()
+    except (ValidationError, ValueError) as exc:
+        logger.warning(
+            "Structured parsing failed for architecture selection; falling back: %s",
+            exc,
+        )
+
+    data = json.loads(_extract_json_payload(json_str))
     if not isinstance(data, dict):
         raise TypeError("Expected JSON object.")
     required_fields = [
@@ -513,6 +559,85 @@ def parse_architecture_selection(json_str: str) -> dict[str, Any]:
         "rejected_architectures",
         "implementation_risks",
         "evolution_notes",
+    ]
+    for field in required_fields:
+        if field not in data:
+            raise ValueError(f"Missing required field: {field}")
+    return data
+
+
+def parse_library_labeler_output(json_str: str) -> dict[str, Any]:
+    """Parse glm-file-library-labeler JSON output."""
+    from pydantic import ValidationError
+
+    from scripts.spec_refinement.schemas import LibraryLabelerOutput
+
+    try:
+        return LibraryLabelerOutput.model_validate_json(json_str).model_dump()
+    except (ValidationError, ValueError) as exc:
+        logger.warning(
+            "Structured parsing failed for library labeler output; falling back: %s",
+            exc,
+        )
+
+    data = json.loads(_extract_json_payload(json_str))
+    if not isinstance(data, dict):
+        raise TypeError("Expected JSON object.")
+    required_fields = ["file_id", "candidate_labels", "uncertain_labels"]
+    for field in required_fields:
+        if field not in data:
+            raise ValueError(f"Missing required field: {field}")
+    return data
+
+
+def parse_spec_patch_output(json_str: str) -> dict[str, Any]:
+    """Parse glm-library-spec-integrator JSON output."""
+    from pydantic import ValidationError
+
+    from scripts.spec_refinement.schemas import SpecPatchOutput
+
+    try:
+        return SpecPatchOutput.model_validate_json(json_str).model_dump()
+    except (ValidationError, ValueError) as exc:
+        logger.warning(
+            "Structured parsing failed for spec patch output; falling back: %s",
+            exc,
+        )
+
+    data = json.loads(_extract_json_payload(json_str))
+    if not isinstance(data, dict):
+        raise TypeError("Expected JSON object.")
+    required_fields = ["file_id", "lib_id", "patches"]
+    for field in required_fields:
+        if field not in data:
+            raise ValueError(f"Missing required field: {field}")
+    return data
+
+
+def parse_architecture_brief_output(json_str: str) -> dict[str, Any]:
+    """Parse glm-architecture-brief-extractor JSON output."""
+    from pydantic import ValidationError
+
+    from scripts.spec_refinement.schemas import ArchitectureBrief
+
+    try:
+        return ArchitectureBrief.model_validate_json(json_str).model_dump()
+    except (ValidationError, ValueError) as exc:
+        logger.warning(
+            "Structured parsing failed for architecture brief output; falling back: %s",
+            exc,
+        )
+
+    data = json.loads(_extract_json_payload(json_str))
+    if not isinstance(data, dict):
+        raise TypeError("Expected JSON object.")
+    required_fields = [
+        "lib_id",
+        "intent",
+        "boundaries",
+        "dependencies",
+        "constraints",
+        "interfaces",
     ]
     for field in required_fields:
         if field not in data:

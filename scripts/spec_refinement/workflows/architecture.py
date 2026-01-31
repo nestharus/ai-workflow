@@ -9,11 +9,19 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
 
+from pydantic import BaseModel
+
+from scripts.spec_refinement.schemas import (
+    ArchitectureBrief,
+    ArchitectureProposal,
+    ArchitectureSelection,
+)
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
 from .formats import (
     normalize_compound_pointers,
+    parse_architecture_brief_output,
     parse_architecture_proposal,
     parse_architecture_selection,
 )
@@ -59,6 +67,7 @@ def propose_architectures(run_id: str) -> dict[str, Any]:
             agent_name="opus-architecture-proposer",
             prompt=prompt,
             workspace=manager.workspace_path,
+            structured_schema=ArchitectureProposal,
         )
     except RuntimeError as exc:
         manager.fail_phase(Phase.ARCHITECTURE_PROPOSAL, error=f"Agent execution failed: {exc}")
@@ -141,6 +150,7 @@ def select_architecture(run_id: str) -> dict[str, Any]:
             agent_name="chatgpt-architecture-tradeoff-judge",
             prompt=prompt,
             workspace=manager.workspace_path,
+            structured_schema=ArchitectureSelection,
         )
     except RuntimeError as exc:
         manager.fail_phase(Phase.ARCHITECTURE_SELECTION, error=f"Agent execution failed: {exc}")
@@ -386,8 +396,12 @@ def _extract_architecture_briefs(
             agent_name="glm-architecture-brief-extractor",
             prompt=prompt,
             workspace=manager.workspace_path,
+            structured_schema=ArchitectureBrief,
         )
-        brief = json.loads(_extract_json_payload(output))
+        if isinstance(output, BaseModel):
+            brief = output.model_dump()
+        else:
+            brief = parse_architecture_brief_output(output)
         _validate_architecture_brief(brief, lib_id)
         return lib_id, brief
 
@@ -445,34 +459,28 @@ def _validate_architecture_brief(brief: dict[str, Any], lib_id: str) -> None:
         raise TypeError("Architecture brief dependencies must be a list of strings.")
 
     constraints = brief.get("constraints")
-    if not isinstance(constraints, list):
-        raise TypeError("Architecture brief constraints must be a list.")
-    for item in constraints:
-        if not isinstance(item, dict):
-            raise TypeError("Architecture brief constraint entries must be objects.")
-        for key in ("type", "description", "citation"):
-            if not isinstance(item.get(key), str):
-                raise TypeError(f"Architecture brief constraint missing field: {key}")
+    if not isinstance(constraints, list) or not all(isinstance(item, str) for item in constraints):
+        raise TypeError("Architecture brief constraints must be a list of strings.")
 
     interfaces = brief.get("interfaces")
-    if not isinstance(interfaces, list):
-        raise TypeError("Architecture brief interfaces must be a list.")
-    for item in interfaces:
-        if not isinstance(item, dict):
-            raise TypeError("Architecture brief interface entries must be objects.")
-        for key in ("type", "description", "citation"):
-            if not isinstance(item.get(key), str):
-                raise TypeError(f"Architecture brief interface missing field: {key}")
+    if not isinstance(interfaces, list) or not all(isinstance(item, str) for item in interfaces):
+        raise TypeError("Architecture brief interfaces must be a list of strings.")
 
 
-def _parse_architecture_candidates(output: str) -> list[dict[str, Any]]:
-    payload = _extract_json_payload(output)
+def _parse_architecture_candidates(output: BaseModel | str) -> list[dict[str, Any]]:
+    if isinstance(output, BaseModel):
+        payload = output.model_dump_json()
+    else:
+        payload = _extract_json_payload(output)
     candidates = parse_architecture_proposal(payload)
     return [asdict(candidate) for candidate in candidates]
 
 
-def _parse_architecture_selection(output: str) -> dict[str, Any]:
-    payload = _extract_json_payload(output)
+def _parse_architecture_selection(output: BaseModel | str) -> dict[str, Any]:
+    if isinstance(output, BaseModel):
+        payload = output.model_dump_json()
+    else:
+        payload = _extract_json_payload(output)
     return parse_architecture_selection(payload)
 
 
@@ -669,36 +677,18 @@ def _build_architecture_proposal_prompt(
             lines.append("Constraints:")
             if isinstance(constraints, list) and constraints:
                 for item in constraints:
-                    if not isinstance(item, dict):
-                        continue
-                    ctype = _collapse_whitespace(str(item.get("type", ""))).strip()
-                    desc = _collapse_whitespace(str(item.get("description", ""))).strip()
-                    citation = _collapse_whitespace(str(item.get("citation", ""))).strip()
-                    if not ctype:
-                        ctype = "Unknown"
-                    if not desc:
-                        desc = "None"
-                    if not citation:
-                        citation = "None"
-                    lines.append(f"- type={ctype}; description={desc}; citation={citation}")
+                    item_text = _collapse_whitespace(str(item)).strip()
+                    if item_text:
+                        lines.append(f"- {item_text}")
             else:
                 lines.append("- None")
 
             lines.append("Interfaces:")
             if isinstance(interfaces, list) and interfaces:
                 for item in interfaces:
-                    if not isinstance(item, dict):
-                        continue
-                    itype = _collapse_whitespace(str(item.get("type", ""))).strip()
-                    desc = _collapse_whitespace(str(item.get("description", ""))).strip()
-                    citation = _collapse_whitespace(str(item.get("citation", ""))).strip()
-                    if not itype:
-                        itype = "Unknown"
-                    if not desc:
-                        desc = "None"
-                    if not citation:
-                        citation = "None"
-                    lines.append(f"- type={itype}; description={desc}; citation={citation}")
+                    item_text = _collapse_whitespace(str(item)).strip()
+                    if item_text:
+                        lines.append(f"- {item_text}")
             else:
                 lines.append("- None")
             lines.append("")
@@ -792,6 +782,8 @@ def _map_libraries_distributed(
             prompt=prompt,
             workspace=manager.workspace_path,
         )
+        if isinstance(output, BaseModel):
+            output = output.model_dump_json()
         fragment = json.loads(_extract_json_payload(output))
         _validate_mapping_fragment(fragment, lib_id)
         return cast("dict[str, Any]", fragment)

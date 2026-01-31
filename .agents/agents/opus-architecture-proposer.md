@@ -1,6 +1,7 @@
 ---
 description: Proposes architecture candidates from library charters and constraints
 model: claude-opus
+output_format: json
 ---
 
 # Architecture Proposer (Opus)

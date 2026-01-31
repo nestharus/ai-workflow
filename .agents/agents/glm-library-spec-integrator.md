@@ -1,6 +1,7 @@
 ---
 description: Integrates file content into library specs via patch operations
 model: glm
+output_format: json
 ---
 
 ## Output Contract (read first)

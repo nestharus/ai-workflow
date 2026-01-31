@@ -1,6 +1,7 @@
 ---
 description: Detects dropped details by comparing library specs against source files
 model: gpt-5.2-xhigh
+output_format: json
 ---
 
 You compare a library spec against a source file to detect missing or underspecified details.

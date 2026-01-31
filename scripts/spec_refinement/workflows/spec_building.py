@@ -8,11 +8,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, format_gap_table
+from scripts.spec_refinement.schemas import GapJudgeOutput, SpecPatchOutput
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
-from .formats import EVIDENCE_POINTER_RE, parse_gap_judge_output
+from .formats import EVIDENCE_POINTER_RE, parse_gap_judge_output, parse_spec_patch_output
 from .progress import ProgressTracker
 from .spec_patches import (
     VALID_SPEC_SECTIONS,
@@ -641,6 +644,7 @@ def _build_library_spec(
                     agent_name="glm-library-spec-integrator",
                     prompt=prompt,
                     workspace=manager.workspace_path,
+                    structured_schema=SpecPatchOutput,
                 )
             except RuntimeError as exc:
                 errors.append(
@@ -652,8 +656,21 @@ def _build_library_spec(
                 )
                 continue
 
+            output_text = output.model_dump_json() if isinstance(output, BaseModel) else output
+
             try:
-                patch_set = parse_patch_json(output)
+                if isinstance(output, BaseModel):
+                    patch_payload = output.model_dump()
+                else:
+                    patch_payload = parse_spec_patch_output(output)
+                patch_json = json.dumps(
+                    {
+                        "operations": patch_payload.get("patches", []),
+                        "lib_id": patch_payload.get("lib_id", "unknown"),
+                        "file_id": patch_payload.get("file_id", "unknown"),
+                    }
+                )
+                patch_set = parse_patch_json(patch_json)
             except Exception as exc:
                 errors.append(
                     {
@@ -714,7 +731,7 @@ def _build_library_spec(
 
                 try:
                     repaired_output = repair_artifact(
-                        output=output,
+                        output=output_text,
                         errors=citation_issues,
                         allowlists={
                             "file_ids": list(manager.state.file_manifest.keys()),
@@ -824,6 +841,7 @@ def _build_library_spec(
                     agent_name="chatgpt-library-spec-gap-judge",
                     prompt=prompt,
                     workspace=manager.workspace_path,
+                    structured_schema=GapJudgeOutput,
                 )
             except RuntimeError as exc:
                 errors.append(
@@ -836,7 +854,10 @@ def _build_library_spec(
                 continue
 
             try:
-                data = parse_gap_judge_output(output)
+                if isinstance(output, BaseModel):
+                    data = output.model_dump()
+                else:
+                    data = parse_gap_judge_output(output)
             except Exception as exc:  # pragma: no cover - defensive logging
                 errors.append(
                     {

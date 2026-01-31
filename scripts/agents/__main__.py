@@ -18,8 +18,34 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from pydantic import BaseModel
 
 from scripts.agents.config import load_agents, load_models
+from scripts.agents.structured_output import run_structured_agent
+from scripts.spec_refinement.schemas import (
+    ArchitectureBrief,
+    ArchitectureProposal,
+    ArchitectureSelection,
+    EvidenceMapperOutput,
+    GapJudgeOutput,
+    LibraryLabelerOutput,
+    SpecPatchOutput,
+)
+
+if TYPE_CHECKING:
+    _SchemaType = type[BaseModel]
+
+AGENT_SCHEMAS: dict[str, _SchemaType] = {
+    "glm-library-evidence-mapper": EvidenceMapperOutput,
+    "chatgpt-library-spec-gap-judge": GapJudgeOutput,
+    "opus-architecture-proposer": ArchitectureProposal,
+    "chatgpt-architecture-tradeoff-judge": ArchitectureSelection,
+    "glm-file-library-labeler": LibraryLabelerOutput,
+    "glm-library-spec-integrator": SpecPatchOutput,
+    "glm-architecture-brief-extractor": ArchitectureBrief,
+}
 
 
 def main() -> int:
@@ -105,6 +131,26 @@ def main() -> int:
     if not model:
         print(f"Error: Model not found: {agent.model}", file=sys.stderr)
         return 1
+
+    if agent.output_format == "json" and args.agent in AGENT_SCHEMAS:
+        print(
+            f"[agent-exec] structured agent={args.agent} model={agent.model} "
+            f"schema={AGENT_SCHEMAS[args.agent].__name__} prompt_len={len(prompt)}",
+            file=sys.stderr,
+        )
+        try:
+            structured_output = run_structured_agent(
+                args.agent,
+                prompt,
+                AGENT_SCHEMAS[args.agent],
+                project_root,
+            )
+        except Exception as exc:
+            print(f"Error: Structured agent failed: {exc}", file=sys.stderr)
+            return 1
+
+        print(structured_output.model_dump_json(indent=2))
+        return 0
 
     # Build full prompt with agent instructions
     full_prompt = f"{agent.instructions}\n\n{prompt}"
