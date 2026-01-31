@@ -54,7 +54,7 @@ def _extract_json(output: str) -> Any:
         if start == -1:
             continue
         try:
-            obj, end = decoder.raw_decode(text[start:])
+            obj, _end = decoder.raw_decode(text[start:])
         except json.JSONDecodeError:
             continue
         return obj
@@ -64,6 +64,7 @@ def _extract_json(output: str) -> Any:
 def validate_evidence_mapper_output(
     output: str, manager: WorkspaceManager, allowlists: dict[str, Any]
 ) -> list[dict[str, Any]]:
+    """Validate evidence mapper output against allowlists."""
     issues: list[dict[str, Any]] = []
     try:
         data = _extract_json(output)
@@ -74,7 +75,9 @@ def validate_evidence_mapper_output(
 
     file_id = data.get("file_id")
     if allowlists.get("file_id") and file_id != allowlists["file_id"]:
-        issues.append(_issue("wrong_file_id", f"file_id must be {allowlists['file_id']}", got=file_id))
+        issues.append(
+            _issue("wrong_file_id", f"file_id must be {allowlists['file_id']}", got=file_id)
+        )
 
     relevant = data.get("relevant_sections")
     if not isinstance(relevant, list):
@@ -85,7 +88,9 @@ def validate_evidence_mapper_output(
     if isinstance(valid_sections, list):
         for section in relevant:
             if not isinstance(section, str):
-                issues.append(_issue("invalid_section_type", "Section entries must be strings.", got=section))
+                issues.append(
+                    _issue("invalid_section_type", "Section entries must be strings.", got=section)
+                )
                 continue
             if section not in valid_sections:
                 issues.append(
@@ -109,7 +114,11 @@ def validate_evidence_mapper_output(
     if not isinstance(confidence, (int, float)):
         issues.append(_issue("confidence_not_number", "confidence must be a number."))
     elif confidence < 0.0 or confidence > 1.0:
-        issues.append(_issue("confidence_out_of_range", "confidence must be within [0.0, 1.0].", got=confidence))
+        issues.append(
+            _issue(
+                "confidence_out_of_range", "confidence must be within [0.0, 1.0].", got=confidence
+            )
+        )
 
     return issues
 
@@ -140,6 +149,7 @@ def _section_bullets(section_text: str) -> list[str]:
 def validate_spec_integrator_output(
     output: str, manager: WorkspaceManager, allowlists: dict[str, Any]
 ) -> list[dict[str, Any]]:
+    """Validate spec integrator output."""
     issues: list[dict[str, Any]] = []
     try:
         payload = parse_spec_patch_output(output)
@@ -149,9 +159,15 @@ def validate_spec_integrator_output(
     lib_id = str(payload.get("lib_id", ""))
     file_id = str(payload.get("file_id", ""))
     if allowlists.get("lib_id") and lib_id != allowlists["lib_id"]:
-        issues.append(_issue("wrong_lib_id", "lib_id mismatch.", expected=allowlists["lib_id"], got=lib_id))
+        issues.append(
+            _issue("wrong_lib_id", "lib_id mismatch.", expected=allowlists["lib_id"], got=lib_id)
+        )
     if allowlists.get("file_id") and file_id != allowlists["file_id"]:
-        issues.append(_issue("wrong_file_id", "file_id mismatch.", expected=allowlists["file_id"], got=file_id))
+        issues.append(
+            _issue(
+                "wrong_file_id", "file_id mismatch.", expected=allowlists["file_id"], got=file_id
+            )
+        )
 
     patches = payload.get("patches", [])
     patch_json = json.dumps({"operations": patches, "lib_id": lib_id, "file_id": file_id})
@@ -163,7 +179,9 @@ def validate_spec_integrator_output(
 
     # Validate each operation structure.
     for operation in patch_set.operations:
-        op_errors = validate_patch_operation(operation, valid_sections=patch_set_operations_valid_sections())
+        op_errors = validate_patch_operation(
+            operation, valid_sections=patch_set_operations_valid_sections()
+        )
         if op_errors:
             issues.append(
                 _issue(
@@ -189,7 +207,11 @@ def validate_spec_integrator_output(
     # Apply patch to current spec and validate reclassification outcome.
     current_spec = allowlists.get("current_spec") or ""
     if not isinstance(current_spec, str) or not current_spec.strip():
-        issues.append(_issue("missing_current_spec", "Test case did not provide current_spec for application."))
+        issues.append(
+            _issue(
+                "missing_current_spec", "Test case did not provide current_spec for application."
+            )
+        )
         return issues
 
     try:
@@ -215,7 +237,8 @@ def validate_spec_integrator_output(
         issues.append(
             _issue(
                 "unsupported_assertion_still_asserted",
-                "Unsupported 'throughput management' claim must not remain asserted in Boundaries after applying patches.",
+                "Unsupported 'throughput management' claim must not remain asserted in Boundaries "
+                "after applying patches.",
             )
         )
     decisions = sections.get("Decisions Needed", "")
@@ -223,7 +246,8 @@ def validate_spec_integrator_output(
         issues.append(
             _issue(
                 "missing_decision_needed",
-                "Unsupported 'throughput management' claim should appear in Decisions Needed after applying patches.",
+                "Unsupported 'throughput management' claim should appear in Decisions Needed "
+                "after applying patches.",
             )
         )
 
@@ -231,13 +255,22 @@ def validate_spec_integrator_output(
 
 
 def patch_set_operations_valid_sections() -> list[str]:
+    """Return valid sections for patch set operations."""
     # Keep this local to avoid importing VALID_SPEC_SECTIONS at module import time.
-    return ["Intent", "Boundaries", "Requirements", "Constraints", "Dependencies", "Decisions Needed"]
+    return [
+        "Intent",
+        "Boundaries",
+        "Requirements",
+        "Constraints",
+        "Dependencies",
+        "Decisions Needed",
+    ]
 
 
 def validate_architecture_proposal_output(
     output: str, manager: WorkspaceManager, allowlists: dict[str, Any]
 ) -> list[dict[str, Any]]:
+    """Validate architecture proposal output."""
     issues: list[dict[str, Any]] = []
     try:
         candidates = parse_architecture_proposal(output)
@@ -246,7 +279,11 @@ def validate_architecture_proposal_output(
 
     if not (3 <= len(candidates) <= 5):
         issues.append(
-            _issue("wrong_candidate_count", "Expected 3-5 architecture candidates.", count=len(candidates))
+            _issue(
+                "wrong_candidate_count",
+                "Expected 3-5 architecture candidates.",
+                count=len(candidates),
+            )
         )
 
     # Validate citations are in library-pointer space and exist.
@@ -254,8 +291,13 @@ def validate_architecture_proposal_output(
     issues.extend(_validate_architecture_citations(as_text, manager))
 
     # Forbid file-level pointers in Phase 6 artifacts.
-    if re.search(r"\\[file_\\d+::", as_text):
-        issues.append(_issue("file_pointer_in_arch_output", "Architecture proposal must not cite [file_###::...]."))
+    if re.search(r"\[file_\d+::", as_text):
+        issues.append(
+            _issue(
+                "file_pointer_in_arch_output",
+                "Architecture proposal must not cite [file_###::...].",
+            )
+        )
 
     return issues
 
@@ -263,6 +305,7 @@ def validate_architecture_proposal_output(
 def validate_architecture_selection_output(
     output: str, manager: WorkspaceManager, allowlists: dict[str, Any]
 ) -> list[dict[str, Any]]:
+    """Validate architecture selection output."""
     issues: list[dict[str, Any]] = []
     try:
         data = parse_architecture_selection(output)
@@ -272,12 +315,22 @@ def validate_architecture_selection_output(
     selected = data.get("selected_arch_id")
     candidate_ids = allowlists.get("candidate_ids")
     if isinstance(candidate_ids, list) and selected not in candidate_ids and selected is not None:
-        issues.append(_issue("selected_not_in_candidates", "selected_arch_id not in candidate set.", selected=selected))
+        issues.append(
+            _issue(
+                "selected_not_in_candidates",
+                "selected_arch_id not in candidate set.",
+                selected=selected,
+            )
+        )
 
     rationale = str(data.get("rationale", ""))
     issues.extend(_validate_architecture_citations(rationale, manager))
-    if re.search(r"\\[file_\\d+::", rationale):
-        issues.append(_issue("file_pointer_in_rationale", "Selection rationale must not cite [file_###::...]."))
+    if re.search(r"\[file_\d+::", rationale):
+        issues.append(
+            _issue(
+                "file_pointer_in_rationale", "Selection rationale must not cite [file_###::...]."
+            )
+        )
 
     return issues
 
@@ -285,6 +338,7 @@ def validate_architecture_selection_output(
 def validate_architecture_library_mapping_output(
     output: str, manager: WorkspaceManager, allowlists: dict[str, Any]
 ) -> list[dict[str, Any]]:
+    """Validate architecture library mapping output."""
     issues: list[dict[str, Any]] = []
     try:
         data = _extract_json(output)
@@ -308,10 +362,16 @@ def validate_architecture_library_mapping_output(
 
     component = data.get("component")
     if not isinstance(component, str) or not component.strip():
-        issues.append(_issue("missing_component", "Mapping fragment must include a non-empty component."))
+        issues.append(
+            _issue("missing_component", "Mapping fragment must include a non-empty component.")
+        )
     else:
         allowed_components = allowlists.get("components") or []
-        if isinstance(allowed_components, list) and allowed_components and component not in allowed_components:
+        if (
+            isinstance(allowed_components, list)
+            and allowed_components
+            and component not in allowed_components
+        ):
             issues.append(
                 _issue(
                     "component_not_in_architecture",
@@ -326,16 +386,22 @@ def validate_architecture_library_mapping_output(
 
     # Validate citations exist and are in library-pointer space.
     issues.extend(_validate_architecture_citations(json.dumps(data), manager))
-    if re.search(r"\\[file_\\d+::", json.dumps(data)):
-        issues.append(_issue("file_pointer_in_mapping", "Architecture mapping must not cite [file_###::...]."))
+    if re.search(r"\[file_\d+::", json.dumps(data)):
+        issues.append(
+            _issue("file_pointer_in_mapping", "Architecture mapping must not cite [file_###::...].")
+        )
 
     dependencies = data.get("cross_component_dependencies", [])
     if not isinstance(dependencies, list):
-        issues.append(_issue("invalid_dependencies", "cross_component_dependencies must be a list."))
+        issues.append(
+            _issue("invalid_dependencies", "cross_component_dependencies must be a list.")
+        )
     else:
         for dep in dependencies:
             if not isinstance(dep, dict):
-                issues.append(_issue("invalid_dependency_entry", "Dependency entries must be objects."))
+                issues.append(
+                    _issue("invalid_dependency_entry", "Dependency entries must be objects.")
+                )
                 continue
             citation = dep.get("citation", "")
             if isinstance(citation, str) and "[file_" in citation:

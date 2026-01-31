@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import subprocess
@@ -11,8 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from scripts.spec_refinement.qa.cases import QA_CASES, PreparedQaCase, qa_fixture_dir
 from scripts.spec_refinement.qa.bad_signatures import scan_known_bad_signatures
+from scripts.spec_refinement.qa.cases import QA_CASES, PreparedQaCase, qa_fixture_dir
 from scripts.spec_refinement.workspace import WorkspaceManager
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -22,6 +23,8 @@ _FILE_OUTPUT_RE = re.compile(r"see `([^`]+)` for details\\.?$", re.IGNORECASE)
 
 @dataclass(frozen=True)
 class AgentExecResult:
+    """Result of executing an agent."""
+
     agent_name: str
     prompt_path: Path
     stdout: str
@@ -109,10 +112,8 @@ def _maybe_read_file_output(stdout: str) -> str | None:
 
     # Cleanup the known temporary artifact to avoid polluting the repo root.
     if path.name.upper() == "ARCHITECTURE-MAPPING.MD":
-        try:
+        with contextlib.suppress(OSError):
             path.unlink()
-        except OSError:
-            pass
 
     return content
 
@@ -123,13 +124,17 @@ def _qa_session_dir(manager: WorkspaceManager, session_id: str) -> Path:
 
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # QA artifacts are logs; stringify non-JSON types (e.g. Path) rather than failing the run.
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+        handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
 
 
 def _truncate_for_judge(text: str, *, max_chars: int = 12000) -> str:
@@ -151,8 +156,12 @@ def _build_judge_prompt(
     deterministic_issues: list[dict[str, Any]],
 ) -> str:
     criteria_lines = "\n".join(f"- {item}" for item in prepared.acceptance_criteria)
-    issues_lines = json.dumps(deterministic_issues, indent=2, sort_keys=True) if deterministic_issues else "[]"
-    allowlists_text = json.dumps(prepared.allowlists, indent=2, sort_keys=True) if prepared.allowlists else "{}"
+    issues_lines = (
+        json.dumps(deterministic_issues, indent=2, sort_keys=True) if deterministic_issues else "[]"
+    )
+    allowlists_text = (
+        json.dumps(prepared.allowlists, indent=2, sort_keys=True) if prepared.allowlists else "{}"
+    )
 
     lines = [
         "Evaluate this agent-step QA case against the acceptance criteria.",
@@ -299,6 +308,7 @@ def run_qa_case(
     force_init: bool = False,
     judge_agent: str = "chatgpt-qa-judge",
 ) -> dict[str, Any]:
+    """Run a single QA case and return the result."""
     case = QA_CASES.get(case_id)
     if case is None:
         raise RuntimeError(f"Unknown QA case: {case_id}")
@@ -343,6 +353,7 @@ def run_qa_suite(
     force_init: bool = False,
     judge_agent: str = "chatgpt-qa-judge",
 ) -> dict[str, Any]:
+    """Run a suite of QA cases and return the summary."""
     selected_ids = case_ids or list(QA_CASES.keys())
 
     manager = WorkspaceManager(run_id=run_id, input_folder=qa_fixture_dir())
@@ -429,7 +440,11 @@ def _run_prepared_case(
 
     deterministic_issues = prepared.validator(processed_output, manager, prepared.allowlists)
     signature_issues: list[dict[str, Any]] = []
-    for kind, text in (("raw", raw_output), ("effective", effective_output), ("postprocessed", processed_output)):
+    for kind, text in (
+        ("raw", raw_output),
+        ("effective", effective_output),
+        ("postprocessed", processed_output),
+    ):
         for issue in scan_known_bad_signatures(text):
             issue["output_kind"] = kind
             signature_issues.append(issue)

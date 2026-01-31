@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+from scripts.spec_manager.spec_manager.core.gaps import Severity
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapType
 from scripts.spec_refinement.qa.validators import (
     validate_architecture_library_mapping_output,
@@ -14,20 +16,20 @@ from scripts.spec_refinement.qa.validators import (
     validate_evidence_mapper_output,
     validate_spec_integrator_output,
 )
-from scripts.spec_refinement.workspace import WorkspaceManager
-from scripts.spec_manager.spec_manager.core.gaps import Severity
-
 from scripts.spec_refinement.workflows.architecture import (
-    _build_library_mapping_prompt,
     _build_architecture_proposal_prompt,
     _build_architecture_selection_prompt,
+    _build_library_mapping_prompt,
 )
 from scripts.spec_refinement.workflows.evidence_expansion import _build_evidence_prompt
 from scripts.spec_refinement.workflows.spec_building import _build_patch_prompt
+from scripts.spec_refinement.workspace import WorkspaceManager
 
 
 @dataclass(frozen=True)
 class PreparedQaCase:
+    """A QA case that has been prepared with workspace state."""
+
     case_id: str
     agent_name: str
     description: str
@@ -41,11 +43,14 @@ class PreparedQaCase:
 
 @dataclass(frozen=True)
 class QaCase:
+    """A manual, on-demand QA case for spec-refinement agent steps."""
+
     case_id: str
     agent_name: str
     description: str
 
     def prepare(self, manager: WorkspaceManager) -> PreparedQaCase:  # pragma: no cover
+        """Prepare the QA case with workspace state."""
         raise NotImplementedError
 
 
@@ -63,7 +68,9 @@ def _write_library(manager: WorkspaceManager, lib_id: str, charter: str, spec: s
     (lib_dir / "spec.md").write_text(spec.strip() + "\n", encoding="utf-8")
 
 
-def _library_charter(*, title: str, intent: str, boundaries: list[str], responsibilities: list[str]) -> str:
+def _library_charter(
+    *, title: str, intent: str, boundaries: list[str], responsibilities: list[str]
+) -> str:
     lines = [
         f"# Library Charter: {title}",
         "",
@@ -139,7 +146,10 @@ def _extract_constraints_for_arch_prompt(lib_specs: dict[str, str]) -> list[str]
 
 
 class EvidenceMapperAllowlistCase(QaCase):
+    """Evidence mapper allowlist validation test case."""
+
     def prepare(self, manager: WorkspaceManager) -> PreparedQaCase:
+        """Prepare the evidence mapper allowlist test case."""
         # Map Storage charter -> Gateway file sections.
         lib_id = "lib_002"
         charter = _library_charter(
@@ -169,35 +179,42 @@ class EvidenceMapperAllowlistCase(QaCase):
         file_id = "file_001"
         valid_sections = manager.get_section_labels(file_id)
 
-        # Summary includes headings like "Components"/"Workflows" which must NOT be used as section IDs.
-        summary = """# File Summary: file_001
-File ID: file_001
-
-## Algorithms
-- Request routing | Map path+method to internal handler | Evidence: [file_001::BOUNDARIES] [file_001::REQUIREMENTS]
-- Correlation propagation | Attach and forward correlation_id | Evidence: [file_001::REQUIREMENTS]
-
-## Components
-- Gateway | Validate + route inbound requests | Evidence: [file_001::INTRO] [file_001::BOUNDARIES]
-
-## Workflows
-- Inbound request | validate -> route -> persist metadata -> publish audit event | Evidence: [file_001::REQUIREMENTS] [file_001::INTEGRATION]
-
-## Candidate Responsibilities
-- Own input validation and request routing for external traffic | Evidence: [file_001::BOUNDARIES]
-- Persist request/response metadata via Storage | Evidence: [file_001::INTEGRATION]
-
-## Dependencies
-- Storage
-- Event Bus
-
-## Evidence Map
-- INTRO: [file_001::INTRO]
-- BOUNDARIES: [file_001::BOUNDARIES]
-- REQUIREMENTS: [file_001::REQUIREMENTS]
-- CONSTRAINTS: [file_001::CONSTRAINTS]
-- INTEGRATION: [file_001::INTEGRATION]
-"""
+        # Summary includes headings like "Components"/"Workflows"
+        # which must NOT be used as section IDs.
+        summary = (
+            "# File Summary: file_001\n"
+            "File ID: file_001\n"
+            "\n"
+            "## Algorithms\n"
+            "- Request routing | Map path+method to internal handler | "
+            "Evidence: [file_001::BOUNDARIES] [file_001::REQUIREMENTS]\n"
+            "- Correlation propagation | Attach and forward correlation_id | "
+            "Evidence: [file_001::REQUIREMENTS]\n"
+            "\n"
+            "## Components\n"
+            "- Gateway | Validate + route inbound requests | "
+            "Evidence: [file_001::INTRO] [file_001::BOUNDARIES]\n"
+            "\n"
+            "## Workflows\n"
+            "- Inbound request | validate -> route -> persist metadata -> publish audit event | "
+            "Evidence: [file_001::REQUIREMENTS] [file_001::INTEGRATION]\n"
+            "\n"
+            "## Candidate Responsibilities\n"
+            "- Own input validation and request routing for external traffic | "
+            "Evidence: [file_001::BOUNDARIES]\n"
+            "- Persist request/response metadata via Storage | Evidence: [file_001::INTEGRATION]\n"
+            "\n"
+            "## Dependencies\n"
+            "- Storage\n"
+            "- Event Bus\n"
+            "\n"
+            "## Evidence Map\n"
+            "- INTRO: [file_001::INTRO]\n"
+            "- BOUNDARIES: [file_001::BOUNDARIES]\n"
+            "- REQUIREMENTS: [file_001::REQUIREMENTS]\n"
+            "- CONSTRAINTS: [file_001::CONSTRAINTS]\n"
+            "- INTEGRATION: [file_001::INTEGRATION]\n"
+        )
 
         prompt = _build_evidence_prompt(
             lib_id=lib_id,
@@ -212,7 +229,8 @@ File ID: file_001
             "file_id equals file_001.",
             "relevant_sections is a list and every entry is an exact match from the allow-list.",
             "relevant_sections MUST NOT contain summary headings like 'Components' or 'Workflows'.",
-            "Because the Gateway integrates with Storage, relevant_sections should include INTEGRATION.",
+            "Because the Gateway integrates with Storage, relevant_sections should include "
+            "INTEGRATION.",
         ]
 
         return PreparedQaCase(
@@ -228,7 +246,10 @@ File ID: file_001
 
 
 class SpecIntegratorUnsupportedAssertionCase(QaCase):
+    """Spec integrator unsupported assertion handling test case."""
+
     def prepare(self, manager: WorkspaceManager) -> PreparedQaCase:
+        """Prepare the spec integrator unsupported assertion test case."""
         # Storage library integration against the Storage source file.
         lib_id = "lib_002"
         charter = _library_charter(
@@ -320,7 +341,8 @@ Provide durable persistence APIs. [file_002::INTRO]
             "Output is valid JSON matching SpecPatchOutput (file_id, lib_id, patches).",
             "All patch operations are add/edit/move (no delete).",
             "Citations use only [file_###::SECTION] and section labels are from the allow-list.",
-            "The unsupported claim about throughput management is moved from Boundaries into Decisions Needed (not asserted in Boundaries after applying patches).",
+            "The unsupported claim about throughput management is moved from Boundaries into "
+            "Decisions Needed (not asserted in Boundaries after applying patches).",
         ]
 
         return PreparedQaCase(
@@ -342,7 +364,10 @@ Provide durable persistence APIs. [file_002::INTRO]
 
 
 class ArchitectureProposalCase(QaCase):
+    """Architecture proposal validation test case."""
+
     def prepare(self, manager: WorkspaceManager) -> PreparedQaCase:
+        """Prepare the architecture proposal test case."""
         # Create 4 libraries representing the fixture system.
         libs: dict[str, dict[str, Any]] = {
             "lib_001": {
@@ -385,7 +410,11 @@ class ArchitectureProposalCase(QaCase):
                     "Owns domain business logic and orchestration.",
                     "Does NOT own routing/validation (Gateway) or delivery semantics (Event Bus).",
                 ],
-                "requirements": ["Persist state", "Publish domain events", "Deterministic workflows"],
+                "requirements": [
+                    "Persist state",
+                    "Publish domain events",
+                    "Deterministic workflows",
+                ],
                 "constraints": ["Idempotent execution", "Testable (no hidden I/O)"],
                 "dependencies": ["Uses lib_002 and lib_003"],
             },
@@ -412,13 +441,42 @@ class ArchitectureProposalCase(QaCase):
             lib_charters[lib_id] = charter
             lib_specs[lib_id] = spec
 
-        constraints = _extract_constraints_for_arch_prompt(lib_specs)
-        prompt = _build_architecture_proposal_prompt(lib_charters, lib_specs, constraints)
+        # In the real workflow, architecture briefs are extracted via a separate agent step.
+        # For this single-agent QA case, we provide deterministic briefs with valid citations.
+        briefs: dict[str, dict[str, Any]] = {}
+        for lib_id, info in libs.items():
+            briefs[lib_id] = {
+                "lib_id": lib_id,
+                "intent": info["intent"],
+                "boundaries": " ".join(info["boundaries"]).strip(),
+                "dependencies": info["dependencies"],
+                "constraints": [
+                    {
+                        "type": "Constraint",
+                        "description": item,
+                        "citation": f"[{lib_id}::spec.md::CONSTRAINTS]",
+                    }
+                    for item in info["constraints"]
+                ],
+                "interfaces": [
+                    {
+                        "type": "Interface",
+                        "description": (
+                            "See Requirements/Dependencies sections for interaction surface."
+                        ),
+                        "citation": f"[{lib_id}::spec.md::REQUIREMENTS]",
+                    }
+                ],
+            }
+
+        prompt = _build_architecture_proposal_prompt(lib_charters, lib_specs, briefs)
 
         acceptance = [
             "Output is a JSON array with 3-5 candidates.",
-            "Each candidate has arch_id, pattern, description, components, communication, deployment, citations, tradeoffs.",
-            "Citations use ONLY [lib_###::charter.md] or [lib_###::spec.md::SECTION] pointers (no [file_###::...]).",
+            "Each candidate has arch_id, pattern, description, components, communication, "
+            "deployment, citations, tradeoffs.",
+            "Citations use ONLY [lib_###::charter.md] or [lib_###::spec.md::SECTION] "
+            "pointers (no [file_###::...]).",
             "Tradeoffs are concrete and measurable (not vague).",
         ]
 
@@ -437,19 +495,68 @@ class ArchitectureProposalCase(QaCase):
 
 
 class ArchitectureSelectionCase(QaCase):
+    """Architecture selection validation test case."""
+
     def prepare(self, manager: WorkspaceManager) -> PreparedQaCase:
+        """Prepare the architecture selection test case."""
         # Reuse the same libraries as ArchitectureProposalCase for realistic context.
         proposal_case = ArchitectureProposalCase(
             case_id="phase6_arch_proposal",
             agent_name="opus-architecture-proposer",
             description="Internal reuse for selection case setup.",
         )
-        prepared = proposal_case.prepare(manager)
+        proposal_case.prepare(manager)
 
         # Provide two candidate architectures to judge: one good, one clearly worse.
         candidates: dict[str, str] = {
-            "arch_001": "# Architecture Candidate: arch_001\n\n## Pattern\nLayered monolith\n\n## Description\nSingle deployable with clear layers.\n\n## Components\n- Gateway: routing/validation\n- Domain: workflows\n- Storage: persistence\n- Eventing: publish events\n\n## Communication\nIn-process calls for core flows; async publish for events.\n\n## Deployment\nSingle deployable.\n\n## Tradeoffs\n### Advantages\n- Lower operational complexity\n\n### Disadvantages\n- Harder independent scaling\n\n## Citations\n- [lib_001::charter.md]\n- [lib_002::spec.md::CONSTRAINTS]\n",
-            "arch_002": "# Architecture Candidate: arch_002\n\n## Pattern\nMicroservices\n\n## Description\nSplit each library into a separate service.\n\n## Components\n- GatewaySvc\n- DomainSvc\n- StorageSvc\n- EventBusSvc\n\n## Communication\nSynchronous network calls for all interactions.\n\n## Deployment\nFour services.\n\n## Tradeoffs\n### Advantages\n- Independent deploys\n\n### Disadvantages\n- Higher latency and ops burden\n\n## Citations\n- [lib_001::charter.md]\n- [lib_003::spec.md::CONSTRAINTS]\n",
+            "arch_001": (
+                "# Architecture Candidate: arch_001\n\n"
+                "## Pattern\n"
+                "Layered monolith\n\n"
+                "## Description\n"
+                "Single deployable with clear layers.\n\n"
+                "## Components\n"
+                "- Gateway: routing/validation\n"
+                "- Domain: workflows\n"
+                "- Storage: persistence\n"
+                "- Eventing: publish events\n\n"
+                "## Communication\n"
+                "In-process calls for core flows; async publish for events.\n\n"
+                "## Deployment\n"
+                "Single deployable.\n\n"
+                "## Tradeoffs\n"
+                "### Advantages\n"
+                "- Lower operational complexity\n\n"
+                "### Disadvantages\n"
+                "- Harder independent scaling\n\n"
+                "## Citations\n"
+                "- [lib_001::charter.md]\n"
+                "- [lib_002::spec.md::CONSTRAINTS]\n"
+            ),
+            "arch_002": (
+                "# Architecture Candidate: arch_002\n\n"
+                "## Pattern\n"
+                "Microservices\n\n"
+                "## Description\n"
+                "Split each library into a separate service.\n\n"
+                "## Components\n"
+                "- GatewaySvc\n"
+                "- DomainSvc\n"
+                "- StorageSvc\n"
+                "- EventBusSvc\n\n"
+                "## Communication\n"
+                "Synchronous network calls for all interactions.\n\n"
+                "## Deployment\n"
+                "Four services.\n\n"
+                "## Tradeoffs\n"
+                "### Advantages\n"
+                "- Independent deploys\n\n"
+                "### Disadvantages\n"
+                "- Higher latency and ops burden\n\n"
+                "## Citations\n"
+                "- [lib_001::charter.md]\n"
+                "- [lib_003::spec.md::CONSTRAINTS]\n"
+            ),
         }
 
         # Specs created by prepared setup exist in the workspace.
@@ -465,8 +572,10 @@ class ArchitectureSelectionCase(QaCase):
 
         acceptance = [
             "Output is valid JSON with selected_arch_id and rationale.",
-            "selected_arch_id is one of the provided candidates (arch_001 or arch_002) or null with explanation.",
-            "rationale includes library-pointer citations only ([lib_###::...]); no [file_###::...].",
+            "selected_arch_id is one of the provided candidates (arch_001 or arch_002) or null "
+            "with explanation.",
+            "rationale includes library-pointer citations only ([lib_###::...]); "
+            "no [file_###::...].",
             "Rejected architectures include concrete reasons.",
         ]
 
@@ -476,14 +585,20 @@ class ArchitectureSelectionCase(QaCase):
             description=self.description,
             prompt=prompt,
             acceptance_criteria=acceptance,
-            allowlists={"candidate_ids": sorted(candidates.keys()), "library_ids": sorted(lib_specs.keys())},
+            allowlists={
+                "candidate_ids": sorted(candidates.keys()),
+                "library_ids": sorted(lib_specs.keys()),
+            },
             postprocess=_identity,
             validator=validate_architecture_selection_output,
         )
 
 
 class ArchitectureLibraryMappingCase(QaCase):
+    """Architecture library mapping validation test case."""
+
     def prepare(self, manager: WorkspaceManager) -> PreparedQaCase:
+        """Prepare the architecture library mapping test case."""
         # Ensure libraries exist with spec sections for citations.
         proposal_case = ArchitectureProposalCase(
             case_id="phase6_arch_proposal",
@@ -492,32 +607,27 @@ class ArchitectureLibraryMappingCase(QaCase):
         )
         proposal_case.prepare(manager)
 
-        selected_architecture = """# Selected Architecture: arch_001
-
-## Rationale
-Layered monolith keeps ops cost low while meeting Gateway latency and Event Bus throughput. [lib_001::spec.md::CONSTRAINTS] [lib_003::spec.md::CONSTRAINTS]
-
-## Selected Candidate
-# Architecture Candidate: arch_001
-
-## Pattern
-Layered monolith
-
-## Description
-Single deployable with clear layers.
-
-## Components
-- Gateway: routing/validation
-- Domain: workflows
-- Storage: persistence
-- Eventing: publish events
-
-## Communication
-In-process calls for core flows; async publish for events.
-
-## Deployment
-Single deployable.
-"""
+        selected_architecture = (
+            "# Selected Architecture: arch_001\n\n"
+            "## Rationale\n"
+            "Layered monolith keeps ops cost low while meeting Gateway latency and Event Bus "
+            "throughput. [lib_001::spec.md::CONSTRAINTS] [lib_003::spec.md::CONSTRAINTS]\n\n"
+            "## Selected Candidate\n"
+            "# Architecture Candidate: arch_001\n\n"
+            "## Pattern\n"
+            "Layered monolith\n\n"
+            "## Description\n"
+            "Single deployable with clear layers.\n\n"
+            "## Components\n"
+            "- Gateway: routing/validation\n"
+            "- Domain: workflows\n"
+            "- Storage: persistence\n"
+            "- Eventing: publish events\n\n"
+            "## Communication\n"
+            "In-process calls for core flows; async publish for events.\n\n"
+            "## Deployment\n"
+            "Single deployable.\n"
+        )
         allowed_components = ["Gateway", "Domain", "Storage", "Eventing"]
 
         lib_specs: dict[str, str] = {}
@@ -562,32 +672,39 @@ QA_CASES: dict[str, QaCase] = {
         case_id="phase3_evidence_mapper_allowlist",
         agent_name="glm-library-evidence-mapper",
         description=(
-            "Evidence mapper must choose relevant_sections only from the provided allow-list and "
-            "must not output summary headings like 'Components'/'Workflows'."
+            "Evidence mapper must choose relevant_sections only from the provided "
+            "allow-list and must not output summary headings like 'Components'/'Workflows'."
         ),
     ),
     "phase4_spec_integrator_unsupported_assertion": SpecIntegratorUnsupportedAssertionCase(
         case_id="phase4_spec_integrator_unsupported_assertion",
         agent_name="glm-library-spec-integrator",
         description=(
-            "Spec integrator must produce valid patch ops (no delete), keep citations within the "
-            "[file_###::SECTION] allowlists, and reclassify unsupported assertions into Decisions Needed."
+            "Spec integrator must produce valid patch ops (no delete), "
+            "keep citations within the [file_###::SECTION] allowlists, "
+            "and reclassify unsupported assertions into Decisions Needed."
         ),
     ),
     "phase6_arch_proposal": ArchitectureProposalCase(
         case_id="phase6_arch_proposal",
         agent_name="opus-architecture-proposer",
-        description="Architecture proposer must produce 3-5 candidates with library-pointer citations.",
+        description=(
+            "Architecture proposer must produce 3-5 candidates with library-pointer citations."
+        ),
     ),
     "phase6_arch_selection": ArchitectureSelectionCase(
         case_id="phase6_arch_selection",
         agent_name="chatgpt-architecture-tradeoff-judge",
-        description="Architecture selection must cite only library pointers and select a valid candidate.",
+        description=(
+            "Architecture selection must cite only library pointers and select a valid candidate."
+        ),
     ),
     "phase6_arch_library_mapping": ArchitectureLibraryMappingCase(
         case_id="phase6_arch_library_mapping",
         agent_name="glm-architecture-library-mapper",
-        description="Architecture mapping must map a single library with library-pointer citations.",
+        description=(
+            "Architecture mapping must map a single library with library-pointer citations."
+        ),
     ),
 }
 
