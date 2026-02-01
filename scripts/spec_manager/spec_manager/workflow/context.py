@@ -6,10 +6,18 @@ ContextIndex: Index over all context strata for entity resolution.
 
 from __future__ import annotations
 
+import json
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from pydantic import ValidationError
+from spec_refinement.schemas.sections import FileSections  # type: ignore[import-not-found]
+from spec_refinement.schemas.terms import FileTerms  # type: ignore[import-not-found]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -349,3 +357,151 @@ class ContextIndex:
                     content = composite_path.read_text(encoding="utf-8")
                     self.add_stratum(composite_path, content, priority, "intermediate")
                     priority += 1  # Later intermediates have higher priority
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize context index to JSON.
+
+        Schema:
+        {
+          "index": {
+            "term": [
+              {
+                "path": "str - source file path",
+                "position": "int - character offset",
+                "context": "str - surrounding text",
+                "priority": "int - stratum priority",
+                "type": "str - entity type (term, section, declared_id, etc.)"
+              }
+            ]
+          },
+          "strata": [
+            {
+              "path": "str - stratum file path",
+              "content": "str - full content (for LLM context)",
+              "priority": "int - resolution priority",
+              "type": "str - stratum type (original, patch, intermediate)"
+            }
+          ]
+        }
+        """
+        return {"index": self._index, "strata": self._strata}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any], workspace: Path) -> ContextIndex:
+        """Deserialize context index from dictionary data."""
+        if "index" not in data or "strata" not in data:
+            raise ValueError("Context index data must include 'index' and 'strata'")
+        index = cls(workspace)
+        index._index = data["index"]
+        index._strata = data["strata"]
+        return index
+
+    def save(self, path: Path) -> None:
+        """Persist context index to disk as JSON."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(self.to_dict(), handle, indent=2)
+
+    @classmethod
+    def load(cls, path: Path, workspace: Path) -> ContextIndex:
+        """Load a context index from disk."""
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return cls.from_dict(payload, workspace)
+
+
+class ContextIndexBuilder:
+    """Builds ContextIndex from manifest files (terms and sections).
+
+    Reads manifest/terms/*.terms.json and manifest/sections/*.sections.json
+    to populate the context index for LLM agent entity resolution.
+    """
+
+    def __init__(self, workspace: Path, spec_folder: Path) -> None:
+        """Initialize the builder with workspace and spec folder paths."""
+        self.workspace = workspace
+        self.spec_folder = spec_folder
+
+    def build_from_manifests(self) -> ContextIndex:
+        """Build a ContextIndex using manifest files."""
+        index = ContextIndex(self.workspace)
+        self._load_terms_manifests(index)
+        self._load_sections_manifests(index)
+        return index
+
+    def _load_terms_manifests(self, index: ContextIndex) -> None:
+        """Load term manifests and add terms to the index."""
+        terms_dir = self.spec_folder / "manifest" / "terms"
+        if not terms_dir.exists():
+            return
+
+        for terms_file in sorted(terms_dir.glob("*.terms.json")):
+            try:
+                payload = FileTerms.model_validate_json(terms_file.read_text(encoding="utf-8"))
+            except (OSError, ValidationError, ValueError) as exc:
+                logger.warning("Skipping malformed terms manifest %s: %s", terms_file, exc)
+                continue
+
+            for section_terms in payload.section_terms:
+                for term in section_terms.terms:
+                    normalized = term.lower()
+                    index._add_to_index(
+                        normalized,
+                        str(terms_file),
+                        0,
+                        term,
+                        0,
+                        "term",
+                    )
+
+            for term in payload.global_terms:
+                normalized = term.lower()
+                index._add_to_index(
+                    normalized,
+                    str(terms_file),
+                    0,
+                    term,
+                    0,
+                    "term",
+                )
+
+    def _load_sections_manifests(self, index: ContextIndex) -> None:
+        """Load section manifests and add sections to the index."""
+        sections_dir = self.spec_folder / "manifest" / "sections"
+        if not sections_dir.exists():
+            return
+
+        for sections_file in sorted(sections_dir.glob("*.sections.json")):
+            try:
+                payload = FileSections.model_validate_json(
+                    sections_file.read_text(encoding="utf-8")
+                )
+            except (OSError, ValidationError, ValueError) as exc:
+                logger.warning("Skipping malformed sections manifest %s: %s", sections_file, exc)
+                continue
+
+            for section in payload.sections:
+                section_id = section.section_id.lower()
+                index._add_to_index(
+                    section_id,
+                    str(sections_file),
+                    0,
+                    section.section_id,
+                    0,
+                    "section",
+                )
+                label = section.label.strip()
+                if label:
+                    index._add_to_index(
+                        label.lower(),
+                        str(sections_file),
+                        0,
+                        label,
+                        0,
+                        "section",
+                    )
+
+    def save_index(self, index: ContextIndex, output_path: Path) -> None:
+        """Save a context index to disk."""
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        index.save(output_path)

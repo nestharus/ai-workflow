@@ -123,6 +123,11 @@ class WorkspaceManager:
         else:
             self.state = WorkspaceState(spec_folder=str(self.spec_folder))
 
+    @property
+    def indexes_dir(self) -> Path:
+        """Path to the indexes directory."""
+        return self._workspace / "indexes"
+
     # --- Workspace Lifecycle ---
 
     def initialize(self, force: bool = False) -> list[str]:
@@ -460,7 +465,8 @@ class WorkspaceManager:
         if not output_file.exists():
             return None
 
-        return yaml.safe_load(output_file.read_text(encoding="utf-8"))
+        result: dict[str, Any] | None = yaml.safe_load(output_file.read_text(encoding="utf-8"))
+        return result
 
     def write_agent_output(self, phase: Phase, data: dict[str, Any]) -> Path:
         """Write output data from an agent (for agents to call).

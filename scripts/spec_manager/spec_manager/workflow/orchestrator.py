@@ -19,15 +19,16 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
-from spec_manager.compliance.scorer import ComplianceScorer
-from spec_manager.core.data_structures import ComplianceMetrics
-from spec_manager.core.gaps import detect_gaps, format_gaps_md
-from spec_manager.core.libs_registry import LibsRegistry
-from spec_manager.core.provenance import LineageTable
-from spec_manager.core.sections import SectionExtractor
-from spec_manager.strategies.base import ProcessingContext, StrategyPhase
-from spec_manager.strategies.registry import StrategyRegistry
-from spec_manager.workflow.config import (
+from ..compliance.scorer import ComplianceScorer
+from ..core.data_structures import ComplianceMetrics
+from ..core.gaps import detect_gaps, format_gaps_md
+from ..core.libs_registry import LibsRegistry
+from ..core.provenance import LineageTable
+from ..core.sections import SectionExtractor
+from ..strategies.base import ProcessingContext, StrategyPhase
+from ..strategies.registry import StrategyRegistry
+from ..workspace import WorkspaceManager
+from .config import (
     TrackedUnit,
     UnitLabels,
     UnitStatus,
@@ -36,8 +37,7 @@ from spec_manager.workflow.config import (
     WorkflowPhase,
     WorkflowState,
 )
-from spec_manager.workflow.context import ContextIndex, PatchDependencyGraph
-from spec_manager.workspace import WorkspaceManager
+from .context import ContextIndex, PatchDependencyGraph
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,8 @@ class IntermediateManager:
     def load(self, version: int) -> dict[str, Any] | None:
         """Load a state by version number."""
         for path in self.intermediates_dir.glob(f"v{version:03d}_*.json"):
-            return json.loads(path.read_text(encoding="utf-8"))
+            result: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+            return result
         return None
 
     def list_states(self) -> list[dict[str, Any]]:
@@ -308,7 +309,7 @@ class WorkflowOrchestrator:
             if method == "exact":
                 return 1.0
             elif method == "fuzzy":
-                return evidence.get("similarity", 0.5)
+                return float(evidence.get("similarity", 0.5))
             else:
                 return 0.3
 
@@ -432,6 +433,32 @@ class WorkflowOrchestrator:
 
             # Infer patch dependencies
             self.patch_graph.infer_from_content(content, patch_id)
+
+        # Build context index from manifest files (if they exist)
+        manifest_dir = self.spec_folder / "manifest"
+        if manifest_dir.exists():
+            logger.info("  Building context index from manifest files")
+            from .context import ContextIndexBuilder
+
+            builder = ContextIndexBuilder(
+                workspace=self.workspace,
+                spec_folder=self.spec_folder,
+            )
+
+            manifest_index = builder.build_from_manifests()
+
+            # Merge manifest terms/sections into main context index
+            for term, locations in manifest_index._index.items():
+                if term not in self.context_index._index:
+                    self.context_index._index[term] = []
+                self.context_index._index[term].extend(locations)
+
+            # Save context index to workspace/indexes/
+            indexes_dir = self.workspace_mgr.indexes_dir
+            indexes_dir.mkdir(exist_ok=True)
+            context_index_path = indexes_dir / "context_index.json"
+            self.context_index.save(context_index_path)
+            logger.info(f"  Saved context index to {context_index_path}")
 
         logger.info(f"  Total units: {len(self.state.units)}")
 
