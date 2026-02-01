@@ -230,12 +230,26 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
         from .repair import ArtifactType, get_repair_model, repair_artifact
 
         try:
+            sections_data = manager.read_file_sections(file_id)
+            if sections_data is None:
+                section_ids = manager.get_section_labels(file_id)
+            else:
+                section_ids = [
+                    section.get("section_id")
+                    for section in sections_data.get("sections", [])
+                    if isinstance(section, dict) and isinstance(section.get("section_id"), str)
+                ]
+            file_refs = []
+            for entry in manager.state.file_manifest.values():
+                relpath = entry.get("relpath") if isinstance(entry, dict) else entry
+                if isinstance(relpath, str) and relpath:
+                    file_refs.append(f"spec_snapshot/{relpath}")
             repaired_output = repair_artifact(
                 output=output,
                 errors=issues,
                 allowlists={
-                    "file_ids": list(manager.state.file_manifest.keys()),
-                    "sections": manager.get_section_labels(file_id),
+                    "file_refs": sorted(set(file_refs)),
+                    "sections": section_ids,
                 },
                 artifact_type=ArtifactType.SUMMARY,
                 model_override=get_repair_model(),

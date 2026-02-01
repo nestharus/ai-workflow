@@ -27,6 +27,7 @@ from .spec_patches import (
 from .validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
+    build_section_id_lookup,
     resolve_section_reference,
 )
 
@@ -110,6 +111,48 @@ def _parse_charter(content: str) -> dict[str, Any]:
     }
 
 
+def _resolve_file_relpath(file_id: str, manager: WorkspaceManager) -> str:
+    file_entry = manager.state.file_manifest.get(file_id)
+    if isinstance(file_entry, dict):
+        relpath = file_entry.get("relpath")
+    elif isinstance(file_entry, str):
+        relpath = file_entry
+    else:
+        relpath = None
+    return relpath or ""
+
+
+def _build_file_ref(file_id: str, manager: WorkspaceManager) -> str:
+    relpath = _resolve_file_relpath(file_id, manager)
+    return f"spec_snapshot/{relpath}" if relpath else file_id
+
+
+def _build_file_ref_list(file_manifest: dict[str, Any]) -> list[str]:
+    refs: list[str] = []
+    for _, entry in file_manifest.items():
+        relpath = None
+        if isinstance(entry, dict):
+            relpath = entry.get("relpath")
+        elif isinstance(entry, str):
+            relpath = entry
+        if isinstance(relpath, str) and relpath:
+            refs.append(f"spec_snapshot/{relpath}")
+    return sorted(dict.fromkeys(refs))
+
+
+def _collect_section_ids(
+    file_id: str, manager: WorkspaceManager
+) -> tuple[dict[str, Any], list[str]]:
+    sections_data = manager.read_file_sections(file_id) or {}
+    section_lookup = build_section_id_lookup(file_id, sections_data)
+    section_ids = sorted(
+        {value for value in section_lookup.values() if isinstance(value, str) and value}
+    )
+    if not section_ids:
+        section_ids = [section for section in manager.get_section_labels(file_id) if section]
+    return sections_data, section_ids
+
+
 def _build_spec_template(lib_id: str, charter: dict[str, Any]) -> str:
     lines = [
         f"# Library Spec: {lib_id}",
@@ -150,20 +193,24 @@ def _build_full_spec_prompt_for_metrics(
     charter_content: str,
     spec_content: str,
     file_id: str,
+    file_ref: str,
     file_content: str,
     evidence_sections: list[str],
-    valid_sections: list[str],
+    valid_section_ids: list[str],
     gaps: list[Gap] | None = None,
 ) -> str:
     section_list = ", ".join(evidence_sections) if evidence_sections else "None"
-    valid_list = ", ".join(valid_sections) if valid_sections else "None"
+    valid_list = ", ".join(valid_section_ids) if valid_section_ids else "None"
+    example_section = valid_section_ids[0] if valid_section_ids else f"SEC-{file_id}-0001"
+    example_pointer = f"[{file_ref}::{example_section}]"
     lines = [
         "## OUTPUT CONTRACT (REQUIRED)",
         "",
         "Return ONLY the updated spec markdown. No preamble, no code fences.",
         "",
         "REQUIRED RULES:",
-        "- Preserve evidence-backed content; add missing details with  citations [F####::SECTION].",
+        "- Preserve evidence-backed content; add missing details with citations "
+        "[spec_snapshot/<relpath>::SECTION_ID].",
         "- Boundaries/Requirements/Constraints/Dependencies bullets MUST include at least "
         " one valid evidence pointer. Add missing citations to existing bullets too (including "
         " those originating from the charter).",
@@ -171,8 +218,8 @@ def _build_full_spec_prompt_for_metrics(
         "- If the gap list indicates an unsupported claim, move it to Decisions Needed as an "
         " explicit open question/assumption.",
         "- Never cite derived artifacts (charter, libraries, runs). Only cite SOURCE files via "
-        " [F####::SECTION].",
-        f"- Valid section labels for citations in {file_id}: {valid_list}",
+        " [spec_snapshot/<relpath>::SECTION_ID].",
+        f"- Valid section IDs for citations in {file_ref}: {valid_list}",
         "",
         "FORBIDDEN:",
         "- Citing derived artifacts (charter, libraries, runs).",
@@ -186,7 +233,7 @@ def _build_full_spec_prompt_for_metrics(
         charter_content.strip(),
         "",
         f"Evidence Sections (anchors, not exclusive): {section_list}",
-        f"Valid Section Labels For Citations in {file_id}: {valid_list}",
+        f"Valid Section IDs For Citations in {file_ref}: {valid_list}",
         "",
         "Current Spec:",
         spec_content.strip(),
@@ -204,6 +251,7 @@ def _build_full_spec_prompt_for_metrics(
         [
             "Source File:",
             f"File ID: {file_id}",
+            f"File Reference: {file_ref}",
             file_content.strip(),
         ]
     )
@@ -214,11 +262,11 @@ def _build_full_spec_prompt_for_metrics(
             "",
             f"# Library Spec: {lib_id}",
             "## Boundaries",
-            "- Handles request intake and routing. [F0001::INTRO]",
+            f"- Handles request intake and routing. {example_pointer}",
             "## Requirements",
-            "- Validate payloads before processing. [F0001::REQS]",
+            f"- Validate payloads before processing. {example_pointer}",
             "## Decisions Needed",
-            "- Confirm retention policy for incoming requests. [F0001::OPEN_QUESTIONS]",
+            f"- Confirm retention policy for incoming requests. {example_pointer}",
         ]
     )
     return "\n".join(lines).strip() + "\n"
@@ -230,13 +278,17 @@ def _summarize_spec_sections(spec_doc: SpecDocument) -> list[str]:
     ]
 
 
-def _select_relevant_spec_sections(spec_doc: SpecDocument, file_id: str) -> dict[str, list[str]]:
+def _select_relevant_spec_sections(
+    spec_doc: SpecDocument, file_id: str, file_id_lookup: dict[str, str]
+) -> dict[str, list[str]]:
     relevant: dict[str, list[str]] = {}
     for section_name, lines in spec_doc.section_lines.items():
         matches = []
         for line in lines:
             for match in EVIDENCE_POINTER_RE.finditer(line):
-                if match.group(1).strip() == file_id:
+                file_ref = match.group(1).strip()
+                resolved_file_id = file_id_lookup.get(file_ref)
+                if resolved_file_id == file_id:
                     matches.append(line.strip())
                     break
         if matches:
@@ -272,20 +324,24 @@ def _build_patch_prompt(
     charter_content: str,
     spec_content: str,
     file_id: str,
+    file_ref: str,
     file_content: str,
     evidence_sections: list[str],
-    valid_sections: list[str],
-    valid_file_ids: list[str],
+    valid_section_ids: list[str],
+    valid_file_refs: list[str],
+    file_id_lookup: dict[str, str],
     gaps: list[Gap] | None = None,
 ) -> str:
     spec_doc = SpecDocument(spec_content)
     summaries = _summarize_spec_sections(spec_doc)
-    relevant_sections = _select_relevant_spec_sections(spec_doc, file_id)
+    relevant_sections = _select_relevant_spec_sections(spec_doc, file_id, file_id_lookup)
     relevant_lines = _format_relevant_sections(relevant_sections, spec_doc.section_order)
     section_list = ", ".join(evidence_sections) if evidence_sections else "None"
-    valid_list = ", ".join(valid_sections) if valid_sections else "None"
-    file_id_list = ", ".join(valid_file_ids) if valid_file_ids else "None"
+    valid_list = ", ".join(valid_section_ids) if valid_section_ids else "None"
+    file_ref_list = ", ".join(valid_file_refs) if valid_file_refs else "None"
     valid_spec_sections = ", ".join(VALID_SPEC_SECTIONS)
+    example_section = valid_section_ids[0] if valid_section_ids else f"SEC-{file_id}-0001"
+    example_pointer = f"[{file_ref}::{example_section}]"
     lines = [
         "## OUTPUT CONTRACT (REQUIRED)",
         "",
@@ -296,7 +352,7 @@ def _build_patch_prompt(
         '{ "file_id": "F####", "lib_id": "lib_###", "patches": [ {'
         '"op": "add|edit|move", "section": "Spec Section", '
         '"bullet_index": int|null, "source_section": "Spec Section|null", '
-        '"content": "text", "citations": ["[F####::SECTION]"] } ] }',
+        '"content": "text", "citations": ["[spec_snapshot/<relpath>::SECTION_ID]"] } ] }',
         "",
         "REQUIRED RULES:",
         "- Allowed ops: add, edit, move. Delete operations are FORBIDDEN",
@@ -306,28 +362,29 @@ def _build_patch_prompt(
         "to Decisions Needed",
         "- Every bullet in Boundaries/Requirements/Constraints/Dependencies MUST include at "
         "least one citation",
-        "- Citations MUST reference SOURCE files only (F####::SECTION format)",
-        f"- Valid file IDs for citations: {file_id_list}",
-        f"- Valid section labels for {file_id}: {valid_list}",
+        "- Citations MUST reference SOURCE files only (spec_snapshot/<relpath>::SECTION_ID format)",
+        f"- Valid file references for citations (spec_snapshot/<relpath>): {file_ref_list}",
+        f"- Valid section IDs for {file_ref}: {valid_list}",
         "- When closing gaps, preserve key terms from source/gap text verbatim",
         "- If gap indicates unsupported claim, move to Decisions Needed",
         "",
         "FORBIDDEN:",
         "- Delete operations",
         "- Citing derived artifacts (charter, libraries, runs)",
-        "- Inventing section labels not in allowlist",
+        "- Inventing section IDs not in allowlist",
         "- Paraphrasing key terms from gaps",
         "",
         "## INPUT DATA",
         "",
         f"Library ID: {lib_id}",
         f"Current File ID: {file_id}",
+        f"Current File Reference: {file_ref}",
         "",
         "Library Charter:",
         charter_content.strip(),
         "",
         f"Evidence Sections (anchors, not exclusive): {section_list}",
-        f"Valid Section Labels For Citations in {file_id}: {valid_list}",
+        f"Valid Section IDs For Citations in {file_ref}: {valid_list}",
         "",
         "Current Spec Section Summaries:",
         *summaries,
@@ -355,15 +412,15 @@ def _build_patch_prompt(
             "Example:",
             '{ "file_id": "F0001", "lib_id": "lib_001", "patches": ['
             '{"op": "add", "section": "Requirements", "bullet_index": null, '
-            '"source_section": null, "content": "...", "citations": ["[F0001::INTRO]"]}'
+            f'"source_section": null, "content": "...", "citations": ["{example_pointer}"]{{}}'
             "] }",
         ]
     )
     return "\n".join(lines).strip() + "\n"
 
 
-def _filter_open_gaps_for_file(gaps: list[Gap], file_id: str) -> list[Gap]:
-    needle = f"[{file_id}::"
+def _filter_open_gaps_for_file(gaps: list[Gap], file_ref: str) -> list[Gap]:
+    needle = f"[{file_ref}::"
     return [
         gap
         for gap in gaps
@@ -380,10 +437,46 @@ def _detect_remainder_content(
     manager: WorkspaceManager,
 ) -> list[GapEvidence]:
     _ = file_content
-    _ = manager
+    file_id_lookup = build_file_id_lookup(
+        manager.state.file_manifest, manager.structure.spec_snapshot_dir
+    )
+    section_alias_map = build_section_alias_map(manager.state.section_manifest)
+    sections_data = manager.read_file_sections(file_id) or {}
+    section_lookup = build_section_id_lookup(file_id, sections_data)
+
     pointers = EVIDENCE_POINTER_RE.findall(spec_content)
-    cited_sections = {section for file_ref, section in pointers if file_ref == file_id}
-    uncited = set(evidence_sections) - cited_sections
+    cited_sections: set[str] = set()
+    for file_ref, section_ref in pointers:
+        resolved_file_id = file_id_lookup.get(file_ref)
+        if resolved_file_id != file_id:
+            continue
+        canonical_section = resolve_section_reference(
+            section_ref,
+            resolved_file_id,
+            section_alias_map,
+            sections_data=sections_data,
+        )
+        if canonical_section:
+            cited_sections.add(canonical_section)
+
+    resolved_evidence_sections: set[str] = set()
+    for section in evidence_sections:
+        if not isinstance(section, str):
+            continue
+        raw = section.strip()
+        if not raw:
+            continue
+        canonical = section_lookup.get(raw)
+        if canonical is None:
+            canonical = resolve_section_reference(
+                raw,
+                file_id,
+                section_alias_map,
+                sections_data=sections_data,
+            )
+        resolved_evidence_sections.add(canonical or raw)
+
+    uncited = resolved_evidence_sections - cited_sections
 
     lib_id = "unknown"
     for line in spec_content.splitlines():
@@ -393,12 +486,19 @@ def _detect_remainder_content(
 
     evidence_list: list[GapEvidence] = []
     for section in sorted(uncited):
+        file_entry = manager.state.file_manifest.get(file_id, {})
+        relpath = None
+        if isinstance(file_entry, dict):
+            relpath = file_entry.get("relpath")
+        elif isinstance(file_entry, str):
+            relpath = file_entry
+        file_ref = f"spec_snapshot/{relpath}" if relpath else file_id
         evidence_list.append(
             GapEvidence(
                 invariant_family="coverage",
                 description=f"Section {section} not cited in spec",
                 details={
-                    "source": f"[{file_id}::{section}]",
+                    "source": f"[{file_ref}::{section}]",
                     "derived_artifact_target": f"libraries/{lib_id}/spec.md",
                     "severity": "warning",
                     "gap_type": "coverage_failure",
@@ -432,12 +532,13 @@ def _extract_spec_markdown(output: str, lib_id: str) -> str:
 def _build_gap_prompt(
     spec_content: str,
     file_id: str,
+    file_ref: str,
     file_content: str,
     evidence_sections: list[str],
-    valid_sections: list[str],
+    valid_section_ids: list[str],
 ) -> str:
     section_list = ", ".join(evidence_sections) if evidence_sections else "None"
-    valid_list = ", ".join(valid_sections) if valid_sections else "None"
+    valid_list = ", ".join(valid_section_ids) if valid_section_ids else "None"
     lines = [
         "## OUTPUT CONTRACT (REQUIRED)",
         "",
@@ -452,8 +553,9 @@ def _build_gap_prompt(
         "- Do NOT infer or invent new requirements/behaviors not stated in the source",
         "- If the spec already captures the detail anywhere (including Decisions Needed), "
         "it is NOT a gap",
-        f"- Scope: only consider gaps from these source sections for {file_id}: {section_list}",
-        f"- Valid section labels for citations in {file_id}: {valid_list}",
+        f"- Scope: only consider gaps from these source sections for {file_ref}: {section_list}",
+        "- Use source pointers in [spec_snapshot/<relpath>::SECTION_ID] format",
+        f"- Valid section IDs for citations in {file_ref}: {valid_list}",
         "- If Scope is None/empty, return gaps=[] and total_gaps=0",
         "",
         "FORBIDDEN:",
@@ -467,6 +569,7 @@ def _build_gap_prompt(
         "",
         "Source File:",
         f"File ID: {file_id}",
+        f"File Reference: {file_ref}",
         file_content.strip(),
         "",
         "## OUTPUT FORMAT",
@@ -495,7 +598,14 @@ def _build_evidence_union(
         file_content = file_path.read_text(encoding="utf-8")
         section_blocks = _extract_evidence_section_blocks(file_content)
         for section in evidence_sections:
-            pointer = f"[{file_id}::{section}]"
+            file_entry = manager.state.file_manifest.get(file_id, {})
+            relpath = None
+            if isinstance(file_entry, dict):
+                relpath = file_entry.get("relpath")
+            elif isinstance(file_entry, str):
+                relpath = file_entry
+            file_ref = f"spec_snapshot/{relpath}" if relpath else file_id
+            pointer = f"[{file_ref}::{section}]"
             union_sources.append(pointer)
             union_lines.append(pointer)
             section_text = section_blocks.get(section)
@@ -534,7 +644,7 @@ def _build_gap_audit_prompt(
         "Do NOT infer or invent new requirements/behaviors that are not stated.",
         "If the spec already captures the detail anywhere (including Decisions"
         " Needed), it is NOT a gap.",
-        "Use source pointers in [F####::SECTION] format.",
+        "Use source pointers in [spec_snapshot/<relpath>::SECTION_ID] format.",
         "Source must match one of the Evidence Union Sources listed below.",
         f'Set file_id to "{GAP_AUDIT_FILE_ID}".',
         "",
@@ -568,6 +678,7 @@ def _validate_spec_citations(
         manager.state.file_manifest, manager.structure.spec_snapshot_dir
     )
     section_alias_map = build_section_alias_map(manager.state.section_manifest)
+    sections_cache: dict[str, dict[str, Any]] = {}
 
     for match in pointer_matches:
         file_ref = match.group(1).strip()
@@ -583,10 +694,15 @@ def _validate_spec_citations(
                 }
             )
             continue
+        sections_data = sections_cache.get(resolved_file_id)
+        if sections_data is None:
+            sections_data = manager.read_file_sections(resolved_file_id) or {}
+            sections_cache[resolved_file_id] = sections_data
         canonical_section = resolve_section_reference(
             section_ref,
             resolved_file_id,
             section_alias_map,
+            sections_data=sections_data,
         )
         if canonical_section is None:
             issues.append(
@@ -759,7 +875,12 @@ def _build_library_spec(
         manager.state.file_manifest, manager.structure.spec_snapshot_dir
     )
     section_alias_map = build_section_alias_map(manager.state.section_manifest)
-    valid_file_ids = list(manager.state.file_manifest.keys())
+    valid_file_refs = _build_file_ref_list(manager.state.file_manifest)
+    section_id_allowlists: dict[str, list[str]] = {}
+    for manifest_file_id in manager.state.file_manifest:
+        manifest_file_ref = _build_file_ref(manifest_file_id, manager)
+        _, section_ids = _collect_section_ids(manifest_file_id, manager)
+        section_id_allowlists[manifest_file_ref] = section_ids
 
     existing_gaps = manager.read_library_gaps(lib_id)
     gap_queue = manager.get_library_gap_queue(lib_id)
@@ -792,16 +913,20 @@ def _build_library_spec(
 
             file_content = file_path.read_text(encoding="utf-8")
             current_spec = spec_path.read_text(encoding="utf-8")
-            file_gaps = _filter_open_gaps_for_file(gap_focus, file_id) if gap_focus else None
+            file_ref = _build_file_ref(file_id, manager)
+            _, valid_section_ids = _collect_section_ids(file_id, manager)
+            file_gaps = _filter_open_gaps_for_file(gap_focus, file_ref) if gap_focus else None
             prompt = _build_patch_prompt(
                 lib_id,
                 charter_content,
                 current_spec,
                 file_id,
+                file_ref,
                 file_content,
                 sections,
-                manager.get_section_labels(file_id),
-                valid_file_ids,
+                valid_section_ids,
+                valid_file_refs,
+                file_id_lookup,
                 gaps=file_gaps,
             )
             legacy_prompt_size = len(
@@ -810,9 +935,10 @@ def _build_library_spec(
                     charter_content,
                     current_spec,
                     file_id,
+                    file_ref,
                     file_content,
                     sections,
-                    manager.get_section_labels(file_id),
+                    valid_section_ids,
                     gaps=file_gaps,
                 )
             )
@@ -927,11 +1053,8 @@ def _build_library_spec(
                         output=output_text,
                         errors=citation_issues,
                         allowlists={
-                            "file_ids": list(manager.state.file_manifest.keys()),
-                            "sections": {
-                                file_id: manager.state.section_manifest.get(file_id, [])
-                                for file_id in manager.state.file_manifest
-                            },
+                            "file_refs": valid_file_refs,
+                            "sections": section_id_allowlists,
                         },
                         artifact_type=ArtifactType.SPEC_PATCHES,
                         model_override=get_repair_model(),
@@ -1023,12 +1146,15 @@ def _build_library_spec(
             if file_path is None or not file_path.exists():
                 continue
             file_content = file_path.read_text(encoding="utf-8")
+            file_ref = _build_file_ref(file_id, manager)
+            _, valid_section_ids = _collect_section_ids(file_id, manager)
             prompt = _build_gap_prompt(
                 spec_content,
                 file_id,
+                file_ref,
                 file_content,
                 evidence_sections,
-                manager.get_section_labels(file_id),
+                valid_section_ids,
             )
             try:
                 output = run_agent(

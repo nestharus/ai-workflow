@@ -643,14 +643,23 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
 
                 try:
                     entry_json = json.dumps(candidate_entry, indent=2)
+                    repair_file_id = candidate_entry.get("file_id") or ""
+                    sections_data = manager.read_file_sections(repair_file_id)
+                    if sections_data is None:
+                        section_ids = manager.get_section_labels(repair_file_id)
+                    else:
+                        section_ids = [
+                            section.get("section_id")
+                            for section in sections_data.get("sections", [])
+                            if isinstance(section, dict)
+                            and isinstance(section.get("section_id"), str)
+                        ]
                     repaired_json = repair_artifact(
                         output=entry_json,
                         errors=entry_issues,
                         allowlists={
                             "file_ids": list(manager.state.file_manifest.keys()),
-                            "sections": manager.get_section_labels(
-                                candidate_entry.get("file_id") or ""
-                            ),
+                            "sections": section_ids,
                         },
                         artifact_type=ArtifactType.EVIDENCE_JSON,
                         model_override=get_repair_model(),
