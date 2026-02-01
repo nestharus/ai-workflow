@@ -24,4 +24,4 @@ tools_used:
   - line_comparator
   - diff_tool
 
-implementation_class: null  # Implemented via CoverageVerificationStrategy
+implementation_class: spec_manager.strategies.implementations.line_membership.LineMembershipStrategy

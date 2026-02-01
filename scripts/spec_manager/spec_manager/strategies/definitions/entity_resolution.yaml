@@ -26,4 +26,4 @@ tools_used:
   - id_matcher
   - reference_resolver
 
-implementation_class: null  # Uses EntityResolver directly, not a Strategy subclass
+implementation_class: spec_manager.strategies.implementations.entity_resolution.EntityResolutionStrategy
