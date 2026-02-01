@@ -84,10 +84,11 @@ class RuffLinter(BaseLinter):
             return LinterResult(success=True)
 
         # Step 1: Run ruff format (modifies files, suppress output)
+        # Do not use check=True: format exits non-zero on syntax errors but
+        # we still want ruff check to run so structured errors are reported.
         subprocess.run(
             [uv_exe, "run", "ruff", "format", *targets],
             capture_output=True,
-            check=True,
         )
 
         # Step 2: Run ruff check --fix to apply safe fixes (modifies files)

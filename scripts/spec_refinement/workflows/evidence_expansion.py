@@ -160,13 +160,21 @@ def _build_evidence_prompt(
     charter_content: str,
     file_id: str,
     summary_content: str,
-    valid_sections: list[str],
+    manager: WorkspaceManager,
 ) -> str:
     """Build prompt for evidence mapping.
 
-    IMPORTANT: The model must choose section labels from `valid_sections` (exact match).
+    IMPORTANT: The model must choose section IDs from the allowlist (exact match).
     """
-    section_list = ", ".join(valid_sections) if valid_sections else "None"
+    sections_data = manager.read_file_sections(file_id) or {}
+    section_ids = [
+        s_id
+        for section in sections_data.get("sections", [])
+        if isinstance(section, dict)
+        and (s_id := section.get("section_id")) is not None
+        and isinstance(s_id, str)
+    ]
+    section_list = ", ".join(section_ids) if section_ids else "None"
     lines = [
         "## OUTPUT CONTRACT (REQUIRED)",
         "",
@@ -187,7 +195,7 @@ def _build_evidence_prompt(
         "FORBIDDEN:",
         "- Sections not in the allowlist",
         "- File-summary meta-headings",
-        "- Invented section labels",
+        "- Invented section IDs",
         "",
         "## INPUT DATA",
         "",
@@ -203,7 +211,7 @@ def _build_evidence_prompt(
         "## OUTPUT FORMAT",
         "",
         "Example:",
-        '{"file_id": "F0001", "relevant_sections": ["REQS", "CONSTRAINTS"], '
+        '{"file_id": "F0001", "relevant_sections": ["SEC-F0001-0001", "SEC-F0001-0003"], '
         '"confidence": 0.8, "rationale": "..."}',
     ]
     return "\n".join(lines).strip() + "\n"
@@ -241,7 +249,7 @@ def _build_spotcheck_prompt(
         charter_content.strip(),
         "",
         f"File ID: {file_id}",
-        f"Current Evidence Sections: {section_list}",
+        f"Current Evidence Section IDs: {section_list}",
         "",
         "Source File:",
         file_content.strip(),
@@ -249,7 +257,7 @@ def _build_spotcheck_prompt(
         "## OUTPUT FORMAT",
         "",
         "Example:",
-        '{"missing_sections": ["INTRO"], "scan_complete": true}',
+        '{"missing_sections": ["SEC-F0001-0002"], "scan_complete": true}',
     ]
     return "\n".join(lines).strip() + "\n"
 
@@ -323,7 +331,19 @@ def _validate_evidence_entry(
         )
         sections = []
 
-    valid_sections = set(manager.state.section_manifest.get(file_id, []))
+    sections_data = manager.read_file_sections(file_id) or {}
+    valid_sections = {
+        section.get("section_id")
+        for section in sections_data.get("sections", [])
+        if isinstance(section, dict) and section.get("section_id")
+    }
+    if not valid_sections:
+        valid_sections = set(manager.get_section_labels(file_id))
+    section_id_to_label = {
+        section.get("section_id"): section.get("label")
+        for section in sections_data.get("sections", [])
+        if isinstance(section, dict) and section.get("section_id")
+    }
     filtered_sections: list[str] = []
     seen_sections: set[str] = set()
 
@@ -334,18 +354,7 @@ def _validate_evidence_entry(
         if not raw:
             continue
 
-        # Prefer exact matches, but tolerate common formatting differences.
-        candidate = raw
-        if candidate not in valid_sections:
-            normalized_candidate = candidate.upper().replace(" ", "_")
-            if normalized_candidate in valid_sections:
-                candidate = normalized_candidate
-            else:
-                normalized_candidate = candidate.upper()
-                if normalized_candidate in valid_sections:
-                    candidate = normalized_candidate
-
-        if candidate not in valid_sections:
+        if raw not in valid_sections:
             issues.append(
                 {
                     "type": "unknown_section_reference",
@@ -357,10 +366,10 @@ def _validate_evidence_entry(
             )
             continue
 
-        if candidate in seen_sections:
+        if raw in seen_sections:
             continue
-        seen_sections.add(candidate)
-        filtered_sections.append(candidate)
+        seen_sections.add(raw)
+        filtered_sections.append(raw)
 
     confidence = entry.get("confidence")
     if confidence is not None:
@@ -421,7 +430,8 @@ def _validate_evidence_entry(
         if primary_lib_id is None or primary_lib_id != lib_id:
             mention_filtered: list[str] = []
             for section in filtered_sections:
-                section_text = section_blocks.get(section, "")
+                label = section_id_to_label.get(section) or section
+                section_text = section_blocks.get(label, "")
                 if lib_id in section_text:
                     mention_filtered.append(section)
                     continue
@@ -447,14 +457,12 @@ def _process_pair(
     charter_content: str,
     file_id: str,
     summary_content: str,
-    valid_sections: list[str],
     workspace: Path,
+    manager: WorkspaceManager,
     priority: float,
     rationale: str,
 ) -> dict[str, Any]:
-    prompt = _build_evidence_prompt(
-        lib_id, charter_content, file_id, summary_content, valid_sections
-    )
+    prompt = _build_evidence_prompt(lib_id, charter_content, file_id, summary_content, manager)
 
     try:
         output = run_agent(
@@ -507,7 +515,7 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
         content = summary_path.read_text(encoding="utf-8")
         summaries[file_id] = {"content": content}
 
-    pairs: list[tuple[str, str, str, str, list[str], float, str]] = []
+    pairs: list[tuple[str, str, str, str, float, str]] = []
     errors: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
     per_lib_errors: dict[str, int] = {}
@@ -562,7 +570,6 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                     charter_content,
                     file_id,
                     raw_summary,
-                    manager.get_section_labels(file_id),
                     priority,
                     rationale,
                 )
@@ -585,12 +592,12 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                     charter,
                     file_id,
                     summary,
-                    valid_sections,
                     manager.workspace_path,
+                    manager,
                     priority,
                     rationale,
                 )
-                for lib_id, charter, file_id, summary, valid_sections, priority, rationale in pairs
+                for lib_id, charter, file_id, summary, priority, rationale in pairs
             ]
             for future in as_completed(futures):
                 result = future.result()
@@ -641,8 +648,8 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                         errors=entry_issues,
                         allowlists={
                             "file_ids": list(manager.state.file_manifest.keys()),
-                            "sections": manager.state.section_manifest.get(
-                                candidate_entry.get("file_id") or "", []
+                            "sections": manager.get_section_labels(
+                                candidate_entry.get("file_id") or ""
                             ),
                         },
                         artifact_type=ArtifactType.EVIDENCE_JSON,
@@ -836,27 +843,43 @@ def spotcheck_evidence(run_id: str, lib_ids: list[str] | None = None) -> dict[st
             new_sections: list[str] = []
             rationale_lines: list[str] = []
             confidence_values: list[float] = []
-            valid_sections = set(manager.state.section_manifest.get(file_id, []))
+            sections_data = manager.read_file_sections(file_id) or {}
+            valid_sections = {
+                section.get("section_id")
+                for section in sections_data.get("sections", [])
+                if isinstance(section, dict) and section.get("section_id")
+            }
+            if not valid_sections:
+                valid_sections = set(manager.get_section_labels(file_id))
             for item in missing_sections:
-                section_label = item.get("section_label") if isinstance(item, dict) else None
-                if not isinstance(section_label, str):
+                if isinstance(item, str):
+                    section_id = item
+                    rationale = ""
+                    confidence = None
+                elif isinstance(item, dict):
+                    section_id_temp = item.get("section_id") or item.get("section_label")
+                    if not isinstance(section_id_temp, str):
+                        continue
+                    section_id = section_id_temp
+                    rationale = item.get("rationale", "")
+                    confidence = item.get("confidence")
+                else:
                     continue
-                if section_label not in valid_sections:
+                if not isinstance(section_id, str):
+                    continue
+                if section_id not in valid_sections:
                     issues.append(
                         {
                             "type": "unknown_section_reference",
                             "lib_id": lib_id,
                             "file_id": file_id,
-                            "section": section_label,
+                            "section": section_id,
                             "message": "Spotcheck references unknown section.",
                         }
                     )
                     continue
-                new_sections.append(section_label)
-                rationale = item.get("rationale", "") if isinstance(item, dict) else ""
                 if rationale:
-                    rationale_lines.append(f"{section_label}: {rationale}")
-                confidence = item.get("confidence") if isinstance(item, dict) else None
+                    rationale_lines.append(f"{section_id}: {rationale}")
                 if confidence is not None:
                     try:
                         confidence_values.append(float(confidence))
@@ -869,6 +892,7 @@ def spotcheck_evidence(run_id: str, lib_ids: list[str] | None = None) -> dict[st
                                 "message": "Spotcheck confidence is not numeric.",
                             }
                         )
+                new_sections.append(section_id)
 
             if not new_sections:
                 continue

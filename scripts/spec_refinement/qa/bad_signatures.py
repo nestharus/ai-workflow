@@ -16,8 +16,14 @@ _SIGNATURES: list[tuple[str, re.Pattern[str], str]] = [
     ),
     (
         "arch_file_pointer",
-        re.compile(r"\[F\d{4}::", re.IGNORECASE),
-        "Contains a [F####::...] citation where a library-pointer citation is expected.",
+        re.compile(r"\[(?:F\d{4}|spec_snapshot/[^:]+)::", re.IGNORECASE),
+        "Contains a file-based citation where a library-pointer citation is expected.",
+    ),
+    (
+        "legacy_pointer_format",
+        re.compile(r"\[F\d{4}::[A-Z_]+\]", re.IGNORECASE),
+        "Contains legacy [file_id::LABEL] pointer format; should use "
+        "[spec_snapshot/<relpath>::SEC-...] format.",
     ),
     (
         "runner_file_pointer",
@@ -27,10 +33,10 @@ _SIGNATURES: list[tuple[str, re.Pattern[str], str]] = [
     (
         "evidence_mapper_heading_sections",
         re.compile(
-            r'"relevant_sections"\s*:\s*\[[^\]]*("Components"|"Workflows"|"Algorithms")[^\]]*\]',
+            r'"relevant_sections"\s*:\s*\[[^\]]*("Components"|"Workflows"|"Algorithms"|"(?!SEC-)[^"]+")[^\]]*\]',
             re.IGNORECASE,
         ),
-        "Evidence mapper returned summary headings as section identifiers.",
+        "Evidence mapper returned summary headings or non-section IDs as identifiers.",
     ),
 ]
 

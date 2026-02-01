@@ -6,9 +6,13 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from scripts.spec_refinement.workspace import WorkspaceManager
 
 EVIDENCE_POINTER_RE = re.compile(r"\[([^\[\]]+?)::([^\[\]]+?)\]")
+EVIDENCE_POINTER_NEW_RE = re.compile(r"\[spec_snapshot/([^:]+)::([^\]]+)\]")
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +22,7 @@ def normalize_compound_pointers(text: str) -> str:
 
     Some agents occasionally emit pointers like:
       [F0001::INTRO, F0001::REQS]
+      [spec_snapshot/requirements/core.md::SEC-F0001-0001, SEC-F0001-0002]
     which break the `[FILE_ID::SECTION]` parser/validator. We normalize these into:
       [F0001::INTRO] [F0001::REQS]
     """
@@ -47,6 +52,96 @@ def normalize_compound_pointers(text: str) -> str:
 
     # This targets bracketed constructs containing at least one `::` and a comma.
     return re.sub(r"\[([^\[\]]*?::[^\[\]]*?)\]", _rewrite, text)
+
+
+def parse_evidence_pointer(pointer: str) -> dict[str, str] | None:
+    """Parse evidence pointer into file/section refs and format type."""
+    cleaned = pointer.strip()
+    if not cleaned:
+        return None
+    if "::" in cleaned and not cleaned.startswith("["):
+        cleaned = f"[{cleaned}]"
+    match = EVIDENCE_POINTER_NEW_RE.fullmatch(cleaned)
+    if match:
+        return {
+            "file_ref": match.group(1).strip(),
+            "section_ref": match.group(2).strip(),
+            "format": "new",
+        }
+    match = EVIDENCE_POINTER_RE.fullmatch(cleaned)
+    if match:
+        return {
+            "file_ref": match.group(1).strip(),
+            "section_ref": match.group(2).strip(),
+            "format": "legacy",
+        }
+    return None
+
+
+def extract_pointer_components(pointer: str) -> tuple[str, str, str] | None:
+    """Extract file reference, section reference, and format from an evidence pointer."""
+    parsed = parse_evidence_pointer(pointer)
+    if not parsed:
+        return None
+    return parsed["file_ref"], parsed["section_ref"], parsed["format"]
+
+
+def build_evidence_pointer(
+    file_id: str,
+    section_id: str,
+    file_manifest: dict[str, dict[str, str]],
+) -> str:
+    """Construct a new-format evidence pointer from manifest data."""
+    file_entry = file_manifest.get(file_id)
+    if not file_entry or "relpath" not in file_entry:
+        raise KeyError(f"Missing relpath for file_id '{file_id}'.")
+    relpath = file_entry["relpath"]
+    return f"[spec_snapshot/{relpath}::{section_id}]"
+
+
+def migrate_pointers_to_new_format(content: str, manager: WorkspaceManager) -> str:
+    """Migrate legacy evidence pointers to the new spec_snapshot format."""
+    if not content:
+        return content
+
+    from .validation_utils import build_file_id_lookup, build_section_id_lookup
+
+    file_lookup = build_file_id_lookup(
+        manager.state.file_manifest, manager.structure.spec_snapshot_dir
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        pointer = match.group(0)
+        parsed = parse_evidence_pointer(pointer)
+        if not parsed or parsed["format"] != "legacy":
+            return pointer
+
+        file_ref = parsed["file_ref"]
+        section_ref = parsed["section_ref"]
+        resolved_file_id = file_lookup.get(file_ref)
+        if resolved_file_id is None:
+            return pointer
+
+        sections_data = manager.read_file_sections(resolved_file_id)
+        if not sections_data:
+            return pointer
+
+        section_lookup = build_section_id_lookup(resolved_file_id, sections_data)
+        section_id = section_lookup.get(section_ref)
+        if not section_id:
+            normalized = section_ref.strip().lower().replace(" ", "_").replace("-", "_")
+            section_id = section_lookup.get(normalized)
+        if not section_id:
+            return pointer
+
+        file_entry = manager.state.file_manifest.get(resolved_file_id, {})
+        relpath = file_entry.get("relpath") if isinstance(file_entry, dict) else file_entry
+        if not relpath:
+            return pointer
+
+        return f"[spec_snapshot/{relpath}::{section_id}]"
+
+    return EVIDENCE_POINTER_RE.sub(_replace, content)
 
 
 @dataclass(frozen=True)
@@ -116,7 +211,18 @@ def _extract_file_id(content: str) -> str:
 
 
 def _extract_pointers(text: str) -> list[str]:
-    return [f"[{match.group(1)}::{match.group(2)}]" for match in EVIDENCE_POINTER_RE.finditer(text)]
+    pointers: list[str] = []
+    for match in EVIDENCE_POINTER_RE.finditer(text):
+        pointer = match.group(0)
+        parsed = parse_evidence_pointer(pointer)
+        if not parsed:
+            continue
+        if parsed["format"] == "legacy":
+            logger.info("Legacy evidence pointer detected: %s", pointer)
+            pointers.append(f"[{parsed['file_ref']}::{parsed['section_ref']}]")
+            continue
+        pointers.append(f"[spec_snapshot/{parsed['file_ref']}::{parsed['section_ref']}]")
+    return pointers
 
 
 def _strip_evidence(text: str) -> str:

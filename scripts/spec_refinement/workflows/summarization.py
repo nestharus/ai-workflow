@@ -13,12 +13,14 @@ from .formats import (
     EVIDENCE_POINTER_RE,
     FileSummary,
     normalize_compound_pointers,
+    parse_evidence_pointer,
     parse_file_summary,
 )
 from .progress import ProgressTracker
 from .validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
+    build_section_id_lookup,
     resolve_section_reference,
     strip_invalid_file_pointers,
 )
@@ -26,8 +28,27 @@ from .validation_utils import (
 MAX_WORKERS = 4
 
 
-def _build_summary_prompt(file_id: str, file_path: Path, sections: list[str], content: str) -> str:
-    section_list = ", ".join(sections) if sections else "None"
+def _build_summary_prompt(
+    file_id: str, file_path: Path, content: str, manager: WorkspaceManager
+) -> str:
+    sections_data = manager.read_file_sections(file_id) or {}
+    section_ids = [
+        s_id
+        for section in sections_data.get("sections", [])
+        if isinstance(section, dict)
+        and (s_id := section.get("section_id")) is not None
+        and isinstance(s_id, str)
+    ]
+    section_list = ", ".join(section_ids) if section_ids else "None"
+    file_entry = manager.state.file_manifest.get(file_id, {})
+    if isinstance(file_entry, dict):
+        relpath = file_entry.get("relpath", str(file_path))
+    elif isinstance(file_entry, str):
+        relpath = file_entry
+    else:
+        relpath = str(file_path)
+    example_section = section_ids[0] if section_ids else f"SEC-{file_id}-0001"
+    example_pointer = f"[spec_snapshot/{relpath}::{example_section}]"
     lines = [
         "## OUTPUT CONTRACT (REQUIRED)",
         "",
@@ -40,16 +61,19 @@ def _build_summary_prompt(file_id: str, file_path: Path, sections: list[str], co
         "- Evidence Map",
         "",
         "REQUIRED RULES:",
-        "- Every inventory item MUST include evidence pointers in format [FILE_ID::SECTION]",
+        (
+            "- Every inventory item MUST include evidence pointers in format "
+            "[spec_snapshot/<relpath>::SECTION_ID]"
+        ),
         "- Evidence pointers MUST cite contributing sections, not entire files",
-        "- Section labels MUST match the Known Sections allowlist exactly",
-        f"- Valid section labels for {file_id}: {section_list}",
-        "- Do NOT invent section labels",
+        "- Section IDs MUST match the Known Sections allowlist exactly",
+        f"- Valid section IDs for {file_id}: {section_list}",
+        "- Do NOT invent section IDs",
         "- Keep summaries concise, focused on WHAT (not HOW)",
         "",
         "FORBIDDEN:",
-        "- Citing entire files without section labels",
-        "- Inventing section labels not in the allowlist",
+        "- Citing entire files without section IDs",
+        "- Inventing section IDs not in the allowlist",
         "- Including implementation details (HOW)",
         "",
         "## INPUT DATA",
@@ -66,22 +90,22 @@ def _build_summary_prompt(file_id: str, file_path: Path, sections: list[str], co
         "File ID: {file_id}",
         "",
         "## Algorithms",
-        "- <name> | <intent> | Evidence: [FILE_ID::SECTION]",
+        f"- <name> | <intent> | Evidence: {example_pointer}",
         "",
         "## Components",
-        "- <name> | <intent> | Evidence: [FILE_ID::SECTION]",
+        f"- <name> | <intent> | Evidence: {example_pointer}",
         "",
         "## Workflows",
-        "- <name> | <intent> | Evidence: [FILE_ID::SECTION]",
+        f"- <name> | <intent> | Evidence: {example_pointer}",
         "",
         "## Candidate Responsibilities",
-        "- <description> | Evidence: [FILE_ID::SECTION]",
+        f"- <description> | Evidence: {example_pointer}",
         "",
         "## Dependencies",
         "- <dependency>",
         "",
         "## Evidence Map",
-        "- <SECTION_ID>: [FILE_ID::SECTION_ID]",
+        f"- <SECTION_ID>: {example_pointer}",
         "",
     ]
     return "\n".join(lines)
@@ -108,8 +132,11 @@ def _validate_evidence_pointers(
     section_alias_map = build_section_alias_map(manager.state.section_manifest)
 
     for match in pointer_matches:
-        file_ref = match.group(1).strip()
-        section_ref = match.group(2).strip()
+        parsed = parse_evidence_pointer(match.group(0))
+        if not parsed:
+            continue
+        file_ref = parsed["file_ref"]
+        section_ref = parsed["section_ref"]
         resolved_file_id = file_id_lookup.get(file_ref)
         if resolved_file_id is None:
             issues.append(
@@ -121,10 +148,15 @@ def _validate_evidence_pointers(
                 }
             )
             continue
+        sections_data = manager.read_file_sections(resolved_file_id) or {}
+        section_lookup = build_section_id_lookup(resolved_file_id, sections_data)
+        if section_ref in section_lookup:
+            continue
         canonical_section = resolve_section_reference(
             section_ref,
             resolved_file_id,
             section_alias_map,
+            sections_data=sections_data,
         )
         if canonical_section is None:
             issues.append(
@@ -167,8 +199,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
     except OSError as exc:
         return {"file_id": file_id, "error": f"Failed to read file: {exc}"}
 
-    sections = manager.get_section_labels(file_id)
-    prompt = _build_summary_prompt(file_id, file_path, sections, content)
+    prompt = _build_summary_prompt(file_id, file_path, content, manager)
 
     try:
         output = run_agent(
@@ -204,7 +235,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
                 errors=issues,
                 allowlists={
                     "file_ids": list(manager.state.file_manifest.keys()),
-                    "sections": manager.state.section_manifest.get(file_id, []),
+                    "sections": manager.get_section_labels(file_id),
                 },
                 artifact_type=ArtifactType.SUMMARY,
                 model_override=get_repair_model(),
