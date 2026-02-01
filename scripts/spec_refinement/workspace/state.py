@@ -25,6 +25,7 @@ class Phase(Enum):
     """Spec refinement workflow phases."""
 
     INIT = "init"
+    SECTIONIZATION = "sectionization"
     SUMMARIZATION = "summarization"
     LIBRARY_SYNTHESIS = "library_synthesis"
     EVIDENCE_EXPANSION = "evidence_expansion"
@@ -145,6 +146,7 @@ class WorkspaceState:
         """Get the next phase to execute."""
         phase_order = [
             Phase.INIT,
+            Phase.SECTIONIZATION,
             Phase.SUMMARIZATION,
             Phase.LIBRARY_SYNTHESIS,
             Phase.EVIDENCE_EXPANSION,

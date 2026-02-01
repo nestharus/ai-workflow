@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from scripts.spec_refinement.workspace import Phase, WorkspaceManager
+from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
 from .formats import (
@@ -235,7 +235,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
                 section_ids = manager.get_section_labels(file_id)
             else:
                 section_ids = [
-                    section.get("section_id")
+                    str(section.get("section_id"))
                     for section in sections_data.get("sections", [])
                     if isinstance(section, dict) and isinstance(section.get("section_id"), str)
                 ]
@@ -282,6 +282,13 @@ def summarize_all(run_id: str, parallel: bool = True) -> dict[str, Any]:
     manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
     if not manager.is_initialized:
         raise RuntimeError("Workspace not initialized. Run init before summarization.")
+
+    sectionization_result = manager.state.phases.get(Phase.SECTIONIZATION.value)
+    if not sectionization_result or sectionization_result.status != PhaseStatus.COMPLETED:
+        raise RuntimeError(
+            "Phase 1 sectionization must be completed before summarization. "
+            "Run 'spec sectionize' first."
+        )
 
     manager.start_phase(Phase.SUMMARIZATION)
     files = manager.get_all_files()

@@ -62,6 +62,34 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_spec_sectionize(args: argparse.Namespace) -> int:
+    """Run Phase 1 sectionization for all files."""
+    run_id = args.run_id
+
+    from scripts.spec_refinement.workflows import sectionize_all
+
+    try:
+        result = sectionize_all(run_id, parallel=not args.sequential)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Files processed: {result['files_processed']}")
+    print(f"Sections written: {result['sections_written']}")
+    print(f"Atoms written: {result['atoms_written']}")
+    print(f"Terms written: {result['terms_written']}")
+
+    if result.get("errors"):
+        print("Errors:")
+        for error in result["errors"]:
+            print(f"  - {error.get('file_id')}: {error.get('error')}")
+
+    if result.get("issues"):
+        print(f"Validation issues: {len(result['issues'])}")
+
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     """Show workspace status."""
     run_id = args.run_id
@@ -681,8 +709,9 @@ def main(argv: list[str] | None = None) -> int:
             "  status\n"
             "  gaps\n"
             "  gap\n"
-            "  spec summarize (agent: glm-file-what-summarizer)\n"
-            "  spec synthesize (agent: opus-library-synthesizer)\n"
+            "  spec sectionize (Phase 1: LLM sectionization, atom emission, term extraction)\n"
+            "  spec summarize (Phase 2: agent: glm-file-what-summarizer)\n"
+            "  spec synthesize (Phase 3: agent: opus-library-synthesizer)\n"
             "  spec expand-evidence (agent: glm-library-evidence-mapper)\n"
             "  spec spotcheck-evidence (agent: chatgpt-evidence-gap-judge)\n"
             "  spec build-specs (agent: glm-library-spec-integrator)\n"
@@ -777,6 +806,25 @@ def main(argv: list[str] | None = None) -> int:
         help="Workflow commands for summarization and synthesis",
     )
     spec_subparsers = p_spec.add_subparsers(dest="spec_command", required=True)
+
+    p_spec_sectionize = spec_subparsers.add_parser(
+        "sectionize",
+        help="Run Phase 1 sectionization (LLM-based section detection)",
+        description=(
+            "Run Phase 1 sectionization using LLM agents to detect sections, "
+            "emit line-atoms, and extract terms.\n"
+            "Inputs: initialized workspace with spec_snapshot.\n"
+            "Outputs: manifest/sections/*.sections.json, manifest/atoms/*.atoms.jsonl, "
+            "manifest/terms/*.terms.json, workspace/intermediates/pass_01/evidence.jsonl, "
+            "workspace/intermediates/pass_01/gaps.json"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_sectionize.add_argument("run_id", help="Run identifier")
+    p_spec_sectionize.add_argument(
+        "--sequential", action="store_true", help="Disable parallel execution"
+    )
+    p_spec_sectionize.set_defaults(func=cmd_spec_sectionize)
 
     p_spec_summarize = spec_subparsers.add_parser(
         "summarize",

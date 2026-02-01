@@ -97,6 +97,21 @@ class RunFolderStructure:
         """Path to the per-file terms directory (Phase 1)."""
         return self.manifest_dir / "terms"
 
+    @property
+    def workspace_dir(self) -> Path:
+        """Path to the workspace directory for intermediates."""
+        return self.root / "workspace"
+
+    @property
+    def intermediates_dir(self) -> Path:
+        """Path to the intermediates directory."""
+        return self.workspace_dir / "intermediates"
+
+    @property
+    def pass_01_dir(self) -> Path:
+        """Path to the Phase 1 pass directory."""
+        return self.intermediates_dir / "pass_01"
+
     def validate(self) -> list[str]:
         """Validate run folder structure."""
         issues = []
@@ -159,6 +174,9 @@ class WorkspaceManager:
             self.structure.manifest_sections_dir,
             self.structure.manifest_atoms_dir,
             self.structure.manifest_terms_dir,
+            self.structure.workspace_dir,
+            self.structure.intermediates_dir,
+            self.structure.pass_01_dir,
             self.structure.summaries_dir,
             self.structure.libraries_dir,
             self.structure.architecture_dir,
