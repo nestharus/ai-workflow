@@ -1,4 +1,12 @@
-"""Spec building workflow for Phase 4 spec refinement."""
+"""Spec building workflow for Phase 4 spec refinement.
+
+Migration Notes (Phase 1 Sectionization):
+- Deterministic section parsing via `_extract_evidence_section_blocks()` is removed.
+- Section IDs now come from LLM-generated `{file_id}.sections.json` files.
+- Evidence pointers use format: `[spec_snapshot/<relpath>::SEC-{file_id}-{ordinal:04d}]`.
+- Use `manager.get_section_labels(file_id)` to retrieve section IDs.
+- Legacy `manager.state.section_manifest` reads are replaced with Phase 1 manifests.
+"""
 
 from __future__ import annotations
 
@@ -28,7 +36,6 @@ from .validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
     build_section_id_lookup,
-    resolve_section_reference,
 )
 
 MAX_ITERATIONS_DEFAULT = 5
@@ -51,46 +58,6 @@ def _extract_sections(content: str, level: int) -> dict[str, str]:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
         sections[title] = content[start:end].strip()
     return sections
-
-
-def _extract_evidence_section_blocks(content: str) -> dict[str, str]:
-    explicit_matches = list(re.finditer(r"\[([A-Z_]+)\]", content))
-    if explicit_matches:
-        blocks: dict[str, str] = {}
-        for index, match in enumerate(explicit_matches):
-            label = match.group(1).strip()
-            start = match.end()
-            end = (
-                explicit_matches[index + 1].start()
-                if index + 1 < len(explicit_matches)
-                else len(content)
-            )
-            text = content[start:end].strip()
-            if label in blocks and text:
-                blocks[label] = f"{blocks[label].rstrip()}\n{text}"
-            else:
-                blocks[label] = text
-        return blocks
-
-    heading_matches = list(re.finditer(r"^##\s+(.+)$", content, re.MULTILINE))
-    if not heading_matches:
-        return {}
-    blocks = {}
-    for index, match in enumerate(heading_matches):
-        heading = match.group(1).strip()
-        if not heading:
-            continue
-        label = heading.upper().replace(" ", "_")
-        start = match.end()
-        end = (
-            heading_matches[index + 1].start() if index + 1 < len(heading_matches) else len(content)
-        )
-        text = content[start:end].strip()
-        if label in blocks and text:
-            blocks[label] = f"{blocks[label].rstrip()}\n{text}"
-        else:
-            blocks[label] = text
-    return blocks
 
 
 def _extract_list_items(section_text: str) -> list[str]:
@@ -199,6 +166,11 @@ def _build_full_spec_prompt_for_metrics(
     valid_section_ids: list[str],
     gaps: list[Gap] | None = None,
 ) -> str:
+    """Build the full spec prompt for metrics (legacy size comparison).
+
+    Migration note: evidence pointers now use Phase 1 section IDs from
+    `{file_id}.sections.json`.
+    """
     section_list = ", ".join(evidence_sections) if evidence_sections else "None"
     valid_list = ", ".join(valid_section_ids) if valid_section_ids else "None"
     example_section = valid_section_ids[0] if valid_section_ids else f"SEC-{file_id}-0001"
@@ -332,6 +304,11 @@ def _build_patch_prompt(
     file_id_lookup: dict[str, str],
     gaps: list[Gap] | None = None,
 ) -> str:
+    """Build the patch prompt for spec updates.
+
+    Migration note: evidence pointers now use Phase 1 section IDs from
+    `{file_id}.sections.json`.
+    """
     spec_doc = SpecDocument(spec_content)
     summaries = _summarize_spec_sections(spec_doc)
     relevant_sections = _select_relevant_spec_sections(spec_doc, file_id, file_id_lookup)
@@ -440,9 +417,7 @@ def _detect_remainder_content(
     file_id_lookup = build_file_id_lookup(
         manager.state.file_manifest, manager.structure.spec_snapshot_dir
     )
-    section_alias_map = build_section_alias_map(manager.state.section_manifest)
-    sections_data = manager.read_file_sections(file_id) or {}
-    section_lookup = build_section_id_lookup(file_id, sections_data)
+    valid_section_ids = set(manager.get_section_labels(file_id))
 
     pointers = EVIDENCE_POINTER_RE.findall(spec_content)
     cited_sections: set[str] = set()
@@ -450,14 +425,8 @@ def _detect_remainder_content(
         resolved_file_id = file_id_lookup.get(file_ref)
         if resolved_file_id != file_id:
             continue
-        canonical_section = resolve_section_reference(
-            section_ref,
-            resolved_file_id,
-            section_alias_map,
-            sections_data=sections_data,
-        )
-        if canonical_section:
-            cited_sections.add(canonical_section)
+        if section_ref in valid_section_ids:
+            cited_sections.add(section_ref)
 
     resolved_evidence_sections: set[str] = set()
     for section in evidence_sections:
@@ -466,15 +435,8 @@ def _detect_remainder_content(
         raw = section.strip()
         if not raw:
             continue
-        canonical = section_lookup.get(raw)
-        if canonical is None:
-            canonical = resolve_section_reference(
-                raw,
-                file_id,
-                section_alias_map,
-                sections_data=sections_data,
-            )
-        resolved_evidence_sections.add(canonical or raw)
+        if raw in valid_section_ids:
+            resolved_evidence_sections.add(raw)
 
     uncited = resolved_evidence_sections - cited_sections
 
@@ -486,13 +448,7 @@ def _detect_remainder_content(
 
     evidence_list: list[GapEvidence] = []
     for section in sorted(uncited):
-        file_entry = manager.state.file_manifest.get(file_id, {})
-        relpath = None
-        if isinstance(file_entry, dict):
-            relpath = file_entry.get("relpath")
-        elif isinstance(file_entry, str):
-            relpath = file_entry
-        file_ref = f"spec_snapshot/{relpath}" if relpath else file_id
+        file_ref = _build_file_ref(file_id, manager)
         evidence_list.append(
             GapEvidence(
                 invariant_family="coverage",
@@ -596,21 +552,53 @@ def _build_evidence_union(
         if file_path is None or not file_path.exists():
             continue
         file_content = file_path.read_text(encoding="utf-8")
-        section_blocks = _extract_evidence_section_blocks(file_content)
+        sections_data = manager.read_file_sections(file_id) or {}
+        section_spans = sections_data.get("sections", [])
+        section_lookup: dict[str, dict[str, Any]] = {}
+        for entry in section_spans:
+            if not isinstance(entry, dict):
+                continue
+            section_id = entry.get("section_id")
+            if isinstance(section_id, str) and section_id:
+                section_lookup[section_id] = entry
+        file_lines = file_content.splitlines()
         for section in evidence_sections:
-            file_entry = manager.state.file_manifest.get(file_id, {})
-            relpath = None
-            if isinstance(file_entry, dict):
-                relpath = file_entry.get("relpath")
-            elif isinstance(file_entry, str):
-                relpath = file_entry
-            file_ref = f"spec_snapshot/{relpath}" if relpath else file_id
+            file_ref = _build_file_ref(file_id, manager)
             pointer = f"[{file_ref}::{section}]"
             union_sources.append(pointer)
             union_lines.append(pointer)
-            section_text = section_blocks.get(section)
-            if section_text:
-                union_lines.append(section_text.strip())
+            section_span = section_lookup.get(section)
+            if isinstance(section_span, dict):
+                start_line = section_span.get("start_line")
+                end_line = section_span.get("end_line")
+                if isinstance(start_line, int) and isinstance(end_line, int):
+                    start_index = max(start_line - 1, 0)
+                    end_index = min(end_line, len(file_lines))
+                    section_text = "\n".join(file_lines[start_index:end_index]).strip()
+                    if section_text:
+                        union_lines.append(section_text)
+                    else:
+                        issues.append(
+                            {
+                                "type": "evidence_section_empty",
+                                "lib_id": lib_id,
+                                "file_id": file_id,
+                                "section": section,
+                                "message": "Evidence section content empty in gap audit.",
+                            }
+                        )
+                        union_lines.append("(Section content empty.)")
+                else:
+                    issues.append(
+                        {
+                            "type": "evidence_section_invalid",
+                            "lib_id": lib_id,
+                            "file_id": file_id,
+                            "section": section,
+                            "message": "Evidence section span missing line offsets.",
+                        }
+                    )
+                    union_lines.append("(Section span invalid.)")
             else:
                 issues.append(
                     {
@@ -677,8 +665,7 @@ def _validate_spec_citations(
     file_id_lookup = build_file_id_lookup(
         manager.state.file_manifest, manager.structure.spec_snapshot_dir
     )
-    section_alias_map = build_section_alias_map(manager.state.section_manifest)
-    sections_cache: dict[str, dict[str, Any]] = {}
+    section_ids_cache: dict[str, set[str]] = {}
 
     for match in pointer_matches:
         file_ref = match.group(1).strip()
@@ -694,17 +681,11 @@ def _validate_spec_citations(
                 }
             )
             continue
-        sections_data = sections_cache.get(resolved_file_id)
-        if sections_data is None:
-            sections_data = manager.read_file_sections(resolved_file_id) or {}
-            sections_cache[resolved_file_id] = sections_data
-        canonical_section = resolve_section_reference(
-            section_ref,
-            resolved_file_id,
-            section_alias_map,
-            sections_data=sections_data,
-        )
-        if canonical_section is None:
+        valid_section_ids = section_ids_cache.get(resolved_file_id)
+        if valid_section_ids is None:
+            valid_section_ids = set(manager.get_section_labels(resolved_file_id))
+            section_ids_cache[resolved_file_id] = valid_section_ids
+        if section_ref not in valid_section_ids:
             issues.append(
                 {
                     "type": "unknown_section_reference",
@@ -874,7 +855,12 @@ def _build_library_spec(
     file_id_lookup = build_file_id_lookup(
         manager.state.file_manifest, manager.structure.spec_snapshot_dir
     )
-    section_alias_map = build_section_alias_map(manager.state.section_manifest)
+    section_alias_map = build_section_alias_map(
+        {
+            manifest_file_id: manager.get_section_labels(manifest_file_id)
+            for manifest_file_id in manager.state.file_manifest
+        }
+    )
     valid_file_refs = _build_file_ref_list(manager.state.file_manifest)
     section_id_allowlists: dict[str, list[str]] = {}
     for manifest_file_id in manager.state.file_manifest:
