@@ -87,6 +87,12 @@ def cmd_spec_sectionize(args: argparse.Namespace) -> int:
     if result.get("issues"):
         print(f"Validation issues: {len(result['issues'])}")
 
+    success = bool(result.get("success", False))
+    if not success or result.get("errors") or result.get("issues"):
+        if not success:
+            print("Sectionization failed.")
+        return 1
+
     return 0
 
 

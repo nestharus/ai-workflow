@@ -240,14 +240,14 @@ def _process_file_sectionization(
         try:
             parsed = json.loads(section_output)
             if not isinstance(parsed, list):
-                raise ValueError("Expected JSON array of sections")
+                raise TypeError("Expected JSON array of sections")
             sections_payload = {
                 "file_id": file_id,
                 "sections": parsed,
                 "total_lines": total_lines,
             }
             sections_path = manager.write_file_sections(file_id, sections_payload)
-        except (json.JSONDecodeError, ValidationError, ValueError, OSError) as exc:
+        except (json.JSONDecodeError, ValidationError, TypeError, OSError) as exc:
             errors.append(f"Failed to parse/write sections: {exc}")
 
     section_ids: list[str] = []
@@ -288,9 +288,9 @@ def _process_file_sectionization(
         try:
             parsed_terms = json.loads(terms_output)
             if not isinstance(parsed_terms, dict):
-                raise ValueError("Expected JSON object for terms payload")
+                raise TypeError("Expected JSON object for terms payload")
             terms_path = manager.write_file_terms(file_id, parsed_terms)
-        except (json.JSONDecodeError, ValidationError, ValueError, OSError) as exc:
+        except (json.JSONDecodeError, ValidationError, TypeError, OSError) as exc:
             errors.append(f"Failed to parse/write terms: {exc}")
 
     validation_ok = True
@@ -432,7 +432,7 @@ def _aggregate_evidence(
                         try:
                             payload = json.loads(stripped)
                             if not isinstance(payload, dict):
-                                raise ValueError("Evidence payload must be a JSON object")
+                                raise TypeError("Evidence payload must be a JSON object")
                             evidence_records.append(_prepare_gap_evidence(payload))
                         except (json.JSONDecodeError, ValueError) as exc:
                             issues.append(
@@ -498,9 +498,8 @@ def sectionize_all(run_id: str, parallel: bool = True) -> dict[str, Any]:
                 result = future.result()
                 if "error" in result:
                     errors.append({"file_id": result.get("file_id"), "error": result.get("error")})
-                    failures += 1
                 if not result.get("success", False):
-                    failures += 1 if "error" not in result else 0
+                    failures += 1
                 issues.extend(result.get("issues", []))
                 sections_written += int(result.get("sections_written", 0))
                 terms_written += int(result.get("terms_written", 0))
@@ -511,9 +510,8 @@ def sectionize_all(run_id: str, parallel: bool = True) -> dict[str, Any]:
             result = _process_file_sectionization(file_id, file_path, manager)
             if "error" in result:
                 errors.append({"file_id": result.get("file_id"), "error": result.get("error")})
-                failures += 1
             if not result.get("success", False):
-                failures += 1 if "error" not in result else 0
+                failures += 1
             issues.extend(result.get("issues", []))
             sections_written += int(result.get("sections_written", 0))
             terms_written += int(result.get("terms_written", 0))
@@ -529,7 +527,6 @@ def sectionize_all(run_id: str, parallel: bool = True) -> dict[str, Any]:
     phase_result = manager.state.phases[Phase.SECTIONIZATION.value]
     phase_result.issues = errors + issues
 
-    failure_ratio = (failures / total_files) if total_files else 0
     outputs = {
         "files_processed": total_files,
         "sections_written": sections_written,
@@ -539,16 +536,29 @@ def sectionize_all(run_id: str, parallel: bool = True) -> dict[str, Any]:
         "gaps_path": str(gaps_path),
     }
 
-    if total_files > 0 and failure_ratio > 0.5:
-        manager.fail_phase(Phase.SECTIONIZATION, error="Too many failures")
-    else:
+    evidence_failure = bool(evidence_issues)
+    success = failures == 0 and not evidence_failure
+
+    if success:
         manager.complete_phase(Phase.SECTIONIZATION, outputs=outputs)
+    else:
+        phase_result.outputs = outputs
+        error_details: list[str] = []
+        if failures:
+            error_details.append(f"{failures} file failure(s)")
+        if evidence_failure:
+            error_details.append(f"{len(evidence_issues)} evidence issue(s)")
+        error_message = "Sectionization failed"
+        if error_details:
+            error_message = f"{error_message}: {', '.join(error_details)}"
+        manager.fail_phase(Phase.SECTIONIZATION, error=error_message)
 
     return {
         "files_processed": total_files,
         "sections_written": sections_written,
         "atoms_written": atoms_written,
         "terms_written": terms_written,
+        "success": success,
         "errors": errors,
         "issues": issues,
         "outputs": outputs,
